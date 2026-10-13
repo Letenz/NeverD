@@ -102,11 +102,69 @@ static std::vector<RoundTripTC> makeLongDoubleTC(const char *prefix, const char 
      "  unsigned long long m; __builtin_memcpy(&m,&acc,8);\n"
      "  return ("+t+")(unsigned)(h ^ (unsigned)m ^ (unsigned)(m>>32)); }\n",
      {0x84ULL}, "X87LongDouble", 2},
+
+    // A long double passed by value fills three i386 stack slots or two
+    // x86-64 ones, and its sign and exponent sit in the last, partly used
+    // slot. The callee must read all ten bytes and the caller store them.
+    {p+"_param",
+     "static long double "+p+"_hp(long double) __attribute__((noinline));\n"
+     +t+" "+p+"_param("+t+" a){\n"
+     "  long double x=(long double)((unsigned)a|1u) * -1.0000001L;\n"
+     "  long double r="+p+"_hp(x);\n"
+     "  unsigned long long m; unsigned short e;\n"
+     "  __builtin_memcpy(&m,&r,8); __builtin_memcpy(&e,(char *)&r+8,2);\n"
+     "  return ("+t+")(unsigned)(m ^ (m>>32) ^ e); }\n"
+     "static long double "+p+"_hp(long double x){ return -x * 0.75L + x / 3.0L; }\n",
+     {0x5bULL}, "X87LongDouble", 2},
+
+    // An integer before the long double (i386: slot 0, then slots 1-3;
+    // x86-64: EDI, then the stack), with an integer load and FABS on it.
+    {p+"_mixparam",
+     "static long double "+p+"_hm(int,long double) __attribute__((noinline));\n"
+     +t+" "+p+"_mixparam("+t+" a){\n"
+     "  long double x=(long double)((unsigned)a|1u) * -2.5000001L;\n"
+     "  long double r="+p+"_hm((int)a - 7, x);\n"
+     "  unsigned long long m; unsigned short e;\n"
+     "  __builtin_memcpy(&m,&r,8); __builtin_memcpy(&e,(char *)&r+8,2);\n"
+     "  return ("+t+")(unsigned)(m ^ (m>>32) ^ e); }\n"
+     "static long double "+p+"_hm(int k,long double b){\n"
+     "  return (long double)k * b - __builtin_fabsl(b); }\n",
+     {0x3cULL}, "X87LongDouble", 2},
+
+    // A callee passing a long double on: its only store before the call is
+    // the ten-byte `fstp tbyte` of the argument.
+    {p+"_fwdparam",
+     "static long double "+p+"_hf(long double) __attribute__((noinline));\n"
+     "static long double "+p+"_hg(long double) __attribute__((noinline));\n"
+     +t+" "+p+"_fwdparam("+t+" a){\n"
+     "  long double x=(long double)((unsigned)a|1u) * 1.0000001L;\n"
+     "  long double r="+p+"_hg(x);\n"
+     "  unsigned long long m; unsigned short e;\n"
+     "  __builtin_memcpy(&m,&r,8); __builtin_memcpy(&e,(char *)&r+8,2);\n"
+     "  return ("+t+")(unsigned)(m ^ (m>>32) ^ e); }\n"
+     "static long double "+p+"_hg(long double x){ return "+p+"_hf(x + x) + 1.0L; }\n"
+     "static long double "+p+"_hf(long double x){ return x / 3.0L; }\n",
+     {0x47ULL}, "X87LongDouble", 2},
+
+    // Two long doubles: the second starts where the first one's padding ends.
+    {p+"_twoparam",
+     "static long double "+p+"_h2(long double,long double)"
+     " __attribute__((noinline));\n"
+     +t+" "+p+"_twoparam("+t+" a){\n"
+     "  long double x=(long double)((unsigned)a|1u) * 1.0000001L;\n"
+     "  long double r="+p+"_h2(x, -x / 7.0L);\n"
+     "  unsigned long long m; unsigned short e;\n"
+     "  __builtin_memcpy(&m,&r,8); __builtin_memcpy(&e,(char *)&r+8,2);\n"
+     "  return ("+t+")(unsigned)(m ^ (m>>32) ^ e); }\n"
+     "static long double "+p+"_h2(long double a,long double b){\n"
+     "  return a * b + a - b; }\n",
+     {0x2dULL}, "X87LongDouble", 2},
   };
 }
 // clang-format on
 
-static const std::vector<RoundTripTC> kX64LD = makeLongDoubleTC("x64ld", "long");
+static const std::vector<RoundTripTC> kX64LD =
+    makeLongDoubleTC("x64ld", "long");
 static const std::vector<RoundTripTC> kX86LD = makeLongDoubleTC("x86ld", "int");
 
 INSTANTIATE_TEST_SUITE_P(X87LongDouble, X64X87LongDoubleRT,

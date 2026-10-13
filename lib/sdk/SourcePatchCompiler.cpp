@@ -250,6 +250,13 @@ compileSourcePatch(llvm::StringRef Source,
     }
   }
   Args.push_back("-fno-lto");
+  if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
+      Format == BinaryFormat::COFF) {
+    // A patch resolves references against the original image; it never links
+    // another CRT. Ask the producer to omit automatic DEFAULTLIB directives
+    // instead of stripping linker contracts from a supplied COFF object.
+    Args.push_back("-fno-autolink");
+  }
   if (Object) {
     if (Format != BinaryFormat::COFF)
       Args.push_back("-fPIC");

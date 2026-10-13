@@ -10,8 +10,13 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace neverd::c_stub {
+/// The helper \p Name, with \p Symbol above it: the comment that names the
+/// symbol its identifier is spelled from (`__x86.get_pc_thunk.bx`), if any.
 inline void writeGetPcThunk(llvm::raw_ostream &OS, llvm::StringRef Name,
-                            llvm::StringRef ReturnType, unsigned Register) {
+                            llvm::StringRef ReturnType, unsigned Register,
+                            llvm::StringRef Symbol = {}) {
+  if (!Symbol.empty())
+    OS << "/* " << Symbol << " */\n";
   OS << "/* i386 get-PC helper: preserves every other register and flags. */\n"
         "#if !defined(__i386__)\n"
         "#error \"i386 get-PC helpers require an i386 target\"\n"

@@ -253,6 +253,12 @@ a routine returns keeps the integer the machine reads,
 converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
 void *, const void *))compare)`.
 
+Functions that share a symbol name, such as the static `helper` of two
+files, are numbered as IDA numbers them: the one at the lowest address keeps
+the name, and the others read `helper_0`, `helper_1` and so on in the
+listing, the Functions window, Jump and the pseudocode, skipping a number
+another symbol already holds.
+
 Mangled names read as their language spells them: the listing keeps the
 linkage name an instruction uses and adds the readable form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
@@ -283,10 +289,15 @@ numbered (`QDomNodeList_ctor_2`), except MSVC C++ stems, which the MSVC rules
 share between overloads. An imported function whose identifier is not its
 symbol keeps the symbol in an `__asm__` label so that the code still links.
 Other names keep every byte of their symbol (`__libc_start_main`), apart from
-the underscore Mach-O and 32-bit Windows add to C names and the start-up
-functions the C runtime defines itself (`_start` reads `start`). A name an
-image spells with control characters, and that no scheme reads, is never
-copied into a comment.
+the underscore Mach-O and 32-bit Windows add to C names, the start-up
+functions the C runtime defines itself (`_start` reads `start`) and the
+leading underscores of globals (`__dso_handle` reads `dso_handle`). Wherever
+an identifier is not its symbol, the comment above the definition or on the
+global's `neverd.image` line names the symbol as the listing does
+(`/* _fini */` above `fini`, or above `fini_2` in a program that defines a
+`fini` of its own); hovering a renamed function shows its symbol, and
+double-clicking it goes to the function. A name an image spells with control
+characters, and that no scheme reads, is never copied into a comment.
 
 **Pseudocode** reads in the language the function was written in: a Rust
 function as Rust, a Go function as Go and any other as C. The choice is made
@@ -471,7 +482,16 @@ macOS, to do what the system setting for title bar double clicks asks). The
 title bar dims while the window is inactive, and full screen hides its icon
 and window buttons. Dialogs draw a title bar of their own: the dialog's title
 in the middle, Close, and Maximize for a dialog that offers it, such as the
-quick start.
+quick start. A dialog, a message box included, is wide enough to show its whole
+title.
+
+The controls are the workbench's own too. A combo box's list, such as the
+pseudocode view's representations, drops below it and reads as a menu: a
+4-pixel inset, highlights with rounded corners, the menu's colors. Submenus,
+tree branches, sorted columns and the arrows that scroll a tab bar take the
+workbench's chevrons, message boxes its icons, and Qt's file dialog, which the
+workbench uses on GNOME, its icons for folders, files, drives and its tool
+buttons.
 
 How the rest of the frame is drawn depends on the system:
 
@@ -595,24 +615,35 @@ linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
-When debug-information loading is enabled and a PE has no loaded PDB, the
-workbench offers **Download debug symbols** if its CodeView record supplies a
-unique valid PDB name and build identity. **Download** tries the Microsoft public
-symbol server; **Not now** continues without a network request. The request sends
-only the PDB basename and identity, not the binary. A valid PE is not necessarily
-a Microsoft product, and Microsoft may have no symbols for its build.
+Opening a PE that names a PDB in its CodeView record asks **Load PDB file**, as
+IDA does, before the file loads and whether or not the PDB is on this computer.
+The dialog shows the path the linker recorded and where a copy with the same
+build identity is: at that path, beside the input, or in a directory or symbol
+store of the search path. **Yes** loads that copy; **No** opens the file without
+the PDB, which the project keeps, so reopening it does not load the PDB either.
+Projects, and files opened with **Load debug information** cleared, are not
+asked. With no matching copy, **Yes** downloads the PDB from the first symbol
+server of the search path that has it, sending only the PDB's name and build
+identity, with a progress bar and **Cancel**. The download goes into that
+server's store, where every later load, the command line's included, finds it;
+the engine checks its identity before the file loads. When no server has it, or
+the transfer fails, the dialog offers to try again or to browse for the file on
+disk. A copy beside the input that belongs to another build is named as such.
 
-Downloads run in the background with a cancel button. The engine verifies the
-PDB against the current image before applying it; failed downloads or mismatches
-leave analysis intact and report the reason in Output. Closing or switching
-files, or starting a manual PDB selection, cancels the pending download. Verified
-files are cached under the application's cache directory in
-`symbols/microsoft/<pdb-name>/<build-key>/` and verified again before reuse.
-Direct HTTPS PDB downloads are supported on every desktop platform; Windows
-also tries the compressed `.pd_` variant. Symbol-store `file.ptr` indirection is
-not followed. Transfers have a 2 GiB limit, a 30-second inactivity timeout and a
-10-minute overall deadline. See Microsoft's
-[public symbol server documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+The search path is `_NT_ALT_SYMBOL_PATH` and `_NT_SYMBOL_PATH`, in the syntax
+Microsoft's debuggers read (`srv*<store>*<server>;<directory>`). Without either,
+NeverD searches the store `neverd/symbols` in the user's cache directory
+(`XDG_CACHE_HOME` or `~/.cache`, `~/Library/Caches`, `%LOCALAPPDATA%`) and fills it
+from [Microsoft's public symbol server](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+A PE is not necessarily a Microsoft product, and a server may have no symbols
+for its build. Transfers have a 2 GiB limit, a 30-second inactivity timeout and
+a 10-minute overall deadline; a broken connection or a server error is tried
+twice more before the dialog reports it. Windows also tries a server's
+compressed `.pd_` variant. Symbol-store `file.ptr` indirection is not followed.
+
+A project whose PDB no longer loads, and a file opened before anyone was asked,
+offer the same dialog once the file is open; a copy that has reached a store
+since then loads without asking.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and

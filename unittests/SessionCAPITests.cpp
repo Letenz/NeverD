@@ -511,6 +511,26 @@ protected:
     return Path;
   }
 
+  /// Build the C files \p Texts as one position-independent executable
+  /// named \p Name with the host compiler; empty if it does not build.
+  std::string buildProgramFrom(const std::string &Name,
+                               const std::vector<std::string_view> &Texts) {
+    std::vector<std::string> Sources;
+    for (size_t I = 0; I < Texts.size(); ++I)
+      Sources.push_back(write(Name + std::to_string(I) + ".c", Texts[I]));
+    const std::string Binary = (Directory / Name).string();
+    std::vector<llvm::StringRef> Arguments = {NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                              "-O1", "-fPIE", "-pie"};
+    Arguments.insert(Arguments.end(), Sources.begin(), Sources.end());
+    Arguments.insert(Arguments.end(), {"-o", Binary});
+    std::string Message;
+    const int Built =
+        llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER, Arguments,
+                                  std::nullopt, {}, 60, 0, &Message);
+    EXPECT_EQ(Built, 0) << Message;
+    return Built == 0 ? Binary : std::string();
+  }
+
   /// Build the C program \p Text as a position-independent executable named
   /// \p Name with the host compiler; empty if it does not build.
   std::string buildProgram(const std::string &Name, std::string_view Text) {
@@ -3470,6 +3490,77 @@ TEST_F(SessionCAPITest, NamedPDBWithoutPEIdentityLoadsOnlyByChoice) {
   EXPECT_EQ(neverd_session_load(Session, Stripped.c_str()), 0);
 }
 
+TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  std::ifstream Input(Fixtures / "safety_cases_pe_x64.exe", std::ios::binary);
+  const std::string Exe =
+      write("app.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  const auto Directory = std::filesystem::path(Exe).parent_path();
+  const auto Store = Directory / "store";
+  const std::string Search =
+      "srv*" + Store.string() + "*https://symbols.invalid/download/";
+  const auto Reference = [&] {
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_pdb_reference_json(Exe.c_str(), Search.c_str())));
+    EXPECT_TRUE(static_cast<bool>(Parsed));
+    const auto *PDB =
+        Parsed ? Parsed->getAsObject()->getObject("pdb") : nullptr;
+    return PDB ? llvm::json::Object(*PDB) : llvm::json::Object();
+  };
+
+  // Nothing on this computer: the server, and where its store keeps the PDB.
+  auto PDB = Reference();
+  EXPECT_EQ(PDB.getString("file"), "safety_cases_pe_x64.pdb");
+  const std::string Key = PDB.getString("key").value_or("").str();
+  EXPECT_EQ(Key, "A71CAF3BFD8819D84C4C44205044422E1");
+  EXPECT_EQ(PDB.get("found")->kind(), llvm::json::Value::Null);
+  const auto Stored =
+      Store / "safety_cases_pe_x64.pdb" / Key / "safety_cases_pe_x64.pdb";
+  const auto *Servers = PDB.getArray("servers");
+  ASSERT_TRUE(Servers && Servers->size() == 1);
+  const auto *Server = (*Servers)[0].getAsObject();
+  EXPECT_EQ(Server->getString("url"),
+            "https://symbols.invalid/download/safety_cases_pe_x64.pdb/" + Key +
+                "/safety_cases_pe_x64.pdb");
+  EXPECT_EQ(Server->getString("path"), Stored.string());
+
+  // A PDB of another build beside the input is named, never taken.
+  std::filesystem::copy_file(Fixtures / "safety_cases_pe_arm64.pdb",
+                             Directory / "safety_cases_pe_x64.pdb");
+  PDB = Reference();
+  EXPECT_EQ(PDB.get("found")->kind(), llvm::json::Value::Null);
+  const auto *Rejected = PDB.getArray("rejected");
+  ASSERT_TRUE(Rejected && Rejected->size() == 1);
+  EXPECT_EQ((*Rejected)[0].getAsObject()->getString("location"), "beside");
+  EXPECT_EQ((*Rejected)[0].getAsObject()->getString("reason"), "mismatch");
+
+  // The matching PDB in the store is the one a load finds, unless the PDB
+  // search is off.
+  std::filesystem::create_directories(Stored.parent_path());
+  std::filesystem::copy_file(Fixtures / "safety_cases_pe_x64.pdb", Stored);
+  PDB = Reference();
+  const auto *Found = PDB.getObject("found");
+  ASSERT_TRUE(Found);
+  EXPECT_EQ(Found->getString("location"), "store");
+  EXPECT_EQ(Found->getString("path"), Stored.string());
+  neverd_session_set_symbol_path(Session, Search.c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "pdb");
+  EXPECT_EQ(takeString(neverd_session_debug_info_path(Session)),
+            Stored.string());
+  neverd_session_set_pdb_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "none");
+
+  // An input that is no PE names no PDB.
+  const std::string Text = write("notes.txt", "plain text");
+  EXPECT_EQ(takeString(neverd_pdb_reference_json(Text.c_str(), nullptr)),
+            "{\"pdb\":null}");
+}
+
 TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
   const std::string Path = write("requires-shanghai.evm", "5f00");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
@@ -5241,6 +5332,90 @@ TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
   EXPECT_NE(LLVMC.find("main(void);"), std::string::npos) << LLVMC;
   const std::string HighC = takeString(neverd_decompile(Session, Entry));
   EXPECT_NE(HighC.find("__libc_start_main("), std::string::npos) << HighC;
+#endif
+}
+
+TEST_F(SessionCAPITest, SourcePagesNameTheSymbolsOfRenamedFunctions) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  const std::string Binary =
+      buildProgram("startup_names", "int main(void) { return 0; }\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Fini = neverd_func_find_by_name(Session, "_fini");
+  if (Fini < 0)
+    GTEST_SKIP() << "the start files define no _fini symbol";
+  const auto Entry = neverd_func_entry(Session, Fini);
+  // The C runtime defines _fini itself, so C calls the program's fini: the
+  // comment above it and the page name the symbol, which the listing shows.
+  for (const char *Stage : {"c", "llvmc"}) {
+    SCOPED_TRACE(Stage);
+    auto Page = takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 512));
+    const auto Text = Page.getString("text");
+    ASSERT_TRUE(Text) << takeString(neverd_last_error(Session));
+    EXPECT_NE(Text->find("/* _fini */\n"), llvm::StringRef::npos)
+        << Text->str();
+    const auto *Symbols = Page.getArray("identifier_symbols");
+    ASSERT_NE(Symbols, nullptr);
+    bool Named = false;
+    for (const auto &Value : *Symbols)
+      if (const auto *Name = Value.getAsObject();
+          Name && Name->getString("identifier") == "fini") {
+        EXPECT_EQ(Name->getString("symbol"), "_fini");
+        EXPECT_EQ(Name->getString("address"), ("0x" + llvm::utohexstr(Entry)));
+        Named = true;
+      }
+    EXPECT_TRUE(Named) << Text->str();
+  }
+#endif
+}
+
+TEST_F(SessionCAPITest, FunctionsThatShareANameAreNumberedAsIDANumbersThem) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Two files of the program each define a static helper.
+  const std::string Binary = buildProgramFrom(
+      "shared_names",
+      {"__attribute__((noinline)) static int helper(int x) { return x * 3; }\n"
+       "int use_a(int x) { return helper(x); }\n",
+       "__attribute__((noinline)) static int helper(int x) { return x - 7; }\n"
+       "int use_b(int x) { return helper(x) * 2; }\n",
+       "int use_a(int);\nint use_b(int);\n"
+       "int main(int argc, char **argv) {\n"
+       "  (void)argv;\n  return use_a(argc) + use_b(argc);\n}\n"});
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int First = neverd_func_find_by_name(Session, "helper");
+  const int Second = neverd_func_find_by_name(Session, "helper_0");
+  ASSERT_GE(First, 0);
+  ASSERT_GE(Second, 0);
+  EXPECT_LT(neverd_func_entry(Session, First),
+            neverd_func_entry(Session, Second));
+  // Each caller's pseudocode calls its own file's helper, by the name the
+  // listing gives it.
+  for (const auto &[Caller, Callee] :
+       {std::pair{"use_a", "helper("}, std::pair{"use_b", "helper_0("}}) {
+    SCOPED_TRACE(Caller);
+    const int Index = neverd_func_find_by_name(Session, Caller);
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Session, Index);
+    for (const std::string &Source :
+         {takeString(neverd_decompile(Session, Entry)),
+          takeString(neverd_decompile_llvm(Session, Entry))}) {
+      ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+      EXPECT_NE(Source.find(Callee), std::string::npos) << Source;
+      if (llvm::StringRef(Callee) == "helper_0(")
+        EXPECT_EQ(Source.find("helper("), std::string::npos) << Source;
+    }
+  }
 #endif
 }
 

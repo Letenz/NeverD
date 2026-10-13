@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
+<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
 
 [← Documentation Index](README.md)
 
@@ -130,3 +130,7 @@ ctest --test-dir build-source -L \
 La copia LLVM también corrige referencias GOT de datos Mach-O x64: la tabla catch tipada de Clang es relativa al final del campo de reubicación de cuatro bytes. r3/r4 la desplaza cuatro bytes; la comprobación previa a publicar rechaza ese resultado. En el Mac, x64 usa Rosetta 2 y ARM64 se ejecuta directamente.
 
 La validación nativa de Windows x64 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) superó las 16 pruebas específicas de PE/objetos/trampoline y las 143 pruebas de la matriz de destinos CPU, sin omisiones. El caso FH3 ejecutó siete escenarios de C++; la matriz utiliza Unicorn. Esta ejecución utilizó Clang 22.1.6 con MSVC y Windows SDK nativos, además de LLVM integrado.
+
+El flujo de Windows también genera 27 reemplazos PE para x86, x64 y ARM64. `scripts/check_source_patch_pe_runtime.py` comprueba llamadas no hoja, estado mutable de punteros y argumentos de coma flotante o de pila mediante IR de fuente, objetos compilados y objetos suministrados. Ejecuta cada original y cada resultado tres veces: 30 observaciones de procesos por arquitectura. x86/x64 se ejecutan en Windows x64; ARM64, en `windows-11-arm`. El verificador exige el anfitrión nativo previsto, el mismo commit, resúmenes de archivos coincidentes y todos los casos; los ejecutores externos se registran por separado. Este perfil no demuestra compatibilidad con excepciones C++ de ARM64.
+
+`NEVERD_TEST_MATRIX_NEVERC` selecciona el compilador opcional de la matriz. NeverC 3389.1.5 superó las 66 comprobaciones x64/ARM64 con ELF, PE y Mach-O, incluidas la instalación IR/objeto nativo y la ejecución CPU. Esta versión no admite x86 ni ARM32; utilice Clang, o un controlador GCC compatible para ELF. Para compilar PE con NeverC, el adaptador añade `-fno-autolink`: resuelve referencias en la imagen existente sin enlazar otro CRT. Los objetos suministrados con contratos de enlace `.drectve` siguen rechazándose.
