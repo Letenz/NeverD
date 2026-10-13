@@ -56,3 +56,10 @@ includes the report profile; aggregate fields use private dictionaries and
 ordinal-based public IDs. Review added explicit private-byte accounting, charged
 source key work, and regressions for object-order independence and shared record
 limits. The first 17 targeted checks passed before transport qualification.
+
+Implementation and qualification are complete for both confirmed gaps. Final
+integration passed 764 of 804 owning Web/availability cases with 40 explicit
+skips, four transport cases and Qt review. Parser/backend omission and restore
+were checked. The production CLI distinguishes the original HAR witnesses,
+and two hash-pinned Claude modules now have C++ template regressions. The
+acceptance audit records remaining qualification recommendations separately.

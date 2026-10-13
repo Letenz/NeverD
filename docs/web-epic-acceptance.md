@@ -91,6 +91,13 @@ provided Claude feature corpus passed 48 cases; the later eight request
 structure checks include both pinned real templates and escaped-coordinate
 boundaries. See the implementation ledger for receipts and integration.
 
+Final normal integration with remote `01a640f7d` passed **764 of 804**
+owning Web/availability cases with **40 explicit skips**, including all eight
+Claude platform-package fixtures and the two new template witnesses. A stale
+earlier relation-profile assertion was corrected before this complete rerun.
+Four worker/MCP checks and Qt review also passed; merged CLI outputs are
+byte-identical to the pre-merge results.
+
 Real Claude 2.1.296 macOS ARM64 modules 1357 and 1740 retain respectively ten
 and eight structure rows, each with three template segments and two exact
 expression anchors. The new C++ regression pins original sizes/hashes and

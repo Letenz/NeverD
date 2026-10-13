@@ -3645,3 +3645,28 @@ The [acceptance audit](web-epic-acceptance.md) marks the two confirmed #717 gaps
 addressed. It retains the separate recommendations for real CEF/WebView
 qualification, broader minified-client patterns and a mandatory producer-corpus
 release lane. No issue state/comment or unrelated checkout is modified.
+
+### Integrated v2 verification
+
+Implementation `cd1458ed9` was normally merged with remote `01a640f7d` as
+`dd0d8cc44`. The incoming changes concern native ABI and Qt code folding;
+Web owners and fixtures are unchanged. The 14-step engine/SDK build and Qt web
+test rebuild succeeded.
+
+The broader availability check exposed a stale earlier test expectation for
+`request-source-relations-v1` although the authoritative implementation is
+already v2. The assertion is corrected, and passive-report v2 operations,
+privacy limits and no-execution/network capabilities are explicitly checked.
+After its successful rebuild, the complete owning Web/availability run with
+the supplied cross-platform Claude corpus passed **764 / 804**, with **40
+explicit skips**, in 20.99 seconds. All eight captured platform packages and
+both new template witnesses passed; the source-feature corpus passed in
+20.18 seconds. No production semantics were relaxed to fix the assertion.
+
+All four final worker/MCP checks passed. Qt web review passed (5.50 s).
+Post-merge HAR and real-template CLI reports, with an unusable external-tool
+PATH, are byte-identical to the earlier reports and have zero stderr.
+Provenance scans 7,565 files, capability ownership validates 23 declarations,
+and new C++ files pass the LLVM formatter check. Web/JS/ASAR remain ON.
+Final receipts use `/tmp/neverd-passive-structure-integrated-*`, with the
+successful complete rerun in `integrated-web-tests-fixed.log`.
