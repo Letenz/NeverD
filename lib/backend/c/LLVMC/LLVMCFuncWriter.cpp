@@ -8576,10 +8576,15 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
         !llvm::isa<llvm::UnreachableInst>(Fn.front().back()))
       throw std::invalid_argument(
           "i386 get-PC helper body no longer matches its metadata");
+    const std::string Identifier = functionIdentifier(Fn);
+    std::string Symbol;
+    if (auto It = FunctionSymbolNames.find(&Fn);
+        Opts.EmitComments && It != FunctionSymbolNames.end())
+      Symbol = symbolComment(It->second, Identifier);
     std::string Text;
     llvm::raw_string_ostream Stream(Text);
-    c_stub::writeGetPcThunk(Stream, functionIdentifier(Fn),
-                            typeToCLLVM(Fn.getReturnType()), Reg);
+    c_stub::writeGetPcThunk(Stream, Identifier, typeToCLLVM(Fn.getReturnType()),
+                            Reg, Symbol);
     OS << Text;
     return;
   }
@@ -8705,12 +8710,13 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   OS.retarget(&BufOS);
 
   std::string FName = functionIdentifier(Fn);
-  // A C++ definition names its demangled signature: the C identifier keeps
-  // only its scopes and name.
+  // A definition whose identifier is not its symbol names the symbol: a C++
+  // one its demangled signature, as the C identifier keeps only its scopes
+  // and name, and a start-up function the C runtime defines its own name.
   if (Opts.EmitComments)
     if (auto Symbol = FunctionSymbolNames.find(&Fn);
         Symbol != FunctionSymbolNames.end())
-      if (const std::string Demangled = demangledComment(Symbol->second);
+      if (const std::string Demangled = symbolComment(Symbol->second, FName);
           !Demangled.empty())
         OS << "/* " << Demangled << " */\n";
   writeExceptionAnnotation(Fn);

@@ -862,4 +862,38 @@ TEST(CImageObjects, LiteralsSpellExactlyTheirBytes) {
   EXPECT_FALSE(imageCString(&Img, RodataVA + 0x3F));
 }
 
+TEST(CImageObjects, ObjectsWhoseIdentifiersAreNotTheirSymbolsNameThem) {
+  // `__dso_handle` loses the underscores C reserves; `completed.0` is read
+  // at two widths, so C declares its bytes under its name; the slot names a
+  // target C does not declare by the target's symbol.
+  constexpr va_t Handle = DataVA, Completed = DataVA + 0x10,
+                 Slot = DataVA + 0x20, Target = DataVA + 0x30;
+  std::vector<uint8_t> Data(0x40, 0);
+  putPointer(Data, Slot - DataVA, Target);
+  BinaryImage Img = dataImage(std::vector<uint8_t>(0x10), std::move(Data));
+  Img.DataPtrRelocSlots.insert(Slot);
+  Img.Symbols = {dataSymbol("__dso_handle", Handle, 8),
+                 dataSymbol("completed.0", Completed, 8),
+                 dataSymbol("_IO_stdin_used", Target, 0)};
+  const TypeRef U64 = NdType::makeInt(8, false),
+                U32 = NdType::makeInt(4, false);
+  HighFunc Wide = function("wide", U64, TextVA);
+  Wide.Body = {returnStatement(
+      HighExpr::makeBinop(NdOp::INT_ADD,
+                          HighExpr::makeBinop(NdOp::INT_ADD, load(Handle, U64),
+                                              load(Completed, U64)),
+                          load(Slot, U64)))};
+  HighFunc Narrow = function("narrow", U32, TextVA + 0x10);
+  Narrow.Body = {returnStatement(load(Completed, U32))};
+  const std::string Source = emitWithImage({Wide, Narrow}, Img);
+  EXPECT_NE(Source.find("/* neverd.image: 0x4000 __dso_handle */\n"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find(" dso_handle"), NotFound) << Source;
+  EXPECT_NE(Source.find("/* neverd.image: 0x4010 .. 0x4018 completed.0 */\n"
+                        "unsigned char completed_0["),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("/* &_IO_stdin_used */"), NotFound) << Source;
+}
+
 } // namespace
