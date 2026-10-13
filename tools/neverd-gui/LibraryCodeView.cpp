@@ -362,8 +362,10 @@ bool LibraryCodeView::unfoldSourceLine(int sourceLine) {
   if (sourceLine < 0 || sourceLine >= sourceLines_.size())
     return false;
   const int begin = sourceLines_[sourceLine];
+  // The row's text, without its newline: a block folded under a visible
+  // header begins at the header's newline.
   const int end = sourceLine + 1 < sourceLines_.size()
-                      ? sourceLines_[sourceLine + 1]
+                      ? std::max(begin + 1, sourceLines_[sourceLine + 1] - 1)
                       : int(original_.size());
   bool changed = false;
   for (const auto &region : regions_)
@@ -512,8 +514,10 @@ QVector<QPair<int, int>> LibraryCodeView::foldedRanges() const {
 }
 
 QString LibraryCodeView::regionAt(int position) const {
+  // A block summary ends its header's row; that newline is not the summary.
   for (const auto &segment : segments_)
-    if (position >= segment.begin && position < segment.end)
+    if (position >= segment.begin &&
+        position < segment.end - (segment.block ? 1 : 0))
       return segment.region;
   return {};
 }

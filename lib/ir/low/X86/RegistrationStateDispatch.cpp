@@ -26,7 +26,9 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 }
 
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
-  if (Exhausted || !charge(1 + 2 * std::bit_width(States[Target].size() + 1)))
+  if (Exhausted || !charge(1 + Source.Activation.JumpCaptureCalls.size() +
+                           Source.Activation.Callers.size() +
+                           2 * std::bit_width(States[Target].size() + 1)))
     return;
   auto [It, New] = States[Target].try_emplace(Source.Activation);
   auto &Node = It->second;
@@ -41,7 +43,9 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
               Dest.RuntimeObject.cellCount() +
               Dest.RuntimeObject.OtherRegisterBytes.size() +
               Source.InitializedFrameBytes.size() +
-              Dest.InitializedFrameBytes.size() + 10))
+              Dest.InitializedFrameBytes.size() +
+              Source.JumpCaptures.size() * 14 + Dest.JumpCaptures.size() * 14 +
+              Source.sehCallerCellCount() + Dest.sehCallerCellCount() + 10))
     return;
   bool Changed = !Dest.Reached;
   if (!Dest.Reached) {
@@ -53,6 +57,46 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     Changed |= Before != Dest.Levels.size();
     Changed |= Dest.Frame.merge(Source.Frame);
     Changed |= Dest.RuntimeObject.merge(Source.RuntimeObject);
+    if (Dest.SEHCallers.size() != Source.SEHCallers.size()) {
+      Changed |= !Dest.Unknown;
+      Dest.Unknown = true;
+    } else {
+      for (size_t C = 0; C != Dest.SEHCallers.size(); ++C) {
+        auto &Caller = Dest.SEHCallers[C];
+        const auto &Other = Source.SEHCallers[C];
+        if (Caller.Activation != Other.Activation ||
+            Caller.OtherCallback != Other.OtherCallback ||
+            Caller.OrdinaryCallStack != Other.OrdinaryCallStack ||
+            Caller.StackRestore != Other.StackRestore) {
+          Changed |= !Dest.Unknown;
+          Dest.Unknown = true;
+        }
+        Changed |= Caller.Stack.merge(Other.Stack);
+      }
+    }
+    if (Dest.JumpBindingsIntact && !Source.JumpBindingsIntact) {
+      Dest.JumpBindingsIntact = false;
+      Changed = true;
+    }
+    for (auto Capture = Dest.JumpCaptures.begin();
+         Capture != Dest.JumpCaptures.end();) {
+      const auto Other = Source.JumpCaptures.find(Capture->first);
+      if (Other == Source.JumpCaptures.end() ||
+          Other->second != Capture->second) {
+        Capture = Dest.JumpCaptures.erase(Capture);
+        Changed = true;
+      } else
+        ++Capture;
+    }
+    if (Dest.OrdinaryCallStack &&
+        Dest.OrdinaryCallStack != Source.OrdinaryCallStack) {
+      Dest.OrdinaryCallStack.reset();
+      Changed = true;
+    }
+    if (Dest.StackRestore && Dest.StackRestore != Source.StackRestore) {
+      Dest.StackRestore.reset();
+      Changed = true;
+    }
     for (auto It = Dest.InitializedFrameBytes.begin();
          It != Dest.InitializedFrameBytes.end();)
       if (!Source.InitializedFrameBytes.count(*It)) {
@@ -94,12 +138,20 @@ void RegistrationStateSolver::dispatch(
   Domain Root;
   if (!KnownCxx && Callback)
     Root.Activation = {Address, SearchFilter};
+  if (!KnownCxx && Callback) {
+    if (!charge(Source.JumpCaptures.size() + 1))
+      return;
+    for (const auto &[Offset, Capture] : Source.JumpCaptures)
+      Root.Activation.JumpCaptureCalls.emplace_back(Offset, Capture.Call);
+  }
   Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
   Root.Frame.Cells = Source.Frame.Cells;
   Root.Frame.EntryCells = Source.Frame.EntryCells;
+  Root.JumpCaptures = Source.JumpCaptures;
+  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
   Root.InitializedFrameBytes = Source.InitializedFrameBytes;
   Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
   Root.RuntimeObject.forgetCellValues();
@@ -115,7 +167,11 @@ void RegistrationStateSolver::dispatch(
   if ((Chain.hasCxxCallbackStack() && CxxCatch) || (!KnownCxx && Callback)) {
     if (!charge(Root.Frame.cellCount() + 8))
       return;
-    Root.Frame.enterCallback(Address);
+    if (!KnownCxx && SearchFilter && !EH4 && !Chain.RealignedFrame &&
+        Chain.RegistrationOffset == -16 && Chain.TryLevelOffset == -4)
+      Root.Frame.enterSEHFilter(Address, *Chain.RegistrationOffset - 4);
+    else
+      Root.Frame.enterCallback(Address);
   }
   Root.Unknown = Unknown || Source.Unknown;
   Root.Parent = !Callback;
@@ -159,10 +215,9 @@ void RegistrationStateSolver::dispatch(
         const auto Offset = Chain.cxxSourceFrameOffset(C.FrameOffset);
         const int64_t End = int64_t(Offset.value_or(0)) + SlotBytes;
         if (!SP || !Offset || Source.Unknown || Unknown || *Offset < *SP ||
-            *Offset < -int64_t(limits::kMaxRegistrationEHStateWork) ||
+            *Offset < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
             End > *Chain.cxxRuntimeFrameOffset() ||
-            (*Offset < int64_t(*Chain.TryLevelOffset) + 4 &&
-             int64_t(*Chain.RegistrationOffset) - 4 < End) ||
+            !frameObjectIsDisjointFromAdministration(*Offset, End) ||
             !charge(SlotBytes + Root.Frame.cellCount() +
                     Root.RuntimeObject.cellCount())) {
           CompleteCatchObjects = false;
@@ -191,6 +246,17 @@ void RegistrationStateSolver::seedEntries() {
   // them with zero and then expose the invented value.
   for (auto &Register : Initial.Frame.Registers)
     Register.MayBeFrame = true;
+  if (Conditional) {
+    for (unsigned Index = 0; Index != Initial.Frame.Registers.size(); ++Index)
+      Initial.Frame.Registers[Index].SavedRegister = uint8_t(Index + 1);
+    FrameValue PC;
+    PC.MayBeFrame = PC.ReturnPC = true;
+    Initial.Frame.Cells[4] = PC;
+    for (const auto &[Offset, Value] : Conditional->Arguments)
+      Initial.Frame.store(Offset, 4, Value);
+    for (const auto &[Offset, Value] : Conditional->ObjectCells)
+      Initial.Frame.store(Offset, 4, Value);
+  }
   Initial.Frame.OtherRegistersMayBeFrame = true;
   // After push EBP, the canonical direct prologue establishes EBP at this
   // incoming SP minus four bytes. Do not assume later reads still name it.

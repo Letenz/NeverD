@@ -138,6 +138,37 @@ private slots:
     QCOMPARE(view.blocks().size(), 1001);
   }
 
+  void visibleHeaderRowsLeaveTheirBlocksFolded() {
+    const QString source = "int f() {\n"
+                           "  if (x) {\n"
+                           "    call();\n"
+                           "  }\n"
+                           "  done();\n"
+                           "}\n";
+    LibraryCodeView view;
+    view.reset(source, {}, {}, 0, false, true);
+    view.setRegionFolded("source-block:2", true);
+    // Revealing the header or closing row keeps the block folded; only a
+    // hidden row expands it.
+    QVERIFY(!view.unfoldSourceLine(1));
+    QVERIFY(!view.unfoldSourceLine(3));
+    QVERIFY(view.isFolded("source-block:2"));
+    // The summary is the fold, the newline ending the header's row is not.
+    const int summary = int(view.text().indexOf(QStringLiteral("/* … */")));
+    QCOMPARE(view.regionAt(summary), QStringLiteral("source-block:2"));
+    QVERIFY(view.regionAt(int(view.text().indexOf('\n', summary))).isEmpty());
+    QVERIFY(view.unfoldSourceLine(2));
+    QVERIFY(!view.isFolded("source-block:2"));
+
+    // A library operation over whole rows, newlines included, expands from
+    // its last row and not from the row after it.
+    const QString rows = "a();\nb();\nc();\nd();\n";
+    view.reset(rows, {}, {region("op", 5, 15)});
+    view.setRegionFolded("op", true);
+    QVERIFY(!view.unfoldSourceLine(3));
+    QVERIFY(view.unfoldSourceLine(2));
+  }
+
   void foldUnfoldAndCopyUseOriginalUtf8() {
     LibraryCodeView view;
     const QString source =

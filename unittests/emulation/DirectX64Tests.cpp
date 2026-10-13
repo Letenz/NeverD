@@ -158,6 +158,45 @@ TEST_P(DirectX64, CommittedWriteStopsBeforeTheFollowingInstruction) {
   EXPECT_EQ(Budget->instructions(), 0u);
 }
 
+TEST_P(DirectX64, UnobservedStoresInvalidatePhysicalWriteWitnesses) {
+  // Two original stores run without a write watch. Cover changed contents,
+  // identical-value stores and an ABA history ending with the original bytes.
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x48, 0x89, 0x11, 0x90};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto Space = CPU->addressSpace();
+  auto Written = llvm::cantFail(Space->pinBacking(Data, 8));
+  auto Untouched = llvm::cantFail(Space->pinBacking(Data + 8, 8));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 6, 1}}));
+  for (unsigned Mode : {0u, 1u, 2u}) {
+    SCOPED_TRACE(Mode);
+    const uint64_t First = Mode == 1 ? Value : Value + 1;
+    const uint64_t Last = Mode == 0 ? Value + 2 : Value;
+    llvm::cantFail(S->cpu().writeInteger(Data, Value, 8));
+    llvm::cantFail(S->cpu().writeInteger(Data + 8, Value, 8));
+    llvm::cantFail(S->cpu().writeRegister(CPURegister::X64AX, {First, 0}));
+    llvm::cantFail(S->cpu().writeRegister(CPURegister::X64DX, {Last, 0}));
+    auto History = llvm::cantFail(Written.watchWrites());
+    auto Copy = History;
+    auto Other = llvm::cantFail(Untouched.watchWrites());
+    ASSERT_TRUE(llvm::cantFail(History.intact()));
+    ASSERT_TRUE(llvm::cantFail(Other.intact()));
+    const auto Exit = llvm::cantFail(S->run(Code, 1));
+    ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch);
+    EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 6);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Data, 8)), Last);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Data + 8, 8)), Value);
+    EXPECT_FALSE(llvm::cantFail(History.intact()));
+    EXPECT_FALSE(llvm::cantFail(Copy.intact()));
+    // Opaque execution cannot certify even an unchanged, unwatched range.
+    EXPECT_FALSE(llvm::cantFail(Other.intact()));
+    auto Fresh = llvm::cantFail(Written.watchWrites());
+    EXPECT_TRUE(llvm::cantFail(Fresh.intact()));
+    EXPECT_FALSE(llvm::cantFail(History.intact()));
+  }
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
 TEST_P(DirectX64, ReadingWriteWatchedRAMDoesNotPublishAWrite) {
   constexpr uint8_t Bytes[] = {0x48, 0x8b, 0x01, 0x0f, 0x05};
   llvm::cantFail(CPU->write(Code, Bytes));
@@ -534,6 +573,8 @@ TEST_P(DirectX64, ServiceRequestPreservesTheOriginalPCAndRegisters) {
 TEST_P(DirectX64, InvalidOpcodeIsAFaultAtItsOriginalPC) {
   constexpr uint8_t Bytes[] = {0x0f, 0x0b};
   llvm::cantFail(CPU->write(Code, Bytes));
+  auto View = llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 8));
+  auto History = llvm::cantFail(View.watchWrites());
   auto S = start();
   auto Exit = llvm::cantFail(S->run(Code, 1));
   ASSERT_TRUE(Exit.CPU);
@@ -542,6 +583,7 @@ TEST_P(DirectX64, InvalidOpcodeIsAFaultAtItsOriginalPC) {
   ASSERT_TRUE(Exit.CPU->Fault);
   EXPECT_EQ(Exit.CPU->Fault->Interrupt, 6u);
   EXPECT_EQ(reg(*S, CPURegister::X64PC), Code);
+  EXPECT_FALSE(llvm::cantFail(History.intact()));
   EXPECT_EQ(Budget->instructions(), 0u);
 }
 
@@ -549,6 +591,8 @@ TEST_P(DirectX64, DeadlinePublishesCommittedRegistersAtAnInstructionBoundary) {
   // inc rax; jmp back. No checked instruction credits are charged.
   constexpr uint8_t Bytes[] = {0x48, 0xff, 0xc0, 0xeb, 0xfb};
   llvm::cantFail(CPU->write(Code, Bytes));
+  auto View = llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 8));
+  auto History = llvm::cantFail(View.watchWrites());
   auto S = start(50000);
   auto Exit = llvm::cantFail(S->run(Code, 1));
   ASSERT_EQ(Exit.Kind, SessionExitKind::Timeout);
@@ -557,6 +601,7 @@ TEST_P(DirectX64, DeadlinePublishesCommittedRegistersAtAnInstructionBoundary) {
   EXPECT_GT(reg(*S, CPURegister::X64AX), 0u);
   const auto PC = reg(*S, CPURegister::X64PC);
   EXPECT_TRUE(PC == Code || PC == Code + 3);
+  EXPECT_FALSE(llvm::cantFail(History.intact()));
   EXPECT_EQ(Budget->instructions(), 0u);
 }
 

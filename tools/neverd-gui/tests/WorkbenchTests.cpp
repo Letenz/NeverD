@@ -229,8 +229,11 @@ private slots:
     QTemporaryDir directory;
     Workbench bench;
     LoadDialogAcceptor loadDialogs;
+    // An explicit C view is offered beside another language only.
     bench.window->openFile(
-        writeFixture(directory, QStringLiteral("code-folding.bin")));
+        writeFixture(directory, representation == QLatin1String("c")
+                                    ? QStringLiteral("code-folding-cpp.bin")
+                                    : QStringLiteral("code-folding.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x140);
@@ -246,6 +249,7 @@ private slots:
                                     : QStringLiteral("source"));
     QVERIFY(view);
     view->setRepresentation(representation);
+    QCOMPARE(view->representation(), representation);
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() == 19);
     const QString original = code->allText();
@@ -262,6 +266,19 @@ private slots:
                            height / 2);
     QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, arrow);
     QCOMPARE(code->lineCount(), 18);
+    // The header stays visible: finding its text or clicking past the end of
+    // its row neither expands the block nor offers a fold control there.
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("while (v7)"), true));
+    QCOMPARE(code->lineCount(), 18);
+    const QPoint pastHeader(code->viewport()->width() - 4, arrow.y());
+    QTest::mouseMove(code->viewport(), arrow);
+    QCOMPARE(code->viewport()->cursor().shape(), Qt::PointingHandCursor);
+    QTest::mouseMove(code->viewport(), pastHeader);
+    QCOMPARE(code->viewport()->cursor().shape(), Qt::IBeamCursor);
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      pastHeader);
+    QCOMPARE(code->lineCount(), 18);
     code->setCursorLine(3);
     QTest::keyClick(code, Qt::Key_BracketLeft,
                     Qt::ControlModifier | Qt::ShiftModifier);
@@ -271,7 +288,9 @@ private slots:
     QCOMPARE(code->lineCount(), 18);
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
 
-    QVERIFY(code->findText(QStringLiteral("v7 = v0"), false));
+    // Folding restored the cursor to the if header; search starts below it.
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("v7 = v0"), true));
     const auto target = code->renameTarget();
     QVERIFY(target);
     const auto references = code->localReferences(*target);
@@ -331,7 +350,9 @@ private slots:
     Workbench bench;
     LoadDialogAcceptor loadDialogs;
     bench.window->openFile(
-        writeFixture(directory, QStringLiteral("local-references.bin")));
+        writeFixture(directory, representation == QLatin1String("c")
+                                    ? QStringLiteral("local-references-cpp.bin")
+                                    : QStringLiteral("local-references.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x140);
@@ -347,6 +368,7 @@ private slots:
                                     : QStringLiteral("source"));
     QVERIFY(view);
     view->setRepresentation(representation);
+    QCOMPARE(view->representation(), representation);
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->allText().contains("return v7 + v7"));
     for (auto *button : view->findChildren<QToolButton *>())
@@ -372,6 +394,7 @@ private slots:
     }
     const auto name =
         renamed ? QStringLiteral("counter") : QStringLiteral("v7");
+    // Search continues below the cursor, which is on the earlier match.
     code->setCursorLine(0);
     QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
     const auto target = code->renameTarget();
@@ -401,7 +424,8 @@ private slots:
       auto *table = dialog ? dialog->findChild<QTableView *>(
                                  QStringLiteral("localReferencesTable"))
                            : nullptr;
-      if (!table)
+      // The rows are ready at once; keys reach them once the dialog is active.
+      if (!table || !dialog->isActiveWindow() || !table->hasFocus())
         return;
       chooser.stop();
       sawDialog = dialog->windowTitle().contains(name);

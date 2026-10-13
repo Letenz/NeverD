@@ -13,12 +13,38 @@
 #include "neverd/ir/low/LowIR.h"
 
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 
 namespace neverd {
 
 struct TargetRegInfo;
+class LowSEHRuntimeMemory;
+
+/// Fresh structural proof for one Windows handler/continuation and the exact
+/// LowFunc supplied to the query. Index vectors refer to that snapshot only.
+/// Decoded unwind actions and all reaching protected prefixes own the frame;
+/// neither storage sizing nor ordinary entry roles grant that identity.
+struct LowSEHEstablisherFrame {
+  uint64_t FrameBytes = 0;
+  bool DynamicSP = false;
+  bool HasRelevantLocalUnwind = false;
+  std::vector<bool> RelevantBlocks;
+  std::vector<bool> ProtectedBlocks;
+  std::vector<va_t> CheckedEnd;
+  std::map<va_t, uint64_t> DecodedAdjustments;
+  std::vector<int> ProtectedSources;
+  std::map<int, std::set<va_t>> ProtectedCalls;
+};
+
+/// Shared decoded-frame authority. MedIR must additionally check converted
+/// ABI effects against DecodedAdjustments. A dynamic frame has no fixed-SP
+/// seed. Missing provenance, independent entries and exhausted work refuse.
+llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
+    const LowFunc &Function, va_t Handler, const TargetRegInfo &TRI,
+    bool OrdinaryEntry, size_t &WorkRemaining,
+    llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false);
 
 struct LowSEHFrameProof {
   /// Exact entry-relative SP at direct calls whose first Win64 argument is
@@ -28,20 +54,26 @@ struct LowSEHFrameProof {
   std::string DependencyDigest;
   /// Complete decoded callees inspected to retain memory across a call.
   std::vector<va_t> CalleeDependencies;
+  bool UsesRuntimeMemory = false;
 };
 
-/// Intersection analysis over ordinary CFG edges. Independent and exceptional
-/// entries start without the function's SP identity. Unknown calls/stores
-/// invalidate saved memory. Optional decoded callees prove concrete effects
-/// under one bounded invocation stack; every active return PC is protected.
+/// Intersection analysis over ordinary CFG edges. Independent entries start
+/// without the function's SP identity; an authenticated in-function SEH handler
+/// receives only its separately proved fixed SP. Unknown calls/stores
+/// invalidate saved memory. Decoded callees and authenticated runtime calls
+/// prove concrete effects under one bounded invocation stack; every active
+/// return PC is protected. Runtime facts include immutable scalar formats and
+/// retain no privacy after an opaque frame escape.
 /// No callee memory contract is inferred from an ABI.
 /// Exhausted budgets and incomplete inputs return no proof.
 LowSEHFrameProof
 proveLowSEHFrames(const LowFunc &Function, const TargetRegInfo &TRI,
                   size_t &WorkRemaining,
-                  const std::map<va_t, const LowFunc *> *Callees = nullptr);
+                  const std::map<va_t, const LowFunc *> *Callees = nullptr,
+                  const LowSEHRuntimeMemory *RuntimeMemory = nullptr);
 
-/// Binds a proof to all operations, control boundaries, roots and CFG edges.
+/// Binds a proof to operations, control boundaries, roots, complete CFG edges
+/// and the normalized exception-frame metadata consulted by the analysis.
 /// This is a freshness check, not a replacement for the producing analysis.
 std::string lowSEHFrameDependencyDigest(const LowFunc &Function);
 
@@ -49,7 +81,8 @@ std::string lowSEHFrameDependencyDigest(const LowFunc &Function);
 std::string
 lowSEHFrameDependencyDigest(const LowFunc &Function,
                             llvm::ArrayRef<va_t> Dependencies,
-                            const std::map<va_t, const LowFunc *> *Callees);
+                            const std::map<va_t, const LowFunc *> *Callees,
+                            const LowSEHRuntimeMemory *RuntimeMemory = nullptr);
 
 } // namespace neverd
 
