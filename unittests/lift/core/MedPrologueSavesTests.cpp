@@ -159,4 +159,59 @@ TEST(MedPrologueSaves, OnlyWin64HandsTheCalleeHomeSlots) {
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
+/// `mov rax, [rsp]; ret`: the function reads the return address its call
+/// pushed.
+MedFunc readsReturnAddress() {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.CC = CallingConv::SysV_AMD64;
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Func.Entry;
+  Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::LOAD, temp(20), {sp(0)}),
+               op(NdOp::RETURN, none(), {temp(20)})};
+  Func.Blocks.push_back(std::move(Block));
+  return Func;
+}
+
+const MedOp &read(const MedFunc &Func) { return Func.Blocks[0].Ops[1]; }
+
+TEST(MedPrologueSaves, ALoadOfTheEntrySlotIsTheReturnAddress) {
+  MedFunc Func = readsReturnAddress();
+  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF);
+  EXPECT_TRUE(read(Func).ReturnAddressRead);
+}
+
+TEST(MedPrologueSaves, AFunctionThatWritesTheSlotReadsItsOwnValue) {
+  MedFunc Func = readsReturnAddress();
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.insert(Ops.begin() + 1, op(NdOp::STORE, none(), {sp(0), rcx(0)}));
+  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF);
+  EXPECT_FALSE(Func.Blocks[0].Ops[2].ReturnAddressRead);
+}
+
+TEST(MedPrologueSaves, ANarrowLoadOfTheEntrySlotIsNoReturnAddress) {
+  MedFunc Func = readsReturnAddress();
+  MedVar Narrow = temp(20);
+  Narrow.Size = 4;
+  Func.Blocks[0].Ops[1].Output = Narrow;
+  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF);
+  EXPECT_FALSE(read(Func).ReturnAddressRead);
+}
+
+TEST(MedPrologueSaves, AProcessEntryHasNoReturnAddress) {
+  // The kernel starts `_start` with argc at the stack pointer.
+  MedFunc Func = readsReturnAddress();
+  markReturnAddressReads(Func, Arch::X64, BinaryFormat::ELF,
+                         StackEntryKind::ProcessEntry);
+  EXPECT_FALSE(read(Func).ReturnAddressRead);
+}
+
+TEST(MedPrologueSaves, AArch64KeepsItsReturnAddressInTheLinkRegister) {
+  MedFunc Func = readsReturnAddress();
+  markReturnAddressReads(Func, Arch::AArch64, BinaryFormat::ELF);
+  EXPECT_FALSE(read(Func).ReturnAddressRead);
+}
+
 } // namespace

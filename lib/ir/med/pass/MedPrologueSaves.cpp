@@ -53,6 +53,36 @@ struct FrameAccess {
   }
 };
 
+/// Every plain load and store of \p Func whose address resolves against the
+/// entry stack pointer, all by one proof.
+void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
+                     StackEntryKind Entry, std::vector<FrameAccess> &Loads,
+                     std::vector<FrameAccess> &Stores) {
+  std::vector<MedOp *> Accesses;
+  for (MedBlock &Block : Func.Blocks)
+    for (MedOp &Op : Block.Ops)
+      if ((Op.Opcode == NdOp::LOAD ||
+           (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)) &&
+          Op.NumInputs >= 1 && Op.MemoryOrdering == NdMemoryOrdering::None &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+        Accesses.push_back(&Op);
+  std::vector<MedVar> Addresses;
+  Addresses.reserve(Accesses.size());
+  for (const MedOp *Op : Accesses)
+    Addresses.push_back(Op->Inputs[0]);
+  const std::vector<std::optional<int64_t>> Offsets =
+      entryStackOffsets(Func, Addresses, Architecture, Format, Entry);
+  for (size_t I = 0; I < Accesses.size(); ++I) {
+    if (!Offsets[I])
+      continue;
+    MedOp &Op = *Accesses[I];
+    if (Op.Opcode == NdOp::LOAD)
+      Loads.push_back({*Offsets[I], Op.Output.Size, &Op});
+    else
+      Stores.push_back({*Offsets[I], Op.Inputs[1].Size, &Op});
+  }
+}
+
 } // namespace
 
 void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
@@ -70,7 +100,6 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   std::map<ValueKey, std::vector<const MedOp *>> OpReads;
   std::set<ValueKey> OtherReads;
   std::vector<FrameAccess> Loads, Stores;
-  std::vector<MedOp *> Accesses;
   auto NoteRead = [&](const MedVar &V, const MedOp *By) {
     if (V.isConst() || V.Id < 0)
       return;
@@ -79,39 +108,18 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
     else
       OtherReads.insert(keyOf(V));
   };
-  for (MedBlock &Block : Func.Blocks) {
+  for (const MedBlock &Block : Func.Blocks) {
     for (const PhiNode &Phi : Block.Phis) {
       for (const auto &Incoming : Phi.Args)
         NoteRead(Incoming.second, nullptr);
       if (Phi.ExceptionalEntry)
         NoteRead(*Phi.ExceptionalEntry, nullptr);
     }
-    for (MedOp &Op : Block.Ops) {
+    for (const MedOp &Op : Block.Ops)
       for (unsigned I = 0; I < Op.NumInputs; ++I)
         NoteRead(Op.Inputs[I], &Op);
-      if ((Op.Opcode == NdOp::LOAD ||
-           (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)) &&
-          Op.NumInputs >= 1 && Op.MemoryOrdering == NdMemoryOrdering::None &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-        Accesses.push_back(&Op);
-    }
   }
-  // One proof resolves every address against the entry stack pointer.
-  std::vector<MedVar> Addresses;
-  Addresses.reserve(Accesses.size());
-  for (const MedOp *Op : Accesses)
-    Addresses.push_back(Op->Inputs[0]);
-  const std::vector<std::optional<int64_t>> Offsets =
-      entryStackOffsets(Func, Addresses, Architecture, Format, Entry);
-  for (size_t I = 0; I < Accesses.size(); ++I) {
-    if (!Offsets[I])
-      continue;
-    MedOp &Op = *Accesses[I];
-    if (Op.Opcode == NdOp::LOAD)
-      Loads.push_back({*Offsets[I], Op.Output.Size, &Op});
-    else
-      Stores.push_back({*Offsets[I], Op.Inputs[1].Size, &Op});
-  }
+  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
   for (const MedCallClobber &Clobber : Func.CallClobbers) {
     NoteRead(Clobber.Value, nullptr);
     NoteRead(Clobber.PreservedInput, nullptr);
@@ -167,6 +175,25 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   }
   for (MedOp *Save : Saves)
     Save->PrologueSave = true;
+}
+
+void markReturnAddressReads(MedFunc &Func, Arch Architecture,
+                            BinaryFormat Format, StackEntryKind Entry) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if (!TRI.CallPushesReturnAddress || Entry != StackEntryKind::Call ||
+      !TRI.PointerSize)
+    return;
+  std::vector<FrameAccess> Loads, Stores;
+  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
+  // A store into the slot replaces the return address, as a function that
+  // returns somewhere else does.
+  if (llvm::any_of(Stores, [&](const FrameAccess &Write) {
+        return Write.overlaps(0, TRI.PointerSize);
+      }))
+    return;
+  for (const FrameAccess &Read : Loads)
+    if (Read.Offset == 0 && Read.Size == TRI.PointerSize)
+      Read.Op->ReturnAddressRead = true;
 }
 
 } // namespace neverd

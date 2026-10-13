@@ -44413,6 +44413,24 @@ TEST(HighCPointerAddresses, AHomeSlotSaveReadForAnythingElseStays) {
   EXPECT_NE(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
 }
 
+TEST(LLVMCPointerAddresses, TheEntrySlotReadsAsTheReturnAddress) {
+  // `mov rax, [rsp]; ret` returns the address its call pushed.  Neither view
+  // has a frame slot holding it: HighC read an unassigned local and LLVM-C a
+  // zero.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0x04, 0x24, // mov rax, [rsp]
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__builtin_return_address(0)"), std::string::npos)
+      << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry, /*NoOpt=*/false,
+                        /*Dbg=*/nullptr, /*SourceProjection=*/true);
+  EXPECT_NE(LLVMC.find("__builtin_return_address(0)"), std::string::npos)
+      << LLVMC;
+}
+
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
   // A value stored in the outgoing argument area is not an argument of a
   // call whose WDK prototype takes one parameter (ExAcquireFastMutexUnsafe).

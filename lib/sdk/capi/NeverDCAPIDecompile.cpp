@@ -183,6 +183,8 @@ void emitMedView(const MedFunc &F, const LowFunc *Low, const IRRowSink &Sink) {
         // Source views leave this store out: say so where the IR shows it.
         if (Op.PrologueSave)
           OS << " ; prologue save";
+        if (Op.ReturnAddressRead)
+          OS << " ; return address";
         OS << "\n";
       });
     }

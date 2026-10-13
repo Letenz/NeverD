@@ -33,6 +33,14 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
                                  BinaryFormat Format,
                                  StackEntryKind Entry = StackEntryKind::Call);
 
+/// In source mode, mark each pointer-width load of the slot at the entry stack
+/// pointer as a ReturnAddressRead when the call pushed its return address
+/// there and no store in \p Func writes that slot: the value is the function's
+/// own return address, which C spells `__builtin_return_address(0)`.
+void markReturnAddressReads(MedFunc &Func, Arch Architecture,
+                            BinaryFormat Format,
+                            StackEntryKind Entry = StackEntryKind::Call);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDPROLOGUESAVES_H
