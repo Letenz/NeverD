@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Shares width-correct scalar constant evaluation across LowIR analyses.
 
 #include "neverd/ir/low/LowScalarConstant.h"
 

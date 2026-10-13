@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Binds runtime memory receipts to their complete source catalog.
 
 #include "neverd/ir/low/SEHRuntimeMemory.h"
 

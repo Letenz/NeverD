@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Declares runtime memory transfers used by the shared SEH frame proof.
 
 #ifndef NEVERD_IR_LOW_SEHFRAMERUNTIMEMEMORY_H
 #define NEVERD_IR_LOW_SEHFRAMERUNTIMEMEMORY_H

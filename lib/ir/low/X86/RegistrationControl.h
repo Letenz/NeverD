@@ -4,6 +4,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Shares checked source control contracts for PE32 registration EH.
 
 #ifndef NEVERD_IR_LOW_X86_REGISTRATIONCONTROL_H
 #define NEVERD_IR_LOW_X86_REGISTRATIONCONTROL_H

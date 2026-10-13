@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Carries an opaque caller capture identity through a checked helper.
 
 #include "RegistrationStateSolver.h"
 

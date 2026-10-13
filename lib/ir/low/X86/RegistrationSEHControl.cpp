@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Authenticates physical PE32 call, return and folded continuation bytes.
 
 #include "RegistrationABIPrivate.h"
 

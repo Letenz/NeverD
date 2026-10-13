@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Binds ordinary returns and nonlocal exits to their active SEH invocation.
 
 #include "RegistrationControl.h"
 #include "RegistrationStateSolver.h"

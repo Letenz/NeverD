@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Uses the common x86 intrinsic policy for PE32 integer-frame analysis.
 
 #ifndef NEVERD_IR_LOW_X86_REGISTRATIONFRAMEEFFECTS_H
 #define NEVERD_IR_LOW_X86_REGISTRATIONFRAMEEFFECTS_H

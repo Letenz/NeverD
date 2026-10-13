@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Binds exception-field accesses to exact source instruction occurrences.
 
 #include "RegistrationStateSolver.h"
 

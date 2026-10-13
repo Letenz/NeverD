@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Applies authenticated CRT effects while protecting live frame storage.
 
 #include "SEHFrameRuntimeMemory.h"
 

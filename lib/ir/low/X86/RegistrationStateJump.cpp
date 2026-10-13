@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Propagates captured EH3 state through checked nonlocal resumptions.
 
 #include "RegistrationStateSolver.h"
 

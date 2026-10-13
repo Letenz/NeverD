@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Interprets finally effects under the actual ordinary or runtime invocation.
 
 #include "RegistrationFrameEffects.h"
 #include "RegistrationStateSolver.h"

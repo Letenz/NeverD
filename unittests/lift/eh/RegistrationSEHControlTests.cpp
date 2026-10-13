@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Checks physical PE32 control-transfer provenance and malformed encodings.
 
 #include "gtest/gtest.h"
 

@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Exercises actual stack and memory effects of ordinary finally calls.
 
 #include "RegistrationStateTestUtils.h"
 #include "gtest/gtest.h"

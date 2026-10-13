@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Tests invocation ownership of runtime exception fields.
 
 #include "../../../lib/ir/low/X86/RegistrationFrame.h"
 #include "RegistrationStateTestUtils.h"

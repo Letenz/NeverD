@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Tracks exact frame values, saved cells and escaped runtime aliases.
 
 #ifndef NEVERD_IR_LOW_SEHFRAMESTATE_H
 #define NEVERD_IR_LOW_SEHFRAMESTATE_H

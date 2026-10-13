@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Transfers authenticated CRT effects through PE32 registration states.
 
 #include "RegistrationStateSolver.h"
 

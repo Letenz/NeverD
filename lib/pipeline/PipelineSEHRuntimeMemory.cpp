@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Authenticates PE import providers, immutable formats and image storage.
 
 #include "PipelineSEHRuntimeMemory.h"
 

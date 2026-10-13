@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Evaluates fixed-width scalar LowIR operations from checked input facts.
 
 #ifndef NEVERD_IR_LOW_LOWSCALARCONSTANT_H
 #define NEVERD_IR_LOW_LOWSCALARCONSTANT_H

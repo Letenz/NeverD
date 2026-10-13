@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Tests ordinary and runtime SEH invocation exits and their negative controls.
 
 #include "../../../lib/ir/low/X86/RegistrationStateSolver.h"
 #include "RegistrationStateTestUtils.h"

@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Checks ordinary calls into owned PE32 finally bodies.
 
 #include "RegistrationStateSolver.h"
 

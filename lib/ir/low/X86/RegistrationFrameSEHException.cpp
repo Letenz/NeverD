@@ -4,6 +4,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Restricts exception-object facts to their authenticated search invocation.
 
 #include "RegistrationFrame.h"
 

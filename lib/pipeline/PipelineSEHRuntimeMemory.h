@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Declares collection of checked Windows CRT source memory evidence.
 
 #ifndef NEVERD_PIPELINE_SEHRUNTIMEMEMORY_H
 #define NEVERD_PIPELINE_SEHRUNTIMEMEMORY_H

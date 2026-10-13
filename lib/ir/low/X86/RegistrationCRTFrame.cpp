@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Checks PE32 CRT output cells against registration frame ownership.
 
 #include "RegistrationCRTFrame.h"
 

@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Retains authenticated Windows CRT bindings and source memory evidence.
 
 #ifndef NEVERD_IR_LOW_SEHRUNTIMEMEMORY_H
 #define NEVERD_IR_LOW_SEHRUNTIMEMEMORY_H

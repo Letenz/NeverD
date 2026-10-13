@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Checks EH3 captures, callback effects and nonlocal state restoration.
 
 #include "../../../lib/ir/low/X86/RegistrationStateSolver.h"
 #include "RegistrationStateTestUtils.h"

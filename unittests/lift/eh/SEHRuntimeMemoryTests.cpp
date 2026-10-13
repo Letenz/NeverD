@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Checks authenticated CRT frame effects and invalidated source evidence.
 
 #include "PipelineSEHRuntimeMemory.h"
 #include "gtest/gtest.h"

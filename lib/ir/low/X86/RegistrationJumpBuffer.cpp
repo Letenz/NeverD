@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Tracks the initialized fields and lifetime of an EH3 jump buffer.
 
 #include "RegistrationJumpCapture.h"
 

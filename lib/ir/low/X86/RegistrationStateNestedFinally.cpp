@@ -3,6 +3,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Checks nested finally resumptions against the active capture and value.
 
 #include "RegistrationStateSolver.h"
 
