@@ -106,9 +106,10 @@ public:
   void writeGlobals(llvm::Module &Mod);
   void writeImageByteArray(const llvm::GlobalVariable &Global,
                            llvm::StringRef Name);
-  /// Declare the image objects \p Fn reads or writes, and those whose
-  /// addresses alone its printed \p Text names.
-  void writeReferencedImageObjects(const llvm::Function &Fn,
+  /// Declare the image objects \p Fns read or write, and those whose
+  /// addresses alone their printed \p Text names, with each pointer mirror
+  /// the text names that the environment holds rather than the module.
+  void writeReferencedImageObjects(llvm::ArrayRef<const llvm::Function *> Fns,
                                    llvm::StringRef Text);
   void writeForwardDecls(llvm::Module &Mod);
 
@@ -777,6 +778,14 @@ public:
   mutable std::map<const llvm::AllocaInst *,
                    llvm::SmallVector<ImmediateUser, 2>>
       UniqueImmediateUsers;
+  /// The headers the output includes.
+  std::set<std::string> IncludedHeaders;
+  /// Whether an included header declares data object \p Name
+  /// (LibCDataObjects.def), which C then reaches as the header declares it.
+  bool headerDeclaresObject(llvm::StringRef Name) const {
+    const char *Header = libc::headerOfDataObject(Name);
+    return Header && IncludedHeaders.count(Header);
+  }
   mutable CProjectionIdentifierAllocator ImageIdentifierAllocator;
   mutable std::map<va_t, std::string> ImageObjectNames;
   /// The comment naming the symbol of each image object whose identifier is
