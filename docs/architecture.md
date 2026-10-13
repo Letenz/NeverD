@@ -3190,6 +3190,15 @@ with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
 
+`LinuxFiles` also owns explicit device open descriptions in the file/link
+namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
+all guest pointer resolution and byte expectations precede output writes and
+sequence consumption. The process JSON adapter transports bounded inputs;
+Android imports and raw Linux traps use the same descriptor and transaction
+state. This is a caller-supplied observation contract, not driver execution or
+an inference from ioctl request encoding. Other device operations remain
+unsupported; see [the device contract](linux-device-contracts.md).
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |

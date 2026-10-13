@@ -66,6 +66,8 @@ LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
     return PathKind::Directory;
   if (Options->Files.contains(Path))
     return RequiresDirectory ? PathKind::NotDirectory : PathKind::File;
+  if (Options->Devices.contains(Path))
+    return RequiresDirectory ? PathKind::NotDirectory : PathKind::Device;
   if (Options->SymbolicLinks.contains(Path))
     return RequiresDirectory ? PathKind::LinkTraversal : PathKind::SymbolicLink;
   // Catalogue prefixes denote directories; a link component requires an
@@ -77,10 +79,14 @@ LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
         llvm::StringRef(Next->first).starts_with(Prefix))
       return PathKind::Directory;
   }
+  auto Device = Options->Devices.lower_bound(Prefix);
+  if (Device != Options->Devices.end() &&
+      llvm::StringRef(Device->first).starts_with(Prefix))
+    return PathKind::Directory;
   for (size_t I = Path.find('/', 1); I != std::string::npos;
        I = Path.find('/', I + 1)) {
     const auto Parent = Path.substr(0, I);
-    if (Options->Files.contains(Parent))
+    if (Options->Files.contains(Parent) || Options->Devices.contains(Parent))
       return PathKind::NotDirectory;
     if (Options->SymbolicLinks.contains(Parent))
       return PathKind::LinkTraversal;
@@ -111,6 +117,7 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::Directory:
     if (Mode)
       return unsupported(Result, FileAccessMode);
@@ -142,6 +149,7 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
@@ -160,7 +168,10 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   const uint32_t LargeFile = ARM64 ? OpenLargeFileARM64 : OpenLargeFileX64;
   const uint32_t Directory = ARM64 ? OpenDirectoryARM64 : OpenDirectoryX64;
   const uint32_t Direct = ARM64 ? OpenDirectARM64 : OpenDirectX64;
-  if (Flags & ~(OpenCloseOnExec | LargeFile | Directory | Direct))
+  const uint32_t AccessMask = Options->Devices.empty() ? 0 : 3;
+  if ((Flags &
+       ~(OpenCloseOnExec | LargeFile | Directory | Direct | AccessMask)) ||
+      (Flags & 3) == 3)
     return unsupported(Result, FileOpenFlags);
   auto Imported = readPath(Address);
   if (!Imported)
@@ -185,6 +196,17 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
     return unsupported(Result, FileDirectory);
+  case PathKind::Device: {
+    if (Flags & Direct)
+      return unsupported(Result, FileDirectIO);
+    const auto &Device = Options->Devices.at(Path->Name);
+    if ((Flags & 3) != Device.AccessMode)
+      return unsupported(Result, DeviceOpenMode);
+    if (Device.OpenErrno)
+      return std::optional<uint64_t>(uint64_t(0) - Device.OpenErrno);
+    Descriptors.emplace(FD, OpenDevice{&Device});
+    return std::optional<uint64_t>(FD);
+  }
   case PathKind::File:
     break;
   }
@@ -193,6 +215,8 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   // this catalogue does not infer a backing filesystem's direct-I/O policy.
   if (Flags & Direct)
     return unsupported(Result, FileDirectIO);
+  if (Flags & 3)
+    return unsupported(Result, FileOpenFlags);
   auto File = Options->Files.find(Path->Name);
   auto Metadata = Options->Metadata.find(Path->Name);
   Descriptors.emplace(FD,

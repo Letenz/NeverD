@@ -15,6 +15,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxResidency.cpp
   LinuxFiles.cpp
   LinuxFileOptions.cpp
+  LinuxDeviceFiles.cpp
   LinuxFilePaths.cpp
   LinuxFileLinks.cpp
   LinuxFileIO.cpp

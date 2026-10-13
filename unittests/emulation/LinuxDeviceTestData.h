@@ -1,0 +1,24 @@
+//===- LinuxDeviceTestData.h - Explicit synthetic device inputs --*- C++
+//-*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared test input, independent of the fixture's byte comparison oracle.
+//===----------------------------------------------------------------------===//
+#ifndef NEVERD_TEST_LINUXDEVICETESTDATA_H
+#define NEVERD_TEST_LINUXDEVICETESTDATA_H
+#include "neverd/emulation/LinuxDeviceOptions.h"
+
+inline neverd::emulation::LinuxDeviceOptions deviceTestInput() {
+  return {2,
+          0,
+          {{0xa1000001,
+            37,
+            {},
+            {{0, {}, {0x31, 0x32}, {0x52, 0x53}},
+             {1, 8, {0x55, 0x56}, {0x90, 0x91}}}},
+           {0xa1000002, -13, 0x8877665544332211ULL, {}}}};
+}
+#endif

@@ -174,6 +174,10 @@ The supported Bionic subset is:
   catalogue entries share this behavior; provider lifetime rules still apply.
   See the pinned Android 9
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/getpagesize.cpp).
+- `ioctl`, for [explicit Linux device transactions](linux-device-contracts.md).
+  Imported, dynamic and raw calls use the shared descriptor owner. Inputs must
+  declare the ordered request, scalar/byte expectations, result and outputs;
+  missing transactions stop. This does not provide a driver or device mapping.
 - `sysconf`, for Android's `_SC_PAGESIZE` (`0x27`) and `_SC_PAGE_SIZE` (`0x28`)
   selectors. Both return the same guest page size as `getpagesize`, mappings
   and allocation rounding, without changing errno. The selector uses its

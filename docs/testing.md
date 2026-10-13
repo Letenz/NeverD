@@ -4819,6 +4819,17 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidDevices.*` runs independent O0/O2 callers with ordinary, APS2 and RELR
+relocations. Raw, named, variadic and dynamic ioctl routes check full buffers,
+errno, scalar argument width, independent opens, descriptor reuse and provider
+lifetime. Rejected requests, nested pointers, later input/output faults and
+read-only buffers must preserve bytes; alias cases resolve every input before
+outputs. `AndroidDeviceMemory.*` checks retry without sequence consumption.
+Linux x64/ARM64 callers use the same synthetic inputs and independent byte
+oracle. Process JSON and Python integration cover strict schema, shared limits
+and public API parity. These tests validate explicit device transactions, not
+real hardware, driver execution or device-backed mappings.
+
 `AndroidResidencyTests.cpp` compares raw SVC, variadic and named `mincore`
 calls using independent O0/O2 fixtures with ordinary, APS2 and RELR relocations.
 It checks ordered range/alignment errors, empty queries, unchanged output bytes,

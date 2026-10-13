@@ -48,6 +48,11 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return close(A0);
   case ServiceKind::Read:
     return readDescriptor(A0, A1, A2, Result);
+  case ServiceKind::Ioctl:
+    return deviceIoctl(A0, A1, A2, Result);
+  case ServiceKind::Write:
+  case ServiceKind::WriteV:
+    return unsupported(Result, DeviceOperation);
   case ServiceKind::Readlink:
     return readLink(AtCurrentDirectory, A0, A1, A2, Result);
   case ServiceKind::ReadlinkAt:

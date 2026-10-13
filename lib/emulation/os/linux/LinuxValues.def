@@ -64,6 +64,8 @@ NEVERD_LINUX_VALUE(RangeError, 34)
 NEVERD_LINUX_VALUE(XAttrNameLimit, 256)
 NEVERD_LINUX_VALUE(FileDescriptorLimit, 4096)
 NEVERD_LINUX_VALUE(FileCountLimit, 256)
+NEVERD_LINUX_VALUE(DeviceIoctlLimit, 1024)
+NEVERD_LINUX_VALUE(DeviceMemoryLimit, 16)
 NEVERD_LINUX_VALUE(FileByteLimit, 16 * 1024 * 1024)
 NEVERD_LINUX_VALUE(FilePathLimit, 4096)
 NEVERD_LINUX_VALUE(FileNameLimit, 255)
@@ -164,6 +166,7 @@ NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
 NEVERD_LINUX_SERVICE(MkdirAt, 258, 34, 3)
 NEVERD_LINUX_SERVICE(ReadlinkAt, 267, 78, 4)
 NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
+NEVERD_LINUX_SERVICE(Ioctl, 16, 29, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
 NEVERD_LINUX_SERVICE(Fstat, 5, 80, 2)
@@ -243,6 +246,16 @@ NEVERD_LINUX_DIAGNOSTIC(
     FileInputsMissing, "Linux file services require explicit linux_files input")
 NEVERD_LINUX_DIAGNOSTIC(FileOpenFlags,
                         "unsupported Linux memory-file open flags")
+NEVERD_LINUX_DIAGNOSTIC(DeviceOptions,
+                        "invalid linux_files device transaction contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceOperation,
+                        "Linux device operation has no explicit contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceOpenMode,
+                        "Linux device open access mode differs from its contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceIoctlMissing,
+                        "Linux ioctl has no matching next device transaction")
+NEVERD_LINUX_DIAGNOSTIC(DeviceIoctlMemory,
+                        "Linux ioctl memory does not satisfy its explicit contract")
 NEVERD_LINUX_DIAGNOSTIC(
     XAttrKernel, "extended attribute queries require explicit released GKI input")
 NEVERD_LINUX_DIAGNOSTIC(

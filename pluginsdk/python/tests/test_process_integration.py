@@ -16,6 +16,47 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_explicit_device_transactions_share_native_and_raw_calls(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        device = {"path": "/fixture/control", "access_mode": 2, "open_errno": 0,
+                  "ioctls": [
+                      {"request": 0xa1000001, "result": 37, "memory": [
+                          {"offset": 0, "expected_hex": "3132", "output_hex": "5253"},
+                          {"offset": 1, "pointer_offset": 8,
+                           "expected_hex": "5556", "output_hex": "9091"}]},
+                      {"request": 0xa1000002, "result": -13,
+                       "argument": str(0x8877665544332211), "memory": []}]}
+        for route in range(4):
+            options = {"backend": "unicorn", "linux_files": {"files": [], "devices": [device]},
+                       "android": {"entry_symbol": "devices_sequence", "initialize": False,
+                                   "arguments": [route], "libraries": {"libdevice.so": ["ioctl"]}}}
+            result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                             "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], "0")
+            if route in (1, 3):
+                calls = [c for c in result["android"]["native_calls"] if c["name"] == "ioctl"]
+                self.assertTrue(any(c["result"] == "25" for c in calls))
+                self.assertTrue(any(c["result"] == "ffffffffffffffff" for c in calls))
+                if route == 3:
+                    self.assertTrue(all(c["library"] == "libdevice.so" for c in calls))
+
     def test_android_integer_scanning_preserves_provider_and_output(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

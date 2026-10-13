@@ -402,6 +402,10 @@ sleep and real device clocks remain unsupported.
 workloads. C++ uses `ProcessOptions::LinuxFiles`; C, Python and CLI share this
 strict JSON contract:
 
+Optional `devices` entries add [explicit descriptor-owned ioctl transactions](linux-device-contracts.md)
+in the same namespace. Device responses are declared inputs; regular file
+bytes remain immutable and device mappings are not implied.
+
 
 Optional `symbolic_links` entries use the same canonical absolute namespace:
 `{"path":"/links/item","target_hex":"2e2e2f746172676574"}`. Targets are

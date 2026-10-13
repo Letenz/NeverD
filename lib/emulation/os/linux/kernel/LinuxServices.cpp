@@ -86,6 +86,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Readlink:
   case ServiceKind::ReadlinkAt:
   case ServiceKind::Close:
+  case ServiceKind::Ioctl:
   case ServiceKind::Lseek:
   case ServiceKind::Fstat:
   case ServiceKind::FstatAt:
@@ -133,6 +134,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
+    if (Files.isDevice(Event.Arguments[0]))
+      return Files.handle(Kind, Event, Result);
     if (Options.LinuxFiles)
       if (auto E = Files.outputError(Event.Arguments[0])) {
         if (*E == uint64_t(0) - InvalidArgument)

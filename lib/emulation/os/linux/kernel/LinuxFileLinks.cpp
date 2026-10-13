@@ -46,6 +46,7 @@ LinuxFiles::readLink(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::Directory:
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   case PathKind::LinkTraversal:

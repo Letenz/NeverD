@@ -62,6 +62,8 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
     return unsupported(Result, FileStatusDirectory);
+  case PathKind::Device:
+    return unsupported(Result, FileStatusMissing);
   case PathKind::File:
     break;
   }

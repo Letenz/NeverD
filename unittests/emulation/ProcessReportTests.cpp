@@ -2313,6 +2313,130 @@ TEST(ProcessReport, LinuxLinkObservationsAreBoundedAndShareTheFileNamespace) {
   }
 }
 
+TEST(ProcessReport, LinuxDeviceTransactionsAreExplicitLosslessAndBounded) {
+  const char *Device = R"({"path":"/fixture/control","access_mode":2,
+    "open_errno":0,"ioctls":[{"request":4294967295,"result":-13,
+      "argument":"18446744073709551615","memory":[
+        {"offset":1,"pointer_offset":0,"expected_hex":"00fF",
+         "output_hex":"8001"}]}]})";
+  auto Parse = [](const std::string &D) {
+    return processOptionsFromJSON(
+        std::string(R"({"linux_files":{"files":[],"devices":[)") + D + "]}}");
+  };
+  auto O = Parse(Device);
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  const auto &D = O->LinuxFiles->Devices.at("/fixture/control");
+  EXPECT_EQ(D.AccessMode, 2u);
+  EXPECT_EQ(D.OpenErrno, 0u);
+  ASSERT_EQ(D.Ioctls.size(), 1u);
+  EXPECT_EQ(D.Ioctls[0].Request, UINT32_MAX);
+  EXPECT_EQ(D.Ioctls[0].Result, -13);
+  EXPECT_EQ(D.Ioctls[0].Argument, UINT64_MAX);
+  ASSERT_EQ(D.Ioctls[0].Memory.size(), 1u);
+  EXPECT_EQ(D.Ioctls[0].Memory[0].PointerOffset, 0u);
+  EXPECT_EQ(D.Ioctls[0].Memory[0].Expected, (std::vector<uint8_t>{0, 255}));
+  EXPECT_EQ(D.Ioctls[0].Memory[0].Output, (std::vector<uint8_t>{128, 1}));
+
+  for (unsigned Mode = 0; Mode != 18; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto J = llvm::cantFail(llvm::json::parse(Device));
+    auto &Object = *J.getAsObject();
+    auto &Call = *Object.getArray("ioctls")->front().getAsObject();
+    auto &Memory = *Call.getArray("memory")->front().getAsObject();
+    switch (Mode) {
+    case 0:
+      Object["access_mode"] = 3;
+      break;
+    case 1:
+      Object["open_errno"] = 4096;
+      break;
+    case 2:
+      Object.erase("open_errno");
+      break;
+    case 3:
+      Object["path"] = "relative";
+      break;
+    case 4:
+      Object["extra"] = true;
+      break;
+    case 5:
+      Call["request"] = uint64_t(1) << 32;
+      break;
+    case 6:
+      Call["result"] = -4096;
+      break;
+    case 7:
+      Call["argument"] = -1;
+      break;
+    case 8:
+      Call["memory"] = nullptr;
+      break;
+    case 9:
+      Call["extra"] = 0;
+      break;
+    case 10:
+      Memory["offset"] = "18446744073709551615";
+      break;
+    case 11:
+      Memory["pointer_offset"] = "18446744073709551608";
+      break;
+    case 12:
+      Memory["expected_hex"] = "0";
+      break;
+    case 13:
+      Memory["output_hex"] = "gg";
+      break;
+    case 14:
+      Memory["expected_hex"] = "";
+      Memory["output_hex"] = "";
+      break;
+    case 15:
+      Memory["offset"] = -1;
+      break;
+    case 16:
+      Memory["extra"] = 0;
+      break;
+    case 17:
+      Call["result"] = 1.5;
+      break;
+    }
+    auto R = Parse(llvm::formatv("{0}", J).str());
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto Input = *O;
+    auto &Files = *Input.LinuxFiles;
+    auto &Device = Files.Devices.at("/fixture/control");
+    if (Mode == 0)
+      Files.Files["/fixture/control"] = {};
+    if (Mode == 1)
+      Files.SymbolicLinks["/fixture/control/child"] = {'x'};
+    if (Mode == 2)
+      Files.Devices["/fixture/control/child"] = {};
+    if (Mode == 3)
+      Device.Ioctls.resize(1025);
+    if (Mode == 4)
+      Device.Ioctls[0].Memory.resize(17);
+    if (Mode == 5)
+      Device.Ioctls[0].Memory[0].Output.resize(16 * 1024 * 1024);
+    if (Mode == 6)
+      Device.AccessMode = 3;
+    if (Mode == 7)
+      Device.OpenErrno = 4096;
+    if (Mode == 8)
+      Device.Ioctls[0].Result = -4096;
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, Input);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+  auto Duplicate = Parse(std::string(Device) + ',' + Device);
+  EXPECT_FALSE(bool(Duplicate));
+  llvm::consumeError(Duplicate.takeError());
+}
+
 llvm::json::Value fileMetadata() {
   return llvm::cantFail(llvm::json::parse(R"({
     "device":4294967295,"inode":"18446744073709551615","mode":33279,

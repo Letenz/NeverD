@@ -65,6 +65,7 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::extendedAttribute(
     case PathKind::NotDirectory:
       return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
     case PathKind::File:
+    case PathKind::Device:
     case PathKind::Directory:
       break;
     }

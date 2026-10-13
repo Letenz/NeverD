@@ -13,6 +13,8 @@
 namespace neverd::emulation::linux_model {
 bool isCanonicalFilePath(llvm::StringRef Path);
 llvm::Error validateFileOptions(const LinuxFileOptions &Options);
+llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
+                                  uint64_t &Bytes, uint64_t &Transactions);
 
 class LinuxFiles {
 public:
@@ -28,6 +30,7 @@ public:
                     const std::optional<LinuxKernelOptions> &Kernel,
                     ProcessResult &Result);
   std::optional<uint64_t> outputError(uint32_t FD) const;
+  bool isDevice(uint32_t FD) const;
   std::optional<uint64_t>
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
                         const LinuxKernelOptions &Kernel,
@@ -40,6 +43,7 @@ private:
   enum class Stream { Input, Output, Error };
   enum class PathKind {
     File,
+    Device,
     Directory,
     Missing,
     NotDirectory,
@@ -60,7 +64,12 @@ private:
   struct ProcessDescriptor {
     uint32_t PID, Flags;
   };
-  using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor>;
+  struct OpenDevice {
+    const LinuxDeviceOptions *Options;
+    size_t NextIoctl = 0;
+  };
+  using Descriptor =
+      std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice>;
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;
@@ -91,6 +100,10 @@ private:
                                 uint64_t Size);
   uint64_t seek(OpenFile &File, uint64_t Offset, uint32_t Whence);
   llvm::Expected<std::optional<uint64_t>> close(uint32_t FD);
+  llvm::Expected<std::optional<uint64_t>> deviceIoctl(uint32_t FD,
+                                                      uint32_t Request,
+                                                      uint64_t Argument,
+                                                      ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> readDescriptor(uint32_t FD,
                                                          uint64_t Address,
                                                          uint64_t Size,

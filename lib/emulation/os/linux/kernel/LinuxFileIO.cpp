@@ -30,6 +30,8 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (std::holds_alternative<ProcessDescriptor>(I->second))
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+  if (std::holds_alternative<OpenDevice>(I->second))
+    return unsupported(Result, DeviceOperation);
   auto *File = std::get_if<OpenFile>(&I->second);
   if (!File) {
     if (std::get<Stream>(I->second) == Stream::Input)
@@ -52,6 +54,8 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (std::holds_alternative<ProcessDescriptor>(I->second))
     return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
+  if (std::holds_alternative<OpenDevice>(I->second))
+    return unsupported(Result, DeviceOperation);
   auto *File = std::get_if<OpenFile>(&I->second);
   if (!File) {
     if (std::get<Stream>(I->second) == Stream::Input)

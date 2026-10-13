@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "LinuxDeviceTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -256,6 +257,17 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
       ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
       EXPECT_EQ(R->ExitStatus, 0u);
     }
+  }
+}
+TEST_P(LinuxProcess, ExplicitDeviceTransactionsShareDescriptorOwnership) {
+  Options.LinuxFiles.emplace().Devices["/fixture/control"] = deviceTestInput();
+  for (const char *Optimization : {"O0", "O2"}) {
+    auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
+                                            Optimization + ".elf");
+    auto R = emulateProcess(DevicePath, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 0u);
   }
 }
 TEST_P(LinuxProcess, MemoryFileOpenFlagsRetainObservedPathErrors) {

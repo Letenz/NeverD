@@ -8,28 +8,39 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <set>
+
 namespace neverd::emulation::linux_model {
 llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
   if (Options.DescriptorLimit < 3 ||
       Options.DescriptorLimit > FileDescriptorLimit ||
       Options.Files.size() > FileCountLimit ||
-      Options.SymbolicLinks.size() > FileCountLimit - Options.Files.size())
+      Options.SymbolicLinks.size() > FileCountLimit - Options.Files.size() ||
+      Options.Devices.size() >
+          FileCountLimit - Options.Files.size() - Options.SymbolicLinks.size())
     return failure(FileOptionsLimit);
+  std::set<std::string> Paths;
+  auto AddPaths = [&](const auto &Catalogue) -> llvm::Error {
+    for (const auto &[Path, Value] : Catalogue)
+      if (Path.size() >= FilePathLimit || !isCanonicalFilePath(Path) ||
+          !Paths.insert(Path).second)
+        return failure(FileOptionPath);
+    return llvm::Error::success();
+  };
+  if (auto E = AddPaths(Options.Files))
+    return E;
+  if (auto E = AddPaths(Options.SymbolicLinks))
+    return E;
+  if (auto E = AddPaths(Options.Devices))
+    return E;
+  for (const auto &Path : Paths)
+    for (size_t I = Path.find('/', 1); I != std::string::npos;
+         I = Path.find('/', I + 1))
+      if (Paths.contains(Path.substr(0, I)))
+        return failure(FileOptionPath);
   uint64_t Total = 0;
   for (const auto *Catalogue : {&Options.Files, &Options.SymbolicLinks}) {
     for (const auto &[Path, Bytes] : *Catalogue) {
-      if (Path.size() >= FilePathLimit || !isCanonicalFilePath(Path) ||
-          (Options.Files.contains(Path) &&
-           Options.SymbolicLinks.contains(Path)))
-        return failure(FileOptionPath);
-      // Neither regular files nor links may also be catalogue directories.
-      for (size_t I = Path.find('/', 1); I != std::string::npos;
-           I = Path.find('/', I + 1)) {
-        const auto Parent = Path.substr(0, I);
-        if (Options.Files.contains(Parent) ||
-            Options.SymbolicLinks.contains(Parent))
-          return failure(FileOptionPath);
-      }
       const uint64_t Cost = Path.size() + 1;
       if (Cost > FileByteLimit - Total ||
           Bytes.size() > FileByteLimit - Total - Cost)
@@ -39,6 +50,14 @@ llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
           (Bytes.empty() || llvm::is_contained(Bytes, uint8_t(0))))
         return failure(FileLinkTarget);
     }
+  }
+  uint64_t Transactions = 0;
+  for (const auto &[Path, Device] : Options.Devices) {
+    if (Path.size() + 1 > FileByteLimit - Total)
+      return failure(FileOptionsLimit);
+    Total += Path.size() + 1;
+    if (auto E = validateDeviceOptions(Device, Total, Transactions))
+      return E;
   }
   for (const auto &[Path, Metadata] : Options.Metadata) {
     if (!Options.Files.contains(Path))
