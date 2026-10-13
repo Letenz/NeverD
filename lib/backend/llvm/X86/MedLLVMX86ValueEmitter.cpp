@@ -20,6 +20,7 @@
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
+#include "neverd/backend/llvm/LLVMX87ContextAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -49,6 +50,7 @@ namespace neverd {
 llvm::Value *MedLLVMEmitter::emitRdtscValue(const MedOp &Op, Intrinsic IC,
                                             llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
+
   if ((IC != I::Rdtsc && IC != I::Rdtscp) || Op.Output.Size == 0)
     return nullptr;
 
@@ -538,6 +540,186 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
                                                    llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
+  if (isX87ContextIntrinsic(IC)) {
+    if (!x87ContextMedShapeIsValid(Op, TargetArch))
+      llvm::report_fatal_error("invalid complete x87 context contract");
+    auto *Ptr = llvm::PointerType::get(*Ctx, 0);
+    llvm::Value *Context = nullptr;
+    if (IC == I::X87ContextBegin) {
+      llvm::IRBuilder<> Entry(&CurFunc->getEntryBlock(),
+                              CurFunc->getEntryBlock().begin());
+      auto *Storage = Entry.CreateAlloca(
+          llvm::ArrayType::get(Builder.getInt8Ty(), X87ContextBytes), nullptr,
+          "x87_context");
+      Storage->setAlignment(llvm::Align(16));
+      Context = Storage;
+      Builder.CreateMemSet(Context, Builder.getInt8(0), X87ContextBytes,
+                           llvm::Align(16));
+    } else {
+      Context = getVar(Op.Inputs[1], Builder);
+      if (!Context->getType()->isPointerTy())
+        Context = Builder.CreateIntToPtr(Context, Ptr);
+    }
+    auto emit = [&](X87ContextAsmPhase Phase, uint32_t Selector = 0,
+                    llvm::ArrayRef<llvm::Value *> Args = {}) {
+      llvm::SmallVector<llvm::Value *, 4> Arguments;
+      if (Args.empty())
+        Arguments.push_back(Context);
+      else
+        Arguments.append(Args.begin(), Args.end());
+      llvm::SmallVector<llvm::Type *, 4> Types(Arguments.size(), Ptr);
+      const auto Space = Phase == X87ContextAsmPhase::Step
+                             ? Op.MemoryAddressSpace
+                             : NdMemoryAddressSpace::Default;
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(Builder.getVoidTy(), Types, false),
+          x87ContextAsm(Phase, Selector, Space),
+          Phase == X87ContextAsmPhase::Step ? X87ContextStepConstraints
+          : Phase == X87ContextAsmPhase::Restore ||
+                  Phase == X87ContextAsmPhase::RestoreHost
+              ? X87ContextRestoreConstraints
+              : X87ContextSnapshotConstraints,
+          true);
+      auto *Call = Builder.CreateCall(Asm, Arguments);
+      Call->setMetadata(
+          X87ContextAsmMetadata,
+          llvm::MDNode::get(
+              *Ctx,
+              {llvm::ConstantAsMetadata::get(Builder.getInt32(unsigned(Phase))),
+               llvm::ConstantAsMetadata::get(Builder.getInt32(Selector)),
+               llvm::ConstantAsMetadata::get(
+                   Builder.getInt32(unsigned(Space)))}));
+    };
+    const auto offset = [&](unsigned Bytes) {
+      return Builder.CreateGEP(Builder.getInt8Ty(), Context,
+                               Builder.getInt64(Bytes));
+    };
+    if (IC == I::X87ContextBegin || IC == I::X87ContextRefresh) {
+      emit(X87ContextAsmPhase::Capture);
+      return IC == I::X87ContextBegin
+                 ? Builder.CreatePtrToInt(Context, Builder.getInt64Ty())
+                 : nullptr;
+    }
+    if (IC == I::X87ContextMMXRead) {
+      auto *Status = Builder.CreateLoad(Builder.getInt16Ty(), offset(2));
+      auto *Top =
+          Builder.CreateZExt(Builder.CreateAnd(Builder.CreateLShr(Status, 11),
+                                               Builder.getInt16(7)),
+                             Builder.getInt64Ty());
+      auto *Slot = Builder.CreateAnd(
+          Builder.CreateSub(Builder.getInt64(Op.Inputs[2].ConstVal + 8), Top),
+          Builder.getInt64(7));
+      auto *Address = Builder.CreateGEP(
+          Builder.getInt8Ty(), Context,
+          Builder.CreateAdd(Builder.getInt64(32),
+                            Builder.CreateMul(Slot, Builder.getInt64(16))));
+      return Builder.CreateLoad(Builder.getInt64Ty(), Address);
+    }
+    if (IC == I::X87ContextMMXEnter) {
+      auto *Status = Builder.CreateLoad(Builder.getInt16Ty(), offset(2));
+      auto *Top =
+          Builder.CreateZExt(Builder.CreateAnd(Builder.CreateLShr(Status, 11),
+                                               Builder.getInt16(7)),
+                             Builder.getInt64Ty());
+      llvm::Value *Physical[8];
+      auto *Raw = Builder.getIntNTy(128);
+      for (unsigned I = 0; I < 8; ++I) {
+        auto *Slot =
+            Builder.CreateAnd(Builder.CreateSub(Builder.getInt64(I + 8), Top),
+                              Builder.getInt64(7));
+        auto *Address = Builder.CreateGEP(
+            Builder.getInt8Ty(), Context,
+            Builder.CreateAdd(Builder.getInt64(32),
+                              Builder.CreateMul(Slot, Builder.getInt64(16))));
+        Physical[I] = Builder.CreateLoad(Raw, Address);
+      }
+      for (unsigned I = 0; I < 8; ++I)
+        Builder.CreateStore(Physical[I], offset(32 + I * 16));
+      Builder.CreateStore(Builder.CreateAnd(Status, Builder.getInt16(0xc7ff)),
+                          offset(2));
+      Builder.CreateStore(Builder.getInt8(0xff), offset(4));
+      return nullptr;
+    }
+    if (IC == I::X87ContextMMXWrite) {
+      const unsigned Slot = Op.Inputs[2].ConstVal;
+      Builder.CreateStore(getVar(Op.Inputs[3], Builder),
+                          offset(32 + Slot * 16));
+      Builder.CreateStore(Builder.getInt16(0xffff), offset(40 + Slot * 16));
+      return nullptr;
+    }
+    emit(X87ContextAsmPhase::SaveHost);
+    if (IC == I::X87ContextExport) {
+      // Preserve live SIMD and MXCSR. Only the x87 header and eight values
+      // cross this context's boundary, including retained empty payloads.
+      Builder.CreateMemCpy(offset(512), llvm::Align(16), Context,
+                           llvm::Align(16), 24);
+      Builder.CreateMemCpy(offset(544), llvm::Align(16), offset(32),
+                           llvm::Align(16), 128);
+      emit(X87ContextAsmPhase::RestoreHost);
+      return nullptr;
+    }
+    Builder.CreateMemCpy(offset(24), llvm::Align(8), offset(536),
+                         llvm::Align(8), 8);
+    Builder.CreateMemCpy(offset(160), llvm::Align(16), offset(672),
+                         llvm::Align(16), 352);
+    const uint32_t Selector = Op.Inputs[2].ConstVal;
+    const auto Spec = *x87ContextInstruction(Selector);
+    llvm::IRBuilder<> Entry(&CurFunc->getEntryBlock(),
+                            CurFunc->getEntryBlock().begin());
+    auto *Result =
+        Entry.CreateAlloca(Builder.getInt64Ty(), nullptr, "x87_result");
+    auto *Flags =
+        Entry.CreateAlloca(Builder.getInt64Ty(), nullptr, "x87_flags");
+    Builder.CreateStore(Builder.getInt64(0), Result);
+    Builder.CreateStore(getVar(Op.Inputs[4], Builder), Flags);
+    auto *Address = getVar(Op.Inputs[3], Builder);
+    if (!Address->getType()->isPointerTy())
+      Address = Builder.CreateIntToPtr(Address, Ptr);
+    llvm::Value *PreviousIP = nullptr;
+    llvm::Value *PreviousOpcode = nullptr;
+    if (x87ContextUpdatesInstructionPointer(Selector))
+      PreviousIP = Builder.CreateLoad(Builder.getInt64Ty(), offset(8));
+    if (PreviousIP)
+      PreviousOpcode = Builder.CreateLoad(Builder.getInt16Ty(), offset(6));
+    emit(X87ContextAsmPhase::Step, Selector, {Context, Result, Address, Flags});
+    if (PreviousIP) {
+      auto *CurrentIP = Builder.CreateLoad(Builder.getInt64Ty(), offset(8));
+      auto *Changed = Builder.CreateICmpNE(CurrentIP, PreviousIP);
+      Builder.CreateStore(Builder.CreateSelect(Changed,
+                                               getVar(Op.Inputs[5], Builder),
+                                               CurrentIP),
+                          offset(8));
+      const unsigned Original =
+          (Selector & X87ContextMemory)
+              ? (Selector >> X87ContextOriginalModRMShift) & 0xff
+              : (Selector >> 8) & 0xff;
+      auto *OldOpcode = Builder.CreateLoad(Builder.getInt16Ty(), offset(6));
+      auto *Status = Builder.CreateLoad(Builder.getInt16Ty(), offset(2));
+      // An FIP update does not imply an FOP update. Preserve an unchanged
+      // observed opcode unless this instruction raised an unmasked exception.
+      auto *OpcodeChanged = Builder.CreateOr(
+          Builder.CreateICmpNE(OldOpcode, PreviousOpcode),
+          Builder.CreateICmpNE(
+              Builder.CreateAnd(Status, Builder.getInt16(0x80)),
+              Builder.getInt16(0)));
+      Builder.CreateStore(
+          Builder.CreateSelect(
+              OpcodeChanged, Builder.getInt16(((Selector & 7) << 8) | Original),
+              OldOpcode),
+          offset(6));
+    }
+    if (Spec.WritesAX)
+      return Builder.CreateLoad(Builder.getInt16Ty(), Result);
+    if (Spec.WritesFlags) {
+      auto *Raw = Builder.CreateLoad(Builder.getInt64Ty(), Result);
+      return Builder.CreateOr(
+          Builder.CreateAnd(Raw, Builder.getInt64(0xd5)),
+          Builder.CreateShl(Builder.CreateAnd(Builder.CreateLShr(Raw, 8),
+                                              Builder.getInt64(1)),
+                            11));
+    }
+    return nullptr;
+  }
   if (IC == I::CetRdSsp) {
     const auto Shape = x86ShadowStackReadMedShape(Op, TargetArch);
     if (!x86ShadowStackReadShapeIsValid(Shape))

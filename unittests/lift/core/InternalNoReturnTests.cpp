@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/InternalNoReturn.h"
@@ -166,15 +167,24 @@ TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
           for (const LowOp &Op : Block.Ops) {
             if (Op.Opcode == NdOp::CALL && Op.Addr == Base) {
               SawCall = true;
-              EXPECT_EQ(Op.Output.Size, x86reg::FPURegSize);
-              EXPECT_TRUE(Op.Output.isReg());
-              EXPECT_GE(Op.Output.Offset, x86reg::ST0);
-              EXPECT_LE(Op.Output.Offset, x86reg::ST7);
+              if (Architecture == Arch::X64) {
+                EXPECT_EQ(Op.Output, NdVar::reg(x86reg::RAX, 8));
+              } else {
+                EXPECT_EQ(Op.Output.Size, x86reg::FPURegSize);
+                EXPECT_TRUE(Op.Output.isReg());
+                EXPECT_GE(Op.Output.Offset, x86reg::ST0);
+                EXPECT_LE(Op.Output.Offset, x86reg::ST7);
+              }
             }
             if (Op.Opcode == NdOp::RETURN) {
               SawReturn = true;
-              EXPECT_EQ(Op.NumInputs, 1u);
-              EXPECT_EQ(Op.Inputs[0].Size, x86reg::FPURegSize);
+              if (Architecture == Arch::X64) {
+                ASSERT_EQ(Op.NumInputs, 1u);
+                EXPECT_EQ(Op.Inputs[0], NdVar::reg(x86reg::RAX, 8));
+              } else {
+                EXPECT_EQ(Op.NumInputs, 1u);
+                EXPECT_EQ(Op.Inputs[0].Size, x86reg::FPURegSize);
+              }
             }
           }
         EXPECT_TRUE(SawCall);
@@ -206,7 +216,10 @@ TEST(InternalNoReturn, LocalFloatingStateKeepsTheFullProof) {
         EXPECT_EQ(
             detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base),
             Trap);
-        EXPECT_GT(Counter.LeafQueries, 0u);
+        if (Architecture == Arch::X64)
+          EXPECT_EQ(Counter.LeafQueries, 0u);
+        else
+          EXPECT_GT(Counter.LeafQueries, 0u);
         const LowFunc Full = Builder.build(Image, Dec, Base, "full");
         EXPECT_EQ(lowFunctionNeverReturns(Full, Architecture), Trap);
       }
@@ -245,7 +258,7 @@ TEST(InternalNoReturn, TerminationProjectionPreservesExceptionHandlers) {
     }
 }
 
-TEST(InternalNoReturn, UnprovenFloatingTagsStayUnsupportedInOrdinaryIR) {
+TEST(InternalNoReturn, UnknownTagsRequireScalarProofOrOwnedRuntimeContext) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (BinaryFormat Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
@@ -264,9 +277,20 @@ TEST(InternalNoReturn, UnprovenFloatingTagsStayUnsupportedInOrdinaryIR) {
       const bool Proof =
           detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base);
       const LowFunc Full = Builder.build(Image, Dec, Base, "full");
-      EXPECT_FALSE(Full.hasCompleteInstructionLift());
+      EXPECT_EQ(Full.hasCompleteInstructionLift(), Architecture == Arch::X64);
       EXPECT_EQ(Full.UnsupportedInstructionAddresses,
-                std::vector<va_t>{Base + 7});
+                Architecture == Arch::X64 ? std::vector<va_t>{}
+                                          : std::vector<va_t>{Base + 7});
+      if (Architecture == Arch::X64) {
+        unsigned RootCapture = 0;
+        for (const auto &B : Full.Blocks)
+          for (const auto &Op : B.Ops)
+            RootCapture +=
+                B.StartAddr == Base + 7 && Op.Opcode == NdOp::INTRINSIC &&
+                Op.NumInputs == 1 &&
+                Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+        EXPECT_EQ(RootCapture, 1u);
+      }
       EXPECT_EQ(Proof, lowFunctionNeverReturns(Full, Architecture));
       const InternalNoReturnIndex Index(Image, &Entries, nullptr, nullptr,
                                         nullptr);

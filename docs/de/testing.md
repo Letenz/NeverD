@@ -292,6 +292,10 @@ Integer-Min/Max für i1/8/16/32/64/128 bei O0/O2 aus und prüft zugewiesene und
 eingebettete Ergebnisse, Erzeugerreihenfolge und einmalige Auswertung. Nicht
 unterstützte skalare Breiten und fehlerhafte Operanden müssen explizit scheitern.
 
+## Funktionsgebundener x64-x87-Kontext
+
+`NeverDX86X87ConvertStateTests` vergleicht Originalbytes mit nativem LLVM, HighC und LLVMC bei default/NoOpt und C O0/O2. Geprüft werden Konvertierungen, acht Rechenformen, Flags, MMX/EMMS, volle/leere Stacks, Aufrufe, Wrapper, Einstiegsschleifen und unabhängige Einstiege. Vier FLDENV/FRSTOR-Formate prüfen ausstehende Ausnahmen, Tags und gespeicherte Werte; soweit anwendbar alle vier RC, drei definierten PC und 64 Ausnahmemasken. Low/Med/High-Verträge lehnen falsche Formen, gefälschte Handles und abgeschnittene Selektoren ab. Schmale Rückgaben erhalten Aufrufeffekte und verweigern benötigte unbekannte Bits. Das native Orakel benötigt x64 und Clang; vollständige Befehls-, Plattform-, CPU-, Fehlerprioritäts- oder typisierte Gleitkomma-Import-ABI-Abdeckung wird nicht behauptet.
+
 ## Kontrollfluss und Aufrufe in strukturiertem C prüfen
 
 `HighControlFlowSemantics.*` prüft, dass beim Verschieben von Schleifenausstiegen oder nachfolgenden Blöcken die von anderen Sprüngen verwendeten Labels erhalten bleiben. Direkte Einstiege in Ausstiege am Schleifenanfang und -ende sowie der Ersatz von break werden im erzeugten C mit O0/O2 gegen unabhängige Rückgabewerte geprüft.

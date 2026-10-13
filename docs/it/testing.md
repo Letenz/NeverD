@@ -291,6 +291,10 @@ i1/8/16/32/64/128 a O0/O2, verificando risultati assegnati e incorporati,
 ordine dei produttori e valutazione singola. Le larghezze scalari non supportate
 e gli operandi malformati devono fallire esplicitamente.
 
+## Contesto x87 posseduto dalle funzioni x64
+
+`NeverDX86X87ConvertStateTests` confronta i byte originali con LLVM nativo, HighC e LLVMC in default/NoOpt e C O0/O2. Verifica conversioni, otto forme aritmetiche, flag, MMX/EMMS, stack pieni/vuoti, chiamate, wrapper, cicli e ingressi indipendenti. Quattro formati FLDENV/FRSTOR coprono eccezioni pendenti, tag e valori conservati; ove applicabile usa quattro RC, tre PC definiti e 64 maschere. I contratti Low/Med/High rifiutano forme errate, handle contraffatti e selettori troncati. I ritorni stretti mantengono gli effetti delle chiamate e rifiutano i bit sconosciuti necessari. L’oracolo richiede x64 e Clang; non certifica tutte le istruzioni, piattaforme, CPU, priorità dei guasti o ABI degli import floating point tipizzati.
+
 ## Verifiche di controllo e chiamata nel C strutturato
 
 `HighControlFlowSemantics.*` verifica che spostare uscite o code dei cicli conservi le etichette raggiunte da altri salti. Gli ingressi diretti nelle uscite iniziali e finali e la sostituzione di break eseguono il C generato a O0/O2 confrontandolo con valori di ritorno attesi indipendenti.

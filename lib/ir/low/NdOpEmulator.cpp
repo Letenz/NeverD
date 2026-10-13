@@ -17,7 +17,9 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
 #include <array>
@@ -116,6 +118,9 @@ void NdOpEmulator::reset() {
 }
 
 void NdOpEmulator::setRegister(uint64_t RegOff, uint64_t Value) {
+  if (RegOff == x86reg::FPU_CW || RegOff == x86reg::FPU_SW ||
+      (RegOff >= x86reg::ST0 && RegOff <= x86reg::ST7))
+    X87ContextKnown = false;
   Registers[RegOff] = Value;
   WideRegisters.erase(RegOff);
 }
@@ -129,6 +134,9 @@ std::optional<uint64_t> NdOpEmulator::getRegister(uint64_t RegOff) const {
 
 void NdOpEmulator::setRegisterBytes(uint64_t RegOff,
                                     llvm::ArrayRef<uint8_t> Value) {
+  if (RegOff == x86reg::FPU_CW || RegOff == x86reg::FPU_SW ||
+      (RegOff >= x86reg::ST0 && RegOff <= x86reg::ST7))
+    X87ContextKnown = false;
   std::vector<uint8_t> Bytes(Value.begin(), Value.end());
   WideRegisters[RegOff] = Bytes;
   uint64_t Low = 0;
@@ -438,6 +446,8 @@ void NdOpEmulator::clobberVolatileRegisters() {
   // An unknown callee may change MXCSR status. Do not publish the stale word
   // as an authenticated input to an explicit FP state operation.
   MXCSRKnown = false;
+  X87ContextKnown = false;
+  X87PayloadKnown = 0;
   X86ShadowStackEnabled.reset();
   X86ShadowStackPointer.reset();
   for (auto It = Registers.begin(); It != Registers.end();) {
@@ -461,6 +471,12 @@ void NdOpEmulator::clobberVolatileRegisters() {
 }
 
 bool NdOpEmulator::step(const LowOp &Op) {
+  if (X87ContextKnown && Op.Output.isReg() &&
+      ((Op.Output.Size == 10 && Op.Output.Offset >= x86reg::ST0 &&
+        Op.Output.Offset <= x86reg::ST7) ||
+       Op.Output.Offset == x86reg::FPU_CW ||
+       Op.Output.Offset == x86reg::FPU_SW))
+    return false;
   // Consumer-side validation is mandatory because callers may construct a
   // LowOp directly without first running the instruction-boundary verifier.
   // Never approximate an invalid address-space tag as ordinary memory.
@@ -484,6 +500,11 @@ bool NdOpEmulator::step(const LowOp &Op) {
       if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
         return false;
       const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+      // These instructions import/export the full extended state. The scalar
+      // emulator cannot authenticate unknown SIMD registers or target XSTATE
+      // feature configuration, so every mode stops before retaining stale x87.
+      if (x87ContextSynchronizesExternalState(Id))
+        return false;
       if (!intrinsicSupportsMemoryAddressSpace(Id) ||
           !intrinsicMemoryAddressSpaceShapeIsValid(
               Id, Op.NumInputs, Op.Output.Size,
@@ -587,6 +608,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
           Id == Intrinsic::CetRstorssp || Id == Intrinsic::CetSaveprevssp ||
           Id == Intrinsic::CetSetssbsy || Id == Intrinsic::CetClrssbsy)
         return executeIntrinsic(Op);
+      if (isX87ContextIntrinsic(Id))
+        return executeX87Context(Op);
       if (Id == Intrinsic::X87Fprem || Id == Intrinsic::X87Fprem1 ||
           Id == Intrinsic::X87ReadStatus || Id == Intrinsic::X87Fninit ||
           Id == Intrinsic::X87Fnclex || Id == Intrinsic::X87Wait ||

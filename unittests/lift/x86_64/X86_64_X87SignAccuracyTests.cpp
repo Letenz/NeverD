@@ -9,6 +9,7 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
+#include "neverd/ir/X87Context.h"
 #include "neverd/lift/X86Lifter.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -59,12 +60,16 @@ TEST(X87SignConcrete, EverySignExponentWordMatchesOriginalBytes) {
         for (bool Strict : {false, true}) {
           NdOpEmulator E(Image);
           E.setStrictMode(Strict);
-          E.setRegisterBytes(x86reg::ST0, Input);
-          E.setRegister(x86reg::FPU_CW, Control);
-          E.setRegister(x86reg::FPU_SW, 0x2322);
+          std::array<uint8_t, 512> State{};
+          std::memcpy(State.data(), &Control, 2);
+          State[2] = 0x22;
+          State[3] = 0x23; // TOP=4, with masked sticky exceptions and C1.
+          State[4] = 0x10;
+          std::copy(Input.begin(), Input.end(), State.begin() + 32);
+          ASSERT_TRUE(E.setX87Context(State));
           for (const auto &Op : Ops)
             ASSERT_TRUE(E.step(Op)) << Opcode << ':' << Word << ':' << Strict;
-          EXPECT_EQ(E.getRegisterBytes(x86reg::ST0),
+          EXPECT_EQ(E.getRegisterBytes(x86reg::ST4),
                     std::vector<uint8_t>(Expected.begin(), Expected.end()))
               << Opcode << ':' << Word << ':' << Mantissa << ':' << Strict;
           EXPECT_EQ(*E.getRegister(x86reg::FPU_SW) & ~0x4500U, 0x2022U);
@@ -166,7 +171,9 @@ TEST(X87SignContract, PendingOrUnknownExceptionsStopBeforeValueAndC1) {
       ASSERT_NO_THROW(D.liftToLow(I, Ops));
       ASSERT_FALSE(Ops.empty());
       EXPECT_EQ(Ops[0].Opcode, NdOp::INTRINSIC);
-      EXPECT_EQ(Ops[0].Inputs[0].Offset, unsigned(Intrinsic::X87Wait));
+      EXPECT_EQ(Ops[0].Inputs[0].Offset, unsigned(Intrinsic::X87ContextStep));
+      ASSERT_TRUE(x87ContextInstruction(Ops[0].Inputs[2].Offset));
+      EXPECT_TRUE(x87ContextInstruction(Ops[0].Inputs[2].Offset)->Waiting);
       NdOpEmulator E(Image);
       if (State == 2) {
         E.setCallPreservedRegisters({});
@@ -206,15 +213,22 @@ TEST(X87SignContract, PhysicalStackSlotsAndPaddingRemainDistinct) {
       ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), Entry, I), 2);
       std::vector<LowOp> Ops;
       L.lift(I.Raw, Ops);
-      const unsigned Top = L.getFpuTop();
+      const unsigned Top = (8 - Depth) & 7;
       NdOpEmulator E(Image);
       std::array<std::vector<uint8_t>, 8> Expected;
+      std::array<uint8_t, 512> State{};
+      State[0] = 0x7f;
+      State[1] = 3;
+      State[2] = 0x22;
+      State[3] = uint8_t((Top << 3) | 3);
+      State[4] = 0xff;
       for (unsigned Slot = 0; Slot < 8; ++Slot) {
-        Expected[Slot] = std::vector<uint8_t>(16, uint8_t(0xd0 + Slot));
-        E.setRegisterBytes(x86reg::stReg(Slot), Expected[Slot]);
+        Expected[Slot] = std::vector<uint8_t>(10, uint8_t(0xd0 + Slot));
+        E.setRegister(x86reg::stReg(Slot) + 10, 0xa500 + Slot);
+        std::fill_n(State.begin() + 32 + ((Slot + 8 - Top) & 7) * 16, 16,
+                    uint8_t(0xd0 + Slot));
       }
-      E.setRegister(x86reg::FPU_SW, 0x2322);
-      E.setRegister(x86reg::FPU_CW, 0x37f);
+      ASSERT_TRUE(E.setX87Context(State));
       if (Opcode == 0xe0)
         Expected[Top][9] ^= 0x80;
       else
@@ -224,12 +238,15 @@ TEST(X87SignContract, PhysicalStackSlotsAndPaddingRemainDistinct) {
       for (unsigned Slot = 0; Slot < 8; ++Slot)
         EXPECT_EQ(E.getRegisterBytes(x86reg::stReg(Slot)), Expected[Slot])
             << Depth << ':' << Opcode << ':' << Slot;
-      EXPECT_EQ(L.getFpuTop(), int(Top));
-      EXPECT_EQ(*E.getRegister(x86reg::FPU_SW) & ~0x4500U, 0x2022U);
+      ASSERT_TRUE(E.getX87Context());
+      for (unsigned Slot = 0; Slot < 8; ++Slot)
+        EXPECT_EQ(E.getRegister(x86reg::stReg(Slot) + 10), 0xa500 + Slot);
+      EXPECT_EQ((*E.getRegister(x86reg::FPU_SW) >> 11) & 7, Top);
+      EXPECT_EQ(*E.getRegister(x86reg::FPU_SW) & ~0x7d00U, 0x22U);
     }
 }
 
-TEST(X87SignContract, KnownEmptyOrPoppedStacksAreRejected) {
+TEST(X87SignContract, EmptyOrPoppedStacksRetainOwnedRuntimeExceptionState) {
   for (unsigned Opcode : {0xe0U, 0xe1U})
     for (bool Popped : {false, true}) {
       BinaryImage Image;
@@ -260,18 +277,28 @@ TEST(X87SignContract, KnownEmptyOrPoppedStacksAreRejected) {
       llvm::LLVMContext Context;
       PipelineOptions Options;
       Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.SourceProjection = true;
       Options.OnlyFunctionEntries = {Entry};
       auto Result = Pipeline().run(Image, Context, Options);
-      EXPECT_TRUE(Result.LowFuncs.empty()) << Opcode << ':' << Popped;
+      ASSERT_EQ(Result.LowFuncs.size(), 1U) << Opcode << ':' << Popped;
       ASSERT_EQ(Result.FunctionAudits.size(), 1U);
       const va_t SignAddress = Entry + (Popped ? 6 : 2);
       const auto &Unsupported =
           Result.FunctionAudits[0].UnsupportedInstructions;
-      EXPECT_NE(std::find(Unsupported.begin(), Unsupported.end(), SignAddress),
-                Unsupported.end());
+      EXPECT_TRUE(Unsupported.empty());
       EXPECT_EQ(Result.FunctionAudits[0].Disposition,
-                PipelineFunctionDisposition::RejectedIncomplete);
-      EXPECT_FALSE(Result.FunctionAudits[0].HasLLVMDefinition);
+                PipelineFunctionDisposition::Accepted);
+      EXPECT_TRUE(Result.FunctionAudits[0].HasLLVMDefinition);
+      unsigned Steps = 0;
+      for (const auto &Block : Result.LowFuncs[0].Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Addr == SignAddress && Op.Opcode == NdOp::INTRINSIC &&
+              Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextStep)) {
+            ++Steps;
+            EXPECT_EQ(Op.Inputs[2].Offset, 0xd9u | (Opcode << 8));
+          }
+      EXPECT_EQ(Steps, 1u);
     }
 }
 
@@ -302,7 +329,7 @@ BinaryImage signControlFlowImage(llvm::ArrayRef<uint8_t> Bytes,
   return Image;
 }
 
-TEST(X87SignContract, EveryIncomingBranchAndLoopMustRetainAFullSlot) {
+TEST(X87SignContract, EveryIncomingBranchAndLoopRetainsTheRuntimeContext) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
@@ -351,25 +378,26 @@ TEST(X87SignContract, EveryIncomingBranchAndLoopMustRetainAFullSlot) {
             auto Result = Pipeline().run(Image, Context, Options);
             ASSERT_EQ(Result.FunctionAudits.size(), 1U);
             const auto &Audit = Result.FunctionAudits[0];
-            if (Invalid) {
-              EXPECT_EQ(Audit.Disposition,
-                        PipelineFunctionDisposition::RejectedIncomplete);
-              EXPECT_NE(std::find(Audit.UnsupportedInstructions.begin(),
-                                  Audit.UnsupportedInstructions.end(),
-                                  SignAddress),
-                        Audit.UnsupportedInstructions.end());
-              EXPECT_FALSE(Audit.HasLLVMDefinition);
-            } else {
-              EXPECT_EQ(Audit.Disposition,
-                        PipelineFunctionDisposition::Accepted)
-                  << Result.Error;
-              EXPECT_TRUE(Audit.UnsupportedInstructions.empty());
-              EXPECT_TRUE(Audit.HasLLVMDefinition);
-            }
+            EXPECT_EQ(Audit.Disposition, PipelineFunctionDisposition::Accepted)
+                << Result.Error;
+            EXPECT_TRUE(Audit.UnsupportedInstructions.empty());
+            EXPECT_TRUE(Audit.HasLLVMDefinition);
+            ASSERT_EQ(Result.LowFuncs.size(), 1U);
+            unsigned Steps = 0;
+            for (const auto &Block : Result.LowFuncs[0].Blocks)
+              for (const auto &Op : Block.Ops)
+                if (Op.Addr == SignAddress && Op.Opcode == NdOp::INTRINSIC &&
+                    Op.Inputs[0].Offset ==
+                        unsigned(Intrinsic::X87ContextStep)) {
+                  ++Steps;
+                  EXPECT_EQ(Op.Inputs[2].Offset, 0xd9u | (Opcode << 8));
+                  EXPECT_TRUE(Op.Inputs[1].isTemp());
+                }
+            EXPECT_EQ(Steps, 1u);
           }
 }
 
-TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
+TEST(X87SignContract, AStaticFunctionBoundaryProvesNoSourceValue) {
   // The calling convention empties the register stack at the boundary but
   // defines no slot, so a sign change or FXAM there still reads no value.
   for (BinaryFormat Format :
@@ -378,6 +406,8 @@ TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
       auto Image =
           signControlFlowImage({0xd9, uint8_t(Opcode), 0xdb, 0x3a, 0xc3},
                                Format); // op; fstp [rdx]; ret
+      Image.Arch = Arch::X86;
+      Image.Bits = Bitness::Bits32;
       llvm::LLVMContext Context;
       PipelineOptions Options;
       Options.EmitDumpOutput = false;
@@ -395,6 +425,44 @@ TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
                 Audit.UnsupportedInstructions.end())
           << Opcode;
       EXPECT_FALSE(Audit.HasLLVMDefinition);
+    }
+}
+
+TEST(X87SignContract, X64EntryCapturesItsRuntimeStateBeforeReadingASlot) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Opcode : {0xe0U, 0xe1U, 0xe5U}) {
+      auto Image = signControlFlowImage({0xd9, uint8_t(Opcode), 0xc3}, Format);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.SourceProjection = true;
+      Options.OnlyFunctionEntries = {Entry};
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_EQ(Result.FunctionAudits.size(), 1U);
+      const auto &Audit = Result.FunctionAudits[0];
+      EXPECT_EQ(Audit.Disposition, PipelineFunctionDisposition::Accepted);
+      EXPECT_TRUE(Audit.HasLLVMDefinition);
+      EXPECT_TRUE(Audit.UnsupportedInstructions.empty());
+      ASSERT_EQ(Result.LowFuncs.size(), 1U);
+      unsigned Captures = 0, Steps = 0;
+      for (const auto &Block : Result.LowFuncs[0].Blocks)
+        for (const auto &Op : Block.Ops) {
+          if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+              !Op.Inputs[0].isConst())
+            continue;
+          if (Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin))
+            ++Captures;
+          if (Op.Addr == Entry &&
+              Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextStep)) {
+            EXPECT_EQ(Captures, 1U);
+            EXPECT_EQ(Op.Inputs[2].Offset, 0xd9U | (Opcode << 8));
+            ++Steps;
+          }
+        }
+      EXPECT_EQ(Captures, 1U);
+      EXPECT_EQ(Steps, 1U);
     }
 }
 
