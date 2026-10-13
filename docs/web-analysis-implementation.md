@@ -3760,3 +3760,63 @@ focused run passed **20 of 22** large-source/SDK/native-handoff/availability/
 transport cases in 5.50 s; the missing optional Bun producer image and the
 normal backend-omission case are explicit skips. Capability ownership remains
 valid. These receipts use `/tmp/neverd-js-continuation-push-retry-*`.
+
+### 2026-10-13: actual CEF/WebView2 packs and required producer qualification
+
+The follow-up closes the measured resource-format part of the #716 gap with
+one independent C++ validator and two explicit layouts:
+`chromium-datapack-v5-v1` (standard u16 IDs/counts) and
+`msedge-webview2-datapack-v5-u32-v1` (the observed WebView2 wide table).
+Both input headers mark v5; explicit selection prevents layout guessing.
+Complete index/payload admission, sorted unique IDs, checked aliases, original
+SHA-256 slices and revision-bound pages precede publication. Explicit bounded
+native gzip produces separately identified bytes; failures remain unselectable.
+Source/HTML/anchor consumers share `ArtifactView`, including nested ZIP and
+compressed origins. Fixed-name exclusive local export verifies original and
+already selected decoded files before completion; worker/MCP exclude raw export.
+
+The fixed CEF 120.2.7 NuGet original is 128,957,697 bytes and SHA-256
+`e7f2e0b6860d8cce3ab66d7cb50492b9e1ea601172c850e5c7595d2a45baff17`.
+Its 8,187,343-byte pack contains 2,504 canonical resources and 16 aliases.
+Resource 698's 23,108 gzip bytes at pack offset 24,660 decode to 102,823 bytes
+and 11,830 parsed module nodes. Resource 693 yields a 976-byte HTML document
+with one script candidate. Both decoded hashes independently match native
+gzip reference reads. The original NuGet deflate frame remains separate from
+the resource gzip frame in source origins.
+
+The local Teams 26261.303.5165.1465 app supplies WebView2 154.0.4258.37's
+51,851,676-byte pack, SHA-256
+`b3b4fb23fa809ac33895d6f0a87d03fdb6a2f087d6a15824d39faf48644c7b8d`.
+Its measured table contains 5,814 canonical resources and 633 aliases. Numeric
+resource 24,521 retains its exact 535 bytes at offset 621,511 and parses into
+56 script nodes with original anchors. No client/native runtime is run or
+redistributed; resource tables establish no framework identity or runtime route.
+The [profile](web-datapack-profile.md) pins sizes, hashes and limitations.
+
+All 18 new resource/policy checks pass, including both original real inputs.
+Owning Web Release regression passed **814 of 845** distinct cases with
+**31 explicit optional-input/feature skips**, in 117.00 seconds. Worker/MCP/
+availability passed six of seven with the normal backend-omission-only skip;
+Qt Web review passed in 7.20 seconds. JS omission passed all 16 applicable
+resource cases with the same real originals, plus six of seven transport/
+availability cases. Web omission passed six of seven, with the dependent
+positive worker case explicitly skipped; all four additive C symbols remain
+available as omission stubs. Enabled flags are restored before integration.
+LLVM formatting, the 23-capability ledger, source provenance and all 309
+localized Markdown entries pass. Receipts use `/tmp/neverd-js-gap-*`.
+
+For #718, eleven existing fixed full-image tests now have one required
+qualification inventory. `NEVERD_REQUIRE_WEB_PRODUCER_CORPUS=1` converts absent
+inputs and unavailable native/source consumers into failures; missing test
+registrations and empty CTest selections also fail. The release target and
+explicit/reusable workflow require an immutable corpus URL and SHA-256, then
+retain the owning C++ artifact hashes and source witnesses. A separate fixed
+CEF workflow requires its actual redistributable input.
+
+The complete old producer images were stored under erased `/tmp` directories.
+An absence probe selected all eleven required cases and failed all eleven with
+zero skips; no green full-corpus receipt is claimed. Their original manifests
+are preserved while fixed tools/inputs are prepared for reconstruction in a
+persistent directory. [Required corpus qualification](web-producer-corpus-qualification.md)
+records the release contract and remaining artifact-availability work. The
+measured #714 minified-loader/configuration-file follow-up remains separate.

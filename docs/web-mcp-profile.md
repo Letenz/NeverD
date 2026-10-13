@@ -104,6 +104,12 @@ verification flag or raw-payload switch. Signature verification and package
 inventory binding remain unverified; see the
 [attestation profile](web-package-attestation-profile.md).
 
+The DataPack tools select explicit standard v5/u16 or measured WebView2 v5/u32
+resource tables, page exact original/alias ranges and explicitly decode a selected
+gzip stream. They use the same C++ SDK and retained storage origins; numeric IDs
+imply no filenames, framework identity or runtime routes. The derived selection
+uses ordinary source/HTML consumers. Raw DataPack export is excluded.
+
 MCP does not expose source review options or raw export. Structural source
 views replace private identifiers/literals/comments according to the shared
 view policy. A preview token remains a backend publication token, not proof

@@ -11,6 +11,7 @@
 
 #include "NativeFixture.h"
 #include "NexeFixture.h"
+#include "ProducerCorpus.h"
 #include "ZipFixture.h"
 #include "gtest/gtest.h"
 
@@ -63,6 +64,8 @@ protected:
   std::vector<std::string> Artifacts;
   void SetUp() override {
 #ifdef _WIN32
+    ASSERT_TRUE(
+        neverd::web::test::producerPrerequisite(false, "POSIX capture"));
     GTEST_SKIP() << "POSIX capture profile required";
 #endif
     const auto C = take(neverd_web_capabilities_json());
@@ -70,6 +73,7 @@ protected:
     if (const auto *Ops = C.getAsObject()->getArray("operations"))
       for (const auto &Op : *Ops)
         Available |= Op.getAsString() == "nexe_extract";
+    ASSERT_TRUE(neverd::web::test::producerPrerequisite(Available, "nexe API"));
     if (!Available)
       GTEST_SKIP() << "nexe namespace policy unavailable";
     llvm::SmallString<128> D;
@@ -376,10 +380,14 @@ TEST_F(WebNexeSDK, EqualMemberBytesCannotCrossPackageNamespacesOrInheritEntry) {
 TEST_F(WebNexeSDK,
        OptionalProducerSourcesBootstrapAndManifestUseSharedConsumers) {
 #if !NEVERD_TEST_WEB_JAVASCRIPT
+  ASSERT_TRUE(
+      neverd::web::test::producerPrerequisite(false, "JavaScript parser"));
   GTEST_SKIP() << "Source qualification requires the parser";
 #endif
   const auto *RootPath = std::getenv("NEVERD_NEXE_4RC7_CORPUS");
-  if (!RootPath)
+  ASSERT_TRUE(
+      neverd::web::test::producerCorpus("NEVERD_NEXE_4RC7_CORPUS", RootPath));
+  if (!RootPath || !*RootPath)
     GTEST_SKIP()
         << "Set NEVERD_NEXE_4RC7_CORPUS to the pinned producer outputs";
   for (const auto *Name :

@@ -15,6 +15,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   AsarTests.cpp
   ElectronManifestTests.cpp
   DesktopManifestTests.cpp
+  DataPackTests.cpp
   HTMLTests.cpp
   ImportMapTests.cpp
   BlobStoreTests.cpp
@@ -23,6 +24,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   SEATests.cpp
   NexeTests.cpp
   PkgTests.cpp
+  ProducerCorpusPolicyTests.cpp
   WailsTests.cpp
   TauriTests.cpp
   JsonReaderTests.cpp
@@ -44,6 +46,12 @@ add_neverd_unittest(NeverDWebBrotliWithoutDecoderTests
   ../../lib/web/compression/Brotli.cpp
   LINK_COMPONENTS Web)
 target_include_directories(NeverDWebBrotliWithoutDecoderTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/web")
+add_neverd_unittest(NeverDWebGzipWithoutDecoderTests
+  GzipNoDecoderTests.cpp
+  ../../lib/web/compression/Gzip.cpp
+  LINK_COMPONENTS Web)
+target_include_directories(NeverDWebGzipWithoutDecoderTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/web")
 # Manual, development-only recorder; no production or test dependency on it.
 add_executable(neverd-web-bun-fixture-record EXCLUDE_FROM_ALL fixtures/bun/Record.cpp)
@@ -114,6 +122,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/RecoveryTestProperties.cmake")
 endif()
+
 if(TARGET neverd_shared)
   add_neverd_unittest(NeverDWebNativeTests
     NativeTests.cpp
@@ -145,6 +154,8 @@ if(TARGET neverd_shared)
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     DesktopSDKTests.cpp
+    DataPackSDKTests.cpp
+    DataPackCorpusSDKTests.cpp
     HTMLSDKTests.cpp
     LINK_LIBS neverd_shared LLVMSupport
   )
@@ -161,4 +172,17 @@ if(TARGET neverd_shared)
     target_compile_definitions(NeverDWebSDKTests PRIVATE
       NEVERD_WEB_TEST_CLI="$<TARGET_FILE:neverd>")
   endif()
+endif()
+
+if(TARGET NeverDWebSDKTests AND NEVERD_ENABLE_WEB_JAVASCRIPT)
+  set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/ProducerCorpusTestProperties.cmake")
+  add_custom_target(check-neverd-web-producer-corpus
+    COMMAND "${CMAKE_COMMAND}" -E env NEVERD_REQUIRE_WEB_PRODUCER_CORPUS=1
+      "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
+      --output-on-failure --no-tests=error -L "^NeverDWebProducerCorpus$"
+    DEPENDS NeverDWebArtifactTests NeverDWebSourceMapTests
+            NeverDWebNativeTests NeverDWebSDKTests
+    USES_TERMINAL
+    COMMENT "Qualifying all pinned full producer containers without optional skips")
 endif()

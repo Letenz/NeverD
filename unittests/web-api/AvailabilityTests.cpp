@@ -90,6 +90,8 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("nexe_records"), ASARAvailable);
   EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
   EXPECT_EQ(Has("pkg_records"), ASARAvailable);
+  EXPECT_TRUE(Has("datapack_extract"));
+  EXPECT_TRUE(Has("datapack_records"));
   EXPECT_EQ(Has("wails_extract"), ASARAvailable);
   EXPECT_EQ(Has("wails_records"), ASARAvailable);
   EXPECT_EQ(Has("wails_export"), ASARAvailable);
@@ -299,6 +301,13 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                      0, 0, 1),
         neverd_web_pkg_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                     0),
+        neverd_web_datapack_extract_json(nullptr, nullptr, 0, nullptr, 0,
+                                         nullptr, 0),
+        neverd_web_datapack_records_json(nullptr, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_datapack_decode_json(nullptr, nullptr, 0, nullptr, 0,
+                                        nullptr, 0),
+        neverd_web_datapack_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                        nullptr, 0),
         neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
                                     0, 1),
         neverd_web_wails_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,

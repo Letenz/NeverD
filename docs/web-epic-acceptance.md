@@ -123,13 +123,17 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   model do not cover arbitrary minified aliases or separate configuration-file
   precedence. The recorded Claude corpus has zero named loading links. Broader
   navigation requires measured source patterns and new conservative profiles.
-- **#716 CEF/WebView:** the supplied `neverd-resources.json` adapter is an asset
-  index. `desktop/ResourceManifest.cpp` reads a caller declaration; it does not
-  discover a real client's runtime/package format. A pinned real CEF/WebView
-  input and a measured adapter would extend this phase beyond supplied metadata.
-- **#718 regression qualification:** several full producer-container tests are
-  optional environment-selected cases. A release qualification lane should
-  require the redistributable producer corpus and fail on its absence. Native
+- **#716 CEF/WebView:** the follow-up [DataPack readers](web-datapack-profile.md)
+  now qualify actual CEF 120.2.7 NuGet resources and Teams' WebView2
+  154.0.4258.37 resource pack. Separate v5/u16 and v5/u32 profiles retain all
+  original resources/aliases, explicit gzip selections and nested origins. Fixed
+  JS/HTML consumers and source anchors pass. Framework authentication, native
+  runtime activation and arbitrary custom client layouts remain unverified.
+- **#718 regression qualification:** the [required release lane](web-producer-corpus-qualification.md)
+  now selects all eleven fixed full-image cases, requires immutable corpus
+  URL/hash inputs and fails missing files/consumers instead of skipping. The
+  old `/tmp` full-image corpus is absent and must be restored or independently
+  regenerated before a green full release qualification can be claimed. Native
   Windows input formats are supported on the qualified macOS host; a Windows
   analysis-host reader/export writer remains unavailable, as the matrix states.
 

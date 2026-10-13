@@ -89,6 +89,14 @@ int runWeb() {
        WebArguments[0] == "archive-pkg-source"))
     return runWebPkg();
   if (!WebArguments.empty() &&
+      (WebArguments[0] == "pak" || WebArguments[0] == "pak-source" ||
+       WebArguments[0] == "pak-html" || WebArguments[0] == "pak-export" ||
+       WebArguments[0] == "archive-pak" ||
+       WebArguments[0] == "archive-pak-source" ||
+       WebArguments[0] == "archive-pak-html" ||
+       WebArguments[0] == "archive-pak-export"))
+    return runWebDataPack();
+  if (!WebArguments.empty() &&
       (WebArguments[0] == "wails" || WebArguments[0] == "wails-source" ||
        WebArguments[0] == "wails-html" || WebArguments[0] == "wails-native" ||
        WebArguments[0] == "wails-export" ||

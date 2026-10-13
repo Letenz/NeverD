@@ -72,6 +72,10 @@ add_neverd_component_library(NeverDWeb
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
   desktop/ResourceManifest.cpp
+  desktop/DataPack.cpp
+  SessionDataPack.cpp
+  SessionDataPackExport.cpp
+  compression/Gzip.cpp
   desktop/wails/ELF.cpp
   desktop/wails/PE.cpp
   desktop/wails/Mappings.cpp

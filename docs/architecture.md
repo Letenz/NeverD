@@ -971,6 +971,15 @@ resource descriptor through the same captured namespace/path owner.
 `SessionDesktopExport` reuses the exclusive local writer and exact artifact
 origins; transport adapters neither infer a framework nor export raw resources.
 See the [resource descriptor profile](web-desktop-resource-profile.md).
+`desktop/DataPack` owns the explicit standard v5/u16 and measured WebView2
+v5/u32 table layouts, complete partitions, aliases and original resource hashes.
+`SessionDataPack` owns revision-bound publication and explicit gzip selections;
+`compression/Gzip` owns bounded native stream validation and discarded failures.
+`ArtifactView` retains separate original and decoded origins without granting a
+filesystem namespace or mapping decoded text into compressed storage.
+`SessionDataPackExport` uses the existing exclusive writer and fixed filenames.
+No transport infers a resource name, framework, runtime route or source language.
+See the [resource pack profiles](web-datapack-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker

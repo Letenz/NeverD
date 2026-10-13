@@ -11,6 +11,7 @@
 
 #include "Internal.h"
 #include "JsonReader.h"
+#include "ProducerCorpus.h"
 #include "SEAFixture.h"
 #include "gtest/gtest.h"
 
@@ -292,7 +293,8 @@ TEST_F(WebSEA, OfficialNodeCompilerBlobsMatchIndependentSourceAndAssetInputs) {
 }
 TEST_F(WebSEA, OptionalOfficialNodeSnapshotRemainsOpaque) {
   const auto *Root = std::getenv("NEVERD_NODE_SEA_22150_CORPUS");
-  if (!Root)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_NODE_SEA_22150_CORPUS", Root));
+  if (!Root || !*Root)
     GTEST_SKIP() << "Set NEVERD_NODE_SEA_22150_CORPUS to compiler cases";
   const auto Dir = std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) / "sea";
   const auto Manifest = parseBoundedJSON(fixture(Dir / "manifest.json"));
@@ -315,7 +317,8 @@ TEST_F(WebSEA, OptionalOfficialNodeSnapshotRemainsOpaque) {
 }
 TEST_F(WebSEA, OptionalSixInjectedOfficialNodeImagesPreserveTheCompilerBlob) {
   const auto *Root = std::getenv("NEVERD_NODE_SEA_22150_IMAGES");
-  if (!Root)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_NODE_SEA_22150_IMAGES", Root));
+  if (!Root || !*Root)
     GTEST_SKIP() << "Set NEVERD_NODE_SEA_22150_IMAGES to pinned images";
   const auto Dir = std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) / "sea";
   const auto Manifest = parseBoundedJSON(fixture(Dir / "images.json"));

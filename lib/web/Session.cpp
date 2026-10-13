@@ -12,6 +12,7 @@
 #include "PathPolicy.h"
 #include "RecoveryParser.h"
 #include "SessionInternal.h"
+#include "compression/Gzip.h"
 
 #include "neverd/web/Source.h"
 #include "neverd/web/SourceRecovery.h"
@@ -90,6 +91,32 @@ std::string Session::capabilities() {
       {"runtime_entry_verified", false}});
   Operations.emplace_back("sea_extract");
   Operations.emplace_back("sea_records");
+  Operations.emplace_back("datapack_extract");
+  Operations.emplace_back("datapack_records");
+  if (compression::gzipAvailable())
+    Operations.emplace_back("datapack_decode");
+#ifndef _WIN32
+  Operations.emplace_back("datapack_export");
+#endif
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "datapack_extraction"},
+      {"profiles", llvm::json::Array{std::string(DataPackProfile),
+                                     std::string(WebViewDataPackProfile)}},
+      {"max_input_bytes", std::to_string(MaxDataPackBytes)},
+      {"max_resources", MaxDataPackResources},
+      {"max_cached_extractions", MaxCachedDataPacks},
+      {"max_cached_resources", MaxCachedDataPackResources},
+      {"max_page_records", MaxDataPackPageRecords},
+      {"codec", compression::gzipAvailable()
+                    ? llvm::json::Value("gzip-rfc1952-v1")
+                    : llvm::json::Value(nullptr)},
+      {"max_decoded_bytes", std::to_string(MaxDataPackDecodedBytes)},
+      {"max_cached_decoded_bytes",
+       std::to_string(MaxCachedDataPackDecodedBytes)},
+      {"max_decoded_resources", MaxDecodedDataPackResources},
+      {"framework_identity", "not_inferred"},
+      {"runtime_resource_binding", "not_checked"},
+      {"executes_input", false}});
   if (nexeAvailable()) {
     Operations.emplace_back("nexe_extract");
     Operations.emplace_back("nexe_records");
@@ -934,6 +961,8 @@ std::string Session::commit(std::string_view Token) {
   State->SEAExtractions.clear();
   State->NexeExtractions.clear();
   State->PkgExtractions.clear();
+  State->DataPacks.clear();
+  State->DecodedDataPackResources.clear();
   State->WailsExtractions.clear();
   State->TauriExtractions.clear();
   State->AsarExtractions.clear();
@@ -1013,6 +1042,9 @@ std::string Session::metadata() const {
       {"asar_extraction_count", State->AsarExtractions.size()},
       {"electron_manifest_count", State->ElectronManifests.size()},
       {"desktop_manifest_count", State->DesktopManifests.size()},
+      {"datapack_count", State->DataPacks.size()},
+      {"decoded_datapack_resource_count",
+       State->DecodedDataPackResources.size()},
       {"electron_source_count", State->ElectronSources.size()},
       {"electron_ipc_count", State->ElectronIPCs.size()},
       {"electron_entries_count", State->ElectronEntryAnalyses.size()},

@@ -12,6 +12,7 @@
 #include "../../../unittests/web/AsarEnvelopeFixture.h"
 #include "../../../unittests/web/BunFixture.h"
 #include "../../../unittests/web/BunSourceMapFixture.h"
+#include "../../../unittests/web/DataPackFixture.h"
 #include "../../../unittests/web/NativeFixture.h"
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PackageArchiveFixture.h"
@@ -2500,6 +2501,63 @@ int main(int argc, char **argv) {
       reply = process.call("web_pkg_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "pkg accepted execution option");
+    }
+    {
+      using namespace neverd::web::datapack_test;
+      const auto path = fixture.root / "pak";
+      std::ofstream(path, std::ios::binary)
+          << widePack({{70000, gzipStored("var x='CANARY';")}}, {{90000, 0}});
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "DataPack capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{{"schema_version", 1},
+                      {"revision", revision},
+                      {"artifact_id", items["items"][0]["artifact_id"]},
+                      {"profile", "msedge-webview2-datapack-v5-u32-v1"}};
+      const auto E = web.execute("web_datapack_extract", args);
+      reply = process.call("web_datapack_extract", args, revision, project);
+      check(reply["payload"] == E && E["resource_id_width"] == 32,
+            "DataPack extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", E["extraction_id"]},
+                      {"limit", 1}};
+      const auto R = web.execute("web_datapack_records", page);
+      reply = process.call("web_datapack_records", page, revision, project);
+      check(reply["payload"] == R && R["next_offset"] == 1 &&
+                R["items"][0]["resource_id"] == 70000 &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "DataPack pages differ or reveal contents");
+      if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                    "datapack_decode") != caps["operations"].end()) {
+        const Json decode{{"schema_version", 1},
+                          {"revision", revision},
+                          {"resource_id", R["items"][0]["selection_id"]},
+                          {"codec", "gzip-rfc1952-v1"}};
+        const auto D = web.execute("web_datapack_decode", decode);
+        reply = process.call("web_datapack_decode", decode, revision, project);
+        check(reply["payload"] == D &&
+                  reply.dump().find("CANARY") == std::string::npos,
+              "DataPack decoded metadata differs");
+      }
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_datapack_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "DataPack accepted execution option");
     }
     if (std::find(caps["operations"].begin(), caps["operations"].end(),
                   "wails_extract") != caps["operations"].end()) {

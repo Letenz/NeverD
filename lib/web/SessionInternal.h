@@ -18,6 +18,7 @@
 #include "neverd/web/Asar.h"
 #include "neverd/web/Bun.h"
 #include "neverd/web/ConfigurationOrder.h"
+#include "neverd/web/DataPack.h"
 #include "neverd/web/DesktopBridge.h"
 #include "neverd/web/DesktopManifest.h"
 #include "neverd/web/Electron.h"
@@ -93,6 +94,8 @@ struct Session::Impl {
   std::map<std::string, SEAExtraction> SEAExtractions;
   std::map<std::string, NexeExtraction> NexeExtractions;
   std::map<std::string, PkgExtraction> PkgExtractions;
+  std::map<std::string, DataPackExtraction> DataPacks;
+  std::map<std::string, DataPackDecodedResource> DecodedDataPackResources;
   std::map<std::string, WailsExtraction> WailsExtractions;
   std::map<std::string, TauriExtraction> TauriExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
@@ -162,14 +165,14 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && NexeExtractions.empty() &&
-                   PkgExtractions.empty() && WailsExtractions.empty() &&
-                   TauriExtractions.empty() && AsarExtractions.empty() &&
-                   ElectronManifests.empty() && DesktopManifests.empty() &&
-                   HTMLDocuments.empty() && PackageAnalyses.empty() &&
-                   PackageArchives.empty() && PackageIntegrity.empty() &&
-                   PackageAdvisories.empty() && PackageAttestations.empty() &&
-                   HARCaptures.empty() && InterfaceSources.empty() &&
-                   StreamCaptures.empty()
+                   PkgExtractions.empty() && DataPacks.empty() &&
+                   WailsExtractions.empty() && TauriExtractions.empty() &&
+                   AsarExtractions.empty() && ElectronManifests.empty() &&
+                   DesktopManifests.empty() && HTMLDocuments.empty() &&
+                   PackageAnalyses.empty() && PackageArchives.empty() &&
+                   PackageIntegrity.empty() && PackageAdvisories.empty() &&
+                   PackageAttestations.empty() && HARCaptures.empty() &&
+                   InterfaceSources.empty() && StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }

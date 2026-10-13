@@ -747,6 +747,35 @@ The same target compares static scalar, pointer, array and packed-record alignme
 
 ## Offline web analysis
 
+`WebDataPack.*` checks both resource-ID widths, complete partitions, aliases,
+sorted uniqueness, malformed/truncated indexes, identity and count overflow.
+`WebDataPackGzip.*` checks one validated stream, corrupt CRC/size, truncation,
+concatenation/trailing bytes and output refusal; the separate no-decoder target
+qualifies honest native omission. `WebDataPackSDK.*` checks private canaries,
+one-row pages, source anchors, stored/deflate ZIP composition, explicit gzip,
+failed-publication atomicity, cache limits, revocation and exclusive export.
+CLI cases use an unusable external-tool PATH; worker/MCP compare the shared API
+and reject raw-export/execution options. See [resource profiles](web-datapack-profile.md).
+
+Select the fixed real inputs without running the applications:
+
+```sh
+NEVERD_CEF_REDIST_12027_X64=/path/cef.redist.x64.120.2.7.nupkg \
+NEVERD_TEAMS_WV2_154_PAK=/path/to/the/pinned/resources.pak \
+ctest --test-dir build-release/unittests/web --output-on-failure \
+  -R '^WebDataPackReal\.'
+```
+
+`NEVERD_REQUIRE_CEF_RESOURCE_CORPUS=1` forbids an absent CEF input. The fixed
+download and original SHA are in `web-resource-qualification.yml`; its actual
+ZIP/resource/JS/HTML case requires native ZIP decoding, ICU 77.1 and the embedded
+parser. Local Teams bytes are not redistributed. Shared changes require the
+owning Web suite, worker/MCP/availability and parser/backend omission, then
+enabled restoration. [Full producer qualification](web-producer-corpus-qualification.md)
+separately requires all eleven fixed-image cases with
+`NEVERD_REQUIRE_WEB_PRODUCER_CORPUS=1`; missing files or consumers fail instead
+of skipping. Ordinary optional-corpus behavior remains explicit.
+
 `WebLargeSource.*` checks explicit profile identities, unchanged interactive
 refusal, complete lexical scope beyond 100,000 nodes, late source anchors,
 invalid encoding/syntax, dense over-budget input and rejection of recovery

@@ -202,6 +202,45 @@ Session::Impl::artifactView(std::string_view SelectionID) const {
                 {"container_origin", std::move(Parent->Origin)}},
             false};
       }
+  for (const auto &[ID, E] : DataPacks)
+    for (const auto &R : E.Resources)
+      if (R.ID == SelectionID) {
+        auto Parent = artifactView(E.ArtifactID);
+        if (!Parent)
+          throw Error("datapack_parent_bytes_unavailable");
+        auto View = storedSelection(std::move(*Parent), E, R,
+                                    "datapack_stored_resource");
+        View.Origin["resource_id"] = R.ResourceID;
+        View.Origin["canonical_index"] = R.CanonicalIndex;
+        View.Origin["alias"] = R.Alias;
+        View.Origin["profile"] = E.Profile;
+        return View;
+      }
+  const auto Decoded = DecodedDataPackResources.find(std::string(SelectionID));
+  if (Decoded != DecodedDataPackResources.end()) {
+    const auto &D = Decoded->second;
+    auto Stored = artifactView(D.ResourceID);
+    if (!Stored)
+      throw Error("datapack_stored_bytes_unavailable");
+    return ArtifactView{
+        D.Content, D.BlobHash, 0,
+        llvm::json::Object{{"kind", "datapack_decoded_resource"},
+                           {"extraction_id", D.ExtractionID},
+                           {"selection_id", D.ID},
+                           {"resource_selection_id", D.ResourceID},
+                           {"storage_artifact_id",
+                            Stored->Origin.getString("storage_artifact_id")
+                                .value_or("")
+                                .str()},
+                           {"codec", "gzip-rfc1952-v1"},
+                           {"stored_sha256", Stored->BlobHash},
+                           {"byte_offset", nullptr},
+                           {"expanded_byte_offset", "0"},
+                           {"byte_offset_basis", "expanded_stream"},
+                           {"byte_length", std::to_string(D.Content.size())},
+                           {"stored_origin", std::move(Stored->Origin)}},
+        false};
+  }
   for (const auto &[ID, E] : WailsExtractions)
     for (const auto &M : E.Members)
       if (M.ID == SelectionID && !M.Directory) {

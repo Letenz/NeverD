@@ -1,0 +1,80 @@
+name: Web resource qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - 'include/neverd/web/DataPack.h'
+      - 'lib/web/desktop/DataPack.cpp'
+      - 'lib/web/SessionDataPack*.cpp'
+      - 'lib/web/compression/Gzip.*'
+      - 'unittests/web/DataPack*'
+      - '.github/workflows/web-resource-qualification.yml'
+  pull_request:
+    paths:
+      - 'include/neverd/web/DataPack.h'
+      - 'lib/web/desktop/DataPack.cpp'
+      - 'lib/web/SessionDataPack*.cpp'
+      - 'lib/web/compression/Gzip.*'
+      - 'unittests/web/DataPack*'
+      - '.github/workflows/web-resource-qualification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cef:
+    name: Fixed CEF 120.2.7 resources (macOS arm64 reader)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      NEVERD_REQUIRE_CEF_RESOURCE_CORPUS: '1'
+      NEVERD_CEF_REDIST_12027_X64: ${{ github.workspace }}/web-corpus/cef.redist.x64.120.2.7.nupkg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install build and namespace dependencies
+        run: brew install cmake ninja icu4c@77
+      - name: Obtain and verify the fixed redistributable input
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p web-corpus
+          curl --fail --location --retry 2 --max-time 600 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$NEVERD_CEF_REDIST_12027_X64" \
+            https://api.nuget.org/v3-flatcontainer/cef.redist.x64/120.2.7/cef.redist.x64.120.2.7.nupkg
+          printf '%s  %s\n' \
+            e7f2e0b6860d8cce3ab66d7cb50492b9e1ea601172c850e5c7595d2a45baff17 \
+            "$NEVERD_CEF_REDIST_12027_X64" | shasum -a 256 -c -
+      - name: Build the C++ reader and public consumers
+        shell: bash
+        run: |
+          cmake -S . -B build-web-qualification -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DNEVERD_LLVM_PREBUILT=ON \
+            -DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r4 \
+            -DNEVERD_ENABLE_WEB_ANALYSIS=ON \
+            -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON \
+            -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DICU_ROOT="$(brew --prefix icu4c@77)"
+          cmake --build build-web-qualification \
+            --target NeverDWebArtifactTests NeverDWebSDKTests \
+            NeverDWebGzipWithoutDecoderTests --parallel 3
+      - name: Qualify the real distribution with no optional CEF omission
+        run: >-
+          ctest --test-dir build-web-qualification/unittests/web
+          --output-on-failure --no-tests=error --parallel 3
+          --output-junit "$GITHUB_WORKSPACE/build-web-qualification/unittests/web/cef-resource-results.xml"
+          -R '^Web(DataPack|DataPackGzip|DataPackSDK|GzipWithoutDecoder)\.|^WebDataPackReal\.PinnedCEF12027'
+      - name: Retain qualification diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cef-12027-resource-qualification
+          path: |
+            build-web-qualification/unittests/web/cef-resource-results.xml
+            build-web-qualification/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
