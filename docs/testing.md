@@ -681,6 +681,14 @@ checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
 `HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
 frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 
+`LLVMCValues.RawMemoryUpdates*` compares emitted C with independently compiled
+LLVM at O0/O2 with undefined-behavior traps. It covers constant add/subtract and
+bitwise updates at 8/16/32/64 bits, captured wrapped results, unaligned byte
+storage and surrounding sentinels. Intervening calls, reads, aliasing stores,
+earlier result users, old-value users, changed addresses/widths and volatile or
+atomic accesses retain their memory ordering and separate stores. The byte-copy
+mode and the unchanged input module are checked too.
+
 `LLVMCValues.SelectedFunctionKeeps*SynthesizedTableStorage` compiles and executes
 selected lookup-table output at O0/O2 for x86, x64, ARM and AArch64 source
 profiles across ELF, COFF and Mach-O. Execution uses host scalar C for 64-bit

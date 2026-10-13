@@ -3273,6 +3273,9 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
 }
 
 std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
+  if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst))
+    if (RawMemoryExpressionLoads.count(Load))
+      return rawMemoryLoadText(*Load);
   if (Inst.getOpcode() == llvm::Instruction::FNeg)
     return "(-" + valueStr(Inst.getOperand(0)) + ")";
   if (const auto *Extract = llvm::dyn_cast<llvm::ExtractElementInst>(&Inst))

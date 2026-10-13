@@ -129,6 +129,9 @@ public:
   std::string fcmpInlineText(const llvm::FCmpInst &Compare);
   std::string gepExpr(const llvm::GEPOperator &GEP);
   bool writeRawMemoryCopy(llvm::Instruction &Inst, int Indent);
+  void planRawMemoryUpdates(llvm::Function &Fn);
+  bool writeRawMemoryUpdate(const llvm::StoreInst &Store, int Indent);
+  std::string rawMemoryLoadText(const llvm::LoadInst &Load);
   /// A call whose result is printed at exactly one later instruction is
   /// inlined there. Ctor returns, noreturn, and values with two printed
   /// uses stay assigned. A call that mentions a slot is not moved past a
@@ -736,6 +739,12 @@ public:
   /// Fixed expression boundaries, chosen before declarations or assignments
   /// can be omitted and retained by later display-only inlining passes.
   std::set<const llvm::Value *> MaterializedExpressions;
+  /// A captured scalar update can move to its own store only after every
+  /// remaining SSA use and intervening effect has been checked.
+  std::map<const llvm::StoreInst *, const llvm::BinaryOperator *>
+      RawMemoryUpdates;
+  std::set<const llvm::Instruction *> RawMemoryUpdateInputs;
+  std::set<const llvm::LoadInst *> RawMemoryExpressionLoads;
   /// Calls currently being printed as expressions, so a cyclic reprint
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;

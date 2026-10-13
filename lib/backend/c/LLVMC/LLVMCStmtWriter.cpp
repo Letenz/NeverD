@@ -1425,6 +1425,11 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
+  if (RawMemoryUpdateInputs.count(&Inst))
+    return;
+  if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst))
+    if (writeRawMemoryUpdate(*Store, Indent))
+      return;
   // Aggregate SSA values and storage arrays have distinct C declarations but
   // identical byte layouts. A byte copy also preserves unaligned accesses.
   auto AggregateAddress = [&](const llvm::Value *Ptr) {

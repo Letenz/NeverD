@@ -1290,6 +1290,18 @@ promotion when an incomplete native exception contract excludes optimization.
 The C emitter clones verified LLVM IR and removes dead computations before
 rendering, including in `--no-opt` mode. This source normalization preserves
 observable calls and ordered memory accesses without modifying the cached IR.
+`LLVMCMemoryUpdates` owns compound assignment spelling for raw scalar memory.
+A same-block, single-use read and constant integer update can join their exact
+store only across effect-free instructions. Every surviving result use must be
+dominated by that store; the expression captures the wrapped result when needed.
+If an observer prevents joining the store, a single read can instead belong to
+its existing arithmetic assignment across the same effect-free boundary. That
+assignment stays materialized so later inlining cannot defer the read.
+The existing unsigned 8/16/32/64-bit memory carriers retain alignment and alias
+policy. Ordered accesses are excluded; different pointers and width changes
+cannot authorize a compound store. Named objects retain their existing
+projections, and exhausted proof budgets leave the remaining statements alone.
+This does not supply new alias facts or change the caller's LLVM module.
 `LLVMCBitTests` projects a single tested integer bit through casts, fixed shifts,
 selects and bitwise assembly to its existing SSA predicate. Full-word users
 retain the original value; loads, calls, PHIs, freeze and unsupported arithmetic

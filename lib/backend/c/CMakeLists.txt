@@ -23,6 +23,7 @@ add_neverd_component_library(NeverDBackendC
   LLVMC/LLVMCEmitter.cpp
   LLVMC/LLVMCExprWriter.cpp
   LLVMC/LLVMCFuncWriter.cpp
+  LLVMC/LLVMCMemoryUpdates.cpp
   LLVMC/LLVMCScalarRegions.cpp
   LLVMC/LLVMCScalarExpressions.cpp
   LLVMC/LLVMCStmtWriter.cpp

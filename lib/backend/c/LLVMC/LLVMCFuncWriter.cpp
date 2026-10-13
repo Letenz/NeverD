@@ -2312,6 +2312,9 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UseScalarExpressionTypes = false;
+  RawMemoryUpdates.clear();
+  RawMemoryUpdateInputs.clear();
+  RawMemoryExpressionLoads.clear();
   ScopedScalarNames.clear();
   Dominators.recalculate(Fn);
   NextVar = 0;
@@ -2523,6 +2526,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   collectOmittedInlinedImmediates(Fn);
   collectTypedHomes(Fn);
   markSinglePrintedUseCalls(Fn);
+  planRawMemoryUpdates(Fn);
   scanReferencedBlocks(Fn);
   // The scan predicts references and layout; it has not emitted any region.
   // Re-evaluate ownership during the statement walk, where folded conditions

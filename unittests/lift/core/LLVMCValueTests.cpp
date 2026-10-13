@@ -153,6 +153,222 @@ int main(void) {
     compileAndRun(Source + Driver, Optimization, {}, true);
 }
 
+TEST(LLVMCValues, RawMemoryUpdatesPreserveWrappedResultsAndUnalignedBytes) {
+  using namespace llvm;
+  LLVMContext Context;
+  Module Module("scalar-memory-updates", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(Triple(sys::getDefaultTargetTriple()));
+  std::string Declarations, Checks;
+  std::vector<std::pair<Function *, std::string>> Functions;
+  for (unsigned Width : {8, 16, 32, 64}) {
+    auto *Type = IntegerType::get(Context, Width);
+    for (auto Op : {Instruction::Add, Instruction::Sub, Instruction::And,
+                    Instruction::Or, Instruction::Xor}) {
+      for (unsigned Kind = 0; Kind != 3; ++Kind) {
+        const APInt Bits = Kind == 0   ? APInt(Width, 1)
+                           : Kind == 1 ? APInt::getAllOnes(Width)
+                                       : APInt::getSignMask(Width);
+        for (bool Capture : {false, true}) {
+          const std::string Name =
+              "update_" + std::to_string(Width) + "_" + std::to_string(Op) +
+              "_" + std::to_string(Kind) + "_" + std::to_string(Capture);
+          auto *Function = Function::Create(
+              FunctionType::get(Type::getInt64Ty(Context),
+                                {PointerType::getUnqual(Context)}, false),
+              GlobalValue::ExternalLinkage, Name, Module);
+          Functions.emplace_back(Function, Name);
+          IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", Function));
+          auto *Old =
+              B.CreateAlignedLoad(Type, Function->getArg(0), Align(1), "old");
+          auto *Step = ConstantInt::get(Context, Bits);
+          // Commutative forms exercise both operand orders.
+          Value *Next = Op != Instruction::Sub && Kind == 1
+                            ? B.CreateBinOp(Op, Step, Old, "updated")
+                            : B.CreateBinOp(Op, Old, Step, "updated");
+          B.CreateAlignedStore(Next, Function->getArg(0), Align(1));
+          B.CreateRet(Capture ? B.CreateZExtOrTrunc(Next, B.getInt64Ty())
+                              : B.getInt64(85));
+          Declarations += "uint64_t ref_" + Name + "(void *);\n";
+          Checks += "memcpy(a + offset, &cases[n], sizeof(cases[n]));\n"
+                    "memcpy(b, a, sizeof(a));\nif (" +
+                    Name + "(a + offset) != ref_" + Name +
+                    "(b + offset) || memcmp(a, b, sizeof(a))) return 1;\n";
+        }
+      }
+    }
+  }
+  ASSERT_FALSE(verifyModule(Module, &errs()));
+  std::string Original, Reference;
+  raw_string_ostream OriginalOS(Original), ReferenceOS(Reference);
+  Module.print(OriginalOS, nullptr);
+  for (auto &[Fn, Name] : Functions)
+    Fn->setName("ref_" + Name);
+  Module.print(ReferenceOS, nullptr);
+  for (auto &[Fn, Name] : Functions)
+    Fn->setName(Name);
+  const std::string Driver = "#include <string.h>\n" + Declarations + R"(
+int main(void) {
+  const uint64_t cases[] = {0, 1, 127, 128, 255, 65535, UINT32_MAX,
+      UINT64_MAX, UINT64_C(1) << 63, UINT64_C(0x123456789abcdef0)};
+  for (unsigned n = 0; n < sizeof(cases) / sizeof(cases[0]); ++n)
+    for (unsigned offset = 1; offset < 4; ++offset) {
+      uint8_t a[24], b[24];
+      for (unsigned j = 0; j < sizeof(a); ++j) a[j] = (uint8_t)(j * 17);
+      memcpy(a + offset, &cases[n], sizeof(cases[n]));
+      memcpy(b, a, sizeof(a));
+)" + Checks + R"(
+    }
+  return 0;
+}
+)";
+  for (bool PointerSpelling : {false, true}) {
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = PointerSpelling;
+    Options.ScalarPointers =
+        neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+    std::string Source;
+    raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    for (StringRef Op : {"+=", "-=", "&=", "|=", "^="})
+      EXPECT_EQ(Source.find(Op.str()) != std::string::npos, PointerSpelling);
+    std::string Unchanged;
+    raw_string_ostream UnchangedOS(Unchanged);
+    Module.print(UnchangedOS, nullptr);
+    EXPECT_EQ(Unchanged, Original);
+    for (StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source + Driver, Level, Reference, true);
+  }
+}
+
+TEST(LLVMCValues, RawMemoryUpdatesRetainObserversAliasesAndOrderedAccesses) {
+  using namespace llvm;
+  LLVMContext Context;
+  SMDiagnostic Diagnostic;
+  auto Module = parseAssemblyString(R"(
+declare void @mutate(ptr)
+define i64 @alias_store(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  store i64 83, ptr %q, align 1
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @call_observer(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = sub i64 %old, 1
+  call void @mutate(ptr %q)
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @call_before_update(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  call void @mutate(ptr %q)
+  %new = add i64 %old, 1
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @store_before_update(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  store i64 47, ptr %q, align 1
+  %new = add i64 %old, 1
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @read_observer(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  %read = load volatile i64, ptr %q, align 8
+  store i64 %new, ptr %p, align 1
+  %result = xor i64 %read, %new
+  ret i64 %result
+}
+define i64 @earlier_result(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  %early = xor i64 %new, 5
+  store i64 %new, ptr %p, align 1
+  ret i64 %early
+}
+define i64 @old_snapshot(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  store i64 %new, ptr %p, align 1
+  %result = xor i64 %old, %new
+  ret i64 %result
+}
+define i64 @different_address(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  store i64 %new, ptr %q, align 1
+  ret i64 %new
+}
+define i64 @volatile_update(ptr %p, ptr %q) {
+  %old = load volatile i64, ptr %p, align 8
+  %new = add i64 %old, 1
+  store volatile i64 %new, ptr %p, align 8
+  ret i64 %new
+}
+define i64 @atomic_update(ptr %p, ptr %q) {
+  %old = load atomic i64, ptr %p seq_cst, align 8
+  %new = add i64 %old, 1
+  store atomic i64 %new, ptr %p seq_cst, align 8
+  ret i64 %new
+}
+define i64 @changed_width(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  %narrow = trunc i64 %new to i32
+  store i32 %narrow, ptr %p, align 1
+  ret i64 %new
+}
+)",
+                                    Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  Module->setDataLayout("e-p:64:64");
+  Module->setTargetTriple(Triple(sys::getDefaultTargetTriple()));
+  std::string Declarations, Checks;
+  std::vector<std::pair<Function *, std::string>> Functions;
+  for (auto &Fn : *Module) {
+    if (Fn.isDeclaration())
+      continue;
+    const auto Name = Fn.getName().str();
+    Functions.emplace_back(&Fn, Name);
+    Declarations += "uint64_t ref_" + Name + "(void *, void *);\n";
+    Checks += "if (" + Name + "(a, a + other) != ref_" + Name +
+              "(b, b + other) || memcmp(a, b, sizeof(a))) return 1;\n";
+  }
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.ScalarPointers =
+      neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  std::string Source;
+  raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  EXPECT_EQ(Source.find(" += "), std::string::npos);
+  EXPECT_EQ(Source.find(" -= "), std::string::npos);
+  for (auto &[Fn, Name] : Functions)
+    Fn->setName("ref_" + Name);
+  std::string Reference;
+  raw_string_ostream ReferenceOS(Reference);
+  Module->print(ReferenceOS, nullptr);
+  const std::string Driver = "#include <string.h>\n" + Declarations + R"(
+void mutate(void *p) { uint64_t x = 97; memcpy(p, &x, sizeof(x)); }
+int main(void) {
+  for (unsigned n = 0; n < 64; ++n)
+    for (unsigned other = 0; other < 2; ++other) {
+      uint64_t a[3] = {UINT64_MAX - n, (uint64_t)n * 17, 0x98765432};
+      uint64_t b[3]; memcpy(b, a, sizeof(a));
+)" + Checks + R"(
+    }
+  return 0;
+}
+)";
+  for (StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Driver, Level, Reference, true);
+}
+
 TEST(LLVMCValues, ArrayResultsKeepBothWordsAcrossExternalCalls) {
   llvm::LLVMContext Context;
   llvm::Module Module("array-result", Context);
