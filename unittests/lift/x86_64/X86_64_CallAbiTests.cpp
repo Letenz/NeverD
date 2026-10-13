@@ -111,6 +111,26 @@ static int sum8(const int *p) {
                             {0x71, 0, 1, -3, 77});
 }
 
+// `test rdi, rdi; je; bsr rcx, rdi`: the bsr runs only with a nonzero
+// source, so it always writes RCX, and the old RCX is no argument.
+TEST_F(X86_64_CallAbi, AGuardedBsrReadsNoArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static int top(unsigned long long x) __attribute__((noinline));
+int usetop(int a) {
+  unsigned long long v = (unsigned long long)a * 0x9E3779B97F4A7C15ull;
+  return top(v) + top(v >> 7) * 3;
+}
+static int top(unsigned long long x) {
+  if (!x)
+    return -1;
+  unsigned long long r;
+  __asm__ volatile("bsr %1, %0" : "=c"(r) : "r"(x));
+  return (int)r;
+}
+)C",
+                            "usetop", {"usetop", "top"}, {0x71, 0, 1, -3, 77});
+}
+
 // Six register arguments and four pushed afresh on every iteration of a
 // loop, whose stack pointer is a PHI at the loop head.
 TEST_F(X86_64_CallAbi, StackArgumentsPushedInALoopReachTheCallee) {

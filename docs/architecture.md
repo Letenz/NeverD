@@ -58,8 +58,10 @@ path, beside the image, then the path's directories and stores). Discovery and
 `neverd_pdb_reference_json` share those candidates, so a PDB the GUI downloads
 into a store is the one the next load, and the command line's, finds; the C API
 names the first copy whose Info/DBI identity matches without loading the PE. No
-engine code contacts a server: the GUI owns consent and HTTPS transport into the
-store path the engine names, then loads the file through the strict PDB loader.
+engine code contacts a server: each frontend owns its transport into the store
+path the engine names, the GUI Qt's after the user consents and the command
+line the system's libcurl or WinHTTP for `--download-symbols`, and then loads
+the file through the strict PDB loader.
 `neverd_session_set_pdb_search(0)` opens a PE without the PDB the user declined,
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
@@ -132,11 +134,13 @@ prepared inputs used by a later HighC enhancement. The additive
 page API keeps default behavior and bytecode support. Source options never
 change the lifting, patching or general module optimizer defaults.
 
-LLVMC defaults to a scalar cleanup sequence after ordinary frame and SSA
-promotion. O0–O3 and a bounded custom pass selection are explicit alternatives.
-Symbolic fixed-point rewriting and LLVM dispatcher recovery require the
-independent symbolic option. Native machine CFG, jump-table, ABI and exception
-proofs remain authoritative and are unaffected. Worker source edits validate
+LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
+cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
+LLVM dispatcher recovery defaults on independently of the compiler level and
+optional symbolic fixed-point expression rewriting. Recovery retains its
+targeted constant proofs; `llvm_control_flow: false` explicitly disables that
+pass. Native machine CFG, jump-table, ABI and exception proofs remain
+authoritative and are unaffected. Worker source edits validate
 against the same source options used to display their targets.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
@@ -2769,6 +2773,12 @@ shorthand is applied.
 `lib/pipeline/Pipeline.cpp` is the source of truth for route selection. Keep
 representation-specific logic in its owning IR or backend library; the pipeline
 should orchestrate those components rather than absorb their algorithms.
+
+## LLVM C object storage
+
+`LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
+
+`LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
 
 ## Cross-architecture translation contract
 

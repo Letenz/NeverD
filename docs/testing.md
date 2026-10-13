@@ -52,8 +52,12 @@ and strict option validation. `SourceLLVMProfiles*` checks separate source and
 module cache identities. `HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
 enable it through the production converter. `SymSimplifyGuard.SourceProfiles*`
-checks zero symbolic work when disabled and evaluates all LLVM profiles against
-independent integer results, including wraparound. GUI source-transformation
+checks that the optional expression pass stays off when disabled and evaluates
+all LLVM profiles against independent integer results, including wraparound.
+`ControlFlowRecovery.SourceRecovery*` and `DefaultSource*` check independent
+recovery, default O2 recovery and the conservative patch boundary. Dispatcher
+regressions preserve effects, externally used values, subsequent state reads
+and atomic accesses. GUI source-transformation
 tests cover menu/keyboard activation, cancellation with retained source,
 concurrent listing/function reads and reset on navigation. Worker source-cache
 tests count engine calls separately for each option set. `HighExprSimplify.*`
@@ -730,6 +734,12 @@ ctest --test-dir build-release \
   -L '^NeverD(CMemoryCopy|LLVMCValue|LLVMCFrameMemory|HighCStoreForwarding)Tests$' \
   --output-on-failure
 ```
+
+## LLVM C object storage
+
+`NeverDLLVMCAllocaTests` compiles original LLVM and generated C at O0/O2 with undefined-behavior traps. Native observations check complete dynamic extents, padded element stride, 16/32/64-byte alignment, independent simultaneous/loop allocations and one evaluation of a count-producing call. Both ordinary and preserved-type C routes retain storage. Unsupported/overflowing allocation shapes and explicit stack save/restore refuse before dead-code removal. These tests validate C allocation behavior, not exact source stack addresses or exception-frame identity.
+
+The same target compares static scalar, pointer, array and packed-record alignment through 128 bytes, global alignment, complete padded-string storage and scalar-global address identity in initializers, returns, calls, selects and pointer-to-integer conversions. Ordinary/preserved-type and whole/selected-function routes are covered where applicable.
 
 ## Offline web analysis
 

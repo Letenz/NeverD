@@ -297,6 +297,12 @@ escalares no admitidos y los operandos mal formados deben fallar explícitamente
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` comprueba que los argumentos de registro obligatorios inferidos conserven las posiciones finales desconocidas. Evaluar un argumento obligatorio o una condición desconocida debe provocar una trampa explícita; los operandos omitidos, nulos o anidados no deben convertirse silenciosamente en cero. Los valores conocidos y los operandos adicionales cuya ausencia de lectura esté demostrada siguen siendo ejecutables. Una trampa es un límite de diagnóstico, no una prueba de equivalencia del comportamiento recuperado.
 
+## Almacenamiento de objetos en LLVM C
+
+`NeverDLLVMCAllocaTests` ejecuta LLVM original y C generado en O0/O2 con trampas de comportamiento indefinido. Observa rangos completos, paso con relleno, alineación 16/32/64, independencia de asignaciones simultáneas/en bucle y evaluación única del productor de cantidad. Las rutas C normales y con tipos conservados retienen almacenamiento; contratos no admitidos, desbordamientos y stack save/restore se rechazan antes de DCE. No certifica direcciones originales de pila ni identidad de marcos de excepción.
+
+El mismo objetivo compara la alineación de escalares, punteros, arreglos y registros empaquetados estáticos hasta 128 bytes, la alineación global, el almacenamiento completo de cadenas rellenadas con ceros y la identidad de direcciones globales en inicializadores, retornos, llamadas, selecciones y conversiones de puntero a entero. Cubre, donde corresponde, salidas ordinarias/con tipos conservados y completas/de función seleccionada.
+
 ## Pruebas de ejecución CPU
 
 `NeverDIntegerABITests` compila fixtures originales de Clang para Windows x64, Linux x64 y Linux ARM64. Sus funciones reales de diez argumentos comprueban registros, pila y marcos de llamada. La matriz Unicorn/KVM/WHP marca explícitamente como omitidos los pares host/ISA no disponibles; un skip no es un aprobado. `NeverDExecutionBudgetTests` verifica presupuestos compartidos de continuación, reservas y deadlines absolutos sin depender de pausas temporizadas.

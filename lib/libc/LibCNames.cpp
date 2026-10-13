@@ -348,6 +348,15 @@ std::optional<bool> libcReturnsValue(std::string_view Name,
   return It->second == ReturnKind::Value;
 }
 
+const char *headerOfDataObject(std::string_view Name) {
+  static const std::unordered_map<std::string_view, const char *> Headers = {
+#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER) {NAME, HEADER},
+#include "neverd/libc/LibCDataObjects.def"
+  };
+  const auto It = Headers.find(Name);
+  return It == Headers.end() ? nullptr : It->second;
+}
+
 bool returnsDoubleWord(std::string_view Name) {
   static const std::unordered_set<std::string_view> Names = {
 #define NEVERD_DOUBLE_WORD_RESULT(NAME) NAME,

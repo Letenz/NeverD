@@ -1,0 +1,30 @@
+//===- LibCDataObjects.def - Objects C library headers declare --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The data objects a C library header declares, which emitted C reaches as
+// the header declares them.  A declaration of its own beside the header's
+// would give the object another type (`extern uint64_t stdout;` against
+// stdio.h's `extern FILE *stdout;`), which C rejects.
+//
+// NEVERD_LIBC_DATA_OBJECT(Name, Header): the C name of one object and the
+// header that declares it.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LIBC_DATA_OBJECT
+#error "define NEVERD_LIBC_DATA_OBJECT(Name, Header) before including this file"
+#endif
+
+NEVERD_LIBC_DATA_OBJECT("stdin", "stdio.h")
+NEVERD_LIBC_DATA_OBJECT("stdout", "stdio.h")
+NEVERD_LIBC_DATA_OBJECT("stderr", "stdio.h")
+// POSIX getopt state.
+NEVERD_LIBC_DATA_OBJECT("optarg", "unistd.h")
+NEVERD_LIBC_DATA_OBJECT("optind", "unistd.h")
+NEVERD_LIBC_DATA_OBJECT("opterr", "unistd.h")
+NEVERD_LIBC_DATA_OBJECT("optopt", "unistd.h")
+
+#undef NEVERD_LIBC_DATA_OBJECT

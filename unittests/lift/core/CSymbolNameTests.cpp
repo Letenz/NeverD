@@ -411,7 +411,8 @@ define i64 @install(i64 %handler) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
   EXPECT_NE(Source.find("__cxa_atexit(handler, 0, 0)"), NotFound) << Source;
-  EXPECT_NE(Source.find("(void*)__cxa_atexit"), NotFound) << Source;
+  // The slot holds the symbol's address, whichever kind of object it names.
+  EXPECT_NE(Source.find("(void*)&__cxa_atexit"), NotFound) << Source;
   EXPECT_EQ(Source.find("_cxa_atexit"), Source.find("__cxa_atexit") + 1)
       << Source;
 }

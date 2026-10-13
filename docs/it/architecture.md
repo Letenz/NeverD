@@ -302,6 +302,12 @@ Mantieni la logica specifica di una rappresentazione nella relativa libreria IR
 o backend; il pipeline deve orchestrare i componenti, non assorbirne gli
 algoritmi.
 
+## Memoria degli oggetti in LLVM C
+
+`LLVMCStackAllocation` gestisce allocazioni con conteggio o fuori dall’ingresso nel clone C privato. Conserva passo DataLayout, conteggio senza segno, allineamento e posizione. Una chiamata privata con effetti emette `__builtin_alloca` in quella posizione, verifica overflow e allinea nei byte aggiuntivi; la durata arriva al ritorno con Clang/GCC. Un oggetto all’ingresso mantiene la dichiarazione locale. Conteggi troppo larghi, memoria scalabile, altri spazi, inalloca/swifterror, stack save/restore espliciti e marcatori privati nell’ingresso sono rifiutati prima della normalizzazione. L’IR originale resta intatto.
+
+`LLVMCStorage` condivide il sovra-allineamento esplicito degli oggetti locali e globali e delle loro dichiarazioni. Le stringhe conservano l’intera dimensione dell’array LLVM, inclusi i byte zero finali. I valori globali LLVM indicano indirizzi nelle espressioni e negli inizializzatori; solo dichiarazioni e caricamenti/scritture diretti usano il semplice nome C. I dati importati mantengono la rappresentazione dell’indirizzo esistente.
+
 ## Contratto di traduzione tra architetture
 
 `include/neverd/translate` definisce un livello contrattuale, non un

@@ -56,10 +56,16 @@ void MicrosoftSymbols::cancel() {
   }
 }
 
+void MicrosoftSymbols::setOffers(bool offers) {
+  offers_ = offers;
+  if (!offers)
+    cancel();
+}
+
 void MicrosoftSymbols::opened() {
   cancel();
   const auto request = session_.metadata().value("pdb_download").toObject();
-  if (request.isEmpty() || !session_.loadsPdbFiles() ||
+  if (!offers_ || request.isEmpty() || !session_.loadsPdbFiles() ||
       !session_.findsPdbFiles())
     return;
   request_ = request;

@@ -297,6 +297,12 @@ e gli operandi malformati devono fallire esplicitamente.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` verifica che gli argomenti di registro obbligatori dedotti mantengano le posizioni finali sconosciute. La valutazione di un argomento obbligatorio o di una condizione sconosciuta deve causare una trap esplicita; gli operandi omessi, nulli o annidati non devono diventare silenziosamente zero. I valori noti e gli operandi aggiuntivi di cui è dimostrata la mancata lettura restano eseguibili. Una trap è un limite diagnostico, non una prova di equivalenza del comportamento ricostruito.
 
+## Memoria degli oggetti in LLVM C
+
+`NeverDLLVMCAllocaTests` esegue LLVM originale e C generato a O0/O2 con trap per comportamento indefinito. Osserva intervalli completi, passo con padding, allineamento 16/32/64, indipendenza di allocazioni simultanee/nei cicli e valutazione unica del conteggio. I percorsi C normali e con tipi conservati mantengono memoria; contratti non supportati, overflow e stack save/restore falliscono prima di DCE. Non certifica indirizzi originali dello stack o identità dei frame di eccezione.
+
+Lo stesso target confronta l’allineamento di scalari, puntatori, array e record compatti statici fino a 128 byte, l’allineamento globale, l’intera memoria delle stringhe completate da zeri e l’identità degli indirizzi globali in inizializzatori, ritorni, chiamate, selezioni e conversioni da puntatore a intero. Copre, ove applicabile, le uscite ordinarie/con tipi preservati e complete/per funzione selezionata.
+
 ## Test di esecuzione CPU
 
 `NeverDIntegerABITests` compila fixture Clang originali per Windows x64, Linux x64 e Linux ARM64. Funzioni reali a dieci argomenti verificano registri, stack e frame di chiamata. La matrice Unicorn/KVM/WHP indica come skip espliciti le coppie host/ISA non disponibili; uno skip non è un pass. `NeverDExecutionBudgetTests` controlla budget condivisi di continuazione, prenotazioni e deadline assolute senza attese basate sul tempo.

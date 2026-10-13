@@ -561,6 +561,7 @@ int runLift(neverd_session_t Sess) {
 
 int runDecompile(neverd_session_t Sess) {
   const bool SourceTransforms = SourceSymbolic.getNumOccurrences() ||
+                                SourceLLVMControlFlow.getNumOccurrences() ||
                                 SourceLLVMLevel.getNumOccurrences() ||
                                 SourceLLVMPasses.getNumOccurrences();
   if (SourceTransforms && (ExportFunc.empty() || NoOpt || Devirtualize)) {
@@ -569,7 +570,8 @@ int runDecompile(neverd_session_t Sess) {
            "combine with --no-opt or --devirtualize\n";
     return 1;
   }
-  if (!LlvmRoute && (SourceLLVMLevel.getNumOccurrences() ||
+  if (!LlvmRoute && (SourceLLVMControlFlow.getNumOccurrences() ||
+                     SourceLLVMLevel.getNumOccurrences() ||
                      SourceLLVMPasses.getNumOccurrences())) {
     WithColor::error() << "LLVM source options require --llvm\n";
     return 1;
@@ -577,6 +579,8 @@ int runDecompile(neverd_session_t Sess) {
   json::Object ViewOptions;
   if (SourceSymbolic.getNumOccurrences())
     ViewOptions["symbolic"] = bool(SourceSymbolic);
+  if (SourceLLVMControlFlow.getNumOccurrences())
+    ViewOptions["llvm_control_flow"] = bool(SourceLLVMControlFlow);
   if (SourceLLVMLevel.getNumOccurrences())
     ViewOptions["llvm_optimization"] = SourceLLVMLevel.getValue();
   if (SourceLLVMPasses.getNumOccurrences()) {

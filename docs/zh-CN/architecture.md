@@ -387,6 +387,12 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 `lib/pipeline/Pipeline.cpp` 是路径选择的事实来源。特定表示的逻辑应留在其
 所属 IR 或 backend 库中；pipeline 应编排这些组件，而不是吸收它们的算法。
 
+## LLVM C 对象存储
+
+`LLVMCStackAllocation` 在私有 C 克隆中统一管理带数量和非入口栈分配，保留 DataLayout 分配步长、无符号数量、对齐和执行位置。带副作用的私有调用在原指令处输出普通 `__builtin_alloca`，检查长度溢出并在额外字节内对齐，因此 Clang/GCC 的分配寿命持续到函数返回。入口的单对象分配保留普通局部声明。过宽数量、可伸缩存储、非默认地址空间、inalloca/swifterror 和显式栈保存/恢复在归一化前拒绝；输入 IR 的私有标记也拒绝，调用者 IR 不变。
+
+`LLVMCStorage` 统一保留局部对象、全局对象及其声明的显式额外对齐。字符串定义保留完整的 LLVM 数组长度，包括尾部零字节。LLVM 全局值在表达式和初始化器中表示地址；只有对象声明和直接加载/存储使用裸 C 名称。导入数据绑定保留已有地址表示。
+
 ## 跨架构翻译契约
 
 `include/neverd/translate` 定义的是契约层，而不是执行后端。`GuestState`
