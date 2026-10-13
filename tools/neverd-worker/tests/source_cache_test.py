@@ -86,6 +86,16 @@ def run(executable):
             page = ok(client, "decompile", {"address": A, "representation": "llvmc",
                       "source_options": {"llvm_optimization": level}, "limit": 4})
             assert page["fixture_source_options"] == {"llvm_optimization": level}
+        recovered = ok(client, "decompile", {"address": A,
+                       "representation": "llvmc", "limit": 4,
+                       "source_options": {"llvm_control_flow": True}})
+        raw_cfg = ok(client, "decompile", {"address": A,
+                     "representation": "llvmc", "limit": 4,
+                     "source_options": {"llvm_control_flow": False}})
+        assert raw_cfg["fixture_pages"] > recovered["fixture_pages"]
+        reused(ok(client, "decompile", {"address": A,
+                  "representation": "llvmc", "limit": 4,
+                  "source_options": {"llvm_control_flow": True}}), recovered)
         for options in ([], "O3", {"symbolic": "yes"}):
             reply = client.call("decompile", {"address": A, "representation": "source",
                                 "source_options": options})

@@ -4695,6 +4695,7 @@ TEST_F(SessionCAPITest, SourceOptionsValidateBeforeChangingAnalysis) {
   const auto *Prepared = State.PipeResult.HighFuncs.data();
   for (const char *Bad :
        {"[]", "null", "{", R"({"symbolic":1})", R"({"unknown":true})",
+        R"({"llvm_control_flow":1})", R"({"llvm_control_flow":null})",
         R"({"llvm_optimization":"O4"})", R"({"llvm_passes":[]})",
         R"({"llvm_optimization":"custom"})",
         R"({"llvm_optimization":"custom","llvm_passes":["inline"]})",
@@ -4709,6 +4710,9 @@ TEST_F(SessionCAPITest, SourceOptionsValidateBeforeChangingAnalysis) {
   }
   EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "c", 0, 10,
                                    R"({"llvm_optimization":"O3"})"),
+            nullptr);
+  EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "c", 0, 10,
+                                   R"({"llvm_control_flow":true})"),
             nullptr);
   EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "low", 0, 10, "{}"),
             nullptr);
@@ -4725,11 +4729,23 @@ TEST_F(SessionCAPITest, SourceLLVMProfilesKeepTheirOwnModulesAndEmission) {
   const auto Ordinary = takeString(neverd_decompile_llvm(Session, Entry));
   ASSERT_FALSE(Ordinary.empty());
   auto &State = *neverd::sdk::toSession(Session);
+  const auto ExplicitDefault = takeView(neverd_ir_view_ex_json(
+      Session, Entry, "llvmc", 0, 2048,
+      R"({"llvm_optimization":"O2","llvm_control_flow":true})"));
+  ASSERT_TRUE(ExplicitDefault.getString("text"));
+  EXPECT_EQ(ExplicitDefault.getString("text"), Ordinary);
+  ASSERT_EQ(State.FunctionSources.size(), 1u);
+  EXPECT_EQ(State.FunctionSources.front().Options.LLVM,
+            neverd::SourceViewOptions::LLVMOptimization::O2);
+  EXPECT_FALSE(State.FunctionSources.front().Options.Symbolic);
+  EXPECT_TRUE(State.FunctionSources.front().Options.RecoverControlFlow);
   for (const char *Options :
        {R"({"llvm_optimization":"O0"})", R"({"llvm_optimization":"O1"})",
-        R"({"llvm_optimization":"O2"})", R"({"llvm_optimization":"O3"})",
+        R"({"llvm_optimization":"basic"})", R"({"llvm_optimization":"O3"})",
         R"({"llvm_optimization":"custom","llvm_passes":[]})",
         R"({"llvm_optimization":"custom","llvm_passes":["instcombine","dce"]})",
+        R"({"llvm_control_flow":false})",
+        R"({"llvm_control_flow":false,"symbolic":true})",
         R"({"symbolic":true})"}) {
     SCOPED_TRACE(Options);
     const auto Page = takeView(

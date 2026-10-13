@@ -91,6 +91,8 @@ namespace {
 using KDDockWidgets::InitialOption;
 
 constexpr char LayoutFileName[] = "desktop.json";
+/// The level of a session message that reports an error.
+constexpr int ErrorMessageLevel = 2;
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
@@ -247,6 +249,17 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
       openAskingForPdb(path, options);
     }
   });
+  // A worker that cannot start leaves no question to ask; the workbench
+  // shows the error instead of staying hidden.
+  connect(&session_, &Session::message, this,
+          [this](const QString &, int level) {
+            if (level >= ErrorMessageLevel && pdbPromptPending_ &&
+                !session_.connected()) {
+              auto [path, options] =
+                  *std::exchange(pdbPromptPending_, std::nullopt);
+              openNow(path, options);
+            }
+          });
   connectActions();
   statusTimer_.setInterval(StatusRefreshMs);
   connect(&statusTimer_, &QTimer::timeout, this, &MainWindow::updateStatusBar);
@@ -1491,9 +1504,21 @@ void MainWindow::updateStatusBar() {
 void MainWindow::openFile(const QString &path) {
   startupQuickStartPending_ = false;
   if (ProjectDatabase::hasState(path))
-    session_.open(path);
+    openNow(path, {});
   else
     openAskingForPdb(path, {});
+}
+
+void MainWindow::setAsksForPdb(bool asks) {
+  asksForPdb_ = asks;
+  microsoftSymbols_->setOffers(asks);
+}
+
+void MainWindow::openNow(const QString &path, const LoadOptions &options) {
+  // The workbench shows as the file starts to load, after any question
+  // asked before the load.
+  showWorkbench();
+  session_.open(path, options);
 }
 
 void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
@@ -1505,9 +1530,9 @@ void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
   }
   // IDA asks as it makes a database, so a project keeps the answer, and
   // the user's own choice of debug information or PDB stands.
-  if (!options.debugInfo || !options.pdb.isEmpty() ||
+  if (!asksForPdb_ || !options.debugInfo || !options.pdb.isEmpty() ||
       !session_.findsPdbFiles() || ProjectDatabase::hasState(path)) {
-    session_.open(path, options);
+    openNow(path, options);
     return;
   }
   session_.read(
@@ -1515,22 +1540,26 @@ void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
       [this, path, options](const QJsonObject &payload) {
         const auto reference = payload.value("pdb").toObject();
         if (reference.isEmpty()) {
-          session_.open(path, options);
+          openNow(path, options);
           return;
         }
         // A modal must run after the query delivery barrier is released.
         QTimer::singleShot(0, this, [this, path, options, reference] {
-          PdbPromptDialog dialog(session_, path, reference, nullptr, this);
+          // Before the workbench shows, the question greets alone, as the
+          // quick start does; closing it answers no.
+          PdbPromptDialog dialog(session_, path, reference, nullptr,
+                                 isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
           dialog.exec();
           auto chosen = options;
           chosen.pdb = dialog.choice();
-          session_.open(path, chosen);
+          openNow(path, chosen);
         });
       },
       [this, path, options](const QString &, const QString &message) {
         output_->append(
             tr("Could not tell which PDB %1 names: %2").arg(path, message), 1);
-        session_.open(path, options);
+        openNow(path, options);
       });
 }
 
@@ -1560,13 +1589,20 @@ void MainWindow::chooseLoader(const QString &path) {
   session_.read(
       QStringLiteral("identify"), {{"path", path}}, this,
       [this, path](const QJsonObject &payload) {
-        LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
+        // Before the workbench shows, the dialog greets alone, as IDA's
+        // does for a file named at startup.
+        LoadFileDialog dialog(path, payload.value("rows").toArray(),
+                              isVisible() ? this : nullptr);
+        dialog.setAttribute(Qt::WA_QuitOnClose, false);
         dialog.setIndicator(
             QSettings().value(AnalysisIndicatorKey, true).toBool());
         dialog.setBinaryProcessor(
             QSettings().value(BinaryProcessorKey).toString());
-        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
+        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0) {
+          // Without a file to open, the workbench takes its place.
+          showWorkbench();
           return;
+        }
         QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
         // The processor the user picked, not one the bytes named.
         if (const auto processor = dialog.options().processor;
@@ -2698,11 +2734,14 @@ void MainWindow::showQuickStart() {
       QCoreApplication::quit();
     return;
   }
-  showWorkbench();
+  // A chosen file shows the workbench as it starts to load, after the
+  // questions asked before the load greet alone too.
   if (start == QuickStartDialog::Start::New)
     chooseLoader(dialog.file());
   else if (start == QuickStartDialog::Start::Previous)
     openFile(dialog.file());
+  else
+    showWorkbench();
 }
 
 void MainWindow::showWorkbench() {

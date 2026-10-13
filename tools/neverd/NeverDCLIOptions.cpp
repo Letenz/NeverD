@@ -545,6 +545,24 @@ cl::opt<std::string> SymbolPathOption(
     cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
     cl::sub(AuditCmd), cl::sub(HuntCmd));
 
+cl::opt<bool> DownloadSymbols(
+    "download-symbols",
+    cl::desc("Download the PDB a PE names from the symbol servers of the "
+             "search path (--symbol-path, _NT_SYMBOL_PATH, or Microsoft's "
+             "public server) into their store when no copy here matches.  "
+             "Only the PDB's name and build identity are sent"),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
 cl::opt<std::string> MapFile(
     "map",
     cl::desc("Load symbols from this linker .map (MSVC, lld, GNU ld, or "
@@ -598,8 +616,13 @@ cl::opt<bool> SourceSymbolic(
 cl::opt<std::string>
     SourceLLVMLevel("llvm-opt",
                     cl::desc("LLVM C optimization: basic, O0, O1, O2, O3 or "
-                             "custom (requires --func --llvm)"),
-                    cl::init("basic"), cl::sub(DecompileCmd));
+                             "custom (default O2; requires --func --llvm)"),
+                    cl::init("O2"), cl::sub(DecompileCmd));
+cl::opt<bool> SourceLLVMControlFlow(
+    "llvm-control-flow",
+    cl::desc("Recover LLVM source control flow (default true; requires --func "
+             "--llvm)"),
+    cl::init(true), cl::sub(DecompileCmd));
 cl::list<std::string> SourceLLVMPasses(
     "llvm-passes",
     cl::desc("Custom scalar passes: instcombine,early-cse,simplifycfg,dce"),

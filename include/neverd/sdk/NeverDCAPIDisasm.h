@@ -174,7 +174,8 @@ NEVERD_API const char *neverd_decompile(neverd_session_t Sess,
 /// LLVM-to-C for one native function (`neverd decompile --llvm`).  Only its
 /// body is emitted, with the other functions declared, so a function the
 /// emitter refuses fails alone.  EVM and SBF have dedicated backends and
-/// return empty.  Free with neverd_free_string.
+/// return empty. Defaults to O2 and control-flow recovery, with optional
+/// symbolic expression simplification off. Free with neverd_free_string.
 NEVERD_API const char *neverd_decompile_llvm(neverd_session_t Sess,
                                              neverd_va_t FuncEntry);
 
@@ -272,11 +273,15 @@ NEVERD_API const char *neverd_ir_view_json(neverd_session_t Sess,
                                            size_t Offset, size_t Limit);
 
 /// Source page with request-local transformations. OptionsJSON is an object:
-/// `symbolic` (bool, default false); for llvmc, `llvm_optimization` is basic
-/// (default), O0, O1, O2, O3 or custom. Custom requires `llvm_passes`, an array
+/// `symbolic` (bool, default false); for llvmc, `llvm_optimization` is basic,
+/// O0, O1, O2 (default), O3 or custom. Custom requires `llvm_passes`, an array
 /// drawn from instcombine, early-cse, simplifycfg and dce, run in that order.
+/// `llvm_control_flow` (bool, default true) independently enables dispatcher
+/// recovery for llvmc, including its targeted constant proofs.
 /// Unknown fields, invalid combinations and non-source representations fail.
-/// Options never alter ordinary views, machine analysis or project state.
+/// Options never alter ordinary views, machine analysis, patching or project
+/// state. Ordinary LLVM source uses O2 and control-flow recovery with optional
+/// symbolic expression rewriting off.
 /// Return an owned UTF-8 string (neverd_free_string), or NULL with last_error
 /// set.
 NEVERD_API const char *neverd_ir_view_ex_json(neverd_session_t Sess,

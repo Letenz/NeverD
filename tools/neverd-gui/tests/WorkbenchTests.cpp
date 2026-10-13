@@ -11,6 +11,7 @@
 #include "LoadFileDialog.h"
 #include "MainWindow.h"
 #include "OutputWindow.h"
+#include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Session.h"
@@ -75,6 +76,9 @@ constexpr int NativeOpenTimeoutMs = 30000;
 // The widest a view may insist on being: a dock's tab bar keeps the dock some
 // 130 pixels wide whatever it shows.
 constexpr int NarrowViewWidth = 160;
+
+/// Long enough for the offer of a missing PDB to follow an open.
+constexpr int OfferWaitMs = 500;
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -1818,6 +1822,30 @@ private slots:
     QVERIFY(view);
     QTRY_VERIFY(!view->text()->loading() &&
                 view->text()->allText().contains("return value"));
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(view->text()->status().contains("O2"));
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *defaultLevel = choices.findChild<QAction *>("sourceLLVM_O2");
+      auto *basic = choices.findChild<QAction *>("sourceLLVM_basic");
+      auto *recovery = choices.findChild<QAction *>("sourceLLVMControlFlow");
+      QVERIFY(defaultLevel && defaultLevel->isChecked());
+      QVERIFY(basic && !basic->isChecked());
+      QVERIFY(recovery && recovery->isChecked());
+      basic->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+      QCOMPARE(
+          view->text()->sourceOptions().value("llvm_optimization").toString(),
+          QStringLiteral("basic"));
+      defaultLevel->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+      QVERIFY(view->text()->sourceOptions().isEmpty());
+      recovery->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+      QCOMPARE(view->text()->sourceOptions().value("llvm_control_flow"),
+               QJsonValue(false));
+    }
     for (const QString name :
          {QStringLiteral("sourceLLVM_O3"), QStringLiteral("sourceSymbolic")}) {
       QMenu choices;
@@ -1831,8 +1859,23 @@ private slots:
         view->text()->sourceOptions().value("llvm_optimization").toString(),
         QStringLiteral("O3"));
     QVERIFY(view->text()->sourceOptions().value("symbolic").toBool());
+    QCOMPARE(view->text()->sourceOptions().value("llvm_control_flow"),
+             QJsonValue(false));
     QVERIFY(diagnostics.join('\n').contains("\"llvm_optimization\":\"O3\""));
     QVERIFY(diagnostics.join('\n').contains("\"symbolic\":true"));
+    QMenu defaults;
+    view->addSourceActions(defaults);
+    defaults.findChild<QAction *>("sourceDefault")->trigger();
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      QVERIFY(choices.findChild<QAction *>("sourceLLVM_O2")->isChecked());
+      QVERIFY(!choices.findChild<QAction *>("sourceSymbolic")->isChecked());
+      QVERIFY(
+          choices.findChild<QAction *>("sourceLLVMControlFlow")->isChecked());
+    }
     if (const auto capture =
             qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
         !capture.isEmpty()) {
@@ -1850,20 +1893,23 @@ private slots:
         QTRY_VERIFY(choices.isVisible());
         QVERIFY(choices.grab().save(capture + "/source-options-menu-" + suffix +
                                     ".png"));
+        auto *levels = qobject_cast<QMenu *>(
+            choices.findChild<QAction *>("sourceLLVM_O2")->parent());
+        QVERIFY(levels);
+        levels->popup(choices.mapToGlobal(QPoint(choices.width(), 0)));
+        QTRY_VERIFY(levels->isVisible());
+        QVERIFY(levels->grab().save(capture + "/source-options-levels-" +
+                                    suffix + ".png"));
       }
       Theme::instance().setMode(previous);
     }
-    QMenu defaults;
-    view->addSourceActions(defaults);
-    defaults.findChild<QAction *>("sourceDefault")->trigger();
-    QTRY_VERIFY(!view->text()->loading());
-    QVERIFY(view->text()->sourceOptions().isEmpty());
     view->text()->setSourceOptions({{"symbolic", true}});
     QTRY_VERIFY(!view->text()->loading());
     view->text()->load(Base + 16, "llvmc");
     QTRY_VERIFY(!view->text()->loading() &&
                 view->text()->allText().contains("function_1"));
     QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(view->text()->status().contains("O2"));
   }
 
   void largePseudocodeKeepsProcessingEvents() {
@@ -2898,7 +2944,8 @@ private slots:
       QVERIFY(!bench.window->isVisible());
       return;
     }
-    QVERIFY(bench.window->isVisible());
+    // A chosen file shows the workbench as it starts to load.
+    QTRY_VERIFY_WITH_TIMEOUT(bench.window->isVisible(), OpenTimeoutMs);
     QVERIFY(bench.functions() && bench.functions()->isVisible());
     if (choice == QLatin1String("go") || choice == QLatin1String("escape")) {
       QVERIFY(bench.session.filePath().isEmpty());
@@ -2908,6 +2955,64 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QCOMPARE(QFileInfo(bench.session.filePath()).canonicalFilePath(),
              QFileInfo(path).canonicalFilePath());
+  }
+
+  void pdbQuestionAtStartupGreetsAlone() {
+    // As the quick start: a PE named at startup asks whether to load the PDB
+    // it names in a window of its own, and the workbench shows once the
+    // user answered, as the file starts to load.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-missing.bin"));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<PdbPromptDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+        no->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    QCOMPARE(bench.session.metadata()
+                 .value("pdb")
+                 .toObject()
+                 .value("mode")
+                 .toString(),
+             QStringLiteral("none"));
+  }
+
+  void unattendedRunsAskNoPdbQuestion() {
+    // A run nobody answers, such as a capture, loads as discovery finds.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-missing.bin"));
+    Workbench bench;
+    bench.window->setAsksForPdb(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<PdbPromptDialog *>(QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // Nor once the file lacks its PDB, which an answered run would offer.
+    QTest::qWait(OfferWaitMs);
+    QVERIFY(!asked);
   }
 
   void quickStartShowsRecentFilesAndStartsAsChosen() {
