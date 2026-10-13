@@ -4109,7 +4109,9 @@ tested function first, where emulation starts. A case whose C calls a routine
 the freestanding image cannot link (a rounding instruction printed as
 `nearbyint`), or does not define the tested function, is skipped with that
 reason. Every round-trip test runs this way, so compare the failing names of
-two such runs to judge a HighC or HighIR change.
+two such runs to judge a HighC or HighIR change. `NEVERD_SEMANTIC_LLVMC=1`
+does the same with the LLVM-C route's C, the check for an LLVM-C printer
+change.
 The patch-full fixture uses `Codegen::compileForRewrite`, the same rewrite
 backend as patch operations, then compares baseline and transformed code across
 the full 4 x 3 ISA/format grid.

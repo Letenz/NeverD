@@ -493,6 +493,9 @@ public:
   void noteAllocaStore(const llvm::AllocaInst *Slot, const llvm::Value *Stored);
   void discoverSyntheticFrame(llvm::Function &Fn);
   void collectTypedHomes(llvm::Function &Fn);
+  /// The pointer type the callee's prototype gives argument \p Index of
+  /// \p Call: its debug information or the MSVC callee table.
+  TypeRef expectedCallArgType(const llvm::CallBase &Call, unsigned Index) const;
   std::optional<FunctionSym> debugCallee(const llvm::CallBase &Call) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
