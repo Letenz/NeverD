@@ -478,6 +478,7 @@
           "neverd decompile --json",
           "neverd decompile --language",
           "neverd decompile --llvm",
+          "neverd decompile --llvm-control-flow",
           "neverd decompile --llvm-opt",
           "neverd decompile --llvm-passes",
           "neverd decompile --load-base",
