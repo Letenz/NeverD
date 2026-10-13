@@ -714,6 +714,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     full["representation"] = representation;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    if (sourceView)
+      CodeEdits::spellIdentifierSymbols(full);
     // The resolver below runs other operations, so the decoration names
     // functions from a copy of the listing's display names.
     auto displayNames = CodeEdits::FunctionAliases(listing().functionAliases());

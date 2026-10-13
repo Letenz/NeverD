@@ -271,10 +271,15 @@ numbered (`QDomNodeList_ctor_2`), except MSVC C++ stems, which the MSVC rules
 share between overloads. An imported function whose identifier is not its
 symbol keeps the symbol in an `__asm__` label so that the code still links.
 Other names keep every byte of their symbol (`__libc_start_main`), apart from
-the underscore Mach-O and 32-bit Windows add to C names and the start-up
-functions the C runtime defines itself (`_start` reads `start`). A name an
-image spells with control characters, and that no scheme reads, is never
-copied into a comment.
+the underscore Mach-O and 32-bit Windows add to C names, the start-up
+functions the C runtime defines itself (`_start` reads `start`) and the
+leading underscores of globals (`__dso_handle` reads `dso_handle`). Wherever
+an identifier is not its symbol, the comment above the definition or on the
+global's `neverd.image` line names the symbol as the listing does
+(`/* _fini */` above `fini`, or above `fini_2` in a program that defines a
+`fini` of its own); hovering a renamed function shows its symbol, and
+double-clicking it goes to the function. A name an image spells with control
+characters, and that no scheme reads, is never copied into a comment.
 
 **Pseudocode** reads in the language the function was written in: a Rust
 function as Rust, a Go function as Go and any other as C. The choice is made
