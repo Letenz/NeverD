@@ -280,6 +280,10 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下啟用未定義行為陷阱，執行兩條恢復 C 路徑，涵蓋全部位元組值和原始計數。
 `NeverDLLVMCIntrinsicSemanticTests` 也在 O0/O2 下執行 i1/8/16/32/64/128 的有號與無號整數 min/max，檢查賦值與內嵌結果、運算元產生順序及單次求值。不支援的純量位寬和格式錯誤的運算元必須明確失敗。
 
+## x64 x87 上下文所有權
+
+`NeverDX86X87ConvertStateTests` 在預設/NoOpt 與 C O0/O2 路線比較原始指令及原生 LLVM、HighC、LLVMC 輸出，檢查轉換、八種算術形式、旗標、MMX/EMMS、滿/空堆疊、呼叫、包裝函式、入口迴圈與獨立入口。其測試夾具透過 `BinaryImage::X87ContextOverride` 在所有主機上固定使用自有上下文；整數載入、符號與 x87 FPU 測試集亦涵蓋 System V 的具型別投影。四種 FLDENV/FRSTOR 格式涵蓋待處理例外、標籤與保留載荷；適用情況涵蓋四種 RC、三種有效 PC 及 64 種例外遮罩。Low/Med/High 契約拒絕非法形狀、偽造控制代碼與截斷選擇器。窄回傳保留呼叫副作用，並拒絕實際需要的未知位元。原生對照需要 x64 與 Clang；不宣稱涵蓋全部指令、平台、CPU、故障優先順序或具型別的浮點匯入 ABI。
+
 ## 結構化 C 控制流程與呼叫檢查
 
 `HighControlFlowSemantics.*` 檢查移動迴圈出口或尾部時是否保留其他跳躍仍引用的標籤。測試涵蓋直接進入迴圈頭部、尾部出口及替換後的 break，並以獨立回傳值預期執行 O0/O2 編譯的產生 C。
