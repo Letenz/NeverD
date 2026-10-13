@@ -24,6 +24,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -282,6 +283,13 @@ protected:
     Mapping = {"replacement", Image.Entry};
     Options.struct_size = sizeof(Options);
     Options.compiler_path = NEVERD_TEST_CLANG;
+    // Keep the original Clang image as an independent ABI oracle when
+    // qualifying the optional ordinary NeverC source producer.
+    if (const char *NeverC = std::getenv("NEVERD_TEST_MATRIX_NEVERC");
+        NeverC && *NeverC) {
+      Options.compiler = NEVERD_SOURCE_PATCH_NEVERC;
+      Options.compiler_path = NeverC;
+    }
     Options.mappings = &Mapping;
     Options.mapping_count = 1;
   }
@@ -312,6 +320,18 @@ TEST_P(SourcePatchMatrix, CompilesInstallsAndExecutes) {
   ASSERT_EQ(Result, 1) << error();
   auto Report = llvm::json::parse(take(neverd_patch_source_report(Session)));
   ASSERT_TRUE(bool(Report));
+  EXPECT_EQ(Report->getAsObject()->getInteger("compiler"), Options.compiler);
+  EXPECT_EQ(Report->getAsObject()->getString("compiler_path"),
+            Options.compiler_path);
+  if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
+      P.Format == BinaryFormat::COFF) {
+    const auto *Arguments =
+        Report->getAsObject()->getArray("compiler_arguments");
+    ASSERT_NE(Arguments, nullptr);
+    EXPECT_TRUE(llvm::any_of(*Arguments, [](const llvm::json::Value &Argument) {
+      return Argument.getAsString() == "-fno-autolink";
+    }));
+  }
   const auto *Installed = Report->getAsObject()->getArray("installed");
   ASSERT_NE(Installed, nullptr);
   ASSERT_EQ(Installed->size(), 1u);
@@ -514,6 +534,20 @@ TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
   EXPECT_FALSE(error().empty());
   EXPECT_FALSE(std::filesystem::exists(Output));
   EXPECT_EQ(read(Original), OriginalBytes);
+  if (Image.Format == BinaryFormat::COFF) {
+    // Suppressing the source producer's automatic libraries must not weaken
+    // the independent contract of an externally supplied linker directive.
+    std::ofstream(C) << "#pragma comment(lib, \"unavailable_patch_runtime\")\n"
+                        "int replacement(int x) {return x+40;}\n";
+    ASSERT_EQ(run(Args), 0);
+    const auto Directed = read(O);
+    EXPECT_EQ(neverd_patch_source(Session, Directed.data(), Directed.size(),
+                                  &Options, Output.string().c_str()),
+              0);
+    EXPECT_NE(error().find(".drectve"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+    EXPECT_EQ(read(Original), OriginalBytes);
+  }
 }
 TEST_P(SourcePatchMatrix, SourceEntrySurvivesImageRebasing) {
   ASSERT_EQ(patch(), 1) << error();
