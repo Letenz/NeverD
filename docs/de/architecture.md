@@ -302,6 +302,12 @@ Darstellungsspezifische Logik gehört in die jeweilige IR- oder
 Backend-Bibliothek; die Pipeline soll Komponenten koordinieren, nicht deren
 Algorithmen übernehmen.
 
+## Objektspeicher in LLVM C
+
+`LLVMCStackAllocation` verwaltet gezählte und außerhalb des Eintritts liegende Stack-Allokationen im privaten C-Klon. DataLayout-Schrittweite, vorzeichenlose Anzahl, Ausrichtung und Ausführungsort bleiben erhalten. Ein privater Aufruf mit Seiteneffekten erzeugt dort `__builtin_alloca`, prüft Größenüberlauf und richtet innerhalb zusätzlicher Bytes aus; die Lebensdauer reicht unter Clang/GCC bis zur Rückkehr. Einzelobjekte am Eintritt behalten lokale Deklarationen. Zu breite Anzahlen, skalierbarer Speicher, andere Adressräume, inalloca/swifterror, explizites stack save/restore und private Marker im Eingabe-IR werden vor Normalisierung abgelehnt. Das ursprüngliche IR bleibt unverändert.
+
+`LLVMCStorage` vereinheitlicht die explizite erhöhte Ausrichtung lokaler und globaler Objekte und ihrer Deklarationen. Zeichenketten behalten die vollständige LLVM-Arraygröße einschließlich abschließender Nullbytes. Globale LLVM-Werte bezeichnen in Ausdrücken und Initialisierungen Adressen; nur Objektdeklarationen und direkte Lese-/Schreibzugriffe verwenden den bloßen C-Namen. Importierte Datenbindungen behalten ihre bisherige Adressdarstellung.
+
 ## Vertrag für architekturübergreifende Übersetzung
 
 `include/neverd/translate` definiert eine Vertragsschicht, kein

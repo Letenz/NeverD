@@ -478,7 +478,7 @@ runOptimizationPipeline(llvm::Module &Mod,
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   llvm::FunctionPassManager Prefix;
-  if (!Options.Conservative && Options.EnableSemantic) {
+  if (!Options.Conservative && Options.EnableControlFlowRecovery) {
     // Before promotion, because that is where a dispatcher's state lives: both
     // a lifted function and a flattened one keep everything in stack slots, the
     // second because no block dominates another once every one of them is
@@ -670,6 +670,7 @@ Pipeline::optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources,
   OptimizationOptions Options;
   Options.SourceMap = Sources;
   Options.EnableSemantic = View.Symbolic;
+  Options.EnableControlFlowRecovery = View.RecoverControlFlow;
   switch (View.LLVM) {
   case SourceViewOptions::LLVMOptimization::Basic:
   case SourceViewOptions::LLVMOptimization::Custom:

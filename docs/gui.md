@@ -91,7 +91,12 @@ Analysis uses the shared C++ backend and never launches the input. See the
 [workflow and limits](web-package-review-journal.md).
 
 A start without a file shows the quick start alone, as IDA does: the workbench
-appears once you choose how to start, and closing the quick start quits. Drag
+appears once you choose how to start, and closing the quick start quits. The
+questions asked before a file loads, **Load a new file** and **Load PDB file**,
+greet alone too while the workbench has not shown yet, after the quick start or
+for a file named on the command line; the workbench appears as the file starts
+to load, or when you cancel the load. A run that captures or measures asks
+nothing and loads the PDB that discovery finds. Drag
 its window edges or lower-right grip to resize it; the next opening remembers
 that size. The action pane stays the same width while the recent files use the
 available space. Its side pane holds the ways to start: **New** (N) asks for a
@@ -178,14 +183,21 @@ hiding a pane stops its requests; showing it again resumes its own function.
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
 right-click **Symbolically simplify this function** to enable it. C through LLVM
-offers basic scalar cleanup by default, separate O0–O3 compiler pipelines, and a
-custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE. Symbolic
-simplification is a separate choice for every LLVM profile. These choices apply
-to the current function; navigating to another function restores the defaults.
+defaults to control-flow recovery and O2, with basic scalar cleanup, O0, O1, O3,
+and a custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE available
+in the same menu. Symbolic simplification is a separate choice for every LLVM
+profile. **Recover LLVM control flow** has its own checked-by-default item;
+disabling symbolic
+expression simplification does not disable recovery or its targeted proofs.
+The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
+`--symbolic-simplify`. LLVM-specific overrides require `--func --llvm`;
+HighC symbolic simplification requires `--func`. These choices apply to the
+current function; navigating to another function restores the defaults.
 An enhancement runs in the analysis worker while the previous source remains
 visible. **Cancel transformation** stops that request, and **Restore default
 source** returns to the ordinary view. Failed enhancements retain the preceding
 source. Required machine control-flow, ABI and exception recovery still run.
+These display defaults do not change the conservative binary patch pipeline.
 
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of

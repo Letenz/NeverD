@@ -298,6 +298,12 @@ unterstützte skalare Breiten und fehlerhafte Operanden müssen explizit scheite
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` prüft, dass erkannte erforderliche Registerargumente auch unbekannte Positionen am Ende behalten. Das Auswerten eines unbekannten erforderlichen Arguments oder einer unbekannten Bedingung muss explizit eine Trap auslösen; ausgelassene, nullwertige und verschachtelte Operanden dürfen nicht stillschweigend zu null werden. Bekannte Werte und nachweislich ungelesene zusätzliche Operanden bleiben ausführbar. Eine Trap ist eine Diagnosegrenze und kein Beweis für gleichwertiges rekonstruiertes Verhalten.
 
+## Objektspeicher in LLVM C
+
+`NeverDLLVMCAllocaTests` führt ursprüngliches LLVM und erzeugtes C bei O0/O2 mit Fallen für undefiniertes Verhalten aus. Beobachtet werden vollständige Bereiche, gepolsterte Schrittweite, 16/32/64-Byte-Ausrichtung, unabhängige gleichzeitige/Schleifen-Allokationen und einmalige Auswertung der Anzahl. Normale und typerhaltende C-Wege behalten Speicher; nicht unterstützte oder überlaufende Verträge und stack save/restore scheitern vor DCE. Ursprüngliche Stack-Adressen und Ausnahmeframe-Identität werden nicht zertifiziert.
+
+Dasselbe Ziel vergleicht die Ausrichtung statischer Skalare, Zeiger, Arrays und gepackter Strukturen bis 128 Byte, globale Ausrichtung, den vollständigen Speicher nullaufgefüllter Zeichenketten und die globale Adressidentität in Initialisierungen, Rückgaben, Aufrufen, Auswahlen und Zeiger-Ganzzahl-Konvertierungen. Geprüft werden soweit anwendbar normale/typerhaltende und vollständige/ausgewählte Funktionsausgaben.
+
 ## Prüfungen der CPU-Ausführung
 
 `NeverDIntegerABITests` baut originale Clang-Fixtures für Windows x64, Linux x64 und Linux ARM64. Funktionen mit zehn Argumenten prüfen echte Register-/Stackparameter und ausgeglichene Aufrufrahmen. Die Unicorn/KVM/WHP-Matrix überspringt nicht verfügbare Host-/ISA-Paare ausdrücklich; ein Skip ist kein Pass. `NeverDExecutionBudgetTests` prüft gemeinsame Fortsetzungsbudgets, Reservierungen und absolute Deadlines ohne timingabhängiges Warten.

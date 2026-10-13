@@ -286,6 +286,12 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` 检查推断出的必需寄存器参数是否保留末尾未知槽位。读取未知的必需参数或条件必须明确触发陷阱；省略、空指针和嵌套操作数不能被悄悄替换为零。已知值和已证明不被读取的多余操作数仍可执行。陷阱是诊断边界，不是恢复行为等价的证明。
 
+## LLVM C 对象存储
+
+`NeverDLLVMCAllocaTests` 将原 LLVM 和输出 C 在 O0/O2 下编译执行并启用未定义行为陷阱，观察完整动态范围、带填充的元素步长、16/32/64 字节对齐、同时及循环分配的独立性，以及数量生成调用只求值一次。普通及保留类型的 C 路径都保留存储；未支持或溢出的分配形状与显式栈保存/恢复在死代码删除前拒绝。这些测试验证 C 分配行为，不证明原栈地址或异常帧身份。
+
+同一测试目标还比较静态标量、指针、数组和紧凑记录最高 128 字节的对齐、全局对齐、带零填充字符串的完整存储，以及初始化器、返回、调用、选择和指针转整数中的标量全局地址身份；按适用范围覆盖普通/保留类型及整模块/单函数输出。
+
 ## CPU 执行测试
 
 `NeverDIntegerABITests` 为 Windows x64、Linux x64 和 Linux ARM64 构建原始 Clang fixture，通过真实的十参数函数检查寄存器／栈参数与调用帧。Unicorn/KVM/WHP 矩阵会明确跳过不可用的主机／ISA 组合；跳过不代表通过。`NeverDExecutionBudgetTests` 不依赖定时 sleep，检查共享续接预算、预留失败和绝对 deadline。

@@ -288,6 +288,12 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 `lib/pipeline/Pipeline.cpp` 是路徑選擇的事實來源。特定表示的邏輯應留在其
 所屬 IR 或 backend 程式庫；pipeline 應編排元件，而不是吸收其演算法。
 
+## LLVM C 物件儲存
+
+`LLVMCStackAllocation` 在私有 C 複本統一管理帶數量和非入口堆疊配置，保留 DataLayout 配置步長、無號數量、對齊與執行位置。具副作用的私有呼叫在原指令處輸出一般 `__builtin_alloca`，檢查長度溢位並在額外位元組內對齊，因此 Clang/GCC 的配置存續到函式返回。入口單物件配置保留一般區域宣告。過寬數量、可伸縮儲存、非預設位址空間、inalloca/swifterror 和明確堆疊儲存/還原在正規化前拒絕；輸入 IR 的私有標記也拒絕，呼叫者 IR 不變。
+
+`LLVMCStorage` 統一保留區域物件、全域物件及其宣告的明確額外對齊。字串定義保留完整的 LLVM 陣列長度，包括尾端零位元組。LLVM 全域值在運算式和初始化器中代表位址；只有物件宣告和直接載入/儲存使用單純的 C 名稱。匯入資料綁定保留既有位址表示。
+
 ## 跨架構翻譯契約
 
 `include/neverd/translate` 定義的是契約層，而不是執行後端。`GuestState`

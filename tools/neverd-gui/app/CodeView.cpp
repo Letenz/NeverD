@@ -401,8 +401,8 @@ void CodeText::request(int offset, quint64 serial) {
           status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
         if (representation_ == QLatin1String("llvmc"))
           status_ +=
-              QStringLiteral(" · ") +
-              sourceOptions_.value("llvm_optimization").toString(tr("Basic"));
+              QStringLiteral(" · ") + sourceOptions_.value("llvm_optimization")
+                                          .toString(QStringLiteral("O2"));
         updateRange();
         viewport()->update();
         if (const auto address = std::exchange(pendingAddress_, {}))
@@ -1792,16 +1792,30 @@ void CodeView::addSourceActions(QMenu &menu) {
     text_->setSourceOptions(options);
   });
   if (representation() == QLatin1String("llvmc")) {
+    auto *recovery = menu.addAction(tr("Recover LLVM control flow"));
+    recovery->setObjectName(QStringLiteral("sourceLLVMControlFlow"));
+    recovery->setCheckable(true);
+    recovery->setChecked(
+        text_->sourceOptions().value("llvm_control_flow").toBool(true));
+    connect(recovery, &QAction::triggered, this, [this](bool enabled) {
+      auto options = text_->sourceOptions();
+      if (enabled)
+        options.remove("llvm_control_flow");
+      else
+        options["llvm_control_flow"] = false;
+      text_->setSourceOptions(options);
+    });
     auto *levels = menu.addMenu(tr("LLVM optimization"));
     auto *group = new QActionGroup(levels);
     const auto selected = text_->sourceOptions()
                               .value("llvm_optimization")
-                              .toString(QStringLiteral("basic"));
+                              .toString(QStringLiteral("O2"));
     for (const auto &level : {QStringLiteral("basic"), QStringLiteral("O0"),
                               QStringLiteral("O1"), QStringLiteral("O2"),
                               QStringLiteral("O3"), QStringLiteral("custom")}) {
       auto *action = levels->addAction(
-          level == QLatin1String("basic")    ? tr("Basic cleanup (default)")
+          level == QLatin1String("basic")    ? tr("Basic cleanup")
+          : level == QLatin1String("O2")     ? tr("O2 (default)")
           : level == QLatin1String("custom") ? tr("Choose passes…")
                                              : level);
       action->setObjectName(QStringLiteral("sourceLLVM_") + level);
@@ -1852,7 +1866,7 @@ void CodeView::addSourceActions(QMenu &menu) {
         } else {
           options.remove("llvm_passes");
         }
-        if (level == QLatin1String("basic"))
+        if (level == QLatin1String("O2"))
           options.remove("llvm_optimization");
         else
           options["llvm_optimization"] = level;

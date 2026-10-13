@@ -289,6 +289,12 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` は、推定された必須レジスタ引数の末尾にある未知スロットが保持されることを検証します。未知の必須引数や条件を評価すると明示的にトラップし、省略・null・入れ子のオペランドを黙ってゼロに置き換えてはいけません。既知の値と、読み取られないことが証明された余分なオペランドは実行可能なままです。トラップは診断境界であり、復元動作の等価性の証明ではありません。
 
+## LLVM C のオブジェクト領域
+
+`NeverDLLVMCAllocaTests` は元の LLVM と生成 C を O0/O2、未定義動作トラップ付きで実行します。全動的範囲、パディングを含む要素幅、16/32/64 バイト整列、同時・ループ割り当ての独立性、要素数を返す呼び出しの一回評価を検証します。通常と型保持の C 経路を確認し、未対応・オーバーフローする割り当てと明示的 stack save/restore は DCE 前に拒否します。元のスタックアドレスや例外フレーム同一性は保証しません。
+
+同じターゲットで静的スカラー、ポインター、配列、パックされたレコードの最大 128 バイトのアラインメント、グローバルのアラインメント、ゼロ埋め文字列の全領域、および初期化子・戻り値・呼び出し・選択・ポインター整数変換でのグローバルアドレスの同一性を比較する。適用可能な通常/型保持および全体/選択関数出力を検証する。
+
 ## CPU 実行テスト
 
 `NeverDIntegerABITests` は Windows x64、Linux x64、Linux ARM64 向けの Clang original fixture をビルドします。10 引数の実関数で register/stack と call frame を検証します。Unicorn/KVM/WHP matrix で利用できない host/ISA 組み合わせは明示的に skip し、skip を成功扱いしません。`NeverDExecutionBudgetTests` は時間依存の sleep を使わず、共有 continuation budget、reservation、絶対 deadline を検査します。
