@@ -7556,6 +7556,59 @@ TEST(CallRegisterEffects, ASyscallReadsOnlyItsOwnArguments) {
     EXPECT_EQ(Unlisted[Register / 8], 8u) << Register;
 }
 
+TEST(CallRegisterEffects, AZeroIdiomReadsNothing) {
+  // `pxor xmm0, xmm0` lifts as a self-XOR.  LowToMed folds it to zero, so
+  // the summary takes it as no read of XMM0 either; otherwise every caller
+  // passes XMM0, and so do their callers.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  const NdVar Xmm0 = NdVar::reg(x86reg::VectorBase, 16);
+  LowFunc Low = makeOneBlockLow(0x1000, "zero", [&](auto Push) {
+    Push(NdOp::INT_XOR, Xmm0, {Xmm0, Xmm0});
+    Push(NdOp::STORE, NdVar(), {NdVar::reg(x86reg::RDI, 8), Xmm0});
+  });
+  const GPRFamilyMask Args =
+      (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+      (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+      (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+  const GPRReadWidths Reads =
+      solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}}, Args,
+                               Args)
+          .EntryReads.at(0x1000);
+  EXPECT_EQ(Reads[x86reg::RDI / 8], 8u);
+  EXPECT_EQ(Reads[kX64VectorFamilyBase], 0u);
+}
+
+TEST(CallRegisterEffects, VzeroupperKeepsTheLowLanesInPlace) {
+  // `vzeroupper` lifts as ZMMn = ZEXT(XMMn) for each register: it keeps the
+  // low lanes, which is no read of them; a later read of those lanes still
+  // reads the incoming value.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  const NdVar Xmm1 = NdVar::reg(x86reg::VectorBase + 64, 16);
+  const NdVar Zmm1 = NdVar::reg(x86reg::VectorBase + 64, 64);
+  auto Reads = [&](bool ReadAfter) {
+    LowFunc Low = makeOneBlockLow(0x1000, "vz", [&](auto Push) {
+      Push(NdOp::INT_ZEXT, Zmm1, {Xmm1});
+      if (ReadAfter)
+        Push(NdOp::STORE, NdVar(), {NdVar::reg(x86reg::RDI, 8), Xmm1});
+    });
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+        (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    return solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}},
+                                    Args, Args)
+        .EntryReads.at(0x1000)[kX64VectorFamilyBase + 1];
+  };
+  EXPECT_EQ(Reads(false), 0u);
+  EXPECT_EQ(Reads(true), 16u);
+}
+
 TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {
   const BinaryImage Img = win64Image();
   // [rsp+40h] after `sub rsp, 18h` is the first stack argument.

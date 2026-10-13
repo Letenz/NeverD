@@ -84,6 +84,33 @@ static int c64(long long a, long long b) { return a < b ? -1 : (a > b ? 1 : 0); 
                             "cmpsum", {"cmpsum", "c64"}, {0x71, 0, 1, -3, 77});
 }
 
+// An AVX2 callee ends with `vzeroupper`, which keeps every XMM register's
+// low lanes: that reads no vector argument, so the callee takes only its
+// pointer and its callers pass no vector value.
+TEST_F(X86_64_CallAbi, VzeroupperReadsNoVectorArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-mavx2"}, R"C(
+typedef int v8 __attribute__((vector_size(32)));
+static int sum8(const int *p) __attribute__((noinline));
+int avxsum(int a) {
+  int buf[8];
+  for (int i = 0; i < 8; i++)
+    buf[i] = (a * (i + 1)) ^ i;
+  return sum8(buf) + sum8(buf) * 3;
+}
+static int sum8(const int *p) {
+  v8 v;
+  __builtin_memcpy(&v, p, sizeof(v));
+  v = v * v + v;
+  int s = 0;
+  for (int i = 0; i < 8; i++)
+    s += v[i];
+  return s;
+}
+)C",
+                            "avxsum", {"avxsum", "sum8", "v8"},
+                            {0x71, 0, 1, -3, 77});
+}
+
 // Six register arguments and four pushed afresh on every iteration of a
 // loop, whose stack pointer is a PHI at the loop head.
 TEST_F(X86_64_CallAbi, StackArgumentsPushedInALoopReachTheCallee) {
