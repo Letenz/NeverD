@@ -527,6 +527,24 @@ cl::opt<bool> PdbUnverified(
     cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
     cl::sub(HuntCmd));
 
+cl::opt<std::string> SymbolPathOption(
+    "symbol-path",
+    cl::desc("Search these directories and symbol stores for the PDB a PE "
+             "names, in _NT_SYMBOL_PATH syntax (srv*<store>*<server>;<dir>), "
+             "instead of _NT_SYMBOL_PATH or the user's symbol cache.  Servers "
+             "are not contacted"),
+    cl::value_desc("path"), cl::sub(LiftCmd), cl::sub(DecompileCmd),
+    cl::sub(PatchCmd), cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(FunctionEditsCmd),
+    cl::sub(ItemsCmd), cl::sub(OperandsCmd), cl::sub(SearchCmd),
+    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
+    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
+    cl::sub(AuditCmd), cl::sub(HuntCmd));
+
 cl::opt<std::string> MapFile(
     "map",
     cl::desc("Load symbols from this linker .map (MSVC, lld, GNU ld, or "
@@ -573,6 +591,19 @@ cl::opt<bool> Devirtualize(
     "devirtualize",
     cl::desc("Recover an x64 interpreter (experimental; requires --func)"),
     cl::sub(DecompileCmd));
+cl::opt<bool> SourceSymbolic(
+    "symbolic-simplify",
+    cl::desc("Symbolically simplify the selected source function"),
+    cl::sub(DecompileCmd));
+cl::opt<std::string>
+    SourceLLVMLevel("llvm-opt",
+                    cl::desc("LLVM C optimization: basic, O0, O1, O2, O3 or "
+                             "custom (requires --func --llvm)"),
+                    cl::init("basic"), cl::sub(DecompileCmd));
+cl::list<std::string> SourceLLVMPasses(
+    "llvm-passes",
+    cl::desc("Custom scalar passes: instcombine,early-cse,simplifycfg,dce"),
+    cl::CommaSeparated, cl::sub(DecompileCmd));
 cl::opt<bool> VMMachineState(
     "vm-machine-state",
     cl::desc(

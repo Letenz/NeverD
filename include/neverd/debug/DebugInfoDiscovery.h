@@ -17,6 +17,7 @@
 #define NEVERD_DEBUG_DEBUGINFODISCOVERY_H
 
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/SymbolStore.h"
 
 #include <filesystem>
 #include <memory>
@@ -26,15 +27,6 @@
 namespace neverd {
 
 struct BinaryImage;
-
-/// A symbol-store lookup derived only from a unique, valid PE CodeView record.
-/// These are path components, not a URL or permission to contact a server.
-struct PDBSymbolRequest {
-  std::string FileName;
-  std::string Key;
-};
-
-std::optional<PDBSymbolRequest> pdbSymbolRequest(const BinaryImage &Img);
 
 /// Which loader produced a DebugContext.
 enum class DebugInfoKind { None, DWARF, PDB, Map };
@@ -54,6 +46,16 @@ struct DebugInfoRequest {
   /// Set false to read the image alone.  The escape hatch for a stale or
   /// mismatched companion file that names functions worse than the image does.
   bool Enabled = true;
+
+  /// Set false to leave a PE without the PDB it names unless PDBPath names
+  /// one: the user declined it, or chose one that loads after the image.
+  /// Other debug information is still found.
+  bool SearchPDB = true;
+
+  /// The symbol search path, in _NT_SYMBOL_PATH syntax, that replaces the
+  /// environment's.  Its directories and stores are searched for the PDB;
+  /// its servers are not contacted.
+  std::optional<std::string> SymbolPath;
 
   /// Explicit user choice permits the named PDB to supply analysis input
   /// when the PE's CodeView identity is absent. Automatic discovery never

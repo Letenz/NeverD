@@ -927,6 +927,12 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
     return Declared == ExternalFunctionIdentifiers.end() ? Slot
                                                          : Declared->second;
   }
+  // The function this unit defines at the address, under the identifier its
+  // definition took: a second static `helper` is `helper_2`.
+  if (auto At = DefinedFunctionsByAddress.find(E.CallAddr);
+      At != DefinedFunctionsByAddress.end() && At->second &&
+      !isVariadicImportStub(*At->second))
+    return functionIdentifier(*At->second);
   return Name + "_" + llvm::utohexstr(E.CallAddr);
 }
 
@@ -5420,13 +5426,13 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
       // A mangled name keeps the underscores its scheme starts with
       // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
       // identifier is spelled from: `vtable for QDomNode`, Go's
-      // `main.Flags`.
+      // `main.Flags`, or `__dso_handle`, whose underscores C drops.
       const llvm::StringRef CName =
           cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
       Named.Raw = symbolScheme(CName) != SymbolScheme::None
                       ? CName.str()
                       : stripLeadingUnderscores(Sym->Name).str();
-      Named.Readable = demangledComment(CName);
+      Named.Readable = symbolComment(CName, Named.Raw);
       Named.Symbol = Sym->Name;
     }
   }
@@ -5444,8 +5450,11 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     const ImageSymbolName Named = imageSymbolName(Addr);
     if (!Named.Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
-    if (!Named.Readable.empty())
-      Obj.Readable = Named.Readable;
+    // An identifier spelled from the name, or numbered after another object
+    // took it, has the name in its comment.
+    Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()
+                       ? Named.Readable
+                       : symbolComment(Named.Raw, Obj.Name);
     if (!Named.Symbol.empty())
       Obj.Symbol = Named.Symbol;
     if (Obj.Symbol.empty())

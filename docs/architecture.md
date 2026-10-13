@@ -50,14 +50,19 @@ loads opens the project without it, with a warning. Older display-only
 selections remain presentation aliases until the user selects the PDB again
 for analysis.
 
-`pdbSymbolRequest` derives symbol-store path components from the loader's unique,
-validated CodeView identity. The existing headers JSON exposes those components
-and the current debug-information status; worker metadata advertises a download
-candidate only when debug loading is enabled and no PDB is loaded. The GUI owns
-user consent, HTTPS transport and its private cache. It never reparses PE records
-or treats a network response as analysis evidence: inspection and transactional
-application use the existing strict PDB APIs. Epoch and request guards retire
-downloads on document changes, and network errors do not change the image.
+`debug/SymbolStore` owns where a PE's PDB is: the symbol-store key it derives
+from the loader's unique, validated CodeView identity (`pdbSymbolRequest`), the
+search path in `_NT_SYMBOL_PATH` syntax with its default store in the user's
+cache directory, and the candidates discovery tries in order (the recorded
+path, beside the image, then the path's directories and stores). Discovery and
+`neverd_pdb_reference_json` share those candidates, so a PDB the GUI downloads
+into a store is the one the next load, and the command line's, finds; the C API
+names the first copy whose Info/DBI identity matches without loading the PE. No
+engine code contacts a server: the GUI owns consent and HTTPS transport into the
+store path the engine names, then loads the file through the strict PDB loader.
+`neverd_session_set_pdb_search(0)` opens a PE without the PDB the user declined,
+or before the PDB they chose loads. Epoch and request guards retire downloads on
+document changes, and network errors do not change the image.
 
 ## System boundary
 
@@ -108,11 +113,31 @@ these facts. Navigation still discards the preceding output IR and source.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
-revision and listing generation identify a document. A hit can answer before
-preparing the mutable single-function Session; it never marks that Session as
+revision, listing generation and source transformation options identify a
+document. A hit can answer before preparing the mutable single-function Session;
+it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Documents own text, rows and edit anchors, and project or presentation changes
 invalidate them. Oversized documents remain readable without being retained.
+
+`SourceViewOptions` owns request-local native source policy. Ordinary HighIR
+conversion skips symbolic expression simplification. An explicit source request
+may rebuild HighIR from already prepared LowIR/MedIR and library recognitions,
+retaining one enhanced variant without repeating machine/ABI recovery. A scoped
+borrow restores the ordinary result on every exit. LLVM source modules and
+emitted source caches include the options in their identity. LLVM call-site
+preparation owns a separate MedIR copy so opening that view cannot change the
+prepared inputs used by a later HighC enhancement. The additive
+`neverd_ir_view_ex_json` API validates options before preparation; the legacy
+page API keeps default behavior and bytecode support. Source options never
+change the lifting, patching or general module optimizer defaults.
+
+LLVMC defaults to a scalar cleanup sequence after ordinary frame and SSA
+promotion. O0–O3 and a bounded custom pass selection are explicit alternatives.
+Symbolic fixed-point rewriting and LLVM dispatcher recovery require the
+independent symbolic option. Native machine CFG, jump-table, ABI and exception
+proofs remain authoritative and are unaffected. Worker source edits validate
+against the same source options used to display their targets.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only

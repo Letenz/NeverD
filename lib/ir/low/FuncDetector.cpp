@@ -254,7 +254,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       continue;
     if (Img.hasExecutableCodeOwnerAt(Sym.Addr)) {
       Entries.insert(Sym.Addr);
-      Results.push_back({Sym.Addr, Sym.Name});
+      // As the function is listed: a name lower functions take is numbered.
+      Results.push_back({Sym.Addr, Img.functionListName(Sym.Addr, Sym.Name)});
     }
   }
 

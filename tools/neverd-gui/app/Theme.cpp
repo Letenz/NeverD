@@ -101,6 +101,12 @@ Theme &Theme::instance() {
 }
 
 Theme::Theme() {
+  // Once the fixed font was asked for, Qt 6.8's GTK platform theme answers
+  // the next system font query after a theme change with the fixed font, and
+  // every window without a font of its own -- the dialogs' titles among them
+  // -- draws in the code font.  Keep the system font of now.
+  if (qGuiApp)
+    QGuiApplication::setFont(QGuiApplication::font());
   QSettings settings;
   mode_ = modeFromName(settings.value(ModeKey).toString());
   codeFont_ = defaultCodeFont();

@@ -1,13 +1,18 @@
 #include "WorkbenchStyle.h"
 
+#include "Icons.h"
+
 #include <QAbstractButton>
 #include <QApplication>
+#include <QComboBox>
+#include <QFileDialog>
 #include <QGroupBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QStyleFactory>
+#include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTimer>
 
@@ -29,9 +34,71 @@ WorkbenchStyle::WorkbenchStyle()
 int WorkbenchStyle::styleHint(StyleHint hint, const QStyleOption *option,
                               const QWidget *widget,
                               QStyleHintReturn *returnData) const {
-  if (hint == SH_UnderlineShortcut)
+  switch (hint) {
+  case SH_UnderlineShortcut:
     return cues_;
-  return QProxyStyle::styleHint(hint, option, widget, returnData);
+  // A combo box's list highlights the item under the pointer, as a menu does.
+  case SH_ComboBox_ListMouseTracking:
+    return true;
+  default:
+    return QProxyStyle::styleHint(hint, option, widget, returnData);
+  }
+}
+
+QIcon WorkbenchStyle::standardIcon(StandardPixmap pixmap,
+                                   const QStyleOption *option,
+                                   const QWidget *widget) const {
+  switch (pixmap) {
+  // A file dialog's tool buttons and the places it lists.
+  case SP_ArrowBack:
+  case SP_FileDialogBack:
+    return icon(QStringLiteral("back"));
+  case SP_ArrowForward:
+    return icon(QStringLiteral("forward"));
+  case SP_FileDialogToParent:
+    return icon(QStringLiteral("up"));
+  case SP_FileDialogNewFolder:
+    return icon(QStringLiteral("folder_new"));
+  case SP_FileDialogListView:
+    return icon(QStringLiteral("view_list"));
+  case SP_FileDialogDetailedView:
+    return icon(QStringLiteral("view_details"));
+  case SP_DirIcon:
+  case SP_DirClosedIcon:
+    return icon(QStringLiteral("folder"));
+  case SP_DirOpenIcon:
+    return icon(QStringLiteral("open"));
+  case SP_FileIcon:
+    return icon(QStringLiteral("file"));
+  case SP_ComputerIcon:
+    return icon(QStringLiteral("computer"));
+  case SP_DriveHDIcon:
+    return icon(QStringLiteral("drive"));
+  case SP_MessageBoxInformation:
+    return icon(QStringLiteral("message_information"));
+  case SP_MessageBoxWarning:
+    return icon(QStringLiteral("message_warning"));
+  case SP_MessageBoxCritical:
+    return icon(QStringLiteral("message_critical"));
+  case SP_MessageBoxQuestion:
+    return icon(QStringLiteral("help"));
+  default:
+    return QProxyStyle::standardIcon(pixmap, option, widget);
+  }
+}
+
+void WorkbenchStyle::polish(QWidget *widget) {
+  QProxyStyle::polish(widget);
+  // The combo box's own delegates draw items themselves; a styled delegate
+  // draws them as the style sheet's item rules say, like a menu's.
+  if (auto *combo = qobject_cast<QComboBox *>(widget);
+      combo && !qobject_cast<QStyledItemDelegate *>(combo->itemDelegate()))
+    combo->setItemDelegate(new QStyledItemDelegate(combo));
+  // Qt's own file dialog lists folders and files with the icon theme's
+  // icons unless it is given others.
+  if (auto *files = qobject_cast<QFileDialog *>(widget);
+      files && files->iconProvider() != fileIcons())
+    files->setIconProvider(fileIcons());
 }
 
 void WorkbenchStyle::polish(QApplication *application) {

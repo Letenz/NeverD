@@ -1,6 +1,8 @@
 #include "Icons.h"
 
 #include <QFile>
+#include <QFileIconProvider>
+#include <QFileInfo>
 #include <QHash>
 #include <QIconEngine>
 #include <QPainter>
@@ -66,6 +68,38 @@ private:
   std::shared_ptr<QSvgRenderer> renderer_;
 };
 } // namespace
+
+namespace {
+class WorkbenchFileIcons final : public QFileIconProvider {
+public:
+  QIcon icon(IconType type) const override {
+    switch (type) {
+    case Computer:
+      return gui::icon(QStringLiteral("computer"));
+    case Drive:
+      return gui::icon(QStringLiteral("drive"));
+    case Folder:
+      return gui::icon(QStringLiteral("folder"));
+    case File:
+      return gui::icon(QStringLiteral("file"));
+    default:
+      return QFileIconProvider::icon(type);
+    }
+  }
+  QIcon icon(const QFileInfo &info) const override {
+    if (info.isRoot())
+      return icon(Drive);
+    if (info.isDir())
+      return icon(Folder);
+    return icon(File);
+  }
+};
+} // namespace
+
+QAbstractFileIconProvider *fileIcons() {
+  static WorkbenchFileIcons provider;
+  return &provider;
+}
 
 QIcon icon(const QString &name) {
   static QHash<QString, QIcon> cache;

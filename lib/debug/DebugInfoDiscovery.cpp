@@ -22,7 +22,6 @@
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/FilePath.h"
 
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -95,37 +94,6 @@ void addCandidate(std::vector<std::filesystem::path> &Out,
     return;
   if (std::find(Out.begin(), Out.end(), Candidate) == Out.end())
     Out.push_back(std::move(Candidate));
-}
-
-/// Base name of a path a linker recorded inside the image.  Such a path is
-/// spelled for the machine that produced the binary, so it may use Windows
-/// separators no matter which host NeverD runs on.
-llvm::StringRef recordedFileName(llvm::StringRef Recorded) {
-  size_t Pos = Recorded.find_last_of("/\\");
-  return Pos == llvm::StringRef::npos ? Recorded : Recorded.substr(Pos + 1);
-}
-
-/// PDB files a PE image points at or conventionally sits beside.
-std::vector<std::filesystem::path>
-pdbCandidates(const std::filesystem::path &BinaryPath, const BinaryImage &Img) {
-  std::vector<std::filesystem::path> Out;
-  const std::filesystem::path Dir = BinaryPath.parent_path();
-
-  // The CodeView debug directory records the path the linker wrote the PDB to.
-  // It resolves on the machine that produced the binary; anywhere else only
-  // the file name survives the trip, which is why that name is also retried
-  // next to the image.
-  llvm::StringRef Recorded(Img.DynInfo.PDBPath);
-  if (!Recorded.empty() && !Recorded.starts_with(kBuildIdPrefix)) {
-    addCandidate(Out, std::filesystem::u8path(Recorded.str()));
-    addCandidate(
-        Out, Dir / std::filesystem::u8path(recordedFileName(Recorded).str()));
-  }
-
-  auto Companion = BinaryPath;
-  Companion.replace_extension(".pdb");
-  addCandidate(Out, std::move(Companion));
-  return Out;
 }
 
 /// Companion files that hold the DWARF stripped out of an ELF image, in the
@@ -226,37 +194,6 @@ DebugInfoResult loadMap(const std::filesystem::path &P,
 
 } // anonymous namespace
 
-std::optional<PDBSymbolRequest> pdbSymbolRequest(const BinaryImage &Img) {
-  const auto &DI = Img.DynInfo;
-  if (!Img.isCOFF() ||
-      DI.CodeViewPDBIdentityState != PDBIdentityState::Unique ||
-      !DI.CodeViewPDBIdentity || !DI.CodeViewPDBIdentity->isValid())
-    return std::nullopt;
-  const auto Name = recordedFileName(DI.PDBPath);
-  // The recorded directory is never a network or cache destination. Restrict
-  // the basename to portable file characters before publishing it to clients.
-  if (Name.empty() || Name.size() > 240 || Name.front() == '.' ||
-      !Name.ends_with_insensitive(".pdb"))
-    return std::nullopt;
-  for (unsigned char C : Name)
-    if (C < 0x20 || C >= 0x7f || llvm::StringRef("<>:\"/\\|?*").contains(C))
-      return std::nullopt;
-  const auto &Identity = *DI.CodeViewPDBIdentity;
-  std::string Key;
-  if (Identity.Kind == PDBIdentityKind::RSDS) {
-    // CodeView serializes GUID's first three fields little-endian. Symbol
-    // stores spell those fields as a GUID, without braces or separators.
-    constexpr unsigned Order[] = {3, 2, 1,  0,  5,  4,  7,  6,
-                                  8, 9, 10, 11, 12, 13, 14, 15};
-    for (unsigned I : Order)
-      Key += llvm::utohexstr(Identity.Guid[I], false, 2);
-  } else {
-    Key = llvm::utohexstr(Identity.Signature, false, 8);
-  }
-  Key += llvm::utohexstr(Identity.Age, true);
-  return PDBSymbolRequest{Name.lower(), std::move(Key)};
-}
-
 const char *debugInfoKindName(DebugInfoKind Kind) {
   switch (Kind) {
   case DebugInfoKind::None:
@@ -309,16 +246,19 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
 
   switch (Img.Format) {
   case BinaryFormat::COFF:
-    for (const std::filesystem::path &C : pdbCandidates(BinaryPath, Img)) {
-      if (!isReadableFile(C))
+    if (!Req.SearchPDB)
+      break;
+    for (const PDBCandidate &C :
+         pdbCandidates(BinaryPath, Img, symbolPath(Req.SymbolPath))) {
+      if (!isReadableFile(C.Path))
         continue;
-      DebugInfoResult Attempt = loadPDB(C, Img, Progress);
+      DebugInfoResult Attempt = loadPDB(C.Path, Img, Progress);
       if (Attempt)
         return Attempt;
       LLVM_DEBUG(llvm::dbgs()
-                 << "debug-discovery: rejected PDB candidate " << pathToUTF8(C)
-                 << (Attempt.Error.empty() ? "" : ": ") << Attempt.Error
-                 << "\n");
+                 << "debug-discovery: rejected PDB candidate "
+                 << pathToUTF8(C.Path) << (Attempt.Error.empty() ? "" : ": ")
+                 << Attempt.Error << "\n");
     }
     break;
 
@@ -464,6 +404,9 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
   dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
   recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   recordDataInCode(Img, DataObjects);
+  // Static functions of several modules share names (ntoskrnl's PDB names
+  // thirteen twice).
+  Img.numberSharedFunctionNames();
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

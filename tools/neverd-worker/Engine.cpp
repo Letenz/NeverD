@@ -156,6 +156,11 @@ const LoadOptionsFunctions &loadOptions() {
   return functions;
 }
 constexpr std::string_view LoadOptionsSuffix = ".neverd-load.json";
+/// The PDB a PE names and where it is, before or after the PE is open.
+using PdbReferenceFunction = const char *(*)(const char *, const char *);
+/// Whether the next load searches for the PDB a PE names.
+using PdbSearchFunction = void (*)(neverd_session_t, int);
+
 using IdentifyFunction = const char *(*)(const char *);
 IdentifyFunction identifyFunction() {
   static const auto function =
@@ -166,6 +171,14 @@ IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
       engineSymbol<IRViewFunction>("neverd_ir_view_json");
+  return function;
+}
+using IRViewExFunction = const char *(*)(neverd_session_t, neverd_va_t,
+                                         const char *, size_t, size_t,
+                                         const char *);
+IRViewExFunction irViewExFunction() {
+  static const auto function =
+      engineSymbol<IRViewExFunction>("neverd_ir_view_ex_json");
   return function;
 }
 SessionJsonFunction headersFunction() {
@@ -511,6 +524,10 @@ bool Engine::loadsPdbFiles() {
   return engineSymbol<Inspect>("neverd_session_inspect_pdb_json") &&
          engineSymbol<Load>("neverd_session_load_pdb");
 }
+bool Engine::findsPdbFiles() {
+  return engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json") &&
+         engineSymbol<PdbSearchFunction>("neverd_session_set_pdb_search");
+}
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
@@ -620,14 +637,23 @@ void Engine::forgetNamedViews() {
 }
 
 std::shared_ptr<const Engine::NamedView>
-Engine::namedView(std::uint64_t address, const std::string &representation) {
+Engine::namedView(std::uint64_t address, const std::string &representation,
+                  const Json &options) {
   const auto view = irViewFunction();
+  const auto extended = irViewExFunction();
+  if (!options.is_object() || options.dump().size() > 4096)
+    throw Error("invalid_request", "source_options must be a bounded object");
+  if (!options.empty() && !extended)
+    throw Error("unsupported", "This engine does not support source options");
   if (!view)
     return nullptr;
   const bool sourceView = representation == "c" || representation == "llvmc" ||
                           representation == "source" ||
                           representation == "cpp" || representation == "rust" ||
                           representation == "go";
+  if (!sourceView && !options.empty())
+    throw Error("invalid_request", "Source options require a source view");
+  const auto optionText = options.dump();
   (void)listing().functionAliases();
   const auto cacheKey = [&] {
     const auto generation = listing().generation();
@@ -638,7 +664,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
       namedViewsListingGeneration_ = generation;
     }
     return hexAddress(address) + ":" + representation + ":" +
-           std::to_string(revision_) + ":" + std::to_string(generation);
+           std::to_string(revision_) + ":" + std::to_string(generation) + ":" +
+           optionText;
   };
   const auto lookupKey = cacheKey();
   for (auto it = namedViews_.begin(); it != namedViews_.end(); ++it)
@@ -665,14 +692,17 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     Json full;
     auto backendRepresentation = representation;
     for (std::size_t next = 0;;) {
-      auto page =
-          backendJson(view(session_, address, backendRepresentation.c_str(),
-                           next, EnginePageLines),
-                      true);
+      auto page = backendJson(
+          sourceView && extended && !options.empty()
+              ? extended(session_, address, backendRepresentation.c_str(), next,
+                         EnginePageLines, optionText.c_str())
+              : view(session_, address, backendRepresentation.c_str(), next,
+                     EnginePageLines),
+          true);
       // Older page APIs offer HighC but not the automatic source dialect.
       // Keep the Pseudocode action useful, with the actual dialect reported.
-      if (next == 0 && representation == "source" && page.is_object() &&
-          !page.contains("text") &&
+      if (next == 0 && options.empty() && representation == "source" &&
+          page.is_object() && !page.contains("text") &&
           page.value("mapping_status", std::string()) ==
               "unsupported_representation") {
         backendRepresentation = "c";
@@ -712,8 +742,11 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     full["complete"] = true;
     full["next_offset"] = nullptr;
     full["representation"] = representation;
+    full["source_options"] = options;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    if (sourceView)
+      CodeEdits::spellIdentifierSymbols(full);
     // The resolver below runs other operations, so the decoration names
     // functions from a copy of the listing's display names.
     auto displayNames = CodeEdits::FunctionAliases(listing().functionAliases());
@@ -819,9 +852,9 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
 
 std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                                           const std::string &representation,
-                                          std::size_t offset,
-                                          std::size_t limit) {
-  const auto document = namedView(address, representation);
+                                          std::size_t offset, std::size_t limit,
+                                          const Json &options) {
+  const auto document = namedView(address, representation, options);
   if (!document)
     return std::nullopt;
   const auto &namedView_ = document->value;
@@ -1116,7 +1149,8 @@ Json Engine::codeEditRow(std::uint64_t address) const {
 
 Json Engine::analysisSnapshot() {
   requireLoaded();
-  if (!pdbInput_.is_null() &&
+  // A declined PDB names no file to have changed.
+  if (pdbInput_.contains("path") &&
       signatureStamp(utf8Path(pdbInput_.at("path").get<std::string>())) !=
           pdbInput_.at("stamp"))
     throw Error("input_changed", "Loaded PDB changed; load it again");
@@ -1158,6 +1192,12 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   auto options = snapshot.at("open");
   options["read_only"] = true;
   options["analysis"] = false;
+  // The owner left the PDB it declined unloaded; so does its replica.
+  const auto pdb = snapshot.value("pdb", Json());
+  const bool pdbDeclined =
+      pdb.is_object() && pdb.value("mode", Json("")) == "none";
+  if (pdbDeclined)
+    options["pdb"] = pdb;
   execute("open", options);
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
@@ -1190,7 +1230,7 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
     neverd_annotation_set(
         session_, parseAddress(row.at("addr").get<std::string>()),
         row.at("text").get_ref<const std::string &>().c_str());
-  if (const auto pdb = snapshot.value("pdb", Json()); !pdb.is_null())
+  if (!pdb.is_null() && !pdbDeclined)
     execute("pdb_load", pdb);
   for (const auto &input : snapshot.at("signatures")) {
     const auto path = utf8Path(input.at("path").get<std::string>());
@@ -1217,6 +1257,19 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("unsupported", "This engine cannot identify files");
     const auto path = stringField(p, "path", {}, 32768);
     auto result = backendJson(identify(path.c_str()));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
+  if (operation == "pdb_reference") {
+    // The PDB a PE names, where a copy of it is, and where to download it,
+    // before the PE is opened as after.
+    const auto reference =
+        engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json");
+    if (!reference)
+      throw Error("unsupported", "This engine cannot find PDB files");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(reference(path.c_str(), nullptr));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
     return result;
@@ -1325,6 +1378,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     for (const char *flag : {"read_only", "debug_info", "analysis"})
       if (p.contains(flag) && !p[flag].is_boolean())
         throw Error("invalid_request", std::string(flag) + " must be boolean");
+    if (p.contains("pdb") && !p.at("pdb").is_object())
+      throw Error("invalid_request", "PDB selection must be an object");
+    // The user's answer for the PDB the input names: none, which leaves the
+    // image without one, or the file to load once the image is.
+    const bool pdbDeclined =
+        p.contains("pdb") && p.at("pdb").value("mode", Json("")) == "none";
     const bool readOnly = p.value("read_only", false);
     // The loader the load dialog chose when the file names none itself: EVM
     // bytecode, or a binary file with its processor and placement, as the
@@ -1385,6 +1444,16 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         throw Error("unsupported",
                     "This engine cannot disable debug information");
       set(next.get(), 0);
+    }
+    // Searching would load the PDB the user declined, or one the file they
+    // chose replaces.
+    if (p.contains("pdb")) {
+      if (const auto search =
+              engineSymbol<PdbSearchFunction>("neverd_session_set_pdb_search"))
+        search(next.get(), 0);
+      else if (pdbDeclined)
+        throw Error("unsupported",
+                    "This engine cannot open a PE without its PDB");
     }
     if (!chosenLoader.empty() &&
         loadOptions().set(next.get(), chosenLoader.c_str()) != 0)
@@ -1452,9 +1521,9 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                            failure.what());
       }
     }
-    if (p.contains("pdb")) {
-      if (!p.at("pdb").is_object())
-        throw Error("invalid_request", "PDB selection must be an object");
+    if (pdbDeclined) {
+      pdbInput_ = {{"mode", "none"}};
+    } else if (p.contains("pdb")) {
       // A saved selection names a file outside the project: one that no
       // longer loads leaves the project open without it, and says why.  A
       // matching PDB proves itself again by its GUID and age; only a PDB the
@@ -1933,7 +2002,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     auto &store = history();
     const auto before = codeEditRow(address);
     const auto after = CodeEdits::change(before, p);
-    const auto document = namedView(address, stringField(p, "representation"));
+    const auto document = namedView(address, stringField(p, "representation"),
+                                    p.value("source_options", Json::object()));
     if (!document)
       throw Error("unsupported",
                   "The engine does not expose editable source targets");
@@ -2481,6 +2551,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         representation != "low" && representation != "med" &&
         representation != "high" && representation != "llvm" && !spelled)
       throw Error("unsupported", "Unknown code representation");
+    const auto options = p.value("source_options", Json::object());
+    if (!options.is_object() || options.dump().size() > 4096 ||
+        (!options.empty() && representation != "c" &&
+         representation != "llvmc" && !spelled))
+      throw Error("invalid_request",
+                  "Invalid source_options for this representation");
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
     const auto limit = sizeField(p, "limit", 512, 2048);
@@ -2491,8 +2567,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     std::string reason;
     if (representation == "low" || representation == "med" ||
         representation == "c" || representation == "llvmc" || spelled) {
-      if (auto named = namedViewPage(address, representation, offset, limit))
+      if (auto named =
+              namedViewPage(address, representation, offset, limit, options))
         return *named;
+      if (!options.empty())
+        throw Error("unavailable",
+                    error().empty() ? "Source transformation failed" : error());
       prepareFunction(address);
       if (const auto view = irViewFunction()) {
         auto result = backendJson(

@@ -17,6 +17,7 @@
 #include <optional>
 #include <set>
 #include <tuple>
+#include <vector>
 
 namespace neverd::med_calling_conv_detail {
 
@@ -41,6 +42,21 @@ void recoverFPStackReads(
     unsigned ParameterBase,
     llvm::function_ref<std::optional<int64_t>(const MedVar &)> Trace,
     const std::set<int64_t> &MutableSlots);
+
+/// One above every value id in \p Func. MedIR numbers registers, temporaries
+/// and stack values from one counter, and HighIR keys them by {Id, SSAVer}
+/// alone: a new temporary takes an id above every value's, or it aliases a
+/// register's (`t30` read as EAX.30).
+int nextValueId(const MedFunc &Func);
+
+/// Rewrite \p Read, a read of \p Bytes from the first byte of the stack
+/// parameter \p First, as the composition of the parameters it covers, each
+/// one \p Slot bytes and above the ones below it.  The last gives only the
+/// bytes the read reaches; the rest of it is padding, as past a ten-byte x87
+/// long double.  The temporaries to compute before \p Read are appended to
+/// \p Prefix, numbered from \p NextValueId.
+void composeStackSlots(MedOp &Read, MedVar First, unsigned Slot, unsigned Bytes,
+                       int &NextValueId, std::vector<MedOp> &Prefix);
 
 ValueKey valueKey(const MedVar &V);
 /// Internal register-ABI stack recovery, including a bounded variadic prefix.

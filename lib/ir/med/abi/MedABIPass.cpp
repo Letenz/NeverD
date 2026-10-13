@@ -1446,14 +1446,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
         if (SlotIdx >= 0 && SlotIdx < MaxArgs && !FoundMask[SlotIdx]) {
           const MedVar &SV = Prev.Inputs[1];
-          int Lanes =
-              (SlotSize > 0 && SV.Size > SlotSize && (SV.Size % SlotSize) == 0)
-                  ? SV.Size / SlotSize
-                  : 1;
+          int Lanes = SlotSize > 0 && SV.Size > SlotSize
+                          ? (SV.Size + SlotSize - 1) / SlotSize
+                          : 1;
           // A single wide store covering several outgoing 4-byte slots is split
           // into one argument per slot — but only for a direct callee that
           // actually takes a scalar argument at every covered slot, so a
-          // genuine wide (vector) argument is still passed whole.
+          // genuine wide (vector) argument is still passed whole.  The slot
+          // an x87 `fstp tbyte` ends in takes its last two bytes, and padding
+          // passed as zero.
           bool SplitWide = Lanes > 1 && !CI.IsIndirect && CalleeArgs >= 0 &&
                            SlotIdx + Lanes <= CalleeArgs;
           if (SplitWide)
@@ -1464,11 +1465,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
               }
           if (SplitWide) {
             for (int L = 0; L < Lanes; ++L) {
+              const int Bytes = std::min<int>(SlotSize, SV.Size - L * SlotSize);
               MedVar Lane;
               Lane.Kind = MedVar::Temp;
               Lane.Id = FreshId++;
               Lane.SSAVer = 0;
-              Lane.Size = static_cast<uint16_t>(SlotSize);
+              Lane.Size = static_cast<uint16_t>(Bytes);
               Lane.TheArch = TheArch;
               MedOp Sub;
               Sub.Opcode = NdOp::SUBBYTES;
@@ -1478,6 +1480,17 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
               Sub.addInput(
                   MedVar::makeConst(static_cast<uint64_t>(L * SlotSize), 4));
               CallLaneOps.push_back(std::move(Sub));
+              if (Bytes < SlotSize) {
+                MedOp Widen;
+                Widen.Opcode = NdOp::INT_ZEXT;
+                Widen.Addr = Op.Addr;
+                Widen.Output = Lane;
+                Widen.Output.Id = FreshId++;
+                Widen.Output.Size = static_cast<uint16_t>(SlotSize);
+                Widen.addInput(Lane);
+                Lane = Widen.Output;
+                CallLaneOps.push_back(std::move(Widen));
+              }
               Found[SlotIdx + L] = Lane;
               FoundMask[SlotIdx + L] = true;
               FromStackScan[SlotIdx + L] = true;

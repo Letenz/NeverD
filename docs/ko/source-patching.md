@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
+<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
 
 [← Documentation Index](README.md)
 
@@ -130,3 +130,7 @@ ctest --test-dir build-source -L \
 LLVM 빌드 복사본은 Mach-O x64 GOT 데이터 참조도 수정합니다. Clang의 타입 catch 테이블은 4바이트 재배치 필드 끝을 기준으로 합니다. r3/r4는 4바이트 어긋나며 출력 전 검증에서 수정되지 않은 결과를 거부합니다. 개발 Mac의 x64 Mach-O 사례는 Rosetta 2로, ARM64 사례는 직접 실행합니다.
 
 Windows x64 네이티브 검증 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805)에서 PE/객체/trampoline 전용 테스트 16개와 CPU 대상 행렬 테스트 143개가 건너뛰기 없이 모두 통과했습니다. FH3 테스트는 C++ 실행 시나리오 7가지를 검증했으며 대상 행렬은 Unicorn을 사용합니다. 이 실행은 Clang 22.1.6, 네이티브 MSVC 및 Windows SDK, 통합 LLVM을 사용했습니다.
+
+Windows 워크플로는 x86, x64, ARM64용 PE 교체 바이너리 27개도 생성합니다. `scripts/check_source_patch_pe_runtime.py`는 소스 IR, 컴파일된 객체, 외부 객체 경로에서 비리프 호출, 변경 가능한 포인터 상태, 부동소수점 및 스택 인수를 검사합니다. 원본과 각 교체 결과를 세 번씩 실행하여 아키텍처마다 프로세스 실행 30회를 관측합니다. x86/x64는 Windows x64에서, ARM64는 `windows-11-arm`에서 실행합니다. 검증기는 네이티브 호스트, 커밋, 파일 해시의 일치와 전체 사례 목록을 요구하며 외부 실행기의 결과는 별도로 기록합니다. 이 프로파일은 ARM64 C++ 예외 지원을 입증하지 않습니다.
+
+행렬의 선택적 컴파일러는 `NEVERD_TEST_MATRIX_NEVERC`로 지정합니다. NeverC 3389.1.5는 x64/ARM64와 ELF, PE, Mach-O 조합의 66개 검사를 모두 통과했으며 IR 및 네이티브 객체 설치와 CPU 실행을 확인했습니다. 이 컴파일러 버전은 x86과 ARM32를 지원하지 않으므로 해당 대상에는 Clang을 사용하며 ELF에는 호환 GCC 드라이버도 사용할 수 있습니다. NeverC의 PE 컴파일 시 어댑터는 `-fno-autolink`를 추가하여 다른 CRT를 링크하지 않고 기존 이미지에서 참조를 해결합니다. `.drectve` 링크 계약이 있는 외부 객체는 계속 거부됩니다.

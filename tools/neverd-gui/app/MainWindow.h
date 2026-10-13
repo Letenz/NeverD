@@ -4,6 +4,7 @@
 #include "Address.h"
 #include "AddressSpace.h"
 #include "ChooserView.h"
+#include "Session.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -12,6 +13,7 @@
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <optional>
+#include <utility>
 
 class QDialog;
 class QLabel;
@@ -144,6 +146,9 @@ private:
   QString askForFile(QWidget *parent) const;
   /// Open \p path, first asking how to load it when NeverD keeps no project
   /// for it, as IDA's "Load a new file" dialog does.
+  /// Open \p path once the user answered whether to load the PDB it names,
+  /// as IDA asks when it loads a PE that names one.
+  void openAskingForPdb(const QString &path, LoadOptions options);
   void chooseLoader(const QString &path);
   /// File, Load file, Reload the input file: read the file again, asking
   /// again how to read a binary file.
@@ -210,6 +215,8 @@ private:
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;
   MicrosoftSymbols *microsoftSymbols_ = nullptr;
+  /// A file to open once the worker has started, asking for its PDB then.
+  std::optional<std::pair<QString, LoadOptions>> pdbPromptPending_;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   ChooserView *functions_ = nullptr;

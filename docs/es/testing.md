@@ -1856,6 +1856,8 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 La ejecución KVM x64 verificada delega el bucle completo de instrucciones al hilo vCPU privado mediante `withExecutionOwner`. El bucle conserva la admisión, las transacciones RAM, los hooks y los presupuestos; cada entrada nativa mantiene sus controles y la prioridad de excepciones. El llamador supervisa las entradas activas y confirma la cancelación antes de regresar. Los hooks CPU no deben depender del estado local del hilo llamador. Una entrada nativa independiente conserva su finalización en el llamador. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` y `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verifican la propiedad y la cancelación real; este cambio no certifica un controlador recuperado.
 
+El flujo Windows de patches de fuente también ejecuta `scripts/check_source_patch_pe_runtime.py`: tres originales y 27 reemplazos x86/x64/ARM64, y después 30 observaciones de procesos por arquitectura. x86/x64 usan Windows x64; ARM64 usa `windows-11-arm`. Deben coincidir commit, arquitectura PE, hashes y todos los casos. Este perfil C no valida excepciones C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` selecciona NeverC ordinario. Las 66 comprobaciones de 3389.1.5 cubren x64/ARM64 con ELF, PE y Mach-O; x86/ARM32 no están disponibles y no hay cambio automático de compilador. El adaptador PE utiliza `-fno-autolink`; los objetos externos `.drectve` siguen rechazándose.
+
 
 ## Ordinary Darwin whole-file lock coverage
 
