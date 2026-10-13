@@ -4,6 +4,7 @@ add_neverd_component_library(NeverDDebugInfo
   PDBFunctionNameHint.cpp
   PDBLoader.cpp
   PDB20Loader.cpp
+  SymbolStore.cpp
   map/COFFLLDMapParser.cpp
   map/ELFMapParser.cpp
   map/GNUldMapParser.cpp

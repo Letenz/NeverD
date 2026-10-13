@@ -110,18 +110,32 @@ selection as `pdb`: a `verified` one is checked again by its identity, an
 `analysis` one by its stamp, and one that no longer loads leaves the file open
 without it, with a warning.
 
+`pdb_reference {path}` needs no open binary: it returns the SDK's
+`neverd_pdb_reference_json` for the input, `{pdb:null}` or
+`{pdb:{file,key,recorded,found,rejected,servers}}` — the PDB the PE names, the
+first local copy whose build identity matches (`{path,location}` with location
+`recorded`, `beside`, `directory` or `store`), the copies of other builds, and
+`[{url,path}]`, each symbol server of the search path with the store path it
+keeps the PDB at. The GUI asks before an `open` and passes the answer as `pdb`:
+a `{path,mode:"verified"}` selection, or `{mode:"none"}`, which opens the PE
+without the PDB it names and is saved with the project like a selection. With a
+`pdb` value the open searches for no PDB itself, so the selection is the only
+one that loads. `pdb_reference` is listed in `capabilities` when the engine has
+it.
+
 `open` and `metadata` also return `pdb_download`: either null or `{file,key}`
 derived by the SDK from a unique valid PE CodeView record. A candidate is offered
-only with debug loading enabled, no loaded/selected PDB and PDB-loading support.
-It grants no network permission. The GUI may ask for consent to query Microsoft's
-symbol server, then use `pdb_inspect` and strict `pdb_load` (`mode:"verified"`).
-For a freshly downloaded file, `stamp` may be omitted on `pdb_load`; the worker
-inspects that final path and returns its stamp. The GUI saves this returned
-selection for project reopening. SDK headers JSON supplies `dynamic.pdb_symbol`
-and `debug_info:{enabled,kind,path}`; clients using older engines see no candidate.
-The GUI includes the original `{file,key}` as `download` on `pdb_load`. The worker
-rejects the command if it is no longer the current missing-symbol candidate,
-including when another client has loaded a PDB while the download was running.
+only with debug loading enabled, no loaded, selected or declined PDB and
+PDB-loading support. It grants no network permission. The GUI may ask for
+consent to download from the servers `pdb_reference` names, then use strict
+`pdb_load` (`mode:"verified"`). For a freshly downloaded file, `stamp` may be
+omitted on `pdb_load`; the worker inspects that final path and returns its
+stamp. The GUI saves this returned selection for project reopening. SDK headers
+JSON supplies `dynamic.pdb_symbol` and `debug_info:{enabled,kind,path}`; clients
+using older engines see no candidate. The GUI includes the original `{file,key}`
+as `download` on `pdb_load`. The worker rejects the command if it is no longer
+the current missing-symbol candidate, including when another client has loaded a
+PDB while the download was running.
 
 Unless stated otherwise, operations require an open binary. Standard table pages
 take `{offset:0,limit:128,filter:""}`, with limit 1–512, and return

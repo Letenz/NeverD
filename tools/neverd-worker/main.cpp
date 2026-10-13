@@ -245,6 +245,8 @@ Json hello() {
     result["capabilities"].push_back("pdb_inspect");
     result["capabilities"].push_back("pdb_load");
   }
+  if (Engine::findsPdbFiles())
+    result["capabilities"].push_back("pdb_reference");
   result["web"] = WebEngine::capabilities();
   return result;
 }

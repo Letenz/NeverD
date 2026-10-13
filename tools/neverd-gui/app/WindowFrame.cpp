@@ -119,7 +119,7 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar,
                          bool frameless, bool drawsShadow)
     : QObject(&window), window_(window), handle_(handle), titleBar_(titleBar),
       frameless_(frameless), drawsShadow_(drawsShadow),
-      content_(window.contentsMargins()) {
+      content_(window.contentsMargins()), states_(handle.windowStates()) {
   window.installEventFilter(this);
   handle.installEventFilter(this);
   if (!frameless) {
@@ -167,7 +167,7 @@ Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
 }
 
 bool WindowFrame::resizable() const {
-  if (window_.windowState() &
+  if (states_ &
       (Qt::WindowMaximized | Qt::WindowFullScreen | Qt::WindowMinimized))
     return false;
   return window_.minimumSize() != window_.maximumSize();
@@ -175,10 +175,8 @@ bool WindowFrame::resizable() const {
 
 bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   if (object == &window_) {
-    if (event->type() == QEvent::WindowStateChange)
-      updateMargins();
     // Some systems make the native window's frame only as it first shows.
-    else if (event->type() == QEvent::Show && !frameless_)
+    if (event->type() == QEvent::Show && !frameless_)
       platform::removeCaption(handle_);
     else if (event->type() == QEvent::Resize)
       placeTitleBar();
@@ -188,6 +186,14 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   }
   if (object != &handle_)
     return false;
+  // QWidget reports a requested state at once, before the window system
+  // applies it; the native window receives this event only when the window
+  // system has applied a state, such as with a Wayland configure.
+  if (event->type() == QEvent::WindowStateChange) {
+    states_ = handle_.windowStates();
+    updateMargins();
+    return false;
+  }
   if (event->type() == QEvent::Leave) {
     showEdges({});
     return false;
@@ -240,8 +246,7 @@ void WindowFrame::paint() {
 }
 
 void WindowFrame::updateMargins() {
-  const Qt::WindowStates states = window_.windowState();
-  const bool framed = !(states & (Qt::WindowMaximized | Qt::WindowFullScreen));
+  const bool framed = !(states_ & (Qt::WindowMaximized | Qt::WindowFullScreen));
   const QMargins margins =
       drawsShadow_ && framed
           ? QMargins(ShadowExtent, ShadowExtent, ShadowExtent, ShadowExtent)
@@ -251,7 +256,7 @@ void WindowFrame::updateMargins() {
     platform::setShadowMargins(handle_, margins);
     window_.update();
   }
-  insets_ = !frameless_ && states & Qt::WindowMaximized
+  insets_ = !frameless_ && states_ & Qt::WindowMaximized
                 ? platform::maximizedInsets(handle_)
                 : QMargins();
   const int titleHeight = titleBar_ ? titleBar_->sizeHint().height() : 0;

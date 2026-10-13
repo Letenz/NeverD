@@ -606,24 +606,35 @@ linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
-When debug-information loading is enabled and a PE has no loaded PDB, the
-workbench offers **Download debug symbols** if its CodeView record supplies a
-unique valid PDB name and build identity. **Download** tries the Microsoft public
-symbol server; **Not now** continues without a network request. The request sends
-only the PDB basename and identity, not the binary. A valid PE is not necessarily
-a Microsoft product, and Microsoft may have no symbols for its build.
+Opening a PE that names a PDB in its CodeView record asks **Load PDB file**, as
+IDA does, before the file loads and whether or not the PDB is on this computer.
+The dialog shows the path the linker recorded and where a copy with the same
+build identity is: at that path, beside the input, or in a directory or symbol
+store of the search path. **Yes** loads that copy; **No** opens the file without
+the PDB, which the project keeps, so reopening it does not load the PDB either.
+Projects, and files opened with **Load debug information** cleared, are not
+asked. With no matching copy, **Yes** downloads the PDB from the first symbol
+server of the search path that has it, sending only the PDB's name and build
+identity, with a progress bar and **Cancel**. The download goes into that
+server's store, where every later load, the command line's included, finds it;
+the engine checks its identity before the file loads. When no server has it, or
+the transfer fails, the dialog offers to try again or to browse for the file on
+disk. A copy beside the input that belongs to another build is named as such.
 
-Downloads run in the background with a cancel button. The engine verifies the
-PDB against the current image before applying it; failed downloads or mismatches
-leave analysis intact and report the reason in Output. Closing or switching
-files, or starting a manual PDB selection, cancels the pending download. Verified
-files are cached under the application's cache directory in
-`symbols/microsoft/<pdb-name>/<build-key>/` and verified again before reuse.
-Direct HTTPS PDB downloads are supported on every desktop platform; Windows
-also tries the compressed `.pd_` variant. Symbol-store `file.ptr` indirection is
-not followed. Transfers have a 2 GiB limit, a 30-second inactivity timeout and a
-10-minute overall deadline. See Microsoft's
-[public symbol server documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+The search path is `_NT_ALT_SYMBOL_PATH` and `_NT_SYMBOL_PATH`, in the syntax
+Microsoft's debuggers read (`srv*<store>*<server>;<directory>`). Without either,
+NeverD searches the store `neverd/symbols` in the user's cache directory
+(`XDG_CACHE_HOME` or `~/.cache`, `~/Library/Caches`, `%LOCALAPPDATA%`) and fills it
+from [Microsoft's public symbol server](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+A PE is not necessarily a Microsoft product, and a server may have no symbols
+for its build. Transfers have a 2 GiB limit, a 30-second inactivity timeout and
+a 10-minute overall deadline; a broken connection or a server error is tried
+twice more before the dialog reports it. Windows also tries a server's
+compressed `.pd_` variant. Symbol-store `file.ptr` indirection is not followed.
+
+A project whose PDB no longer loads, and a file opened before anyone was asked,
+offer the same dialog once the file is open; a copy that has reached a store
+since then loads without asking.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and

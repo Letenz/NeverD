@@ -69,6 +69,9 @@ struct MockSession {
   std::string path, error;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
+  /// Whether a load searches for the fixture PDB, and whether it found one.
+  bool pdbSearch = true;
+  bool pdbFound = false;
   bool pdbLoaded = false;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
@@ -146,6 +149,73 @@ void neverd_session_set_load_progress(neverd_session_t s,
     session(s)->progressUser = userData;
   }
 }
+namespace {
+constexpr char FixturePdb[] = "fixture.pdb";
+constexpr char FixturePdbKey[] = "123456789ABCDEF0123456789ABCDEF01";
+constexpr char FixturePdbBytes[] = "matching fixture PDB";
+
+bool symbolsFixture(const std::filesystem::path &input) {
+  const auto name = input.filename().string();
+  return name == "symbols-missing.bin" || name == "symbols-local.bin";
+}
+
+/// Where the fixture's symbol store keeps its PDB: beside the input, as
+/// <dir>/symbols/<pdb>/<key>/<pdb>.
+std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
+  return input.parent_path() / "symbols" / FixturePdb / FixturePdbKey /
+         FixturePdb;
+}
+
+bool matchingFixturePdb(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  return bytes == FixturePdbBytes;
+}
+} // namespace
+
+const char *neverd_pdb_reference_json(const char *path, const char *) {
+  const auto input = std::filesystem::u8path(path);
+  if (!symbolsFixture(input))
+    return copy(Json{{"pdb", nullptr}}.dump());
+  const auto utf8 = [](const std::filesystem::path &p) {
+    const auto text = p.u8string();
+    return std::string(text.begin(), text.end());
+  };
+  Json found = nullptr;
+  Json rejected = Json::array();
+  const std::pair<std::filesystem::path, const char *> candidates[] = {
+      {input.parent_path() / FixturePdb, "beside"},
+      {fixtureStorePdb(input), "store"}};
+  for (const auto &[candidate, location] : candidates) {
+    if (!std::filesystem::is_regular_file(candidate))
+      continue;
+    Json entry{{"path", utf8(candidate)}, {"location", location}};
+    if (matchingFixturePdb(candidate)) {
+      found = std::move(entry);
+      break;
+    }
+    entry["reason"] = "mismatch";
+    rejected.push_back(std::move(entry));
+  }
+  const std::string url = std::string("https://msdl.microsoft.com/download/"
+                                      "symbols/") +
+                          FixturePdb + "/" + FixturePdbKey + "/" + FixturePdb;
+  return copy(Json{
+      {"pdb",
+       {{"file", FixturePdb},
+        {"key", FixturePdbKey},
+        {"recorded", FixturePdb},
+        {"found", found},
+        {"rejected", rejected},
+        {"servers", Json::array({{{"url", url},
+                                  {"path", utf8(fixtureStorePdb(input))}}})}}}}
+                  .dump());
+}
+
+void neverd_session_set_pdb_search(neverd_session_t s, int enabled) {
+  session(s)->pdbSearch = enabled != 0;
+}
+
 int neverd_session_load(neverd_session_t s, const char *path) {
   const auto notify = [&](const char *phase, unsigned long long done) {
     if (session(s)->progress)
@@ -171,6 +241,13 @@ int neverd_session_load(neverd_session_t s, const char *path) {
                           : std::set<std::uint64_t>{};
   session(s)->functions = listedFunctions({}, session(s)->imageFunctions,
                                           session(s)->absentFunctions);
+  // The local fixture's PDB is beside it; the missing one's is found once a
+  // download put it in the store.
+  const auto input = std::filesystem::u8path(path);
+  session(s)->pdbFound =
+      session(s)->debugInfo && session(s)->pdbSearch &&
+      (input.filename() == "symbols-local.bin" ||
+       (symbolsFixture(input) && matchingFixturePdb(fixtureStorePdb(input))));
   notify("ready", 1);
   return 1;
 }
@@ -314,10 +391,8 @@ const char *neverd_headers_json(neverd_session_t s) {
       session(s)->path.ends_with("symbols-local.bin")) {
     result["debug_info"] = {
         {"enabled", session(s)->debugInfo},
-        {"kind", session(s)->pdbLoaded ||
-                         session(s)->path.ends_with("symbols-local.bin")
-                     ? "pdb"
-                     : "none"}};
+        {"kind",
+         session(s)->pdbLoaded || session(s)->pdbFound ? "pdb" : "none"}};
     result["dynamic"]["pdb_symbol"] = {
         {"file", "fixture.pdb"}, {"key", "123456789ABCDEF0123456789ABCDEF01"}};
   }
