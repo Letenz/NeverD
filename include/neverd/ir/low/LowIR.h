@@ -1183,6 +1183,8 @@ struct LowSEHLocalUnwindEvidence {
   /// Memory preservation may inspect decoded leaf callees. Consumers must
   /// bind the receipt to these current bodies as well as the caller.
   std::vector<va_t> CalleeDependencies;
+  /// The receipt also binds authenticated import and immutable format facts.
+  bool UsesRuntimeMemory = false;
 };
 
 struct LowFunctionTemporary {

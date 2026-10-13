@@ -1461,6 +1461,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>已保存的变量名属于另一份源代码呈现</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>展开代码块 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>折叠代码块 (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2136,6 +2144,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>当前引擎不支持使用未验证的 PDB 进行分析</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>行</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>列</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>代码</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>请等待函数加载完成后再查找引用</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2667,6 +2691,113 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>分析进程无法恢复分析状态。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>符号下载超时。</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>下载调试符号</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>未能为 %1 加载匹配的本地 PDB。
+
+是否尝试从微软符号服务器下载 %2？仅当微软提供此版本的符号时才能下载成功。
+
+会发送 PDB 文件名和版本标识，不会上传二进制文件。匹配的符号将自动缓存并加载。</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>下载</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>暂不下载</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>无法创建符号缓存目录：%1</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>无法在 %1 中打开临时符号文件：%2</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>已取消符号下载。</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>正在下载 %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>符号文件超过 2 GiB 下载限制。</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>微软没有此版本的匹配符号。</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>符号下载失败：%1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>下载的符号文件为空。</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>无法写入符号文件 %1：%2</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>压缩的符号文件无效。</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>无法在 %1 中创建临时符号目录：%2</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>正在解压符号…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>无法解压符号文件。</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>压缩符号需要 Windows。</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>正在验证下载的符号…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>PDB 与已加载文件不匹配。</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>无法将已验证的 PDB 保存到 %1：%2</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>符号验证失败：%1</translation>
     </message>
 </context>
 </TS>
