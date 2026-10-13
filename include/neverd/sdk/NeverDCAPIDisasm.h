@@ -228,7 +228,10 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// "low", "med", "c", "llvmc", "cpp", "rust", "go" or "source"; dialects
 /// spell the HighC page in that language and "source" in the function's own
 /// (C++, Rust, Go or C), adding dialect, unread and source_names (where each
-/// source name such as core::fmt::write is). Dialects are offered for
+/// source name such as core::fmt::write is). Every C, LLVMC and dialect page
+/// lists identifier_symbols: the functions the emitted C names by another
+/// identifier than their symbol (fini for _fini, dotted_fn for dotted.fn),
+/// each as identifier, symbol and address. Dialects are offered for
 /// an image with that language's code (neverd_headers_json's
 /// language.pseudocode); for another the page is mapping_status
 /// "unsupported_representation" with the reason. Offset is an absolute
@@ -249,8 +252,8 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// first row address belongs to the smallest intersecting statement span;
 /// declarations and synthetic/unbound statements have no guessed address. These
 /// anchors support navigation, not complete expression provenance. Pages retain
-/// provenance_complete:false and ordinary source byte for byte. Library regions add
-/// foldable and spans. Optional function_identity shares
+/// provenance_complete:false and ordinary source byte for byte. Library regions
+/// add foldable and spans. Optional function_identity shares
 /// raw/display/linkage names with neverd_resolve_addr; original direct-call
 /// regions add callee and callee_identity. Span begin_byte/end_byte are
 /// half-open UTF-8 byte offsets in the complete source; byte_offset locates
