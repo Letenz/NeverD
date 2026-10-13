@@ -3490,6 +3490,77 @@ TEST_F(SessionCAPITest, NamedPDBWithoutPEIdentityLoadsOnlyByChoice) {
   EXPECT_EQ(neverd_session_load(Session, Stripped.c_str()), 0);
 }
 
+TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  std::ifstream Input(Fixtures / "safety_cases_pe_x64.exe", std::ios::binary);
+  const std::string Exe =
+      write("app.exe", std::string(std::istreambuf_iterator<char>(Input), {}));
+  const auto Directory = std::filesystem::path(Exe).parent_path();
+  const auto Store = Directory / "store";
+  const std::string Search =
+      "srv*" + Store.string() + "*https://symbols.invalid/download/";
+  const auto Reference = [&] {
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_pdb_reference_json(Exe.c_str(), Search.c_str())));
+    EXPECT_TRUE(static_cast<bool>(Parsed));
+    const auto *PDB =
+        Parsed ? Parsed->getAsObject()->getObject("pdb") : nullptr;
+    return PDB ? llvm::json::Object(*PDB) : llvm::json::Object();
+  };
+
+  // Nothing on this computer: the server, and where its store keeps the PDB.
+  auto PDB = Reference();
+  EXPECT_EQ(PDB.getString("file"), "safety_cases_pe_x64.pdb");
+  const std::string Key = PDB.getString("key").value_or("").str();
+  EXPECT_EQ(Key, "A71CAF3BFD8819D84C4C44205044422E1");
+  EXPECT_EQ(PDB.get("found")->kind(), llvm::json::Value::Null);
+  const auto Stored =
+      Store / "safety_cases_pe_x64.pdb" / Key / "safety_cases_pe_x64.pdb";
+  const auto *Servers = PDB.getArray("servers");
+  ASSERT_TRUE(Servers && Servers->size() == 1);
+  const auto *Server = (*Servers)[0].getAsObject();
+  EXPECT_EQ(Server->getString("url"),
+            "https://symbols.invalid/download/safety_cases_pe_x64.pdb/" + Key +
+                "/safety_cases_pe_x64.pdb");
+  EXPECT_EQ(Server->getString("path"), Stored.string());
+
+  // A PDB of another build beside the input is named, never taken.
+  std::filesystem::copy_file(Fixtures / "safety_cases_pe_arm64.pdb",
+                             Directory / "safety_cases_pe_x64.pdb");
+  PDB = Reference();
+  EXPECT_EQ(PDB.get("found")->kind(), llvm::json::Value::Null);
+  const auto *Rejected = PDB.getArray("rejected");
+  ASSERT_TRUE(Rejected && Rejected->size() == 1);
+  EXPECT_EQ((*Rejected)[0].getAsObject()->getString("location"), "beside");
+  EXPECT_EQ((*Rejected)[0].getAsObject()->getString("reason"), "mismatch");
+
+  // The matching PDB in the store is the one a load finds, unless the PDB
+  // search is off.
+  std::filesystem::create_directories(Stored.parent_path());
+  std::filesystem::copy_file(Fixtures / "safety_cases_pe_x64.pdb", Stored);
+  PDB = Reference();
+  const auto *Found = PDB.getObject("found");
+  ASSERT_TRUE(Found);
+  EXPECT_EQ(Found->getString("location"), "store");
+  EXPECT_EQ(Found->getString("path"), Stored.string());
+  neverd_session_set_symbol_path(Session, Search.c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "pdb");
+  EXPECT_EQ(takeString(neverd_session_debug_info_path(Session)),
+            Stored.string());
+  neverd_session_set_pdb_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_session_debug_info_kind(Session)), "none");
+
+  // An input that is no PE names no PDB.
+  const std::string Text = write("notes.txt", "plain text");
+  EXPECT_EQ(takeString(neverd_pdb_reference_json(Text.c_str(), nullptr)),
+            "{\"pdb\":null}");
+}
+
 TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
   const std::string Path = write("requires-shanghai.evm", "5f00");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

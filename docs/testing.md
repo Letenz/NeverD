@@ -63,11 +63,17 @@ executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
-to check download consent, local/disabled/absent-identity gating, strict PDB
-application, cache reuse, 404/mismatch failure and cancellation on file changes.
-It never contacts a real symbol server. `DebugInfoDiscovery.SymbolStoreKey*` and
-`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order, hexadecimal
-age, NB10 keys and refusal of unusable identities or unsafe path components.
+to check the Load PDB file dialog (a matching local copy, declining, downloads
+into the store the worker names, 404 and another build's file leaving the store
+again) and the offer for an open file (local/disabled/absent-identity gating,
+strict PDB application, the next load finding the stored copy, cancellation on
+file changes). It never contacts a real symbol server. `SymbolStore.*` covers
+`_NT_SYMBOL_PATH` parsing, store and server paths and candidate order;
+`DebugInfoDiscovery.SymbolStoreKey*` and
+`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order,
+hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
+components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
+that PDB before opening it.
 
 `SessionCAPITest.PrepareFunction*` checks analysis without source emission,
 restricted and whole-image scope, repeated and switched entries, address zero,
@@ -724,6 +730,12 @@ ctest --test-dir build-release \
   -L '^NeverD(CMemoryCopy|LLVMCValue|LLVMCFrameMemory|HighCStoreForwarding)Tests$' \
   --output-on-failure
 ```
+
+## LLVM C object storage
+
+`NeverDLLVMCAllocaTests` compiles original LLVM and generated C at O0/O2 with undefined-behavior traps. Native observations check complete dynamic extents, padded element stride, 16/32/64-byte alignment, independent simultaneous/loop allocations and one evaluation of a count-producing call. Both ordinary and preserved-type C routes retain storage. Unsupported/overflowing allocation shapes and explicit stack save/restore refuse before dead-code removal. These tests validate C allocation behavior, not exact source stack addresses or exception-frame identity.
+
+The same target compares static scalar, pointer, array and packed-record alignment through 128 bytes, global alignment, complete padded-string storage and scalar-global address identity in initializers, returns, calls, selects and pointer-to-integer conversions. Ordinary/preserved-type and whole/selected-function routes are covered where applicable.
 
 ## Offline web analysis
 
@@ -5543,12 +5555,35 @@ The exact reference regressions cover both x64 ELF PLT branches and Mach-O GOT
 data words. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires both corrected producers.
 See the [source patch matrix](source-patching.md).
 
+`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` selects the optional ordinary NeverC
+producer while originals remain compiled by Clang as independent ABI oracles.
+For NeverC 3389.1.5 use
+`--gtest_filter=*/*.*/*_X64:*/*.*/*_ARM64`: its 66 checks cover six supported
+profiles. This compiler does not implement x86/ARM32; an unfiltered run must
+fail those source cases rather than silently use Clang. The adapter disables
+NeverC's automatic PE default libraries with `-fno-autolink`. The same matrix
+still rejects externally supplied `.drectve` contracts without publication.
+
 The dedicated `source-patch-windows.yml` workflow uses Clang 22.1.6, the native
 MSVC CRT and the Windows SDK. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing
 runtime inputs fail; the workflow also rejects skipped PE/object/matrix cases.
 It retains XML evidence and does not cancel an active qualification when an
 unrelated dev push arrives. Check the actual run result before claiming native
 Windows qualification.
+
+`scripts/check_source_patch_pe_runtime.py prepare` builds three freestanding
+PE originals and 27 replacements: x86/x64/ARM64, three C scenarios, and source
+IR/compiled-object/supplied-object routes. The scenarios exercise original
+nonleaf calls, mutable pointers and floating-point/stack argument bindings.
+`run` requires 30 process observations per architecture, exact commit/file
+identity and a complete inventory; failures retire any previous success report.
+The Windows x64 job executes x86 and x64, then `windows-11-arm` downloads the
+same hashed images and executes ARM64. All originals and replacements run three
+times. The jobs retain images, publication receipts and runtime JSON. A runner
+override records external execution and cannot claim native Windows coverage.
+These C process checks do not qualify ARM64 C++ EH or an ARM64 engine build.
+The verifier's evidence regressions run with
+`python -m unittest scripts.tests.test_check_source_patch_pe_runtime -v`.
 
 `NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,
 atomic publication, original data bindings, native state and C++ exceptions.

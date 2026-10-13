@@ -50,14 +50,19 @@ loads opens the project without it, with a warning. Older display-only
 selections remain presentation aliases until the user selects the PDB again
 for analysis.
 
-`pdbSymbolRequest` derives symbol-store path components from the loader's unique,
-validated CodeView identity. The existing headers JSON exposes those components
-and the current debug-information status; worker metadata advertises a download
-candidate only when debug loading is enabled and no PDB is loaded. The GUI owns
-user consent, HTTPS transport and its private cache. It never reparses PE records
-or treats a network response as analysis evidence: inspection and transactional
-application use the existing strict PDB APIs. Epoch and request guards retire
-downloads on document changes, and network errors do not change the image.
+`debug/SymbolStore` owns where a PE's PDB is: the symbol-store key it derives
+from the loader's unique, validated CodeView identity (`pdbSymbolRequest`), the
+search path in `_NT_SYMBOL_PATH` syntax with its default store in the user's
+cache directory, and the candidates discovery tries in order (the recorded
+path, beside the image, then the path's directories and stores). Discovery and
+`neverd_pdb_reference_json` share those candidates, so a PDB the GUI downloads
+into a store is the one the next load, and the command line's, finds; the C API
+names the first copy whose Info/DBI identity matches without loading the PE. No
+engine code contacts a server: the GUI owns consent and HTTPS transport into the
+store path the engine names, then loads the file through the strict PDB loader.
+`neverd_session_set_pdb_search(0)` opens a PE without the PDB the user declined,
+or before the PDB they chose loads. Epoch and request guards retire downloads on
+document changes, and network errors do not change the image.
 
 ## System boundary
 
@@ -2762,6 +2767,12 @@ shorthand is applied.
 `lib/pipeline/Pipeline.cpp` is the source of truth for route selection. Keep
 representation-specific logic in its owning IR or backend library; the pipeline
 should orchestrate those components rather than absorb their algorithms.
+
+## LLVM C object storage
+
+`LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
+
+`LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
 
 ## Cross-architecture translation contract
 

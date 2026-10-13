@@ -53,7 +53,10 @@ private:
   /// Draw the shadow outside the visible window and its surface inside.
   void paint();
   /// Give the shadow band its size, which a maximized or full-screen window
-  /// does without, and keep room for the title bar.
+  /// does without, and keep room for the title bar.  The band follows the
+  /// state the window system applied (states_), not the one QWidget requests:
+  /// a Wayland window that changed its geometry for a state the compositor
+  /// had not entered yet committed buffers for neither state.
   void updateMargins();
   void placeTitleBar();
   void showEdges(Qt::Edges edges);
@@ -70,6 +73,8 @@ private:
   QMargins margins_;
   /// What a maximized window keeps clear above its title bar.
   QMargins insets_;
+  /// The window states the window system last applied.
+  Qt::WindowStates states_;
   Qt::Edges shown_;
 };
 

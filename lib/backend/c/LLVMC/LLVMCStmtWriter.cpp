@@ -15,6 +15,7 @@
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCStackAllocation.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -1408,12 +1409,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     return;
   // Aggregate SSA values and storage arrays have distinct C declarations but
   // identical byte layouts. A byte copy also preserves unaligned accesses.
-  auto AggregateAddress = [&](const llvm::Value *Ptr) {
-    std::string Text = valueStr(Ptr);
-    if (llvm::isa<llvm::GlobalVariable>(Ptr))
-      Text = "&" + Text;
-    return Text;
-  };
+  auto AggregateAddress = [&](const llvm::Value *Ptr) { return valueStr(Ptr); };
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
       Load && Load->getType()->isAggregateType()) {
     if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
@@ -1620,8 +1616,6 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       AddressText = "&" + Image;
     else if (const auto *Slot = asAllocaPointer(Address))
       AddressText = "&" + getName(Slot);
-    else if (llvm::isa<llvm::GlobalVariable>(Address->stripPointerCasts()))
-      AddressText = "&" + valueStr(Address->stripPointerCasts());
     else
       AddressText = valueStr(Address);
     if (!OnlyFunction && !Load->isAtomic())
@@ -3570,17 +3564,17 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
     // permits direct access; differently typed views still copy object bytes.
     if (Global->getValueType() == Type &&
         !ExternalDataIdentifiers.count(Global)) {
+      const std::string Object = globalNameStr(Global);
       emitIndent(Indent);
       if (Load)
-        OS << getName(Load) << " = " << Pointer << ";\n";
+        OS << getName(Load) << " = " << Object << ";\n";
       else
-        OS << Pointer << " = "
+        OS << Object << " = "
            << (Integer ? integerPointerOperandStr(Store->getValueOperand())
                        : valueStr(Store->getValueOperand()))
            << ";\n";
       return true;
     }
-    Pointer = "&" + Pointer;
   }
   emitIndent(Indent);
   if (WideInteger) {
@@ -4542,6 +4536,39 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
 
 void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
                                 int Indent) {
+  if (const auto Allocation = llvmc::cStackAllocation(Call)) {
+    // Plain alloca has function lifetime on both Clang and GCC. GCC's aligned
+    // variant may release at a nested block exit, so align inside extra bytes.
+    // Keep the allocation at this call, never in a returning helper or VLA.
+    const auto Count = freshVar("allocation_count");
+    const auto Offset = freshVar("allocation_offset");
+    const std::string IntegerType =
+        Allocation->CountBits == 64 ? "uint64_t" : "uint32_t";
+    const std::string Max =
+        Allocation->CountBits == 64 ? "UINT64_MAX" : "UINT32_MAX";
+    const uint64_t Padding = Allocation->Alignment - 1;
+    emitIndent(Indent);
+    OS << "{ const " << IntegerType << " " << Count << " = "
+       << valueStr(Call.getArgOperand(0)) << ";\n";
+    if (Allocation->Stride) {
+      emitIndent(Indent + 1);
+      OS << "if (" << Count << " > (" << Max << " - " << Padding << ") / "
+         << Allocation->Stride << ") __builtin_trap();\n";
+    }
+    emitIndent(Indent + 1);
+    OS << Name << " = __builtin_alloca(" << Count << " * " << Allocation->Stride
+       << " + " << Padding << ");\n";
+    if (Padding) {
+      emitIndent(Indent + 1);
+      OS << "const " << IntegerType << " " << Offset << " = (-(" << IntegerType
+         << ")(uintptr_t)" << Name << ") & " << Padding << ";\n";
+      emitIndent(Indent + 1);
+      OS << Name << " = (uint8_t*)" << Name << " + " << Offset << ";\n";
+    }
+    emitIndent(Indent);
+    OS << "}\n";
+    return;
+  }
   if (writeIntrinsicCall(Call, Indent))
     return;
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Call))
@@ -4664,6 +4691,9 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
+  if (llvmc::cStackAllocation(Call))
+    throw std::runtime_error(
+        "private C stack allocation cannot be an expression");
   for (const llvm::CallBase *Pending : RenderingCalls)
     if (Pending == &Call)
       return getName(&Call);

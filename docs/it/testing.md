@@ -297,6 +297,12 @@ e gli operandi malformati devono fallire esplicitamente.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` verifica che gli argomenti di registro obbligatori dedotti mantengano le posizioni finali sconosciute. La valutazione di un argomento obbligatorio o di una condizione sconosciuta deve causare una trap esplicita; gli operandi omessi, nulli o annidati non devono diventare silenziosamente zero. I valori noti e gli operandi aggiuntivi di cui è dimostrata la mancata lettura restano eseguibili. Una trap è un limite diagnostico, non una prova di equivalenza del comportamento ricostruito.
 
+## Memoria degli oggetti in LLVM C
+
+`NeverDLLVMCAllocaTests` esegue LLVM originale e C generato a O0/O2 con trap per comportamento indefinito. Osserva intervalli completi, passo con padding, allineamento 16/32/64, indipendenza di allocazioni simultanee/nei cicli e valutazione unica del conteggio. I percorsi C normali e con tipi conservati mantengono memoria; contratti non supportati, overflow e stack save/restore falliscono prima di DCE. Non certifica indirizzi originali dello stack o identità dei frame di eccezione.
+
+Lo stesso target confronta l’allineamento di scalari, puntatori, array e record compatti statici fino a 128 byte, l’allineamento globale, l’intera memoria delle stringhe completate da zeri e l’identità degli indirizzi globali in inizializzatori, ritorni, chiamate, selezioni e conversioni da puntatore a intero. Copre, ove applicabile, le uscite ordinarie/con tipi preservati e complete/per funzione selezionata.
+
 ## Test di esecuzione CPU
 
 `NeverDIntegerABITests` compila fixture Clang originali per Windows x64, Linux x64 e Linux ARM64. Funzioni reali a dieci argomenti verificano registri, stack e frame di chiamata. La matrice Unicorn/KVM/WHP indica come skip espliciti le coppie host/ISA non disponibili; uno skip non è un pass. `NeverDExecutionBudgetTests` controlla budget condivisi di continuazione, prenotazioni e deadline assolute senza attese basate sul tempo.
@@ -1850,3 +1856,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 L’esecuzione KVM x64 verificata delega l’intero ciclo di istruzioni al thread vCPU privato tramite `withExecutionOwner`. Ammissione, transazioni RAM, hook e budget restano nel ciclo; ogni ingresso nativo mantiene i controlli e la priorità delle eccezioni. Il chiamante sorveglia gli ingressi attivi e attende la conferma della cancellazione. Gli hook CPU non devono dipendere dallo stato locale del thread chiamante. Il completamento di un ingresso nativo autonomo resta sul chiamante. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` e `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verificano proprietà e cancellazione reale; la modifica non certifica un driver recuperato.
+
+Il workflow Windows per patch sorgente esegue anche `scripts/check_source_patch_pe_runtime.py`: tre originali e 27 sostituzioni x86/x64/ARM64, poi 30 osservazioni di processo per architettura. x86/x64 usano Windows x64, ARM64 usa `windows-11-arm`. Commit, architettura PE, hash e tutti i casi devono corrispondere. Questo profilo C non verifica le eccezioni C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` seleziona NeverC ordinario. I 66 controlli di 3389.1.5 coprono x64/ARM64 con ELF, PE e Mach-O; x86/ARM32 non sono disponibili e il compilatore non viene sostituito automaticamente. L’adattatore PE usa `-fno-autolink`; gli oggetti esterni `.drectve` restano rifiutati.

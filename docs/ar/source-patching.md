@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
+<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
 
 [← Documentation Index](README.md)
 
@@ -130,3 +130,7 @@ ctest --test-dir build-source -L \
 تصحح نسخة LLVM أيضاً مراجع بيانات GOT في Mach-O x64؛ تقاس جداول catch ذات النوع في Clang من نهاية حقل إعادة التموضع ذي أربعة بايتات. تزحزحه r3/r4 أربعة بايتات، وترفضه مراجعة ما قبل النشر. تنفذ حالات x64 على Mac عبر Rosetta 2، وحالات ARM64 مباشرةً.
 
 اجتاز التحقق في بيئة Windows x64 الأصلية [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) جميع الاختبارات المتخصصة وعددها 16 لمسارات PE والكائنات وtrampoline، وجميع اختبارات مصفوفة أهداف CPU وعددها 143، دون تخطي أي حالة. نفّذ اختبار FH3 سبعة سيناريوهات تشغيل C++؛ وتستخدم مصفوفة الأهداف Unicorn. استُخدم Clang 22.1.6 مع MSVC وWindows SDK الأصليين وLLVM المدمج.
+
+يُنشئ سير عمل Windows أيضًا 27 بديلًا بصيغة PE لمعمارية x86 وx64 وARM64. يتحقق `scripts/check_source_patch_pe_runtime.py` من الاستدعاءات غير الورقية وحالة المؤشرات القابلة للتغيير ووسائط الفاصلة العائمة والمكدس عبر IR المصدر والكائنات المترجمة والكائنات المقدمة. يُشغّل كل أصل وكل نتيجة ثلاث مرات، أي 30 ملاحظة تنفيذ لكل معمارية. يعمل x86/x64 على Windows x64، ويعمل ARM64 على `windows-11-arm`. يتطلب التحقق المضيف الأصلي المتوقع وتطابق الإيداع وبصمات الملفات واكتمال جميع الحالات، مع تسجيل المشغلات الخارجية بصورة منفصلة. لا يثبت هذا الملف دعم استثناءات C++ على ARM64.
+
+يحدد `NEVERD_TEST_MATRIX_NEVERC` المترجم الاختياري للمصفوفة. اجتاز NeverC 3389.1.5 جميع الفحوص الـ66 لمعمارية x64/ARM64 مع ELF وPE وMach-O، بما فيها تثبيت IR والكائنات الأصلية وتنفيذ CPU. لا يدعم هذا الإصدار x86 أو ARM32؛ استخدم Clang لهما، أو مشغل GCC متوافقًا مع ELF. عند ترجمة PE باستخدام NeverC، يضيف المحوّل `-fno-autolink` لحل المراجع داخل الصورة الحالية دون ربط CRT آخر. تظل الكائنات المقدمة التي تحتوي عقود ربط `.drectve` مرفوضة.

@@ -286,6 +286,12 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` 檢查推斷出的必要暫存器引數是否保留末尾未知欄位。讀取未知的必要引數或條件必須明確觸發陷阱；省略、空指標和巢狀運算元不能被悄悄替換為零。已知值和已證明不被讀取的多餘運算元仍可執行。陷阱是診斷邊界，不是還原行為等價的證明。
 
+## LLVM C 物件儲存
+
+`NeverDLLVMCAllocaTests` 將原 LLVM 與輸出 C 在 O0/O2 下編譯執行並啟用未定義行為陷阱，觀察完整動態範圍、含填補的元素步長、16/32/64 位元組對齊、同時與迴圈配置的獨立性，以及數量產生呼叫只求值一次。一般及保留型別的 C 路徑都保留儲存；未支援或溢位的配置形狀與明確堆疊儲存/還原在死碼刪除前拒絕。這些測試驗證 C 配置行為，不證明原堆疊位址或例外框架身分。
+
+同一測試目標也比較靜態純量、指標、陣列和緊密記錄最高 128 位元組的對齊、全域對齊、零填補字串的完整儲存，以及初始化器、傳回、呼叫、選擇和指標轉整數中的純量全域位址身分；依適用範圍涵蓋一般/保留型別及整個模組/單一函式輸出。
+
 ## CPU 執行測試
 
 `NeverDIntegerABITests` 為 Windows x64、Linux x64 與 Linux ARM64 建置原始 Clang fixture，透過真實十參數函式檢查暫存器／堆疊參數及呼叫框架。Unicorn/KVM/WHP 矩陣會明確略過不可用的主機／ISA 組合；skip 不代表通過。`NeverDExecutionBudgetTests` 不依賴計時 sleep，檢查共用續接預算、預約失敗與絕對 deadline。
@@ -1700,3 +1706,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
+
+原始碼 patch 的 Windows 工作流程還會執行 `scripts/check_source_patch_pe_runtime.py`：先產生 x86/x64/ARM64 的三份原始程式與 27 份替換產物，再為每種架構執行 30 次程序觀測。x86/x64 在 Windows x64 上執行，ARM64 在 `windows-11-arm` 上執行；提交、PE 架構、檔案雜湊及案例清單必須相符。此 C 程序配置不驗證 ARM64 C++ 例外。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 選擇普通 NeverC 產生器。3389.1.5 的 66 項配置涵蓋 x64/ARM64 × ELF、PE、Mach-O；它不支援 x86/ARM32，不能靜默切換編譯器。PE 適配器使用 `-fno-autolink`，外部 `.drectve` 物件仍會被拒絕。

@@ -48,6 +48,9 @@ public:
   /// Whether the engine lists the ways it can load a file (identify).
   static bool identifiesFiles();
   static bool loadsPdbFiles();
+  /// Whether the engine finds the PDB a PE names before opening it, and
+  /// opens a PE without it.
+  static bool findsPdbFiles();
 
 private:
   neverd_session_t session_ = nullptr;

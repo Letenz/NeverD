@@ -26,6 +26,8 @@
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCStackAllocation.h"
+#include "LLVMCStorage.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -807,6 +809,9 @@ void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
 void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
                                       llvm::StringRef Name) {
   const auto *Array = llvm::cast<llvm::ArrayType>(Global.getValueType());
+  OS << llvmc::storageAlignment(Global.getValueType(),
+                                Global.getParent()->getDataLayout(),
+                                Global.getAlign().valueOrOne());
   if (Global.hasLocalLinkage())
     OS << "static ";
   if (Global.isConstant())
@@ -837,6 +842,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         continue;
       // Initializers can refer forward or form cycles. The declarations use
       // the same storage shape and linkage as the definitions below.
+      OS << llvmc::storageAlignment(Global.getValueType(), Mod.getDataLayout(),
+                                    Global.getAlign().valueOrOne());
       OS << (Global.hasLocalLinkage() ? "static " : "extern ");
       if (Global.isConstant())
         OS << "const ";
@@ -848,7 +855,7 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       OS << (String ? "char"
                     : typeToCLLVM(Array ? Array->getElementType()
                                         : Global.getValueType()))
-         << " " << constStr(&Global);
+         << " " << globalNameStr(&Global);
       if (Array)
         OS << "[" << Array->getNumElements() << "]";
       OS << ";\n";
@@ -949,9 +956,11 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       else if (VTy->isIntegerTy(64))
         CTy = "uint64_t";
       if (!headerDeclaresObject(Name))
-        OS << imageObjectSymbolLine(Name) << "extern " << CTy << " " << Name
-           << "; /* 0x" << llvm::utohexstr(*parseNdDataSymbol(RawName))
-           << " */\n";
+        OS << imageObjectSymbolLine(Name)
+           << llvmc::storageAlignment(GV.getValueType(), Mod.getDataLayout(),
+                                      GV.getAlign().valueOrOne())
+           << "extern " << CTy << " " << Name << "; /* 0x"
+           << llvm::utohexstr(*parseNdDataSymbol(RawName)) << " */\n";
       EmittedGlobalNames.insert(Name);
       continue;
     }
@@ -987,6 +996,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       continue;
     }
 
+    OS << llvmc::storageAlignment(GV.getValueType(), Mod.getDataLayout(),
+                                  GV.getAlign().valueOrOne());
     if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(Init)) {
       if (GV.isConstant() && CDA->isString()) {
         llvm::StringRef Raw = CDA->getAsString();
@@ -994,8 +1005,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
           Raw = Raw.drop_back();
         if (GV.hasLocalLinkage())
           OS << "static ";
-        OS << "const char " << Name
-           << "[] = " << wrapInitializer("\"" + escapeCString(Raw) + "\"")
+        OS << "const char " << Name << "[" << CDA->getNumElements()
+           << "] = " << wrapInitializer("\"" + escapeCString(Raw) + "\"")
            << ";\n";
         continue;
       }
@@ -1154,7 +1165,7 @@ void LLVMCWriter::writeReferencedImageObjects(
   if (!OnlyFunction && CurMod)
     for (const auto &Global : CurMod->globals())
       if (!Global.hasInitializer() && mirrorsImageStorage(Global))
-        if (const std::string Name = constStr(&Global);
+        if (const std::string Name = globalNameStr(&Global);
             !EmittedGlobalNames.count(Name) && Spelled(Name)) {
           OS << "extern " << typeToCLLVM(Global.getValueType()) << " " << Name
              << ";\n";
@@ -1263,6 +1274,8 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         continue;
     }
     if (Fn.isIntrinsic())
+      continue;
+    if (llvmc::isCStackAllocationFunction(Fn))
       continue;
     if (!OnlyFunction && GuardAnalysisOnlyFunctions &&
         !isReferencedByExecutableProjection(Fn))
@@ -1710,6 +1723,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   if (llvm::verifyModule(Mod, &llvm::errs()))
     return false;
   validateArrayValueBoundaries(Mod, Only);
+  llvmc::validateCStackAllocations(Mod, Only);
   // Source normalization must not mutate the caller's IR. Remove dead
   // computations left by recovered control flow even when semantic
   // optimization is disabled; they can otherwise reference unneeded image
@@ -1748,6 +1762,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
+  llvmc::lowerCStackAllocations(*Projection, ProjectionOnly);
   // Native image/debug projections keep their separate source contracts.
   // Pure scalar loop recovery proves its exact replacement before publishing
   // into this private clone and retains the existing path on refusal.

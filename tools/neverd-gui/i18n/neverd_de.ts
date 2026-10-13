@@ -2164,6 +2164,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>Wait for the function to finish loading before finding references</source>
         <translation>Warten Sie vor der Referenzsuche, bis die Funktion vollständig geladen ist</translation>
     </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>Die PDB, die %1 nennt, ließ sich nicht ermitteln: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2445,6 +2449,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>PDB zur Analyse geladen: %1 (%2 Namen, vom Benutzer bestätigt, Identität ungeprüft)</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>Wie gewählt ohne die PDB geöffnet, die die Eingabedatei nennt</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2698,74 +2706,141 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     </message>
 </context>
 <context>
-    <name>neverd::gui::MicrosoftSymbols</name>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB-Datei laden</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>Die Eingabedatei wurde mit Debuginformationen gelinkt, die hier gespeichert sind:</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>&amp;Durchsuchen…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>Der Download wurde abgebrochen.</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>Unter diesem Pfad liegt eine passende Kopie.</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>Neben der Eingabedatei liegt eine passende Kopie:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>In einem Symbolverzeichnis liegt eine passende Kopie:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>Im Symbolspeicher liegt eine passende Kopie:</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>Möchten Sie sie laden?</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 gehört zu einem anderen Build.</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>%1 kann nicht gelesen werden.</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>Auf diesem Computer liegt keine passende Kopie, und es ist kein Symbolserver konfiguriert.</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>Möchten Sie auf dem Datenträger nach der PDB-Datei suchen?</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>Auf diesem Computer liegt keine passende Kopie. Für die Suche werden nur Name und Build-Kennung der PDB gesendet.</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>Möchten Sie diese Datei auf dem Microsoft-Symbolserver suchen?</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>Möchten Sie diese Datei auf dem Symbolserver %1 suchen?</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>%1 wird von %2 heruntergeladen…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 von %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>%1 wird geprüft…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>Die heruntergeladene Datei ist nicht die PDB dieses Builds.</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>PDB-Datei „%1“ wurde nicht gefunden.</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>Möchten Sie es erneut versuchen oder auf dem Datenträger nach der PDB-Datei suchen?</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB-Dateien (*.pdb);;Alle Dateien (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
     <message>
         <source>The symbol download timed out.</source>
         <translation>Zeitüberschreitung beim Symboldownload.</translation>
     </message>
     <message>
-        <source>Download debug symbols</source>
-        <translation>Debugsymbole herunterladen</translation>
+        <source>No symbol server is configured.</source>
+        <translation>Es ist kein Symbolserver konfiguriert.</translation>
     </message>
     <message>
-        <source>No matching local PDB was loaded for %1.
-
-Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
-
-The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
-        <translation>Für %1 wurde keine passende lokale PDB geladen.
-
-Soll versucht werden, %2 vom Microsoft-Symbolserver herunterzuladen? Dies gelingt nur, wenn Microsoft Symbole für diesen Build veröffentlicht.
-
-Der PDB-Dateiname und die Build-Kennung werden gesendet; die Binärdatei wird nicht hochgeladen. Passende Symbole werden automatisch zwischengespeichert und geladen.</translation>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 ist kein HTTP-Symbolserver.</translation>
     </message>
     <message>
-        <source>Download</source>
-        <translation>Herunterladen</translation>
-    </message>
-    <message>
-        <source>Not now</source>
-        <translation>Nicht jetzt</translation>
-    </message>
-    <message>
-        <source>Cannot create the symbol cache directory: %1</source>
-        <translation>Das Symbolcache-Verzeichnis kann nicht erstellt werden: %1</translation>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>Das Symbolspeicherverzeichnis %1 kann nicht erstellt werden.</translation>
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
         <translation>Eine temporäre Symboldatei kann in %1 nicht geöffnet werden: %2</translation>
     </message>
     <message>
-        <source>Cancel</source>
-        <translation>Abbrechen</translation>
-    </message>
-    <message>
-        <source>Symbol download cancelled.</source>
-        <translation>Symboldownload abgebrochen.</translation>
-    </message>
-    <message>
-        <source>Downloading %1…</source>
-        <translation>%1 wird heruntergeladen…</translation>
-    </message>
-    <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
         <translation>Die Symboldatei überschreitet das Downloadlimit von 2 GiB.</translation>
     </message>
     <message>
-        <source>Microsoft has no matching symbols for this build.</source>
-        <translation>Microsoft bietet keine passenden Symbole für diesen Build an.</translation>
-    </message>
-    <message>
-        <source>Symbol download failed: %1</source>
-        <translation>Symboldownload fehlgeschlagen: %1</translation>
-    </message>
-    <message>
-        <source>The downloaded symbol file is empty.</source>
-        <translation>Die heruntergeladene Symboldatei ist leer.</translation>
-    </message>
-    <message>
         <source>Cannot write the symbol file %1: %2</source>
         <translation>Die Symboldatei %1 kann nicht geschrieben werden: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1 bietet keine passenden Symbole für diesen Build an.</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>Der Symboldownload von %1 ist fehlgeschlagen: %2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 hat eine leere Symboldatei gesendet.</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
@@ -2776,10 +2851,6 @@ Der PDB-Dateiname und die Build-Kennung werden gesendet; die Binärdatei wird ni
         <translation>Ein temporäres Symbolverzeichnis kann in %1 nicht erstellt werden: %2</translation>
     </message>
     <message>
-        <source>Expanding compressed symbols…</source>
-        <translation>Symbole werden entpackt…</translation>
-    </message>
-    <message>
         <source>Could not expand the compressed symbol file.</source>
         <translation>Die komprimierte Symboldatei konnte nicht entpackt werden.</translation>
     </message>
@@ -2788,20 +2859,8 @@ Der PDB-Dateiname und die Build-Kennung werden gesendet; die Binärdatei wird ni
         <translation>Komprimierte Symbole benötigen Windows.</translation>
     </message>
     <message>
-        <source>Verifying downloaded symbols…</source>
-        <translation>Heruntergeladene Symbole werden geprüft…</translation>
-    </message>
-    <message>
-        <source>The PDB does not match the loaded file.</source>
-        <translation>Die PDB passt nicht zur geladenen Datei.</translation>
-    </message>
-    <message>
-        <source>Cannot save the verified PDB to %1: %2</source>
-        <translation>Die geprüfte PDB kann nicht unter %1 gespeichert werden: %2</translation>
-    </message>
-    <message>
-        <source>Symbol verification failed: %1</source>
-        <translation>Symbolprüfung fehlgeschlagen: %1</translation>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>Die Symboldatei kann nicht unter %1 gespeichert werden: %2</translation>
     </message>
 </context>
 </TS>

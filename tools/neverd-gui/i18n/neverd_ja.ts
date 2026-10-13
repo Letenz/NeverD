@@ -2160,6 +2160,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Wait for the function to finish loading before finding references</source>
         <translation>関数の読み込みが完了してから参照を検索してください</translation>
     </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>%1 が指定する PDB を特定できませんでした：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2441,6 +2445,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>選択どおり、入力ファイルが指定する PDB を読み込まずに開きました</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2694,74 +2702,141 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
 </context>
 <context>
-    <name>neverd::gui::MicrosoftSymbols</name>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>入力ファイルにリンクされたデバッグ情報の保存先：</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>参照(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>ダウンロードを取り消しました。</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>そのパスに一致するコピーがあります。</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>入力ファイルと同じ場所に一致するコピーがあります：</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>シンボルディレクトリに一致するコピーがあります：</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>シンボルストアに一致するコピーがあります：</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>読み込みますか？</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 は別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>%1 を読み取れません。</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>このコンピューターに一致するコピーがなく、シンボルサーバーも設定されていません。</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>ディスク上の PDB ファイルを参照しますか？</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>このコンピューターに一致するコピーがありません。検索には PDB の名前とビルド ID だけが送信されます。</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>Microsoft シンボルサーバーでこのファイルを探しますか？</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>シンボルサーバー %1 でこのファイルを探しますか？</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>%2 から %1 をダウンロード中…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>%1 を検証中…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>ダウンロードしたファイルはこのビルドの PDB ではありません。</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>PDB ファイル「%1」が見つかりませんでした。</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>もう一度試しますか、それともディスク上の PDB ファイルを参照しますか？</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB ファイル (*.pdb);;すべてのファイル (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
     <message>
         <source>The symbol download timed out.</source>
         <translation>シンボルのダウンロードがタイムアウトしました。</translation>
     </message>
     <message>
-        <source>Download debug symbols</source>
-        <translation>デバッグシンボルのダウンロード</translation>
+        <source>No symbol server is configured.</source>
+        <translation>シンボルサーバーが設定されていません。</translation>
     </message>
     <message>
-        <source>No matching local PDB was loaded for %1.
-
-Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
-
-The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
-        <translation>%1 に一致するローカル PDB は読み込まれていません。
-
-Microsoft シンボルサーバーから %2 のダウンロードを試みますか？Microsoft がこのビルドのシンボルを公開している場合のみ取得できます。
-
-PDB ファイル名とビルド識別子を送信します。バイナリはアップロードしません。一致するシンボルは自動的にキャッシュされ、読み込まれます。</translation>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 は HTTP シンボルサーバーではありません。</translation>
     </message>
     <message>
-        <source>Download</source>
-        <translation>ダウンロード</translation>
-    </message>
-    <message>
-        <source>Not now</source>
-        <translation>今はしない</translation>
-    </message>
-    <message>
-        <source>Cannot create the symbol cache directory: %1</source>
-        <translation>シンボルキャッシュのディレクトリを作成できません: %1</translation>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>シンボルストアのディレクトリ %1 を作成できません。</translation>
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
         <translation>%1 に一時シンボルファイルを開けません: %2</translation>
     </message>
     <message>
-        <source>Cancel</source>
-        <translation>キャンセル</translation>
-    </message>
-    <message>
-        <source>Symbol download cancelled.</source>
-        <translation>シンボルのダウンロードをキャンセルしました。</translation>
-    </message>
-    <message>
-        <source>Downloading %1…</source>
-        <translation>%1 をダウンロード中…</translation>
-    </message>
-    <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
         <translation>シンボルファイルが 2 GiB のダウンロード制限を超えています。</translation>
     </message>
     <message>
-        <source>Microsoft has no matching symbols for this build.</source>
-        <translation>このビルドに一致するシンボルは Microsoft にありません。</translation>
-    </message>
-    <message>
-        <source>Symbol download failed: %1</source>
-        <translation>シンボルのダウンロード失敗：%1</translation>
-    </message>
-    <message>
-        <source>The downloaded symbol file is empty.</source>
-        <translation>ダウンロードしたシンボルファイルは空です。</translation>
-    </message>
-    <message>
         <source>Cannot write the symbol file %1: %2</source>
         <translation>シンボルファイル %1 に書き込めません: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1 にはこのビルドに一致するシンボルがありません。</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>%1 からのシンボルのダウンロードに失敗しました：%2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 から空のシンボルファイルが送られてきました。</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
@@ -2772,10 +2847,6 @@ PDB ファイル名とビルド識別子を送信します。バイナリはア�
         <translation>%1 に一時シンボルディレクトリを作成できません: %2</translation>
     </message>
     <message>
-        <source>Expanding compressed symbols…</source>
-        <translation>シンボルを展開中…</translation>
-    </message>
-    <message>
         <source>Could not expand the compressed symbol file.</source>
         <translation>圧縮シンボルファイルを展開できませんでした。</translation>
     </message>
@@ -2784,20 +2855,8 @@ PDB ファイル名とビルド識別子を送信します。バイナリはア�
         <translation>圧縮シンボルには Windows が必要です。</translation>
     </message>
     <message>
-        <source>Verifying downloaded symbols…</source>
-        <translation>ダウンロードしたシンボルを検証中…</translation>
-    </message>
-    <message>
-        <source>The PDB does not match the loaded file.</source>
-        <translation>PDB が読み込まれたファイルと一致しません。</translation>
-    </message>
-    <message>
-        <source>Cannot save the verified PDB to %1: %2</source>
-        <translation>検証済み PDB を %1 に保存できません: %2</translation>
-    </message>
-    <message>
-        <source>Symbol verification failed: %1</source>
-        <translation>シンボルの検証失敗：%1</translation>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>シンボルファイルを %1 に保存できません：%2</translation>
     </message>
 </context>
 </TS>

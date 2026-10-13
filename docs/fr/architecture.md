@@ -302,6 +302,12 @@ Gardez la logique propre à une représentation dans sa bibliothèque IR ou
 backend ; le pipeline doit orchestrer ces composants, pas absorber leurs
 algorithmes.
 
+## Stockage des objets en LLVM C
+
+`LLVMCStackAllocation` gère les allocations comptées ou hors entrée dans le clone C privé. Le pas DataLayout, le nombre non signé, l’alignement et la position restent exacts. Un appel privé à effets émet `__builtin_alloca` à la position initiale, contrôle le débordement et aligne dans des octets supplémentaires ; la durée atteint donc le retour sous Clang/GCC. Une allocation d’un objet à l’entrée garde sa déclaration locale. Les nombres trop larges, le stockage scalable, les espaces non standards, inalloca/swifterror, stack save/restore explicites et les marqueurs privés d’entrée sont refusés avant normalisation. L’IR original reste intact.
+
+`LLVMCStorage` partage le suralignement explicite des objets locaux et globaux et de leurs déclarations. Les chaînes conservent toute la taille du tableau LLVM, y compris les octets nuls finaux. Les valeurs globales LLVM représentent des adresses dans les expressions et initialisations ; seules les déclarations et les lectures/écritures directes utilisent le nom C seul. Les données importées conservent leur représentation d’adresse existante.
+
 ## Contrat de traduction inter-architectures
 
 `include/neverd/translate` définit une couche contractuelle,

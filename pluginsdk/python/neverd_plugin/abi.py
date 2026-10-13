@@ -967,6 +967,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_pdb_reference_json",
+    "const char *",
+    ["const char *", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_set_load_options",
     "int",
     ["neverd_session_t", "const char *"],
@@ -1056,6 +1062,16 @@ _declare(
     "neverd_session_set_debug_info_enabled",
     "void",
     ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_pdb_search",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_symbol_path",
+    "void",
+    ["neverd_session_t", "const char *"],
 )
 _declare(
     "neverd_session_set_load_progress",

@@ -496,7 +496,12 @@ void Session::sendOpen(const QString &requested, const QString &path,
                   : tr("Platform: %1, as chosen").arg(platform),
               0);
         }
-        if (const auto pdb = payload.value("pdb").toObject(); !pdb.isEmpty())
+        if (const auto pdb = payload.value("pdb").toObject();
+            pdb.value("mode").toString() == QLatin1String("none"))
+          emit message(tr("Opened without the PDB the input names, as "
+                          "chosen"),
+                       0);
+        else if (!pdb.isEmpty())
           reportPdb(pdb);
         if (std::exchange(reloading_, false))
           emit message(tr("Reloaded the input file"), 0);

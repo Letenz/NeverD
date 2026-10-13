@@ -3677,6 +3677,15 @@ if(COFF_NATIVE_EH_TEST_OBJECTS)
   add_dependencies(NeverDLiftTests lift-coff-native-eh-test-objects)
 endif()
 
+add_neverd_unittest(NeverDLLVMCAllocaTests
+  core/LLVMCAllocaTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDLLVMCAllocaTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
 add_neverd_unittest(NeverDLLVMCIntrinsicSemanticTests
   core/LLVMCIntrinsicSemanticTests.cpp
   core/LLVMCFunnelShiftTests.cpp
