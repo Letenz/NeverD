@@ -58,7 +58,7 @@ bool RegistrationStateSolver::initializeContracts() {
           (Throw && !Callee.isRethrow() && !Callee.isRuntimeThrow() &&
            (!Callee.ThrownTypeVA || Callee.ThrownTypeVA > UINT32_MAX ||
             !Callee.ThrownObjectSize ||
-            Callee.ThrownObjectSize > limits::kMaxRegistrationEHStateWork)) ||
+            Callee.ThrownObjectSize > limits::kMaxSourceCallBorrowedBytes)) ||
           !validObjects(Callee.ECXReads) || !validObjects(Callee.ECXWrites) ||
           !validImageRanges(Callee.ImageReads) ||
           !validImageRanges(Callee.ImageWrites) ||
@@ -166,7 +166,7 @@ bool RegistrationStateSolver::validObjects(
   int32_t PreviousEnd = 0;
   for (const auto &Range : Ranges) {
     if (!charge(1) || Range.Begin < PreviousEnd || Range.End <= Range.Begin ||
-        Range.End > int64_t(limits::kMaxRegistrationEHStateWork))
+        Range.End > int64_t(limits::kMaxSourceCallBorrowedBytes))
       return false;
     PreviousEnd = Range.End;
   }
@@ -227,7 +227,7 @@ bool RegistrationStateSolver::projectFrameObject(
     const int64_t End = int64_t(Object) + Extent.End;
     // Saved EBP and the caller PC lie above the source allocation. The common
     // administration proof also protects runtime slots within that allocation.
-    if (Begin < *SP || Begin < -int64_t(limits::kMaxRegistrationEHStateWork) ||
+    if (Begin < *SP || Begin < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
         End > (KnownCxx ? *Chain.cxxRuntimeFrameOffset() : 0) ||
         !frameObjectIsDisjointFromAdministration(Begin, End) ||
         !charge(size_t(End - Begin) + State.Frame.cellCount()))

@@ -15,7 +15,7 @@ using namespace neverd;
 using namespace neverd::registration_test;
 
 TEST(RegistrationState, OrdinaryFinallyReturnsItsCheckedFrameEffects) {
-  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 25; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = makeBranchingFrame();
     auto &Chain = *F.ExceptionMetadata->Registration;
@@ -51,9 +51,10 @@ TEST(RegistrationState, OrdinaryFinallyReturnsItsCheckedFrameEffects) {
     if (Mutation == 4)
       emitOp(Call, 0x1100, NdOp::COPY, NdVar::reg(x86reg::RBP, 4),
              {NdVar::reg(x86reg::RAX, 4)});
-    if (Mutation == 5)
-      emitOp(Call, 0x1100, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
-             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(8, 4)});
+    if (Mutation == 5 || Mutation == 24)
+      emitOp(
+          Call, 0x1100, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+          {NdVar::reg(x86reg::RSP, 4), NdVar::cst(Mutation == 5 ? 40 : 8, 4)});
     const auto Prefix = Call.Ops.size();
     emitOp(Call, 0x1100, NdOp::CALL, {}, {NdVar::cst(0x1800, 4)});
     Call.InstructionBoundaries = {{0x1100, 5, 0, Prefix + 1}};
@@ -177,14 +178,18 @@ TEST(RegistrationState, OrdinaryFinallyReturnsItsCheckedFrameEffects) {
     bool RestoredSP = false, AppliedWrite = false, PreservedBX = false;
     for (const auto &Value : A.FrameValues) {
       if (Value.Address == 0x1020 && Value.OpSeq == SPSeq)
-        RestoredSP |= Value.EstablishedFrameOffset == -56;
+        RestoredSP |=
+            Value.EstablishedFrameOffset == (Mutation == 24 ? -48 : -56);
       if (Value.Address == 0x1020 && Value.OpSeq == CellSeq)
         AppliedWrite |= Value.EstablishedFrameOffset == 0;
       if (Value.Address == 0x1020 && Value.OpSeq == BXSeq)
         PreservedBX |= Value.EstablishedFrameOffset == 0;
     }
-    const bool Valid = Mutation < 2 || Mutation == 15 || Mutation == 16 ||
-                       Mutation == 17 || Mutation == 20;
+    // A normal CALL/RET owns the actual ESP independently of SavedESP.
+    // Releasing storage up to the registration administration still refuses.
+    const bool Valid = Mutation < 2 || Mutation == 3 || Mutation == 15 ||
+                       Mutation == 16 || Mutation == 17 || Mutation == 20 ||
+                       Mutation == 24;
     EXPECT_EQ(RestoredSP, Valid);
     EXPECT_EQ(AppliedWrite, Valid && Mutation != 20);
     if (Mutation == 15 || Mutation == 16)

@@ -7,6 +7,7 @@
 #include "RegistrationFrame.h"
 
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/lift/X86Regs.h"
 
 namespace neverd::registration_state {
@@ -135,16 +136,33 @@ FrameValue FrameTransfer::read(const NdVar &Value) const {
         State.Registers[Value.Offset / x86reg::GeneralRegStride];
     if (Value.Offset % x86reg::GeneralRegStride == 0 && Value.Size >= 4)
       return Register;
+    const auto Byte = Value.Offset % x86reg::GeneralRegStride;
+    if (Register.Constant && !Register.MayBeFrame && Value.Size &&
+        Byte + Value.Size <= 4)
+      return FrameValue::constant((*Register.Constant >> (Byte * 8)) &
+                                  (UINT32_MAX >> ((4 - Value.Size) * 8)));
     return {{}, {}, false, Register.MayBeFrame};
   }
   if (Value.isReg()) {
     FrameValue Result;
+    std::optional<uint32_t> Constant = Value.Size && Value.Size <= 4
+                                           ? std::optional<uint32_t>{0}
+                                           : std::nullopt;
     for (uint64_t Byte = 0; Byte < Value.Size; ++Byte)
       if (auto It = State.OtherRegisterBytes.find(Value.Offset + Byte);
-          It != State.OtherRegisterBytes.end())
+          It != State.OtherRegisterBytes.end()) {
         Result = join(Result, It->second);
-      else if (State.OtherRegistersMayBeFrame)
-        Result = join(Result, {{}, {}, false, true, true});
+        if (Constant && It->second.Constant && !It->second.MayBeFrame)
+          *Constant |= (*It->second.Constant & UINT8_MAX) << (Byte * 8);
+        else
+          Constant.reset();
+      } else {
+        Constant.reset();
+        if (State.OtherRegistersMayBeFrame)
+          Result = join(Result, {{}, {}, false, true, true});
+      }
+    if (Constant && !Result.MayBeFrame)
+      return FrameValue::constant(*Constant);
     return Result;
   }
   if (Value.isTemp()) {
@@ -169,6 +187,17 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Result.MayBeFrame = true;
     }
   }
+  if (Op.Output.Size <= 4)
+    if (const auto Constant = lowScalarConstantResult(
+            Op, [&](const NdVar &V) -> std::optional<uint64_t> {
+              if (!V.Size || V.Size > 4)
+                return std::nullopt;
+              const auto Value = read(V);
+              if (Value.MayBeFrame || Value.SecurityCookie || Value.ReturnPC)
+                return std::nullopt;
+              return Value.Constant;
+            }))
+      return FrameValue::constant(uint32_t(*Constant));
   if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
       Op.NumInputs == 1) {
     const auto Input = read(Op.Inputs[0]);
@@ -348,7 +377,10 @@ void FrameTransfer::write(const LowOp &Op, FrameValue Value,
       Register = {{}, {}, false, Register.MayBeFrame || Value.MayBeFrame};
   } else if (Op.Output.isReg()) {
     for (uint64_t Byte = 0; Byte < Op.Output.Size; ++Byte)
-      if (Value.MayBeFrame || State.OtherRegistersMayBeFrame)
+      if (Value.Constant && !Value.MayBeFrame && Op.Output.Size <= 4)
+        State.OtherRegisterBytes[Op.Output.Offset + Byte] =
+            FrameValue::constant((*Value.Constant >> (Byte * 8)) & UINT8_MAX);
+      else if (Value.MayBeFrame || State.OtherRegistersMayBeFrame)
         State.OtherRegisterBytes[Op.Output.Offset + Byte] = {
             {}, {}, false, Value.MayBeFrame, Value.FrameOnlyFromCall};
       else

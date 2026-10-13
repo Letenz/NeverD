@@ -407,6 +407,46 @@ TEST(SEHRuntimeMemory, ScalarAddressesRespectDeclaredWidthsAndUnknownInputs) {
   EXPECT_FALSE(lowScalarConstantResult(Op, Constant));
 }
 
+TEST(SEHRuntimeMemory, ScalarComparisonsUseTheInputSignAndWidth) {
+  const auto Constant = [](const NdVar &V) -> std::optional<uint64_t> {
+    return V.isConst() ? std::optional<uint64_t>{V.Offset} : std::nullopt;
+  };
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    SCOPED_TRACE(Width);
+    LowOp Op;
+    Op.Output = NdVar::tmp(0, 1);
+    Op.addInput(NdVar::cst(UINT64_MAX, Width)); // -1 at every input width.
+    Op.addInput(NdVar::cst(1, Width));
+    Op.Opcode = NdOp::INT_SLESS;
+    EXPECT_EQ(lowScalarConstantResult(Op, Constant), 1u);
+    Op.Opcode = NdOp::INT_LESS;
+    EXPECT_EQ(lowScalarConstantResult(Op, Constant), 0u);
+    Op.Inputs[1] = Op.Inputs[0];
+    Op.Opcode = NdOp::INT_SLESS;
+    EXPECT_EQ(lowScalarConstantResult(Op, Constant), 0u);
+    Op.Opcode = NdOp::INT_SLESSEQUAL;
+    EXPECT_EQ(lowScalarConstantResult(Op, Constant), 1u);
+    Op.Opcode = NdOp::INT_EQUAL;
+    EXPECT_EQ(lowScalarConstantResult(Op, Constant), 1u);
+    Op.Inputs[1] = NdVar::reg(0, Width);
+    EXPECT_FALSE(lowScalarConstantResult(Op, Constant));
+    Op.Inputs[1] = NdVar::cst(1, Width == 8 ? 4 : 8);
+    EXPECT_FALSE(lowScalarConstantResult(Op, Constant));
+    Op.Inputs[1] = NdVar::cst(1, Width);
+    Op.Output.Size = 4;
+    EXPECT_FALSE(lowScalarConstantResult(Op, Constant));
+  }
+  LowOp Op;
+  Op.Opcode = NdOp::BOOL_NOT;
+  Op.Output = NdVar::tmp(0, 1);
+  Op.addInput(NdVar::cst(0x100, 1));
+  EXPECT_EQ(lowScalarConstantResult(Op, Constant), 1u);
+  Op.Inputs[0].Offset = 0x101;
+  EXPECT_EQ(lowScalarConstantResult(Op, Constant), 0u);
+  Op.Inputs[0].Size = 2;
+  EXPECT_FALSE(lowScalarConstantResult(Op, Constant));
+}
+
 TEST(SEHRuntimeMemory, RuntimeHomeAreaCannotOverwriteTheParentReturnPC) {
   Fixture F(true, false);
   auto &Text = F.Image.Segments.front().Data;

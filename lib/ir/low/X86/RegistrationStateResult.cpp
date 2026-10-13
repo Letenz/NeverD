@@ -134,6 +134,20 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     Result.Diagnostics.push_back(
         "SEH invocation exit or parent stack is not proven");
   }
+  for (const auto &[Identity, Resume] : JumpResumptions)
+    if (!charge(1) || ModifiedCallbackCaptures.count(Resume.CaptureCall))
+      Result.SEHJumpResumptionsComplete = false;
+  const bool FailedJump = !Result.SEHJumpResumptionsComplete;
+  Result.SEHJumpResumptionsComplete &=
+      Result.Complete && Result.CallbackStatesComplete;
+  if (Result.SEHJumpResumptionsComplete)
+    for (const auto &[Identity, Resume] : JumpResumptions)
+      Result.SEHJumpResumptions.push_back(Resume);
+  else if (FailedJump || !JumpResumptions.empty()) {
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.Diagnostics.push_back("SEH jump buffer or resumption is not proven");
+  }
   if (!Result.CxxContinuationsComplete) {
     Result.Complete = Result.CallbackStatesComplete = false;
     Result.Diagnostics.push_back(

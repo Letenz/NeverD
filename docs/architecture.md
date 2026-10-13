@@ -5148,18 +5148,42 @@ only admits a closed RaiseException invocation with no argument array. Unknown
 calls and unbounded writes refuse the specialization. Object writes withdraw
 pre-call constants on both ordinary and exceptional paths. Nested CFG state
 analysis and failed proofs count against the same callee work budget.
+An incoming jump-buffer argument carries an opaque capture identity, rather
+than a usable pointer into its caller's frame. A checked foreign resumption
+returns that identity and its scalar value to the caller's unwind owner.
 These are source-analysis facts; native lowering rejects them until a replacement
-call plan is proved. Jump-buffer resumption and the complete xcpt4 proof remain
-required.
+call and buffer plan is proved.
 
 `RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
 unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
 checks a current source CALL, complete buffer separation, the installed canonical
 frame and the explicit two-argument unwind protocol. It retains actual captured
-nonvolatile values, including unknown pointer provenance. These preparatory
-records are not integrated with state completion: surviving-buffer identity,
-mutation/lifetime checks, runtime unwind effects and CFG/SSA resumption consumers
-remain required. Neither routine publishes a zero-pop or no-return shortcut.
+nonvolatile values, including unknown pointer provenance. `RegistrationJumpBuffer`
+owns the ten initialized DWORDs; the six unused unwind-data words retain their
+original contents. `RegistrationStateJump` retains captures across checked
+transfers, withdraws them on overlapping writes, released storage or unknown
+calls, and rejects an altered runtime import slot. An authenticated resume walks
+the current unwind levels, preserves checked finally writes, restores captured
+registers and ESP, and joins at the physical capture PC. Unknown finally effects
+refuse this transfer. CFG partitioning creates that PC as an ordinary fallthrough
+block without inventing an independent entry. Complete nonlocal finally effects,
+CFG/SSA consumers of the resumption receipts remain required for native
+projection. Native lowering rejects these source facts until a replacement-buffer
+contract is proved. No target-wide call-pop or no-return summary is inferred.
+
+Ordinary finally calls use the actual reaching ESP. Nested calls retain a
+separate invocation stack and physical return PC for each caller; SavedESP
+belongs to runtime restoration. A closed, authenticated RaiseException call
+with no argument array preserves those cells, while its exception dispatch
+remains part of the language analysis. A returning call can precede a block's
+terminator; its physical fallthrough grants no memory contract by itself.
+
+Checked `_controlfp_s` queries and exception-mask changes can write only a
+disjoint caller-owned DWORD. Its returned control word remains unknown.
+Authenticated math import cleanup and checked floating-state intrinsic shapes
+supply integer-frame facts only. Their floating effects, traps and original
+calls remain in LowIR. Writes in asynchronous filters withdraw affected jump
+resumption receipts even if those receipts were observed earlier.
 
 A termination-only SEH function has no dispatcher-entered except body. Its
 returning-stack proof follows its ordinary entry and checks every finally's
@@ -5168,5 +5192,16 @@ register, makes an unchecked nested call or abandons its invocation stack cannot
 use this route. An incoming object can still prevent a memory-effect proof:
 the returning-stack contract grants no initialized object borrow or saved-memory
 preservation.
+
+A canonical EH3 direct prologue also permits an independent register-only
+returning-stack proof through its ordinary body and every except entry.
+Unproved incoming memory cannot grant saved-slot restoration: each return
+still requires an exact ESP and matching immutable near-return encoding.
+Scope callbacks retain separate entries and return obligations. COFF install
+discovery observes a distinct direct prologue before deduplicating tentative
+function owners, so two real frames inside one guessed range remain distinct.
+Proof work and admitted memory extents have separate limits. Raising the
+registration work allowance does not enlarge an object, borrow or callback
+frame: those retain the shared 1 MiB source-call storage bound.
 
 `RegistrationScopeGraph` shares the EH3/EH4 index and frame-sentinel rules between COFF parsing and LowIR. State analysis revalidates initial levels, backward enclosing links, handler presence and filter/finally roles before publishing facts. An initially active scope retains its frame sentinel; an empty table admits only that sentinel. Instruction bytes, executable ownership and frame installation retain their separate proofs. Scope handler and filter addresses must also fit the PE32 pointer width.

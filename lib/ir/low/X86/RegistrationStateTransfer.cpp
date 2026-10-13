@@ -11,6 +11,8 @@
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -28,7 +30,7 @@ bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
 bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                                             BlockFacts &Facts) {
   const LowBlock &Block = Function.Blocks[I];
-  if (!charge(Before.catchCellCount() + 1))
+  if (!charge(Before.catchCellCount() + Before.sehCallerCellCount() + 1))
     return true;
   Domain After = Before;
   std::optional<Domain> CallException;
@@ -40,6 +42,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   std::optional<RegistrationCxxContinuation> CatchReturn;
   bool NoReturnAtExit = false;
   va_t NoReturnEnd = InvalidVA;
+  va_t InvocationEnd = InvalidVA;
   auto Invalidate = [&] {
     Facts.Invalid = true;
     After.Unknown = true;
@@ -72,6 +75,10 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (!charge(1 + RegisterBytes + MemoryWork))
       break;
     const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+    if (Memory.Address && Memory.StoredValue &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      invalidateJumpRuntimeBindings(After, Transfer.read(*Memory.Address),
+                                    Memory.AccessSize);
     if (Conditional &&
         (!checkConditionalMemory(After.Frame, Op, Transfer,
                                  &After.InitializedFrameBytes) ||
@@ -284,6 +291,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = false;
           After.Installed = true;
+          After.JumpCaptures.clear();
           ProvenInstallation = true;
           if (EH4 && !cookiesReady(After.Frame))
             CompleteCookies = false;
@@ -295,6 +303,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = true;
           After.Installed = false;
+          After.JumpCaptures.clear();
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
         } else {
           CompleteChainOperations = false;
@@ -302,6 +311,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Installed = After.Uninstalled = true;
         }
       } else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        invalidateJumpCaptures(After, Address, Width);
         if (Chain.hasCxxCallbackStack() && !After.Installed &&
             After.Uninstalled && Address.Offset == Chain.TryLevelOffset &&
             Width == 4 && Stored.Constant == uint32_t(*Chain.SeededTryLevel)) {
@@ -418,7 +428,10 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     }
     std::optional<FrameValue> CallSP;
     bool CheckedCall = false;
-    if (!transferOrdinaryFinally(I, After, Op, Facts, CallSP))
+    const bool JumpCapture = transferJumpCapture(I, After, Op, Facts, CallSP);
+    const bool JumpResume = transferJumpResume(I, After, Op, Facts);
+    if (!JumpCapture && !JumpResume &&
+        !transferOrdinaryFinally(I, After, Op, Facts, CallSP))
       if (auto Call = transferCall(I, After, Op, Facts)) {
         CheckedCall = true;
         CallSP = Call->StackPointer;
@@ -428,11 +441,35 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       }
     if (auto SP = transferLocalUnwind(I, After, Op, Facts))
       CallSP = *SP;
+    if (!CallSP)
+      CallSP = transferControlFP(Before, After, Op, Facts, CallException);
+    if (!CallSP && JumpRuntime && JumpRuntime->Raise &&
+        After.JumpBindingsIntact && !After.Unknown && !Facts.Invalid &&
+        After.Installed && !After.Uninstalled &&
+        !After.Activation.SearchFilter &&
+        JumpRuntime->Raise(Op, After.Frame, WorkUsed)) {
+      const auto SP =
+          After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+      if (SP.Offset && *SP.Offset <= int64_t(*Chain.RegistrationOffset) - 24)
+        CallSP = FrameValue::frame(*SP.Offset + 16);
+      else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
+                                         *SP.CallbackAddress, 16, true))
+        CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
+                                           SP.CallbackAddress->Offset + 16);
+    }
     if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,
                                 CallException))
       break;
-    if (SEHControls && !KnownCxx && Before.Callback &&
-        Before.Activation.Entry &&
+    if (!JumpCapture && !JumpResume && !CallSP && !Facts.InvocationAtExit &&
+        (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+         (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)))) {
+      if (After.Callback)
+        for (const auto &[Offset, Capture] : After.JumpCaptures)
+          ModifiedCallbackCaptures.insert(Capture.Call);
+      After.JumpCaptures.clear();
+    }
+    if (!JumpResume && !CallSP && !Facts.InvocationAtExit && SEHControls &&
+        !KnownCxx && Before.Callback && Before.Activation.Entry &&
         FinallyTargets.count(*Before.Activation.Entry) &&
         ((Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
          ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
@@ -487,6 +524,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     }
     recordSEHStackRestore(Op, After, Transfer, Value);
     Transfer.write(Op, Value, CookieCheckVA);
+    if (JumpCapture)
+      After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
+          FrameValue::constant(0);
     if (CheckRuntimeObjects) {
       RuntimeTransfer.write(Op, RuntimeValue);
       if (CheckedCall) {
@@ -511,6 +551,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     }
     if (CallSP)
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] = *CallSP;
+    if (const auto SP = parentStackOffset(After))
+      std::erase_if(After.JumpCaptures,
+                    [&](const auto &Capture) { return *SP > Capture.first; });
     if ((CheckCalls || Conditional) &&
         !(Conditional &&
           After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
@@ -529,12 +572,20 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             After.InitializedFrameBytes.lower_bound(*SP));
       }
     }
-    if (NoReturnAtExit)
+    if (Facts.InvocationAtExit && Op.Opcode == NdOp::CALL) {
+      const auto Source = Boundaries.find(Op.Addr);
+      if (Source != Boundaries.end())
+        InvocationEnd =
+            Source->second.second.Address + Source->second.second.Size;
+      break;
+    }
+    if (NoReturnAtExit || (JumpResume && Facts.InvocationAtExit))
       break;
   }
   for (auto It = Stores.lower_bound(Block.StartAddr);
        It != Stores.end() && It->first < Block.EndAddr; ++It)
     if ((!NoReturnAtExit || It->first < NoReturnEnd) &&
+        (InvocationEnd == InvalidVA || It->first < InvocationEnd) &&
         !ProvenStores.count(It->first))
       Invalidate();
   if (Facts.Invalid)
@@ -543,6 +594,26 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   Facts.CxxContinuationAtExit = CatchReturn.has_value();
   Facts.NoReturnAtExit = NoReturnAtExit;
   if (!NoReturnAtExit && !Facts.InvocationAtExit) {
+    std::optional<va_t> SelectedBranch;
+    if (!Facts.Invalid && !After.Unknown && Block.Succs.size() == 2 &&
+        !Block.Ops.empty()) {
+      const auto &Branch = Block.Ops.back();
+      if (Branch.Opcode == NdOp::COND_BR && Branch.NumInputs == 2 &&
+          Branch.Inputs[0].isConst()) {
+        const auto Condition = Transfer.read(Branch.Inputs[1]);
+        const auto Taken = Entries.find(Branch.Inputs[0].Offset);
+        const auto Fallthrough = Entries.find(Block.EndAddr);
+        if (Condition.Constant && !Condition.MayBeFrame &&
+            Taken != Entries.end() && Fallthrough != Entries.end() &&
+            Taken != Fallthrough &&
+            llvm::is_contained(Block.Succs,
+                               Function.Blocks[Taken->second].Id) &&
+            llvm::is_contained(Block.Succs,
+                               Function.Blocks[Fallthrough->second].Id))
+          SelectedBranch =
+              *Condition.Constant ? Branch.Inputs[0].Offset : Block.EndAddr;
+      }
+    }
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {
@@ -550,7 +621,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             "registration-state CFG has a missing edge");
         return false;
       }
-      merge(It->second, After);
+      if (!SelectedBranch ||
+          Function.Blocks[It->second].StartAddr == *SelectedBranch)
+        merge(It->second, After);
     }
   }
   if (CatchReturn)

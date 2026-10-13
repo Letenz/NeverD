@@ -143,7 +143,7 @@ bool hasPrivateCallerFrame(
           const int64_t End = int64_t(*Object.Offset) + Memory.AccessSize;
           if (Address.Offset || Address.Constant || Address.MayBeFrame ||
               *Object.Offset < 0 || End > INT32_MAX ||
-              End > limits::kMaxRegistrationEHStateWork)
+              End > limits::kMaxSourceCallBorrowedBytes)
             return false;
           if (Op.Opcode != NdOp::STORE)
             Effects.ECXReads.emplace(*Object.Offset, int32_t(End));
@@ -298,15 +298,7 @@ bool hasPrivateCallerFrame(
         if (ScalarArguments) {
           // A closed RaiseException invocation reads no argument array.
           // Its callbacks remain obligations of the enclosing SEH solver.
-          if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1 ||
-              !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
-              checkedRegistrationImportStackPop(Image, Op.Inputs[0].Offset) !=
-                  16 ||
-              State.Frame.load(*SP + 8, 4).Constant != 0 ||
-              State.Frame.load(*SP + 12, 4).Constant != 0 ||
-              !State.Frame.load(*SP + 4, 4).Constant ||
-              *State.Frame.load(*SP + 4, 4).Constant > 1 ||
-              State.Frame.load(*SP, 4).MayBeFrame)
+          if (!hasClosedRegistrationRaise(Image, Op, State.Frame))
             return false;
         }
         unsigned Pop = 0;

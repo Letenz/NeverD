@@ -71,6 +71,10 @@ struct FrameValue {
   /// Two live reference catches can have the same object-relative offset.
   std::optional<std::pair<uint32_t, uint32_t>> ExceptionObject;
   std::optional<SEHExceptionAddress> SEHException;
+  /// A borrowed live jump buffer is opaque to an inspected callee. Only an
+  /// authenticated resume consumes it; source memory/arithmetic gets no
+  /// establisher coordinate from this identity.
+  std::optional<va_t> JumpCapture;
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
   static FrameValue entryFrame(int32_t Offset) {

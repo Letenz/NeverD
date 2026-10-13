@@ -191,6 +191,25 @@ struct RegistrationSEHInvocationExit {
   bool operator==(const RegistrationSEHInvocationExit &) const = default;
 };
 
+/// A live EH3 buffer supplies one physical capture PC and restored ESP. The
+/// source invocation is retired by the authenticated nonlocal runtime call;
+/// this is distinct from an ordinary CALL return or a target-wide noreturn.
+struct RegistrationSEHJumpResume {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t CaptureCall = InvalidVA;
+  va_t TargetVA = InvalidVA;
+  va_t EntryVA = InvalidVA;
+  va_t OrdinaryCall = 0;
+  int32_t BufferOffset = 0;
+  int32_t StackOffset = 0;
+  /// Cross-function exits bind the caller CALL above and the callee's checked
+  /// runtime resume occurrence. These do not grant a callable native ABI.
+  va_t CalleeVA = 0;
+  va_t ResumeVA = 0;
+  bool operator==(const RegistrationSEHJumpResume &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -205,6 +224,11 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
   /// Invocation-specialized original helpers require a separate native plan.
   bool HasBoundSEHCallees = false;
+  /// Original EH3 captures retain their physical buffer and invocation. Native
+  /// reconstruction requires a separate replacement-buffer contract.
+  bool HasEH3JumpCaptures = false;
+  bool SEHJumpResumptionsComplete = true;
+  std::vector<RegistrationSEHJumpResume> SEHJumpResumptions;
   /// Complete chain access ownership, including decoded boundaries and
   /// operation identities, available only with a complete registration
   /// lifetime and callback state proof. This is not a native output receipt.

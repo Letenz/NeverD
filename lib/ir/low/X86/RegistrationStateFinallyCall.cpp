@@ -27,7 +27,7 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
   // permission to emit a native call to a source-frame-sharing helper.
   if (CheckCalls)
     CompleteCalls = false;
-  if (SEHControls && !StackPops.count({Op.Inputs[0].Offset, false}))
+  if (SEHControls)
     return enterOrdinaryFinally(I, After, Op, Facts);
   const auto Refuse = [&] {
     Facts.Invalid = After.Unknown = true;
@@ -40,11 +40,10 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
   const auto Boundary = Boundaries.find(Op.Addr);
   const auto &Block = Function.Blocks[I];
   const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
-  const auto SavedSP =
-      After.Frame.load(*Chain.RegistrationOffset - 8, 4).Offset;
   if (!Function.hasCompleteLiftCoverage() || After.Unknown || Facts.Invalid ||
       !After.Parent || After.Callback || After.Frame.CallbackEntry ||
-      Chain.RealignedFrame || !SP.Offset || !SavedSP || *SP.Offset > *SavedSP ||
+      Chain.RealignedFrame || !SP.Offset ||
+      *SP.Offset >= int64_t(*Chain.RegistrationOffset) - 8 ||
       *SP.Offset < INT32_MIN + 4 ||
       After.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset !=
           0 ||
@@ -67,6 +66,7 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
     llvm::consumeError(std::move(Error));
     return Refuse();
   }
+  std::vector<RegistrationObjectExtent> Writes;
   if (Insn.Control != LowInstructionControl::Call ||
       isUnconditionalNoReturn(Insn) ||
       hasLowInstructionControlFlag(Insn.ControlFlags,
@@ -76,8 +76,11 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
       Insn.FirstOp > OpIndex || OpIndex - Insn.FirstOp >= Insn.OpCount ||
       Insn.FirstOp > Block.Ops.size() ||
       Insn.OpCount > Block.Ops.size() - Insn.FirstOp ||
-      !runLocalFinally(Op.Inputs[0].Offset, After.Frame, true))
+      !runLocalFinally(Op.Inputs[0].Offset, After.Frame, true, &Writes))
     return Refuse();
+  for (const auto &Write : Writes)
+    invalidateJumpCaptures(After, FrameValue::frame(Write.Begin),
+                           uint16_t(Write.End - Write.Begin));
   ReturnedSP = SP;
   return true;
 }

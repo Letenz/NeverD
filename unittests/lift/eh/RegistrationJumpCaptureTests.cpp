@@ -7,9 +7,11 @@
 /// Check the current frame, physical PC and complete EH3 buffer separation.
 
 #include "../../../lib/ir/low/X86/RegistrationJumpCapture.h"
+#include "../../../lib/ir/low/X86/RegistrationJumpRuntime.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
@@ -18,6 +20,44 @@ using namespace neverd;
 using namespace neverd::registration_state;
 
 #ifdef NEVERD_BINARY_CORPUS_ROOT
+TEST(RegistrationJumpCapture, PhysicalCapturePCPartitionsOrdinaryFlow) {
+  auto Image = COFFLoader().load(
+      std::string(NEVERD_BINARY_CORPUS_ROOT) +
+      "/corpus/windows-eh/msvc/vs2019/x86/native/no-gs/o0/windows-seh-tests/"
+      "xcpt4-msvc-x86-native-no-gs-o0.exe");
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(*Image));
+  const auto Function =
+      CFGBuilder().build(*Image, Dec, 0x401580, "capture-pcs");
+  unsigned Captures = 0, Resumes = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
+          !Op.Inputs[0].isConst() ||
+          (Op.Inputs[0].Offset != 0x407c7e && Op.Inputs[0].Offset != 0x407c66))
+        continue;
+      const bool Capture = Op.Inputs[0].Offset == 0x407c7e;
+      if (Capture)
+        ++Captures;
+      else
+        ++Resumes;
+      EXPECT_EQ(Block.EndAddr, Op.Addr + 5);
+      if (!Capture)
+        continue;
+      ASSERT_EQ(Block.Succs.size(), 1u);
+      const auto Next = llvm::find_if(Function.Blocks, [&](const LowBlock &B) {
+        return B.Id == Block.Succs[0];
+      });
+      ASSERT_NE(Next, Function.Blocks.end());
+      EXPECT_EQ(Next->StartAddr, Op.Addr + 5);
+      EXPECT_FALSE(Function.ModuleAnalysisRoots.count(Next->StartAddr));
+      EXPECT_FALSE(Function.OrdinaryModuleAnalysisRoots.count(Next->StartAddr));
+    }
+  EXPECT_EQ(Captures, 7u);
+  EXPECT_EQ(Resumes, 6u);
+}
+
 TEST(RegistrationJumpCapture, BindsCurrentSourceAndBoundedCallerStorage) {
   for (unsigned Mutation = 0; Mutation != 23; ++Mutation) {
     SCOPED_TRACE(Mutation);
@@ -122,6 +162,13 @@ TEST(RegistrationJumpCapture, BindsCurrentSourceAndBoundedCallerStorage) {
         prepareEH3JumpCapture(*Image, Function, Op, Frame, Installed, Work);
     EXPECT_EQ(Capture.has_value(), Mutation == 0);
     if (Capture) {
+      size_t SourceWork = 0;
+      const auto Binding =
+          checkedJumpRuntimeCall(*Image, Function, Op, SourceWork);
+      ASSERT_TRUE(Binding);
+      EXPECT_EQ(Binding->Routine, JumpRuntimeBinding::Kind::Capture);
+      EXPECT_TRUE(isEH3JumpRuntimeInstruction(*Image, Op.Addr, 5,
+                                              Function.Blocks[0].Ops));
       EXPECT_EQ(Capture->Call, 0x40223cu);
       EXPECT_EQ(Capture->ReturnPC, 0x402241u);
       EXPECT_EQ(Capture->StackOffset, -316);
@@ -134,6 +181,8 @@ TEST(RegistrationJumpCapture, BindsCurrentSourceAndBoundedCallerStorage) {
       const auto Detached = Op;
       EXPECT_FALSE(prepareEH3JumpCapture(*Image, Function, Detached, Frame,
                                          Installed, Work));
+      EXPECT_FALSE(
+          checkedJumpRuntimeCall(*Image, Function, Detached, SourceWork));
     }
   }
 }

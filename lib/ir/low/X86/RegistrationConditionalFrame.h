@@ -10,6 +10,7 @@
 /// Check invocation-specific SEH frame inputs and bounded effects.
 
 #include "RegistrationFrame.h"
+#include "RegistrationJumpCapture.h"
 
 #include "neverd/ir/RegistrationCall.h"
 
@@ -23,6 +24,14 @@ struct BinaryImage;
 
 namespace neverd::registration_state {
 
+struct BorrowedJumpResume {
+  va_t Address = InvalidVA;
+  int Seq = -1;
+  va_t CaptureCall = InvalidVA;
+  FrameValue Value;
+  bool operator==(const BorrowedJumpResume &) const = default;
+};
+
 /// Invocation-specific inputs in the callee's established EBP coordinates.
 /// Positive object extents are proved caller storage, disjoint from this
 /// invocation's return PC, private frame and incoming argument slots.
@@ -31,6 +40,8 @@ struct ConditionalFrame {
   std::map<int32_t, FrameValue> Arguments;
   std::vector<RegistrationObjectExtent> Objects;
   std::map<int32_t, FrameValue> ObjectCells;
+  std::map<va_t, EH3JumpCapture> JumpBuffers;
+  std::map<std::pair<va_t, int>, BorrowedJumpResume> JumpResumes;
   std::set<std::pair<int32_t, int32_t>> Reads;
   std::set<std::pair<int32_t, int32_t>> Writes;
   bool Complete = true;
@@ -41,17 +52,19 @@ struct BoundCalleeEffect {
   uint32_t StackPopBytes = 0;
   std::vector<RegistrationObjectExtent> Reads;
   std::vector<RegistrationObjectExtent> Writes;
+  bool HasOrdinaryReturn = true;
+  std::vector<BorrowedJumpResume> JumpResumes;
 };
 
 /// Prove one exact original helper using its current caller cells. The caller
 /// separately binds this target to its authenticated physical CALL occurrence.
-std::optional<BoundCalleeEffect> proveBoundSEHCallee(const BinaryImage &Image,
-                                                     const LowOp &Op,
-                                                     const FrameState &Parent,
-                                                     size_t &Work);
+std::optional<BoundCalleeEffect> proveBoundSEHCallee(
+    const BinaryImage &Image, const LowOp &Op, const FrameState &Parent,
+    size_t &Work, const std::map<int32_t, EH3JumpCapture> *Captures = nullptr);
 
 using BoundCalleeProver = std::function<std::optional<BoundCalleeEffect>(
-    const LowOp &, const FrameState &, size_t &)>;
+    const LowOp &, const FrameState &, size_t &,
+    const std::map<int32_t, EH3JumpCapture> &)>;
 
 } // namespace neverd::registration_state
 

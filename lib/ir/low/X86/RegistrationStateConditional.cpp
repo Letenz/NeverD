@@ -123,6 +123,10 @@ bool RegistrationStateSolver::conditionalCall(const FrameState &State,
   if (LocalUnwindTargets.count({Target, Op.Opcode == NdOp::INDIR_CALL}) ||
       (Op.Opcode == NdOp::CALL && FinallyTargets.count(Target)))
     return true;
+  // Authentication grants only entry to the argument/activation checker.
+  // An absent or expired borrowed capture still refuses at the transfer.
+  if (JumpRuntime && JumpRuntime->Resume && JumpRuntime->Resume(Op, WorkUsed))
+    return true;
   if (!Conditional->ProveCall || !Conditional->ProveCall(Op, State))
     return Refuse();
   return true;

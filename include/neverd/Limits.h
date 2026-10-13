@@ -756,7 +756,9 @@ constexpr uint32_t kMaxRegistrationEHRecords = 4096;
 
 /// Total registration-state propagation work, including state/edge pairs.
 /// Exhaustion invalidates the whole result rather than truncating a domain.
-constexpr size_t kMaxRegistrationEHStateWork = 1048576;
+/// Includes the shared decoded-callee closure; large nested EH3 functions
+/// need more than one million operations even after all transfers are exact.
+constexpr size_t kMaxRegistrationEHStateWork = 4194304;
 
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;

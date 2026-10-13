@@ -43,7 +43,7 @@ bool FrameState::callbackMemoryIsPrivate(const CallbackFrameAddress &Address,
   // The runtime return PC and caller storage start at offset zero. Only an
   // explicitly allocated interval below that boundary belongs to this call.
   if (CallbackEntry != Address.Entry || !SP || SP->Entry != Address.Entry ||
-      SP->Offset < -int64_t(limits::kMaxRegistrationEHStateWork) || !Width ||
+      SP->Offset < -int64_t(limits::kMaxSourceCallBorrowedBytes) || !Width ||
       Address.Offset < SP->Offset || int64_t(Address.Offset) + Width > 0)
     return false;
   if (Read)

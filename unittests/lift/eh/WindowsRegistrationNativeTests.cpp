@@ -3168,6 +3168,22 @@ TEST(WindowsRegistrationNative, BoundSEHHelpersRequireAReplacementCallReceipt) {
   EXPECT_EQ(F.print(), Before);
 }
 
+TEST(WindowsRegistrationNative, JumpCapturesRequireAReplacementBufferReceipt) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    RegistrationNativeFixture F;
+    auto &States = *F.Source.RegistrationStates;
+    if (Mutation == 0)
+      States.HasEH3JumpCaptures = true;
+    if (Mutation == 1)
+      States.SEHJumpResumptionsComplete = false;
+    if (Mutation == 2)
+      States.SEHJumpResumptions.push_back({});
+    const auto Before = F.print();
+    EXPECT_FALSE(F.lower());
+    EXPECT_EQ(F.print(), Before);
+  }
+}
+
 TEST(WindowsRegistrationNative, ReplaysPreservedCalleeReturnCleanup) {
   for (bool CalleePop : {false, true}) {
     BinaryImage Image;

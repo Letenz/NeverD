@@ -2923,8 +2923,15 @@ and indirect forms, including loader storage, DLL identity, delay imports,
 architecture, veneer opcode/slot and writable code. `RegistrationJumpCapture`
 checks physical PC and frame values, argument/admin overlap, wrong protocol,
 unknown callback roles, detached operations, source slices, caller ownership and
-work exhaustion. These tests validate preparation only; they do not establish
-buffer survival or a nonlocal resumption.
+work exhaustion. Its pinned xcpt4 CFG check requires all seven physical capture
+PCs to begin ordinary fallthrough blocks without becoming independent roots.
+`RegistrationJumpState` checks solver-local capture/resumption, partial buffer
+writes, unused unwind-data writes, unknown intervening calls, altered IAT bytes,
+missing authentication and absent physical continuations. Buffer tests retain the
+six untouched DWORDs and mutate every initialized byte. Native controls reject
+both capture facts and unconsumed resumption receipts without changing IR. These
+checks do not establish full xcpt4, recursive nonlocal finally effects or shared
+CFG/SSA resumption support.
 
 CRT source regressions use synthetic tables and the pinned Windows corpus:
 
@@ -5106,6 +5113,33 @@ code, changed frame registers and nested calls that only have a pop summary
 refuse. This regression does not certify the helper's object-memory effects.
 The public xcpt4 PE32 and PE64 issue tests remain separate required acceptance
 checks; passing these focused tests does not close either issue.
+
+`RegistrationConditionalFrame.XCPT4CompletesWithinTheDefaultClosureBudget`
+checks the original PE32 xcpt4 main, including filters, ordinary and runtime
+finally invocations, local unwinds and jump-buffer resumptions. The shared
+registration work cap is 4,194,304. A Release observation used 1,144,583 state
+work units and 2,613,031 units for the complete decoded-callee closure. The
+original filter-output test also passes when built independently from its
+unchanged test body and helper. These work counts are deterministic accounting,
+not a throughput benchmark; the PE64 xcpt4 acceptance remains unresolved.
+Unknown-address frame accesses still charge every potentially aliased cell.
+Their budget regression scales its load count with the configured limit and
+must withdraw all complete output when exhausted.
+Memory extent tests continue to reject a borrow beyond 1 MiB and an oversized
+C++ throw object. Their shared source-call storage limit is independent of
+the registration propagation work cap.
+
+The borrowed-capture, asynchronous-filter-write and nested-finally cases
+require actual buffer contents, disjoint object extents and each invocation's
+own return slot. Import rebinding, partial buffer writes, changed CALL bytes,
+missing capture evidence and unproved continuations refuse. The returning
+RaiseException case checks a call before a finally return; conditional and
+guarded instructions and an absent memory contract still refuse.
+CRT regressions check the exact `_controlfp_s` binding and output DWORD,
+floating-state intrinsic shapes and import cleanup without granting memory
+effects. Scalar comparison tests cover signedness, input widths and unknown
+values. Distinct direct registration prologues inside one guessed function
+range must retain separate owners; a damaged prefix supplies no new entry.
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` checks optimized and unoptimized source projection across PE32, ELF and Mach-O on x86, x64 and AArch64. Single-function and sharded LLVM emission retain the same explicit incomplete native EH contract; binary rewriting still rejects it.
 

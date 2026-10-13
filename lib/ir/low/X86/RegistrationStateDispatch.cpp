@@ -26,7 +26,9 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 }
 
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
-  if (Exhausted || !charge(1 + 2 * std::bit_width(States[Target].size() + 1)))
+  if (Exhausted || !charge(1 + Source.Activation.JumpCaptureCalls.size() +
+                           Source.Activation.Callers.size() +
+                           2 * std::bit_width(States[Target].size() + 1)))
     return;
   auto [It, New] = States[Target].try_emplace(Source.Activation);
   auto &Node = It->second;
@@ -41,7 +43,9 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
               Dest.RuntimeObject.cellCount() +
               Dest.RuntimeObject.OtherRegisterBytes.size() +
               Source.InitializedFrameBytes.size() +
-              Dest.InitializedFrameBytes.size() + 10))
+              Dest.InitializedFrameBytes.size() +
+              Source.JumpCaptures.size() * 14 + Dest.JumpCaptures.size() * 14 +
+              Source.sehCallerCellCount() + Dest.sehCallerCellCount() + 10))
     return;
   bool Changed = !Dest.Reached;
   if (!Dest.Reached) {
@@ -53,6 +57,37 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     Changed |= Before != Dest.Levels.size();
     Changed |= Dest.Frame.merge(Source.Frame);
     Changed |= Dest.RuntimeObject.merge(Source.RuntimeObject);
+    if (Dest.SEHCallers.size() != Source.SEHCallers.size()) {
+      Changed |= !Dest.Unknown;
+      Dest.Unknown = true;
+    } else {
+      for (size_t C = 0; C != Dest.SEHCallers.size(); ++C) {
+        auto &Caller = Dest.SEHCallers[C];
+        const auto &Other = Source.SEHCallers[C];
+        if (Caller.Activation != Other.Activation ||
+            Caller.OtherCallback != Other.OtherCallback ||
+            Caller.OrdinaryCallStack != Other.OrdinaryCallStack ||
+            Caller.StackRestore != Other.StackRestore) {
+          Changed |= !Dest.Unknown;
+          Dest.Unknown = true;
+        }
+        Changed |= Caller.Stack.merge(Other.Stack);
+      }
+    }
+    if (Dest.JumpBindingsIntact && !Source.JumpBindingsIntact) {
+      Dest.JumpBindingsIntact = false;
+      Changed = true;
+    }
+    for (auto Capture = Dest.JumpCaptures.begin();
+         Capture != Dest.JumpCaptures.end();) {
+      const auto Other = Source.JumpCaptures.find(Capture->first);
+      if (Other == Source.JumpCaptures.end() ||
+          Other->second != Capture->second) {
+        Capture = Dest.JumpCaptures.erase(Capture);
+        Changed = true;
+      } else
+        ++Capture;
+    }
     if (Dest.OrdinaryCallStack &&
         Dest.OrdinaryCallStack != Source.OrdinaryCallStack) {
       Dest.OrdinaryCallStack.reset();
@@ -103,12 +138,20 @@ void RegistrationStateSolver::dispatch(
   Domain Root;
   if (!KnownCxx && Callback)
     Root.Activation = {Address, SearchFilter};
+  if (!KnownCxx && Callback) {
+    if (!charge(Source.JumpCaptures.size() + 1))
+      return;
+    for (const auto &[Offset, Capture] : Source.JumpCaptures)
+      Root.Activation.JumpCaptureCalls.emplace_back(Offset, Capture.Call);
+  }
   Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
   Root.Frame.Cells = Source.Frame.Cells;
   Root.Frame.EntryCells = Source.Frame.EntryCells;
+  Root.JumpCaptures = Source.JumpCaptures;
+  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
   Root.InitializedFrameBytes = Source.InitializedFrameBytes;
   Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
   Root.RuntimeObject.forgetCellValues();
@@ -172,7 +215,7 @@ void RegistrationStateSolver::dispatch(
         const auto Offset = Chain.cxxSourceFrameOffset(C.FrameOffset);
         const int64_t End = int64_t(Offset.value_or(0)) + SlotBytes;
         if (!SP || !Offset || Source.Unknown || Unknown || *Offset < *SP ||
-            *Offset < -int64_t(limits::kMaxRegistrationEHStateWork) ||
+            *Offset < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
             End > *Chain.cxxRuntimeFrameOffset() ||
             !frameObjectIsDisjointFromAdministration(*Offset, End) ||
             !charge(SlotBytes + Root.Frame.cellCount() +

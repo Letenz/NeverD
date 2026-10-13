@@ -34,7 +34,7 @@ void RegistrationStateSolver::recordCatchReturn(
       Captured.CallbackAddress->Offset <= 0 &&
       Captured.CallbackAddress->Offset >= *Context->SuspendedStackOffset &&
       Captured.CallbackAddress->Offset >=
-          -int64_t(limits::kMaxRegistrationEHStateWork);
+          -int64_t(limits::kMaxSourceCallBorrowedBytes);
   const bool SavedParent = Captured.Offset && *Captured.Offset <= SavedSlot;
   // The runtime owns this snapshot, independently of subsequent catch writes
   // to SavedESP. The continuation edge restores both the cell and ESP.

@@ -7,6 +7,8 @@
 /// Check invocation-specific SEH frame inputs and bounded effects.
 
 #include "RegistrationABIPrivate.h"
+#include "RegistrationCRTFrame.h"
+#include "RegistrationJumpRuntime.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
@@ -18,10 +20,10 @@
 
 namespace neverd::registration_state {
 
-std::optional<BoundCalleeEffect> proveBoundSEHCallee(const BinaryImage &Image,
-                                                     const LowOp &Op,
-                                                     const FrameState &Parent,
-                                                     size_t &Work) {
+std::optional<BoundCalleeEffect>
+proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
+                    const FrameState &Parent, size_t &Work,
+                    const std::map<int32_t, EH3JumpCapture> *Captures) {
   if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
       Op.Inputs[0].Size != 4)
     return std::nullopt;
@@ -58,6 +60,17 @@ std::optional<BoundCalleeEffect> proveBoundSEHCallee(const BinaryImage &Image,
     if (!Value.Offset || Value.ReturnPC || Value.CallbackAddress ||
         Value.SEHException)
       continue;
+    if (Captures)
+      if (const auto Capture = Captures->find(*Value.Offset);
+          Capture != Captures->end() &&
+          hasEH3JumpCapture(Parent, Capture->second)) {
+        FrameValue Buffer;
+        Buffer.MayBeFrame = true;
+        Buffer.JumpCapture = Capture->second.Call;
+        Inputs.Arguments.emplace(Arg, Buffer);
+        Inputs.JumpBuffers.emplace(Capture->second.Call, Capture->second);
+        continue;
+      }
     const auto Object = Parent.Cells.find(*Value.Offset);
     const int64_t Offset = int64_t(*Value.Offset) - Base;
     if (Object == Parent.Cells.end() || Object->second.MayBeFrame ||
@@ -100,8 +113,27 @@ std::optional<BoundCalleeEffect> proveBoundSEHCallee(const BinaryImage &Image,
   const auto Controls = Index.sehControlContracts(Function);
   if (!Stacks || !Unwinds || !Controls)
     return std::nullopt;
+  EH3JumpRuntime Jumps;
+  for (const auto &Imported : Image.Imports)
+    if (checkedJumpRuntime(Image, Imported.IATAddr, true) ||
+        isCheckedControlFPSlot(Image, Imported.IATAddr) ||
+        registration_abi::checkedRegistrationImportStackPop(
+            Image, Imported.IATAddr) == 16)
+      Jumps.ImportSlots.insert(Imported.IATAddr);
+  Jumps.Resume = [&](const LowOp &Resume, size_t &Used) {
+    const auto Binding = checkedJumpRuntimeCall(Image, Function, Resume, Used);
+    return Binding && Binding->Routine == JumpRuntimeBinding::Kind::Resume;
+  };
+  Jumps.Raise = [&](const LowOp &Raise, const FrameState &State, size_t &Used) {
+    return registration_abi::hasClosedRegistrationRaise(Image, Raise, State) &&
+           registration_abi::chargeCalleeWork(Used, 10);
+  };
+  Jumps.ControlFP = [&](const LowOp &Op, size_t &Used) {
+    return isCheckedControlFPCall(Image, Op, Used);
+  };
   RegistrationStateSolver Solver(Function, 0, 0, nullptr, nullptr, &*Stacks,
-                                 &*Unwinds, &*Controls, &Inputs);
+                                 &*Unwinds, &*Controls, &Inputs, nullptr,
+                                 &Jumps);
   const auto States = Solver.run();
   if (!registration_abi::chargeCalleeWork(Inputs.Work, Solver.workUsed()))
     return std::nullopt;
@@ -123,9 +155,12 @@ std::optional<BoundCalleeEffect> proveBoundSEHCallee(const BinaryImage &Image,
       return Return.Opcode == NdOp::RETURN;
     });
   }
-  if (!HasParentReturn)
+  if (!HasParentReturn && Inputs.JumpResumes.empty())
     return std::nullopt;
   BoundCalleeEffect Effect;
+  Effect.HasOrdinaryReturn = HasParentReturn;
+  for (const auto &[Identity, Resume] : Inputs.JumpResumes)
+    Effect.JumpResumes.push_back(Resume);
   for (const auto &[Begin, End] : Inputs.Reads)
     Effect.Reads.push_back({int32_t(Base + Begin), int32_t(Base + End)});
   for (const auto &[Begin, End] : Inputs.Writes)
@@ -147,13 +182,36 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
   const bool CheckBoundCalls = Depth < 4;
   ++Depth;
   auto RestoreDepth = llvm::scope_exit([&] { --Depth; });
-  BoundCalleeProver Prove = [&](const LowOp &Op, const FrameState &State,
-                                size_t &Work) {
-    return proveBoundSEHCallee(Image, Op, State, Work);
+  BoundCalleeProver Prove =
+      [&](const LowOp &Op, const FrameState &State, size_t &Work,
+          const std::map<int32_t, EH3JumpCapture> &Captures) {
+        return proveBoundSEHCallee(Image, Op, State, Work, &Captures);
+      };
+  EH3JumpRuntime Jumps;
+  for (const auto &Imported : Image.Imports)
+    if (checkedJumpRuntime(Image, Imported.IATAddr, true) ||
+        isCheckedControlFPSlot(Image, Imported.IATAddr) ||
+        registration_abi::checkedRegistrationImportStackPop(
+            Image, Imported.IATAddr) == 16)
+      Jumps.ImportSlots.insert(Imported.IATAddr);
+  Jumps.Capture = [&](const LowOp &Op, const FrameState &State, bool Installed,
+                      size_t &Work) {
+    return prepareEH3JumpCapture(Image, Function, Op, State, Installed, Work);
+  };
+  Jumps.Resume = [&](const LowOp &Op, size_t &Work) {
+    const auto Binding = checkedJumpRuntimeCall(Image, Function, Op, Work);
+    return Binding && Binding->Routine == JumpRuntimeBinding::Kind::Resume;
+  };
+  Jumps.Raise = [&](const LowOp &Op, const FrameState &State, size_t &Work) {
+    return registration_abi::hasClosedRegistrationRaise(Image, Op, State) &&
+           registration_abi::chargeCalleeWork(Work, 10);
+  };
+  Jumps.ControlFP = [&](const LowOp &Op, size_t &Work) {
+    return isCheckedControlFPCall(Image, Op, Work);
   };
   RegistrationStateSolver Solver(Function, 0, 0, nullptr, nullptr, Stacks,
                                  LocalUnwinds, Controls, nullptr,
-                                 CheckBoundCalls ? &Prove : nullptr);
+                                 CheckBoundCalls ? &Prove : nullptr, &Jumps);
   auto States = Solver.run();
   if (Index && !Index->chargeStateWork(Solver.workUsed())) {
     States.Complete = States.CallbackStatesComplete =
@@ -161,6 +219,8 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     States.SEHInvocationExitsComplete = States.SEHExceptionAccessesComplete =
         false;
     States.SEHInvocationExits.clear();
+    States.SEHJumpResumptionsComplete = false;
+    States.SEHJumpResumptions.clear();
     States.SEHExceptionAccesses.clear();
     States.Diagnostics.push_back("SEH callee state proof budget exhausted");
   }

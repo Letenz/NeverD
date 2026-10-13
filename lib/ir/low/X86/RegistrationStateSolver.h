@@ -9,6 +9,7 @@
 
 #include "RegistrationConditionalFrame.h"
 #include "RegistrationFrame.h"
+#include "RegistrationJumpCapture.h"
 
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/low/LowIR.h"
@@ -52,6 +53,10 @@ struct SEHActivation {
   std::optional<va_t> Entry;
   bool SearchFilter = false;
   va_t OrdinaryCall = 0;
+  /// Keep pre-capture callbacks separate from callbacks whose parent owns a
+  /// checked capture. Joining these loses the buffer/guard correlation.
+  std::vector<std::pair<int32_t, va_t>> JumpCaptureCalls;
+  std::vector<std::pair<va_t, va_t>> Callers;
   auto operator<=>(const SEHActivation &) const = default;
 };
 
@@ -79,6 +84,22 @@ struct Domain {
     bool operator==(const ParentStackRestore &) const = default;
   };
   std::optional<ParentStackRestore> StackRestore;
+  std::map<int32_t, EH3JumpCapture> JumpCaptures;
+  struct SEHCaller {
+    SEHActivation Activation;
+    FrameState Stack;
+    bool OtherCallback = false;
+    std::optional<int32_t> OrdinaryCallStack;
+    std::optional<ParentStackRestore> StackRestore;
+  };
+  std::vector<SEHCaller> SEHCallers;
+  size_t sehCallerCellCount() const {
+    size_t Count = 0;
+    for (const auto &Caller : SEHCallers)
+      Count += Caller.Stack.cellCount() + Caller.Activation.Callers.size() + 8;
+    return Count;
+  }
+  bool JumpBindingsIntact = true;
   size_t catchCellCount() const {
     size_t Count = 0;
     for (const auto &Stack : CxxCatchStacks)
@@ -118,7 +139,8 @@ public:
       const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
       const std::vector<RegistrationSEHControlContract> *SEHControls,
       ConditionalFrame *Conditional = nullptr,
-      const BoundCalleeProver *BoundCallees = nullptr);
+      const BoundCalleeProver *BoundCallees = nullptr,
+      const EH3JumpRuntime *JumpRuntime = nullptr);
   RegistrationStateAnalysis run();
   size_t workUsed() const { return WorkUsed; }
 
@@ -161,11 +183,15 @@ private:
   bool validateSEHInvocationBlock(size_t I);
   bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
                        BlockFacts &Facts);
+  bool returnNestedFinally(Domain &After, const LowOp &Op, BlockFacts &Facts);
   void recordSEHStackRestore(const LowOp &Op, Domain &After,
                              const FrameTransfer &Transfer,
                              const FrameValue &Value);
   bool runLocalFinally(va_t Target, FrameState &Parent,
-                       bool OrdinaryInvocation = false);
+                       bool OrdinaryInvocation = false,
+                       std::vector<RegistrationObjectExtent> *Writes = nullptr,
+                       const EH3JumpCapture *Jump = nullptr,
+                       const FrameValue *JumpValue = nullptr);
   void
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
                     const FrameTransfer &Transfer, const BlockFacts &Facts,
@@ -183,9 +209,28 @@ private:
                            std::pair<uint32_t, uint32_t> Identity);
   bool transferBlock(size_t I, const Domain &Before, BlockFacts &Facts);
   bool transferBoundSEHCallee(size_t I, const Domain &Before, Domain &After,
-                              const LowOp &Op, const BlockFacts &Facts,
+                              const LowOp &Op, BlockFacts &Facts,
                               std::optional<FrameValue> &CallSP,
                               std::optional<Domain> &CallException);
+  bool transferJumpCapture(size_t I, Domain &After, const LowOp &Op,
+                           const BlockFacts &Facts,
+                           std::optional<FrameValue> &CallSP);
+  bool transferJumpResume(size_t I, Domain &After, const LowOp &Op,
+                          BlockFacts &Facts);
+  bool transferBorrowedJump(size_t I, Domain &After, const LowOp &Op,
+                            BlockFacts &Facts, const FrameValue &Buffer,
+                            const FrameValue &Value);
+  std::optional<FrameValue>
+  transferControlFP(const Domain &Before, Domain &After, const LowOp &Op,
+                    const BlockFacts &Facts,
+                    std::optional<Domain> &CallException);
+  bool resumeJumpCapture(Domain &After, BlockFacts &Facts, const LowOp &Op,
+                         const EH3JumpCapture &Saved, const FrameValue &Value,
+                         va_t CalleeVA = 0, va_t ResumeVA = 0);
+  void invalidateJumpCaptures(Domain &State, const FrameValue &Address,
+                              uint16_t Width);
+  void invalidateJumpRuntimeBindings(Domain &State, const FrameValue &Address,
+                                     uint16_t Width);
   bool checkConditionalMemory(const FrameState &State, const LowOp &Op,
                               const FrameTransfer &Transfer,
                               const std::set<int32_t> *Initialized = nullptr);
@@ -233,6 +278,7 @@ private:
   const std::vector<RegistrationSEHControlContract> *SEHControls;
   ConditionalFrame *Conditional;
   const BoundCalleeProver *BoundCallees;
+  const EH3JumpRuntime *JumpRuntime;
   const bool KnownCxx;
   const bool EH4;
   const bool CheckCalls;
@@ -267,6 +313,8 @@ private:
   using SEHExitKey = std::tuple<va_t, va_t, va_t, int>;
   std::map<SEHExitKey, RegistrationSEHInvocationExit> SEHExits;
   std::set<SEHExitKey> InvalidSEHExits;
+  std::map<SEHExitKey, RegistrationSEHJumpResume> JumpResumptions;
+  std::set<va_t> ModifiedCallbackCaptures;
   std::map<uint32_t, uint32_t> CleanupIndices;
   bool CompleteCalls;
   bool CompleteCleanups;

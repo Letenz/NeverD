@@ -11,10 +11,15 @@
 
 #include "neverd/Common.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <optional>
 
 namespace neverd {
 struct BinaryImage;
+struct LowFunc;
+struct LowOp;
+struct RegistrationChainInfo;
 
 namespace registration_state {
 
@@ -30,6 +35,21 @@ struct JumpRuntimeBinding {
 /// resumption authority; the invocation must separately bind its buffer.
 std::optional<JumpRuntimeBinding>
 checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect);
+
+/// Bind an original direct E8 occurrence to the authenticated import. A
+/// detached operation or altered instruction slice grants no call authority.
+std::optional<JumpRuntimeBinding>
+checkedJumpRuntimeCall(const BinaryImage &Image, const LowFunc &Function,
+                       const LowOp &Op, size_t &Work);
+
+/// Partition the ordinary fallthrough at an authenticated capture or resume
+/// call. This grants no buffer, frame, resumption or no-return authority.
+bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
+                                 uint16_t Size, llvm::ArrayRef<LowOp> Ops);
+bool isEH3FinallyCallInstruction(const BinaryImage &Image,
+                                 const RegistrationChainInfo &Chain,
+                                 va_t Address, uint16_t Size,
+                                 llvm::ArrayRef<LowOp> Ops);
 
 } // namespace registration_state
 } // namespace neverd

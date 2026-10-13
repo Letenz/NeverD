@@ -7,6 +7,7 @@
 #include "RegistrationControl.h"
 #include "RegistrationStateSolver.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -53,8 +54,17 @@ bool RegistrationStateSolver::validateSEHInvocationBlock(size_t I) {
     if (Insn.Mode != InstructionMode::Default ||
         Insn.TargetMode != LowInstructionTargetMode::Preserve ||
         (&Insn != &Block.InstructionBoundaries.back() &&
-         Insn.Control != LowInstructionControl::None))
+         Insn.Control != LowInstructionControl::None &&
+         (Insn.Control != LowInstructionControl::Call ||
+          isUnconditionalNoReturn(Insn) ||
+          hasLowInstructionControlFlag(
+              Insn.ControlFlags, LowInstructionControlFlag::Conditional) ||
+          hasLowInstructionControlFlag(
+              Insn.ControlFlags, LowInstructionControlFlag::InstructionGuard))))
       return false;
+  // An ordinary returning call can precede the terminator in one decoded
+  // block. Its invocation-specific effects are checked by transferBlock;
+  // accepting the physical fallthrough here grants no callee memory fact.
   std::set<va_t> Actual, Expected;
   for (int Next : Block.Succs) {
     const auto Successor = Index.find(Next);
@@ -99,12 +109,21 @@ bool RegistrationStateSolver::enterOrdinaryFinally(size_t I,
   const auto Resume = sehCallContinuation(Op.Addr);
   const auto SP =
       Before.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
-  const auto SavedSP =
-      Before.Frame.load(*Chain.RegistrationOffset - 8, 4).Offset;
+  const bool ParentCall = Before.Parent && !Before.Callback &&
+                          !Before.Frame.CallbackEntry && SP.Offset &&
+                          *SP.Offset < int64_t(*Chain.RegistrationOffset) - 8 &&
+                          *SP.Offset >= INT32_MIN + 4;
+  const bool CallbackCall =
+      !Before.Parent && Before.Callback &&
+      Before.Activation.Entry == Before.Frame.CallbackEntry &&
+      !Before.Activation.SearchFilter && SP.CallbackAddress &&
+      SP.CallbackAddress->Entry == Before.Frame.CallbackEntry &&
+      SP.CallbackAddress->Offset <= 0 &&
+      SP.CallbackAddress->Offset >=
+          -int64_t(limits::kMaxSourceCallBorrowedBytes) &&
+      Before.SEHCallers.size() < 16;
   if (!Function.hasCompleteLiftCoverage() || Before.Unknown || Facts.Invalid ||
-      !Before.Parent || Before.Callback || Before.Frame.CallbackEntry ||
-      Chain.RealignedFrame || !SP.Offset || !SavedSP || *SP.Offset > *SavedSP ||
-      *SP.Offset < INT32_MIN + 4 ||
+      (!ParentCall && !CallbackCall) || Chain.RealignedFrame ||
       Before.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset !=
           0 ||
       Entry == Entries.end() || Control == SEHControlIndex.end() ||
@@ -168,6 +187,27 @@ bool RegistrationStateSolver::enterOrdinaryFinally(size_t I,
   }
   Domain Root = Before;
   Root.Activation = {Op.Inputs[0].Offset, false, Op.Addr};
+  if (CallbackCall) {
+    if (!charge(Before.sehCallerCellCount() +
+                Before.Frame.CallbackCells.size() +
+                Before.Frame.InitializedCallbackBytes.size() + 10))
+      return Refuse();
+    Root.Activation.Callers = Before.Activation.Callers;
+    Root.Activation.Callers.emplace_back(*Before.Activation.Entry,
+                                         Before.Activation.OrdinaryCall);
+    Domain::SEHCaller Caller;
+    Caller.Activation = Before.Activation;
+    Caller.Stack.CallbackEntry = Before.Frame.CallbackEntry;
+    Caller.Stack.CallbackCells = Before.Frame.CallbackCells;
+    Caller.Stack.InitializedCallbackBytes =
+        Before.Frame.InitializedCallbackBytes;
+    Caller.Stack.Registers[x86reg::RSP / x86reg::GeneralRegStride] = SP;
+    Caller.OtherCallback = Before.OtherCallback;
+    Caller.OrdinaryCallStack = Before.OrdinaryCallStack;
+    Caller.StackRestore = Before.StackRestore;
+    Root.SEHCallers.push_back(std::move(Caller));
+    Result.HasBoundSEHCallees = true;
+  }
   Root.Parent = false;
   Root.Callback = true;
   Root.OtherCallback = false;
@@ -195,6 +235,7 @@ void RegistrationStateSolver::recordSEHStackRestore(
   if (After.StackRestore && Value.Offset)
     return;
   After.StackRestore.reset();
+  After.SEHCallers.clear();
   const auto Source = Boundaries.find(Op.Addr);
   if ((Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::COPY) ||
       Op.NumInputs != 1 || Op.Output.Size != 4 ||
@@ -288,6 +329,8 @@ bool RegistrationStateSolver::transferSEHExit(size_t I, Domain &After,
   Exit.Address = Op.Addr;
   Exit.EndAddress = Block.EndAddr;
   Exit.OpSeq = Op.Seq;
+  if (OrdinaryReturn && !After.SEHCallers.empty())
+    return returnNestedFinally(After, Op, Facts);
   if (OrdinaryReturn) {
     const auto Control = SEHControlIndex.find(Op.Addr);
     const auto Call = SEHControlIndex.find(Exit.CallVA);

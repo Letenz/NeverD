@@ -8,6 +8,7 @@
 #include "RegistrationStateTestUtils.h"
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
@@ -2017,7 +2018,8 @@ LowFunc makePopulatedFrame(bool Exact) {
   const auto SP = NdVar::reg(x86reg::RSP, 4);
   const auto Slot = NdVar::reg(x86reg::RDI, 4);
   Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(4096, 4)});
-  for (int32_t I = 0; I != 512; ++I) {
+  constexpr int32_t PopulatedCells = 512;
+  for (int32_t I = 0; I != PopulatedCells; ++I) {
     Emit(NdOp::INT_ADD, Slot,
          {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32 - I * 4), 4)});
     Emit(NdOp::STORE, {}, {Slot, NdVar::cst(uint32_t(I), 4)});
@@ -2025,7 +2027,10 @@ LowFunc makePopulatedFrame(bool Exact) {
   // Thousands of exact accesses to a populated frame must leave enough of
   // the same cumulative budget to prove the subsequent registration unlink.
   // Each load still reads the current cell, including the last overwrite.
-  for (unsigned I = 0; I != 4096; ++I)
+  const size_t Loads =
+      Exact ? 4096
+            : limits::kMaxRegistrationEHStateWork / size_t(PopulatedCells) + 1;
+  for (size_t I = 0; I != Loads; ++I)
     Emit(NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
          {Exact ? Slot : NdVar::reg(x86reg::RCX, 4)});
   Emit(NdOp::INT_ADD, SP, {SP, NdVar::cst(4096, 4)});

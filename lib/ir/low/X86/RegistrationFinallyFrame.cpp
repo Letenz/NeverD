@@ -13,10 +13,18 @@
 
 namespace neverd::registration_state {
 
-bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
-                                              bool OrdinaryInvocation) {
+bool RegistrationStateSolver::runLocalFinally(
+    va_t Target, FrameState &Parent, bool OrdinaryInvocation,
+    std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
+    const FrameValue *JumpValue) {
   const auto Entry = Entries.find(Target);
-  const auto ParentSP = Parent.load(*Chain.RegistrationOffset - 8, 4).Offset;
+  // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
+  // belongs to a separate runtime restoration protocol; finally-only helpers
+  // need not initialize that slot.
+  const auto ParentSP =
+      OrdinaryInvocation
+          ? Parent.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset
+          : Parent.load(*Chain.RegistrationOffset - 8, 4).Offset;
   if (Entry == Entries.end() || !ParentSP ||
       *ParentSP >= *Chain.RegistrationOffset - 8 ||
       !charge(Parent.cellCount() + Parent.OtherRegisterBytes.size() + 10))
@@ -47,9 +55,10 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
     if (OrdinaryInvocation && !validateSEHInvocationBlock(I))
       return false;
     bool HasReturn = false;
+    bool HasResume = false;
     for (const auto &Op : Block.Ops) {
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
-          Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INDIR_CALL ||
           (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
           Op.Opcode == NdOp::INDIR_BR ||
           Op.MemoryOrdering != NdMemoryOrdering::None)
@@ -66,6 +75,34 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
               Block.Ops.size() - Source->second.second.FirstOp)
         return false;
       Transfer.beginInstruction(Op.Addr);
+      if (Op.Opcode == NdOp::CALL) {
+        const auto SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                            .CallbackAddress;
+        if (!Jump || !JumpValue || !JumpRuntime || !JumpRuntime->Resume ||
+            !JumpRuntime->Resume(Op, WorkUsed) ||
+            !validateSEHInvocationBlock(I) || !SP || SP->Entry != Target ||
+            SP->Offset > -8 || !State.callbackMemoryIsPrivate(*SP, 8, true) ||
+            State.loadCallback(SP->Offset, 4).Offset != Jump->BufferOffset ||
+            !hasEH3JumpCapture(State, *Jump))
+          return false;
+        const auto Value = State.loadCallback(SP->Offset + 4, 4);
+        const auto Normalize = [](const FrameValue &V) {
+          return V.Constant == 0 ? FrameValue::constant(1) : V;
+        };
+        // A nested jump can interrupt this unwind. Continue its enclosing
+        // chain only when it resumes the same live capture with the same
+        // value. A different target/value needs a separate transition.
+        if (Value.MayBeFrame || Normalize(Value) != Normalize(*JumpValue))
+          return false;
+        if (!Returned)
+          Returned = State;
+        else if (!charge(Returned->cellCount() + State.cellCount() + 10))
+          return false;
+        else
+          Returned->merge(State);
+        HasReturn = HasResume = true;
+        break;
+      }
       if (Op.Opcode == NdOp::RETURN) {
         if (!callbackReturnInstruction(I, Op) ||
             State.CallbackEntry != Target || !State.callbackStackIsRestored(0))
@@ -117,6 +154,10 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
           if (Value.CallbackAddress || (Value.MayBeFrame && !Value.Offset))
             return false;
           State.store(*Address.Offset, Memory.AccessSize, Value);
+          if (Writes)
+            Writes->push_back(
+                {*Address.Offset,
+                 int32_t(int64_t(*Address.Offset) + Memory.AccessSize)});
         }
       }
       Transfer.write(Op, Transfer.evaluate(Op, true));
@@ -132,7 +173,7 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
       }
     }
     if (HasReturn) {
-      if (!Block.Succs.empty())
+      if (!HasResume && !Block.Succs.empty())
         return false;
       continue;
     }

@@ -70,8 +70,14 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
       Walk = Scope.EnclosingLevel;
       Frame.store(*Chain.TryLevelOffset, 4,
                   FrameValue::constant(uint32_t(Walk)));
-      if (Scope.IsFinally && !runLocalFinally(Scope.HandlerVA, Frame))
-        return Refuse();
+      if (Scope.IsFinally) {
+        std::vector<RegistrationObjectExtent> Writes;
+        if (!runLocalFinally(Scope.HandlerVA, Frame, false, &Writes))
+          return Refuse();
+        for (const auto &Write : Writes)
+          invalidateJumpCaptures(After, FrameValue::frame(Write.Begin),
+                                 uint16_t(Write.End - Write.Begin));
+      }
     }
     StoppedLevels.insert(Walk);
     if (!Joined)

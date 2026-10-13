@@ -460,8 +460,8 @@ TEST(RegistrationCallABI, TerminationOnlyStackProofDoesNotGrantAnObjectBorrow) {
   }
 }
 
-TEST(RegistrationCallABI, SEHReturningStackUsesCompleteParentFrameEvidence) {
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+TEST(RegistrationCallABI, SEHReturningStackKeepsMemoryEvidenceSeparate) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
     SCOPED_TRACE(Mutation);
     ThrowImage F;
     F.Image.Imports.clear();
@@ -538,21 +538,33 @@ TEST(RegistrationCallABI, SEHReturningStackUsesCompleteParentFrameEvidence) {
       Text.Size = Text.FileSz = Text.Data.size();
       F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = Text.Size;
     }
+    if (Mutation == 8) {
+      // An unknown store prevents a registration memory proof, but does not
+      // change the epilogue's register-only restoration of returning ESP.
+      const std::vector<uint8_t> UnknownStore{0x89, 0x02, 0x90, 0x90, 0x90};
+      std::copy(UnknownStore.begin(), UnknownStore.end(),
+                Text.Data.begin() + 0x24);
+    }
     F.tableWord(0, UINT32_MAX);
     F.tableWord(4, Chain.Scopes.front().FilterVA);
     F.tableWord(8, Chain.Scopes.front().HandlerVA);
     F.Image.ExceptionMetadata.Functions.push_back(EH);
     F.Image.ExceptionMetadata.rebuildIndex();
-    if (Mutation == 0 || Mutation == 3 || Mutation == 7) {
+    if (Mutation == 0 || Mutation == 3 || Mutation == 7 || Mutation == 8) {
       Decoder Dec;
       ASSERT_TRUE(Dec.init(F.Image));
       const auto Low = CFGBuilder().build(F.Image, Dec, Text.VA);
       ASSERT_TRUE(Low.RegistrationStates);
-      ASSERT_TRUE(Low.RegistrationStates->Complete);
-      ASSERT_TRUE(Low.RegistrationStates->RegistrationLifetimeComplete);
+      if (Mutation == 8)
+        EXPECT_FALSE(Low.RegistrationStates->Complete);
+      else {
+        ASSERT_TRUE(Low.RegistrationStates->Complete);
+        ASSERT_TRUE(Low.RegistrationStates->RegistrationLifetimeComplete);
+      }
     }
     EXPECT_EQ(getCheckedX86CalleeStackPop(F.Image, Text.VA),
-              Mutation == 0 ? std::optional<uint32_t>{0} : std::nullopt);
+              Mutation == 0 || Mutation == 8 ? std::optional<uint32_t>{0}
+                                             : std::nullopt);
     // An outer ordinary helper must reuse the checked SEH result through
     // nested CFG construction, without starting a separate callee closure.
     Text.Data.resize(0x140, 0xcc);
@@ -562,7 +574,8 @@ TEST(RegistrationCallABI, SEHReturningStackUsesCompleteParentFrameEvidence) {
     Text.Size = Text.FileSz = Text.Data.size();
     F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = Text.Size;
     EXPECT_EQ(getCheckedX86CalleeStackPop(F.Image, Text.VA + 0x120),
-              Mutation == 0 ? std::optional<uint32_t>{0} : std::nullopt);
+              Mutation == 0 || Mutation == 8 ? std::optional<uint32_t>{0}
+                                             : std::nullopt);
   }
 }
 

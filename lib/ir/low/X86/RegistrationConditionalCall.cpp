@@ -10,12 +10,50 @@
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BinaryEncoding.h"
 
 namespace neverd::registration_abi {
 using namespace registration_state;
 
+bool hasClosedRegistrationRaise(const BinaryImage &Image, const LowOp &Op,
+                                const FrameState &State) {
+  if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1 || Op.Seq < 0 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Op.MemoryOrdering != NdMemoryOrdering::None || Op.Addr > UINT32_MAX - 6 ||
+      checkedRegistrationImportStackPop(Image, Op.Inputs[0].Offset) != 16)
+    return false;
+  const auto *Imported = Image.findImportAt(Op.Inputs[0].Offset);
+  if (!Imported || Imported->IsDelayImport ||
+      !isFileBackedPEImportSlot(Image, Op.Inputs[0].Offset))
+    return false;
+  const auto Bytes =
+      readImmutablePE32CodeBytes(Image, Op.Addr, 6, {Op.Addr + 2});
+  if (!Bytes || (*Bytes)[0] != 0xff || (*Bytes)[1] != 0x15 ||
+      readLE<uint32_t>(Bytes->data() + 2) != Op.Inputs[0].Offset)
+    return false;
+  const auto &SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+  std::array<FrameValue, 4> Args;
+  if (SP.Offset && *SP.Offset <= INT32_MAX - 16)
+    for (unsigned I = 0; I != Args.size(); ++I)
+      Args[I] = State.load(*SP.Offset + I * 4, 4);
+  else if (SP.CallbackAddress &&
+           State.callbackMemoryIsPrivate(*SP.CallbackAddress, 16, true))
+    for (unsigned I = 0; I != Args.size(); ++I)
+      Args[I] = State.loadCallback(SP.CallbackAddress->Offset + I * 4, 4);
+  else
+    return false;
+  // A closed invocation lends no argument array. Dispatch effects remain
+  // obligations of the enclosing language solver, rather than an ABI fact.
+  return !Args[0].MayBeFrame && Args[1].Constant && *Args[1].Constant <= 1 &&
+         Args[2].Constant == 0 && Args[3].Constant == 0;
+}
+
 bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
                              const FrameState &State, size_t &Work) {
+  if (hasClosedRegistrationRaise(Image, Op, State))
+    return chargeCalleeWork(Work, 10);
   if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
       Op.Inputs[0].Size != 4)
     return false;

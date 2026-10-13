@@ -7,6 +7,8 @@
 /// Check invocation-specific SEH frame inputs and bounded effects.
 
 #include "../../../lib/ir/low/X86/RegistrationABIPrivate.h"
+#include "../../../lib/ir/low/X86/RegistrationCRTFrame.h"
+#include "../../../lib/ir/low/X86/RegistrationFrameEffects.h"
 #include "../../../lib/ir/low/X86/RegistrationStateSolver.h"
 #include "gtest/gtest.h"
 
@@ -26,6 +28,32 @@ auto loadXCPT4() {
       "xcpt4-msvc-x86-native-no-gs-o0.exe");
 }
 } // namespace
+
+TEST(RegistrationConditionalFrame,
+     XCPT4CompletesWithinTheDefaultClosureBudget) {
+  auto Image = loadXCPT4();
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  size_t Work = 0;
+  RegistrationCallCalleeIndex Index(*Image, &Work);
+  CFGBuilder Builder;
+  Builder.setRegistrationCalleeIndex(&Index);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(*Image));
+  const auto Function = Builder.build(*Image, Dec, 0x401580, "main");
+  ASSERT_TRUE(Function.RegistrationStates);
+  const auto &States = *Function.RegistrationStates;
+  for (const auto &Diagnostic : States.Diagnostics)
+    ADD_FAILURE() << Diagnostic;
+  EXPECT_TRUE(States.Complete);
+  EXPECT_TRUE(States.CallbackStatesComplete);
+  EXPECT_TRUE(States.RegistrationLifetimeComplete);
+  EXPECT_TRUE(States.SEHInvocationExitsComplete);
+  EXPECT_TRUE(States.HasEH3JumpCaptures);
+  EXPECT_TRUE(States.SEHJumpResumptionsComplete);
+  EXPECT_FALSE(States.SEHInvocationExits.empty());
+  EXPECT_FALSE(States.SEHJumpResumptions.empty());
+  EXPECT_LE(Work, limits::kMaxRegistrationEHStateWork);
+}
 
 TEST(RegistrationConditionalFrame, XCPT4HelperChecksItsBoundIncomingCounter) {
   auto Image = loadXCPT4();
@@ -165,5 +193,181 @@ TEST(RegistrationConditionalFrame,
     } else
       EXPECT_FALSE(Effect);
   }
+}
+TEST(RegistrationConditionalFrame, OriginalHelperResumesItsBorrowedCapture) {
+  using namespace registration_state;
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = loadXCPT4();
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = 0x40263d;
+    Call.Seq = 0;
+    Call.addInput(NdVar::cst(0x4011a0, 4));
+    FrameState Parent;
+    Parent.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
+        FrameValue::frame(-308);
+    Parent.store(-308, 4, FrameValue::frame(-288));
+    Parent.store(-304, 4, FrameValue::frame(-28));
+    Parent.store(-28, 4, FrameValue::constant(1));
+    EH3JumpCapture Capture;
+    Capture.Call = 0x4025fe;
+    Capture.ReturnPC = 0x402603;
+    Capture.UnwindTarget = 0x407c78;
+    Capture.BufferOffset = -288;
+    Capture.StackOffset = -316;
+    Capture.Nonvolatile[0] = FrameValue::frame(0);
+    storeEH3JumpCapture(Parent, Capture);
+    std::map<int32_t, EH3JumpCapture> Captures{{-288, Capture}};
+    size_t Work = 0;
+    if (Mutation == 1)
+      Captures.clear();
+    if (Mutation == 2)
+      Parent.store(-268, 1, FrameValue::constant(0));
+    if (Mutation == 3)
+      Parent.store(-304, 4, FrameValue::frame(-268));
+    if (Mutation == 4)
+      for (auto &Import : Image->Imports)
+        if (Import.Name == "_longjmpex")
+          Import.Module = "application.dll";
+    if (Mutation == 5) {
+      auto *Byte = const_cast<uint8_t *>(Image->readVA(0x40122c, 1));
+      ASSERT_TRUE(Byte);
+      *Byte = 0x90;
+    }
+    if (Mutation == 6)
+      Work = limits::kMaxRegistrationEHStateWork;
+    if (Mutation == 7)
+      ++Call.Addr;
+    const auto Effect =
+        proveBoundSEHCallee(*Image, Call, Parent, Work, &Captures);
+    if (!Mutation) {
+      ASSERT_TRUE(Effect);
+      EXPECT_FALSE(Effect->HasOrdinaryReturn);
+      ASSERT_EQ(Effect->JumpResumes.size(), 1u);
+      EXPECT_EQ(Effect->JumpResumes.front().Address, 0x40122cu);
+      EXPECT_EQ(Effect->JumpResumes.front().CaptureCall, Capture.Call);
+      EXPECT_EQ(Effect->JumpResumes.front().Value.Constant, 1u);
+      ASSERT_EQ(Effect->Writes.size(), 1u);
+      EXPECT_EQ(Effect->Writes.front().Begin, -28);
+      EXPECT_EQ(Effect->Writes.front().End, -24);
+    } else
+      EXPECT_FALSE(Effect);
+  }
+}
+TEST(RegistrationCRTFrame, ControlFPRequiresItsImportAndPhysicalCall) {
+  using namespace registration_state;
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = loadXCPT4();
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    LowOp Call;
+    Call.Opcode = NdOp::INDIR_CALL;
+    Call.Addr = 0x404014;
+    Call.Seq = 0;
+    Call.addInput(NdVar::cst(0x4080e0, 4));
+    auto Import = llvm::find_if(
+        Image->Imports, [](const auto &I) { return I.Name == "_controlfp_s"; });
+    ASSERT_NE(Import, Image->Imports.end());
+    if (Mutation == 1)
+      Import->Module = "application.dll";
+    if (Mutation == 2)
+      Import->IsDelayImport = true;
+    if (Mutation == 3)
+      Image->ImportStorageSlots.clear();
+    if (Mutation == 4)
+      Call.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    if (Mutation == 5)
+      Call.Seq = -1;
+    if (Mutation == 6) {
+      auto *Byte = const_cast<uint8_t *>(Image->readVA(Call.Addr, 1));
+      ASSERT_TRUE(Byte);
+      *Byte = 0x90;
+    }
+    if (Mutation == 7)
+      Call.Inputs[0].Size = 8;
+    if (Mutation == 8) {
+      for (auto &Segment : Image->Segments)
+        if (Segment.isExecutable())
+          Segment.Flags = Segment.Flags | SegmentFlags::Writable;
+      for (auto &Section : Image->Sections)
+        if (Section.isExecutable())
+          Section.Flags = Section.Flags | SegmentFlags::Writable;
+    }
+    if (Mutation == 9)
+      Image->Imports.push_back(
+          {"application.dll", "_controlfp_s", 0, 0x4080e0});
+    size_t Work = 0;
+    EXPECT_EQ(isCheckedControlFPCall(*Image, Call, Work), Mutation == 0);
+  }
+}
+TEST(RegistrationCRTFrame, MathHelperStackFactsDoNotGrantMemoryEffects) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = loadXCPT4();
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    if (Mutation == 1 || Mutation == 2)
+      for (auto &Import : Image->Imports)
+        if (Import.Name == "log") {
+          if (Mutation == 1)
+            Import.Module = "application.dll";
+          else
+            Import.IsDelayImport = true;
+        }
+    if (Mutation == 3) {
+      auto *Byte = const_cast<uint8_t *>(Image->readVA(0x407ccc, 1));
+      ASSERT_TRUE(Byte);
+      *Byte = 0x90;
+    }
+    size_t Work = Mutation == 4 ? limits::kMaxRegistrationEHStateWork : 0;
+    const auto Pop = getCheckedX86CalleeStackPop(*Image, 0x407ccc, &Work);
+    if (!Mutation) {
+      ASSERT_TRUE(Pop);
+      EXPECT_EQ(*Pop, 0u);
+      EXPECT_EQ(getCheckedX86CalleeStackPop(*Image, 0x401540, &Work), 0u);
+    } else
+      EXPECT_FALSE(Pop);
+  }
+}
+
+TEST(RegistrationCRTFrame, FloatingStateEffectsRequireTheirExactShape) {
+  auto Image = loadXCPT4();
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(*Image));
+  const auto Function = CFGBuilder().build(*Image, Dec, 0x401540, "math");
+  unsigned Checked = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Original : Block.Ops) {
+      if (Original.Opcode != NdOp::INTRINSIC || !Original.NumInputs ||
+          !Original.Inputs[0].isConst())
+        continue;
+      const auto Id = static_cast<Intrinsic>(Original.Inputs[0].Offset);
+      if (Id != Intrinsic::X86ReadMXCSR && Id != Intrinsic::X86WriteMXCSR &&
+          Id != Intrinsic::X86FPArithState &&
+          Id != Intrinsic::X86FPArithMemoryState)
+        continue;
+      ++Checked;
+      for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+        SCOPED_TRACE(Mutation);
+        auto Op = Original;
+        if (Mutation == 1)
+          Op.Inputs[0] = NdVar::reg(0, 2);
+        if (Mutation == 2)
+          Op.Inputs[0].Size = 4;
+        if (Mutation == 3)
+          Op.NumInputs = 0;
+        if (Mutation == 4)
+          Op.Output = NdVar::reg(x86reg::RSP, 4);
+        if (Mutation == 5)
+          Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        if (Mutation == 6)
+          Op.Inputs[0].Offset = static_cast<unsigned>(Intrinsic::X87Wait);
+        EXPECT_EQ(registration_state::isFramePreservingIntrinsic(Op),
+                  Mutation == 0);
+      }
+    }
+  EXPECT_GT(Checked, 0u);
 }
 #endif

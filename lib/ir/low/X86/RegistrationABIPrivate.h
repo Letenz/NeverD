@@ -75,6 +75,8 @@ bool callerPCIsNotReadBack(const ImageFrameEffects &Effects);
 bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
                              const registration_state::FrameState &State,
                              size_t &Work);
+bool hasClosedRegistrationRaise(const BinaryImage &Image, const LowOp &Op,
+                                const registration_state::FrameState &State);
 bool hasPrivateCallerFrame(
     const LowFunc &Function, const BinaryImage &Image, size_t &Work,
     ImageFrameEffects &Effects, bool BorrowECX = false,
