@@ -203,6 +203,9 @@ def native_machine() -> int:
 
 def execute(args: argparse.Namespace) -> None:
     root = args.root.resolve()
+    report_path = root / (args.arch + "-runtime.json")
+    # A failed replay must not leave an earlier success for artifact consumers.
+    report_path.unlink(missing_ok=True)
     if args.runner:
         if args.expected_native_host:
             raise ValueError("an external runner cannot claim native Windows coverage")
@@ -248,7 +251,7 @@ def execute(args: argparse.Namespace) -> None:
     result = {"schema": manifest["schema"], "commit": manifest["commit"],
               "architecture": args.arch, "native_host": host,
               "observations": observations}
-    (root / (args.arch + "-runtime.json")).write_text(
+    report_path.write_text(
         json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"{args.arch}: all 30 Windows process observations passed ({host})")
 

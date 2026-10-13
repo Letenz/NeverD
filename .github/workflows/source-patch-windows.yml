@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/source-patch-windows.yml'
       - 'scripts/check_source_patch_pe_runtime.py'
+      - 'scripts/tests/test_check_source_patch_pe_runtime.py'
       - 'pluginsdk/python/neverd_plugin/abi.py'
       - 'pluginsdk/python/neverd_plugin/ffi.py'
       - 'lib/sdk/SourcePatchCompiler.*'
@@ -32,6 +33,7 @@ on:
     paths:
       - '.github/workflows/source-patch-windows.yml'
       - 'scripts/check_source_patch_pe_runtime.py'
+      - 'scripts/tests/test_check_source_patch_pe_runtime.py'
       - 'pluginsdk/python/neverd_plugin/abi.py'
       - 'pluginsdk/python/neverd_plugin/ffi.py'
       - 'lib/sdk/SourcePatchCompiler.*'
@@ -82,6 +84,9 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
+
+      - name: Check runtime qualification evidence rules
+        run: python -m unittest scripts.tests.test_check_source_patch_pe_runtime -v
 
       - name: Install the checked source producer
         shell: pwsh
