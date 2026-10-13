@@ -226,7 +226,7 @@ Win64 class-return projection is target-specific; a DWARF name on another
 platform cannot create a hidden result parameter. Runtime-language detection
 uses exported names as well as symbols and imports.
 
-`isCanonicalX87Wait` owns the same normal-path frame-preservation rule for ordinary registration transfer and checked local-finally returns. The FWAIT operation and exceptional dispatch remain intact. Other intrinsics and malformed shapes remain opaque; this rule grants no nonlocal finally exit or native recovery proof.
+`isX86FramePreservingIntrinsic` shares checked FWAIT, MXCSR and floating-point arithmetic shapes between ordinary registration transfer and checked local-finally returns. The original operations and exceptional dispatch remain intact. Unsupported intrinsics and malformed shapes remain opaque; this rule grants no nonlocal finally exit or native recovery proof.
 
 Windows registration-chain EH has separate source and generated contracts.
 The COFF loader owns the checked SEH/FuncInfo records. LowIR's
@@ -5308,6 +5308,172 @@ Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an 
 DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.
 
 `isCheckedX86SafeSEHHandlerReference` authenticates a retained PE32 handler entry through the existing SafeSEH decoder, immutable table/header bytes and the relocated load-config pointer. LLVM declares that source identity before emitting any body, including omitted shards. Table membership establishes neither a language personality nor a callable ABI or native EH reconstruction permission; those consumers keep their independent checks.
+
+`proveLowSEHEstablisherFrame` owns the decoded Windows x64 parent-frame proof shared by LowIR and SSA. It checks normalized unwind actions, complete instruction/CFG provenance and every reaching protected prefix under a bounded query. SSA additionally checks converted ABI effects. A certified handler entry supplies only its fixed SP coordinate; it restores no saved memory facts. Ordinary catch-return analysis keeps its original entry domain, while a separate local-unwind address inventory visits declared activation roots without carrying register values across exceptional edges. Runtime identity, exact continuation uses and whole-module exclusivity remain independent publication requirements.
+
+Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP.
+
+Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
+
+The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.
+
+`_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
+
+The `_local_unwind2` bound is a numeric operand, not a scope-table index. Any constant 32-bit unsigned bound can prove a zero-step exit; only actual current levels index the table. Dynamic bounds and invalid current levels remain unproved.
+
+`PipelineSEHRuntimeMemory` authenticates exact PE import-directory bindings and
+immutable scalar printf formats. `ReadOnlyBytes` owns complete, unique storage
+and fixup checks; ABI declarations supply no memory authority. The shared LowIR
+frame interpreter checks actual arguments, active return-PC slots (including
+the parent entry PC), the physical CALL push and the
+Win64 home area before applying CRT effects. Scratch identities below SP expire
+at every authenticated runtime invocation. Explicit IAT writes withdraw
+future bindings, and unknown exported bits retain possible frame escape.
+Import veneers require their immutable indirect-jump bytes and exact IAT
+displacement; an address cache supplies no callable authority.
+Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
+rechecks the same dependencies. Writable formats and opaque calls retain their
+refusal, so this contract does not yet close the x64 xcpt4 case.
+
+Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
+UCRT import binding, an unescaped frame and a constant exception-mask subset
+permit a four-byte output wholly inside live caller storage, outside the home
+area and every active return PC. Only overlapping saved cells lose their
+identities. Precision-control and unknown masks remain unsupported because
+their invalid-parameter callbacks have no memory contract. The original call
+and its MXCSR effects remain in IR. PE32 registration and Win64 frame analysis
+also share one checked rule for WAIT, MXCSR transport and scalar/vector FP
+arithmetic. Its output-carrier check excludes all GPRs, including x64 R8–R15
+and APX registers; memory reads and floating-point traps remain observable.
+The Win64 interpreter still refuses potentially trapping FP effects when the
+invocation has language callbacks without a checked memory-effect receipt;
+a continuing filter may write the parent frame before ordinary execution
+resumes. PE32 callback effects remain the registration solver's responsibility.
+
+`RegistrationStateFinallyCall` checks ordinary calls into owned PE32 finally
+bodies. `RegistrationFinallyFrame` shares the returning invocation interpreter
+with local-unwind analysis. An independent source-byte check authenticates
+near-return encodings. The interpreter follows actual arguments, every ordinary return,
+private stack allocation and parent-frame writes, including changes to nominally
+preserved registers. This establishes state flow without granting a callable
+native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
+resumption still require a separate invocation-exit contract; the PE32 xcpt4
+case remains incomplete.
+
+`RegistrationSEHControl` authenticates the actual PE32 near CALL and RET bytes.
+When LowIR has folded the return continuation, it retains the complete immutable
+near-jump path from the physical return PC to the normalized successor. A prefix,
+cycle, far jump or unavailable source bytes supply no continuation authority.
+A CALL and its tail jump may occupy the same LowIR block; that tail must contain
+only the matching authenticated branch, without additional register or memory
+effects. The physical return PC remains before the jump.
+`RegistrationStateSEHExit` distinguishes each ordinary call from runtime
+activations. An inspected near return restores its caller's stack; an inspected
+parent jump must restore the actual SavedESP and reach ordinary parent code or a
+checked except body. A load into a temporary followed by a copy into ESP binds
+the exact adjacent producer in the same instruction, including the source slot,
+width and micro-operation identity. Budget exhaustion withdraws invocation-exit
+completeness and any previously published exits. These are source-analysis
+receipts. CFG/SSA continuation
+consumers and native replacement receipts remain required; the native emitter
+refuses the new physical invocation exits until those obligations are complete.
+The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
+effects.
+
+`RegistrationFrameEffects` owns the integer-frame effect of the exact void
+`X87Wait` intrinsic. WAIT retains its x87 side effect and possible exception
+dispatch while preserving GPRs and frame memory. State propagation, finally
+inspection and callee frame/stack checks use the same predicate. An altered
+intrinsic identity, operand shape, output, address space or ordering grants no
+such effect.
+
+`RegistrationFrameSEHException` owns the EH3 search filter's runtime exception
+coordinates. A checked direct frame seeds the current EXCEPTION_POINTERS slot
+only for a runtime search invocation. The record link and four-byte exception
+code/flags are read-only; other fields, widths and invocation roles have no
+authority. Callback exit or reentry strips exact runtime pointer identities from
+registers and every retained frame space while preserving possible pointer taint.
+Scalar fields retain possible address provenance until the current exception's
+origin has been bound; their DWORD representation cannot prove an unknown memory
+sink disjoint from the frame.
+`RegistrationStateSEHException` binds each access to its actual instruction slice
+and micro-operation. Conflicting observations and work exhaustion withdraw the
+access receipts. Native SEH lowering rejects these source receipts until it can
+prove the replacement runtime objects. This supplies the exception-field part
+of the PE32 helper analysis; incoming object arguments and their caller bounds
+still require separate proof.
+
+`RegistrationConditionalCallee` specializes an original EH3 helper from the
+caller's actual stack cells. It authenticates the physical CALL, complete
+immutable callee instructions and ordinary near returns. Incoming scalar words
+and four-byte caller objects occupy separate coordinates; object bounds exclude
+argument storage, return PCs and registration administration.
+`RegistrationStateConditional` uses the same state solver for its body, filters
+and finally invocations. Private reads require allocation and initialization;
+an except entry may read its initialized SavedESP slot before restoring SP.
+An ordinary return must restore the actual stack and nonvolatile register
+identities. `RegistrationConditionalCall` inspects nested scalar helpers and
+only admits a closed RaiseException invocation with no argument array. Unknown
+calls and unbounded writes refuse the specialization. Object writes withdraw
+pre-call constants on both ordinary and exceptional paths. Nested CFG state
+analysis and failed proofs count against the same callee work budget.
+An incoming jump-buffer argument carries an opaque capture identity, rather
+than a usable pointer into its caller's frame. A checked foreign resumption
+returns that identity and its scalar value to the caller's unwind owner.
+These are source-analysis facts; native lowering rejects them until a replacement
+call and buffer plan is proved.
+
+`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
+unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
+checks a current source CALL, complete buffer separation, the installed canonical
+frame and the explicit two-argument unwind protocol. It retains actual captured
+nonvolatile values, including unknown pointer provenance. `RegistrationJumpBuffer`
+owns the ten initialized DWORDs; the six unused unwind-data words retain their
+original contents. `RegistrationStateJump` retains captures across checked
+transfers, withdraws them on overlapping writes, released storage or unknown
+calls, and rejects an altered runtime import slot. An authenticated resume walks
+the current unwind levels, preserves checked finally writes, restores captured
+registers and ESP, and joins at the physical capture PC. Unknown finally effects
+refuse this transfer. CFG partitioning creates that PC as an ordinary fallthrough
+block without inventing an independent entry. Complete nonlocal finally effects,
+CFG/SSA consumers of the resumption receipts remain required for native
+projection. Native lowering rejects these source facts until a replacement-buffer
+contract is proved. No target-wide call-pop or no-return summary is inferred.
+
+Ordinary finally calls use the actual reaching ESP. Nested calls retain a
+separate invocation stack and physical return PC for each caller; SavedESP
+belongs to runtime restoration. A closed, authenticated RaiseException call
+with no argument array preserves those cells, while its exception dispatch
+remains part of the language analysis. A returning call can precede a block's
+terminator; its physical fallthrough grants no memory contract by itself.
+
+Checked `_controlfp_s` queries and exception-mask changes can write only a
+disjoint caller-owned DWORD. Its returned control word remains unknown.
+Authenticated math import cleanup and checked floating-state intrinsic shapes
+supply integer-frame facts only. Their floating effects, traps and original
+calls remain in LowIR. Writes in asynchronous filters withdraw affected jump
+resumption receipts even if those receipts were observed earlier.
+
+A termination-only SEH function has no dispatcher-entered except body. Its
+returning-stack proof follows its ordinary entry and checks every finally's
+actual near return independently. A finally that writes the established frame
+register, makes an unchecked nested call or abandons its invocation stack cannot
+use this route. An incoming object can still prevent a memory-effect proof:
+the returning-stack contract grants no initialized object borrow or saved-memory
+preservation.
+
+A canonical EH3 direct prologue also permits an independent register-only
+returning-stack proof through its ordinary body and every except entry.
+Unproved incoming memory cannot grant saved-slot restoration: each return
+still requires an exact ESP and matching immutable near-return encoding.
+Scope callbacks retain separate entries and return obligations. COFF install
+discovery observes a distinct direct prologue before deduplicating tentative
+function owners, so two real frames inside one guessed range remain distinct.
+Proof work and admitted memory extents have separate limits. Raising the
+registration work allowance does not enlarge an object, borrow or callback
+frame: those retain the shared 1 MiB source-call storage bound.
+
+`RegistrationScopeGraph` shares the EH3/EH4 index and frame-sentinel rules between COFF parsing and LowIR. State analysis revalidates initial levels, backward enclosing links, handler presence and filter/finally roles before publishing facts. An initially active scope retains its frame sentinel; an empty table admits only that sentinel. Instruction bytes, executable ownership and frame installation retain their separate proofs. Scope handler and filter addresses must also fit the PE32 pointer width.
 
 Kernel field initialization has a separate physical RAM owner. Permission validation remains pure. Successful host writes, committed checked transactions and exact software after-write events define only the bytes they committed, including same-value stores and completed fault prefixes. Temporary writes, rollback, attempts cancelled before commit and opaque invalidation define no bytes. An owning bitmap follows retained physical slices through aliases and can be queried without reading guest RAM. Software events prove their reported writes without establishing complete write coverage; typed model services keep their explicit initialization contracts.
 

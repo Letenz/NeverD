@@ -7,6 +7,7 @@
 #include "NeverDLiftFixture.h"
 #include "PipelineLowIRDetail.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
@@ -2666,5 +2667,275 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofIntersectsEveryPredecessor) {
         proveLowSEHFrames(Make(), getTargetRegInfo(Architecture), Budget);
     EXPECT_TRUE(Proof.Calls.empty());
     EXPECT_TRUE(Proof.DependencyDigest.empty());
+  }
+}
+
+TEST(CFGBuilderCoverage,
+     LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame) {
+  constexpr va_t Entry = 0x140001000, Handler = Entry + 0x40;
+  constexpr va_t Target = Entry + 0x80, Stub = Entry + 0x200;
+  auto Make = [&](unsigned Mutation) {
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Bits = Bitness::Bits64;
+    Img.Format = BinaryFormat::COFF;
+    Img.Base = Entry - 0x1000;
+    Img.Entry = Entry;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = Entry;
+    Text.Size = 0x201;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.assign(Text.Size, 0xcc);
+    auto Copy = [&](unsigned At, std::initializer_list<uint8_t> Bytes) {
+      std::copy(Bytes.begin(), Bytes.end(), Text.Data.begin() + At);
+    };
+    auto Relative = [&](unsigned At, uint8_t Opcode, va_t To) {
+      Text.Data[At] = Opcode;
+      const uint32_t Bits = static_cast<uint32_t>(To - (Entry + At + 5));
+      for (unsigned I = 0; I != 4; ++I)
+        Text.Data[At + 1 + I] = uint8_t(Bits >> (I * 8));
+    };
+    Copy(0, {0x48, 0x83, 0xec, 0x28}); // sub rsp,40
+    Copy(4, {0x90});
+    Relative(5, 0xe9, Mutation == 18 ? Handler : Entry + 0xa0);
+    unsigned At = 0x40;
+    if (Mutation == 5) {
+      Copy(At, {0x89, 0xe1, 0x90});
+      At += 3;
+    } // ecx=esp
+    else if (Mutation == 6) {
+      Copy(At, {0x48, 0x8d, 0x4c, 0x24, 8});
+      At += 5;
+    } else if (Mutation == 8) {
+      Copy(At, {0x48, 0x8b, 0x4c, 0x24, 32});
+      At += 5;
+    } else {
+      Copy(At, {0x48, 0x89, 0xe1});
+      At += 3;
+    } // mov rcx,rsp
+    Copy(At, {0x48, 0x8d, 0x15});
+    const uint32_t Disp = static_cast<uint32_t>(Target - (Entry + At + 7));
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[At + 3 + I] = uint8_t(Disp >> (8 * I));
+    At += 7;
+    Relative(At, 0xe8, Stub);
+    At += 5;
+    Relative(At, 0xe9, Entry + 0xa0);
+    Copy(0x80, {0x90});
+    Relative(0x81, 0xe9, Entry + 0xa0);
+    Copy(0xa0, {0x48, 0x83, 0xc4, 0x28, 0xc3});
+    Relative(0xc0, 0xe9, Entry + 0xa0);
+    Copy(0x200, {0xc3});
+    if (Mutation == 4) {
+      Copy(4, {0x48, 0x83, 0xec, 8});
+      Relative(8, 0xe9, Entry + 0xa0);
+    }
+    if (Mutation == 24)
+      Relative(0xc0, 0xe9, Entry + 4);
+    if (Mutation == 23)
+      for (unsigned I = 1; I != 40; ++I)
+        Relative(0xc0 + I * 8, 0xe9, Entry + 0xa0);
+    Img.Segments.push_back(std::move(Text));
+    Img.Symbols.push_back(
+        Symbol::makeFunc(Entry, Mutation == 23 ? 0x200 : 0xe0));
+    Import Runtime;
+    Runtime.Name = "_local_unwind";
+    Runtime.Module = Mutation == 9 ? "untrusted.dll" : "VCRUNTIME140.dll";
+    Img.Imports.push_back(std::move(Runtime));
+    EXPECT_TRUE(Img.recordImportStub(Stub, 0));
+    ExceptionFunction EH;
+    EH.CodeRange = {Entry, Entry + (Mutation == 23 ? 0x200 : 0xe0)};
+    EH.Encoding = ExceptionEncoding::X64UnwindV1;
+    EH.UnwindVersion = 1;
+    EH.UnwindFlags = 1;
+    EH.PrologueSize = 4;
+    EH.Personality = ExceptionPersonality::CSpecificHandler;
+    UnwindOperation Alloc;
+    Alloc.Kind = UnwindOperationKind::AllocateSmall;
+    Alloc.CodeOffset = 4;
+    Alloc.StackOffset = Mutation == 1 ? 48 : 40;
+    EH.UnwindOperations.push_back(Alloc);
+    EH.SEH.emplace();
+    SEHScopeRecord Scope;
+    Scope.Kind = SEHScopeKind::CatchAll;
+    Scope.GuardedRange = {Entry + 4, Entry + (Mutation == 4 ? 8 : 5)};
+    Scope.HandlerVA = Handler;
+    EH.SEH->Scopes.push_back(Scope);
+    if (Mutation == 25) {
+      auto FinallyScope = Scope;
+      FinallyScope.Kind = SEHScopeKind::Finally;
+      EH.SEH->Scopes.push_back(FinallyScope);
+    }
+    Scope.GuardedRange = {Target, Target + 1};
+    Scope.HandlerVA = Entry + 0xc0;
+    if (Mutation == 24) {
+      Scope.Kind = SEHScopeKind::Finally;
+      Scope.GuardedRange = {Entry + 4, Entry + 5};
+    }
+    EH.SEH->Scopes.push_back(Scope);
+    // Many handlers share one immutable CFG under a small fixed budget.
+    if (Mutation == 23) {
+      Scope.GuardedRange = {Entry + 4, Entry + 5};
+      for (unsigned I = 1; I != 40; ++I) {
+        Scope.HandlerVA = Entry + 0xc0 + I * 8;
+        EH.SEH->Scopes.push_back(Scope);
+      }
+    }
+    // Unrelated cold scopes must not pay for a whole-function scan.
+    if (Mutation == 22) {
+      Scope.GuardedRange = {Entry + 0xb0, Entry + 0xb1};
+      for (unsigned I = 0; I != 2048; ++I)
+        EH.SEH->Scopes.push_back(Scope);
+    }
+    if (Mutation == 7)
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+    Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+    Img.ExceptionMetadata.rebuildIndex();
+    if (Mutation == 11) {
+      Segment Data;
+      Data.VA = Entry + 0x300;
+      Data.Size = 8;
+      Data.Name = ".data";
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      for (unsigned I = 0; I != 8; ++I)
+        Data.Data.push_back(uint8_t(Target >> (I * 8)));
+      Img.CodePtrRelocSlots.insert(Data.VA);
+      Img.Segments.push_back(std::move(Data));
+    }
+    return Img;
+  };
+  for (unsigned Mutation = 0; Mutation != 26; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Img = Make(Mutation);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    std::set<va_t> Entries{Entry, Stub};
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Entries);
+    auto Low = Builder.build(Img, Dec, Entry, "handler_frame");
+    auto H = llvm::find_if(
+        Low.Blocks, [&](const LowBlock &B) { return B.StartAddr == Handler; });
+    ASSERT_NE(H, Low.Blocks.end());
+    ASSERT_FALSE(H->ExceptionalPreds.empty());
+    if (Mutation == 2)
+      Low.OrdinaryModuleAnalysisRoots.insert(Handler);
+    if (Mutation == 3) {
+      H->ExceptionalPreds.clear();
+      for (auto &B : Low.Blocks)
+        std::erase_if(B.ExceptionalSuccs,
+                      [&](const auto &E) { return E.TargetVA == Handler; });
+    }
+    if (Mutation == 12)
+      Low.TruncatedPathAddresses.push_back(Entry + 1);
+    if (Mutation == 13)
+      Low.OrdinaryModuleAnalysisRoots.insert(Entry + 4);
+    if (Mutation == 16) {
+      for (auto &E : H->ExceptionalPreds)
+        E.Kind = ExceptionalEdgeKind::SEHFinally;
+      for (auto &B : Low.Blocks)
+        for (auto &E : B.ExceptionalSuccs)
+          if (E.TargetVA == Handler)
+            E.Kind = ExceptionalEdgeKind::SEHFinally;
+    }
+    if (Mutation == 17) {
+      for (auto &E : H->ExceptionalPreds)
+        ++E.RegionIndex;
+      for (auto &B : Low.Blocks)
+        for (auto &E : B.ExceptionalSuccs)
+          if (E.TargetVA == Handler)
+            ++E.RegionIndex;
+    }
+    if (Mutation == 19)
+      H->ExceptionalPreds.front().BlockId = H->Id;
+    if (Mutation == 20)
+      for (auto &B : Low.Blocks)
+        std::erase_if(B.ExceptionalSuccs,
+                      [&](const auto &E) { return E.TargetVA == Handler; });
+    if (Mutation == 21)
+      Low.Blocks.front().InstructionBoundaries.clear();
+    if (Mutation == 24 || Mutation == 25) {
+      size_t FrameWork = limits::kMaxSEHEstablisherFrameWork;
+      auto ParentFrame = proveLowSEHEstablisherFrame(
+          Low, Handler, getTargetRegInfo(Arch::X64), false, FrameWork);
+      EXPECT_FALSE(bool(ParentFrame));
+      if (!ParentFrame)
+        llvm::consumeError(ParentFrame.takeError());
+      EXPECT_THROW(
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+          std::exception);
+    }
+    if (Mutation == 22) {
+      size_t FrameWork = 4096;
+      auto ParentFrame = proveLowSEHEstablisherFrame(
+          Low, Handler, getTargetRegInfo(Arch::X64), false, FrameWork);
+      ASSERT_TRUE(bool(ParentFrame)) << llvm::toString(ParentFrame.takeError());
+      EXPECT_EQ(ParentFrame->FrameBytes, 40u);
+    }
+    size_t Work = Mutation == 14   ? 0
+                  : Mutation == 15 ? 1
+                  : Mutation == 23 ? 16384
+                                   : limits::kMaxSEHEstablisherFrameWork;
+    auto Proof = proveLowSEHFrames(Low, getTargetRegInfo(Arch::X64), Work);
+    const bool FrameValid = Mutation == 0 || Mutation == 9 || Mutation == 10 ||
+                            Mutation == 11 || Mutation == 18 ||
+                            Mutation == 22 || Mutation == 23;
+    if (FrameValid) {
+      ASSERT_EQ(Proof.Calls.size(), 1u);
+      EXPECT_EQ(Proof.Calls.begin()->second, -40);
+    } else {
+      EXPECT_TRUE(Proof.Calls.empty());
+      continue;
+    }
+    ASSERT_TRUE(llvm::is_contained(Low.CodeRefTargets, Target));
+
+    if (Mutation == 0) {
+      for (unsigned Edit = 0; Edit != 9; ++Edit) {
+        SCOPED_TRACE(Edit);
+        auto Changed = Low;
+        auto &EH = *Changed.ExceptionMetadata;
+        if (Edit == 0)
+          EH.UnwindOperations.front().StackOffset += 8;
+        if (Edit == 1)
+          ++EH.SEH->Scopes.front().GuardedRange.End;
+        if (Edit == 2)
+          EH.FrameRegister = 5;
+        if (Edit == 3)
+          ++EH.PrologueSize;
+        if (Edit == 4)
+          EH.ParseStatus = ExceptionParseStatus::Partial;
+        auto *Block = Changed.blockFor(Handler);
+        auto &Edge = Block->ExceptionalPreds.front();
+        if (Edit == 5)
+          ++Edge.TargetVA;
+        if (Edit == 6)
+          Edge.Kind = ExceptionalEdgeKind::SEHFinally;
+        if (Edit == 7)
+          ++Edge.RegionIndex;
+        if (Edit == 8)
+          Edge.SourceVA = Entry + 4;
+        EXPECT_NE(Proof.DependencyDigest, lowSEHFrameDependencyDigest(Changed));
+      }
+    }
+    auto Evidence =
+        pipeline_detail::collectWindowsEHContinuationRootsForTesting(
+            Img, {Low}, Entries, std::nullopt, Mutation != 10);
+    if (Mutation == 9 || Mutation == 10 || Mutation == 11) {
+      EXPECT_TRUE(Evidence.LocalUnwindsByOwner.empty());
+      continue;
+    }
+    ASSERT_TRUE(Evidence.AnalysisComplete);
+    ASSERT_EQ(Evidence.LocalUnwindsByOwner[Entry].size(), 1u);
+    Low.SEHLocalUnwindContinuations = Evidence.LocalUnwindsByOwner[Entry];
+    auto ChangedScope = Low;
+    ++ChangedScope.ExceptionMetadata->SEH->Scopes.front().GuardedRange.End;
+    EXPECT_THROW(LowToMedConverter().convert(ChangedScope, Arch::X64,
+                                             BinaryFormat::COFF),
+                 std::exception);
+    EXPECT_NO_THROW({
+      auto Med =
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+      EXPECT_TRUE(verifyMedFunc(Med, "handler-frame"));
+    });
   }
 }

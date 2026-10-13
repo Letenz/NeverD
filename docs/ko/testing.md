@@ -1487,6 +1487,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 일반 서브루틴으로 판정하기 전에 반환 주소 슬롯 검사는 겹치는 쓰기, 알 수 없는 쓰기, 원자적 쓰기 및 효과가 입증되지 않은 피호출 함수의 쓰기를 거부합니다. PE, ELF 및 Mach-O 사례는 반환 주소의 부분 손상과 i386 확장 메모리 주소를 검사합니다. 전용 스택 쓰기, 버려지는 반환 주소 및 종료 분기는 계속 허용됩니다.
 
+하나의 내부 호출 지점에 있는 혼합 출구는 두 동작을 보존합니다. 검증된 단순 near RET는 손상되지 않은 자기 반환 PC를 꺼내 정확한 후속 위치로 돌아가며, 그 PC를 버리는 출구는 원래 제어 흐름을 유지합니다. `MixedExitsResumeOnlyTheMatchingInvocation`은 PE/ELF/Mach-O x64와 ELF i386에서 최적화 여부에 따른 LLVM을 검증하고 검사기를 켠 x64 C를 실행합니다. 관련 테스트는 반복 호출을 다루고, RET를 공유하는 여러 호출 지점, 독립 또는 예외 진입점, 후속 블록에서 새로 드러난 선행 블록, 미해결 간접 출구, PC 손상, 즉시값으로 스택을 정리하는 반환 및 언어 런타임 메타데이터를 거부합니다. CFG를 재구축할 때마다 호출 소유 관계를 재검증하며, 공유 SEH 콜백 반환을 허용하지 않습니다. 비지역 출구는 부모 반환 슬롯도 별도로 증명합니다. 바깥 RET는 정확한 진입 SP에서 원래 진입 반환 PC를 읽어야 합니다. 과도한 스택 해제와 그 PC를 손상시키거나 별칭으로 접근할 수 있는 쓰기는 거부하며, 겹치지 않는 내부 쓰기는 허용합니다.
+
 `NeverDSysVCallContractTests`는 QtXml의 `QDomNode::save`와 `QDomNode::isDocument` 형태로 x86-64 System V 호출 규약을 검사합니다. 요약이 인수 레지스터를 읽는 직접 피호출자는 수정 없이 넘어온 입력 `this`를 포함해 호출자의 값을 받습니다. 가상 호출은 지배 블록이 `RDI`에 적재한 객체를 받습니다. 한 경로에서는 `RAX`를 쓰지 않고 반환하고 다른 경로에서는 피호출자의 결과만 넘기는 메서드는 void입니다. 비교 연쇄 앞에서 `AL`에 쓴 바이트는 모든 경로에서 반환값입니다. 생성된 프로그램은 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다.
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier`는 CoreImage 제공자, CIImage 팩터리, 완전한 48바이트 논리 레코드와 x2 포인터를 검사하고 누락되거나 잘못된 제공자, x86_64와 충돌하는 선언을 거부한다. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication`은 동일한 기계 주소를 가진 결과 대입과 원래 호출을 구분한다. `RejectsChangedCopyCallBodyAndCurrentImage`는 증명, 인수, 저장, 프레임, 메타데이터, 임포트, 중복 호출과 저장 IR에 대한 24가지 변경을 거부하며 MedIR과 HighIR을 일관되게 함께 수정한 경우도 포함한다. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI`는 ARM64에서 수정하지 않은 생성 C를 O0/O2로 실행하고 컴파일러에서 독립적으로 관측한 x2 포인터를 받는 함수와 비교한다. 부동소수점 비트 패턴 6개, 선택자와 수신자 식별, 한 번의 평가, 반환 객체, 합법적인 복사본 쓰기, 입력 불변성과 경계 가드를 확인한다. 다른 호스트에서는 이 물리 ABI 실행 테스트를 건너뛴다.
@@ -1674,7 +1676,9 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `X86PreservedState.*`는 새 스칼라 형식, 정확한 별칭, 엄격한 초기화, 오래된 바이트/연산 구간/버전 거부를 검사한다. `OriginalBinaryUndefinedIndependence.*Opaque*`는 분기, 내부 호출, 완전한 간접 대상, 정확한 프로필, 독립 디코딩으로 계산한 메타데이터 예산의 정확/1 부족 경계를 다룬다. `BinaryLowIR*.*Opaque*`는 증인과 임의 미정의 선택, 여러 귀납 소스, 후반 순위/예산 실패, 실제 진입 스칼라 보존, LowIR이 같은 후속 소스 바이트 변경의 실행 해시 변경을 검사한다. `NativeUndefinedIndependence.*Opaque*`와 `NativeStackControl.*FreshMemoryCall*`는 그룹 내부, 절단점 전 경계, 오래된 기록, 스택 변경 전 대상 평가를 검사한다. `NeverDInterpreterLLVMRefinementTests`를 포함한 영향받는 메타데이터 사용자를 재빌드하고, sanitizer 및 컴파일한 결함 주입 결과는 일반 테스트와 별도로 보고한다.
 
-`scripts/check_windows_nonlocal_finally.py`는 MSVC x86/x64 프로그램을 O0/O2 및 GS 활성·비활성 설정으로 컴파일하고 네이티브 실행합니다. 여섯 사례는 일반 호출과 예외 해제 중의 finally, 부모 함수로의 조건부 점프, 해제를 중단하는 return을 구분합니다. 반복 실행은 로컬 보호 영역과 x86 등록 체인을 검사하며, 정리 순서를 변경한 음성 대조군은 원래 기대값에서 거부되어야 합니다. Windows EH fixture 작업은 소스·이미지 해시, 컴파일러 출력, 링크 맵과 실행 관찰을 보존합니다. 해당 MSVC 환경에서 `--arch x86` 또는 `--arch x64`와 `--output`을 지정합니다. 이는 원본 런타임 기준이며 NeverD의 비지역 전이 지원을 입증하지 않습니다.
+`scripts/check_windows_nonlocal_finally.py`는 MSVC x86/x64 프로그램을 O0/O2 및 GS 활성·비활성 설정으로 컴파일하고 네이티브 실행합니다. 여섯 사례는 일반 호출과 예외 해제 중의 finally, 부모 함수로의 조건부 점프, 해제를 중단하는 return을 구분합니다. 반복 실행은 로컬 보호 영역과 x86 등록 체인을 검사하며, 정리 순서를 변경한 음성 대조군은 원래 기대값에서 거부되어야 합니다. Windows EH fixture 작업은 소스·이미지 해시, 컴파일러 출력, 링크 맵과 실행 관찰을 보존합니다. 해당 MSVC 환경에서 `--arch x86` 또는 `--arch x64`와 `--output`을 지정합니다. 이는 원본 런타임 기준이며 NeverD의 비지역 전이 지원을 입증하지 않습니다. 추가 네 사례는 부모 재개 직후 두 번째 예외를 발생시키며, 두 사례는 가드가 있는 호출자 카운터를 검사합니다. x86 체인은 각 호출 뒤와 재개 지점에서 확인합니다. 스키마 2가 필요하며 이전의 최종 체인 기록만으로는 부족합니다.
+
+`scripts/check_windows_native_seh_resume.py`는 실험적인 Windows x64 LLVM/CRT 프로토콜을 O0/O2에서 별도로 검사합니다. `_local_unwind`의 물리 SP와 부모 재개 주소는 소스 프레임과 구분합니다. MASM은 보존 GPR 여덟 개, XMM6–XMM15, SP, 가드, 정상 호출 뒤의 연산과 비지역 경로의 연산 건너뛰기, 두 번째 예외를 검사합니다. 도구와 해시를 보존합니다. 성공은 NeverD 재구성 허가가 아니며 PE32, 이탈한 메모리 별칭, 임의 중첩, 두 C 경로는 미해결입니다. 네이티브 x64 MSVC에서 `--output`을 지정합니다. 워크플로 입력 `windows_eh_protocol_only`는 NeverD를 다시 빌드하지 않고 이 네이티브 실험을 실행하며 엔진 회귀 검증과는 별개입니다.
 
 `RegistrationTryLevel.EH4Publication*`와 `EH4CookieStoresMustOwnDistinctPrivateBytes`는 ADD/SUB 할당, 레지스터 저장, cookie PUSH 및 disp8/disp32 cookie 저장을 사용하는 PE32 EH4 직접 프레임을 검사합니다. 변경된 원본과 오프셋, 겹치는 cookie, 저장된 레지스터나 런타임 관리 영역을 덮어쓰는 접근은 거부하며, 공유 LowIR이 값과 수명을 독립적으로 검증합니다.
 
@@ -1683,6 +1687,20 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `RegistrationCallNoReturn`은 변경된 명령 범위, 대상, 연산 범위, 조건부 호출 및 다른 아키텍처나 형식에서의 사용을 거부합니다. 정렬된 스택의 PE32 검사는 독립적으로 종료가 증명된 호출과 현재 증거로 제거해야 하는 일반 후속 간선을 모두 확인합니다. 메모리 효과 증거가 무효여도 이미 없는 일반 간선이 복원되지는 않습니다.
 
 `SafeSEHReference.*`는 불변 SafeSEH 테이블 소속, 잘못되거나 모호한 저장 영역, 재배치, 다른 아키텍처와 형식, 분할 간 선언 순서를 검사합니다. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM`는 `NEVERD_NONLOCAL_FINALLY_INPUTS`로 네이티브 MSVC x86/x64, O0/O2, GS 및 소스 최적화 설정의 LLVM 조합 32개를 검사합니다. LLVM과 해석된 호출 시그니처를 검증하며 지원하지 않는 x86 네이티브 EH 재구성이 계속 거부되어야 합니다. Windows EH 전용 작업은 네이티브 fixture artifact를 내려받아 실행하며 입력 디렉터리가 없으면 테스트를 명시적으로 건너뜁니다.
+
+`LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame`은 인증된 Windows x64 SEH 처리기와 일반/예외 공유 진입의 로컬 해제 호출을 검사합니다. 반례에는 해제 할당 불일치, 불안정하거나 일부 폭의 SP, 독립 루트, 불완전한 입력, 누락되거나 위조된 예외 간선, 작업 한도 소진, 알 수 없는 스택 메모리, 외부 재배치 및 신뢰할 수 없는 런타임이 포함됩니다. LowIR 호출 증명과 모듈 증명서를 SSA 검증에 전달하며 일반 반환 연속 테스트는 별도 진입 규칙을 유지합니다.
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC`와 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation`은 PE, ELF, Mach-O x64 및 ELF i386에서 부모 반환 주소 손상과 겹치지 않는 부모 지역 쓰기를 검사합니다. 피호출자 반환 주소 보존만으로 일반 호출을 허용할 수 없습니다.
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork`는 x86, x64, ARM, AArch64에서 반복된 긍정 및 부정 질의의 작업량을 제한합니다. 문맥 테스트는 바인딩 값, 진입 SP, 폭 및 예산 0의 거부를 유지하고, 임시 또는 재구축된 실행 가능 그래프와 함수 변경 후 이전 답을 폐기합니다.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects`는 경계 아래의 조기 중단, 센티널 종료, 요청 인덱스를 건너뛰는 부모 링크, 서로 다른 중단 단계의 병합도 검사합니다. 실제로 통과해야 하는 finally 본문이 없으면 계속 거부하며, 건너뛴 정리는 프레임 쓰기 효과를 제공하지 않습니다.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects`는 테이블 밖의 상수 상한, 부호 없는 값의 상위 절반과 -2도 검사합니다. 반복 없는 종료는 원래 단계와 프레임 메모리 사실을 유지하며, 동적 상한과 유효하지 않은 현재 단계는 계속 거부합니다.
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts`는 파싱 완료 후에도 잘못된 센티널, 순환, 전방/범위 밖 링크, 잘못된 초기 단계와 처리기/필터 역할을 검사합니다. 초기 활성 범위와 빈 테이블 대조 사례는 EH3/EH4의 유효한 센티널을 보존합니다. 포인터 폭을 넘는 처리기와 필터 주소도 사실을 공개하지 않고 거부합니다.
+
+소스 등록 상태 솔버는 객체 대여, catch 객체 생성, local-finally 쓰기에 동일한 관리 영역 경계 검사를 적용합니다. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers`와 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells`는 EH3/EH4의 SavedESP, 예외 포인터, cookie 슬롯에 대한 읽기, 쓰기 및 부분 겹침을 검사합니다. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors`는 이후의 재로드에 의존하지 않고 저장된 진입 프레임을 보호합니다. 인접한 일반 객체는 계속 대여할 수 있습니다.
 
 `RAMReservationTests.cpp`는 동일 값과 ABA 쓰기, 유지된 범위, 주소 재사용, 공유 매핑, 롤백, 취소, 오류 전에 커밋된 쓰기와 불투명 실행에서 공개 쓰기 증명을 검증합니다. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites`는 선호 주소, 낮은 주소와 커널 주소에서 소유된 로드 사실을 검사합니다. 바이트를 복원해도 출처 증명은 복원되지 않습니다. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts`는 활성 CFG 수정과 비활성 대체 포인터 유지를 구분합니다.
 

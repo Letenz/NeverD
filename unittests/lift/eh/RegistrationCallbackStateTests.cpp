@@ -230,4 +230,33 @@ TEST(RegistrationCallback, RejectsUnbalancedOrAliasedCallbackFrames) {
   }
 }
 
+TEST(RegistrationCallback, RealignedCatchObjectsCannotReplaceRuntimeAnchors) {
+  for (int32_t Offset : {-24, -21, -20, -17, -16, -12}) {
+    SCOPED_TRACE(Offset);
+    auto F = realignedCatch();
+    auto &Catch = F.ExceptionMetadata->Cxx->TryBlocks[0].Handlers[0];
+    Catch.TypeDescriptorVA = 0x3000;
+    Catch.CatchObjectOffset = Offset;
+    auto &Handler = F.Blocks[4];
+    Handler.Ops.clear();
+    Handler.EndAddr = Handler.StartAddr + 5;
+    Handler.InstructionBoundaries = {{Handler.StartAddr, 5, 0, 1}};
+    Handler.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+    emit(Handler, Handler.StartAddr, NdOp::CALL, {}, {NdVar::cst(0x2100, 4)});
+    RegistrationCalleeFrameContract Throw;
+    Throw.CalleeKind = RegistrationCalleeFrameContract::Kind::PrivateThrow;
+    Throw.Target = 0x2100;
+    Throw.DoesNotReturn = true;
+    Throw.ThrownTypeVA = 0x3000;
+    Throw.ThrownObjectSize = 4;
+    const std::vector Callees{Throw};
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Callees);
+    // A no-return catch isolates construction ownership: a later SavedEBP
+    // reload must not be the only reason to refuse overwriting that anchor.
+    EXPECT_EQ(A.CxxCatchObjectsComplete, Offset == -24);
+    EXPECT_EQ(A.RuntimeObjectAccessesComplete, Offset == -24);
+    EXPECT_EQ(A.CxxCatchObjects.empty(), Offset != -24);
+  }
+}
+
 } // namespace

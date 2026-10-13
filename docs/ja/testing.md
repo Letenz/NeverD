@@ -1497,6 +1497,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 通常のサブルーチンと判定する前に、戻りアドレス領域への重複書き込み、未知の書き込み、アトミック書き込み、および効果を証明できない呼び出し先の書き込みを拒否します。PE、ELF、Mach-O のケースは、戻りアドレスの一部破壊と i386 の拡張メモリアドレスを検証します。専用スタックへの書き込み、破棄される戻りアドレス、終了する分岐は引き続き許可されます。
 
+単一の内部呼び出し位置からの混合出口は両方の動作を保持します。検証された裸の近 RET は破壊されていない自身の戻り PC を取り出して正確な継続位置へ戻り、その PC を破棄する出口は元の制御フローを保ちます。`MixedExitsResumeOnlyTheMatchingInvocation` は PE/ELF/Mach-O x64 と ELF i386 を対象に、最適化あり・なしの LLVM を検証し、サニタイザー付きで x64 C を実行します。関連テストは反復呼び出しを扱い、RET を共有する複数の呼び出し位置、独立・例外入口、継続部から判明する新たな先行ブロック、未解決の間接出口、PC 破壊、即値付きスタック解放 RET、言語ランタイムのメタデータを拒否します。CFG の再構築ごとに呼び出しの帰属を再検証し、共有 SEH コールバックの戻りは許可しません。 非局所出口では親の戻りスロットも別途証明します。外側の RET は入口と正確に同じ SP で元の入口戻り PC を読み取る必要があります。過剰なスタック解放や、その PC を破壊または別名参照し得る書き込みは拒否し、重ならないプライベート書き込みは許可します。
+
 `NeverDSysVCallContractTests` は、QtXml の `QDomNode::save` と `QDomNode::isDocument` の形を使って x86-64 System V の呼び出し規約を検査します。サマリが引数レジスタを読む直接呼び出し先は、呼び出し元がそのまま渡す入力の `this` も含め、呼び出し元の値を受け取ります。仮想呼び出しは、支配するブロックが `RDI` に読み込んだオブジェクトを引数に取ります。ある経路では `RAX` を書かずに戻り、他の経路では呼び出し先の結果を渡すだけのメソッドは void になります。比較の連鎖の前に `AL` に書いたバイトは、どの経路でも戻り値です。出力したプログラムは `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` は CoreImage のプロバイダー、CIImage ファクトリー、完全な 48 バイトの論理レコード、x2 ポインターを検証し、欠落・不正なプロバイダー、x86_64、矛盾する宣言を拒否する。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` は同じ機械アドレスを持つ結果代入と元の呼び出しを区別する。`RejectsChangedCopyCallBodyAndCurrentImage` は証明、引数、ストア、フレーム、メタデータ、インポート、重複呼び出し、保存 IR に対する 24 種類の変更を拒否し、MedIR と HighIR の整合した同時変更も含む。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` は ARM64 上で変更しない生成 C を O0/O2 で実行し、コンパイラーから独立に観測した x2 ポインターを受け取る関数と比較する。6 個すべての浮動小数点ビット列、セレクターとレシーバーの識別、1 回の評価、戻りオブジェクト、コピーへの適法な書き込み、入力の不変性、境界ガードを検証する。他のホストではこの物理 ABI 実行テストをスキップする。
@@ -1684,7 +1686,9 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `X86PreservedState.*` は新しいスカラー形式、正確な別名、厳密リセット、古いバイト/操作列/バージョンの拒否を検査する。`OriginalBinaryUndefinedIndependence.*Opaque*` は分岐、内部呼び出し、完全な間接宛先、正確なプロファイル、独立デコードから算出したメタデータ予算の一致/1 不足を扱う。`BinaryLowIR*.*Opaque*` は証人と任意の未定義選択、複数の帰納ソース、後半の順位/予算失敗、真の入口スカラー保存、同一 LowIR の後続ソースバイト変更による実行ダイジェスト変更を検査する。`NativeUndefinedIndependence.*Opaque*` と `NativeStackControl.*FreshMemoryCall*` はグループ内部、切点前境界、古い記録、スタック変更前の宛先評価を扱う。`NeverDInterpreterLLVMRefinementTests` を含むメタデータ利用側を再ビルドし、sanitizer とコンパイル済み故障注入の結果は通常テストと分けて報告する。
 
-`scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。
+`scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。 追加の4ケースは親関数の復帰直後に2回目の例外を発生させ、2ケースはガード付きの呼び出し元カウンターを検証します。x86 の登録チェーンは各呼び出し後と復帰先で確認します。スキーマ2が必須で、従来の最終チェーンだけの記録では不十分です。
+
+`scripts/check_windows_native_seh_resume.py` は実験的な Windows x64 LLVM/CRT プロトコルを O0/O2 で別途検証します。`_local_unwind` の物理 SP と親の復帰先はソースフレームと分離します。MASM は8個の保存 GPR、XMM6–XMM15、SP、ガード、通常経路の呼び出し後処理、非局所経路での処理スキップと2回目の例外を確認します。ツール情報とハッシュを保存します。成功は NeverD 再構築の許可ではなく、PE32、エスケープしたメモリ、任意の入れ子、両 C 経路は未解決です。ネイティブ x64 MSVC で `--output` を指定します。 ワークフロー入力 `windows_eh_protocol_only` は NeverD を再ビルドせずにこれらのネイティブ実験を実行します。エンジンの回帰検証とは別です。
 
 `RegistrationTryLevel.EH4Publication*` と `EH4CookieStoresMustOwnDistinctPrivateBytes` は、ADD/SUB による確保、レジスタ保存、cookie の PUSH、disp8/disp32 の cookie 格納を含む PE32 EH4 の直接フレームを検証します。変更された参照元やオフセット、cookie の重複、保存レジスタやランタイム管理領域への上書きは拒否し、共有 LowIR が値と寿命を独立して検証します。
 
@@ -1693,6 +1697,20 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `RegistrationCallNoReturn` は変更された命令範囲、対象、演算範囲、条件付き呼び出し、異なるアーキテクチャや形式での使用を拒否します。整列スタックの PE32 テストは、独立に終端が証明された呼び出しと、現行の証拠で除去する通常の後続辺の両方を検証します。メモリー効果の証拠が無効でも、既に存在しない通常辺は復活しません。
 
 `SafeSEHReference.*` は不変の SafeSEH テーブルへの所属、不正または曖昧な格納領域、再配置、他のアーキテクチャと形式、分割間の宣言順序を検査します。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` は `NEVERD_NONLOCAL_FINALLY_INPUTS` を使い、ネイティブ MSVC の x86/x64、O0/O2、GS とソース最適化の有無を組み合わせた 32 通りの LLVM 出力を検証します。LLVM と解決済み呼び出しシグネチャを検証し、未対応の x86 ネイティブ EH 再構築は拒否されることも確認します。Windows EH 専用ジョブはネイティブ fixture artifact を取得して実行し、入力ディレクトリがなければテストは明示的にスキップされます。
+
+`LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` は証明された Windows x64 SEH ハンドラーと通常・例外共有入口からのローカル巻き戻し呼び出しを検証します。反例は巻き戻し割り当ての不一致、不安定または部分幅の SP、独立入口、不完全な入力、欠落・偽造された例外辺、予算不足、不明なスタックメモリ、外部再配置、未認証ランタイムを含みます。LowIR 証明とモジュール証明書を SSA 検証へ渡し、通常の戻り継続テストは独立した入口規則を維持します。
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC` と `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` は、PE・ELF・Mach-O x64 と ELF i386 で親の戻りアドレス破壊と重ならない親ローカル書き込みを検査します。呼び出し先の戻りアドレス保持だけでは通常呼び出しを許可できません。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` は x86、x64、ARM、AArch64 で肯定・否定照会の反復作業量を制限します。コンテキストのテストは束縛値、入口 SP、幅、予算ゼロの拒否を維持し、暫定・再構築された実行可能グラフや関数の変更後に古い回答を破棄します。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は境界より下での早期停止、番兵での終了、要求インデックスを飛ばす親リンク、異なる停止階層の結合も検証します。実際に通過する finally 本体が欠けている場合は引き続き拒否し、飛ばしたクリーンアップからフレーム書き込み効果を得ることはありません。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は、表外の定数上限、符号なし値の上半分、-2 も検証します。反復なしの終了は元のレベルとフレームメモリの事実を保持し、動的な上限と無効な現在レベルは引き続き拒否します。
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` は解析完了後の誤った番兵、循環、前方・範囲外リンク、無効な初期レベルとハンドラー/フィルターの役割を検査します。初期有効スコープと空の表の対照例で EH3/EH4 の有効な番兵を保持します。 幅を超えるハンドラーとフィルターのアドレスも、事実を公開せず拒否します。
+
+ソースの登録状態ソルバーは、オブジェクトの借用、catch オブジェクトの構築、local-finally の書き込みに共通の管理領域境界チェックを使います。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` と `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` は、EH3/EH4 の SavedESP、例外ポインター、cookie スロットに対する読み取り、書き込み、部分的な重なりを検証します。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` は、後続の再読み取りに依存せず、保存された入口フレームを保護します。隣接する通常のオブジェクトは引き続き借用できます。
 
 `RAMReservationTests.cpp` は公開された書き込み証明について、同値・ABA 書き込み、保持範囲、アドレス再利用、共有マッピング、ロールバック、キャンセル、障害前に確定した書き込み、不透明な実行を検証します。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` は優先・下方・カーネルのロードアドレスで所有された事実を検証し、バイトの復元では出所の証明が戻らないことを確認します。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` は有効な CFG の修正と無効時のフォールバック保持を区別します。
 

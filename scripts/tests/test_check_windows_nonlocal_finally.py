@@ -8,12 +8,16 @@ def result(values):
     return {"exit_code": 0, "stdout": "NONLOCAL_FINALLY " +
             " ".join(map(str, values[:6])) +
             f" guards={values[6]} chain={values[7]} consistent={values[8]} "
-            f"iterations={values[9]}\n"}
+            f"iterations={values[9]} " +
+            "reenter=" + ",".join(map(str, values[10:14])) +
+            f" counters={values[14]},{values[15]} " +
+            f"immediate_guards={values[16]} immediate_chain={values[17]} " +
+            f"reentries={values[18]}\n"}
 
 
 class NonlocalFinallyEvidenceTests(unittest.TestCase):
     def test_checks_every_exit_and_runtime_guard(self):
-        values = runner.EXPECTED + (1, 1, 1, 192)
+        values = runner.EXPECTED + runner.RUNTIME_CHECKS
         self.assertEqual(runner.observe(result(values)), values)
         for index in range(len(values)):
             changed = list(values)
@@ -26,12 +30,19 @@ class NonlocalFinallyEvidenceTests(unittest.TestCase):
                 runner.observe(result(values) | changed)
 
     def test_control_cannot_pass_as_original(self):
-        control = result(runner.CONTROL + (1, 1, 1, 192))
+        control = result(runner.CONTROL + runner.RUNTIME_CHECKS)
         runner.observe(control, True)
         with self.assertRaises(ValueError):
             runner.observe(control)
         with self.assertRaises(ValueError):
-            runner.observe(result(runner.EXPECTED + (1, 1, 1, 192)), True)
+            runner.observe(result(runner.EXPECTED + runner.RUNTIME_CHECKS), True)
+
+    def test_legacy_observation_does_not_claim_reentry_coverage(self):
+        old = {"exit_code": 0, "stdout": "NONLOCAL_FINALLY " +
+               " ".join(map(str, runner.EXPECTED)) +
+               " guards=1 chain=1 consistent=1 iterations=192\n"}
+        with self.assertRaises(ValueError):
+            runner.observe(old)
 
     def test_native_compiler_must_match_the_requested_target(self):
         for arch, machine, magic in (("x86", 0x14C, 0x10B), ("x64", 0x8664, 0x20B)):

@@ -1443,6 +1443,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 將目標判定為一般子程序前，返回位址槽檢查會拒絕重疊寫入、未知寫入、原子寫入及效果未證明的被呼叫函式寫入。PE、ELF 和 Mach-O 案例涵蓋返回位址的部分寬度破壞及 i386 擴寬記憶體位址。私有堆疊寫入、捨棄的返回位址和終止分支仍可通過驗證。
 
+同一內部呼叫點的混合出口保留兩種行為：已證明的裸近 RET 彈出自身未被破壞的返回位址，並續接至精確位置；丟棄該位址的出口保留原有控制流程。`MixedExitsResumeOnlyTheMatchingInvocation` 涵蓋 PE/ELF/Mach-O x64 與 ELF i386，驗證最佳化及未最佳化 LLVM，並在啟用消毒器時執行 x64 C。配套案例涵蓋重複呼叫，並拒絕多個呼叫點共用 RET、獨立或例外入口、續接區塊揭露的新前驅、未封閉的間接出口、返回位址損壞、帶立即數清理堆疊的返回及語言執行階段中繼資料。每次重建 CFG 都須重新證明呼叫歸屬；這不授權共用 SEH 回呼返回。 非區域出口還須單獨證明父函式返回槽：外層 RET 必須在精確的入口 SP 處讀取原始入口返回位址。釋放過多堆疊空間，以及破壞或可能別名該位址的寫入均被拒絕；不重疊的私有寫入仍可通過。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 與 `QDomNode::isDocument` 的形態檢查 x86-64 System V 呼叫約定。摘要顯示會讀取某個引數暫存器的直接被呼叫者會收到呼叫者的值，包括原樣傳遞的傳入 `this`；虛擬呼叫會取得支配區塊載入 `RDI` 的物件；在某條路徑上不寫 `RAX` 就返回、在其他路徑上只傳遞被呼叫者結果的方法為 void；在比較鏈之前寫入 `AL` 的位元組在每條路徑上都是返回值。產生的程式在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 檢查 CoreImage 提供方、CIImage 工廠、完整 48 位元組邏輯記錄與 x2 指標，拒絕缺失或錯誤的提供方、x86_64 及衝突宣告。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 區分原始呼叫與沿用相同機器位址的結果賦值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒絕 24 類憑據、參數、儲存、框架、中繼資料、匯入、重複呼叫與儲存 IR 的修改，包括同時一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 執行未修改的產生 C，對照獨立從編譯器觀察到的 x2 指標接收函式，檢查六個浮點位元模式、選擇器與接收者身分、單次求值、傳回物件、合法副本寫入、輸入不變性與邊界保護。其他主機略過此實體 ABI 執行測試。
@@ -1630,7 +1632,9 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
 
-`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。
+`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。 新增四種情況在父函式恢復後立即再次拋出例外，另有兩種檢查純量輸入與呼叫端擁有、帶相鄰 guard 的計數器。x86 註冊鏈在每次呼叫之後與恢復標籤處檢查。必須使用 schema 2 觀測；只比較最終註冊鏈的舊報告不能證明這些涵蓋範圍。
+
+`scripts/check_windows_native_seh_resume.py` 單獨測試 Windows x64 LLVM/CRT 的實驗性續接協定，涵蓋 O0/O2。`_local_unwind` 接收捕獲的實體 SP 與取址的父函式續接點，與逸出的來源框架單元分開。MASM 呼叫端檢查八個保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路徑執行呼叫後的操作，非局部路徑跳過這些操作，所有路徑隨後再次拋出例外。報告保留工具鏈與雜湊。原生成功不授予 NeverD 重建憑據，也未解決 PE32 出口、逸出記憶體的存取權限、任意巢狀或兩條 C 路線。請在原生 x64 MSVC 環境中指定 `--output`。 工作流程參數 `windows_eh_protocol_only` 直接執行這些原生實驗，不重新建置 NeverD；它與引擎迴歸涵蓋範圍分開。
 
 `RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
 
@@ -1639,6 +1643,20 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `RegistrationCallNoReturn` 拒絕變更的指令範圍、目標、操作範圍、條件呼叫，以及錯誤架構或格式下的使用。對齊堆疊 PE32 案例同時檢查已獨立證明終止的呼叫和依賴目前證明刪除的普通後繼邊；記憶體證據失效不能重新產生已不存在的普通邊。
 
 `SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
+
+`LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上檢查父返回位址損壞和不相交的父區域變數寫入。只保住被呼叫者的返回位址不能授權一般呼叫。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 與 AArch64 上限制重複肯定及否定查詢的工作量。上下文測試保留繫結值、入口 SP、位寬與零預算的拒絕，並在暫時或重建的可行圖及函式切換後捨棄舊答案。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 也檢查低於邊界的提前停止、哨兵退出、父層級跳過請求索引，以及不同停止層級的合併。實際經過的 finally 函式本體缺失時仍須拒絕；跳過的清理不能提供堆疊框架寫入效果。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 亦涵蓋表外常數上界、無符號高半區及 -2。零步退出保留原層級與框架記憶體事實；動態上界及無效目前層級仍遭拒絕。
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 檢查解析已完成但含錯誤哨兵、循環、前向或越界連結、無效初始層級及處理器/過濾器角色的記錄。初始活動範圍與空表對照案例驗證 EH3/EH4 的合法框架哨兵仍被保留。 超出指標寬度的處理器及過濾器位址也會遭拒，且不發布事實。
+
+原始碼登記狀態求解器對物件借用、catch 物件建構與 local-finally 寫入共用管理區邊界檢查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 與 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 涵蓋 EH3/EH4 對 SavedESP、例外指標與 cookie 槽的讀取、寫入及部分重疊。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 獨立檢查入口框架保存槽，無須依賴後續重新載入才發現覆寫。相鄰一般物件仍可合法借用。
 
 `RAMReservationTests.cpp` 驗證公開寫入記錄的同值及 ABA 寫入、保留切片、位址重用、兄弟映射、回復、取消、故障前已提交寫入和不透明執行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在偏好、向下重定位和核心載入位址檢查具有獨立生命週期的載入事實：還原位元組不會恢復已失效的來源證明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 區分活動 CFG 指標替換與未啟用 CFG 的後援指標保留。
 
