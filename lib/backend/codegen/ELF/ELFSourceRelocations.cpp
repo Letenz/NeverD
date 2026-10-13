@@ -215,7 +215,10 @@ prepareELFSourceRelocations(const BinaryImage &Original,
            Fixup.SpecifierName == "GOTOFF" || Fixup.SpecifierName == "GOT"))
         continue; // The address model encodes these relative to the GOT anchor.
       const unsigned Width = Original.getPointerSize();
-      if (Fixup.Specifier ||
+      const bool AArch64Absolute = Original.Arch == Arch::AArch64 &&
+                                   Fixup.Specifier == 1 &&
+                                   Fixup.SpecifierName == "ABS";
+      if ((Fixup.Specifier && !AArch64Absolute) ||
           Fixup.Kind != (Width == 8 ? llvm::FK_Data_8 : llvm::FK_Data_4) ||
           Fixup.BitWidth != Width * 8)
         return fail("unsupported absolute symbolic field: " + Section.Name +
