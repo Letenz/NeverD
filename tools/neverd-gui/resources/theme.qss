@@ -88,6 +88,8 @@ QTabBar::close-button { image: url(:/neverd/icons/close_small.svg); subcontrol-p
 QTabBar::close-button:hover { background: ${ToolBarHover}; }
 QTabWidget::pane { border: none; }
 QToolTip { background: ${ToolTipBase}; color: ${ToolTipText}; border: 1px solid ${MenuSeparator}; padding: 4px 6px; }
+QProgressBar { background: ${Input}; border: none; border-radius: 2px; max-height: 4px; min-height: 4px; }
+QProgressBar::chunk { background: ${Accent}; border-radius: 2px; }
 QSplitter::handle { background: ${DockSeparator}; width: 1px; height: 1px; }
 QSplitter::handle:hover, QSplitter::handle:pressed { background: ${DockSeparatorHover}; }
 QAbstractScrollArea { border: none; }
