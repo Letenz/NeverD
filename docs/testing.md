@@ -760,6 +760,10 @@ private canaries and source/report/anchor parity. Run the owning Web directory,
 availability and transport suites plus both omission configurations after
 changing this shared source-profile boundary. See the
 [large-source contract](web-passive-report-profile.md#explicit-large-source-selections).
+Run CTest invocations sequentially within the same build directory, especially
+after changing build flags. GoogleTest discovery writes shared generated lists;
+concurrent owning-directory and root runs can duplicate registrations. Check
+the unique names in one generated inventory before reporting case totals.
 `WebSourceFeatures.CapturedClaudeLargeClientUnitsWhenSupplied` additionally
 checks every shipped JS unit in the retained macOS ARM64 package sequentially
 through explicit large parsing, lexical navigation, features and configuration

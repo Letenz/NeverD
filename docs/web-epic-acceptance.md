@@ -106,9 +106,6 @@ no traffic was supplied. A broader 20-module candidate probe returned 16
 bounded reports and four existing byte/parser-budget refusals, all with empty
 stderr. It does not establish full client network reconstruction.
 
-No additional blocking gap was established for the already named #714, #715
-or #718 profiles in this review. Useful follow-up qualification remains:
-
 The explicit `hermes-602befee-large-source-js-v1` follow-up removes the four
 earlier selected byte/parser refusals without changing interactive admission.
 Pinned modules 141/299/415/1452 retain 180,783/185,080/1,165,367/286,849 nodes,
@@ -118,6 +115,9 @@ The whole retained macOS ARM64 corpus now has 2,364 parsed, navigated feature
 inventories with zero parser/feature refusals under explicit large admission.
 This qualifies named syntax navigation and recorded original anchors, not
 runtime requests, effective policy or full dynamic client reconstruction.
+
+No additional blocking gap was established for the already named #714, #715
+or #718 profiles in this review. Useful follow-up qualification remains:
 
 - **#714 real-client navigation:** the named spelling patterns and object-order
   model do not cover arbitrary minified aliases or separate configuration-file

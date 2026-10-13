@@ -3725,3 +3725,30 @@ property receipt is `/tmp/neverd-large-source-full-client.xml`. The original
 temporary full Bun/SEA/pkg/nexe producer-container corpora are absent from this
 host, so their optional tests remain coverage omissions. No proprietary source
 or ignored `superpowers` document is included in the change.
+
+### Final large-source integration
+
+Implementation `cd62989ff` was normally merged with remote `a191a6167`, then
+`e02da11c2`, as `9cf89bcb5`. Incoming native changes require the recorded
+Capstone revision `f5fb7682d`; it was synchronized in this worktree. The Web
+owners remain unchanged apart from an incoming SEA SDK test portability fix.
+All seven owning Web test binaries, engine, CLI, worker and MCP rebuilt in
+Release. Web/JavaScript/ASAR remain ON.
+
+The final owning run passed **796 of 827 unique checks**, with **31 explicit
+skips**, in 50.15 s. Four real large selections and all 2,364 macOS ARM64 feature
+inventories pass, as do the eight fixed Claude platform-package selections.
+Two earlier concurrent CTest invocations raced on GoogleTest discovery files,
+producing duplicate registrations; that run is not counted as additional
+coverage. The generated lists were preserved for diagnosis, regenerated and
+checked for unique names before the final sequential runs. The testing guide
+now records this orchestration constraint.
+
+Final worker/MCP/availability checks passed six of seven cases with the normal
+backend-omission-only skip. Qt Web review passed in 4.06 s. The final CLI report
+for the 4.5 MiB module 415
+retains 141 static rows and is byte-identical to its pre-merge report, with
+unusable external-tool PATH and zero stderr. The 23-capability check, LLVM
+formatter and source-provenance scan of 7,675 files pass. Final receipts use
+`/tmp/neverd-js-continuation-final-*`; missing producer corpora remain the same
+explicit qualification gaps.
