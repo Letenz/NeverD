@@ -296,7 +296,9 @@ const char *neverd_headers_json(neverd_session_t s) {
       session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
       : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
       : (session(s)->path.ends_with("pseudocode-cpp.bin") ||
-         session(s)->path.ends_with("code-edits-cpp.bin"))
+         session(s)->path.ends_with("code-edits-cpp.bin") ||
+         session(s)->path.ends_with("code-folding-cpp.bin") ||
+         session(s)->path.ends_with("local-references-cpp.bin"))
           ? "cpp"
           : "c";
   Json pseudocode = Json::array({"c"});
@@ -970,11 +972,15 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
+      session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
+      session(s)->path.ends_with("local-references-cpp.bin") ||
       session(s)->path.ends_with("tab-sync-paged.bin")) {
     const bool localReferences =
-        session(s)->path.ends_with("local-references.bin");
-    const bool codeFolding = session(s)->path.ends_with("code-folding.bin");
+        session(s)->path.ends_with("local-references.bin") ||
+        session(s)->path.ends_with("local-references-cpp.bin");
+    const bool codeFolding = session(s)->path.ends_with("code-folding.bin") ||
+                             session(s)->path.ends_with("code-folding-cpp.bin");
     const bool paged =
         localReferences || session(s)->path.ends_with("tab-sync-paged.bin");
     std::string full = "#include <stdint.h>\n"

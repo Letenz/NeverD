@@ -1314,10 +1314,14 @@ bool CodeText::findText(const QString &text, bool forward) {
   for (int i = 0; i + 1 < source_.size(); ++i)
     if (source_[i] == '\n')
       starts.append(i + 1);
-  const int current =
-      !loading_ && library_.canFold()
-          ? library_.sourceLineAt(displayPosition(cursorLine_, 0))
-          : cursorLine_;
+  // Search from the row after the cursor's. A summary standing for whole
+  // rows, such as the prelude or a library operation, is the cursor's row;
+  // the hidden body of a block follows its header.
+  int current = cursorLine_;
+  if (!loading_ && library_.canFold() && cursorLine_ < lines_.size())
+    current = library_.sourceLineAt(displayPosition(
+        cursorLine_,
+        forward ? int(lines_[cursorLine_].styled.text.size()) : 0));
   for (int step = 1; step <= starts.size(); ++step) {
     const int index = forward ? current + step : current - step;
     if (index < 0 || index >= starts.size())
