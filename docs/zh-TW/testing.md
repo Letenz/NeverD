@@ -1722,3 +1722,5 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 ```
 
 原生產生器驗證固定 NeverC 提交 `182fd2c5dc`，使用獨立編譯的原程式與目前 NeverD 安裝器。`check_source_patch_hosted_pe_runtime.py` 要求每種架構完成 36 次原生 Windows 觀測，涵蓋 C++ IR/物件/hosted 生命週期，以及例外穿過兩個 hosted 框架的回呼。`check_source_patch_elf_runtime.py` 要求每種架構完成 66 次原生 Linux 觀測，涵蓋 C++ IR/物件/hosted、hosted 例外傳播及九種 Clang 例外情境。回執、製品雜湊與實際主機架構必須相符。這些檢查安裝真實編譯器產物，不表示在 CI 主機執行過 NeverC 編譯器。
+
+原生驗證 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次進程觀測全部通過：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公開原始碼介面產生 C++ IR、普通物件與 C++ hosted DynCode，並驗證例外穿過兩層 NeverC 框架。重放核對目前引擎原始碼和子模組摘要、原件與最終位元組、安裝回執及實際原生主機。macOS ARM64 與 Rosetta x64 在本機通過相同三條 C++ 路徑及兩層例外傳播。Clang FH3 原生驗證 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通過九種例外情境和對照，共各 36 次觀測。

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: f684e44974d11ab73953095844ff651d947f0160044fc4ef826d80e0e9c5dc5d -->
+<!-- i18n-source: 382939d2eb45a68de6f110b936bbf8adee2c705da454ddc07ad950447a57cd94 -->
 
 [← Documentation Index](README.md)
 
@@ -65,11 +65,13 @@ neverd patch app --from-source=replacement.c --compiler=neverc \
 
 | المترجم | الناتج | ملف تنفيذ نظام التشغيل المتحقق |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3 |
 | Clang 22.1.6 | كائن أصلي | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | كائن أصلي | ELF x64 C/C++ مع بيئة Itanium متوافقة |
 | NeverC 3389.1.5 الوضع العادي | LLVM IR | ELF x64 C؛ Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
+| NeverC 3389.1.5 `cpp-core-v2` | LLVM IR / كائن أصلي | ELF / PE / Mach-O x64/ARM64: أعمار الكائنات العادية ضمن مجموعة C++17 |
+| NeverC 3389.1.5 `hosted-v1` | كائن أصلي + حمولة مختومة | ELF / PE / Mach-O x64/ARM64: C / مجموعة C++17، أعمار الكائنات وانتقال الاستثناءات عبر إطارات C |
 
 يعرض الجدول ملفات تشغيل OS المتحقق منها، ولا يضمن كل إصدار أو خيار للمترجم. تقبل مثبتات ELF وPE وMach-O الأصلية المعماريات الأربع. يتطلب GCC برنامج تشغيل ELF مطابقًا ولا ينتج LLVM IR. تفشل بوضوح عمليات النقل المجهولة وTLS والمنشئات العامة عند التحميل وLTO ورموز common/IFUNC والاستيرادات غير المحلولة. يسجل إيصال JSON المترجم والوسائط والربط والعناوين، ويسجل SHA-256 للكائنات الأصلية أيضًا.
 
@@ -110,6 +112,8 @@ neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140
 ## استثناءات C++
 
 تستخدم ELF بيانات FDE/LSDA للمترجم، وتستخدم Mach-O صيغة compact unwind/DWARF. تقبل PE x64/ARM64 جداول FH3 للمترجم مع بيئة MSVC أصلية متوافقة وهويات أنواع متطابقة. قد تحتاج بيانات type-info إلى روابط صريحة. ترفض FH4 وpersonality المخصصة ومصدر SEH وأوضاع CFG/EHCont/XFG النشطة مع الحفاظ على أعلام الحماية الأصلية.
+
+تُرفض حاليًا البرامج الأصلية ELF x86/x64 التي تتطلب IBT؛ فمثبت المصدر لا يوفر بعد قفزة وسيطة تحافظ على ENDBR.
 
 تغطي حالات التنفيذ العودة العادية وcatch الداخلي واستثناءً جديداً يمسكه المستدعي الأصلي واستثناءً يمر من الدالة الأصلية عبر البديل وتنظيف RAII مرة واحدة وإعادة الرمي وإنهاء noexcept والدوال غير المعدلة. يجب أن يسمح موضع الاستدعاء الأصلي بانتشار الاستثناء. لا يعيد التصحيح مسارات catch التي أزالها المترجم حول دالة ثبت أنها لا ترمي.
 
@@ -161,3 +165,5 @@ ctest --test-dir build-source -L \
 اجتاز التحقق من عمليات Windows الأصلية [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) جميع الملاحظات الـ90: 30 لكل من x86 وx64 وARM64، عبر IR المصدر والكائنات المترجمة والكائنات المقدمة. نُفّذ x86/x64 على Windows x64، ونُفّذ ARM64 على `windows-11-arm` باستخدام الصور نفسها بعد التحقق من بصماتها. اجتاز التشغيل نفسه أيضًا جميع الفحوص المتخصصة الـ16 لمسارات PE والكائنات وtrampoline، وجميع فحوص مصفوفة Unicorn الـ143، دون تخطي أي حالة. احتفظ اختبار FH3 بسيناريوهات تشغيل C++ x64 السبعة.
 
 يثبت التحقق الأصلي مراجعة NeverC على `182fd2c5dc` ويستخدم برامج أصلية مترجمة بصورة مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 ملاحظة Windows أصلية لكل معمارية لأعمار كائنات C++ عبر IR والكائنات وhosted، واستثناء يعبر إطارين hosted. ويتطلب `check_source_patch_elf_runtime.py` عدد 66 ملاحظة Linux أصلية لكل معمارية لـ C++ عبر IR والكائنات وhosted وانتقال استثناءات hosted وتسعة سيناريوهات Clang. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية. تثبت هذه الفحوص مخرجات مترجم حقيقية ولا تدعي تشغيل برنامج NeverC التنفيذي على مضيف CI.
+
+نجح التحقق الأصلي [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) في الملاحظات الـ204 كلها: 36 لكل معمارية Windows x64/ARM64 و66 لكل معمارية Linux x64/ARM64. أنتجت واجهة المصدر العامة C++ IR وكائنات عادية وC++ hosted DynCode، واستثناء يعبر إطارين NeverC. يتحقق الإعادة من بصمات المصدر والوحدات الفرعية الحالية والبايتات الأصلية والنهائية والإيصالات والمضيف الأصلي الفعلي. نجحت أيضًا مسارات C++ الثلاثة والانتقال المحلي على macOS ARM64 وRosetta x64. ونجح Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) بصورة منفصلة في تسعة سيناريوهات وضوابطها، بمجموع 36 ملاحظة لكل معمارية Windows x64/ARM64.
