@@ -1,0 +1,43 @@
+{
+  "original_sha256": "d3cf81b06709e739b6c7f865161cd2887caf9814f32f61ec149957d52d8a7ca4",
+  "sha256": "82aa10e1dd8c42e104fb3a1b6a2eb0697835a0397ade164a4f773fc7130c7e9b",
+  "size": 100736,
+  "writes": [
+    {
+      "offset": 32,
+      "data": "eJxjcGAEAACEAEI="
+    },
+    {
+      "offset": 40,
+      "data": "eJxzaAQAAQMAwg=="
+    },
+    {
+      "offset": 56,
+      "data": "eJzjBgAADAAM"
+    },
+    {
+      "offset": 60,
+      "data": "eJxTBAAAIgAi"
+    },
+    {
+      "offset": 2348,
+      "data": "eJwL7GMQAQADBgD0"
+    },
+    {
+      "offset": 70368,
+      "data": "eJyTcHYCAAETAJ4="
+    },
+    {
+      "offset": 70376,
+      "data": "eJyTcGYEAADSAF0="
+    },
+    {
+      "offset": 70384,
+      "data": "eJxLAQAAZQBl"
+    },
+    {
+      "offset": 71312,
+      "data": "eJztnE1oXFUUx++byVebUlPJYjTWFOuiCBmzEBlw4cskixREYgnShTh5mffaGcx8MPMqSeuioIsKIha6GIRKFy6m4iIrmeVAq2YZXRRXko0QXGVVuxmf5809N++9k4xTqCv5/+DO/917z/+e8z53c5UCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/GGLWR8MC29ICdT2gppRI6wb40+3I8nkvZCZ3hOKNWTEcTFdgJ/X5SJdQ4La51u6dHt3sLCe1wHd1U0pdi3y77djne6AEXZtSc3wi3VV5vlc/L6BLHLcXiQ1b+8N3wOLOoF8ws5hPqcpwrfO+Rb0w9PVOslzjfoOuywvUbPXIfBtz3Vb5JRg9v0zMSfKp+6d2w7vcW1e1xpe7cezDbaT8odHo3Fu6ru+oMzd/upguP4nH7afXdXtp6TVlvP0rEj0bx5npY1y8p65OXrZlTsypD/bB9EQTBhXDynVNnp75J3Q2v10vU3qDWorl5MddfZyb91tLPvSB8DNsPe8EHdLxPWifN/NgLviJdJv2W9BZph3SHdI90l/QJ6fRPFLvTC5ZIV0kvU66H1G5S26P231xRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP+GbHOr4jvrpH5Da8kclau+16irbLXme9mr1WvZ9WvlDXeu7PLQQv7inO9cVf25ktMsqay7VaX1tPoNPfOx12iWa9VEp0BzDW/DCQP5qL7hhynL9Ot7m/R7hTo0V3Md31FZr1S40nAqXqHkNqIeLVosFrzNolf3C1T0hqfXKDiNhrOl1zDH4TphKlqyX6BTKRfJX/P7Pzq/zrXebKpssVapeFUaq3pUtMtFcecw/7MS7o8Q/gPfbFsQ7aMQzcexRP88tfGYP9qnQPdfFfEjov+m8G+yf5MHzg3xh/sfPA6CmvG32N/igQs8brYRmFBJ3qU2GcvfZb/ZxyHHJxzujWDF/BnW95Xei8L4n6RtVt2fFRdMXr8PqQWx+jOjNqvuvyjqTwn9iNrfMX+O/Tk21FVUf1odPf/rSl9T42+zv83+NZFfnv9n7M+b+TGbVfd/i/kzx/i/VNHeGiF77N8bS8YZ5P3/XPjVuM2qZVvET4n+HeHvsr/L/vlUMt4W/q+F/+CEzar700Pqv8f+5838SZv1+PgRoW2VfH+j/T70k+aqJHK9H4R/jfOvcf6ceGDl89MV/takzar7w87/V2qnlX42Q6L9Q47PNyH0d2rPxfwdsx/LU/r/5PqNv8v+Lvvl8yL7f6no3QqJ9nfR/YPY9yOe93AdS+QPOD/vznFuSP2jwr/P/n32rw3xnxb+ZX6Tl/lLNSi/YdrSY8ZfYn+J/TJefv9e4PzzYtz45wb44ype0T4tjjDv4VlqF9XR78+JWO1xbp3U/vNiUtZ/ZoBf3dSRtjBI/ytW8vtRz+dZdeRlES/fn9et5DXYYf8O+1dEvLwf/wDhXm3p"
+    }
+  ]
+}
