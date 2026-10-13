@@ -576,7 +576,43 @@ void ChooserView::updateStatus() {
     status_->setText(total == 1 ? tr("1 item") : tr("%n items", "", total));
 }
 
+void ChooserView::enableCommand(ChooserCommand command, bool enabled) {
+  const unsigned bit = 1u << unsigned(command);
+  commands_ = enabled ? commands_ | bit : commands_ & ~bit;
+}
+
+QKeySequence ChooserView::commandKey(ChooserCommand command) {
+#define NEVERD_IDA_CHOOSER_COMMAND(IdaAction, Shortcut, QtShortcut, Command)   \
+  if (command == ChooserCommand::Command)                                      \
+    return QKeySequence(QStringLiteral(QtShortcut), QKeySequence::PortableText);
+#include "IdaActions.def"
+  return {};
+}
+
+std::optional<ChooserCommand>
+ChooserView::commandFor(const QKeySequence &key) const {
+#define NEVERD_IDA_CHOOSER_COMMAND(IdaAction, Shortcut, QtShortcut, Command)   \
+  if ((commands_ & (1u << unsigned(ChooserCommand::Command))) &&               \
+      key == commandKey(ChooserCommand::Command))                              \
+    return ChooserCommand::Command;
+#include "IdaActions.def"
+  return std::nullopt;
+}
+
 bool ChooserView::eventFilter(QObject *object, QEvent *event) {
+  // A list window's own command takes its key before any window-wide one.
+  if (object == table_ && (event->type() == QEvent::ShortcutOverride ||
+                           event->type() == QEvent::KeyPress)) {
+    const auto *pressed = static_cast<QKeyEvent *>(event);
+    if (const auto command =
+            commandFor(QKeySequence(pressed->keyCombination()))) {
+      event->accept();
+      if (event->type() == QEvent::KeyPress)
+        if (const auto address = currentAddress())
+          emit commandRequested(*command, *address);
+      return true;
+    }
+  }
   if (event->type() != QEvent::KeyPress)
     return QWidget::eventFilter(object, event);
   auto *key = static_cast<QKeyEvent *>(event);

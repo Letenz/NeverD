@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>從所選 PDB 檔案載入符號</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>編輯函式(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>變更目前函式的名稱及其屬性</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1469,6 +1477,14 @@ Double-click to go to the declaration.</source>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>摺疊程式碼區塊 (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>符號化簡</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>轉換失敗：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1483,6 +1499,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>反組譯檢視移動時保持顯示此函式</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>最佳化</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>轉換目前函式</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>對此函式進行符號化簡</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>復原 LLVM 控制流程</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM 最佳化</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>基本清理</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2（預設）</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>選擇最佳化階段…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>此函式的 LLVM 最佳化階段</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>選擇純量清理階段。符號化簡另行控制。</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>還原預設原始碼</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>取消轉換</translation>
     </message>
 </context>
 <context>
@@ -2449,6 +2513,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>已依選擇開啟，未載入輸入檔案指定的 PDB</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>已編輯 %1 處的函式</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2857,6 +2925,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>無法將符號檔案儲存到 %1：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>編輯函式</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD 不保存此堆疊框大小</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>函式名稱(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>函式的結束位置由分析決定</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>起始位址(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>結束位址(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>選擇(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>函式色彩</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>預設(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>色彩(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>輸入大小（位元組）</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>區域變數區(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>保存的暫存器(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>只有 x86 函式會自行彈出引數</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>清除的位元組數(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>框架指標差值(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD 不保存此旗標</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>不返回(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>分析將對此函式的每次呼叫視為終止</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>遠函式(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>只有 16 位元 x86 程式碼才有遠函式</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>程式庫函式(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>靜態函式</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>以 BP 為基礎的框架(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP 等於 SP(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>模糊 SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>外聯程式碼</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>確定(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>預設</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
     </message>
 </context>
 </TS>

@@ -78,6 +78,8 @@ struct MockSession {
   std::set<std::uint64_t> absentFunctions;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
+  /// What the user states of a function (neverd_func_edit), by entry.
+  std::map<std::uint64_t, Json> functionAttributes;
   /// The user's data items, as neverd_items_json lists them.
   std::map<std::uint64_t, Json> items;
   /// The user's operand formats by address and operand index.
@@ -1746,24 +1748,105 @@ int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
     return -1;
   }
   state.functionEdits[address] = false;
+  state.functionAttributes.erase(address);
   state.functions = listedFunctions(state.functionEdits, state.imageFunctions,
                                     state.absentFunctions);
   return 0;
 }
+constexpr const char *FunctionAttributeKeys[] = {"noreturn", "library",
+                                                 "static", "color"};
+int neverd_func_edit(neverd_session_t s, neverd_va_t address,
+                     const char *text) {
+  auto &state = *session(s);
+  if (neverd_func_find_by_addr(s, address) < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return -1;
+  }
+  Json row;
+  try {
+    row = Json::parse(text ? text : "");
+  } catch (...) {
+    row = nullptr;
+  }
+  if (!row.is_object()) {
+    state.error = "a function edit is a JSON object";
+    return -1;
+  }
+  Json stated = state.functionAttributes.contains(address)
+                    ? state.functionAttributes[address]
+                    : Json::object();
+  for (const auto &[key, value] : row.items()) {
+    if (std::find(std::begin(FunctionAttributeKeys),
+                  std::end(FunctionAttributeKeys),
+                  key) == std::end(FunctionAttributeKeys)) {
+      state.error = "unknown function attribute \"" + key + "\"";
+      return -1;
+    }
+    if (value.is_null())
+      stated.erase(key);
+    else
+      stated[key] = value;
+  }
+  if (stated.empty())
+    state.functionAttributes.erase(address);
+  else
+    state.functionAttributes[address] = stated;
+  return 0;
+}
+const char *neverd_func_attributes_json(neverd_session_t s,
+                                        neverd_va_t address) {
+  auto &state = *session(s);
+  const int index = neverd_func_find_by_addr(s, address);
+  if (index < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return nullptr;
+  }
+  const Json stated = state.functionAttributes.contains(address)
+                          ? state.functionAttributes[address]
+                          : Json::object();
+  const auto size = static_cast<std::uint64_t>(neverd_func_size(s, index));
+  const char *name = neverd_func_name(s, index);
+  const std::string spelled = name ? name : "";
+  neverd_free_string(name);
+  Json result{{"addr", hexAddress(address)},
+              {"name", spelled},
+              {"start", hexAddress(address)},
+              {"end", hexAddress(address + size)},
+              {"noreturn", stated.value("noreturn", false)},
+              {"library", stated.value("library", false)},
+              {"static", stated.contains("static") ? stated["static"] : Json()},
+              {"color", stated.contains("color") ? stated["color"] : Json()},
+              {"purged_bytes", 0},
+              {"stated", stated}};
+  return copy(result.dump());
+}
 const char *neverd_functions_json(neverd_session_t s) {
-  Json result = Json::array();
+  std::map<std::uint64_t, Json> rows;
   for (const auto &[address, created] : session(s)->functionEdits)
-    result.push_back({{"addr", hexAddress(address)},
-                      {"state", created ? "created" : "deleted"}});
+    rows[address]["state"] = created ? "created" : "deleted";
+  for (const auto &[address, stated] : session(s)->functionAttributes)
+    rows[address].update(stated);
+  Json result = Json::array();
+  for (auto &[address, row] : rows) {
+    row["addr"] = hexAddress(address);
+    result.push_back(std::move(row));
+  }
   return copy(result.dump());
 }
 int neverd_functions_load(neverd_session_t s) {
   try {
     std::map<std::uint64_t, bool> edits;
-    for (const auto &item : read(session(s)->path + ".neverd-functions.json"))
-      edits[parseAddress(item.at("addr").get<std::string>())] =
-          item.at("state").get<std::string>() == "created";
+    std::map<std::uint64_t, Json> attributes;
+    for (const auto &item : read(session(s)->path + ".neverd-functions.json")) {
+      const auto address = parseAddress(item.at("addr").get<std::string>());
+      if (item.contains("state"))
+        edits[address] = item.at("state").get<std::string>() == "created";
+      for (const char *key : FunctionAttributeKeys)
+        if (item.contains(key))
+          attributes[address][key] = item.at(key);
+    }
     session(s)->functionEdits = std::move(edits);
+    session(s)->functionAttributes = std::move(attributes);
     session(s)->functions =
         listedFunctions(session(s)->functionEdits, session(s)->imageFunctions,
                         session(s)->absentFunctions);
