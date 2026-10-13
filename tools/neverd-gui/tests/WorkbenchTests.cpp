@@ -25,6 +25,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialogButtonBox>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
@@ -270,7 +271,7 @@ private slots:
     QCOMPARE(code->lineCount(), 18);
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
 
-    QVERIFY(code->findText(QStringLiteral("v7 = v0"), true));
+    QVERIFY(code->findText(QStringLiteral("v7 = v0"), false));
     const auto target = code->renameTarget();
     QVERIFY(target);
     const auto references = code->localReferences(*target);
@@ -354,6 +355,8 @@ private slots:
     QVERIFY(view->locked());
     assembly->navigate(Base + 0x180);
     QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x180));
     QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
     if (renamed) {
       const auto target = code->renameTarget();
@@ -361,7 +364,7 @@ private slots:
       auto edit = *target;
       edit["address"] = hexAddress(Base + 0x140);
       edit["representation"] = representation;
-      edit["kind"] = "rename";
+      edit["kind"] = "name";
       edit["name"] = "counter";
       bench.session.editCode(edit, bench.session.epoch());
       QTRY_VERIFY(!code->loading() &&
@@ -369,6 +372,7 @@ private slots:
     }
     const auto name =
         renamed ? QStringLiteral("counter") : QStringLiteral("v7");
+    code->setCursorLine(0);
     QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
     const auto target = code->renameTarget();
     QVERIFY(target);
@@ -387,6 +391,7 @@ private slots:
     QVERIFY(references[3].column < references[4].column);
     code->setFolded(true);
     QVERIFY(code->libraryFolded());
+    code->setCursorLine(0);
     QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
     code->setFocus();
     bool sawDialog = false, correctRows = false;
@@ -405,7 +410,9 @@ private slots:
                     model->index(2, 0).data().toInt() == 551 &&
                     model->index(2, 1).data().toInt() == 3;
       table->setCurrentIndex(model->index(2, 0));
-      QTest::keyClick(table, Qt::Key_Return);
+      auto *buttons = dialog->findChild<QDialogButtonBox *>();
+      QVERIFY(buttons);
+      QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
     });
     chooser.start(10);
     QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
@@ -2063,6 +2070,8 @@ private slots:
     const QString link = representation == QLatin1String("source")
                              ? QStringLiteral("function_22")
                              : QStringLiteral("Bar_ctor");
+    if (representation == QLatin1String("llvmc"))
+      QVERIFY(code->findText(QStringLiteral("caller(void)"), true));
     QVERIFY(code->findText(link, true));
     QCOMPARE(code->currentToken(), link);
     QSignalSpy activation(code, &CodeText::nameActivated);

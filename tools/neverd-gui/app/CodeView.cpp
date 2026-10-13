@@ -1408,8 +1408,9 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
                shift);
     return;
   case Qt::Key_End:
-    if (event->modifiers() & Qt::ControlModifier)
-      moveCursor(int(lines_.size()) - 1, 0, shift);
+    if ((event->modifiers() & Qt::ControlModifier) && !lines_.isEmpty())
+      moveCursor(int(lines_.size()) - 1, int(lines_.back().styled.text.size()),
+                 shift);
     else if (cursorLine_ < lines_.size())
       moveCursor(cursorLine_, int(lines_[cursorLine_].styled.text.size()),
                  shift);

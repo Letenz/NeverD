@@ -297,7 +297,9 @@ const char *neverd_headers_json(neverd_session_t s) {
       session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
       : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
       : (session(s)->path.ends_with("pseudocode-cpp.bin") ||
-         session(s)->path.ends_with("code-edits-cpp.bin"))
+         session(s)->path.ends_with("code-edits-cpp.bin") ||
+         session(s)->path.ends_with("code-folding.bin") ||
+         session(s)->path.ends_with("local-references.bin"))
           ? "cpp"
           : "c";
   Json pseudocode = Json::array({"c"});
