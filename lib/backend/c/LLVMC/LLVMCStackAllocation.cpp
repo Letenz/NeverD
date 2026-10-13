@@ -9,7 +9,10 @@
 
 #include "LLVMCStackAllocation.h"
 
+#include "llvm/ADT/SCCIterator.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -24,10 +27,32 @@ namespace {
 
 constexpr llvm::StringLiteral AllocationMarker = "neverd.c.stack-allocation";
 
-bool needsRuntimeAllocation(const llvm::AllocaInst &Allocation) {
+using BlockSet = llvm::SmallPtrSet<const llvm::BasicBlock *, 16>;
+
+/// The blocks one call can run more than once: every block on a CFG cycle,
+/// self-loops and unwind edges included.
+BlockSet repeatingBlocks(const llvm::Function &Function) {
+  BlockSet Blocks;
+  if (Function.isDeclaration())
+    return Blocks;
+  for (auto It = llvm::scc_begin(&Function); !It.isAtEnd(); ++It)
+    if (It.hasCycle())
+      Blocks.insert(It->begin(), It->end());
+  return Blocks;
+}
+
+bool needsRuntimeAllocation(const llvm::AllocaInst &Allocation,
+                            const BlockSet &Repeating) {
   const auto *Count =
       llvm::dyn_cast<llvm::ConstantInt>(Allocation.getArraySize());
-  return !Allocation.isStaticAlloca() || !Count || !Count->isOne();
+  if (!Count || !Count->isOne())
+    return true;
+  // One object outside the entry block lives until the function returns, as
+  // a function-scope C object does, unless its block runs again and needs a
+  // fresh object each time.
+  return !Allocation.isStaticAlloca() &&
+         (Allocation.isUsedWithInAlloca() ||
+          Repeating.contains(Allocation.getParent()));
 }
 
 CStackAllocation allocationShape(const llvm::AllocaInst &Allocation) {
@@ -67,11 +92,12 @@ void validateCStackAllocations(const llvm::Module &Module,
           "C projection input contains a private stack allocation marker");
     if (Only && &Function != Only)
       continue;
+    const BlockSet Repeating = repeatingBlocks(Function);
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
         if (const auto *Allocation =
                 llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
-          if (needsRuntimeAllocation(*Allocation) ||
+          if (needsRuntimeAllocation(*Allocation, Repeating) ||
               Allocation->isSwiftError() || Allocation->isUsedWithInAlloca() ||
               Allocation->getAddressSpace() != 0)
             (void)allocationShape(*Allocation);
@@ -86,13 +112,16 @@ void validateCStackAllocations(const llvm::Module &Module,
 
 void lowerCStackAllocations(llvm::Module &Module, const llvm::Function *Only) {
   llvm::SmallVector<llvm::AllocaInst *, 16> Work;
-  for (auto &Function : Module)
-    if (!Only || &Function == Only)
-      for (auto &Block : Function)
-        for (auto &Instruction : Block)
-          if (auto *Allocation = llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
-            if (needsRuntimeAllocation(*Allocation))
-              Work.push_back(Allocation);
+  for (auto &Function : Module) {
+    if (Only && &Function != Only)
+      continue;
+    const BlockSet Repeating = repeatingBlocks(Function);
+    for (auto &Block : Function)
+      for (auto &Instruction : Block)
+        if (auto *Allocation = llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
+          if (needsRuntimeAllocation(*Allocation, Repeating))
+            Work.push_back(Allocation);
+  }
   if (Work.empty())
     return;
   const unsigned Bits = Module.getDataLayout().getPointerSizeInBits(0);

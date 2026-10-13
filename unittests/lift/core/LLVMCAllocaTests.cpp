@@ -495,6 +495,57 @@ int main(void) {
 )");
 }
 
+TEST(LLVMCAlloca, NonEntryUnitAllocationOutsideACycleStaysOneObject) {
+  // A block that runs at most once per call allocates one object for the
+  // rest of the call, which is what a function-scope C object provides.
+  constexpr llvm::StringLiteral IR = R"(
+target datalayout = "e-p:64:64-i64:64-i128:128-n8:16:32:64-S128"
+declare void @observe_once(ptr)
+define i64 @branch_storage(i32 %take) {
+entry:
+  %slow.path = icmp ne i32 %take, 0
+  br i1 %slow.path, label %slow, label %exit
+slow:
+  %storage = alloca i32, align 16
+  store i32 23, ptr %storage, align 4
+  call void @observe_once(ptr %storage)
+  %value = load i32, ptr %storage, align 4
+  %wide = zext i32 %value to i64
+  br label %exit
+exit:
+  %result = phi i64 [ %wide, %slow ], [ 7, %entry ]
+  ret i64 %result
+}
+)";
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.EmitIncludes = false;
+  std::string Text;
+  llvm::raw_string_ostream Stream(Text);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, Stream, Options));
+  EXPECT_EQ(Text.find("__builtin_alloca("), std::string::npos) << Text;
+  comparePrograms(IR, R"(
+extern uint64_t original_branch_storage(uint32_t);
+static unsigned bad, seen;
+void observe_once(void *storage) {
+  if (((uintptr_t)storage & 15) != 0 || *(uint32_t*)storage != 23) bad=1;
+  ++seen;
+  *(uint32_t*)storage=41;
+}
+int main(void) {
+  uint64_t expected=original_branch_storage(1)+original_branch_storage(0);
+  uint64_t actual=branch_storage(1)+branch_storage(0);
+  return bad || seen != 2 || actual != expected;
+}
+)",
+                  /*PreserveTypes=*/false, /*SelectedFunction=*/{},
+                  /*RequireRuntimeAllocation=*/false);
+}
+
 TEST(LLVMCAlloca, UnsupportedStackContractsRefuseBeforeDeadCodeRemoval) {
   const char *Inputs[] = {
       R"(target datalayout = "e-p:64:64"
