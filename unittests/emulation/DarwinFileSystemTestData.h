@@ -262,5 +262,80 @@ inline std::array<uint8_t, 4400> createdFileSystemRecords() {
   return R;
 }
 
+inline DarwinFileOptions mountEnumerationOptions() {
+  DarwinFileOptions O;
+  const auto S = fileSystemSnapshot();
+  O.FileSystemEnumeration.emplace().Mounts = {{S, DarwinFileSystemSnapshot{}},
+                                              {DarwinFileSystemSnapshot{}, S},
+                                              {S, DarwinFileSystemSnapshot{}}};
+  return O;
+}
+inline std::string mountEnumerationFilesJSON() {
+  const std::string S = FileSystemSnapshotJSON;
+  const std::string Z = R"({"block_size":0,"io_size":0,"blocks":0,
+    "free_blocks":0,"available_blocks":0,"files":0,"free_files":0,
+    "filesystem_id":[0,0],"owner":0,"type":0,"flags":0,"subtype":0,
+    "type_name":"","mount_point":"","mounted_from":"","extended_flags":0})";
+  return "{\"files\":[],\"filesystem_enumeration\":{\"mounts\":[{\"cached\":" +
+         S + ",\"refreshed\":" + Z + "},{\"cached\":" + Z +
+         ",\"refreshed\":" + S + "},{\"cached\":" + S + ",\"refreshed\":" + Z +
+         "}]}}";
+}
+inline std::string mountEnumerationOutput() {
+  const auto Literal = fileSystemRecord();
+  std::string Result;
+  for (bool Refreshed : {false, true, true}) {
+    std::array<uint8_t, 6536> B{};
+    std::fill_n(B.begin(), 16, 0xa5);
+    std::fill_n(B.end() - 16, 16, 0xa5);
+    for (unsigned I = 0; I != 3; ++I)
+      if ((I == 1) == Refreshed)
+        std::copy(Literal.begin() + 16, Literal.end() - 16,
+                  B.begin() + 16 + I * 2168);
+    Result.append(reinterpret_cast<const char *>(B.data()), B.size());
+  }
+  return Result + "M";
+}
+struct MountEnumerationService {
+  uint64_t Number, Value;
+  bool Error;
+  std::array<std::optional<uint64_t>, 6> Arguments;
+};
+inline std::vector<MountEnumerationService>
+mountEnumerationServices(bool Virtual) {
+  std::vector<MountEnumerationService> R;
+  const auto Call = [&](uint64_t Number, std::optional<uint64_t> Out,
+                        uint64_t Size, uint64_t Flags, uint64_t Value,
+                        bool Error = false) {
+    R.push_back({Number,
+                 Value,
+                 Error,
+                 {Out, Size, Flags, UINT64_MAX, UINT64_MAX, UINT64_MAX}});
+  };
+  const auto Emit = [&] {
+    if (Virtual)
+      R.push_back({4, 6536, false, {1, std::nullopt, 6536, 0, 0, 0}});
+  };
+  Call(347, 0, 0, 2, 3);
+  Call(347, 0, UINT64_MAX, 0, 3);
+  Call(347, 1, 0, 0, 0);
+  Call(347, 1, 2167, 4, 0);
+  Call(347, std::nullopt, 4335, 2, 1);
+  Call(347, std::nullopt, 4336, 2, 2);
+  Call(347, std::nullopt, 6504, 2, 3);
+  Emit();
+  Call(347, 1, 0xffffffff, 2, 14, true);
+  Call(347, std::nullopt, 6504, 1, 3);
+  Emit();
+  Call(347, std::nullopt, 6504, 2, 3);
+  Emit();
+  for (uint64_t H : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL})
+    Call(H | 347, std::nullopt, H | 4336, H | 2, 2);
+  Call(347, 1, 2168, 1, 14, true);
+  Call(347, 0, 2168, 2, 3);
+  R.push_back({4, 1, false, {1, std::nullopt, 1, 0, 0, 0}});
+  return R;
+}
+
 } // namespace neverd::emulation::darwin_test
 #endif

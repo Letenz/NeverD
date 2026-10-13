@@ -2890,6 +2890,54 @@ TEST_P(DarwinProcess,
   }
 }
 
+TEST_P(DarwinProcess, MountEnumerationKeepsOrderedSnapshotsAndRefreshCache) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinTime.reset();
+  Options.DarwinSystem.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (bool Virtual : {false, true}) {
+    const auto Wanted = darwin_test::mountEnumerationServices(Virtual);
+    ASSERT_EQ(Wanted.size(), Virtual ? 19u : 16u);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = darwin_test::mountEnumerationOptions();
+      auto R = run(Virtual ? "virtual-mount-enumeration" : "mount-enumeration");
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, Virtual ? 53 : 52);
+      EXPECT_EQ(R->StandardOutput,
+                Virtual ? darwin_test::mountEnumerationOutput() : "M");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        for (unsigned J = 0; J != 6; ++J)
+          if (W.Arguments[J])
+            EXPECT_EQ(E.Arguments[J], *W.Arguments[J]);
+      }
+    }
+  }
+  Options.DarwinFiles.emplace();
+  auto R = run("mount-enumeration");
+  ASSERT_TRUE(bool(R));
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R->Diagnostic,
+            "Darwin mount enumeration environment is not configured");
+  EXPECT_TRUE(R->StandardOutput.empty());
+  ASSERT_EQ(R->Services.size(), 1u);
+  EXPECT_FALSE(R->Services[0].Result);
+  EXPECT_FALSE(R->Services[0].Error);
+}
+
 TEST_P(DarwinProcess, TimestampMutationsKeepExplicitClockAndObjectAuthority) {
   Options.InstructionQuantum = 1024;
   Options.Limits.TimeoutMicroseconds = 5000000;

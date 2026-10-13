@@ -231,6 +231,7 @@ NEVERD_DARWIN_SERVICE(Utimes, 138, Int)
 NEVERD_DARWIN_SERVICE(Futimes, 139, Int)
 NEVERD_DARWIN_SERVICE(Statfs64, 345, Int)
 NEVERD_DARWIN_SERVICE(Fstatfs64, 346, Int)
+NEVERD_DARWIN_SERVICE(Getfsstat64, 347, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
@@ -560,6 +561,14 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin filesystem observation requires a known regular or directory vnode")
 NEVERD_DARWIN_DIAGNOSTIC(FileSystemProvider,
                          "Darwin object filesystem snapshot is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemEnumerationOption,
+    "Darwin mount table requires complete bounded snapshots")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemEnumerationEnvironment,
+    "Darwin mount enumeration environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemRefresh,
+                         "Darwin mount refresh provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileSystemPartialOutput,
                          "Darwin partial filesystem output is not implemented")
 NEVERD_DARWIN_DIAGNOSTIC(FileTimestampInput,

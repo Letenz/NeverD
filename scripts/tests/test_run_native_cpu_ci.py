@@ -531,7 +531,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 87 * len(platforms))
+                    self.assertEqual(len(required), 88 * len(platforms))
                     for platform in platforms:
                         self.assertIn(
                             "Transports/DarwinProcess."

@@ -298,6 +298,8 @@ private:
   uint64_t NextCreatedInode = 0;
   uint16_t CurrentUmask = 0;
   std::optional<uint64_t> StorageUsed;
+  /// Selected immutable snapshots; the selection itself belongs to one process.
+  std::vector<const DarwinFileSystemSnapshot *> MountCache;
   uint32_t FixedEntries = 0;
   uint32_t AttributeSlots = 0;
   std::shared_ptr<DirectoryNode> CurrentDirectory;
@@ -342,6 +344,8 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   fileSystemStatus(ServiceKind Service, const ProcessServiceEvent &Event,
                    ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  enumerateFileSystems(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

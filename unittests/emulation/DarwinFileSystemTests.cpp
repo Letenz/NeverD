@@ -551,6 +551,245 @@ TEST_P(DarwinFileSystemTest,
   const auto FD = open("/link", 0x200000);
   refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemKind);
 }
+class DarwinMountEnumerationTest : public DarwinFileSystemTest {
+protected:
+  static constexpr auto K = ServiceKind::Getfsstat64;
+  using Buffer = std::array<uint8_t, 3 * 2168 + 32>;
+  void SetUp() override {
+    DarwinFileSystemTest::SetUp();
+    const auto S = darwin_test::fileSystemSnapshot();
+    Options->FileSystemEnumeration.emplace().Mounts = {
+        {S, DarwinFileSystemSnapshot{}},
+        {DarwinFileSystemSnapshot{}, S},
+        {S, DarwinFileSystemSnapshot{}}};
+    reset();
+  }
+  uint64_t output() { return Base + Page + 16; }
+  void clear() {
+    Buffer B;
+    B.fill(0xa5);
+    llvm::cantFail(Space->write(output() - 16, B));
+  }
+  Buffer bytes() {
+    Buffer B;
+    llvm::cantFail(Space->read(output() - 16, B));
+    return B;
+  }
+  Buffer expected(std::initializer_list<bool> Records) {
+    Buffer B;
+    B.fill(0xa5);
+    const auto S = darwin_test::fileSystemRecord();
+    auto Out = B.begin() + 16;
+    for (bool Nonzero : Records) {
+      if (Nonzero)
+        std::copy(S.begin() + 16, S.end() - 16, Out);
+      else
+        std::fill_n(Out, 2168, 0);
+      Out += 2168;
+    }
+    return B;
+  }
+  void cache(std::initializer_list<bool> Records) {
+    clear();
+    EXPECT_EQ(ok(K, {output(), 6504, 2}), Records.size());
+    EXPECT_EQ(bytes(), expected(Records));
+  }
+};
+TEST_P(DarwinMountEnumerationTest, UnknownAndEmptyTablesRemainDistinct) {
+  Options->FileSystemEnumeration.reset();
+  reset();
+  refused(K, {0, 0, 2}, diagnostic::FileSystemEnumerationEnvironment);
+  refused(K, {1, 0, 2}, diagnostic::FileSystemEnumerationEnvironment);
+  Options.reset();
+  reset();
+  refused(K, {0, 0, 2}, diagnostic::FileSystemEnumerationEnvironment);
+  Options.emplace().FileSystemEnumeration.emplace();
+  reset();
+  EXPECT_EQ(ok(K, {0, UINT64_MAX, UINT64_MAX}), 0u);
+  EXPECT_EQ(ok(K, {UINT64_MAX, UINT64_MAX, UINT64_MAX}), 0u);
+}
+TEST_P(DarwinMountEnumerationTest, CountsAndShortBuffersNeedNoRefreshOrAccess) {
+  for (auto &M : Options->FileSystemEnumeration->Mounts)
+    M.Refreshed.reset();
+  reset();
+  for (uint64_t Size :
+       {0ULL, 1ULL, 2167ULL, 2168ULL, 0x80000000ULL, 0xffffffffULL, UINT64_MAX})
+    for (uint64_t Flags : {0ULL, 1ULL, 2ULL, 4ULL, UINT64_MAX})
+      EXPECT_EQ(ok(K, {0, Size, Flags}), 3u);
+  for (uint64_t Size : {0ULL, 1ULL, 2167ULL, 0x1234567800000000ULL})
+    EXPECT_EQ(ok(K, {UINT64_MAX, Size, 0}), 0u);
+  cache({true, false, true});
+  refused(K, {1, 2168, 0}, diagnostic::FileSystemRefresh);
+}
+TEST_P(DarwinMountEnumerationTest,
+       OrderedDuplicatesSignedCapacityAndHighCarriers) {
+  for (uint64_t High : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL})
+    for (const auto &[Size, Count] :
+         std::vector<std::pair<uint32_t, size_t>>{{0, 0},
+                                                  {2167, 0},
+                                                  {2168, 1},
+                                                  {4335, 1},
+                                                  {4336, 2},
+                                                  {6504, 3},
+                                                  {INT32_MAX, 3},
+                                                  {0x80000000u, 3},
+                                                  {UINT32_MAX, 3}}) {
+      clear();
+      EXPECT_EQ(ok(K, {output(), High | Size, High | 2}), Count);
+      EXPECT_EQ(bytes(), Count == 0   ? expected({})
+                         : Count == 1 ? expected({true})
+                         : Count == 2 ? expected({true, false})
+                                      : expected({true, false, true}));
+    }
+}
+TEST_P(DarwinMountEnumerationTest, RefreshFlagPrecedenceCacheAndProcessReset) {
+  for (uint64_t High : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL})
+    for (uint32_t Flags :
+         {0u, 1u, 2u, 3u, 4u, 6u, 7u, 0x80000000u, 0x80000002u, UINT32_MAX}) {
+      reset();
+      clear();
+      EXPECT_EQ(ok(K, {output(), 6504, High | Flags}), 3u);
+      const bool Cached = Flags == 2 || Flags == 0x80000002u;
+      EXPECT_EQ(bytes(), Cached ? expected({true, false, true})
+                                : expected({false, true, false}));
+      if (Cached)
+        cache({true, false, true});
+      else
+        cache({false, true, false});
+      EXPECT_EQ(Options->FileSystemEnumeration->Mounts[0].Cached.BlockSize,
+                0x10203040u);
+    }
+  reset();
+  cache({true, false, true});
+}
+TEST_P(DarwinMountEnumerationTest, TruncatedRefreshTouchesOnlyCopiedMounts) {
+  clear();
+  EXPECT_EQ(ok(K, {output(), 4335, 1}), 1u);
+  EXPECT_EQ(bytes(), expected({false}));
+  cache({false, false, true});
+}
+TEST_P(DarwinMountEnumerationTest, MissingLaterRefreshRetainsEarlierEffects) {
+  Options->FileSystemEnumeration->Mounts[1].Refreshed.reset();
+  reset();
+  clear();
+  refused(K, {output(), 6504, 1}, diagnostic::FileSystemRefresh);
+  EXPECT_EQ(bytes(), expected({false}));
+  cache({false, false, true});
+}
+TEST_P(DarwinMountEnumerationTest, CompleteFaultRefreshesCurrentMountFirst) {
+  for (uint64_t Address : {uint64_t(1), value::UserLimit, UINT64_MAX}) {
+    reset();
+    error(K, {Address, 6504, 1}, 14);
+    cache({false, false, true});
+  }
+}
+TEST_P(DarwinMountEnumerationTest, LaterFaultPreservesCopiesAndRefreshes) {
+  const auto Address = Base + Page * 4 - 2168;
+  std::array<uint8_t, 2168> B;
+  B.fill(0xa5);
+  llvm::cantFail(Space->write(Address, B));
+  error(K, {Address, 6504, 1}, 14);
+  llvm::cantFail(Space->read(Address, B));
+  EXPECT_EQ(B, (std::array<uint8_t, 2168>{}));
+  cache({false, true, true});
+}
+TEST_P(DarwinMountEnumerationTest, PartialRecordStopsBeforeItsEffects) {
+  for (bool Later : {false, true}) {
+    reset();
+    const size_t Size = 128 + (Later ? 2168 : 0);
+    const auto Address = Base + Page * 4 - Size;
+    std::vector<uint8_t> B(Size, 0xa5), Expected = B;
+    llvm::cantFail(Space->write(Address, B));
+    refused(K, {Address, 6504, 1}, diagnostic::FileSystemPartialOutput);
+    llvm::cantFail(Space->read(Address, B));
+    if (Later)
+      std::fill_n(Expected.begin(), 2168, 0);
+    EXPECT_EQ(B, Expected);
+    if (Later)
+      cache({false, false, true});
+    else
+      cache({true, false, true});
+  }
+}
+TEST_P(DarwinMountEnumerationTest, ObjectSnapshotsRemainIndependent) {
+  const auto FD = open();
+  clear();
+  EXPECT_EQ(ok(K, {output(), 6504, 1}), 3u);
+  EXPECT_EQ(capture(FD), darwin_test::fileSystemRecord());
+  FDRoute = true;
+  EXPECT_EQ(capture(FD), darwin_test::fileSystemRecord());
+  cache({false, true, false});
+}
+TEST(DarwinMountEnumerationOptions, EntryAndSnapshotBytesShareExistingLimits) {
+  DarwinFileOptions O;
+  auto &Mounts = O.FileSystemEnumeration.emplace().Mounts;
+  Mounts.resize(256);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  Mounts.emplace_back();
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  Mounts.pop_back();
+  O.Files["/data"] = {};
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  Mounts.resize(1);
+  Mounts[0].Refreshed.emplace();
+  O.Files["/data"].resize(darwin_file_limits::Bytes - 2 * 2168 - 6);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/data"].push_back(0);
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  Mounts[0].Refreshed.reset();
+  O.Files["/data"].resize(darwin_file_limits::Bytes - 2168 - 6);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+TEST(DarwinMountEnumerationOptions,
+     BothSnapshotsUseStrictNamesAndQueryIsolation) {
+  for (bool Refreshed : {false, true})
+    for (unsigned I = 0; I != 5; ++I) {
+      DarwinFileOptions O;
+      auto &M = O.FileSystemEnumeration.emplace().Mounts.emplace_back();
+      M.Refreshed.emplace();
+      auto &S = Refreshed ? *M.Refreshed : M.Cached;
+      switch (I) {
+      case 0:
+        S.TypeName = std::string(16, 'x');
+        break;
+      case 1:
+        S.MountPoint = std::string(1024, 'x');
+        break;
+      case 2:
+        S.MountedFrom = std::string(1024, 'x');
+        break;
+      case 3:
+        S.TypeName = std::string("a\0b", 3);
+        break;
+      case 4:
+        S.MountPoint = std::string(1, char(0xff));
+        break;
+      }
+      auto E = validateFileOptions(O);
+      EXPECT_TRUE(bool(E));
+      llvm::consumeError(std::move(E));
+    }
+  for (auto Domain : {DarwinFileAuthorization::StaticOwnerQueries,
+                      DarwinFileAuthorization::StaticOrdinaryQueries}) {
+    DarwinFileOptions O;
+    O.Authorization = Domain;
+    O.FileSystemEnumeration.emplace();
+    auto E = validateFileOptions(O);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+}
+INSTANTIATE_TEST_SUITE_P(Page, DarwinMountEnumerationTest,
+                         testing::Values(std::make_tuple(uint64_t(4096), false),
+                                         std::make_tuple(uint64_t(16384),
+                                                         false)));
+
 INSTANTIATE_TEST_SUITE_P(PageAndRoute, DarwinFileSystemTest,
                          testing::Combine(testing::Values(uint64_t(4096),
                                                           uint64_t(16384)),

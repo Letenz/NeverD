@@ -131,9 +131,10 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
        Options.OwnershipMutations || Options.TimestampMutations ||
-       Options.FileSystemObservations || Options.AdvisoryLocks ||
-       Options.Synchronization || Options.DataSynchronization ||
-       Options.FullSynchronization || Options.BarrierSynchronization))
+       Options.FileSystemObservations || Options.FileSystemEnumeration ||
+       Options.AdvisoryLocks || Options.Synchronization ||
+       Options.DataSynchronization || Options.FullSynchronization ||
+       Options.BarrierSynchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -420,6 +421,21 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
         return E;
     }
   }
+  if (Options.FileSystemEnumeration) {
+    const auto &Mounts = Options.FileSystemEnumeration->Mounts;
+    if (Mounts.size() > limits::Files - Entries)
+      return failure(diagnostic::FileOptionsLimit);
+    Entries += Mounts.size();
+    for (const auto &Mount : Mounts) {
+      if (!validFileSystemSnapshot(Mount.Cached) ||
+          (Mount.Refreshed && !validFileSystemSnapshot(*Mount.Refreshed)))
+        return failure(diagnostic::FileSystemEnumerationOption);
+      const uint64_t Bytes = 2168 * (1 + unsigned(bool(Mount.Refreshed)));
+      if (Bytes > limits::Bytes - Total)
+        return failure(diagnostic::FileOptionsLimit);
+      Total += Bytes;
+    }
+  }
   const auto AdmitObjectProvider = [&](const auto &Environment,
                                        const char *Reason) -> llvm::Error {
     if (auto E = AdmitCreatedRegularProvider(Environment))
@@ -676,6 +692,9 @@ DarwinFiles::DarwinFiles(GuestMemory &Memory,
   Descriptors.emplace(2, Descriptor{std::make_shared<Description>(
                              Description{Kind::Error, {}})});
   Descriptors.at(1).Open->Flags = Descriptors.at(2).Open->Flags = OpenWriteOnly;
+  if (Options && Options->FileSystemEnumeration)
+    for (const auto &Mount : Options->FileSystemEnumeration->Mounts)
+      MountCache.push_back(&Mount.Cached);
 }
 uint32_t DarwinFiles::limit() const {
   return Options ? Options->DescriptorLimit : limits::DefaultDescriptors;
@@ -2929,6 +2948,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return synchronize(SynchronizationKind::Data, Event, Result);
   if (Service == ServiceKind::Utimes || Service == ServiceKind::Futimes)
     return changeTimes(Service, Event, Result, Time);
+  if (Service == ServiceKind::Getfsstat64)
+    return enumerateFileSystems(Event, Result);
   if (Service == ServiceKind::Statfs64 || Service == ServiceKind::Fstatfs64)
     return fileSystemStatus(Service, Event, Result);
   if (Service == ServiceKind::Flock)

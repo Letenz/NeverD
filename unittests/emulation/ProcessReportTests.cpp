@@ -184,6 +184,206 @@ TEST(ProcessReport,
   }
 }
 
+TEST(ProcessReport,
+     DarwinMountEnumerationPreservesOrderDuplicatesAndOptionalRefresh) {
+  auto S =
+      llvm::cantFail(llvm::json::parse(darwin_test::FileSystemSnapshotJSON));
+  auto Z = S;
+  for (auto &[K, V] : *Z.getAsObject()) {
+    if (K == "type_name" || K == "mount_point" || K == "mounted_from")
+      V = "";
+    else if (K == "filesystem_id")
+      V = llvm::json::Array{0, 0};
+    else
+      V = 0;
+  }
+  auto Parse = [&](llvm::json::Array Mounts) {
+    return processOptionsFromJSON(
+        llvm::formatv(
+            "{0}",
+            llvm::json::Value(llvm::json::Object{
+                {"darwin_files",
+                 llvm::json::Object{
+                     {"files", llvm::json::Array{}},
+                     {"filesystem_enumeration",
+                      llvm::json::Object{{"mounts", std::move(Mounts)}}}}}}))
+            .str());
+  };
+  auto P = Parse(
+      llvm::json::Array{llvm::json::Object{{"cached", S}, {"refreshed", Z}},
+                        llvm::json::Object{{"cached", Z}, {"refreshed", S}},
+                        llvm::json::Object{{"cached", S}}});
+  ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+  const auto &M = P->DarwinFiles->FileSystemEnumeration->Mounts;
+  ASSERT_EQ(M.size(), 3u);
+  ASSERT_TRUE(M[0].Refreshed);
+  ASSERT_TRUE(M[1].Refreshed);
+  EXPECT_FALSE(M[2].Refreshed);
+  for (const auto *E : {&M[0].Cached, &*M[1].Refreshed, &M[2].Cached}) {
+    EXPECT_EQ(E->BlockSize, 0x10203040u);
+    EXPECT_EQ(E->IOSize, -4096);
+    EXPECT_EQ(E->Blocks, 0xfedcba9876543210ULL);
+    EXPECT_EQ(E->FreeBlocks, 0x0102030405060708ULL);
+    EXPECT_EQ(E->AvailableBlocks, 0u);
+    EXPECT_EQ(E->Files, UINT64_MAX);
+    EXPECT_EQ(E->FreeFiles, 9u);
+    EXPECT_EQ(E->FileSystemID, (std::array<int32_t, 2>{-1, INT32_MIN}));
+    EXPECT_EQ(E->Owner, 0xfffffffeu);
+    EXPECT_EQ(E->Type, 26u);
+    EXPECT_EQ(E->Flags, 0x01020304u);
+    EXPECT_EQ(E->Subtype, 7u);
+    EXPECT_EQ(E->TypeName, "virtfs");
+    EXPECT_EQ(E->MountPoint, "/虚拟");
+    EXPECT_EQ(E->MountedFrom, "neverd:declared");
+    EXPECT_EQ(E->ExtendedFlags, 0x87654321u);
+  }
+  for (const auto *E : {&*M[0].Refreshed, &M[1].Cached}) {
+    EXPECT_EQ(E->BlockSize, 0u);
+    EXPECT_EQ(E->Files, 0u);
+    EXPECT_EQ(E->TypeName, "");
+    EXPECT_EQ(E->FileSystemID, (std::array<int32_t, 2>{0, 0}));
+  }
+  EXPECT_FALSE(P->DarwinFiles->FileSystemObservations);
+  auto Empty = Parse(llvm::json::Array{});
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_TRUE(Empty->DarwinFiles->FileSystemEnumeration->Mounts.empty());
+}
+TEST(ProcessReport,
+     DarwinMountEnumerationRejectsMalformedTablesAndBothRecords) {
+  const auto S =
+      llvm::cantFail(llvm::json::parse(darwin_test::FileSystemSnapshotJSON));
+  auto Reject = [&](llvm::json::Value Enumeration) {
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}",
+                      llvm::json::Value(llvm::json::Object{
+                          {"darwin_files",
+                           llvm::json::Object{{"files", llvm::json::Array{}},
+                                              {"filesystem_enumeration",
+                                               std::move(Enumeration)}}}}))
+            .str());
+    EXPECT_FALSE(bool(P));
+    if (!P)
+      EXPECT_NE(llvm::toString(P.takeError()),
+                "invalid darwin_files option: darwin_files");
+  };
+  for (const char *Bad : {"null", "[]", "{}", R"({"mounts":null})",
+                          R"({"mounts":{}})", R"({"mounts":[],"extra":0})",
+                          R"({"mounts":[null]})", R"({"mounts":[{}]})"})
+    Reject(llvm::cantFail(llvm::json::parse(Bad)));
+  for (auto Entry : {llvm::json::Object{{"refreshed", S}},
+                     llvm::json::Object{{"cached", S}, {"extra", 0}},
+                     llvm::json::Object{{"cached", S}, {"refreshed", nullptr}}})
+    Reject(llvm::json::Object{{"mounts", llvm::json::Array{std::move(Entry)}}});
+  const char *Keys[] = {"block_size",
+                        "io_size",
+                        "blocks",
+                        "free_blocks",
+                        "available_blocks",
+                        "files",
+                        "free_files",
+                        "filesystem_id",
+                        "owner",
+                        "type",
+                        "flags",
+                        "subtype",
+                        "type_name",
+                        "mount_point",
+                        "mounted_from",
+                        "extended_flags"};
+  for (const char *Which : {"cached", "refreshed"})
+    for (unsigned I = 0; I != 26; ++I) {
+      SCOPED_TRACE(llvm::formatv("{0}/{1}", Which, I).str());
+      auto Record = S;
+      auto &O = *Record.getAsObject();
+      if (I < 16)
+        O.erase(Keys[I]);
+      else
+        switch (I) {
+        case 16:
+          O["extra"] = 0;
+          break;
+        case 17:
+          O["block_size"] = "4294967296";
+          break;
+        case 18:
+          O["io_size"] = "-2147483649";
+          break;
+        case 19:
+          O["blocks"] = "-1";
+          break;
+        case 20:
+          O["files"] = "18446744073709551616";
+          break;
+        case 21:
+          O["filesystem_id"] = llvm::json::Array{0};
+          break;
+        case 22:
+          O["filesystem_id"] = llvm::json::Array{0, "2147483648"};
+          break;
+        case 23:
+          O["type_name"] = std::string(16, 'x');
+          break;
+        case 24:
+          O["mounted_from"] = std::string("a\0b", 3);
+          break;
+        case 25:
+          O["owner"] = true;
+          break;
+        }
+      auto Entry = llvm::json::Object{{"cached", S}, {"refreshed", S}};
+      Entry[Which] = std::move(Record);
+      Reject(
+          llvm::json::Object{{"mounts", llvm::json::Array{std::move(Entry)}}});
+    }
+  llvm::json::Array Excess;
+  for (unsigned I = 0; I != 257; ++I)
+    Excess.push_back(llvm::json::Object{{"cached", S}});
+  Reject(llvm::json::Object{{"mounts", std::move(Excess)}});
+}
+TEST(ProcessReport,
+     DarwinMountEnumerationSharesCatalogueAndClosesStaticQueries) {
+  for (const char *Domain :
+       {"static-owner-queries", "static-ordinary-queries"}) {
+    auto P = processOptionsFromJSON(
+        llvm::formatv(
+            "{{\"darwin_files\":{{\"files\":[],\"authorization\":\"{0}\","
+            "\"filesystem_enumeration\":{{\"mounts\":[]}}}}}}",
+            Domain)
+            .str());
+    EXPECT_FALSE(bool(P));
+    if (!P)
+      EXPECT_NE(llvm::toString(P.takeError()),
+                "invalid darwin_files option: darwin_files");
+  }
+  const auto S =
+      llvm::cantFail(llvm::json::parse(darwin_test::FileSystemSnapshotJSON));
+  llvm::json::Array Mounts;
+  for (unsigned I = 0; I != 100; ++I)
+    Mounts.push_back(llvm::json::Object{{"cached", S}});
+  auto F =
+      llvm::json::Object{{"files", llvm::json::Array{}},
+                         {"filesystem_enumeration",
+                          llvm::json::Object{{"mounts", std::move(Mounts)}}}};
+  // Exercise the shared 256-entry catalogue without exceeding the separate
+  // 64KiB public JSON envelope with 256 complete sixteen-field records.
+  for (unsigned I = 0; I != 156; ++I)
+    F.getArray("files")->push_back(llvm::json::Object{
+        {"path", "/f" + std::to_string(I)}, {"bytes_hex", ""}});
+  for (bool File : {false, true}) {
+    if (File)
+      F.getArray("files")->push_back(
+          llvm::json::Object{{"path", "/extra"}, {"bytes_hex", ""}});
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", llvm::json::Object(F)}}))
+            .str());
+    EXPECT_EQ(bool(P), !File);
+    if (!P)
+      EXPECT_NE(llvm::toString(P.takeError()),
+                "invalid darwin_files option: darwin_files");
+  }
+}
+
 TEST(ProcessReport, DarwinTimestampDeclarationUsesStrictSharedTimedObjects) {
   for (bool Text : {false, true}) {
     auto Files =

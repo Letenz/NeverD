@@ -356,6 +356,76 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     }
     return llvm::Error::success();
   };
+  auto ReadFileSystemSnapshot =
+      [&](const llvm::json::Value &Value,
+          llvm::StringRef Name) -> llvm::Expected<DarwinFileSystemSnapshot> {
+    const auto *Record = Value.getAsObject();
+    if (!Record || Record->size() != 16 || Remaining < 2168)
+      return invalid(Name);
+    DarwinFileSystemSnapshot Snapshot;
+    const auto Number = [&](llvm::StringRef Key,
+                            auto &Destination) -> llvm::Error {
+      const auto *V = Record->get(Key);
+      using T = std::remove_reference_t<decltype(Destination)>;
+      const auto N = V ? process_json::integer<T>(*V) : std::nullopt;
+      if (!N)
+        return invalid(Key);
+      Destination = *N;
+      return llvm::Error::success();
+    };
+    if (auto E = Number(field::FileBlockSize, Snapshot.BlockSize))
+      return E;
+    if (auto E = Number(field::FileSystemIOSize, Snapshot.IOSize))
+      return E;
+    if (auto E = Number(field::FileBlocks, Snapshot.Blocks))
+      return E;
+    if (auto E = Number(field::FileSystemFreeBlocks, Snapshot.FreeBlocks))
+      return E;
+    if (auto E =
+            Number(field::FileSystemAvailableBlocks, Snapshot.AvailableBlocks))
+      return E;
+    if (auto E = Number(field::Files, Snapshot.Files))
+      return E;
+    if (auto E = Number(field::FileSystemFreeFiles, Snapshot.FreeFiles))
+      return E;
+    const auto *ID = Record->getArray(field::FileSystemID);
+    if (!ID || ID->size() != 2)
+      return invalid(field::FileSystemID);
+    for (unsigned I = 0; I != 2; ++I) {
+      const auto N = process_json::integer<int32_t>((*ID)[I]);
+      if (!N)
+        return invalid(field::FileSystemID);
+      Snapshot.FileSystemID[I] = *N;
+    }
+    if (auto E = Number(field::FileSystemOwner, Snapshot.Owner))
+      return E;
+    if (auto E = Number(field::FileSystemType, Snapshot.Type))
+      return E;
+    if (auto E = Number(field::FileFlags, Snapshot.Flags))
+      return E;
+    if (auto E = Number(field::FileSystemSubtype, Snapshot.Subtype))
+      return E;
+    if (auto E = Number(field::FileSystemExtendedFlags, Snapshot.ExtendedFlags))
+      return E;
+    const auto Text = [&](llvm::StringRef Key,
+                          std::string &Destination) -> llvm::Error {
+      const auto V = Record->getString(Key);
+      if (!V)
+        return invalid(Key);
+      Destination = V->str();
+      return llvm::Error::success();
+    };
+    if (auto E = Text(field::FileSystemTypeName, Snapshot.TypeName))
+      return E;
+    if (auto E = Text(field::FileSystemMountPoint, Snapshot.MountPoint))
+      return E;
+    if (auto E = Text(field::FileSystemMountedFrom, Snapshot.MountedFrom))
+      return E;
+    if (!darwin_model::validFileSystemSnapshot(Snapshot))
+      return invalid(Name);
+    Remaining -= 2168;
+    return Snapshot;
+  };
   auto FileSystemProvider = [&](const llvm::json::Value &Value,
                                 llvm::StringRef Name) -> llvm::Error {
     auto Parsed = ProviderObjects(Value, Name, Out.FileSystemObservations);
@@ -365,77 +435,49 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       const auto *Object = Value.getAsObject();
       const auto Path = Object ? Object->getString(field::Path) : std::nullopt;
       const auto *Record =
-          Object ? Object->getObject(field::FileSystemSnapshot) : nullptr;
+          Object ? Object->get(field::FileSystemSnapshot) : nullptr;
       if (!Object || Object->size() != 2 || !Path || !Record ||
-          Record->size() != 16 || Path->size() >= Remaining ||
-          2168 > Remaining - Path->size() - 1)
+          Path->size() >= Remaining)
         return invalid(Name);
-      DarwinFileSystemSnapshot Snapshot;
-      const auto Number = [&](llvm::StringRef Key,
-                              auto &Destination) -> llvm::Error {
-        const auto *V = Record->get(Key);
-        using T = std::remove_reference_t<decltype(Destination)>;
-        const auto N = V ? process_json::integer<T>(*V) : std::nullopt;
-        if (!N)
-          return invalid(Key);
-        Destination = *N;
-        return llvm::Error::success();
-      };
-      if (auto E = Number(field::FileBlockSize, Snapshot.BlockSize))
-        return E;
-      if (auto E = Number(field::FileSystemIOSize, Snapshot.IOSize))
-        return E;
-      if (auto E = Number(field::FileBlocks, Snapshot.Blocks))
-        return E;
-      if (auto E = Number(field::FileSystemFreeBlocks, Snapshot.FreeBlocks))
-        return E;
-      if (auto E = Number(field::FileSystemAvailableBlocks,
-                          Snapshot.AvailableBlocks))
-        return E;
-      if (auto E = Number(field::Files, Snapshot.Files))
-        return E;
-      if (auto E = Number(field::FileSystemFreeFiles, Snapshot.FreeFiles))
-        return E;
-      const auto *ID = Record->getArray(field::FileSystemID);
-      if (!ID || ID->size() != 2)
-        return invalid(field::FileSystemID);
-      for (unsigned I = 0; I != 2; ++I) {
-        const auto N = process_json::integer<int32_t>((*ID)[I]);
-        if (!N)
-          return invalid(field::FileSystemID);
-        Snapshot.FileSystemID[I] = *N;
-      }
-      if (auto E = Number(field::FileSystemOwner, Snapshot.Owner))
-        return E;
-      if (auto E = Number(field::FileSystemType, Snapshot.Type))
-        return E;
-      if (auto E = Number(field::FileFlags, Snapshot.Flags))
-        return E;
-      if (auto E = Number(field::FileSystemSubtype, Snapshot.Subtype))
-        return E;
-      if (auto E =
-              Number(field::FileSystemExtendedFlags, Snapshot.ExtendedFlags))
-        return E;
-      const auto Text = [&](llvm::StringRef Key,
-                            std::string &Destination) -> llvm::Error {
-        const auto V = Record->getString(Key);
-        if (!V)
-          return invalid(Key);
-        Destination = V->str();
-        return llvm::Error::success();
-      };
-      if (auto E = Text(field::FileSystemTypeName, Snapshot.TypeName))
-        return E;
-      if (auto E = Text(field::FileSystemMountPoint, Snapshot.MountPoint))
-        return E;
-      if (auto E = Text(field::FileSystemMountedFrom, Snapshot.MountedFrom))
-        return E;
-      if (!darwin_model::validFileSystemSnapshot(Snapshot) ||
-          !Out.FileSystemObservations->Objects
-               .emplace(Path->str(), std::move(Snapshot))
+      Remaining -= Path->size() + 1;
+      auto Snapshot = ReadFileSystemSnapshot(*Record, Name);
+      if (!Snapshot)
+        return Snapshot.takeError();
+      if (!Out.FileSystemObservations->Objects
+               .emplace(Path->str(), std::move(*Snapshot))
                .second)
         return invalid(Name);
-      Remaining -= Path->size() + 1 + 2168;
+    }
+    return llvm::Error::success();
+  };
+  auto FileSystemEnumeration = [&](const llvm::json::Value &Value,
+                                   llvm::StringRef Name) -> llvm::Error {
+    const auto *Object = Value.getAsObject();
+    const auto *Mounts =
+        Object ? Object->getArray(field::FileSystemMounts) : nullptr;
+    if (!Object || Object->size() != 1 || !Mounts ||
+        Mounts->size() > darwin_file_limits::Files)
+      return invalid(Name);
+    auto &Provider = Out.FileSystemEnumeration.emplace();
+    for (const auto &Item : *Mounts) {
+      const auto *Entry = Item.getAsObject();
+      const auto *Cached =
+          Entry ? Entry->get(field::FileSystemCached) : nullptr;
+      const auto *Refreshed =
+          Entry ? Entry->get(field::FileSystemRefreshed) : nullptr;
+      if (!Entry || !Cached || Entry->size() != 1 + unsigned(bool(Refreshed)))
+        return invalid(Name);
+      auto Snapshot = ReadFileSystemSnapshot(*Cached, Name);
+      if (!Snapshot)
+        return Snapshot.takeError();
+      DarwinMountObservation Mount{std::move(*Snapshot), std::nullopt};
+      if (Refreshed) {
+        auto Update = ReadFileSystemSnapshot(*Refreshed, Name);
+        if (!Update)
+          return Update.takeError();
+        Mount.Refreshed = std::move(*Update);
+      }
+      Provider.Mounts.push_back(std::move(Mount));
     }
     return llvm::Error::success();
   };
@@ -492,6 +534,9 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return E;
     } else if (Name == field::FileOwnershipMutations) {
       if (auto E = TimedObjectProvider(V, Name, Out.OwnershipMutations))
+        return E;
+    } else if (Name == field::FileSystemEnumeration) {
+      if (auto E = FileSystemEnumeration(V, Name))
         return E;
     } else if (Name == field::FileSystemObservations) {
       if (auto E = FileSystemProvider(V, Name))

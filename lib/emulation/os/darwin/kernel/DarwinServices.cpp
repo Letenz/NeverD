@@ -202,6 +202,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Futimes:
   case ServiceKind::Statfs64:
   case ServiceKind::Fstatfs64:
+  case ServiceKind::Getfsstat64:
   case ServiceKind::Fdatasync:
   case ServiceKind::Fsync:
   case ServiceKind::Flock:

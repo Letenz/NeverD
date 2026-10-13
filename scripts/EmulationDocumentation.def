@@ -58,7 +58,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all56 other file routes closed before preflight")
+                           "all57 other file routes closed before preflight")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
@@ -1949,7 +1949,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "no physical durability claim")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "normal XNU entry tests cancellation")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "all56 other logical file routes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all57 other logical file routes")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free68 service records")
 
@@ -2179,7 +2179,7 @@ NEVERD_EMULATION_DOC_TOKEN(
     "explicit effective ownership even equal times EPERM1 / current-time owner "
     "or proved ordinary POSIX write / group knowledge preserved")
 NEVERD_EMULATION_DOC_TOKEN(
-    Darwin, "all56 other file routes closed before preflight / both static "
+    Darwin, "all57 other file routes closed before preflight / both static "
             "queries reject even empty timestamp declaration")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "ordinary regular Contents grants retain actual dup link rename "
@@ -2246,7 +2246,7 @@ NEVERD_EMULATION_DOC_TOKEN(
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "both immutable query domains reject even empty filesystem declaration / "
-    "all56 other logical file routes closed before preflight")
+    "all57 other logical file routes closed before preflight")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "67 private identities / both4096 and16384 pages bothroutes / "
             "full2200 guarded literal / shared16MiB budget")
@@ -2274,3 +2274,58 @@ NEVERD_EMULATION_DOC_TOKEN(
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "native Intel physical iOS full dyld Mach IPC ObjC Swift "
             "Foundation UIKit unqualified / full Apple environment incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DarwinFileSystemEnumerationOptions / DarwinMountObservation / "
+            "FileSystemEnumeration / filesystem_enumeration")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "getfsstat64 BSD347 Int / shared LP64 record2168 / "
+                           "independent ordered live accessible mounts")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "mounts required array / cached complete16 fields "
+                           "required / refreshed complete16 fields optional")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "empty table known empty / missing table unsupported / duplicate "
+            "entries retain order / no inferred mount identity")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "NULL output returns full count without refresh / "
+                           "short buffer capacity zero without memory access")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "low32 signed byte size promoted to LP64 unsigned before division "
+            "and narrowed int32 / negative size large capacity")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "NOWAIT2 uses current cache unless WAIT1 or DWAIT4 / other bits "
+            "follow same test / low32 flag carriers")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "process cache starts Cached / refresh selects Refreshed before "
+            "complete EFAULT14 / new process resets cache")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "copy complete records sequentially / later fault retains prior output and "
+    "refresh / partial current record unsupported before its effects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "missing refresh stops before current effects / earlier records "
+            "stay committed / path and FD snapshots independent")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "one catalogue entry per mount / each snapshot2168 bytes / "
+            "shared256 entries16MiB / public JSON64KiB unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "both static query domains reject empty enumeration / all57 other "
+            "logical file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "MountEnumerationKeepsOrderedSnapshotsAndRefreshCach"
+                           "e / common16 authored services main52 stdout M")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-mount-enumeration / 19 authored services main53 / "
+            "independent19609 full guarded output bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "270 ARM64 O0 O1 O2 native observations / count stability and "
+            "literal guard checks / no universal host counters")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "native-common73 / mandatory88 per platform "
+                                   "/ matching ARM64 required264 identities")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native5s guest5000000us quantum1024 public30s "
+                           "existing method and owner bounds unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "no dead unmount MAC refusal failed refresh asynchronous wait host "
+            "query or complete Apple framework claim")

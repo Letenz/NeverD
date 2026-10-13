@@ -8938,6 +8938,104 @@ static __attribute__((noinline)) int virtual_filesystem_creation(void) {
   return 0;
 }
 
+/* SDK-free common getfsstat64 ABI and virtual-only literal output. Real mount
+ * counters are never used as the oracle for declared virtual observations. */
+union mount_guard {
+  u64 words[817];
+  unsigned char bytes[6536];
+};
+static int mount_call(u64 number, u64 output, u64 size, u64 flags, u64 wanted,
+                      unsigned bad) {
+  unsigned error;
+  const u64 value = call(number, output, size, flags, -1UL, -1UL, -1UL, &error);
+  if (value != wanted || error != bad)
+    return 360;
+#if defined(__aarch64__)
+  if (secondary)
+    return 360;
+#else
+  if (secondary != (bad ? flags : 0))
+    return 360;
+#endif
+  return 0;
+}
+static int mount_capture(union mount_guard *out, u64 number, u64 size,
+                         u64 flags, u64 count, unsigned capacity) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 817; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  const unsigned wanted = count < capacity ? count : capacity;
+  if (mount_call(number, (u64)(out->bytes + 16), size, flags, wanted, 0))
+    return 361;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 16; ++i)
+    if (out->bytes[i] != 0xa5 || out->bytes[6520 + i] != 0xa5)
+      return 361;
+#pragma clang loop unroll(full)
+  for (unsigned n = 0; n != 3; ++n) {
+    if (n >= wanted) {
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 271; ++i)
+        if (out->words[2 + n * 271 + i] != 0xa5a5a5a5a5a5a5a5UL)
+          return 361;
+      continue;
+    }
+    const unsigned char *p = out->bytes + 16 + n * 2168;
+#pragma clang loop unroll(full)
+    for (unsigned i = 2140; i != 2168; ++i)
+      if (p[i])
+        return 361;
+    const unsigned starts[] = {72, 88, 1112}, lengths[] = {16, 1024, 1024};
+#pragma clang loop unroll(full)
+    for (unsigned f = 0; f != 3; ++f) {
+      unsigned i = 0;
+      while (i < lengths[f] && p[starts[f] + i])
+        ++i;
+      if (i == lengths[f])
+        return 361;
+    }
+  }
+  return 0;
+}
+static int mount_emit(const union mount_guard *out, int virtual_mode) {
+  unsigned error;
+  if (virtual_mode &&
+      (call(4, 1, (u64)out->bytes, 6536, 0, 0, 0, &error) != 6536 || error ||
+       secondary))
+    return 362;
+  return 0;
+}
+static __attribute__((noinline)) int mount_enumeration(int virtual_mode) {
+  unsigned error;
+  const u64 count = call(347, 0, 0, 2, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !count)
+    return 363;
+  if (mount_call(347, 0, -1UL, 0, count, 0) || mount_call(347, 1, 0, 0, 0, 0) ||
+      mount_call(347, 1, 2167, 4, 0, 0))
+    return 363;
+  union mount_guard out;
+  if (mount_capture(&out, 347, 4335, 2, count, 1) ||
+      mount_capture(&out, 347, 4336, 2, count, 2) ||
+      mount_capture(&out, 347, 6504, 2, count, 3) ||
+      mount_emit(&out, virtual_mode) ||
+      mount_call(347, 1, 0xffffffffUL, 2, 14, 1) ||
+      mount_capture(&out, 347, 6504, 1, count, 3) ||
+      mount_emit(&out, virtual_mode) ||
+      mount_capture(&out, 347, 6504, 2, count, 3) ||
+      mount_emit(&out, virtual_mode))
+    return 364;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 3; ++i)
+    if (mount_capture(&out, highs[i] | 347, highs[i] | 4336, highs[i] | 2,
+                      count, 2))
+      return 365;
+  if (mount_call(347, 1, 2168, 1, 14, 1) ||
+      mount_call(347, 0, 2168, 2, count, 0) ||
+      call(4, 1, (u64) "M", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 366;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -8984,6 +9082,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "mount-enumeration")) {
+    const int status = mount_enumeration(0);
+    return status ? status : 52;
+  }
+  if (equal(argv[1], "virtual-mount-enumeration")) {
+    const int status = mount_enumeration(1);
+    return status ? status : 53;
+  }
   if (equal(argv[1], "filesystem-observations")) {
     const int status = argc < 3 ? 349 : filesystem_observations(argv[2]);
     return status ? status : 50;

@@ -279,6 +279,23 @@ struct DarwinFileSystemOptions {
   bool CreatedRegularObjects = false;
 };
 
+/// One live, accessible mount with an explicit cached observation. Refreshed
+/// supplies an immediate successful refresh; omission leaves it unsupported.
+/// Refresh updates only this entry's process-local cache, including before a
+/// complete EFAULT. New processes start from Cached again.
+struct DarwinMountObservation {
+  DarwinFileSystemSnapshot Cached;
+  std::optional<DarwinFileSystemSnapshot> Refreshed;
+};
+
+/// Independent ordered getfsstat64 table. Empty means known empty. Duplicate
+/// records retain their positions; paths and equal IDs infer no relationship
+/// to statfs64/fstatfs64 providers. No dead/unmount state, MAC refusal, failed
+/// refresh lifecycle, host query or asynchronous wait is modeled.
+struct DarwinFileSystemEnumerationOptions {
+  std::vector<DarwinMountObservation> Mounts;
+};
+
 /// Explicit whole-file flock provider for ordinary regular objects.
 /// Initial locks are empty; every owner is a modeled current open description.
 /// No external peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC,
@@ -379,6 +396,9 @@ struct DarwinFileOptions {
   /// Independent filesystem observations. Both immutable query environments
   /// reject even an empty declaration.
   std::optional<DarwinFileSystemOptions> FileSystemObservations;
+  /// Independent complete live mount table. Both immutable query environments
+  /// reject even an empty declaration; absence remains unknown.
+  std::optional<DarwinFileSystemEnumerationOptions> FileSystemEnumeration;
   /// Independent flock authority; absence is unknown. Either static query
   /// environment rejects this declaration, including an empty object list.
   std::optional<DarwinAdvisoryLockOptions> AdvisoryLocks;

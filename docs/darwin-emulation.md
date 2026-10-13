@@ -2043,7 +2043,7 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all56 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all57 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
 64 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
@@ -2117,7 +2117,7 @@ OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
 ARM64 matching native mandatory237 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all56 other file routes closed before preflight / static query declarations incompatible
+all57 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
@@ -2156,7 +2156,7 @@ separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
 ARM64 matching native mandatory237 / actual successful execution required
 720 owner observations / 702 literal controls and 18 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all56 other file routes closed before preflight / static query declarations incompatible
+all57 other file routes closed before preflight / static query declarations incompatible
 no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -2166,7 +2166,7 @@ native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 
 ## Explicit ordinary whole-file advisory locks
 
-Raw BSD `flock`131 uses `DarwinFileOptions::AdvisoryLocks` or strict `darwin_files.advisory_locks={"objects":["/data"]}`. Each unique string grants one initial ordinary regular object with complete metadata, flags0, no special mode bits, link_count1 and no initial inode alias. Paths share the catalogue byte budget, including NUL. Unknown fields, malformed arrays and duplicates fail before image loading. Omission leaves the environment unknown; an empty list declares the environment without granting an object, including for an unlock when no lock exists. Mode and ownership grants remain independent. Both static query environments reject the declaration even when empty and refuse all56 other dispatched file routes before preflight.
+Raw BSD `flock`131 uses `DarwinFileOptions::AdvisoryLocks` or strict `darwin_files.advisory_locks={"objects":["/data"]}`. Each unique string grants one initial ordinary regular object with complete metadata, flags0, no special mode bits, link_count1 and no initial inode alias. Paths share the catalogue byte budget, including NUL. Unknown fields, malformed arrays and duplicates fail before image loading. Omission leaves the environment unknown; an empty list declares the environment without granting an object, including for an unlock when no lock exists. Mode and ownership grants remain independent. Both static query environments reject the declaration even when empty and refuse all57 other dispatched file routes before preflight.
 
 The declared whole-file provider starts with no locks and includes only current modeled open descriptions as possible owners. Low32 FD lookup precedes action handling. A known vnode with no SH/EX/UN action returns EBADF9. UN8 takes priority over EX2, which takes priority over SH1; unrelated bits are ignored when an action is present, and NB4 selects a nonblocking attempt. Readonly descriptions can take EX without consulting modeled credentials or deriving a general DAC grant. Different descriptions of the same Contents share the lock domain: SH/SH is compatible and any EX conflicts. Nonblocking conflicts return EAGAIN35 before removing the caller’s old lock, so a failed upgrade preserves SH. A successful upgrade or downgrade replaces that description’s lock, and uncontended blocking requests complete immediately. A contended blocking request stops unsupported before any model mutation; this does not model the native wait path, which may drop an old shared lock while waiting.
 
@@ -2193,7 +2193,7 @@ runtime hardlink rename held zero-name unlink keep object grant
 created or reused names do not inherit provider grants / path registry not lock authority
 flock preserves bytes cursors stat xattrs and allocation / successful lock sets persistent FWASLOCKED0x4000
 mode ownership data namespace policies independent / invalidated records never restored
-all56 other file routes closed before preflight / either static query rejects even empty declaration
+all57 other file routes closed before preflight / either static query rejects even empty declaration
 SDK-free77 service records / 13 guarded full stat observations / separate main return39
 OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime
 64 current native-common cases / 79 mandatory workloads per platform
@@ -2210,7 +2210,7 @@ native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 
 Raw BSD fsync95 and fsync_nocancel408 use the same Fsync/Int owner within the existing uncancelled single-thread profile. DarwinFileOptions::Synchronization or strict darwin_files.synchronization={"objects":["/data"]} declares an immediate successful regular-vnode file integrity completion provider: successful model mutations have already committed, with no deferred provider work or requested cancellation. A zero result acknowledges that supplied provider; it neither flushes host storage nor proves physical durability. The cancellable XNU entry tests cancellation before the common path; the nocancel entry does not. General cancellation, provider failures, leases, shadow/resource-fork flushes and asynchronous waits remain unknown.
 
-The objects array grants only initial ordinary regular objects with complete metadata, flags0, link_count1 and no initial inode aliases. Objects are unique canonical strings, at most256, charged with their NUL against the shared input byte budget. Unknown keys, malformed arrays, duplicates and invalid paths fail before image loading. Missing versus explicitly empty providers stay distinct. Both static query environments reject even empty declarations and close all56 other logical file routes before preflight; alias408 introduces no additional route.
+The objects array grants only initial ordinary regular objects with complete metadata, flags0, link_count1 and no initial inode aliases. Objects are unique canonical strings, at most256, charged with their NUL against the shared input byte budget. Unknown keys, malformed arrays, duplicates and invalid paths fail before image loading. Missing versus explicitly empty providers stay distinct. Both static query environments reject even empty declarations and close all57 other logical file routes before preflight; alias408 introduces no additional route.
 
 Low32 descriptor lookup comes first, returning EBADF9 for absent or closed descriptors even without a provider. Opaque streams, directory descriptions and symlink descriptions remain unsupported independently of the ordinary regular provider. Readonly regular descriptions may complete with an explicit object grant, without inferring general DAC authority. Contents owns the grant through runtime hardlinks, rename and held zero-name unlink. Current duplicate, fcntl and dup2 descriptions select the current object; created objects and reused names never inherit an initial grant; fresh objects require the separate creation provider below. A mapping or retained Contents cannot make a closed descriptor valid. Completion changes no bytes, cursor, descriptor flags, stat fields, xattrs, allocation, namespace or advisory locks, and cannot restore invalidated observations. Mutation and authorization owners remain independent.
 
@@ -2235,7 +2235,7 @@ created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
-all56 other logical file routes closed before preflight / both static queries reject empty declaration
+all57 other logical file routes closed before preflight / both static queries reject empty declaration
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
@@ -2280,7 +2280,7 @@ created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
-all56 other logical file routes closed before preflight / both static queries reject empty declarations
+all57 other logical file routes closed before preflight / both static queries reject empty declarations
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
@@ -2316,7 +2316,7 @@ Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and
 closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
 bytes stat cursor flags xattrs allocation namespace locks unchanged / no observation restoration
 completion grants supply no mode ownership xattr flock or general DAC authority
-both immutable query environments reject even false declarations / all56 other logical routes remain closed
+both immutable query environments reject even false declarations / all57 other logical routes remain closed
 SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
 CreatedRegularSynchronizationKeepsIndependentProvidersAndState
 68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
@@ -2351,7 +2351,7 @@ nonblocking conflict35 before old-lock removal / failed upgrade retains shared l
 last description close releases lock / VM Contents lease cannot retain lock or revive closed FD9
 flock preserves bytes stat cursor xattrs allocation namespace and observation validity
 mode ownership completion xattr permissions remain independent / no general DAC grant
-both static query declarations reject even false environment / all56 other file routes closed
+both static query declarations reject even false environment / all57 other file routes closed
 SDK-free131 service records / 12 guarded full stat observations / separate main return43 / stdout L
 CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus
 68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
@@ -2431,7 +2431,7 @@ fixed virtual ctime is separate from request conversion and current-time sample 
 NULL uses only explicit TimeOfDay / zero sample valid / missing sample stays unknown / no timezone or Mach prerequisite
 utimes pathname before input / futimes input before low32 FD / fully unmapped EFAULT14 / partial input unsupported
 explicit effective ownership even equal times EPERM1 / current-time owner or proved ordinary POSIX write / group knowledge preserved
-all56 other file routes closed before preflight / both static queries reject even empty timestamp declaration
+all57 other file routes closed before preflight / both static queries reject even empty timestamp declaration
 ordinary regular Contents grants retain actual dup link rename held-zero-name lifetime / replacement names inherit none
 opaque kind unsupported / native pipe EINVAL22 does not identify model kind / directories and symbolic vnodes outside provider
 62 private identities / pages4096 and16384 / full160-byte stat guards / independent dirty bytes locks xattrs and real VM
@@ -2461,7 +2461,7 @@ created_regular_objects defaultfalse / true requires complete CreationPolicy / s
 initial children unbound parents new directories links receive none / no fsid device inode or pathname prefix inference
 effective ordinary ancestor search uses shared authorizer and group knowledge / FD query borrows no target DAC credentials or access flags
 pathname and low32 FD kind before output / ENOENT2 EBADF9 EFAULT14 / individually partial output unsupported before effects
-both immutable query domains reject even empty filesystem declaration / all56 other logical file routes closed before preflight
+both immutable query domains reject even empty filesystem declaration / all57 other logical file routes closed before preflight
 67 private identities / both4096 and16384 pages bothroutes / full2200 guarded literal / shared16MiB budget
 dup independent opens hardlinks rename directory moves CWD held-unlink reuse / dirty bytes locks xattrs and real VM independent
 FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime / 49 authored common services / main50 stdout W
@@ -2479,3 +2479,38 @@ Path lookup follows symlinks and shares effective ordinary ancestor search, requ
 Snapshots bind to actual initial regular/directory objects, including implicit directories, and survive dup, independent opens, runtime hardlinks, rename, moved directories/CWD and held zero-name lifetime. Different or reused names inherit no initial grant. Optional created_regular_objects defaultsfalse. True requires complete CreationPolicy and explicitly binds each successful new regular file to its actual parent's already-bound snapshot, if one exists. Unbound parents, initial children, mkdir/symlink and children through new unbound directories receive none. This relation comes from the declared provider, never equality of filesystem_id/device/inode or a pathname prefix. Counters remain exactly declared observations and are not derived from bytes, allocation units or virtual storage limits.
 
 The original model follows the [pinned XNU namei/file-vnode/mount-stat ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and the native SDK LP64 layout. No XNU implementation was copied. Native probes verify captured ABI and ordering on their owned test filesystem; dynamic capacity counts and IDs do not establish universal constants, real mount identity, quota or lifecycle. The SDK-free common workload compares stable fields and guards while deliberately excluding all five dynamic capacity counters. The independent virtual workload checks all4400 emitted bytes against authored literals. The first native virtualized round timed out in validation loops; fixed loops are unrolled without changing a single service, assertion, quantum or deadline. Broader default-fatal cleanup and framework execution are separate unfinished work.
+
+## Declared mount enumeration
+
+Declared mount enumeration now provides ordered cached observations and explicitly supplied successful refreshes. Each process keeps its own cache. Duplicate records remain separate, and an empty table is distinct from an unknown table. This supports another common filesystem query used by Apple applications; dyld, Mach IPC and the full Objective-C/Swift and Foundation/UIKit environment remain incomplete.
+
+```text
+DarwinFileSystemEnumerationOptions / DarwinMountObservation / FileSystemEnumeration / filesystem_enumeration
+getfsstat64 BSD347 Int / shared LP64 record2168 / independent ordered live accessible mounts
+mounts required array / cached complete16 fields required / refreshed complete16 fields optional
+empty table known empty / missing table unsupported / duplicate entries retain order / no inferred mount identity
+NULL output returns full count without refresh / short buffer capacity zero without memory access
+low32 signed byte size promoted to LP64 unsigned before division and narrowed int32 / negative size large capacity
+NOWAIT2 uses current cache unless WAIT1 or DWAIT4 / other bits follow same test / low32 flag carriers
+process cache starts Cached / refresh selects Refreshed before complete EFAULT14 / new process resets cache
+copy complete records sequentially / later fault retains prior output and refresh / partial current record unsupported before its effects
+missing refresh stops before current effects / earlier records stay committed / path and FD snapshots independent
+one catalogue entry per mount / each snapshot2168 bytes / shared256 entries16MiB / public JSON64KiB unchanged
+both static query domains reject empty enumeration / all57 other logical file routes closed before preflight
+MountEnumerationKeepsOrderedSnapshotsAndRefreshCache / common16 authored services main52 stdout M
+virtual-mount-enumeration / 19 authored services main53 / independent19609 full guarded output bytes
+270 ARM64 O0 O1 O2 native observations / count stability and literal guard checks / no universal host counters
+native-common73 / mandatory88 per platform / matching ARM64 required264 identities
+native5s guest5000000us quantum1024 public30s existing method and owner bounds unchanged
+no dead unmount MAC refusal failed refresh asynchronous wait host query or complete Apple framework claim
+```
+
+Raw BSD getfsstat64 347 reads only the explicitly declared mount table. JSON retains the required darwin_files.files array (which may be empty) and adds filesystem_enumeration: {"mounts":[{"cached":complete_snapshot,"refreshed":complete_snapshot}]}. Each snapshot uses all sixteen fields documented for filesystem_observations. Refreshed is optional; its presence declares immediate successful refresh for that mount. Empty mounts is a known empty table. Absence remains unsupported even for count-only requests. Entries model live, accessible mounts in exactly the declared order, including duplicates, without MAC denial, dead or unmounting state, refresh failure or asynchronous provider work.
+
+NULL output returns the full count without refresh. NonNULL output copies only complete 2168-byte records, returning the smaller of table size and capacity. The low signed32 buffer length is promoted to unsigned64 before division and the quotient is narrowed to signed32, as in the pinned XNU ABI; negative lengths therefore have a large positive capacity. Zero capacity does not access the pointer. Flags use the low32 bits: NOWAIT2 selects the current cache unless WAIT1 or DWAIT4 is also present. Otherwise the current mount needs an explicit Refreshed snapshot. Unknown bits follow this same bit test.
+
+Each process begins with Cached. A successful declared refresh selects Refreshed before copyout, so even a completely unmapped destination returning EFAULT14 updates that mount’s cache. Later NOWAIT observes the selected record. New process preparation resets all selections. Sequential records preserve earlier output and cache changes when a later copy faults or lacks a refresh provider. An individually partially accessible record is explicitly unsupported before its own refresh or output; this is not a modeled native partial-copy result.
+
+Each mount consumes one shared catalogue entry and each cached/refreshed snapshot consumes2168 bytes within the existing256-entry and16MiB budgets. The public JSON envelope stays64KiB. Both static query environments reject even an empty table. Enumeration supplies no statfs/fstatfs object binding and derives no identity from equal filesystem IDs, devices, inodes or path prefixes.
+
+Original implementation and tests use [pinned XNU getfsstat64 ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [mount-stat cache updates](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c); no implementation was copied. ARM64 O0/O1/O2 probes retain270 observations with stable before/after counts, high carriers, size and flag boundaries, refresh/fault sequences and guarded output. Actual host counters are evidence for those runs, not virtual constants. Native and virtual workloads remain within native5 seconds, guest5,000,000 microseconds, quantum1024 and public30 seconds.

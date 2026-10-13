@@ -893,6 +893,99 @@ class ProcessIntegrationTests(unittest.TestCase):
                 self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
 
 
+    def test_darwin_mount_enumeration_keeps_order_and_refresh_cache(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        snapshot = {"block_size":270544960,"io_size":-4096,"blocks":"18364758544493064720","free_blocks":"72623859790382856","available_blocks":0,"files":"18446744073709551615","free_files":9,"filesystem_id":[-1,-2147483648],"owner":4294967294,"type":26,"flags":16909060,"subtype":7,"type_name":"virtfs","mount_point":"/虚拟","mounted_from":"neverd:declared","extended_flags":2271560481}
+        zero = {key: "" if key in ("type_name", "mount_point", "mounted_from") else [0, 0] if key == "filesystem_id" else 0 for key in snapshot}
+        files = {"files": [], "filesystem_enumeration": {"mounts": [
+            {"cached":snapshot,"refreshed":zero}, {"cached":zero,"refreshed":snapshot},
+            {"cached":snapshot,"refreshed":zero}]}}
+        # Literal bytes independent of the runtime serializer.
+        record = bytearray(2168)
+        record[:72] = bytes.fromhex("4030201000f0ffff1032547698badcfe08070605040302010000000000000000ffffffffffffffff0900000000000000ffffffff00000080feffffff1a0000000403020107000000")
+        record[72:79] = b"virtfs\0"
+        mount = "/虚拟".encode() + b"\0"
+        record[88:88+len(mount)] = mount
+        record[1112:1128] = b"neverd:declared\0"
+        record[2136:2140] = bytes.fromhex("21436587")
+        self.assertEqual(len(record), 2168)
+        initial = b"\xa5"*16 + bytes(record) + bytes(2168) + bytes(record) + b"\xa5"*16
+        refreshed = b"\xa5"*16 + bytes(2168) + bytes(record) + bytes(2168) + b"\xa5"*16
+        literal = initial + refreshed*2 + b"M"
+        mask = (1 << 64)-1
+        def services(virtual: bool) -> list:
+            rows = []
+            def call(pointer, size, flags, value, error=False, number=347):
+                rows.append((number,value,error,[pointer,size,flags,mask,mask,mask]))
+            def emit():
+                if virtual: rows.append((4,6536,False,[1,None,6536,0,0,0]))
+            call(0,0,2,3)
+            call(0,mask,0,3)
+            call(1,0,0,0)
+            call(1,2167,4,0)
+            call(None,4335,2,1)
+            call(None,4336,2,2)
+            call(None,6504,2,3)
+            emit()
+            call(1,0xffffffff,2,14,True)
+            call(None,6504,1,3)
+            emit()
+            call(None,6504,2,3)
+            emit()
+            for high in (0,0x1234567800000000,0xffffffff00000000):
+                call(None,high|4336,high|2,2,number=high|347)
+            call(1,2168,1,14,True)
+            call(0,2168,2,3)
+            rows.append((4,1,False,[1,None,1,0,0,0]))
+            return rows
+        for file, profile in (("macos-arm64","macos-macho64-v1"),("macos-x86_64","macos-macho64-v1"),("ios-arm64","ios-macho64-v1"),("ios-simulator-arm64","ios-simulator-macho64-v1"),("ios-simulator-x86_64","ios-simulator-macho64-v1")):
+            cls = 0x2000000 if file.endswith("x86_64") else 0
+            for virtual in (False, True):
+                request = {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["guest","virtual-mount-enumeration" if virtual else "mount-enumeration"],"darwin_files":files}
+                original = json.dumps(request,sort_keys=True)
+                for repeat in range(2):
+                    with self.subTest(file=file,virtual=virtual,repeat=repeat):
+                        result = session.emulate_process(str(Path(fixtures)/file),profile,json.dumps(request))
+                        self.assertEqual(result["stop_reason"],"exited",result["diagnostic"])
+                        self.assertEqual(result["exit_status"],53 if virtual else 52)
+                        self.assertEqual(result["stdout_hex"],literal.hex() if virtual else "4d")
+                        self.assertEqual(result["stderr_hex"],"")
+                        wanted = services(virtual)
+                        self.assertEqual(len(wanted),19 if virtual else 16)
+                        self.assertEqual(len(result["services"]),len(wanted))
+                        for event,(number,value,error,args) in zip(result["services"],wanted):
+                            self.assertEqual(event["number"],format(cls|number,"x"))
+                            self.assertEqual(event["result"],format(value,"x"))
+                            self.assertEqual(event["error"],error)
+                            self.assertEqual(len(event["arguments"]),6)
+                            for actual, known in zip(event["arguments"],args):
+                                if known is not None: self.assertEqual(actual,format(known,"x"))
+                        self.assertEqual(json.dumps(request,sort_keys=True),original)
+                        self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
+            request["darwin_files"] = {"files": []}
+            result = session.emulate_process(str(Path(fixtures)/file),profile,json.dumps(request))
+            self.assertEqual(result["stop_reason"],"unsupported_service")
+            self.assertEqual(result["diagnostic"],"Darwin mount enumeration environment is not configured")
+            self.assertEqual(result["stdout_hex"],"")
+            self.assertEqual(len(result["services"]),1)
+            self.assertIsNone(result["services"][0]["result"])
+            self.assertNotIn("error",result["services"][0])
+
     def test_darwin_timestamp_mutations_keep_explicit_clock_and_object_authority(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
