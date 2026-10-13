@@ -5244,6 +5244,45 @@ TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
 #endif
 }
 
+TEST_F(SessionCAPITest, SourcePagesNameTheSymbolsOfRenamedFunctions) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  const std::string Binary =
+      buildProgram("startup_names", "int main(void) { return 0; }\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Fini = neverd_func_find_by_name(Session, "_fini");
+  if (Fini < 0)
+    GTEST_SKIP() << "the start files define no _fini symbol";
+  const auto Entry = neverd_func_entry(Session, Fini);
+  // The C runtime defines _fini itself, so C calls the program's fini: the
+  // comment above it and the page name the symbol, which the listing shows.
+  for (const char *Stage : {"c", "llvmc"}) {
+    SCOPED_TRACE(Stage);
+    auto Page = takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 512));
+    const auto Text = Page.getString("text");
+    ASSERT_TRUE(Text) << takeString(neverd_last_error(Session));
+    EXPECT_NE(Text->find("/* _fini */\n"), llvm::StringRef::npos)
+        << Text->str();
+    const auto *Symbols = Page.getArray("identifier_symbols");
+    ASSERT_NE(Symbols, nullptr);
+    bool Named = false;
+    for (const auto &Value : *Symbols)
+      if (const auto *Name = Value.getAsObject();
+          Name && Name->getString("identifier") == "fini") {
+        EXPECT_EQ(Name->getString("symbol"), "_fini");
+        EXPECT_EQ(Name->getString("address"), ("0x" + llvm::utohexstr(Entry)));
+        Named = true;
+      }
+    EXPECT_TRUE(Named) << Text->str();
+  }
+#endif
+}
+
 TEST_F(SessionCAPITest, AnalyzedLLVMPagesEmitTheirFunctionAlone) {
 #if !defined(__linux__)
   GTEST_SKIP() << "builds a glibc program";

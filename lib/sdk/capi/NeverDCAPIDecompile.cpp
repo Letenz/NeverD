@@ -754,6 +754,18 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   Page["next_offset"] = End == Total
                             ? llvm::json::Value(nullptr)
                             : llvm::json::Value(static_cast<int64_t>(End));
+  // The functions the C names by another identifier than their symbol, as a
+  // start-up function the C runtime defines (`fini` for `_fini`) or a symbol
+  // C cannot spell: each with the symbol and the entry a reader finds it by.
+  llvm::json::Array Renamed;
+  for (const CSourceName &Name : Map.Names)
+    if (Name.TheKind == CSourceName::Kind::Function && Name.Address &&
+        !Name.Symbol.empty() && Name.Symbol != Name.Identifier)
+      Renamed.push_back(
+          llvm::json::Object{{"identifier", Name.Identifier},
+                             {"symbol", jsonSafeText(Name.Symbol)},
+                             {"address", vaHex(*Name.Address)}});
+  Page["identifier_symbols"] = std::move(Renamed);
   if (Dialect) {
     // What the page reads in, which a `source` request chose; the
     // declarations it shows as C; and the source names on the page, which
