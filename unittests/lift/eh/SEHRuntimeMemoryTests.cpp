@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <map>
+#include <utility>
 
 using namespace neverd;
 
@@ -254,6 +255,61 @@ TEST(SEHRuntimeMemory, FormatAndRuntimeHomeAreaOwnTheirActualEffects) {
       EXPECT_EQ(Proof.Calls.begin()->second, -56);
       EXPECT_TRUE(Proof.UsesRuntimeMemory);
     }
+  }
+}
+
+TEST(SEHRuntimeMemory, WindowsFormatsDoNotBorrowForeignDialectContracts) {
+  const std::pair<llvm::StringRef, bool> Cases[] = {
+      {"result=%d\n", true},
+      {"%hhd %hd %ld %lld", true},
+      {"%08x", true},
+      {"%.3f", true},
+      {"%lf", true},
+      {"%%", true},
+      {"price $1 and apostrophe ' literal", true},
+      {"%1$d", false},
+      {"%2$*1$d", false},
+      {"%'d", false},
+      {"%qd", false},
+      {"%*d", false},
+      {"%.*f", false},
+      {"%2147483648d", false},
+      {"%.2147483648f", false},
+      {"%999999999999999999999999d", false},
+      {"%Ld", false},
+      {"%hf", false},
+      {"%p", false},
+      {"%s", false},
+      {"%n", false},
+      {"%", false},
+      {"%0%", false},
+      {"%lc", false},
+      {"\xc3\xa9=%d", false},
+  };
+  for (const auto &[Format, Accepted] : Cases) {
+    SCOPED_TRACE(Format.str());
+    Fixture F(true, false);
+    auto &Data = F.Image.Segments[1];
+    Data.Data.assign(Format.begin(), Format.end());
+    Data.Data.push_back(0);
+    Data.Size = Data.FileSz = Data.Data.size();
+    auto &Section = F.Image.Sections[1];
+    Section.Size = Section.FileSz = Data.Size;
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    CFGBuilder Builder;
+    auto Caller = Builder.build(F.Image, Dec, Entry, "caller");
+    ASSERT_TRUE(Caller.hasCompleteLiftCoverage());
+    const auto Memory = collectLowSEHRuntimeMemory(F.Image, {Caller});
+    size_t Work = 100000;
+    const auto Proof = proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64),
+                                         Work, nullptr, &Memory);
+    if (Accepted) {
+      ASSERT_EQ(Proof.Calls.size(), 1u);
+      EXPECT_EQ(Proof.Calls.begin()->first.first, F.UnwindCall);
+      EXPECT_EQ(Proof.Calls.begin()->second, -56);
+    } else
+      EXPECT_TRUE(Proof.Calls.empty());
   }
 }
 

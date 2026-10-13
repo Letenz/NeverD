@@ -13,6 +13,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineLibraryRecognition.cpp
   PipelineLowIR.cpp
   PipelineSEHRuntimeMemory.cpp
+  Windows/SEHRuntimeFormat.cpp
   PipelineMedIR.cpp
   PipelineOptimize.cpp
   PipelinePatchLift.cpp

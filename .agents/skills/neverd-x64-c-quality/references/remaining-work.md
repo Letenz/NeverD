@@ -14,7 +14,7 @@ analysis and comparison output belong outside the repository.
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
 | The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Complete decoded callee chains and certified runtime-only continuations retain their frame evidence. This case still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
-| The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Ordinary finally calls and nonlocal exits need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. A nested SEH helper also needs checked incoming-object and exception-field accesses before its independent returning-stack proof can close. Neither a guessed zero-pop summary nor an unconditional no-return annotation is valid. |
+| Native reconstruction of PE32 `xcpt4` nonlocal invocations remains incomplete | Source registration-state closure and local filter recovery are fixed by #920 / #859. CFG, SSA and native emitters still need to consume the source capture/resumption and invocation-exit evidence. A source receipt does not certify a replacement runtime activation. |
 
 The original MSVC nonlocal-finally fixture now includes a second exception
 immediately after parent resumption and a guarded caller-owned counter helper.
@@ -30,6 +30,11 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## CRT and catch-continuation repairs
 
+- Windows SEH runtime-memory proofs use their own bounded scalar printf
+  grammar instead of Darwin/Objective-C argument typing. Positional and
+  foreign dialects, dynamic widths, decimal overflow and multibyte formats
+  retain refusal. This fixes false frame preservation; #858 still needs
+  writable-format and exception-activation memory contracts.
 - Object borrows, local-finally writes and catch-object construction share the
   source solver’s administration-boundary check. SEH SavedESP and exception
   pointers, discontiguous EH4 cookies and realigned saved-entry anchors cannot

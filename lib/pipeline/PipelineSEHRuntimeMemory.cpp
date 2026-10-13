@@ -8,10 +8,11 @@
 
 #include "PipelineSEHRuntimeMemory.h"
 
+#include "Windows/SEHRuntimeFormat.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/loader/BinaryImage.h"
-#include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -58,36 +59,6 @@ std::optional<LowSEHRuntimeCall> runtimeCall(const BinaryImage &Image,
   Call.Module = Imported.Module;
   Call.Name = Imported.Name;
   return Call;
-}
-
-std::optional<std::string> scalarFormat(const BinaryImage &Image, va_t Address,
-                                        size_t &Remaining) {
-  constexpr uint32_t MaxFormatBytes = 4096;
-  std::vector<uint16_t> Units;
-  for (uint32_t I = 0; I != MaxFormatBytes; ++I) {
-    if (!Remaining || Address > InvalidVA - I)
-      return std::nullopt;
-    --Remaining;
-    const auto *Byte = Image.readVA(Address + I, 1);
-    if (!Byte)
-      return std::nullopt;
-    if (*Byte) {
-      Units.push_back(*Byte);
-      continue;
-    }
-    // Byte availability alone is not an immutable format contract.
-    auto Bytes = readImmutableImageBytes(Image, Address, I + 1);
-    auto Arguments = objcFormatArgumentTypes(
-        Units, SourceCallTypeHint::FormatSyntax::Printf);
-    if (!Bytes || !Arguments ||
-        llvm::any_of(*Arguments, [](const TypeRef &Type) {
-          return !Type || (Type->Kind != NdTypeKind::Int &&
-                           Type->Kind != NdTypeKind::Float);
-        }))
-      return std::nullopt;
-    return std::string(Bytes->begin(), Bytes->end());
-  }
-  return std::nullopt;
 }
 
 bool runtimeVeneer(const BinaryImage &Image, va_t Address, va_t Slot,
@@ -188,7 +159,7 @@ collectLowSEHRuntimeMemory(const BinaryImage &Image,
     if (!Segment || !Segment->isReadable() || Segment->isWritable() ||
         Segment->isExecutable())
       continue;
-    if (auto Format = scalarFormat(Image, Candidate, Remaining))
+    if (auto Format = readWindowsSEHScalarFormat(Image, Candidate, Remaining))
       Memory.ScalarFormats.emplace(Candidate, std::move(*Format));
     if (!Remaining)
       return {};

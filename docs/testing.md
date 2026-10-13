@@ -5473,6 +5473,13 @@ below SP and encoded frame escape
 must refuse. These focused contracts do not establish xcpt4 support; retain the
 real `DecompileMatrixFailsClosedWithAuditableExceptionMetadata` acceptance test.
 
+`SEHRuntimeMemory.WindowsFormatsDoNotBorrowForeignDialectContracts` checks the
+decoded CALL through the complete frame proof. Ordinary integer/float formats
+preserve the saved cell; positional/grouping/q dialects, unproved dynamic
+widths, overflowing decimal fields, pointer conversions and multibyte formats
+must not. Both segment and section extents cover each fixture's actual bytes,
+so rejection tests syntax rather than an accidentally truncated mapping.
+
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC
 controls. Wrong providers, delay imports, missing or conflicting import storage,

@@ -5335,6 +5335,13 @@ Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
 rechecks the same dependencies. Writable formats and opaque calls retain their
 refusal, so this contract does not yet close the x64 xcpt4 case.
 
+`pipeline/Windows/SEHRuntimeFormat` owns a scalar subset of the
+[Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
+for this memory proof. Positional syntax, foreign length/flag extensions, dynamic
+widths, overflowing numeric fields and multibyte formats supply no authority.
+This bounded ASCII subset is independent of Darwin/Objective-C source type
+hints; immutable bytes and current runtime arguments are still required.
+
 Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
 UCRT import binding, an unescaped frame and a constant exception-mask subset
 permit a four-byte output wholly inside live caller storage, outside the home
