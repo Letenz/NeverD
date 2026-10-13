@@ -529,6 +529,13 @@ static uint16_t definedLowBytesRec(
         D.Inputs[0].Size == V.Size) {
       Result =
           definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
+    } else if (D.Opcode == NdOp::INT_ZEXT && D.NumInputs == 1 &&
+               D.Inputs[0].Size < V.Size) {
+      // The zeros above a fully defined value are defined, and nothing
+      // above one that is not: `mov eax, r14d` after r14d took a `bool`.
+      const uint16_t InputDefined =
+          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
+      Result = InputDefined < D.Inputs[0].Size ? InputDefined : V.Size;
     } else if (D.Opcode == NdOp::CONCAT && D.NumInputs == 2 &&
                D.Inputs[0].Size + D.Inputs[1].Size == V.Size) {
       const MedVar &Hi = D.Inputs[0];
