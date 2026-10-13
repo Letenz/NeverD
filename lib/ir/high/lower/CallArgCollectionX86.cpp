@@ -22,6 +22,30 @@
 
 namespace neverd {
 namespace call_args_detail {
+namespace {
+
+/// The piece of \p Value, \p Width bytes stored across several stack slots,
+/// that the slot at byte \p Offset of it holds.  The slot a ten-byte x87
+/// long double ends in holds its last two bytes, and padding read as zero.
+ExprPtr slotPiece(ExprPtr Value, int64_t Width, int64_t Offset,
+                  int64_t SlotBytes) {
+  const int64_t Bytes = std::min(SlotBytes, Width - Offset);
+  if (Width % SlotBytes != 0 &&
+      (!Value->Type || Value->Type->Kind != NdTypeKind::Int))
+    Value = HighExpr::makeBitCast(
+        std::move(Value), NdType::makeInt(static_cast<uint16_t>(Width), false));
+  ExprPtr Piece = HighExpr::makeBinop(
+      NdOp::SUBBYTES, std::move(Value),
+      HighExpr::makeConst(static_cast<uint64_t>(Offset), 4));
+  Piece->Type = NdType::makeInt(static_cast<uint16_t>(Bytes), false);
+  if (Bytes == SlotBytes)
+    return Piece;
+  ExprPtr Slot = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Piece));
+  Slot->Type = NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
+  return Slot;
+}
+
+} // namespace
 
 void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args) {
@@ -46,6 +70,18 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       Scan.EntryOffsetOf &&
       Scan.CalleeStackArgs > static_cast<int>(RegisterPositions);
   const std::vector<ExprPtr> RegisterArgs = Found;
+  // The slots a store of \p Width bytes fills from argument position
+  // \p Position on.  One that ends inside a slot, the ten bytes of an x87
+  // long double, fills them only for a callee in this image that reads them
+  // all, whose parameters are its slots; an import may take it whole.
+  auto slotsFilled = [&](int64_t Width, int64_t Position, int64_t SlotBytes) {
+    const int64_t Slots = (Width + SlotBytes - 1) / SlotBytes;
+    if (Slots <= 1 || Width % SlotBytes == 0)
+      return std::max<int64_t>(Slots, 1);
+    return Scan.CalleeInImage && Position + Slots <= Scan.CalleeStackArgs
+               ? Slots
+               : 1;
+  };
   collectSpilledStackArgs(Scan, Found);
   if (SlotsByCallOffset && !Scan.TailJump && Scan.CalleeRegisterArgs >= 0)
     Found = RegisterArgs;
@@ -57,8 +93,7 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
     auto walk = [&](const std::vector<MedOp> &Ops, int Before) {
       for (int J = Before; J >= 0; --J) {
         const MedOp &Prev = Ops[static_cast<size_t>(J)];
-        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-            Prev.Opcode == NdOp::INTRINSIC)
+        if (endsCallSetup(Prev))
           return true;
         if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
             Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -88,11 +123,13 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
       if (Offset % SlotBytes != 0 || Offset / SlotBytes >= StackSlots)
         return true;
-      // A wider store, a 16-byte copy of a by-value record, fills one slot
-      // per pointer width it covers, each with its own bytes.
+      // A wider store, a 16-byte copy of a by-value record or a 10-byte x87
+      // long double, fills one slot per pointer width it reaches, each with
+      // its own bytes.
       const int64_t Bytes = Store.Inputs[1].Size;
-      const int64_t Covered =
-          Bytes > SlotBytes && Bytes % SlotBytes == 0 ? Bytes / SlotBytes : 1;
+      const int64_t Covered = slotsFilled(
+          Bytes, static_cast<int64_t>(RegisterPositions) + Offset / SlotBytes,
+          SlotBytes);
       for (int64_t J = 0; J < Covered; ++J) {
         const size_t K =
             RegisterPositions + static_cast<size_t>(Offset / SlotBytes + J);
@@ -100,13 +137,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
             Found[K])
           continue;
         ExprPtr Value = Scan.ToExpr(Store.Inputs[1]);
-        if (Covered > 1) {
-          Value = HighExpr::makeBinop(
-              NdOp::SUBBYTES, Value,
-              HighExpr::makeConst(static_cast<uint64_t>(J * SlotBytes), 4));
-          Value->Type =
-              NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
-        }
+        if (Covered > 1)
+          Value = slotPiece(std::move(Value), Bytes, J * SlotBytes, SlotBytes);
         Found[K] = std::move(Value);
         PlacedByCallOffset = true;
       }
@@ -189,15 +221,21 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   //
   // Stores outnumbering the arguments found make a cdecl call, whose ECX
   // and EDX written before it are scratch (clang -O0 loads a value there
-  // before storing it).
+  // before storing it).  So does a store wider than a slot, such as a long
+  // double's `fstp tbyte`, to a callee in this image that reads more slots
+  // than there are arguments: it passes the argument of each slot it fills.
+  const int64_t SlotBytes = static_cast<int64_t>(Scan.TRI->PointerSize);
   size_t StoreCount = 0;
-  stores([&](const MedOp &) {
+  bool WideStore = false;
+  stores([&](const MedOp &Store) {
+    WideStore |= Store.Inputs[1].Size > SlotBytes;
     return ++StoreCount < static_cast<size_t>(Scan.MaxArgs);
   });
-  if (StoreCount <= Args.size())
+  if (StoreCount <= Args.size() &&
+      !(WideStore && Scan.CalleeInImage &&
+        Scan.CalleeStackArgs > static_cast<int>(Args.size())))
     return;
   if (Scan.CallStackEntryOffset && Scan.EntryOffsetOf) {
-    const int64_t SlotBytes = static_cast<int64_t>(Scan.TRI->PointerSize);
     std::vector<ExprPtr> Slots(static_cast<size_t>(Scan.MaxArgs));
     stores([&](const MedOp &Store) {
       const std::optional<int64_t> Entry = Scan.EntryOffsetOf(Store.Inputs[0]);
@@ -207,10 +245,10 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       if (Offset % SlotBytes != 0)
         return true;
       // A store wider than a slot, clang's `movsd [esp], xmm0` copying an
-      // eight-byte structure, fills each slot it covers with its piece.
+      // eight-byte structure or an x87 `fstp tbyte`, fills each slot it
+      // reaches with its piece.
       const int64_t Width = Store.Inputs[1].Size;
-      const int64_t Pieces =
-          Width > SlotBytes && Width % SlotBytes == 0 ? Width / SlotBytes : 1;
+      const int64_t Pieces = slotsFilled(Width, Offset / SlotBytes, SlotBytes);
       for (int64_t Piece = 0; Piece < Pieces; ++Piece) {
         const int64_t Index = Offset / SlotBytes + Piece;
         if (Index >= Scan.MaxArgs)
@@ -223,11 +261,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
           if (!Value->Type || Value->Type->Kind != NdTypeKind::Int)
             Value = HighExpr::makeBitCast(
                 Value, NdType::makeInt(static_cast<uint16_t>(Width), false));
-          Value = HighExpr::makeBinop(
-              NdOp::SUBBYTES, Value,
-              HighExpr::makeConst(static_cast<uint64_t>(Piece * SlotBytes), 4));
-          Value->Type =
-              NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
+          Value =
+              slotPiece(std::move(Value), Width, Piece * SlotBytes, SlotBytes);
         }
         Slot = std::move(Value);
       }
@@ -248,8 +283,7 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   auto walkPushes = [&](const std::vector<MedOp> &Ops, int Before) {
     for (int J = Before; J >= 0; --J) {
       const MedOp &Prev = Ops[static_cast<size_t>(J)];
-      if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-          Prev.Opcode == NdOp::INTRINSIC)
+      if (endsCallSetup(Prev))
         break;
       if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
           Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
