@@ -867,12 +867,15 @@ void Session::loadPdb(const QJsonObject &selection) {
   if (!loaded_ || !loadsPdbFiles())
     return;
   command(QStringLiteral("pdb_load"), selection,
-          [this, selection](const QJsonObject &result) {
-            loadOptions_.pdb = selection;
+          [this](const QJsonObject &result) {
+            loadOptions_.pdb = {{"path", result.value("path")},
+                                {"mode", result.value("mode")},
+                                {"stamp", result.value("stamp")}};
             functionCount_ =
                 result.value("function_count").toInteger(functionCount_);
             metadata_.insert(QStringLiteral("debug_info"), result);
-            metadata_.insert(QStringLiteral("pdb"), selection);
+            metadata_.insert(QStringLiteral("pdb"), loadOptions_.pdb);
+            metadata_.remove(QStringLiteral("pdb_download"));
             emit functionsChanged();
             emit stateChanged();
             reportPdb(result);

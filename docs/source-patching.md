@@ -127,4 +127,4 @@ ctest --test-dir build-source -L \
 
 The scoped LLVM copy also corrects Mach-O x64 GOT data references: Clang’s typed-catch table is relative to the end of its four-byte relocation word. The r3/r4 prebuilt misanchors that reference by four bytes. Publication validates the encoded field and refuses the uncorrected producer. On the development Mac, x64 Mach-O runtime cases use Rosetta 2; ARM64 cases execute directly.
 
-Native Windows x64 qualification at [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) passed all 15 focused PE/object/trampoline checks and all 48 target-matrix checks without skips. The FH3 case executed seven C++ runtime scenarios. This run used Clang 22.1.6 with native MSVC and Windows SDK inputs.
+Native Windows x64 qualification at [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) passed all 16 focused PE/object/trampoline checks and all 143 CPU target-matrix checks without skips. The FH3 case executed seven C++ runtime scenarios; the target matrix uses Unicorn. This run used Clang 22.1.6 with native MSVC and Windows SDK inputs and integrated LLVM.

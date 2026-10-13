@@ -318,6 +318,17 @@ in the image's language, EVM bytecode as Solidity and an SBF program as Rust.
 `neverd headers --json` lists the languages a program offers under
 `language.pseudocode`.
 
+Pseudocode, C and LLVM C also fold multiline brace blocks, including `if/else`,
+`while`, `do`, `for` and `switch`. Click the arrow beside the header's line number,
+or use Ctrl+Shift+[ to collapse the current block and Ctrl+Shift+] to expand it;
+Keypad -/+ work too. The header and closing line stay visible, so an `else`
+keeps its own arrow. Nested blocks retain their folding state when their parent
+is expanded. Line numbers remain the original source numbers, and copying or
+exporting includes the hidden code. Instruction and local-reference navigation
+and text search expand every fold hiding the target. Refreshing the same function
+preserves block folds while its brace structure is unchanged. Braces in comments
+and quoted strings do not define folding ranges; incomplete source stays expanded.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
@@ -370,6 +381,14 @@ and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
+In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
+lists its occurrences in the current function, with source line, column and
+code. The list uses the variable's identity from the complete loaded document,
+so similarly spelled names, member names, strings and comments are excluded.
+Selecting an occurrence stays in the originating code window, expands any fold
+that hides the row and selects the identifier. Renamed locals keep their
+original identity. A source reload or project close retires the old list.
+
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 `hex`, `strref`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
@@ -399,6 +418,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
 | Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
+| Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the current pseudocode brace block |
 | Ctrl+F5 | Write the function's pseudocode to a C file |
 | Alt+A | String literal options |
 | Ctrl+W | Save the database |
@@ -574,6 +594,25 @@ indicator, and **Options → Load debug information** reads the PDB, DWARF or
 linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
+
+When debug-information loading is enabled and a PE has no loaded PDB, the
+workbench offers **Download debug symbols** if its CodeView record supplies a
+unique valid PDB name and build identity. **Download** tries the Microsoft public
+symbol server; **Not now** continues without a network request. The request sends
+only the PDB basename and identity, not the binary. A valid PE is not necessarily
+a Microsoft product, and Microsoft may have no symbols for its build.
+
+Downloads run in the background with a cancel button. The engine verifies the
+PDB against the current image before applying it; failed downloads or mismatches
+leave analysis intact and report the reason in Output. Closing or switching
+files, or starting a manual PDB selection, cancels the pending download. Verified
+files are cached under the application's cache directory in
+`symbols/microsoft/<pdb-name>/<build-key>/` and verified again before reuse.
+Direct HTTPS PDB downloads are supported on every desktop platform; Windows
+also tries the compressed `.pd_` variant. Symbol-store `file.ptr` indirection is
+not followed. Transfers have a 2 GiB limit, a 30-second inactivity timeout and a
+10-minute overall deadline. See Microsoft's
+[public symbol server documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and

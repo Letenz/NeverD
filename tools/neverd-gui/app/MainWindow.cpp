@@ -15,6 +15,7 @@
 #include "Language.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
+#include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
@@ -30,6 +31,7 @@
 #include "mcp/McpConnectionManager.h"
 #include "web/PackageReviewDialog.h"
 
+#include <QAbstractTableModel>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -72,6 +74,7 @@
 #include <QStatusBar>
 #include <QStorageInfo>
 #include <QStyle>
+#include <QTableView>
 #include <QTextStream>
 #include <QToolBar>
 #include <QTreeView>
@@ -168,6 +171,57 @@ private:
   ChooserView *view_;
   std::optional<Address> chosen_;
 };
+
+/// A local's source occurrences already belong to the loaded code document.
+/// Keep their rows in a model so a large function need not allocate table
+/// widgets or trigger a binary reference-index query for every occurrence.
+class LocalReferencesModel final : public QAbstractTableModel {
+public:
+  LocalReferencesModel(QVector<CodeText::LocalReference> references,
+                       QStringList headers, QObject *parent)
+      : QAbstractTableModel(parent), references_(std::move(references)),
+        headers_(std::move(headers)) {}
+  int rowCount(const QModelIndex &parent = {}) const override {
+    return parent.isValid() ? 0 : int(references_.size());
+  }
+  int columnCount(const QModelIndex &parent = {}) const override {
+    return parent.isValid() ? 0 : 3;
+  }
+  QVariant data(const QModelIndex &index, int role) const override {
+    if (!index.isValid() || index.row() >= references_.size() ||
+        index.column() >= 3)
+      return {};
+    const auto &reference = references_[index.row()];
+    if (role == Qt::DisplayRole) {
+      if (index.column() == 0)
+        return reference.line + 1;
+      if (index.column() == 1)
+        return reference.column + 1;
+      return reference.text;
+    }
+    if (role == Qt::ToolTipRole)
+      return reference.text;
+    if (role == Qt::FontRole && index.column() == 2)
+      return Theme::instance().codeFont();
+    if (role == Qt::TextAlignmentRole && index.column() < 2)
+      return int(Qt::AlignRight | Qt::AlignVCenter);
+    return {};
+  }
+  QVariant headerData(int section, Qt::Orientation orientation,
+                      int role) const override {
+    if (orientation == Qt::Horizontal && role == Qt::DisplayRole &&
+        section >= 0 && section < headers_.size())
+      return headers_[section];
+    return {};
+  }
+  const CodeText::LocalReference *reference(int row) const {
+    return row >= 0 && row < references_.size() ? &references_[row] : nullptr;
+  }
+
+private:
+  QVector<CodeText::LocalReference> references_;
+  QStringList headers_;
+};
 } // namespace
 
 MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
@@ -185,6 +239,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   buildDocks();
   buildStatusBar();
   connectSession();
+  microsoftSymbols_ = new MicrosoftSymbols(session_, this);
   connectActions();
   statusTimer_.setInterval(StatusRefreshMs);
   connect(&statusTimer_, &QTimer::timeout, this, &MainWindow::updateStatusBar);
@@ -1512,6 +1567,7 @@ void MainWindow::reloadInput() {
 void MainWindow::loadPdb() {
   if (!session_.loaded() || !session_.loadsPdbFiles())
     return;
+  microsoftSymbols_->cancel();
   const auto epoch = session_.epoch();
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Load PDB file"),
@@ -1746,6 +1802,12 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
     showReferencesDialog(address, to, nullptr);
     return;
   }
+  if (view->text()->loading()) {
+    output_->append(
+        tr("Wait for the function to finish loading before finding references"),
+        1);
+    return;
+  }
   if (!to) {
     const auto position = view->text()->currentAddress();
     showReferencesDialog(position ? position : view->text()->function(), false,
@@ -1755,6 +1817,10 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
   // A source name can denote a different function from both its source row
   // and the independent assembly cursor. Prefer its published image identity.
   const auto target = view->text()->renameTarget();
+  if (target && target->value("kind").toString() == QLatin1String("local")) {
+    showLocalReferences(view, *target);
+    return;
+  }
   if (target)
     if (const auto at = addressValue(target->value("address"))) {
       showReferencesDialog(at, to, view);
@@ -1795,6 +1861,71 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
         if (valid())
           output_->append(tr("Cannot jump to %1: %2").arg(query, error), 2);
       });
+}
+
+void MainWindow::showLocalReferences(CodeView *origin,
+                                     const QJsonObject &target) {
+  const QPointer<CodeView> view = origin;
+  auto references = view->text()->localReferences(target);
+  if (references.isEmpty())
+    return;
+  const auto epoch = session_.epoch();
+  const auto serial = codeNavigationSerial_;
+  const auto function = view->text()->function();
+  const auto representation = view->representation();
+  const auto version = view->text()->documentVersion();
+  const auto valid = [this, view, epoch, serial, function, representation,
+                      version] {
+    return view && session_.loaded() && view->isVisible() &&
+           epoch == session_.epoch() && serial == codeNavigationSerial_ &&
+           function == view->text()->function() &&
+           representation == view->representation() &&
+           version == view->text()->documentVersion();
+  };
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("localReferencesDialog"));
+  dialog.setWindowTitle(tr("xrefs to %1").arg(target.value("name").toString()));
+  dialog.setWindowIcon(icon(QStringLiteral("xrefs")));
+  dialog.resize(760, 360);
+  auto *layout = new QVBoxLayout(&dialog);
+  auto *table = new QTableView(&dialog);
+  table->setObjectName(QStringLiteral("localReferencesTable"));
+  auto *model = new LocalReferencesModel(
+      std::move(references), {tr("Line"), tr("Column"), tr("Code")}, &dialog);
+  table->setModel(model);
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setSelectionMode(QAbstractItemView::SingleSelection);
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setWordWrap(false);
+  table->verticalHeader()->hide();
+  table->horizontalHeader()->setSectionResizeMode(
+      0, QHeaderView::ResizeToContents);
+  table->horizontalHeader()->setSectionResizeMode(
+      1, QHeaderView::ResizeToContents);
+  table->horizontalHeader()->setStretchLastSection(true);
+  table->selectRow(0);
+  layout->addWidget(table);
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(table, &QTableView::activated, &dialog,
+          [&dialog](const QModelIndex &) { dialog.accept(); });
+  connect(&session_, &Session::unloaded, &dialog, &QDialog::reject);
+  connect(view, &QObject::destroyed, &dialog, &QDialog::reject);
+  connect(view->text(), &CodeText::statusChanged, &dialog, [&dialog, valid] {
+    if (!valid())
+      dialog.reject();
+  });
+  table->setFocus();
+  if (dialog.exec() != QDialog::Accepted || !valid())
+    return;
+  if (const auto *chosen = model->reference(table->currentIndex().row()))
+    if (view->text()->selectLocalReference(target, *chosen)) {
+      view->window()->activateWindow();
+      view->text()->setFocus();
+    }
 }
 
 void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,

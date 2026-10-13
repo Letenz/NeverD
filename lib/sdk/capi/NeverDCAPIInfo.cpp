@@ -809,6 +809,13 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   }
   if (!DI.PDBPath.empty())
     Dyn["pdb_path"] = DI.PDBPath;
+  if (const auto Request = pdbSymbolRequest(S->Img))
+    Dyn["pdb_symbol"] =
+        llvm::json::Object{{"file", Request->FileName}, {"key", Request->Key}};
+  Root["debug_info"] =
+      llvm::json::Object{{"enabled", S->DbgRequest.Enabled},
+                         {"kind", debugInfoKindName(S->DbgKind)},
+                         {"path", pathToUTF8(S->DbgPath)}};
   if (!DI.UUID.empty())
     Dyn["uuid"] = DI.UUID;
   if (!DI.MinOSVersion.empty())

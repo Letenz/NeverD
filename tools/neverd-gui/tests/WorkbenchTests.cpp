@@ -54,6 +54,7 @@
 #include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -215,6 +216,260 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void nestedPseudocodeBlocksFoldWithoutMovingAssembly_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::newRow("pseudocode") << QStringLiteral("source");
+    QTest::newRow("explicit-c") << QStringLiteral("c");
+    QTest::newRow("llvm-c") << QStringLiteral("llvmc");
+  }
+
+  void nestedPseudocodeBlocksFoldWithoutMovingAssembly() {
+    QFETCH(QString, representation);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-folding.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench
+        .action(representation == QLatin1String("llvmc")
+                    ? ActionId::ViewLLVMC
+                    : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(representation == QLatin1String("llvmc")
+                                    ? QStringLiteral("llvmc")
+                                    : QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() == 19);
+    const QString original = code->allText();
+    assembly->navigate(Base + 0x180);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+
+    // The while arrow uses the fixed line-number gutter, without selecting
+    // code or changing assembly. Its parent retains the child's fold state.
+    code->setCursorLine(4);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int height = int(std::ceil(metrics.lineSpacing()));
+    const QPoint arrow(int(6 + 4.25 * metrics.horizontalAdvance('M')),
+                       (4 - code->verticalScrollBar()->value()) * height +
+                           height / 2);
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, arrow);
+    QCOMPARE(code->lineCount(), 18);
+    code->setCursorLine(3);
+    QTest::keyClick(code, Qt::Key_BracketLeft,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(code->lineCount(), 16);
+    QTest::keyClick(code, Qt::Key_BracketRight,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(code->lineCount(), 18);
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+
+    QVERIFY(code->findText(QStringLiteral("v7 = v0"), true));
+    const auto target = code->renameTarget();
+    QVERIFY(target);
+    const auto references = code->localReferences(*target);
+    const auto hidden =
+        std::find_if(references.cbegin(), references.cend(),
+                     [](const auto &ref) { return ref.line == 5; });
+    QVERIFY(hidden != references.cend());
+    code->setCursorLine(1);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    QCOMPARE(code->lineCount(), 3);
+    QVERIFY(
+        !code->currentAddress()); // The body cannot supply a header address.
+    QTest::keyClick(code, Qt::Key_Home, Qt::ControlModifier);
+    QTest::keyClick(code, Qt::Key_End, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(code->selectedText(), original);
+    QCOMPARE(code->allText(), original);
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("--v7"), true));
+    QCOMPARE(code->lineCount(), 19);
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+    code->setCursorLine(1);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    QVERIFY(code->selectLocalReference(*target, *hidden));
+    QCOMPARE(code->lineCount(), 19);
+    QCOMPARE(code->selectedText(), QStringLiteral("v7"));
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+
+    // A refresh preserves folds, and explicit instruction navigation expands
+    // all blocks hiding its mapped original row.
+    code->setCursorLine(3);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    code->load(Base + 0x140, representation);
+    QTRY_VERIFY(!code->loading() && code->lineCount() == 16);
+    code->selectAddress(Base + 0x142);
+    QCOMPARE(code->lineCount(), 19);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(Base + 0x142));
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+  }
+
+  void localVariableReferencesStayInTheirCodeWindow_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::addColumn<bool>("renamed");
+    QTest::newRow("pseudocode") << QStringLiteral("source") << false;
+    QTest::newRow("explicit-c") << QStringLiteral("c") << false;
+    QTest::newRow("llvm-c") << QStringLiteral("llvmc") << false;
+    QTest::newRow("renamed-local") << QStringLiteral("source") << true;
+  }
+
+  void localVariableReferencesStayInTheirCodeWindow() {
+    QFETCH(QString, representation);
+    QFETCH(bool, renamed);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-references.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench
+        .action(representation == QLatin1String("llvmc")
+                    ? ActionId::ViewLLVMC
+                    : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(representation == QLatin1String("llvmc")
+                                    ? QStringLiteral("llvmc")
+                                    : QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->allText().contains("return v7 + v7"));
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    assembly->navigate(Base + 0x180);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+    QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
+    if (renamed) {
+      const auto target = code->renameTarget();
+      QVERIFY(target);
+      auto edit = *target;
+      edit["address"] = hexAddress(Base + 0x140);
+      edit["representation"] = representation;
+      edit["kind"] = "rename";
+      edit["name"] = "counter";
+      bench.session.editCode(edit, bench.session.epoch());
+      QTRY_VERIFY(!code->loading() &&
+                  code->allText().contains("return counter + counter"));
+    }
+    const auto name =
+        renamed ? QStringLiteral("counter") : QStringLiteral("v7");
+    QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
+    const auto target = code->renameTarget();
+    QVERIFY(target);
+    QCOMPARE(target->value("kind").toString(), QStringLiteral("local"));
+    const auto references = code->localReferences(*target);
+    // The complete function spans three pages. Its similarly named v70,
+    // Box::v7 member, strings and comments are not this local's occurrences.
+    QCOMPARE(references.size(), 5);
+    QCOMPARE(references[0].line, 3);
+    QCOMPARE(references[1].line, 9);
+    QVERIFY(references[1].text.contains(QStringLiteral("中文")));
+    QCOMPARE(references[2].line, 550);
+    QCOMPARE(references[2].column, 2);
+    QCOMPARE(references[3].line, 700);
+    QCOMPARE(references[4].line, 700);
+    QVERIFY(references[3].column < references[4].column);
+    code->setFolded(true);
+    QVERIFY(code->libraryFolded());
+    QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
+    code->setFocus();
+    bool sawDialog = false, correctRows = false;
+    QTimer chooser;
+    connect(&chooser, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *table = dialog ? dialog->findChild<QTableView *>(
+                                 QStringLiteral("localReferencesTable"))
+                           : nullptr;
+      if (!table)
+        return;
+      chooser.stop();
+      sawDialog = dialog->windowTitle().contains(name);
+      const auto *model = table->model();
+      correctRows = model->rowCount() == 5 &&
+                    model->index(2, 0).data().toInt() == 551 &&
+                    model->index(2, 1).data().toInt() == 3;
+      table->setCurrentIndex(model->index(2, 0));
+      QTest::keyClick(table, Qt::Key_Return);
+    });
+    chooser.start(10);
+    QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        dialog->reject();
+    });
+    bench.action(ActionId::JumpXrefsTo)->trigger();
+    QVERIFY(sawDialog);
+    QVERIFY(correctRows);
+    QCOMPARE(code->selectedText(), name);
+    QCOMPARE(code->currentToken(), name);
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+    QCOMPARE(view->representation(), representation);
+    QVERIFY(view->locked());
+    QVERIFY(!code->libraryFolded());
+    QVERIFY(code->preludeFolded());
+    const auto row = code->commentTarget();
+    QVERIFY(row);
+    QCOMPARE(row->value("line").toInt(), 550);
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+  }
+
+  void closingFileDismissesLocalVariableReferences() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-references.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->allText().contains("v7 = 0"));
+    QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
+    code->setFocus();
+    bool closed = false;
+    QTimer closer;
+    connect(&closer, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog ||
+          dialog->objectName() != QLatin1String("localReferencesDialog"))
+        return;
+      closer.stop();
+      closed = true;
+      bench.session.closeFile();
+    });
+    closer.start(10);
+    QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        dialog->reject();
+    });
+    bench.action(ActionId::JumpXrefsTo)->trigger();
+    QVERIFY(closed);
+    QVERIFY(!bench.session.loaded());
+    QVERIFY(!code->function());
+    QVERIFY(code->selectedText().isEmpty());
+  }
+
   void xrefsReturnToTheOriginatingCodeWindow_data() {
     QTest::addColumn<QString>("scenario");
     for (const auto *scenario :

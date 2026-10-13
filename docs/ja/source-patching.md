@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
+<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
 
 [← Documentation Index](README.md)
 
@@ -129,4 +129,4 @@ ctest --test-dir build-source -L \
 
 LLVM のビルド用コピーは Mach-O x64 の GOT データ参照も修正します。Clang の型付き catch 表は 4 バイト再配置フィールドの末尾を基準にします。r3/r4 は 4 バイトずれるため、公開前検証で未修正の結果を拒否します。開発 Mac の x64 Mach-O ケースは Rosetta 2、ARM64 ケースは直接実行します。
 
-Windows x64 のネイティブ検証 [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) では、PE/オブジェクト/trampoline の専用テスト 15 件とターゲット行列テスト 48 件が、スキップなしですべて成功しました。FH3 のテストは C++ の実行シナリオ 7 種類を検証しました。Clang 22.1.6 とネイティブの MSVC、Windows SDK を使用しています。
+Windows x64 のネイティブ検証 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) では、PE/オブジェクト/trampoline の専用テスト 16 件と CPU ターゲット行列テスト 143 件が、スキップなしですべて成功しました。FH3 のテストは C++ の実行シナリオ 7 種類を検証し、ターゲット行列は Unicorn を使用します。Clang 22.1.6、ネイティブの MSVC と Windows SDK、統合 LLVM を使用しました。
