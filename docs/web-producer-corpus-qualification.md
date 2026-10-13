@@ -41,18 +41,29 @@ bun-linux/   bun-cross/   sea-cases/   sea-images/   nexe/   pkg/
 ```
 
 Each directory keeps the existing recipe's relative filenames. The pkg tree
-includes `outputs-canonical/` and `outputs-stripped/`. Preserve all applicable
-runtime/source redistribution licenses with the archive. The lane verifies
+includes `outputs-canonical/` and `outputs-stripped/`.
+The optional explicit `snapshot_witness` input selects `original` by default
+or the independently recorded `2026-10-13` witness. The latter requires
+`sea-cases/snapshot-2026-10-13.blob` and its separate fixed manifest; repeat
+generation is not assumed deterministic. Original snapshot metadata and byte
+pins remain unchanged. An unknown witness or mismatched byte hash fails.
+
+Preserve all applicable runtime/source redistribution licenses with the archive.
+The lane verifies
 the entire archive before admitting inputs, then the owning C++ tests check
 each recorded artifact hash. It builds the pinned in-process Zstandard 1.5.7
 SDK for Bun maps and requires the qualified portable namespace and JS parser.
 The macOS ARM64 analysis host reads ELF/Mach-O/PE inputs without executing them.
 This does not establish Windows analysis-host support.
 
-The old full-image directories recorded under `/tmp` are absent on the current
-host. Preserved graph/blob fixtures continue to run, but they do not replace
-full independent producer images. An immutable corpus archive still needs to
-be restored/published before a successful full release qualification can be
-claimed. An explicit absence probe selected all eleven cases and failed all
-eleven, with zero successful skips. No corpus URL/hash or green release receipt
-is invented.
+On 2026-10-13 the absent `/tmp` corpus was rebuilt under a persistent local
+directory. All 25 Bun containers, six injected SEA images, three nexe images,
+six canonical pkg images and the pkg preprocessing image match their original
+complete-file hashes. Node's opaque snapshot uses the separately pinned
+`2026-10-13` witness. Both nexe/pkg installations retain new dependency locks;
+their complete output hashes match the old witnesses despite those lock changes.
+All eleven required C++ cases pass with zero skips (25.73 seconds, Release,
+macOS ARM64). A missing-input probe fails all eleven cases with zero skips.
+These are local qualification receipts. The immutable archive still needs an
+accessible URL and a successful workflow receipt before claiming remote release
+qualification. Original manifests have not been relaxed or replaced.

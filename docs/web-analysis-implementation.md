@@ -3832,3 +3832,30 @@ changed. Worker/MCP/availability passed six of seven with its normal omission
 skip, and Qt Web review passed in 2.62 seconds. The 23-capability ledger and
 7,695-file source-provenance scan pass after the native merge. These receipts
 use `/tmp/neverd-js-gap-postmerge-*`.
+
+### Persistent full producer corpus restoration (2026-10-13)
+
+The fixed corpus has been rebuilt in a persistent local directory. All 25 Bun containers,
+six injected Node SEA images, three nexe images, six canonical pkg images and
+the BOM/shebang pkg witness match their original whole-file SHA-256 values.
+The preprocessing witness requires the original `stripped-inputs` basename;
+changing it changes the embedded virtual paths and is correctly rejected by
+the fixed hash check. Fresh nexe/pkg dependency locks are recorded separately
+instead of being passed off as the historical locks.
+
+Node's snapshot builder did not reproduce the old opaque snapshot bytes even
+with the original source, compiler path and fixed random seed. A separate
+immutable `2026-10-13` witness therefore pins its 5,644,095 bytes and SHA-256
+`9e94efe5aed0592ce0338a8c80f0e352cd154ff5849e1fe32f866a4841e2772a`.
+The old witness remains the default and unchanged; only an explicit known
+selection admits the new snapshot. Unknown selections and mismatched hashes
+fail. Both witnesses stay opaque and have no invented source selection.
+
+All eleven required producer cases pass with zero skips in 25.73 seconds;
+the receipt is `/tmp/neverd-full-producer-qualified-fixed.xml`. The invalid
+snapshot selection probe also fails as required. Production used only the
+fixed trusted builders in separate fixture preparation; no generated image
+was executed and the C++ qualification invokes no producer or runtime. Remote
+release qualification still requires an accessible immutable archive and a
+green workflow receipt. Real minified-loader/configuration navigation remains
+the next implementation gap.
