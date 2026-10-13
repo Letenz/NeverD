@@ -2781,6 +2781,8 @@ GUIDE_SECTION_CONTRACTS = {
         "NEVERD_TEST_WINDOWS_CRT_LIB", "NEVERD_TEST_WINDOWS_UCRT_LIB",
         "NEVERD_TEST_WINDOWS_SDK_LIB", "NEVERD_TEST_WINDOWS_RUNNER",
         "NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1",
+        "scripts/check_source_patch_pe_runtime.py", "windows-11-arm",
+        "NEVERD_TEST_MATRIX_NEVERC", "-fno-autolink", ".drectve",
     ),
     ("interpreter-recovery", "machine-state"): (
         "modelInterpreterMachineStateX64", "InterpreterMachineStateModel",
