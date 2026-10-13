@@ -235,6 +235,10 @@ struct MedOp {
   /// Only source-call lowering may establish this transport before SSA.
   bool HasSourceErrorResult = false;
   bool Dead = false;
+  /// Source views only: this STORE saves a callee-saved register's entry
+  /// value into prologue storage (markCalleeSavePrologueSaves), so source
+  /// emitters leave it out.  Binary lifting and patching never set it.
+  bool PrologueSave = false;
   bool PreservesCallerSaved = false;
   /// GPR families (see CallRegisterEffects.h) the direct callee provably
   /// never writes, so SSA keeps their pre-call values across this call.

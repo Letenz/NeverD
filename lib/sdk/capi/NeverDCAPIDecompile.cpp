@@ -180,6 +180,9 @@ void emitMedView(const MedFunc &F, const LowFunc *Low, const IRRowSink &Sink) {
           OS << " " << Op.Output.display() << " =";
         for (int I = 0; I < Op.NumInputs; ++I)
           OS << " " << Op.Inputs[I].display();
+        // Source views leave this store out: say so where the IR shows it.
+        if (Op.PrologueSave)
+          OS << " ; prologue save";
         OS << "\n";
       });
     }

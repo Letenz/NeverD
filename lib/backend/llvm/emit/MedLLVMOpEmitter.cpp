@@ -990,6 +990,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     break;
   }
   case NdOp::STORE: {
+    // A prologue save keeps the caller's register, which no source reads.
+    if (Op.PrologueSave)
+      return;
     auto *Val = GetInput(1);
     if (CurMedFunc && CurMedFunc->SkippedSSA) {
       auto *Ptr =
