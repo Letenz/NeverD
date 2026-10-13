@@ -21,6 +21,7 @@
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/evm/emit/EVMLLVMEmitter.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
@@ -485,7 +486,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return Result;
   }
   Trace.start(NativePipelineTrace::Stage::NoReturnVerify);
-  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
+                            importCallAddresses(Img));
 
   // One read-only proof boundary serves both C routes. Neither annotation nor
   // its display name becomes input to ABI recovery or instruction semantics.

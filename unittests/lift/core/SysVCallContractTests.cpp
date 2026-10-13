@@ -1522,6 +1522,54 @@ TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
   }
 }
 
+TEST(SysVCallContract, AColdFragmentCallingAbortThroughItsStubNeverReturns) {
+  // check(x) jumps to its cold fragment, which calls abort through the PLT
+  // stub that function discovery also lists as a function.  The stub's
+  // import never returns, so neither does the fragment, and check's jump to
+  // it hands back no value.
+  constexpr va_t Check = Text, Cold = Text + 0x40, AbortStub = Text + 0x100;
+  std::vector<uint8_t> Code(0x110, 0xCC);
+  std::vector<uint8_t> CheckCode = {0x85, 0xFF,  // test edi, edi
+                                    0x0F, 0x88}; // js cold
+  for (uint8_t B : rel32(Check + CheckCode.size() + 4, Cold))
+    CheckCode.push_back(B);
+  for (uint8_t B : {0x8D, 0x04, 0x7F, // lea eax, [rdi + rdi*2]
+                    0xC3})            // ret
+    CheckCode.push_back(B);
+  put(Code, Check, CheckCode);
+  std::vector<uint8_t> ColdCode = {0xE8}; // call abort
+  for (uint8_t B : rel32(Cold + 5, AbortStub))
+    ColdCode.push_back(B);
+  put(Code, Cold, ColdCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Check, "check"}, {Cold, "check_cold"}}, {{AbortStub, "abort"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Check, Cold, AbortStub};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  auto Find = [&](va_t Entry) {
+    return std::find_if(
+        Result.MedFuncs.begin(), Result.MedFuncs.end(),
+        [&](const MedFunc &Function) { return Function.Entry == Entry; });
+  };
+  const auto Fragment = Find(Cold);
+  ASSERT_NE(Fragment, Result.MedFuncs.end());
+  EXPECT_TRUE(Fragment->DoesNotReturn);
+  const auto Caller = Find(Check);
+  ASSERT_NE(Caller, Result.MedFuncs.end());
+  bool SawJump = false;
+  for (const MedBlock &Block : Caller->Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].ConstVal == Cold) {
+        SawJump = true;
+        EXPECT_TRUE(Op.DoesNotReturn);
+      }
+  EXPECT_TRUE(SawJump);
+}
+
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
   // die() calls the variadic panic("out of memory") and never returns, so
   // it aligns the stack for the call with a push of RAX (Clang) or a push,

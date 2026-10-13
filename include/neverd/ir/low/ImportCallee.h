@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace neverd {
@@ -51,6 +52,15 @@ inline std::string importCalleeName(const BinaryImage &Img, va_t Addr) {
   if (It != Storage.Slots.end())
     return It->second.Name;
   return {};
+}
+
+/// Every address a call reaches an import through: its executable stubs
+/// and its import address slots.
+inline std::set<va_t> importCallAddresses(const BinaryImage &Img) {
+  std::set<va_t> Addresses;
+  for (const auto &[Addr, Name] : Img.getImportAddressNames())
+    Addresses.insert(Addr);
+  return Addresses;
 }
 
 /// The constant address the value \p Var holds at op \p Index of \p Block
