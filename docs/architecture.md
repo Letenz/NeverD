@@ -840,6 +840,14 @@ and declaration uniqueness from `indexSourceDeclarations`. Exhaustion clears
 relations without invalidating request evidence. `SessionInterfaceRelations`
 owns explicit selection, revision/cache lifetime and metadata-only pages.
 See the [relationship profile](web-interface-relations-profile.md).
+`interfaces/TransformationLinks` adds fixed call spellings only through direct
+request-body and result-argument containment; no value propagation or API
+authentication is duplicated. `interfaces/report/Source` projects existing
+frontend evidence, `Shapes` inspects admitted observed JSON types, `Compose`
+reuses the HTTP join and shared MCP spelling vocabulary, and `Publication`
+emits closed metadata. `SessionPassiveReport` owns explicit committed selections,
+atomic bounded caches and revision-bound pages. See the
+[passive report profile](web-passive-report-profile.md).
 `streams/Framing` owns bounded line/SSE framing, `streams/Records` owns
 selected JSON/protocol shapes and `streams/Relations` owns recorded-context
 joins. Shared `JsonReader` reports consumed nodes even on failure so a stream
@@ -908,6 +916,11 @@ exact captured file comparison for NW.js and VS Code extensions;
 Individual opaque-key Bun/SEA assets never acquire a directory namespace.
 The C API, CLI, worker and MCP only select and publish this common evidence.
 See the [desktop manifest profile](web-desktop-manifest-profile.md).
+`desktop/ResourceManifest` reads the separately versioned supplied CEF/WebView
+resource descriptor through the same captured namespace/path owner.
+`SessionDesktopExport` reuses the exclusive local writer and exact artifact
+origins; transport adapters neither infer a framework nor export raw resources.
+See the [resource descriptor profile](web-desktop-resource-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker
@@ -2248,7 +2261,14 @@ value owner handles known binary32/64/80 images without numerical conversion.
 This does not establish complete x87 architectural state or general arithmetic.
 
 The same tag solver admits FILD only when every incoming path proves its push
-destination empty; an ABI entry alone supplies no tag proof. The successful
+destination empty. A function entry starts from the calling convention's empty
+register stack, and every call returns under the same contract, which the TOP
+pass already assumes for callees it cannot prove: slots a call found empty stay
+empty, full ones become unknown. Payloads stay undefined, so these seeds prove
+push destinations but no FXAM or sign source. Only state restores (FRSTOR,
+FLDENV, FNSAVE, FXRSTOR, XRSTOR) and unmodeled x87 operations replace tags;
+value instructions define only their outputs, and other intrinsics, such as
+an IDIV's divide-error precondition, leave the register stack alone. The successful
 16/32/64-bit signed load becomes an exact raw binary80 image and clears C1 in
 shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
 the signed minimum without overflow. Waiting precedes the source memory load.
@@ -2650,6 +2670,15 @@ ownership from LowIR through MedIR into HighIR. Equal numeric bits do not merge
 different origins. HighIR symbolic simplification keeps address identities
 opaque; source binding uses the shared numeric-operand classification and still
 requires relocation bindings for memory and pointer consumers.
+
+HighIR semantic rewriting splits large functions only where its scalar
+definitions are already discarded. Each segment owns its statements,
+definition environment and symbolic contexts; shared input expression DAGs
+remain read-only. The pipeline grants up to four inner workers only when its
+outer function batch runs serially, bounded by `NEVERD_THREADS`. Small
+functions and converters without an explicit inner-thread allowance retain
+serial rewriting. Solver budgets, effect barriers and rewrite proofs are
+identical in both paths.
 
 MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
 
@@ -5278,6 +5307,8 @@ The driver loader binds relocation facts to the validated file SHA-256. PE rebui
 Driver execution watches publish the same stopped-memory guarantee as process execution watches. The session clears it before every CPU interval and establishes it only at a pure execution-watch exit without a committed watched write. Invocation entry clears it before callbacks. Kernel services, scheduler transitions and other exits remain conservative. The guarantee covers only the preceding installed RAM write watches; the transfer observer still initializes newly visited ranges.
 
 Kernel recovery classifies an arena allocation as a typed live pool only when the pool owner records the same allocation address and exact extent. Its pool dependency remains; unrelated retained objects keep their separate untyped dependency even while pools coexist or are later freed. Allocation identity does not prove pointer fields or supply a kernel materializer.
+
+Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

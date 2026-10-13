@@ -348,6 +348,52 @@ const char *neverd_web_stream_records_json(neverd_web_session_t Session,
 #endif
 }
 
+const char *neverd_web_desktop_resources_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ManifestID, size_t ManifestIDSize,
+    const char *OutputDirectory, size_t DirectorySize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.exportDesktopResources(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(ManifestID, ManifestIDSize, 64),
+        buffer(OutputDirectory, DirectorySize, 32768));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_passive_report_create_json(neverd_web_session_t Session,
+                                                  const char *ExpectedRevision,
+                                                  size_t RevisionSize,
+                                                  const char *SelectionJSON,
+                                                  size_t SelectionSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.createPassiveReport(buffer(ExpectedRevision, RevisionSize, 20),
+                                 buffer(SelectionJSON, SelectionSize, 1024));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_passive_report_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ReportID, size_t ReportIDSize,
+    uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.passiveReportRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                                  buffer(ReportID, ReportIDSize, 64), Offset,
+                                  Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_har_preview_json(neverd_web_session_t Session,
                                         const char *ExpectedRevision,
                                         size_t RevisionSize,

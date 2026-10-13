@@ -293,6 +293,10 @@ void coordinateBounds() {
     Tool.payload(Args);
     Args["input_kind"] = "vsix";
     Tool.payload(Args);
+    Args["input_kind"] = "cef-assets";
+    Tool.payload(Args);
+    Args["input_kind"] = "webview-assets";
+    Tool.payload(Args);
     Args["input_kind"] = "electron";
     refuses([&] { Tool.payload(Args); });
     Args["input_kind"] = "nwjs";

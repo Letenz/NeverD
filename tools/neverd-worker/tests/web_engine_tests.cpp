@@ -2049,7 +2049,7 @@ int main(int argc, char **argv) {
                              interfaceRevision, interfaceProject);
         check(reply["payload"] == relations &&
                   relations["relation_count"] == 4 &&
-                  relations["profile"] == "request-source-relations-v1" &&
+                  relations["profile"] == "request-source-relations-v2" &&
                   relations["response_api_identity"] ==
                       "member_spelling_unverified" &&
                   relations["har_correlation"] == false,
@@ -2307,6 +2307,27 @@ int main(int argc, char **argv) {
                 records["protocol_negotiation_verified"] == false &&
                 reply.dump().find("SECRET_WEB") == std::string::npos,
             "Stream pages differ or expose values");
+      const Json reportArgs{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"stream_capture_id", redaction["stream_capture_id"]}};
+      const auto Report = web.execute("web_passive_report_create", reportArgs);
+      reply = process.call("web_passive_report_create", reportArgs, revision,
+                           project);
+      check(reply["payload"] == Report &&
+                Report["server_constraints"] == "unknown" &&
+                Report["record_count"] == 2,
+            "Worker changed passive report evidence");
+      const Json reportPage{{"schema_version", 1},
+                            {"revision", revision},
+                            {"passive_report_id", Report["passive_report_id"]}};
+      const auto ReportRecords =
+          web.execute("web_passive_report_records", reportPage);
+      reply = process.call("web_passive_report_records", reportPage, revision,
+                           project);
+      check(reply["payload"] == ReportRecords &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed report pages or exposed values");
       auto invalid = previewArgs;
       invalid["replay"] = true;
       reply = process.call("web_stream_preview", invalid, revision, project);

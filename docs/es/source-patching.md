@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ La matriz CPU exige instalar correctamente código fuente, IR externo y objetos 
 `CPU` significa instalación fuente／IR／objeto, recarga y ejecución exacta. ARM ELF obtiene EABI5, estado ARM/Thumb y ABI flotante de la imagen y registra un índice `EHABI` completo y ordenado. PE conserva filas x64/ARM y reubicaciones `HIGHLOW`/`DIR64`/`MOV32T`; x86 usa código de registro del compilador. Mach-O distingue watchOS DWARF e iOS `SjLj` por subtipo CPU. Los saltos de entrada ARM/Thumb son relativos y sobreviven al cambio de base.
 
 Los objetos nativos usan sus símbolos de función acotados, definiciones auxiliares／de sección y registros de desenrollado, sin inventar identificadores MC ni recompilar IR. COFF exige tamaños auxiliares exactos o secciones de una sola función (`-ffunction-sections`). El adaptador watchOS conserva marcos de funciones hoja para obtener registros reales. Los manejadores de lenguaje COFF/Mach-O nativos quedan fuera del perfil de objetos comprobado; las excepciones C++ usan la ruta IR verificada. Se rechazan desenrolladores ARM estáticos con registro exidx fijado, punteros absolutos Mach-O sin registrar y almacenamiento RELRO no soportado.
+
+Los objetos C de GCC también se instalaron y ejecutaron en ELF x86, ARM32 y ARM64 mediante Linux QEMU user mode. El adaptador elige ARM/Thumb desde la imagen y las propiedades GNU se alinean según el ancho de puntero ELF.
 
 <!-- i18n-section: references -->
 ## Referencias originales y almacenamiento
@@ -127,4 +129,4 @@ ctest --test-dir build-source -L \
 
 La copia LLVM también corrige referencias GOT de datos Mach-O x64: la tabla catch tipada de Clang es relativa al final del campo de reubicación de cuatro bytes. r3/r4 la desplaza cuatro bytes; la comprobación previa a publicar rechaza ese resultado. En el Mac, x64 usa Rosetta 2 y ARM64 se ejecuta directamente.
 
-La validación nativa de Windows x64 [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) superó las 15 pruebas específicas de PE/objetos/trampoline y las 48 pruebas de la matriz de destinos, sin omisiones. El caso FH3 ejecutó siete escenarios de C++. Esta ejecución utilizó Clang 22.1.6 con MSVC y Windows SDK nativos.
+La validación nativa de Windows x64 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) superó las 16 pruebas específicas de PE/objetos/trampoline y las 143 pruebas de la matriz de destinos CPU, sin omisiones. El caso FH3 ejecutó siete escenarios de C++; la matriz utiliza Unicorn. Esta ejecución utilizó Clang 22.1.6 con MSVC y Windows SDK nativos, además de LLVM integrado.

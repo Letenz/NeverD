@@ -99,3 +99,27 @@ int acas8(int x) {
 )C",
                        "acas8", {"acas8", "gc8"});
 }
+
+// `test si, si; cmovle` clamps a negative halfword to zero: si is at most
+// zero as a signed 16-bit value.  Printed as `x <= 0` against a 32-bit zero,
+// the halfword extended without its sign, and no negative one was clamped.
+TEST_F(X86_64_SignedCompare, AHalfwordAtMostZeroComparesItsSign) {
+  expectRunsLikeSource(R"C(
+int clamp16(int a) {
+  short x[64];
+  unsigned acc = 0;
+  for (int i = 0; i < 64; i++)
+    x[i] = (short)(((a * (i + 1)) >> 2) - 300);
+  for (int i = 0; i < 64; i++) {
+    int v = x[i];
+    if (v < 0)
+      v = 0;
+    if (v > 255)
+      v = 255;
+    acc = acc * 131u + (unsigned)v;
+  }
+  return (int)acc;
+}
+)C",
+                       "clamp16", {"clamp16"});
+}

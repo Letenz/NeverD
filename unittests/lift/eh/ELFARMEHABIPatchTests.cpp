@@ -406,7 +406,8 @@ TEST(ELFARMEHABIPatch, LeavesImageAloneWithoutTableWhenModelNeedsOne) {
       makeGenericRecord(kFunc1VA, {0xA9, kFinish, kFinish});
   const std::string Text =
       errorText(installELFARMEHABIRecords(Bin, *Region, Record));
-  EXPECT_NE(Text.find(".ARM.extab"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("authenticated storage owner"), std::string::npos)
+      << Text;
   // A rejected install leaves the image exactly as it was.
   EXPECT_EQ(Bin, Before);
 }
@@ -625,6 +626,30 @@ TEST(ELFARMEHABIPatch, ReplacesEntryForAFunctionAlreadyDescribed) {
                       (uint32_t(kFinish) << 8) | kFinish);
 }
 
+TEST(ELFARMEHABIPatch, AcceptsInputProgramsWithImplicitFinish) {
+  // EHABI32 supplies a finish after complete explicitly stored operations.
+  // https://github.com/ARM-software/abi-aa/blob/main/ehabi32/ehabi32.rst
+  for (bool OutOfLine : {false, true}) {
+    SCOPED_TRACE(OutOfLine ? "generic descriptor" : "inline index word");
+    std::vector<uint8_t> Bin = makeARMELFWithEHABI();
+    const uint32_t Opcodes =
+        (uint32_t(0x80) << 16) | (uint32_t(kFinish) << 8) | 0x01;
+    if (OutOfLine)
+      putU32(Bin, kTabOff + 4, Opcodes);
+    else
+      putU32(Bin, kIdxOff + 4, kCompactBit | Opcodes);
+
+    auto Region = findELFARMEHABIRegion(Bin);
+    ASSERT_TRUE(Region.has_value());
+    ELFARMEHABIRecord Replacement;
+    Replacement.FunctionVA = kFunc0VA;
+    Replacement.Model = ELFARMEHABIModel::CantUnwind;
+    ASSERT_FALSE(
+        hadError(installELFARMEHABIRecords(Bin, *Region, Replacement)));
+    EXPECT_EQ(getU32(Bin, kIdxOff + 4), 1u);
+  }
+}
+
 TEST(ELFARMEHABIPatch, RejectsMalformedInputIndexWithoutChangingBytes) {
   ELFARMEHABIRecord Replacement;
   Replacement.FunctionVA = kFunc0VA;
@@ -648,13 +673,13 @@ TEST(ELFARMEHABIPatch, RejectsMalformedInputIndexWithoutChangingBytes) {
   putU32(InlineVendor, kIdxOff + 4, kCompactBit | 0x10000000u);
   RejectsUnchanged(std::move(InlineVendor));
 
-  // An inline opcode program must contain a semantic finish.  A finish byte
-  // used as the operand of a two-byte opcode does not terminate the program.
-  std::vector<uint8_t> InlineWithoutFinish = makeARMELFWithEHABI();
-  putU32(InlineWithoutFinish, kIdxOff + 4,
+  // A finish byte used as an operand does not end the program. An implicit
+  // finish cannot supply the missing mask operand of the trailing pop opcode.
+  std::vector<uint8_t> InlineTruncatedOperand = makeARMELFWithEHABI();
+  putU32(InlineTruncatedOperand, kIdxOff + 4,
          kCompactBit | (uint32_t(0x80) << 16) | (uint32_t(kFinish) << 8) |
-             0x01);
-  RejectsUnchanged(std::move(InlineWithoutFinish));
+             0xB1);
+  RejectsUnchanged(std::move(InlineTruncatedOperand));
 
   // An out-of-line word must resolve inside the image's one allocated extab.
   std::vector<uint8_t> OutsideTable = makeARMELFWithEHABI();
@@ -671,10 +696,10 @@ TEST(ELFARMEHABIPatch, RejectsMalformedInputIndexWithoutChangingBytes) {
   putU32(TruncatedProgram, kTabOff + 4, 4u << 24);
   RejectsUnchanged(std::move(TruncatedProgram));
 
-  std::vector<uint8_t> DescriptorWithoutFinish = makeARMELFWithEHABI();
-  putU32(DescriptorWithoutFinish, kTabOff + 4,
-         (uint32_t(0x80) << 16) | (uint32_t(kFinish) << 8) | 0x01);
-  RejectsUnchanged(std::move(DescriptorWithoutFinish));
+  std::vector<uint8_t> DescriptorTruncatedOperand = makeARMELFWithEHABI();
+  putU32(DescriptorTruncatedOperand, kTabOff + 4,
+         (uint32_t(0x80) << 16) | (uint32_t(kFinish) << 8) | 0xB1);
+  RejectsUnchanged(std::move(DescriptorTruncatedOperand));
 
   // Equal function starts make the binary-search index ambiguous.
   std::vector<uint8_t> DuplicateFunction = makeARMELFWithEHABI();

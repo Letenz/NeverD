@@ -14,8 +14,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/object/SectionNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/object/SectionNames.h"
 
 #include <gtest/gtest.h>
 
@@ -87,9 +87,12 @@ TEST(IsTextSectionName, RejectsUnrelatedNames) {
 }
 
 TEST(IsElfImageDataSectionName, AcceptsEmbeddedDataSections) {
-  EXPECT_TRUE(section_names::isElfImageDataSectionName(section_names::elf::Rodata));
-  EXPECT_TRUE(section_names::isElfImageDataSectionName(section_names::elf::Data));
-  EXPECT_TRUE(section_names::isElfImageDataSectionName(section_names::elf::Bss));
+  EXPECT_TRUE(
+      section_names::isElfImageDataSectionName(section_names::elf::Rodata));
+  EXPECT_TRUE(
+      section_names::isElfImageDataSectionName(section_names::elf::Data));
+  EXPECT_TRUE(
+      section_names::isElfImageDataSectionName(section_names::elf::Bss));
   EXPECT_TRUE(
       section_names::isElfImageDataSectionName(section_names::elf::DataRelRo));
   EXPECT_TRUE(section_names::isElfImageDataSectionName(".rodata.str1.1"));
@@ -101,16 +104,25 @@ TEST(IsElfImageDataSectionName, RejectsTextAndUnknown) {
       section_names::isElfImageDataSectionName(section_names::elf::Text));
   EXPECT_FALSE(section_names::isElfImageDataSectionName(".vmp0"));
   EXPECT_FALSE(section_names::isElfImageDataSectionName(""));
+  // -fPIC code reads a global's address from the GOT the link fills.
+  EXPECT_TRUE(
+      section_names::isElfImageDataSectionName(section_names::elf::Got));
+  EXPECT_TRUE(
+      section_names::isElfImageDataSectionName(section_names::elf::GotPlt));
 }
 
 TEST(IsELFExecutableMapSection, AcceptsCodeOutputSections) {
-  EXPECT_TRUE(section_names::isELFExecutableMapSection(section_names::elf::Text));
-  EXPECT_TRUE(section_names::isELFExecutableMapSection(section_names::elf::Init));
-  EXPECT_TRUE(section_names::isELFExecutableMapSection(section_names::elf::Plt));
+  EXPECT_TRUE(
+      section_names::isELFExecutableMapSection(section_names::elf::Text));
+  EXPECT_TRUE(
+      section_names::isELFExecutableMapSection(section_names::elf::Init));
+  EXPECT_TRUE(
+      section_names::isELFExecutableMapSection(section_names::elf::Plt));
 }
 
 TEST(IsELFExecutableMapSection, RejectsDataSections) {
-  EXPECT_FALSE(section_names::isELFExecutableMapSection(section_names::elf::Data));
+  EXPECT_FALSE(
+      section_names::isELFExecutableMapSection(section_names::elf::Data));
   EXPECT_FALSE(
       section_names::isELFExecutableMapSection(section_names::elf::Rodata));
 }
@@ -265,7 +277,7 @@ TEST(GetTextSegment, ResolvesSegmentOfRenamedCodeSection) {
   Img.Format = BinaryFormat::ELF;
   // Executable LOAD segment with a renamed code section living inside it.
   Img.Segments.push_back(makeSegment("exec_seg", 0x1000, 0x10000,
-                                      /*Exec=*/true));
+                                     /*Exec=*/true));
   Img.Sections.push_back(makeSection(".vmp0", 0x1000, 0x2000, /*Exec=*/true));
   Img.Entry = 0x1000;
 

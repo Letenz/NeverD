@@ -37,8 +37,13 @@ add_neverd_component_library(NeverDWeb
   interfaces/Correlation.cpp
   SessionInterfaces.cpp
   SessionInterfaceRelations.cpp
+  SessionPassiveReport.cpp
+  interfaces/report/Compose.cpp
+  interfaces/report/Shapes.cpp
+  interfaces/report/Publication.cpp
   streams/Framing.cpp
   streams/Records.cpp
+  streams/ProtocolMethods.cpp
   streams/Relations.cpp
   SessionStreams.cpp
   SessionPackages.cpp
@@ -64,6 +69,7 @@ add_neverd_component_library(NeverDWeb
   desktop/Manifest.cpp
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
+  desktop/ResourceManifest.cpp
   desktop/wails/ELF.cpp
   desktop/wails/PE.cpp
   desktop/wails/Mappings.cpp
@@ -82,6 +88,7 @@ add_neverd_component_library(NeverDWeb
   SessionTauriExport.cpp
   compression/Brotli.cpp
   SessionDesktop.cpp
+  SessionDesktopExport.cpp
   SessionElectron.cpp
   SessionElectronIPC.cpp
   SessionElectronEntries.cpp
@@ -196,7 +203,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/RelationContext.cpp
     interfaces/RequestLinks.cpp
     interfaces/ResultLinks.cpp
+    interfaces/TransformationLinks.cpp
     interfaces/SourceRelations.cpp
+    interfaces/report/Source.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
     rewrite/Rename.cpp

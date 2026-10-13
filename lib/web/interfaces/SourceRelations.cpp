@@ -36,6 +36,7 @@ InterfaceSourceRelations analyzeInterfaceSourceRelations(
     for (uint32_t Node = 0; Node < S.Nodes.size(); ++Node) {
       C.step();
       interface_relations::resultLinks(C, Node);
+      interface_relations::transformationLinks(C, Node);
     }
     C.A.Status = "partial";
     C.A.Reason = "syntax_relationships_not_runtime_response_flow";

@@ -422,6 +422,40 @@ static ExprPtr mergeOrderAndEquality(const ExprPtr &E) {
   return nullptr;
 }
 
+/// `(a - b < 0) != sborrow(a, b)` is `a < b`, and `==` is `b <= a`: the
+/// sign and signed-overflow flags of one subtraction, as AArch64's `b.lt`
+/// (N != V) and x86's `jl` (SF != OF) test them.
+static ExprPtr signedOrderFromFlags(const ExprPtr &E) {
+  if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+      (E->Op != NdOp::INT_NOTEQUAL && E->Op != NdOp::INT_EQUAL))
+    return nullptr;
+  for (unsigned I = 0; I < 2; ++I) {
+    const ExprPtr &Sign = E->Operands[I], &Borrow = E->Operands[1 - I];
+    if (!Sign || !Borrow || Sign->Kind != ExprKind::BinOp ||
+        Sign->Op != NdOp::INT_SLESS || Sign->Operands.size() != 2 ||
+        !isZeroConst(Sign->Operands[1]) || Borrow->Kind != ExprKind::BinOp ||
+        Borrow->Op != NdOp::INT_SBOR || Borrow->Operands.size() != 2)
+      continue;
+    const ExprPtr &Difference = Sign->Operands[0];
+    if (!Difference || Difference->Kind != ExprKind::BinOp ||
+        Difference->Op != NdOp::INT_SUB || Difference->Operands.size() != 2 ||
+        !Difference->Type || !Borrow->Operands[0] ||
+        !Borrow->Operands[0]->Type ||
+        Difference->Type->Size != Borrow->Operands[0]->Type->Size ||
+        !sameIntegerValue(Difference->Operands[0], Borrow->Operands[0]) ||
+        !sameIntegerValue(Difference->Operands[1], Borrow->Operands[1]))
+      continue;
+    const bool Less = E->Op == NdOp::INT_NOTEQUAL;
+    auto Order =
+        HighExpr::makeBinop(Less ? NdOp::INT_SLESS : NdOp::INT_SLESSEQUAL,
+                            Less ? Borrow->Operands[0] : Borrow->Operands[1],
+                            Less ? Borrow->Operands[1] : Borrow->Operands[0]);
+    Order->Type = E->Type;
+    return Order;
+  }
+  return nullptr;
+}
+
 static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
                                   const HighExprSet &OrderedMemory,
                                   bool &Changed) {
@@ -704,6 +738,10 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
 
   if (ExprPtr Merged = mergeOrderAndEquality(E)) {
     Replace(std::move(Merged));
+    return;
+  }
+  if (ExprPtr Order = signedOrderFromFlags(E)) {
+    Replace(std::move(Order));
     return;
   }
 

@@ -442,8 +442,13 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
   // Every caller passes the register arguments this function's call-graph
   // summary says it reads (LowToMed), so its own parameter list follows the
   // same summary: a recursive call then matches the definition.  The summary
-  // covers the integer registers only.
-  const bool FromSummary = !ProtoArgs && EntryReadSummary && FromIncomingReads;
+  // covers the integer registers only.  A summary the convention says lists
+  // no parameters (a variadic prologue's vector count) is none the callers
+  // use either.
+  const bool FromSummary =
+      !ProtoArgs && EntryReadSummary && FromIncomingReads &&
+      !(Convention->SummaryListsNoParameters &&
+        Convention->SummaryListsNoParameters(*EntryReadSummary));
   if (ProtoArgs) {
     UsedParamRegs.clear();
     for (size_t I = 0; I < ParamRegs.size() && I < *ProtoArgs; ++I)

@@ -170,11 +170,13 @@ inline bool isReadOnlyAfterRelocSectionName(llvm::StringRef Name) {
 }
 
 /// True if \p Name is an ELF data/rodata/bss section whose contents are
-/// embedded alongside code in roundtrip and Unicorn test images.
+/// embedded alongside code in roundtrip and Unicorn test images, the GOT
+/// included: position-independent code reads a global's address there.
 inline bool isElfImageDataSectionName(llvm::StringRef Name) {
   return Name.starts_with(elf::Rodata) || isDataRelRoSectionName(Name) ||
          Name == elf::Data || Name.starts_with(elf::DataSplitPrefix) ||
-         Name == elf::Bss || Name.starts_with(elf::BssSplitPrefix);
+         Name == elf::Bss || Name.starts_with(elf::BssSplitPrefix) ||
+         Name == elf::Got || Name == elf::GotPlt;
 }
 
 /// True if \p Name is an ELF linker-map output section that carries

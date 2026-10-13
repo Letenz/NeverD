@@ -1,5 +1,4 @@
-//===- NeverDCmdWebStreams.cpp - Passive transcript CLI
-//--------------------===//
+//===- NeverDCmdWebStreams.cpp - Passive transcript CLI -----------------===//
 //
 // NeverD Decompiler
 //
@@ -44,12 +43,17 @@ std::string field(const llvm::json::Value &V, const char *Name) {
 
 int runWebStreams() {
   const bool Preview = WebArguments[0] == "stream-preview";
-  if (Preview ? WebArguments.size() < 3 || WebArguments.size() > 4
-              : WebArguments.size() != 6) {
+  const bool Report = WebArguments[0] == "report-stream";
+  if (Preview
+          ? WebArguments.size() < 3 || WebArguments.size() > 4
+          : WebArguments.size() != 6 && !(Report && WebArguments.size() == 8)) {
     llvm::errs() << "usage: neverd web stream-preview <root> <profile> "
                     "[artifact-index]\n"
                     "       neverd web stream-import <root> <profile> "
                     "<artifact-index> <redaction-policy> <preview-receipt>\n";
+    llvm::errs() << "       neverd web report-stream <root> <profile> "
+                    "<artifact-index> <redaction-policy> <preview-receipt> "
+                    "[source-index source-type]\n";
     return 2;
   }
   uint64_t Index = 0;
@@ -103,11 +107,52 @@ int runWebStreams() {
   if (!C)
     return 1;
   llvm::outs() << *C << '\n';
-  const auto ID = field(*C, "stream_capture_id");
+  auto ID = field(*C, "stream_capture_id");
+  auto Query = neverd_web_stream_records_json;
+  if (Report) {
+    llvm::json::Object Inputs{{"schema_version", 1}, {"stream_capture_id", ID}};
+    if (WebArguments.size() == 8) {
+      uint64_t SourceIndex;
+      const llvm::StringRef IndexText = WebArguments[6];
+      const auto &Mode = WebArguments[7];
+      if (IndexText.empty() || IndexText.getAsInteger(10, SourceIndex) ||
+          std::to_string(SourceIndex) != IndexText ||
+          (Mode != "module" && Mode != "script" && Mode != "commonjs"))
+        return 2;
+      const auto SourcePage = reply(neverd_web_artifacts_json(
+          G.S, Revision.data(), Revision.size(), SourceIndex, 1));
+      const auto *Sources =
+          SourcePage ? SourcePage->getAsObject()->getArray("items") : nullptr;
+      if (!Sources || Sources->size() != 1)
+        return 1;
+      const auto SourceArtifact = field((*Sources)[0], "artifact_id");
+      const auto Source = reply(neverd_web_source_analyze_json(
+          G.S, Revision.data(), Revision.size(), SourceArtifact.data(),
+          SourceArtifact.size(), Mode.data(), Mode.size()));
+      if (!Source)
+        return 1;
+      const auto SourceID = field(*Source, "source_id");
+      const auto Interfaces = reply(neverd_web_interfaces_analyze_json(
+          G.S, Revision.data(), Revision.size(), SourceID.data(),
+          SourceID.size()));
+      if (!Interfaces)
+        return 1;
+      Inputs["interface_analysis_id"] =
+          field(*Interfaces, "interface_analysis_id");
+    }
+    std::string Text;
+    llvm::raw_string_ostream(Text) << llvm::json::Value(std::move(Inputs));
+    const auto R = reply(neverd_web_passive_report_create_json(
+        G.S, Revision.data(), Revision.size(), Text.data(), Text.size()));
+    if (!R)
+      return 1;
+    llvm::outs() << *R << '\n';
+    ID = field(*R, "passive_report_id");
+    Query = neverd_web_passive_report_records_json;
+  }
   for (uint64_t Offset = 0;;) {
-    const auto Records = reply(
-        neverd_web_stream_records_json(G.S, Revision.data(), Revision.size(),
-                                       ID.data(), ID.size(), Offset, 128));
+    const auto Records = reply(Query(G.S, Revision.data(), Revision.size(),
+                                     ID.data(), ID.size(), Offset, 128));
     if (!Records)
       return 1;
     llvm::outs() << *Records << '\n';
