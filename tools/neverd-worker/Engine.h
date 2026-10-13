@@ -41,6 +41,9 @@ public:
   static std::string version();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
+  /// Whether the engine keeps what the user states of a function
+  /// (function_edit, function_attributes).
+  static bool statesFunctionAttributes();
   /// Whether the engine keeps the user's data items.
   static bool keepsDataItems();
   /// Whether the engine keeps how the user shows operands' numbers.

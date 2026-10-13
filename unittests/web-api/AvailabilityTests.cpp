@@ -194,6 +194,7 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_TRUE(Has("native_metadata"));
   EXPECT_TRUE(Has("native_analyze"));
   EXPECT_EQ(Has("source_analyze"), bool(NEVERD_TEST_WEB_JS));
+  EXPECT_EQ(Has("source_analyze_large"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_map_lookup"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_bindings_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_binding_records"), bool(NEVERD_TEST_WEB_JS));
@@ -430,6 +431,8 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
         neverd_web_artifacts_json(nullptr, nullptr, 0, 0, 1),
         neverd_web_source_analyze_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
+        neverd_web_source_analyze_large_json(nullptr, nullptr, 0, nullptr, 0,
+                                             nullptr, 0),
         neverd_web_source_nodes_json(nullptr, nullptr, 0, nullptr, 0, 0, 1),
         neverd_web_source_bindings_analyze_json(nullptr, nullptr, 0, nullptr,
                                                 0),

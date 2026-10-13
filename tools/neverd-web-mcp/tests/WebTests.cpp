@@ -121,6 +121,52 @@ void discovery(Harness &H, const Json &Caps) {
   }
 }
 
+void largeSource(Harness &H) {
+  const auto Artifact = H.import(0);
+  const Json Parse{{"revision", H.Revision},
+                   {"artifact_id", Artifact},
+                   {"source_type", "module"}};
+  H.fail("web_source_analyze", Parse, "source_byte_budget_exceeded");
+  const auto S = H.same("web_source_analyze_large", Parse);
+  require(S.at("parse_status") == "parsed" &&
+              S.at("parser_profile") == "hermes-602befee-large-source-js-v1",
+          "MCP lost explicit large-source profile");
+  require(S == H.same("web_source_analyze_large", Parse),
+          "Large-source cache changed evidence");
+  const Json Selection{{"revision", H.Revision},
+                       {"source_id", S.at("source_id")}};
+  auto Nodes = Selection;
+  Nodes["limit"] = 1;
+  const auto Page = H.same("web_source_nodes", Nodes);
+  require(Page.at("next_offset") == 1 && Page.at("items").size() == 1,
+          "Large source lost ordinary paginated node evidence");
+  const auto I = H.same("web_interfaces_analyze", Selection);
+  require(I.at("analysis_status") == "partial" && I.at("interface_count") == 1,
+          "Large source lost static interface evidence");
+  const auto Report =
+      H.same("web_passive_report_create",
+             {{"revision", H.Revision},
+              {"interface_analysis_id", I.at("interface_analysis_id")}});
+  const auto Rows =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", Report.at("passive_report_id")}});
+  require(!Rows.at("items").empty(), "Large source report lost its anchors");
+  auto Anchor = Selection;
+  Anchor["byte_offset"] = Rows.at("items")[0].at("byte_offset");
+  Anchor["byte_length"] = Rows.at("items")[0].at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  auto Other = Parse;
+  Other["source_type"] = "commonjs";
+  H.fail("web_source_analyze_large", Other,
+         "large_source_cache_budget_exceeded");
+  auto Invalid = Parse;
+  Invalid["execute"] = true;
+  invalid([&] { H.get("web_source_analyze_large", Invalid); });
+  redacted(S);
+  redacted(Rows);
+}
+
 void clientSourceFeatures(Harness &H) {
   const auto Artifact = H.import(0);
   const auto S = H.same("web_source_analyze", {{"revision", H.Revision},
@@ -978,6 +1024,9 @@ int main() {
           "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
           "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
       clientSourceFeatures(H);
+      F.write("source", "/*" + std::string(1024 * 1024, ' ') +
+                            "*/fetch(`/CANARY/${CANARY}`);");
+      largeSource(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);

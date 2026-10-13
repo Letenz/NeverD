@@ -5,6 +5,7 @@
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "ExtensionsView.h"
+#include "FunctionEditDialog.h"
 #include "GraphView.h"
 #include "HexView.h"
 #include "ListingView.h"
@@ -3890,6 +3891,95 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(
         functions->model().rowObject(21).value("name").toString(), looseName,
         OpenTimeoutMs);
+
+    // Alt+P opens IDA's Edit function dialog on the function the cursor is
+    // in, with its name and bounds; what the user states there is an edit of
+    // the history, kept beside the input.
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentFunction(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+    QTRY_VERIFY(bench.action(ActionId::EditFunction)->isEnabled());
+    const auto statedRows = [&] {
+      return QJsonDocument::fromJson(readAll(path + ".neverd-functions.json"))
+          .array();
+    };
+    const auto statesNoReturn = [&] {
+      for (const auto &row : statedRows())
+        if (addressValue(row.toObject().value("addr")) == Base + 0x140)
+          return row.toObject().value("noreturn").toBool(false);
+      return false;
+    };
+    // Answers the dialog once it is active: \p check sees its fields, then
+    // \p accept closes it with OK, else Cancel.
+    const auto answerEditor =
+        [&](std::function<void(FunctionEditDialog *)> check, bool accept) {
+          auto *editor = new QTimer(&bench.session);
+          connect(editor, &QTimer::timeout, editor, [editor, check, accept] {
+            auto *dialog = qobject_cast<FunctionEditDialog *>(
+                QApplication::activeModalWidget());
+            if (!dialog || !dialog->isActiveWindow())
+              return;
+            editor->stop();
+            editor->deleteLater();
+            check(dialog);
+            if (accept)
+              QTest::mouseClick(
+                  dialog->findChild<QPushButton *>(QStringLiteral("ok")),
+                  Qt::LeftButton);
+            else
+              dialog->reject();
+          });
+          editor->start(10);
+        };
+    bool sawFunction = false;
+    answerEditor(
+        [&](FunctionEditDialog *dialog) {
+          auto *name = dialog->findChild<QLineEdit *>(QStringLiteral("name"));
+          auto *start = dialog->findChild<QLineEdit *>(QStringLiteral("start"));
+          auto *noReturn =
+              dialog->findChild<QCheckBox *>(QStringLiteral("noreturn"));
+          sawFunction =
+              name && name->text() == QStringLiteral("function_20") && start &&
+              start->text().endsWith(QStringLiteral("FFFF800012340140")) &&
+              noReturn && !noReturn->isChecked() && noReturn->isEnabled();
+          if (noReturn)
+            noReturn->setChecked(true);
+        },
+        true);
+    disassembly->setFocus();
+    QTRY_VERIFY(disassembly->hasFocus());
+    QTest::keyClick(disassembly, Qt::Key_P, Qt::AltModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(sawFunction, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(statesNoReturn(), OpenTimeoutMs);
+    // Ctrl+E edits the function a row of the Functions window lists, as
+    // IDA's list windows do, over the window's Ctrl+E (Jump to entry point).
+    bool sawStated = false;
+    answerEditor(
+        [&](FunctionEditDialog *dialog) {
+          auto *noReturn =
+              dialog->findChild<QCheckBox *>(QStringLiteral("noreturn"));
+          sawStated = noReturn && noReturn->isChecked();
+        },
+        false);
+    // The closed dialog leaves no window active.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    functions->table()->setFocus();
+    QTRY_VERIFY(functions->table()->hasFocus());
+    // The edit reloads the list; the row must be back before its key.
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(20).value("name").toString(),
+        QStringLiteral("function_20"), OpenTimeoutMs);
+    functions->table()->setCurrentIndex(functions->model().index(20, 0));
+    QTest::keyClick(functions->table(), Qt::Key_E, Qt::ControlModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(sawStated, OpenTimeoutMs);
+    QCOMPARE(disassembly->currentFunction(),
+             std::optional<Address>(Base + 0x140));
+    // Undo takes the statement back.
+    QTRY_VERIFY(bench.session.canUndo());
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(!statesNoReturn(), OpenTimeoutMs);
 
     // D makes the data under the cursor a value, the next size each time
     // (stderr's qword gives way to a byte, then a word); U shows its bytes as

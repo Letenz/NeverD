@@ -193,11 +193,11 @@ struct Resolver {
   void run() {
     step(validateSourceModel(S));
     if (B.SourceID != S.ID || M.SourceID != S.ID || M.BindingID != B.ID ||
-        B.References.size() > MaxJavaScriptNodes ||
-        B.Declarations.size() > 2 * MaxJavaScriptNodes ||
-        B.Bindings.size() > 2 * MaxJavaScriptNodes ||
-        M.Requests.size() > MaxJavaScriptNodes ||
-        M.Imports.size() > MaxJavaScriptNodes)
+        B.References.size() > sourceLimits(S).Nodes ||
+        B.Declarations.size() > 2 * sourceLimits(S).Nodes ||
+        B.Bindings.size() > 2 * sourceLimits(S).Nodes ||
+        M.Requests.size() > sourceLimits(S).Nodes ||
+        M.Imports.size() > sourceLimits(S).Nodes)
       throw Error("invalid_source_origin_inputs");
     if ((B.Status != "ok" && B.Status != "partial") ||
         (M.Status != "ok" && M.Status != "partial"))

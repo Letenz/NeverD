@@ -106,6 +106,23 @@ const FunctionEditFunctions &functionEdits() {
       engineSymbol<SessionLoadFunction>("neverd_functions_load")};
   return functions;
 }
+// Additive C ABI capability: what the user states of a function, as IDA's
+// Edit function does.
+using FunctionStateFunction = int (*)(neverd_session_t, neverd_va_t,
+                                      const char *);
+using FunctionAttributesFunction = const char *(*)(neverd_session_t,
+                                                   neverd_va_t);
+struct FunctionAttributeFunctions {
+  FunctionStateFunction edit;
+  FunctionAttributesFunction attributes;
+  explicit operator bool() const { return edit && attributes; }
+};
+const FunctionAttributeFunctions &functionAttributes() {
+  static const FunctionAttributeFunctions functions{
+      engineSymbol<FunctionStateFunction>("neverd_func_edit"),
+      engineSymbol<FunctionAttributesFunction>("neverd_func_attributes_json")};
+  return functions;
+}
 // Additive C ABI capability: the user's data items.
 using ItemSetFunction = int (*)(neverd_session_t, neverd_va_t, const char *);
 using StringAtFunction = const char *(*)(neverd_session_t, neverd_va_t,
@@ -516,6 +533,9 @@ void Engine::requireWriter() const {
     throw Error("read_only", "This session is read-only");
 }
 bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
+bool Engine::statesFunctionAttributes() {
+  return keepsFunctionEdits() && static_cast<bool>(functionAttributes());
+}
 bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
 bool Engine::identifiesFiles() { return identifyFunction() != nullptr; }
 bool Engine::loadsPdbFiles() {
@@ -2074,6 +2094,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&
+      operation != "function_edit" && operation != "function_attributes" &&
       operation != "item_define" && operation != "operand_format" &&
       operation != "decompile" && operation != "cfg" &&
       operation != "cfg_summary" && operation != "cfg_viewport" &&
@@ -2238,18 +2259,42 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     ++revision_;
     return {{"address", hexAddress(address)}, {"name", name}, {"saved", true}};
   }
-  if (operation == "function_create" || operation == "function_delete") {
+  if (operation == "function_attributes") {
+    const auto &attributes = functionAttributes();
+    if (!attributes)
+      throw Error("unsupported", "This engine keeps no function attributes");
+    const char *row = attributes.attributes(session_, address);
+    if (!row)
+      throw Error("invalid_request", error());
+    return backendJson(row);
+  }
+  if (operation == "function_create" || operation == "function_delete" ||
+      operation == "function_edit") {
     requireWriter();
     const auto &edits = functionEdits();
-    if (!edits)
+    const auto &attributes = functionAttributes();
+    const bool create = operation == "function_create";
+    const bool edit = operation == "function_edit";
+    if (!edits || (edit && !attributes))
       throw Error("unsupported", "This engine keeps no function edits");
     if (dirty_)
       throw Error("unsaved_changes", "Save or reload staged annotations "
-                                     "before creating or deleting a function");
+                                     "before editing a function");
+    // What the user states of the function: each key of "attributes" sets
+    // one of them, and null hands it back to analysis.
+    std::string stated;
+    if (edit) {
+      if (!p.contains("attributes") || !p.at("attributes").is_object() ||
+          p.at("attributes").empty() || p.at("attributes").size() > 16)
+        throw Error("invalid_request",
+                    "A function edit states one attribute or more");
+      stated = p.at("attributes").dump();
+    }
     auto &store = history();
-    const bool create = operation == "function_create";
     // The engine checks the edit; the rows it then holds are the new table.
-    if ((create ? edits.create : edits.remove)(session_, address) != 0)
+    if ((edit     ? attributes.edit(session_, address, stated.c_str())
+         : create ? edits.create(session_, address)
+                  : edits.remove(session_, address)) != 0)
       throw Error("invalid_request", error());
     const auto rowAt = [&](const Json &rows) -> Json {
       for (const auto &row : rows)
@@ -2277,8 +2322,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     }
     functionsChanged();
     ++revision_;
-    return {
-        {"address", hexAddress(address)}, {"created", create}, {"saved", true}};
+    Json result{{"address", hexAddress(address)}, {"saved", true}};
+    if (edit)
+      result["row"] = after;
+    else
+      result["created"] = create;
+    return result;
   }
   if (operation == "item_define") {
     requireWriter();

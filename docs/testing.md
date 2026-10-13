@@ -747,6 +747,29 @@ The same target compares static scalar, pointer, array and packed-record alignme
 
 ## Offline web analysis
 
+`WebLargeSource.*` checks explicit profile identities, unchanged interactive
+refusal, complete lexical scope beyond 100,000 nodes, late source anchors,
+invalid encoding/syntax, dense over-budget input and rejection of recovery
+models by semantic consumers. Its optional pinned Claude check uses
+`NEVERD_CLAUDE_CODE_21296_CROSS_DIR` and the original NeverD exports of macOS
+ARM64 modules 141, 299, 415 and 1452; missing samples are explicit skips.
+`WebSDK.LargeSourceHasIndependentCacheAnchorsAndRevisionOwnership` checks the
+additive C API, one-source cache, interactive isolation, ordinary pages and
+revision revocation. Worker/MCP cover the same operation, capability filtering,
+private canaries and source/report/anchor parity. Run the owning Web directory,
+availability and transport suites plus both omission configurations after
+changing this shared source-profile boundary. See the
+[large-source contract](web-passive-report-profile.md#explicit-large-source-selections).
+Run CTest invocations sequentially within the same build directory, especially
+after changing build flags. GoogleTest discovery writes shared generated lists;
+concurrent owning-directory and root runs can duplicate registrations. Check
+the unique names in one generated inventory before reporting case totals.
+`WebSourceFeatures.CapturedClaudeLargeClientUnitsWhenSupplied` additionally
+checks every shipped JS unit in the retained macOS ARM64 package sequentially
+through explicit large parsing, lexical navigation, features and configuration
+order. It asserts all 2,364 units parse and records independent analysis counts.
+The existing interactive corpus case retains its narrower admission.
+
 `WebPackageSemVer.*`, `WebPackageEvidenceTime.*`, `WebPackageEvidence.*` and
 `WebPackageAdvisories.*` cover strict arbitrary-width precedence, source/time
 admission, OSV union/order/endpoints, wildcard and PURL identity, unsupported

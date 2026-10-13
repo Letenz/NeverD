@@ -119,6 +119,49 @@ neverd web report-stream root mcp-2025-06-18-stdio-jsonl-v1 STREAM_INDEX \
 Use existing HAR/stream preview commands for receipts. Import repeats the preview
 and checks original bytes/profile/policy. Each invocation prints all report pages.
 
+### Explicit large-source selections
+
+`neverd_web_source_analyze_large_json` and worker/MCP
+`web_source_analyze_large` explicitly select
+`hermes-602befee-large-source-js-v1`. Ordinary source analysis keeps its
+1 MiB/100,000-node profile and never automatically retries with larger limits.
+The large profile admits 8 MiB input, 1,500,000 AST nodes, 2,000,000 lexemes and
+16 Mi UTF-16 attribute units. Parser admission retains 256 MiB of charged
+allocations, 1,600,000 allocation operations and a 30-second deadline. The AST
+collector separately bounds charged owned model storage to 768 MiB, including
+vector capacities and private strings; this is not a total process RSS bound.
+
+Only one large source, including its source type, can be retained per revision.
+Repeated exact selections reuse it; another selection refuses until a new
+import revision or session. Its admission is independent of the existing
+interactive cache. Source/node identities bind the distinct parser profile,
+so interactive and large evidence cannot share an analysis ID accidentally.
+Existing node, binding, navigation, interface and report pages consume the
+same complete AST and original artifact. Original source anchors can exceed
+1 MiB without creating synthetic source partitions or offsets.
+
+The shared `SourceLimits` owner selects larger work budgets for bindings,
+primitive values, navigation, client features, direct desktop bridges,
+configuration order, interfaces and request relationships. Their grammar and
+confidence rules remain unchanged. Explicit request-relation limits still
+enforce their caller-selected bounds. Record, string-value, report, metadata,
+display/rewrite and other analysis budgets retain their independent ceilings;
+an admitted large source does not promise every consumer will complete.
+Recovery-export models remain ineligible for semantic analysis.
+
+```sh
+neverd web navigate-large source.js module
+neverd web bindings-large source.js module
+neverd web bun-navigate-large standalone.bin MODULE_INDEX module
+neverd web interfaces-large source.js module
+neverd web interface-relations-large source.js module
+neverd web report-source-large source.js module
+```
+
+These commands use the additive C API and ordinary metadata pages. They do not
+execute the input. Large source import, parsing and redaction retain the same
+offline evidence boundary as ordinary selections.
+
 `interfaces/report/Source` consumes authoritative frontend evidence;
 `SourceStructure`/`URLStructure` project admitted request syntax. `Shapes`
 owns body admission, `ObservedStructure` owns private dictionaries and observed

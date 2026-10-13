@@ -18,7 +18,7 @@
 namespace neverd::web::client_features {
 
 void Context::step(uint64_t Count) {
-  if (Count > MaxJavaScriptClientFeatureSteps - A.Steps)
+  if (Count > sourceWorkLimit(S, MaxJavaScriptClientFeatureSteps) - A.Steps)
     throw Error("source_feature_budget_exceeded");
   A.Steps += Count;
 }
@@ -65,8 +65,8 @@ void Context::prepare() {
   Calls.assign(Size, None);
   References.assign(Size, None);
   if (N.Functions.size() > Size || N.Calls.size() > Size ||
-      B.Bindings.size() > 2 * MaxJavaScriptNodes ||
-      B.References.size() > MaxJavaScriptNodes)
+      B.Bindings.size() > 2 * sourceLimits(S).Nodes ||
+      B.References.size() > sourceLimits(S).Nodes)
     throw Error("source_feature_budget_exceeded");
   BindingFunctions.assign(B.Bindings.size(), None);
   std::vector<bool> Ambiguous(B.Bindings.size());

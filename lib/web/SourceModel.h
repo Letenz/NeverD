@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Source.h"
+#include "neverd/web/SourceLimits.h"
 
 namespace neverd::web {
 

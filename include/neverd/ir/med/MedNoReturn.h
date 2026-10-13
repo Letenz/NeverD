@@ -16,6 +16,7 @@
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include <map>
 #include <vector>
 
 namespace neverd {
@@ -37,7 +38,12 @@ bool hasProvenNoReturnExit(const MedFunc &Func, Arch TheArch);
 
 /// Prove internal no-return functions from explicit architectural terminators
 /// and already-known no-return calls, then mark every direct call to them.
-void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch);
+/// \p Stated is what the user states of functions by entry
+/// (BinaryImage::UserNoReturn): a call to one stated never to return ends
+/// its block, and a call to one stated to return does not, whatever its body
+/// proves.  A function's own DoesNotReturn stays what its body proves.
+void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch,
+                               const std::map<va_t, bool> &Stated = {});
 
 } // namespace neverd
 

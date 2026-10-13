@@ -76,8 +76,29 @@ NEVERD_API int neverd_func_create(neverd_session_t Sess, neverd_va_t Entry);
 /// analysis or neverd_func_create made it; no source makes it one again.
 /// Returns 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_func_delete(neverd_session_t Sess, neverd_va_t Entry);
-/// The user's function edits, [{"addr","state"}] in address order, where
-/// "state" is "created" or "deleted".  Free with neverd_free_string.
+/// State what the function at \p Entry is, as IDA's Edit function does, by
+/// the JSON object \p Row: "noreturn" (it never returns, so every call to it
+/// ends its block), "library" and "static" (notes analysis does not read),
+/// each true or false, and "color" ("#RRGGBB", the color it shows in).  A key
+/// with null hands the attribute back to analysis; absent keys keep theirs.
+/// A change of "noreturn" restarts analysis and finds the functions again.
+/// The statements go when the function is deleted.  Returns 0, or -1 with
+/// neverd_last_error; neverd_functions_save keeps the edit.
+NEVERD_API int neverd_func_edit(neverd_session_t Sess, neverd_va_t Entry,
+                                const char *Row);
+/// What the Edit function dialog shows of the function at \p Entry, without
+/// analyzing the whole program: {"addr","name","start","end","noreturn",
+/// "library","static","color","purged_bytes","stated"}.  "end" is past its
+/// last byte; each attribute is the user's statement, else analysis' answer,
+/// else null when analysis has none; "purged_bytes" is the arguments x86's
+/// `ret imm` pops (null elsewhere); "stated" holds the user's statements.
+/// Null with neverd_last_error when no function starts there.  Free with
+/// neverd_free_string.
+NEVERD_API const char *neverd_func_attributes_json(neverd_session_t Sess,
+                                                   neverd_va_t Entry);
+/// The user's function edits, [{"addr","state"?,attributes...}] in address
+/// order, where "state" is "created" or "deleted" and the attributes are
+/// neverd_func_edit's.  Free with neverd_free_string.
 NEVERD_API const char *neverd_functions_json(neverd_session_t Sess);
 /// Write or read the edits as `<input>.neverd-functions.json`, which
 /// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.

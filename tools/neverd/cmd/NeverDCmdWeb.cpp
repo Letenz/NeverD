@@ -97,9 +97,12 @@ int runWeb() {
   if (!WebArguments.empty() &&
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
+       WebArguments[0] == "interfaces-large" ||
        WebArguments[0] == "interface-relations" ||
+       WebArguments[0] == "interface-relations-large" ||
        WebArguments[0] == "interface-correlate" ||
        WebArguments[0] == "report-source" || WebArguments[0] == "report-har" ||
+       WebArguments[0] == "report-source-large" ||
        WebArguments[0] == "report-correlate"))
     return runWebInterfaces();
   if (!WebArguments.empty() && (WebArguments[0] == "stream-preview" ||
@@ -224,7 +227,8 @@ int runWeb() {
       AsarDirectoryIndex = Directory;
   }
   const bool Bindings =
-      WebArguments.size() == 3 && WebArguments[0] == "bindings";
+      WebArguments.size() == 3 &&
+      (WebArguments[0] == "bindings" || WebArguments[0] == "bindings-large");
   const bool Semantics =
       WebArguments.size() == 3 && WebArguments[0] == "semantics";
   const bool Modules =
@@ -238,7 +242,8 @@ int runWeb() {
       BunElectron || AsarElectron ||
       (WebArguments.size() == 3 && WebArguments[0] == "electron-source");
   const bool BunNavigate =
-      WebArguments.size() == 4 && WebArguments[0] == "bun-navigate";
+      WebArguments.size() == 4 && (WebArguments[0] == "bun-navigate" ||
+                                   WebArguments[0] == "bun-navigate-large");
   const bool BunAnchor =
       WebArguments.size() == 6 && WebArguments[0] == "bun-anchor";
   const bool BunNative =
@@ -257,7 +262,12 @@ int runWeb() {
                     (WebArguments.size() == 3 && WebArguments[0] == "view");
   const bool Navigate =
       BunNavigate || AsarNavigate ||
-      (WebArguments.size() == 3 && WebArguments[0] == "navigate");
+      (WebArguments.size() == 3 &&
+       (WebArguments[0] == "navigate" || WebArguments[0] == "navigate-large"));
+  const bool LargeSource =
+      (Bindings || Navigate) && (WebArguments[0] == "bindings-large" ||
+                                 WebArguments[0] == "navigate-large" ||
+                                 WebArguments[0] == "bun-navigate-large");
   const bool Anchor = BunAnchor || AsarAnchor ||
                       (WebArguments.size() == 5 && WebArguments[0] == "anchor");
   uint64_t AnchorOffset = 0, AnchorLength = 0;
@@ -313,6 +323,7 @@ int runWeb() {
            "<manifest-member-index> "
            "<source-member-index:source-type>... | "
            "source|bindings|semantics|modules|bundles|view|navigate <file> "
+           "<script|module|commonjs> | bindings-large|navigate-large <file> "
            "<script|module|commonjs> "
            "| readable-export <root> <source-type> <new-output-directory> "
            "[artifact-index] "
@@ -339,6 +350,7 @@ int runWeb() {
            "bun-map <file> <module-index> | "
            "anchor <file> <script|module|commonjs> <byte-offset> "
            "<byte-length> | bun-view|bun-navigate <file> <module-index> "
+           "<source-type> | bun-navigate-large <file> <module-index> "
            "<source-type> | "
            "bun-anchor <file> <module-index> <source-type> <byte-offset> "
            "<byte-length> | native|native-analyze <file> | "
@@ -728,10 +740,13 @@ int runWeb() {
                                   : WebArguments[AsarSource  ? 5
                                                  : BunSource ? 3
                                                              : 2];
-    auto Summary = result(neverd_web_source_analyze_json(
-        Session.Handle, Revision->data(), Revision->size(),
-        SourceArtifactID.data(), SourceArtifactID.size(), Type.data(),
-        Type.size()));
+    const auto AnalyzeSource = LargeSource
+                                   ? neverd_web_source_analyze_large_json
+                                   : neverd_web_source_analyze_json;
+    auto Summary =
+        result(AnalyzeSource(Session.Handle, Revision->data(), Revision->size(),
+                             SourceArtifactID.data(), SourceArtifactID.size(),
+                             Type.data(), Type.size()));
     if (!Summary)
       return 1;
     llvm::outs() << *Summary << '\n';

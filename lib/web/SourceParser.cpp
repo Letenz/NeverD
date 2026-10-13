@@ -22,6 +22,7 @@
 #include "neverd/web/Error.h"
 #include "neverd/web/ParserBudget.h"
 #include "neverd/web/Source.h"
+#include "neverd/web/SourceLimits.h"
 
 #include <cfenv>
 
@@ -54,20 +55,21 @@ struct Diagnostics {
 
 static SourceAnalysis inspect(std::string_view ArtifactID,
                               std::string_view Bytes,
-                              std::string_view SourceType, bool Recovery) {
+                              std::string_view SourceType,
+                              SourceAnalysisMode Mode) {
   if (SourceType != "script" && SourceType != "module" &&
       SourceType != "commonjs")
     throw Error("unsupported_source_type");
-  if (Bytes.size() > (Recovery ? MaxRecoverySourceBytes : MaxJavaScriptBytes))
+  const auto Limits = sourceLimits(Mode);
+  if (Bytes.size() > Limits.Bytes)
     throw Error("source_byte_budget_exceeded");
   SourceAnalysis Result;
+  Result.Mode = Mode;
   Result.ArtifactID = ArtifactID;
   Result.BlobHash = sha256(Bytes);
   Result.SourceType = SourceType;
-  Result.ID = identity("source-unit", {ArtifactID, Result.BlobHash,
-                                       Recovery ? JavaScriptRecoveryProfile
-                                                : JavaScriptParserProfile,
-                                       SourceType});
+  Result.ID = identity(
+      "source-unit", {ArtifactID, Result.BlobHash, Limits.Profile, SourceType});
   Result.ParseStatus = "invalid_syntax";
   // The embedded numeric-literal converter assumes nearest rounding. Do not
   // silently inherit another host thread's floating-point mode or change it.
@@ -81,8 +83,7 @@ static SourceAnalysis inspect(std::string_view ArtifactID,
     Result.Diagnostics.push_back({"unsupported_encoding", -1});
     return Result;
   }
-  ParserBudget Budget(Recovery ? ParserBudget::Profile::Recovery
-                               : ParserBudget::Profile::Interactive);
+  ParserBudget Budget(Mode);
   auto Buffer = llvh::MemoryBuffer::getMemBufferCopy(
       llvh::StringRef(Bytes.data(), Bytes.size()), "source");
   const auto *Base = Buffer->getBufferStart();
@@ -107,10 +108,8 @@ static SourceAnalysis inspect(std::string_view ArtifactID,
   hermes::sem::SemContext Semantics;
   if (!hermes::sem::validateASTForParser(Context, Semantics, *Program))
     return Result;
-  hermes_model::Collector Nodes(
-      Result, Base, Bytes.size(),
-      Recovery ? MaxRecoveryNodes : MaxJavaScriptNodes,
-      Recovery ? MaxRecoveryStringUnits : MaxJavaScriptStringUnits);
+  hermes_model::Collector Nodes(Result, Base, Bytes.size(), Limits.Nodes,
+                                Limits.StringUnits, Limits.ModelBytes);
   try {
     Nodes.collect(*Program, UINT32_MAX, SourceType == "module");
   } catch (const Error &E) {
@@ -121,9 +120,7 @@ static SourceAnalysis inspect(std::string_view ArtifactID,
   }
   Result.CommentCount = Parser.getStoredComments().size();
   try {
-    hermes_model::collectLexemes(Result, Parser, Base, Bytes,
-                                 Recovery ? MaxRecoveryLexemes
-                                          : MaxJavaScriptLexemes);
+    hermes_model::collectLexemes(Result, Parser, Base, Bytes, Limits.Lexemes);
   } catch (const Error &E) {
     Result.Lexemes.clear();
     Result.LexemeStatus = E.what();
@@ -162,13 +159,20 @@ static SourceAnalysis inspect(std::string_view ArtifactID,
 SourceAnalysis inspectJavaScript(std::string_view ArtifactID,
                                  std::string_view Bytes,
                                  std::string_view SourceType) {
-  return inspect(ArtifactID, Bytes, SourceType, false);
+  return inspect(ArtifactID, Bytes, SourceType,
+                 SourceAnalysisMode::Interactive);
+}
+
+SourceAnalysis inspectLargeJavaScript(std::string_view ArtifactID,
+                                      std::string_view Bytes,
+                                      std::string_view SourceType) {
+  return inspect(ArtifactID, Bytes, SourceType, SourceAnalysisMode::Large);
 }
 
 SourceAnalysis inspectRecoveryJavaScript(std::string_view ArtifactID,
                                          std::string_view Bytes,
                                          std::string_view SourceType) {
-  return inspect(ArtifactID, Bytes, SourceType, true);
+  return inspect(ArtifactID, Bytes, SourceType, SourceAnalysisMode::Recovery);
 }
 
 } // namespace neverd::web

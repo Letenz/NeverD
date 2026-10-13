@@ -736,6 +736,24 @@ function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
 
+**Edit → Functions → Edit function** (Alt+P, and Ctrl+E on a row of the
+Functions window, as in IDA) opens IDA's Edit function dialog on the current
+function: its name, its start and end, its color, the frame sizes IDA lists
+and its flags. A new name is a rename. **Does not return** states that the
+function never returns, which ends every call to it, over its name and what
+analysis proves of its body, in either direction. **Library func**, **Static
+func** and the color are notes the dialog and the command line keep;
+analysis does not read them, and the listing does not paint the color yet.
+The bounds come from analysis and cannot be changed here. Of the frame sizes
+NeverD shows the bytes x86's `ret imm` purges; the other sizes and the flags
+**Far function**, **BP based frame**, **BP equals to SP**, **Fuzzy SP** and
+**Outlined code** describe IDA's frame model, which NeverD does not keep,
+and show disabled. The statements are kept in the function edits sidecar and
+go with a deleted function. A rename and a change of the flags are two steps
+of the history. The command line shows and states the same
+(`neverd function-edits <input> --show <address>`, `--edit <address> --set
+noreturn=true`, `--set color=#RRGGBB`, `--set library=default`).
+
 **Edit → Rename** (N) names any address, as the listing and the pseudocode
 show it: a name under the cursor renames what it denotes, otherwise the item
 the cursor is on. A data name replaces `qword_A410` in its label, every operand

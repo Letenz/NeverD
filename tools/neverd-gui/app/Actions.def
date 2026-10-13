@@ -96,6 +96,12 @@ NEVERD_VIEW_ACTION(EditCreateFunction,
                    "function_create",
                    QT_TRANSLATE_NOOP("Actions",
                                      "Start a function at the current address"))
+NEVERD_VIEW_ACTION(EditFunction,
+                   QT_TRANSLATE_NOOP("Actions", "&Edit function..."), "Alt+P",
+                   "function_edit",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Change the name of the current function "
+                                     "and what it is"))
 NEVERD_VIEW_ACTION(
     EditDeleteFunction, QT_TRANSLATE_NOOP("Actions", "&Delete function"), "",
     "function_delete",

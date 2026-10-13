@@ -99,7 +99,7 @@ class Evaluator {
   SourceValueAnalysis Result;
 
   void step(uint64_t N = 1) {
-    if (N > MaxJavaScriptValueSteps - Result.Steps)
+    if (N > sourceWorkLimit(Source, MaxJavaScriptValueSteps) - Result.Steps)
       throw Error("source_value_budget_exceeded");
     Result.Steps += N;
   }

@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>선택한 PDB 파일에서 심볼 불러오기</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>함수 편집(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>현재 함수의 이름과 속성을 변경합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1469,6 +1477,14 @@ Double-click to go to the declaration.</source>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>블록 접기 (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>기호 단순화</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>변환 실패: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1483,6 +1499,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>디스어셈블리가 이동해도 이 함수를 계속 표시</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>최적화</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>현재 함수 변환</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>이 함수를 기호적으로 단순화</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>LLVM 제어 흐름 복원</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM 최적화</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>기본 정리</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (기본값)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>패스 선택…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>이 함수의 LLVM 패스</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>스칼라 정리 패스를 선택합니다. 기호 단순화는 따로 제어합니다.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>기본 소스 복원</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>변환 취소</translation>
     </message>
 </context>
 <context>
@@ -2449,6 +2513,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>선택에 따라 입력 파일이 지정한 PDB 없이 열었습니다</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>%1의 함수를 편집했습니다</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2857,6 +2925,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>심볼 파일을 %1에 저장할 수 없습니다: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>함수 편집</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD는 이 프레임 크기를 보관하지 않습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>함수 이름(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>함수의 끝은 분석이 결정합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>시작 주소(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>끝 주소(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>선택(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>함수 색</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>기본값(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>색(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>크기 입력 (바이트 단위)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>지역 변수 영역(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>저장된 레지스터(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>x86 함수만 인수를 스택에서 제거합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>제거되는 바이트(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>프레임 포인터 차이(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD는 이 플래그를 보관하지 않습니다</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>반환하지 않음(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>분석은 이 함수에 대한 모든 호출을 끝으로 처리합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>far 함수(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>far 함수는 16비트 x86 코드에만 있습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>라이브러리 함수(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>정적 함수</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>BP 기반 프레임(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP가 SP와 같음(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>모호한 SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>아웃라인된 코드</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>확인(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>기본값</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
     </message>
 </context>
 </TS>

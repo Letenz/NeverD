@@ -666,6 +666,14 @@ qualified bundle source partitions, fixed-profile Bun container extraction,
 map decoding, budgets and query redaction. `SourceView` owns the bounded display
 projection and original/projected range mapping; `SessionView` owns preview,
 publication and revocation. CLI/worker/MCP adapters cannot bypass those policies.
+`SourceLimits` owns parser/model admission and work scaling for explicitly
+selected interactive and large-source profiles. `ParserBudget` consumes those
+same limits; `HermesModel` charges owned AST capacities and strings separately.
+Semantic consumers validate the complete model through `SourceModel` and use
+its selected node/work bounds. The session retains one large source independently
+of interactive cache counters. Recovery-export models remain outside semantic
+admission. Transports select the additive large-source operation and reuse
+ordinary evidence pages; they do not select limits or partition input syntax.
 `tools/common/web/Backend` owns the shared C++ worker/MCP C ABI client;
 `tools/common/transport/Json` owns bounded generic JSON admission. The compiled
 `neverd-web-mcp` separates launch inputs, schemas, lifecycle and stdio framing.

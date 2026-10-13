@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDWeb
   ArtifactStore.cpp
+  SourceLimits.cpp
   packages/PackageReader.cpp
   packages/PackageDiff.cpp
   packages/PackageArchive.cpp
