@@ -52,7 +52,7 @@ getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address) {
   Result.ObjectSize = readLE<uint32_t>(Catchable + 20);
   Result.TypeDescriptorVA = readLE<uint32_t>(Catchable + 4);
   if (!Result.ObjectSize ||
-      Result.ObjectSize > limits::kMaxRegistrationEHStateWork ||
+      Result.ObjectSize > limits::kMaxSourceCallBorrowedBytes ||
       !Result.TypeDescriptorVA || Result.TypeDescriptorVA > UINT32_MAX - 8 ||
       !Img.readVA(Result.TypeDescriptorVA, 9))
     return std::nullopt;

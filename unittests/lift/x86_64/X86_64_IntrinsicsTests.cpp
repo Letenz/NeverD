@@ -1,8 +1,8 @@
 #include "HighCHostExecution.h"
 #include "NeverDLiftFixture.h"
 
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringRef.h"
+#include <cstring>
+#include <string_view>
 
 namespace {
 
@@ -33,44 +33,39 @@ std::string generatedFunction(const std::string &Source,
   return {};
 }
 
-void expectIntrinsicStyle(const std::string &Source, bool LLVMRoute = false) {
+void expectIntrinsicStyle(const std::string &Source, bool LLVMPath = false) {
   // Linux SYSCALL has no equivalent MSVC intrinsic: its established C
   // projection uses GNU constraints to preserve the Linux register ABI.
-  // The LLVM C route also emits CPUID and XGETBV as volatile queries with a
-  // memory barrier (#823), so an unused result cannot drop a query.
-  // Other system instructions must continue to use the existing C intrinsics.
-  const std::string SyscallAsm = "__asm__ volatile(\"syscall\"";
-  const std::string QueryAsm[] = {"__asm__ volatile(\"cpuid\"",
-                                  "__asm__ volatile(\"xgetbv\""};
-  const auto IsQuery = [&](size_t At) {
-    return LLVMRoute && llvm::any_of(QueryAsm, [&](const std::string &Query) {
-             return Source.compare(At, Query.size(), Query) == 0;
-           });
-  };
+  // LLVM CPU queries also retain their side-effect and memory ordering
+  // contract through constrained assembly. HighC keeps its source intrinsics.
   size_t Search = 0;
-  unsigned Syscalls = 0;
+  unsigned AsmCount = 0;
   while ((Search = Source.find("__asm__ volatile", Search)) !=
          std::string::npos) {
-    if (!IsQuery(Search)) {
-      EXPECT_EQ(Source.compare(Search, SyscallAsm.size(), SyscallAsm), 0)
-          << Source.substr(Search, 200);
-      ++Syscalls;
-    }
-    Search += SyscallAsm.size();
+    const auto Asm = std::string_view(Source).substr(Search);
+    EXPECT_TRUE(Asm.starts_with("__asm__ volatile(\"syscall\"") ||
+                (LLVMPath && (Asm.starts_with("__asm__ volatile(\"cpuid\"") ||
+                              Asm.starts_with("__asm__ volatile(\"xgetbv\""))))
+        << Source.substr(Search, 200);
+    Search += std::strlen("__asm__ volatile");
+    ++AsmCount;
   }
-  EXPECT_EQ(Syscalls, 1u) << Source;
-  for (const char *Name : {"test_rdtsc_intrinsic", "test_pause_intrinsic",
-                           "test_mfence_intrinsic", "test_lfence_intrinsic",
-                           "test_sfence_intrinsic", "test_cpuid_intrinsic",
-                           "test_clflush_intrinsic", "test_xgetbv_intrinsic",
-                           "test_rdtscp_intrinsic", "test_wrmsr_intrinsic"}) {
+  // The fixture has two CPUID occurrences, one XGETBV and one SYSCALL.
+  EXPECT_EQ(AsmCount, LLVMPath ? 4u : 1u) << Source;
+  for (const char *Name :
+       {"test_rdtsc_intrinsic", "test_pause_intrinsic", "test_mfence_intrinsic",
+        "test_lfence_intrinsic", "test_sfence_intrinsic",
+        "test_cpuid_intrinsic", "test_cpuid_return_eax",
+        "test_clflush_intrinsic", "test_xgetbv_intrinsic",
+        "test_rdtscp_intrinsic", "test_wrmsr_intrinsic"}) {
     const auto Body = generatedFunction(Source, Name);
     ASSERT_FALSE(Body.empty()) << Name;
-    const llvm::StringRef Function(Name);
-    if (LLVMRoute && (Function == "test_cpuid_intrinsic" ||
-                      Function == "test_xgetbv_intrinsic"))
+    if (LLVMPath && (std::strcmp(Name, "test_cpuid_intrinsic") == 0 ||
+                     std::strcmp(Name, "test_cpuid_return_eax") == 0 ||
+                     std::strcmp(Name, "test_xgetbv_intrinsic") == 0)) {
+      EXPECT_NE(Body.find("__asm__ volatile"), std::string::npos) << Body;
       EXPECT_NE(Body.find(": \"memory\");"), std::string::npos) << Body;
-    else
+    } else
       EXPECT_EQ(Body.find("__asm__ volatile"), std::string::npos) << Body;
   }
 }
@@ -234,27 +229,21 @@ TEST_F(X86_64_Intrinsics, LlvmC_UsesCorrectStyle) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  expectIntrinsicStyle(content, /*LLVMRoute=*/true);
+  expectIntrinsicStyle(content, /*LLVMPath=*/true);
 }
 
-TEST_F(X86_64_Intrinsics, LlvmC_CpuidUsesIntrinsic) {
-  // LLVM C keeps each CPUID as a volatile query with its full subleaf and a
-  // memory barrier (#823); the __cpuid builtin could vanish when unused.
+TEST_F(X86_64_Intrinsics, LlvmC_CpuidRetainsOrderedRegisterContract) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  const auto Query = content.find("__asm__ volatile(\"cpuid\"");
-  ASSERT_NE(Query, std::string::npos)
-      << "Expected a volatile CPUID query in LLVM C decompile:\n"
-      << content.substr(0, 3000);
-  const auto End = content.find(';', Query);
-  ASSERT_NE(End, std::string::npos);
-  const auto Statement = content.substr(Query, End - Query);
-  EXPECT_NE(Statement.find("\"c\"("), std::string::npos) << Statement;
-  EXPECT_NE(Statement.find(": \"memory\")"), std::string::npos) << Statement;
-  EXPECT_TRUE(content.find("cpuInfo[") != std::string::npos)
-      << "Expected cpuInfo array extraction in LLVM C decompile:\n"
-      << content.substr(0, 3000);
+  const auto Body = generatedFunction(content, "test_cpuid_intrinsic");
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.find("__asm__ volatile(\"cpuid\""), std::string::npos) << Body;
+  for (const char *Operand :
+       {"\"=a\"(cpuInfo[0])", "\"=b\"(cpuInfo[1])", "\"=c\"(cpuInfo[2])",
+        "\"=d\"(cpuInfo[3])", "\"a\"((uint32_t)(0))", "\"c\"((uint32_t)(0))",
+        ": \"memory\""})
+    EXPECT_NE(Body.find(Operand), std::string::npos) << Body;
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_ClflushUsesIntrinsic) {
@@ -266,13 +255,16 @@ TEST_F(X86_64_Intrinsics, LlvmC_ClflushUsesIntrinsic) {
       << content.substr(0, 3000);
 }
 
-TEST_F(X86_64_Intrinsics, LlvmC_XgetbvUsesIntrinsic) {
+TEST_F(X86_64_Intrinsics, LlvmC_XgetbvRetainsOrderedRegisterContract) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("_xgetbv") != std::string::npos)
-      << "Expected _xgetbv() in LLVM C decompile:\n"
-      << content.substr(0, 3000);
+  const auto Body = generatedFunction(content, "test_xgetbv_intrinsic");
+  ASSERT_FALSE(Body.empty());
+  for (const char *Operand :
+       {"__asm__ volatile(\"xgetbv\"", "\"=a\"(xcr[0])", "\"=d\"(xcr[1])",
+        "\"c\"((uint32_t)(0))", ": \"memory\""})
+    EXPECT_NE(Body.find(Operand), std::string::npos) << Body;
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_RdtscUsesIntrinsic) {

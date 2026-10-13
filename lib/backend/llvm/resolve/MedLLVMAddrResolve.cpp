@@ -1227,6 +1227,8 @@ void MedLLVMEmitter::invalidateFeasibleEdgeDependentCaches() const {
   SelfRecurrenceCache.clear();
   StableOffsetCacheFor = nullptr;
   StableOffsetCache.clear();
+  ClosedFrameSlotCacheFor = nullptr;
+  ClosedFrameSlotCache.clear();
   IndexedGlobalBaseCacheFor = nullptr;
   IndexedGlobalBaseCache.clear();
   InductionBasesFor = nullptr;
