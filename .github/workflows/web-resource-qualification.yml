@@ -2,6 +2,7 @@ name: Web resource qualification
 
 on:
   workflow_dispatch:
+  workflow_call:
   push:
     branches: [dev]
     paths:

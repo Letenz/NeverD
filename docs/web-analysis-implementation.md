@@ -3908,3 +3908,25 @@ including the actual fixed Linux Claude inventory, and Qt Web review passes
 in 4.11 seconds. Formatting, all 23 capability records, the 7,705-file source
 provenance scan and all 309 localized Markdown entries pass. The primary
 checkout's existing signature and diagnostic changes are preserved.
+
+### Combined Web release qualification (2026-10-13)
+
+The individual producer/CEF lanes now have a shared explicit/reusable release
+entry point. `web-release-qualification.yml` calls both workflows at the selected
+ref and exposes one final `Web release qualification gate`. The gate runs after
+the input preflight and both dependencies finish, and accepts only three
+successful results. Local execution of its exact shell condition verifies all
+64 combinations of success, failure, cancellation and skip. Input preflight
+rejects missing/invalid URL/hash/witness selections before reader builds.
+The producer and wrapper preflights use explicit failure exits: local Bash 3.2
+continued past a failing standalone `[[ ... ]]` despite `set -e`. Eighteen
+valid/invalid input cases now verify both exact preflight snippets on that shell.
+YAML parsing, documentation and provenance checks pass. No producer hash,
+consumer selection or raw-source policy changes.
+
+An immutable runner-accessible full-corpus URL remains unavailable. The local
+archive and eleven-case strict receipt are retained; a green combined remote
+release receipt cannot yet be claimed. The gate is ready to dispatch with the
+fixed archive SHA-256 and explicit `2026-10-13` snapshot witness once that input
+is supplied. This workflow does not publish fixtures or alter unrelated package
+publication. See [the release contract](web-producer-corpus-qualification.md).

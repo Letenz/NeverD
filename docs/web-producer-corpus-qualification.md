@@ -40,6 +40,25 @@ contains these directories at its root:
 bun-linux/   bun-cross/   sea-cases/   sea-images/   nexe/   pkg/
 ```
 
+The combined `.github/workflows/web-release-qualification.yml` calls this lane
+and the fixed CEF resource qualification at the same selected repository ref.
+Its final `Web release qualification gate` requires both called jobs to report
+`success`; failures, cancellation and skips cannot produce a successful gate.
+The input preflight must also succeed, and rejects missing/invalid URL, SHA-256
+or witness selections before scheduling either expensive reader build.
+It is available both by explicit dispatch and as a reusable release prerequisite.
+A publishing workflow must depend on this gate before claiming complete Web
+release qualification. Ordinary CI and unrelated package publication are not
+represented as substitutes for the combined gate.
+
+Dispatch the combined gate after supplying the immutable archive location:
+
+```sh
+gh workflow run web-release-qualification.yml --ref dev \
+  -f corpus_url=HTTPS_ARCHIVE_URL -f corpus_sha256=ARCHIVE_SHA256 \
+  -f snapshot_witness=2026-10-13
+```
+
 Each directory keeps the existing recipe's relative filenames. The pkg tree
 includes `outputs-canonical/` and `outputs-stripped/`.
 The optional explicit `snapshot_witness` input selects `original` by default
