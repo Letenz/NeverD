@@ -322,6 +322,7 @@ protected:
   bool ObserveFlags = false;
   bool ObserveEnvironment = false;
   bool ObserveEntryLoop = false;
+  bool ObserveEntryState = false;
   unsigned RestoredEnvironmentBytes = 0;
   std::string comparisonDriver(bool, bool DeclareProbe, bool,
                                bool = false) override {
@@ -333,6 +334,8 @@ protected:
                                : "#define OBSERVE_ENVIRONMENT 0\n";
     Text += ObserveEntryLoop ? "#define OBSERVE_ENTRY_LOOP 1\n"
                              : "#define OBSERVE_ENTRY_LOOP 0\n";
+    Text += ObserveEntryState ? "#define OBSERVE_ENTRY_STATE 1\n"
+                              : "#define OBSERVE_ENTRY_STATE 0\n";
     Text += "#define RESTORED_ENVIRONMENT_BYTES " +
             std::to_string(RestoredEnvironmentBytes) + "\n";
     Text += R"(
@@ -397,6 +400,16 @@ int main(void) {
           const uint16_t control = 0x0040 | (pc << 8) | (rc << 10) | masks;
           for (unsigned v = 0; v < sizeof(values) / sizeof(values[0]); ++v) {
            for (unsigned flags = 0; flags < (OBSERVE_FLAGS ? 8 : 1); ++flags) {
+            for (unsigned entry_full = 0; entry_full < (OBSERVE_ENTRY_STATE ? 2 : 1); ++entry_full) {
+            if (OBSERVE_ENTRY_STATE) {
+              // Set real caller state; the probe itself has no FNINIT, FLDCW
+              // or FLD that could manufacture its incoming slot or tags.
+              memcpy(baseline, &control, 2);
+              baseline[2] = baseline[3] = 0;
+              baseline[4] = (unsigned char)entry_full;
+              memcpy(baseline + 32, &values[v].sig, 8);
+              memcpy(baseline + 40, &values[v].exp, 2);
+            }
             _Alignas(16) unsigned char expected[768], actual[768];
             memset(expected, 0xa5, sizeof(expected));
             memcpy(expected, &control, 2);
@@ -465,6 +478,7 @@ int main(void) {
               return 1;
             }
             ++comparisons;
+            }
            }
           }
         }
@@ -482,6 +496,7 @@ int main(void) {
     ObserveFlags = Kind >= 10 && Kind <= 15;
     ObserveEnvironment = Kind == 17;
     ObserveEntryLoop = Kind == 19;
+    ObserveEntryState = Kind >= 33 && Kind <= 35;
     RestoredEnvironmentBytes = Kind == 28   ? 28
                                : Kind == 29 ? 14
                                : Kind == 30 ? 108
@@ -505,7 +520,10 @@ int main(void) {
       Opcode = Width == 4 ? 0xd9 : 0xdd;
       ModRM = Kind == 3 ? 0x50 : 0x58;
     }
-    if (Kind == 32) {
+    if (ObserveEntryState) {
+      const uint8_t Operation = Kind == 33 ? 0xe0 : Kind == 34 ? 0xe1 : 0xe5;
+      Bytes = {0xd9, Operation};
+    } else if (Kind == 32) {
       Bytes = {0xdb, 0xe3, 0xd9, 0xe8, 0xeb, 0, 0xd9, 0xe5};
       AdditionalCodeRoots.insert(Entry + 6);
     } else if (Kind >= 28 && Kind <= 31) {
@@ -953,5 +971,14 @@ TEST_F(X87ConvertFixture, Frstor16RestoresPendingExceptionsTagsAndRawPayloads) {
 }
 TEST_F(X87ConvertFixture, OrdinaryEdgePublishesStateBeforeIndependentRoot) {
   check(32, 8, true);
+}
+TEST_F(X87ConvertFixture, EntryFchsCapturesEmptyAndFullIncomingSlots) {
+  check(33, 8, true);
+}
+TEST_F(X87ConvertFixture, EntryFabsCapturesEmptyAndFullIncomingSlots) {
+  check(34, 8, true);
+}
+TEST_F(X87ConvertFixture, EntryFxamCapturesEmptyAndFullIncomingSlots) {
+  check(35, 8, true);
 }
 } // namespace

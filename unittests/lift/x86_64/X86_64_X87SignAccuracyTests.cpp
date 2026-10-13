@@ -397,7 +397,7 @@ TEST(X87SignContract, EveryIncomingBranchAndLoopRetainsTheRuntimeContext) {
           }
 }
 
-TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
+TEST(X87SignContract, AStaticFunctionBoundaryProvesNoSourceValue) {
   // The calling convention empties the register stack at the boundary but
   // defines no slot, so a sign change or FXAM there still reads no value.
   for (BinaryFormat Format :
@@ -406,6 +406,8 @@ TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
       auto Image =
           signControlFlowImage({0xd9, uint8_t(Opcode), 0xdb, 0x3a, 0xc3},
                                Format); // op; fstp [rdx]; ret
+      Image.Arch = Arch::X86;
+      Image.Bits = Bitness::Bits32;
       llvm::LLVMContext Context;
       PipelineOptions Options;
       Options.EmitDumpOutput = false;
@@ -423,6 +425,44 @@ TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
                 Audit.UnsupportedInstructions.end())
           << Opcode;
       EXPECT_FALSE(Audit.HasLLVMDefinition);
+    }
+}
+
+TEST(X87SignContract, X64EntryCapturesItsRuntimeStateBeforeReadingASlot) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Opcode : {0xe0U, 0xe1U, 0xe5U}) {
+      auto Image = signControlFlowImage({0xd9, uint8_t(Opcode), 0xc3}, Format);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.SourceProjection = true;
+      Options.OnlyFunctionEntries = {Entry};
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_EQ(Result.FunctionAudits.size(), 1U);
+      const auto &Audit = Result.FunctionAudits[0];
+      EXPECT_EQ(Audit.Disposition, PipelineFunctionDisposition::Accepted);
+      EXPECT_TRUE(Audit.HasLLVMDefinition);
+      EXPECT_TRUE(Audit.UnsupportedInstructions.empty());
+      ASSERT_EQ(Result.LowFuncs.size(), 1U);
+      unsigned Captures = 0, Steps = 0;
+      for (const auto &Block : Result.LowFuncs[0].Blocks)
+        for (const auto &Op : Block.Ops) {
+          if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+              !Op.Inputs[0].isConst())
+            continue;
+          if (Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin))
+            ++Captures;
+          if (Op.Addr == Entry &&
+              Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextStep)) {
+            EXPECT_EQ(Captures, 1U);
+            EXPECT_EQ(Op.Inputs[2].Offset, 0xd9U | (Opcode << 8));
+            ++Steps;
+          }
+        }
+      EXPECT_EQ(Captures, 1U);
+      EXPECT_EQ(Steps, 1U);
     }
 }
 
