@@ -937,6 +937,17 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
           libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
               libc::StackProbeEffect::Probe)
         continue;
+      // A vector register widened from its own low bytes (`vzeroupper`, or
+      // a VEX write clearing the upper lanes) keeps those bytes in place:
+      // it reads them no more than a RETURN that hands them back, and
+      // defines none of them.
+      if (Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&
+          Op.Output.isReg() && Op.Inputs[0].isReg() &&
+          Op.Output.Offset == Op.Inputs[0].Offset &&
+          Op.Output.Size > Op.Inputs[0].Size)
+        if (const auto Family = registerFamilyOf(Img.Arch, Op.Output.Offset);
+            Family && Family->first >= kX64VectorFamilyBase)
+          continue;
       RegisterStep Step;
       // A slice of a vector register reads that slice's bytes only, and a
       // whole copy reads the source as wide as the copy is read.
