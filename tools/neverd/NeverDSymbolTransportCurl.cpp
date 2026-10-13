@@ -12,6 +12,8 @@
 
 #include "NeverDSymbolDownload.h"
 
+#include "neverd/support/FilePath.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <dlfcn.h>
@@ -116,7 +118,7 @@ TransferResult fetchURL(const std::string &URL,
   Sink Target{std::ofstream(File, std::ios::binary | std::ios::trunc),
               &Progress, &Functions};
   if (!Target.Out)
-    return {0, "cannot write " + File.string()};
+    return {0, "cannot write " + pathToUTF8(File)};
   CurlHandle *Handle = Functions.Init();
   if (!Handle)
     return {0, "libcurl could not start a transfer"};
@@ -151,7 +153,7 @@ TransferResult fetchURL(const std::string &URL,
   if (Code != 0)
     return {0, Error[0] ? Error : Functions.Describe(Code)};
   if (!Target.Out)
-    return {0, "cannot write " + File.string()};
+    return {0, "cannot write " + pathToUTF8(File)};
   return {Status, {}};
 }
 
