@@ -1476,6 +1476,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>أسماء المتغيرات المحفوظة تخص عرضًا مختلفًا للمصدر</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>توسيع الكتلة (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>طي الكتلة (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2155,6 +2163,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>السطر</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>العمود</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>الشيفرة</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>انتظر اكتمال تحميل الدالة قبل البحث عن المراجع</translation>
     </message>
 </context>
 <context>
