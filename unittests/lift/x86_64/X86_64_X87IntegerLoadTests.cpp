@@ -173,54 +173,74 @@ TEST(X87IntegerLoadContract, MalformedAndUnknownPureInputsRefuseAtomically) {
 }
 
 TEST(X87IntegerLoadContract, WaitPrecedesMemoryAndStopsPendingExceptions) {
-  Decoder D;
-  ASSERT_TRUE(D.init(Arch::X64));
-  BinaryImage Image;
-  Image.Arch = Arch::X64;
-  for (unsigned Width : {2U, 4U, 8U}) {
-    const uint8_t Bytes[] = {uint8_t(Width == 4 ? 0xdb : 0xdf),
-                             uint8_t(Width == 8 ? 0x29 : 0x01)};
-    DecodedInsn I;
-    ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), Entry, I), 2);
-    std::vector<LowOp> Ops;
-    ASSERT_NO_THROW(D.liftToLow(I, Ops));
-    ASSERT_FALSE(Ops.empty());
-    ASSERT_EQ(Ops.back().Opcode, NdOp::INTRINSIC);
-    ASSERT_EQ(Ops.back().Inputs[0].Offset, unsigned(Intrinsic::X87ContextStep));
-    ASSERT_TRUE(x87ContextInstruction(Ops.back().Inputs[2].Offset));
-    EXPECT_TRUE(x87ContextInstruction(Ops.back().Inputs[2].Offset)->Waiting);
-    for (bool Unknown : {false, true}) {
-      NdOpEmulator E(Image);
-      E.setStrictMode(true);
-      E.setLoadCollect(true);
-      if (Unknown) {
-        E.setCallPreservedRegisters({});
-        LowOp Call;
-        Call.Opcode = NdOp::CALL;
-        Call.addInput(NdVar::cst(Entry, 8));
-        ASSERT_TRUE(E.step(Call));
+  // Typed values wait before the load; an owned context's step waits itself.
+  for (bool Owned : {false, true})
+    for (unsigned Width : {2U, 4U, 8U}) {
+      Decoder D;
+      ASSERT_TRUE(D.init(Arch::X64));
+      D.setX87ContextOwnership(Owned);
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      const uint8_t Bytes[] = {uint8_t(Width == 4 ? 0xdb : 0xdf),
+                               uint8_t(Width == 8 ? 0x29 : 0x01)};
+      DecodedInsn I;
+      ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), Entry, I), 2);
+      std::vector<LowOp> Ops;
+      ASSERT_NO_THROW(D.liftToLow(I, Ops));
+      ASSERT_FALSE(Ops.empty());
+      if (Owned) {
+        ASSERT_EQ(Ops.back().Opcode, NdOp::INTRINSIC);
+        ASSERT_EQ(Ops.back().Inputs[0].Offset,
+                  unsigned(Intrinsic::X87ContextStep));
+        ASSERT_TRUE(x87ContextInstruction(Ops.back().Inputs[2].Offset));
+        EXPECT_TRUE(
+            x87ContextInstruction(Ops.back().Inputs[2].Offset)->Waiting);
       } else {
-        E.setRegister(x86reg::FPU_CW, 0x37e);
-        E.setRegister(x86reg::FPU_SW, 0x281);
+        ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
+        ASSERT_EQ(Ops.front().Inputs[0].Offset, unsigned(Intrinsic::X87Wait));
       }
-      E.setRegisterBytes(x86reg::ST7, std::vector<uint8_t>(16, 0xa5));
-      EXPECT_LT(E.run(Ops), Ops.size());
-      EXPECT_TRUE(E.getLoadRecords().empty());
-      EXPECT_EQ(E.getRegisterBytes(x86reg::ST7),
-                std::vector<uint8_t>(16, 0xa5));
+      for (bool Unknown : {false, true}) {
+        NdOpEmulator E(Image);
+        E.setStrictMode(true);
+        E.setLoadCollect(true);
+        if (Unknown) {
+          E.setCallPreservedRegisters({});
+          LowOp Call;
+          Call.Opcode = NdOp::CALL;
+          Call.addInput(NdVar::cst(Entry, 8));
+          ASSERT_TRUE(E.step(Call));
+        } else {
+          E.setRegister(x86reg::FPU_CW, 0x37e);
+          E.setRegister(x86reg::FPU_SW, 0x281);
+        }
+        E.setRegisterBytes(x86reg::ST7, std::vector<uint8_t>(16, 0xa5));
+        if (Owned)
+          EXPECT_LT(E.run(Ops), Ops.size());
+        else
+          EXPECT_EQ(E.run(Ops), 0U);
+        EXPECT_TRUE(E.getLoadRecords().empty());
+        EXPECT_EQ(E.getRegisterBytes(x86reg::ST7),
+                  std::vector<uint8_t>(16, 0xa5));
+      }
     }
-  }
 }
 
 class X87IntegerLoadAdmission : public X86FPStateFixture {};
-TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
+TEST_F(X87IntegerLoadAdmission, DestinationAdmissionFollowsTheX87Model) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
       for (unsigned Scenario = 0; Scenario < 15; ++Scenario) {
+        // An owned context (Win64) captures the actual incoming stack, so it
+        // needs no proof. Typed values (System V) admit FILD only where its
+        // destination is proven empty on every path. Scenarios 1, 9 and 10
+        // start at the function boundary, whose calling convention empties
+        // the register stack, as compiled FILD relies on.
+        const bool Owned = x87ContextOwnsStack(Arch::X64, Format, std::nullopt);
+        const bool Accepted = Owned || Scenario == 0 || Scenario == 1 ||
+                              Scenario == 4 || Scenario == 5 || Scenario == 6 ||
+                              Scenario == 7 || Scenario == 10 || Scenario == 13;
         std::vector<uint8_t> Bytes;
-        // These entries have no FNINIT. The x64 context captures the actual
-        // incoming stack rather than assuming that its tags are empty.
         if (Scenario != 1 && Scenario != 9 && Scenario != 10)
           Bytes = {0xdb, 0xe3}; // fninit authenticates empty tags
         if (Scenario == 2 || Scenario == 3 || Scenario == 9 || Scenario == 11 ||
@@ -231,7 +251,9 @@ TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
           Bytes.insert(Bytes.end(), {0x85, 0xc9, 0x74, 0x02, 0xdd, 0xd8});
         if (Scenario == 4)
           Bytes.insert(Bytes.end(), {0xd9, 0xe8, 0xdd, 0xd8}); // pop frees slot
-        // Calls export and refresh initially empty (5) or full (12) stacks.
+        // An unknown callee also returns under its calling convention: the
+        // empty slots stay empty (5), the full ones become unknown (12). A
+        // context exports and refreshes either stack.
         if (Scenario == 5 || Scenario == 12)
           Bytes.insert(Bytes.end(), {0xff, 0xd0}); // call rax
         if (Scenario == 6)
@@ -242,7 +264,8 @@ TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
           Bytes.insert(Bytes.end(), {0x0f, 0xa2}); // cpuid
         if (Scenario == 14)
           Bytes.insert(Bytes.end(), {0xdd, 0x22}); // frstor [rdx]
-        // Direct calls also preserve the runtime context (10, 11).
+        // So does a direct call to a callee whose x87 effect is proven (10,
+        // 11), and a context crosses it whole.
         std::optional<size_t> CallAt;
         if (Scenario == 10 || Scenario == 11) {
           CallAt = Bytes.size();
@@ -277,9 +300,19 @@ TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
         auto Result = Pipeline().run(Image, Context, Options);
         ASSERT_EQ(Result.FunctionAudits.size(), 1U);
         const auto &Audit = Result.FunctionAudits[0];
-        EXPECT_TRUE(Audit.HasLLVMDefinition) << Scenario << ':' << NoOpt;
-        EXPECT_EQ(Audit.Disposition, PipelineFunctionDisposition::Accepted)
+        EXPECT_EQ(Audit.HasLLVMDefinition, Accepted)
+            << Scenario << ':' << NoOpt;
+        EXPECT_EQ(Audit.Disposition,
+                  Accepted ? PipelineFunctionDisposition::Accepted
+                           : PipelineFunctionDisposition::RejectedIncomplete)
             << Scenario << ':' << NoOpt << ':' << Result.Error;
+        if (!Accepted)
+          EXPECT_NE(std::find(Audit.UnsupportedInstructions.begin(),
+                              Audit.UnsupportedInstructions.end(), Address),
+                    Audit.UnsupportedInstructions.end())
+              << Scenario;
+        if (!Owned)
+          continue;
         EXPECT_TRUE(Audit.UnsupportedInstructions.empty());
         ASSERT_EQ(Result.LowFuncs.size(), 1U);
         unsigned Steps = 0;
@@ -334,6 +367,55 @@ TEST(X87IntegerLoadContract, InvalidOperandMetadataDoesNotPushOrRead) {
 TEST(X87IntegerLoadContract, MemoryLoadsRequireOnlyTheExactSourceExtent) {
   Decoder D;
   ASSERT_TRUE(D.init(Arch::X64));
+  for (unsigned Width : {2U, 4U, 8U})
+    for (unsigned Alignment : {0U, 1U})
+      for (bool Complete : {false, true}) {
+        const uint8_t Bytes[] = {uint8_t(Width == 4 ? 0xdb : 0xdf),
+                                 uint8_t(Width == 8 ? 0x29 : 0x01)};
+        DecodedInsn I;
+        ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), Entry, I), 2);
+        std::vector<LowOp> Ops;
+        ASSERT_NO_THROW(D.liftToLow(I, Ops));
+        ASSERT_EQ(Ops.back().Opcode, NdOp::FLOAT_INT2FLOAT);
+        const NdVar Destination = Ops.back().Output;
+        BinaryImage Image;
+        Image.Arch = Arch::X64;
+        const uint64_t Value = UINT64_C(0xfedcba9876543210);
+        Segment Data;
+        Data.VA = 0x2000 + Alignment;
+        Data.Flags = SegmentFlags::Readable;
+        Data.Data.resize(Width - unsigned(!Complete));
+        std::memcpy(Data.Data.data(), &Value, Data.Data.size());
+        Data.Size = Data.FileSz = Data.Data.size();
+        Image.Segments.push_back(Data);
+        NdOpEmulator E(Image);
+        E.setStrictMode(true);
+        E.setRegister(x86reg::RCX, Data.VA);
+        E.setRegisterBytes(Destination.Offset, std::vector<uint8_t>(16, 0xa5));
+        if (!Complete) {
+          EXPECT_LT(E.run(Ops), Ops.size());
+          EXPECT_EQ(E.getRegisterBytes(Destination.Offset),
+                    std::vector<uint8_t>(16, 0xa5));
+        } else {
+          EXPECT_EQ(E.run(Ops), Ops.size());
+          llvm::APFloat Reference(llvm::APFloat::x87DoubleExtended());
+          ASSERT_EQ(
+              Reference.convertFromAPInt(llvm::APInt(Width * 8, Value), true,
+                                         llvm::APFloat::rmNearestTiesToEven),
+              llvm::APFloat::opOK);
+          std::vector<uint8_t> Expected(16, 0xa5);
+          const auto Bits = Reference.bitcastToAPInt();
+          for (unsigned N = 0; N < 10; ++N)
+            Expected[N] = Bits.extractBitsAsZExtValue(8, N * 8);
+          EXPECT_EQ(E.getRegisterBytes(Destination.Offset), Expected);
+        }
+      }
+}
+
+TEST(X87IntegerLoadContract, OwnedContextLoadsRequireOnlyTheExactSourceExtent) {
+  Decoder D;
+  ASSERT_TRUE(D.init(Arch::X64));
+  D.setX87ContextOwnership(true);
   for (unsigned Width : {2U, 4U, 8U})
     for (unsigned Alignment : {0U, 1U})
       for (bool Complete : {false, true}) {

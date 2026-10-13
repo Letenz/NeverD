@@ -151,6 +151,10 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
     return false;
   if ((State[4] & ~X87PayloadKnown) && !Initialize && Selector != 0x770f)
     return false;
+  // FNSAVE stores every register's retained bits, empty ones included.
+  if ((Selector & X87ContextMemory) && Escape == 0xdd && (ModRM >> 3) == 6 &&
+      X87PayloadKnown != 0xff)
+    return false;
   if (!(Selector & X87ContextMemory) && Escape == 0xd9 && ModRM == 0xe5 &&
       !(X87PayloadKnown & (1u << ((SW >> 11) & 7))))
     return false;

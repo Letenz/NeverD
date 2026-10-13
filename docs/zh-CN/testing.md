@@ -282,7 +282,7 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 ## x64 x87 上下文所有权
 
-`NeverDX86X87ConvertStateTests` 在默认/NoOpt 及 C O0/O2 路线，对照原始指令与原生 LLVM、HighC、LLVMC 输出，检查转换、八种算术形式、标志、MMX/EMMS、满/空栈、调用、包装函数、入口循环和独立入口。四种 FLDENV/FRSTOR 格式覆盖挂起异常、标签和保留载荷；适用场景覆盖四种 RC、三种有效 PC 和 64 种异常掩码。Low/Med/High 契约拒绝非法形状、伪造句柄和截断选择器。窄返回保留调用副作用，并拒绝实际需要的未知位。原生对照需要 x64 和 Clang；不宣称覆盖全部指令、平台、CPU、故障优先级或有类型的浮点导入 ABI。
+`NeverDX86X87ConvertStateTests` 在默认/NoOpt 及 C O0/O2 路线，对照原始指令与原生 LLVM、HighC、LLVMC 输出，检查转换、八种算术形式、标志、MMX/EMMS、满/空栈、调用、包装函数、入口循环和独立入口。其夹具通过 `BinaryImage::X87ContextOverride` 在所有主机上固定使用自有上下文；整数加载、符号与 x87 FPU 测试集还覆盖 System V 的有类型投影。四种 FLDENV/FRSTOR 格式覆盖挂起异常、标签和保留载荷；适用场景覆盖四种 RC、三种有效 PC 和 64 种异常掩码。Low/Med/High 契约拒绝非法形状、伪造句柄和截断选择器。窄返回保留调用副作用，并拒绝实际需要的未知位。原生对照需要 x64 和 Clang；不宣称覆盖全部指令、平台、CPU、故障优先级或有类型的浮点导入 ABI。
 
 ## 结构化 C 控制流与调用检查
 

@@ -1088,9 +1088,12 @@ uint8_t intrinsicOutputCount(Intrinsic Id);
 
 /// True when \p Id writes no register and no memory, so the arguments a call
 /// sets up before it still reach the call: the x87 wait for pending
-/// exceptions that FILD, FABS and FCHS also check.
+/// exceptions that FILD, FABS and FCHS also check, and the owned x87
+/// context's transport around a call, which moves the function's private
+/// context between its buffer and the FPU.
 constexpr bool preservesCallSetup(Intrinsic Id) {
-  return Id == Intrinsic::X87Wait;
+  return Id == Intrinsic::X87Wait || Id == Intrinsic::X87ContextExport ||
+         Id == Intrinsic::X87ContextRefresh;
 }
 
 /// The control or debug register (`%cr8`, `%dr7`) that a ReadCr*/WriteCr*

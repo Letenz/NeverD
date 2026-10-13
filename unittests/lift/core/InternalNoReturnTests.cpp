@@ -135,6 +135,13 @@ BinaryImage floatingForwarder(Arch Architecture, BinaryFormat Format,
   return Image;
 }
 
+// Whether \p Image's calling convention owns the x87 stack as one context,
+// whose calls return through the context rather than an st0 value.
+bool ownsX87(const BinaryImage &Image) {
+  return x87ContextOwnsStack(Image.Arch, Image.abiFormat(),
+                             Image.X87ContextOverride);
+}
+
 TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (BinaryFormat Format :
@@ -167,7 +174,7 @@ TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
           for (const LowOp &Op : Block.Ops) {
             if (Op.Opcode == NdOp::CALL && Op.Addr == Base) {
               SawCall = true;
-              if (Architecture == Arch::X64) {
+              if (ownsX87(Image)) {
                 EXPECT_EQ(Op.Output, NdVar::reg(x86reg::RAX, 8));
               } else {
                 EXPECT_EQ(Op.Output.Size, x86reg::FPURegSize);
@@ -178,7 +185,7 @@ TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
             }
             if (Op.Opcode == NdOp::RETURN) {
               SawReturn = true;
-              if (Architecture == Arch::X64) {
+              if (ownsX87(Image)) {
                 ASSERT_EQ(Op.NumInputs, 1u);
                 EXPECT_EQ(Op.Inputs[0], NdVar::reg(x86reg::RAX, 8));
               } else {
@@ -198,14 +205,16 @@ TEST(InternalNoReturn, LocalFloatingStateKeepsTheFullProof) {
       {0xd9, 0xe5},             // fxam: exposes stack tags to status bits
       {0xd9, 0xf7},             // fincstp: rotates without reading ST(i)
       {0xdb, 0xe3}};            // fninit: resets TOP and tags
-  for (Arch Architecture : {Arch::X86, Arch::X64})
+  for (auto [Architecture, Format] : {std::pair{Arch::X86, BinaryFormat::ELF},
+                                      std::pair{Arch::X64, BinaryFormat::ELF},
+                                      std::pair{Arch::X64, BinaryFormat::COFF}})
     for (const auto &Local : Locals)
       for (bool Trap : {false, true}) {
         SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Format));
         SCOPED_TRACE(Local[1]);
         SCOPED_TRACE(Trap);
-        const auto Image =
-            floatingForwarder(Architecture, BinaryFormat::ELF, Local, Trap);
+        const auto Image = floatingForwarder(Architecture, Format, Local, Trap);
         const std::set<va_t> Entries{Base, Base + 0x20, Base + 0x40};
         ReturningCallCounter Counter;
         Decoder Dec;
@@ -216,7 +225,7 @@ TEST(InternalNoReturn, LocalFloatingStateKeepsTheFullProof) {
         EXPECT_EQ(
             detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base),
             Trap);
-        if (Architecture == Arch::X64)
+        if (ownsX87(Image))
           EXPECT_EQ(Counter.LeafQueries, 0u);
         else
           EXPECT_GT(Counter.LeafQueries, 0u);
@@ -277,11 +286,11 @@ TEST(InternalNoReturn, UnknownTagsRequireScalarProofOrOwnedRuntimeContext) {
       const bool Proof =
           detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base);
       const LowFunc Full = Builder.build(Image, Dec, Base, "full");
-      EXPECT_EQ(Full.hasCompleteInstructionLift(), Architecture == Arch::X64);
+      const bool Owned = ownsX87(Image);
+      EXPECT_EQ(Full.hasCompleteInstructionLift(), Owned);
       EXPECT_EQ(Full.UnsupportedInstructionAddresses,
-                Architecture == Arch::X64 ? std::vector<va_t>{}
-                                          : std::vector<va_t>{Base + 7});
-      if (Architecture == Arch::X64) {
+                Owned ? std::vector<va_t>{} : std::vector<va_t>{Base + 7});
+      if (Owned) {
         unsigned RootCapture = 0;
         for (const auto &B : Full.Blocks)
           for (const auto &Op : B.Ops)

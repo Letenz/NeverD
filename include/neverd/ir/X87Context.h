@@ -25,6 +25,23 @@ inline constexpr uint32_t X87ContextOperand16 = 1U << 17;
 inline constexpr uint32_t X87ContextWaitPrefix = 1U << 18;
 inline constexpr unsigned X87ContextOriginalModRMShift = 19;
 
+/// Whether lifted x86-64 code owns the x87 register stack as one mutable
+/// context (the X87Context* intrinsics) instead of keeping typed binary80
+/// values on the static stack model. The calling convention \p Convention
+/// decides. Win64 never passes an x87 value across a call (MSVC has no
+/// binary80 type, and MinGW passes long double by reference), so the stack is
+/// private machine state there, which the context preserves bit for bit. The
+/// System V ABI passes long double arguments in memory and returns them in
+/// st0; they stay typed values so that those parameter and return contracts
+/// survive. \p Override replaces the convention's choice
+/// (BinaryImage::X87ContextOverride).
+constexpr bool x87ContextOwnsStack(Arch A, BinaryFormat Convention,
+                                   std::optional<bool> Override) {
+  if (A != Arch::X64)
+    return false;
+  return Override ? *Override : Convention == BinaryFormat::COFF;
+}
+
 constexpr bool isX87ContextIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::X87ContextBegin ||
          Id == Intrinsic::X87ContextRefresh ||

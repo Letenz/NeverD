@@ -144,6 +144,54 @@ TEST(X87ContextConcrete, UnknownIncomingStateCannotInventInitializedTags) {
   }
 }
 
+TEST(X87ContextConcrete, SavesAndSkippedRestoresNeverAuthenticateUnknownBits) {
+#if !(defined(__x86_64__) || defined(_M_X64)) ||                               \
+    !(defined(__clang__) || defined(__GNUC__))
+  GTEST_SKIP() << "native x64 GCC/Clang context executor required";
+#endif
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Segment Data;
+  Data.VA = 0x3000;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.assign(0x200, 0);
+  Data.Size = Data.FileSz = Data.Data.size();
+  Img.Segments.push_back(Data);
+  // fnsave [rax]: DD /6 stores all eight registers, empty ones included.
+  const uint32_t Fnsave = 0xdd | (0x30U << 8) | X87ContextMemory |
+                          (0x30U << X87ContextOriginalModRMShift);
+  std::array<uint8_t, 512> State{};
+  State[0] = 0x7f;
+  State[1] = 3;
+  for (bool Strict : {false, true}) {
+    NdOpEmulator E(Img);
+    E.setStrictMode(Strict);
+    ASSERT_TRUE(E.setX86LinearAddressBits(48));
+    // Authenticated payloads may be saved.
+    ASSERT_TRUE(E.setX87Context(State));
+    EXPECT_TRUE(E.step(contextStep(Fnsave, Data.VA))) << Strict;
+    // A direct register write forgets the authenticated payloads, and FNINIT
+    // from that unknown context retains them unknown.
+    ASSERT_TRUE(E.setX87Context(State));
+    E.setRegister(x86reg::FPU_SW, 0);
+    ASSERT_TRUE(E.step(contextStep(0xe3db)));
+    EXPECT_FALSE(E.step(contextStep(Fnsave, Data.VA))) << Strict;
+    EXPECT_FALSE(E.getX87Context());
+  }
+  // A full-state restore the lenient tracer skips leaves no context to trust.
+  NdOpEmulator E(Img);
+  E.setStrictMode(false);
+  ASSERT_TRUE(E.setX87Context(State));
+  LowOp Restore;
+  Restore.Opcode = NdOp::INTRINSIC;
+  Restore.Addr = Entry;
+  Restore.addInput(NdVar::cst(unsigned(Intrinsic::Fxrstor64Mem), 2));
+  Restore.addInput(NdVar::cst(Data.VA, 8));
+  EXPECT_TRUE(E.step(Restore));
+  EXPECT_FALSE(E.getX87Context());
+  EXPECT_FALSE(E.step(contextStep(0xe8d9))); // FLD1 needs the restored tags.
+}
+
 TEST(X87ContextConcrete,
      LegacyScalarWritesCannotLeaveAnAuthenticatedStaleSnapshot) {
   BinaryImage Img;
@@ -318,6 +366,9 @@ TEST(X87ContextConcrete, FistpMatchesNativeFullStateForEveryMaskAndRounding) {
 
 class X87ConvertFixture : public X86FPStateFixture {
 protected:
+  // These oracles cover the owned context on every host, including System V
+  // ones whose convention keeps typed long double values.
+  X87ConvertFixture() { X87ContextOverride = true; }
   bool ObserveContext = false, ResumeAfterException = false;
   bool ObserveFlags = false;
   bool ObserveEnvironment = false;

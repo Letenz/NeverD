@@ -67,6 +67,9 @@ protected:
   unsigned ProbeNumber = 0;
   std::set<va_t> AdditionalFunctionEntries;
   std::set<va_t> AdditionalCodeRoots;
+  /// The image's x87 model (BinaryImage::X87ContextOverride); unset follows
+  /// the host format's calling convention.
+  std::optional<bool> X87ContextOverride;
 
   void SetUp() override {
     auto Clang = llvm::sys::findProgramByName("clang");
@@ -171,6 +174,7 @@ protected:
     Image.Format = Format;
     Image.Base = Image.Entry = Entry;
     Image.CodeRefTargets = AdditionalCodeRoots;
+    Image.X87ContextOverride = X87ContextOverride;
     Segment Text;
     Text.Name = ".text";
     Text.VA = Entry;

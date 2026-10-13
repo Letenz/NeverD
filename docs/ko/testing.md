@@ -284,7 +284,7 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 ## x64 x87 컨텍스트 소유권
 
-`NeverDX86X87ConvertStateTests`는 원래 바이트와 LLVM, HighC, LLVMC의 실행을 default/NoOpt 및 C O0/O2에서 비교합니다. 변환, 여덟 산술 형식, 플래그, MMX/EMMS, 가득 찬/빈 스택, 호출, 래퍼, 진입 루프와 독립 진입점을 검사합니다. 네 FLDENV/FRSTOR 형식은 대기 예외, 태그와 보존 값을 다루며 해당되는 경우 네 RC, 세 유효 PC와 64 예외 마스크를 검사합니다. Low/Med/High 계약은 잘못된 형식, 위조 핸들과 잘린 선택자를 거부합니다. 좁은 반환은 호출 효과를 유지하며 실제 필요한 미지 비트를 거부합니다. 네이티브 대조에는 x64와 Clang이 필요하며 모든 명령, 플랫폼, CPU, 오류 우선순위 또는 형식화된 부동소수점 가져오기 ABI의 검증을 주장하지 않습니다.
+`NeverDX86X87ConvertStateTests`는 원래 바이트와 LLVM, HighC, LLVMC의 실행을 default/NoOpt 및 C O0/O2에서 비교합니다. 이 픽스처는 `BinaryImage::X87ContextOverride`로 모든 호스트에서 소유 컨텍스트를 고정하며, 정수 로드, 부호, x87 FPU 스위트는 System V의 타입 있는 투영도 검사합니다. 변환, 여덟 산술 형식, 플래그, MMX/EMMS, 가득 찬/빈 스택, 호출, 래퍼, 진입 루프와 독립 진입점을 검사합니다. 네 FLDENV/FRSTOR 형식은 대기 예외, 태그와 보존 값을 다루며 해당되는 경우 네 RC, 세 유효 PC와 64 예외 마스크를 검사합니다. Low/Med/High 계약은 잘못된 형식, 위조 핸들과 잘린 선택자를 거부합니다. 좁은 반환은 호출 효과를 유지하며 실제 필요한 미지 비트를 거부합니다. 네이티브 대조에는 x64와 Clang이 필요하며 모든 명령, 플랫폼, CPU, 오류 우선순위 또는 형식화된 부동소수점 가져오기 ABI의 검증을 주장하지 않습니다.
 
 ## 구조화된 C 제어 흐름 및 호출 검사
 

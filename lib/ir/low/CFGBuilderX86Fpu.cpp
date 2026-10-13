@@ -61,6 +61,12 @@ bool isStReg(const NdVar &V) {
          ((V.Offset - x86reg::ST0) % x86reg::FPURegStride == 0);
 }
 
+/// The image's calling convention decides who owns the x87 register stack;
+/// Decoder::configureFor gives its lifter the same answer.
+bool ownsX87Context(const BinaryImage &Img) {
+  return x87ContextOwnsStack(Img.Arch, Img.abiFormat(), Img.X87ContextOverride);
+}
+
 // The intrinsics that load or reinitialize the whole x87 state, or stand for
 // an x87 operation NeverD does not model, may leave any tags. Value
 // instructions define only their outputs (their pops are the lifter's TOP
@@ -1423,7 +1429,7 @@ X87CallGraphCache::validatedSummary(
   // query retains the ordinary depth and its full private allowance.
   X87CallEffectIndex Effects(Request);
   for (va_t Target : Facts->Calls) {
-    if (Img.Arch == Arch::X64 && Effects.usesContext(Target).value_or(false))
+    if (ownsX87Context(Img) && Effects.usesContext(Target).value_or(false))
       return {};
     if (Effects.effect(Target) == std::optional<int>(-1))
       return {};
@@ -1581,7 +1587,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
     recordSkippedFpuFixup(Func);
     return;
   }
-  if (CurrentImg && CurrentImg->Arch == Arch::X64) {
+  if (CurrentImg && ownsX87Context(*CurrentImg)) {
     const auto ContextId = [](const LowOp &Op) {
       return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
                      Op.Inputs[0].isConst()
@@ -1700,6 +1706,9 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
             New.addInput(Handle);
           Ops.push_back(New);
         };
+        // Set while the previous operation was a call whose RETURN follows
+        // directly (a tail jump, or a call right before RET).
+        bool ReturnsCallState = false;
         for (auto &Boundary : B.InstructionBoundaries) {
           const auto First = Boundary.FirstOp, End = First + Boundary.OpCount;
           if (First > B.Ops.size() || Boundary.OpCount > B.Ops.size() - First) {
@@ -1741,7 +1750,14 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
                 Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL;
             const bool ExternalState =
                 x87ContextSynchronizesExternalState(ContextId(Op));
-            if (Call || ExternalState || Op.Opcode == NdOp::RETURN ||
+            // Such a call hands the callee's x87 state straight back to this
+            // function's caller. Nothing reads the context in between, so no
+            // refresh/export pair separates the CALL from its RETURN, whose
+            // adjacency the ABI passes rely on.
+            const bool Returned = Call && I + 1 < B.Ops.size() &&
+                                  B.Ops[I + 1].Opcode == NdOp::RETURN;
+            if (Call || ExternalState ||
+                (Op.Opcode == NdOp::RETURN && !ReturnsCallState) ||
                 Op.Opcode == NdOp::INDIR_BR ||
                 (PublishEdge &&
                  (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR)))
@@ -1749,10 +1765,11 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
             Ops.push_back(Op);
             if (ExternalState)
               emit(Intrinsic::X87ContextRefresh, Op.Addr);
-            if (Call &&
+            if (Call && !Returned &&
                 !hasLowInstructionControlFlag(
                     Boundary.ControlFlags, LowInstructionControlFlag::NoReturn))
               emit(Intrinsic::X87ContextRefresh, Op.Addr);
+            ReturnsCallState = Returned;
           }
           if (MMX) {
             emit(Intrinsic::X87ContextMMXEnter, Boundary.Address);

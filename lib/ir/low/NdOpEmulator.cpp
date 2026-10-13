@@ -119,8 +119,10 @@ void NdOpEmulator::reset() {
 
 void NdOpEmulator::setRegister(uint64_t RegOff, uint64_t Value) {
   if (RegOff == x86reg::FPU_CW || RegOff == x86reg::FPU_SW ||
-      (RegOff >= x86reg::ST0 && RegOff <= x86reg::ST7))
+      (RegOff >= x86reg::ST0 && RegOff <= x86reg::ST7)) {
     X87ContextKnown = false;
+    X87PayloadKnown = 0;
+  }
   Registers[RegOff] = Value;
   WideRegisters.erase(RegOff);
 }
@@ -135,8 +137,10 @@ std::optional<uint64_t> NdOpEmulator::getRegister(uint64_t RegOff) const {
 void NdOpEmulator::setRegisterBytes(uint64_t RegOff,
                                     llvm::ArrayRef<uint8_t> Value) {
   if (RegOff == x86reg::FPU_CW || RegOff == x86reg::FPU_SW ||
-      (RegOff >= x86reg::ST0 && RegOff <= x86reg::ST7))
+      (RegOff >= x86reg::ST0 && RegOff <= x86reg::ST7)) {
     X87ContextKnown = false;
+    X87PayloadKnown = 0;
+  }
   std::vector<uint8_t> Bytes(Value.begin(), Value.end());
   WideRegisters[RegOff] = Bytes;
   uint64_t Low = 0;
@@ -662,6 +666,13 @@ bool NdOpEmulator::step(const LowOp &Op) {
     if (Op.Output.isReg() || Op.Output.isTemp()) {
       Registers.erase(Op.Output.Offset);
       WideRegisters.erase(Op.Output.Offset);
+    }
+    // A skipped full-state import or export leaves no x87 context to trust.
+    if (Op.NumInputs >= 1 && Op.Inputs[0].isConst() &&
+        x87ContextSynchronizesExternalState(
+            static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
+      X87ContextKnown = false;
+      X87PayloadKnown = 0;
     }
     return !StrictMode;
 

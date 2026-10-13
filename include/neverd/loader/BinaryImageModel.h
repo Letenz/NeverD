@@ -287,6 +287,10 @@ struct BinaryImage {
   /// follows: ELF for System V and AAPCS, COFF for Windows, Mach-O for
   /// Apple.  Only a binary file sets it; see abiFormat().
   BinaryFormat ConventionFormat = BinaryFormat::Unknown;
+  /// Replaces the calling convention's choice of how lifted x86-64 code holds
+  /// the x87 register stack (x87ContextOwnsStack): true owns it as one
+  /// mutable context, false keeps typed binary80 values.
+  std::optional<bool> X87ContextOverride;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
   /// The image runs at its link-time addresses: no loader rebases it, so an

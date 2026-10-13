@@ -102,9 +102,8 @@ static void emitFpuArithReg(X86Lifter::LiftState &S, const cs_x86 &X86,
 }
 
 bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
-  if (TargetArch == Arch::X64 &&
-      ((X86.opcode[0] >= 0xd8 && X86.opcode[0] <= 0xdf) ||
-       Insn->id == X86_INS_WAIT)) {
+  if (ownsX87Context() && ((X86.opcode[0] >= 0xd8 && X86.opcode[0] <= 0xdf) ||
+                           Insn->id == X86_INS_WAIT)) {
     const bool Memory = (X86.modrm & 0xc0) != 0xc0 && Insn->id != X86_INS_WAIT;
     uint32_t Selector =
         Insn->id == X86_INS_WAIT
@@ -115,7 +114,9 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
       Selector |= X87ContextMemory;
       Selector |= uint32_t(X86.modrm) << X87ContextOriginalModRMShift;
     }
-    if (X86.prefix[2] == 0x66)
+    // REX.W overrides an operand-size prefix: FNSTENV/FNSAVE with both use
+    // the 28/108-byte images, as the 64-bit hardware does.
+    if (X86.prefix[2] == 0x66 && !(X86.rex & 0x08))
       Selector |= X87ContextOperand16;
     if (Insn->size > 1 && Insn->bytes[0] == 0x9b)
       Selector |= X87ContextWaitPrefix;

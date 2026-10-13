@@ -44729,19 +44729,26 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
                      llvm::StringRef Storage = {}) {
   constexpr va_t Entry = 0x140001000;
-  const std::string HighC =
-      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  // Raw binary80 constants may stay in integer storage until arithmetic
-  // needs a floating value. Executing the result checks both representations.
-  if (!Storage.empty())
-    EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
-  // The unit is written without includes; its ten-byte accesses copy
-  // through memcpy.
-  compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
-                            HighC +
-                            "\nint main(void) { return (uint64_t)"
-                            "sub_140001000() != " +
-                            std::to_string(Expected) + "ull; }\n");
+  // Typed binary80 values and the owned x87 context (the convention of this
+  // PE image) must compute the same result.
+  for (bool Owned : {false, true}) {
+    SCOPED_TRACE(Owned);
+    BinaryImage Image = makeCodeFixture(Entry, Code);
+    Image.X87ContextOverride = Owned;
+    const std::string HighC = highcOnlyFunction(std::move(Image), Entry);
+    // Raw binary80 constants may stay in integer storage until arithmetic
+    // needs a floating value. Executing the result checks both
+    // representations.
+    if (!Storage.empty() && !Owned)
+      EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
+    // The unit is written without includes; its ten-byte accesses copy
+    // through memcpy.
+    compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
+                              HighC +
+                              "\nint main(void) { return (uint64_t)"
+                              "sub_140001000() != " +
+                              std::to_string(Expected) + "ull; }\n");
+  }
 }
 
 TEST(HighCPointerAddresses, AnX87ValueRoundsToTheDoubleItIsStoredAs) {
