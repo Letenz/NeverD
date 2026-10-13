@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   eh/SEHRuntimeMemoryTests.cpp
+  eh/X64CRTFrameTests.cpp
   eh/RegistrationSEHControlTests.cpp
   eh/RegistrationConditionalFrameTests.cpp
   eh/RegistrationJumpRuntimeTests.cpp
@@ -290,6 +291,7 @@ add_neverd_unittest(NeverDLiftTests
   core/HighCReturnJoinTests.cpp
   eh/RegistrationTryLevelTests.cpp
   eh/SEHRuntimeMemoryTests.cpp
+  eh/X64CRTFrameTests.cpp
   format/COFFARMFormatTests.cpp
   format/COFFARMFormatFragmentTests.cpp
   format/COFFARMFormatMalformedTests.cpp

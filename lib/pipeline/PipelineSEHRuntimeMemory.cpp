@@ -27,16 +27,22 @@ std::optional<LowSEHRuntimeCall> runtimeCall(const BinaryImage &Image,
                                              const Import &Imported,
                                              size_t &Remaining) {
   const llvm::StringRef Module = Imported.Module;
-  if (Imported.IsDelayImport || !Imported.IATAddr ||
-      !(Module.equals_insensitive("api-ms-win-crt-stdio-l1-1-0.dll") ||
-        Module.equals_insensitive("ucrtbase.dll") ||
-        Module.equals_insensitive("ucrtbased.dll")))
+  if (Imported.IsDelayImport || !Imported.IATAddr)
     return std::nullopt;
+  const bool UCRT = Module.equals_insensitive("ucrtbase.dll") ||
+                    Module.equals_insensitive("ucrtbased.dll");
+  const bool Stdio =
+      UCRT || Module.equals_insensitive("api-ms-win-crt-stdio-l1-1-0.dll");
   LowSEHRuntimeCall Call;
-  if (Imported.Name == "__acrt_iob_func")
+  if (Stdio && Imported.Name == "__acrt_iob_func")
     Call.Routine = LowSEHRuntimeCall::Kind::CRTStream;
-  else if (Imported.Name == "__stdio_common_vfprintf")
+  else if (Stdio && Imported.Name == "__stdio_common_vfprintf")
     Call.Routine = LowSEHRuntimeCall::Kind::CRTVfprintf;
+  else if (Imported.Name == "_controlfp_s" &&
+           (UCRT ||
+            Module.equals_insensitive("api-ms-win-crt-runtime-l1-1-0.dll") ||
+            Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll")))
+    Call.Routine = LowSEHRuntimeCall::Kind::CRTControlFP;
   else
     return std::nullopt;
   if (Image.Imports.size() + 1 > Remaining) {

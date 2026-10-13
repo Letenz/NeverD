@@ -11,6 +11,7 @@
 
 #include "SEHFrameProofDetail.h"
 #include "SEHFrameRuntimeMemory.h"
+#include "X86/FrameEffects.h"
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowNoReturn.h"
@@ -154,6 +155,7 @@ struct CallContext {
   std::set<int64_t> ReturnSlots;
   const LowSEHRuntimeMemory *RuntimeMemory = nullptr;
   bool UsesRuntimeMemory = false;
+  bool HasExceptionCallbacks = false;
 
   bool overlapsReturnPC(int64_t Begin, int64_t End) const {
     return llvm::any_of(ReturnSlots, [&](int64_t Slot) {
@@ -211,8 +213,16 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
         S = {};
       break;
     }
+    // Ordinary FP completion preserves integer storage, but a local filter
+    // may change that storage before continuing a faulting instruction. The
+    // x64 proof has no callback-effect receipt yet. Reading MXCSR cannot trap;
+    // other FP effects need a callback-free invocation here.
+    const bool PreservesFrame =
+        isX86FramePreservingIntrinsic(Op, TRI.TheArch) && Calls &&
+        (!Calls->HasExceptionCallbacks ||
+         Op.Inputs[0].Offset == static_cast<unsigned>(Intrinsic::X86ReadMXCSR));
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-        Op.Opcode == NdOp::INTRINSIC) {
+        (Op.Opcode == NdOp::INTRINSIC && !PreservesFrame)) {
       const auto CurrentSP = S.get(SP);
       if (Record && CurrentSP && S.get(Frame) == CurrentSP &&
           Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
@@ -694,6 +704,10 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
   CallContext Calls;
   Calls.Callees = Callees;
   Calls.RuntimeMemory = RuntimeMemory;
+  Calls.HasExceptionCallbacks =
+      F.ExceptionMetadata &&
+      (F.ExceptionMetadata->SEH || F.ExceptionMetadata->Cxx ||
+       F.ExceptionMetadata->Registration);
   // The entry frame is anchored at its caller's pushed return address. Runtime
   // home areas must not overwrite that live slot, just as nested invocations
   // must preserve each return address introduced by transferCallee.

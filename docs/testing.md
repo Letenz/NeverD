@@ -5165,9 +5165,21 @@ The source registration solver uses one administration-boundary check for object
 home-area writes, immutable formats and receipt freshness. Wrong providers,
 delay imports, incomplete or conflicting PE32/PE64 storage, `%n` variants,
 writable formats, saved-slot overwrites, IAT rebinding, forged import veneers,
-parent-return-PC home-area overlaps and encoded frame escape
+parent-return-PC overlaps with either CALL's push or the home area, saved cells
+below SP and encoded frame escape
 must refuse. These focused contracts do not establish xcpt4 support; retain the
 real `DecompileMatrixFailsClosedWithAuditableExceptionMetadata` acceptance test.
+
+`X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
+extents with adjacent, partial-overlap, home-area, released-storage and return-PC
+controls. Wrong providers, delay imports, missing or conflicting import storage,
+unknown masks, unsupported precision control and previously escaped frames
+refuse. Decoded WAIT and both register/memory scalar SSE arithmetic retain saved
+frame identities, while malformed effects and GPR outputs (including R8 and
+APX R16) do not. The shared PE32 floating-state tests cover the same policy.
+Adding unproved language callbacks withdraws the Win64 FP preservation result.
+These contracts leave the PE64 xcpt4 writable-format and runtime-activation
+proofs open; passing these tests alone does not satisfy issue #858.
 
 `RegistrationState.OrdinaryFinallyReturnsItsCheckedFrameEffects` checks actual
 ordinary finally returns, private push/pop storage, incoming register values,

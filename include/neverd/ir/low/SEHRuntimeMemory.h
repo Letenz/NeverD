@@ -24,7 +24,7 @@ struct LowFunc;
 /// name nor an ABI declaration supplies this identity. Call arguments and the
 /// invocation's live return slots remain obligations of the frame analysis.
 struct LowSEHRuntimeCall {
-  enum class Kind : uint8_t { CRTStream, CRTVfprintf } Routine;
+  enum class Kind : uint8_t { CRTStream, CRTVfprintf, CRTControlFP } Routine;
   va_t IATAddress = InvalidVA;
   std::string Module;
   std::string Name;

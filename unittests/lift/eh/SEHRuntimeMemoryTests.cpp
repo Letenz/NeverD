@@ -213,9 +213,13 @@ TEST(SEHRuntimeMemory, NestedImportedCallKeepsOnlyAuthenticatedSavedCells) {
 }
 
 TEST(SEHRuntimeMemory, FormatAndRuntimeHomeAreaOwnTheirActualEffects) {
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
     SCOPED_TRACE(Mutation);
-    Fixture F(true, false, Mutation == 6 ? 24 : 40);
+    Fixture F(true, false,
+              Mutation == 6   ? 24
+              : Mutation == 8 ? 0xf8
+              : Mutation == 9 ? 0xf0
+                              : 40);
     if (Mutation == 1 || Mutation == 2 || Mutation == 3 || Mutation == 7) {
       auto &Data = F.Image.Segments[1];
       const std::string Format = Mutation == 1   ? "%n"
@@ -447,22 +451,31 @@ TEST(SEHRuntimeMemory, ScalarComparisonsUseTheInputSignAndWidth) {
   EXPECT_FALSE(lowScalarConstantResult(Op, Constant));
 }
 
-TEST(SEHRuntimeMemory, RuntimeHomeAreaCannotOverwriteTheParentReturnPC) {
-  Fixture F(true, false);
-  auto &Text = F.Image.Segments.front().Data;
-  ASSERT_EQ(Text[3], 56);
-  Text[3] = 8;
-  Text[F.Image.Symbols.front().Size - 2] = 8;
-  Decoder Dec;
-  ASSERT_TRUE(Dec.init(Arch::X64));
-  CFGBuilder Builder;
-  auto Caller = Builder.build(F.Image, Dec, Entry, "caller");
-  ASSERT_TRUE(Caller.hasCompleteLiftCoverage());
-  const auto Memory = collectLowSEHRuntimeMemory(F.Image, {Caller});
-  size_t Work = 100000;
-  EXPECT_TRUE(proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64), Work,
-                                nullptr, &Memory)
-                  .Calls.empty());
+TEST(SEHRuntimeMemory, RuntimeInvocationCannotOverwriteTheParentReturnPC) {
+  for (bool PushOverlaps : {false, true}) {
+    SCOPED_TRACE(PushOverlaps);
+    Fixture F(true, false);
+    auto &Text = F.Image.Segments.front().Data;
+    ASSERT_EQ(Text[3], 56);
+    Text[3] = 8;
+    Text[F.Image.Symbols.front().Size - 2] = 8;
+    if (PushOverlaps) {
+      // At SP=entry+8 the home area is disjoint, but CALL itself replaces
+      // the parent's return PC. SUB after the call cannot repair its value.
+      Text[2] = 0xc4;                                // add rsp,8
+      Text[F.Image.Symbols.front().Size - 3] = 0xec; // sub rsp,8
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    CFGBuilder Builder;
+    auto Caller = Builder.build(F.Image, Dec, Entry, "caller");
+    ASSERT_TRUE(Caller.hasCompleteLiftCoverage());
+    const auto Memory = collectLowSEHRuntimeMemory(F.Image, {Caller});
+    size_t Work = 100000;
+    EXPECT_TRUE(proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64), Work,
+                                  nullptr, &Memory)
+                    .Calls.empty());
+  }
 }
 
 TEST(SEHRuntimeMemory, RuntimeVeneersRequireTheirActualIndirectJump) {

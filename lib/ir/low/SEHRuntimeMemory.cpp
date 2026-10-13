@@ -35,7 +35,7 @@ std::string lowSEHRuntimeMemoryDigest(const LowSEHRuntimeMemory &Memory) {
         Call.IATAddress > InvalidVA - 8 || Call.Module.empty() ||
         Call.Module.size() > 256 || Call.Name.empty() ||
         Call.Name.size() > 256 ||
-        Call.Routine > LowSEHRuntimeCall::Kind::CRTVfprintf)
+        Call.Routine > LowSEHRuntimeCall::Kind::CRTControlFP)
       return {};
     Word(Identity.first);
     Word(Identity.second);

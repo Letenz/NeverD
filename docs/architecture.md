@@ -5072,14 +5072,30 @@ The `_local_unwind2` bound is a numeric operand, not a scope-table index. Any co
 immutable scalar printf formats. `ReadOnlyBytes` owns complete, unique storage
 and fixup checks; ABI declarations supply no memory authority. The shared LowIR
 frame interpreter checks actual arguments, active return-PC slots (including
-the parent entry PC) and the
-Win64 home area before applying CRT effects. Explicit IAT writes withdraw
+the parent entry PC), the physical CALL push and the
+Win64 home area before applying CRT effects. Scratch identities below SP expire
+at every authenticated runtime invocation. Explicit IAT writes withdraw
 future bindings, and unknown exported bits retain possible frame escape.
 Import veneers require their immutable indirect-jump bytes and exact IAT
 displacement; an address cache supplies no callable authority.
 Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
 rechecks the same dependencies. Writable formats and opaque calls retain their
 refusal, so this contract does not yet close the x64 xcpt4 case.
+
+Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
+UCRT import binding, an unescaped frame and a constant exception-mask subset
+permit a four-byte output wholly inside live caller storage, outside the home
+area and every active return PC. Only overlapping saved cells lose their
+identities. Precision-control and unknown masks remain unsupported because
+their invalid-parameter callbacks have no memory contract. The original call
+and its MXCSR effects remain in IR. PE32 registration and Win64 frame analysis
+also share one checked rule for WAIT, MXCSR transport and scalar/vector FP
+arithmetic. Its output-carrier check excludes all GPRs, including x64 R8–R15
+and APX registers; memory reads and floating-point traps remain observable.
+The Win64 interpreter still refuses potentially trapping FP effects when the
+invocation has language callbacks without a checked memory-effect receipt;
+a continuing filter may write the parent frame before ordinary execution
+resumes. PE32 callback effects remain the registration solver's responsibility.
 
 `RegistrationStateFinallyCall` checks ordinary calls into owned PE32 finally
 bodies. `RegistrationFinallyFrame` shares the returning invocation interpreter

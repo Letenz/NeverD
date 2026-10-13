@@ -6,6 +6,8 @@
 
 #include "SEHFrameRuntimeMemory.h"
 
+#include "X86/SEHFrameCRTControl.h"
+
 #include "neverd/ir/TargetRegInfo.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -35,19 +37,21 @@ std::optional<State> transferRuntimeMemory(
     return std::nullopt;
   const auto Binding = Memory.calls().find({Target->Bits, Indirect});
   const auto SP = Caller.get(NdVar::reg(TRI.StackPointer, 8));
-  int64_t HomeEnd = 0;
+  int64_t CallSlot = 0, HomeEnd = 0;
   if (Binding == Memory.calls().end() ||
       (Target->Identity != Value::Kind::ImportTarget &&
        Caller.InvalidatedImportSlots.count(Binding->second.IATAddress)) ||
-      !SP || llvm::AddOverflow(*SP, int64_t{32}, HomeEnd) ||
+      !SP || llvm::SubOverflow(*SP, int64_t{8}, CallSlot) ||
+      llvm::AddOverflow(*SP, int64_t{32}, HomeEnd) ||
       llvm::any_of(ReturnSlots, [&](int64_t Slot) {
-        return Slot > INT64_MAX - 8 || (*SP < Slot + 8 && Slot < HomeEnd);
+        return Slot > INT64_MAX - 8 || (CallSlot < Slot + 8 && Slot < HomeEnd);
       }))
     return std::nullopt;
   const auto Argument = [&](unsigned I) {
     return NdVar::reg(TRI.Win64ParamRegs[I], 8);
   };
   std::optional<Value> Returned;
+  std::optional<int64_t> ControlOutput;
   if (Binding->second.Routine == LowSEHRuntimeCall::Kind::CRTStream) {
     const auto Index = Caller.constant(Argument(0));
     if (!Index || *Index >= 3)
@@ -64,13 +68,24 @@ std::optional<State> transferRuntimeMemory(
         VAList == Caller.Spills.end() ||
         VAList->second.Identity != Value::Kind::Frame)
       return std::nullopt;
+  } else if (Binding->second.Routine == LowSEHRuntimeCall::Kind::CRTControlFP) {
+    ControlOutput =
+        checkedX64ControlFPOutput(Caller, TRI, HomeEnd, ReturnSlots);
+    if (!ControlOutput)
+      return std::nullopt;
   } else
     return std::nullopt;
 
   State Result;
   Result.Spills = Caller.Spills;
   Result.InvalidatedImportSlots = Caller.InvalidatedImportSlots;
+  // CALL writes its own PC below SP, and the runtime may allocate private
+  // storage farther below it. No saved-byte identity there survives a call.
+  std::erase_if(Result.Spills,
+                [&](const auto &Cell) { return Cell.first < *SP; });
   Result.invalidateMemory(*SP, HomeEnd);
+  if (ControlOutput)
+    Result.invalidateMemory(*ControlOutput, *ControlOutput + 4);
   for (const auto &[K, Fact] : Caller.Values) {
     const auto &[Space, Offset, Size] = K;
     if (Space == VnodeSpace::REG &&

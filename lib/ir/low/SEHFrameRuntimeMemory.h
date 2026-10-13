@@ -19,7 +19,8 @@ namespace seh_frame {
 
 /// Authenticate the current arguments of an exact runtime binding. A known
 /// name with an unproved FILE, format, locale or va_list still refuses. The
-/// invocation may use its Win64 home area, never an active physical return PC.
+/// invocation may use its Win64 home area and storage below SP. Neither the
+/// physical CALL push nor the home area may replace an active return PC.
 std::optional<State> transferRuntimeMemory(
     const LowOp &Call, const State &Caller, const TargetRegInfo &TRI,
     const LowSEHRuntimeMemory &Memory, const std::set<int64_t> &ReturnSlots);

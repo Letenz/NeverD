@@ -78,6 +78,12 @@ conditional memory, invocation lifetime and both C routes remain open.
   Certified runtime-only continuation roots receive their established SP even
   without an ordinary incoming edge. This does not preserve saved pointers
   through opaque callees or prove cross-funclet frame borrowing.
+- Win64 `_controlfp_s` now bounds its real four-byte output for authenticated
+  UCRT queries and exception-mask changes. Partial saved-pointer overlaps,
+  active return PCs, home storage, escaped frames and unsupported masks still
+  refuse. PE32 and x64 share checked WAIT, MXCSR and FP arithmetic effects with
+  separate x64 GPR/APX negative controls. This closes two frame-transfer gaps;
+  the x64 xcpt4 case still lacks writable-format and runtime-activation proofs.
 - SEH filters and finally handlers retain separate entry/search-mode states
   when decoded callback tails are shared. Each must restore its own private
   stack and parent EBP. Source-value projections intersect all activations,
