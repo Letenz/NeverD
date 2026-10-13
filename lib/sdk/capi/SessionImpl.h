@@ -431,7 +431,9 @@ struct Session {
       // analysis names the function (getFunctionNameAt): a PE names its
       // functions by exports, and one entry several times where its linker
       // folded identical functions (ObDereferenceObject, ObfDereferenceObject).
-      std::string Linkage = Symbol->Name;
+      // A name functions at lower addresses take is numbered, as the analysis
+      // numbers it (`helper_0`).
+      std::string Linkage = Img.functionListName(Symbol->Addr, Symbol->Name);
       NameOrigin LinkageOrigin = Symbol->Origin;
       if (LinkageOrigin < NameOrigin::Stated)
         if (const Export *Exp = Img.findExportAt(Symbol->Addr);

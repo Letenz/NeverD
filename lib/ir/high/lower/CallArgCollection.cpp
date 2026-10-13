@@ -1570,8 +1570,8 @@ void MedToHighConverter::resolveCalleeNames(
   // caching them on the image.  They choose what calleeDisplayName does: the
   // *first* import or export at an address, including an empty name, as
   // findImportAt and findExportAt do, and the symbol getFunctionNameAt
-  // chooses.  The first symbol at a MinGW function's start is often its
-  // object's `.text` section symbol.
+  // chooses, numbered as the function is listed.  The first symbol at a
+  // MinGW function's start is often its object's `.text` section symbol.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
     ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
@@ -1617,13 +1617,13 @@ void MedToHighConverter::resolveCalleeNames(
     }
     auto Exp = ExportsByAddr.find(Target);
     auto Sym = SymbolsByAddr.find(Target);
-    llvm::StringRef FromImage;
+    std::string FromImage;
     if (Exp != ExportsByAddr.end() && !Exp->second.empty())
       FromImage = Exp->second;
     else if (Sym != SymbolsByAddr.end())
-      FromImage = Sym->second->Name;
+      FromImage = Image->functionListName(Target, Sym->second->Name);
     Names[Target] = Usable(FromImage)
-                        ? FromImage.str()
+                        ? std::move(FromImage)
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
   }
 }
