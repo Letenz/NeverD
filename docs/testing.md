@@ -52,8 +52,12 @@ and strict option validation. `SourceLLVMProfiles*` checks separate source and
 module cache identities. `HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
 enable it through the production converter. `SymSimplifyGuard.SourceProfiles*`
-checks zero symbolic work when disabled and evaluates all LLVM profiles against
-independent integer results, including wraparound. GUI source-transformation
+checks that the optional expression pass stays off when disabled and evaluates
+all LLVM profiles against independent integer results, including wraparound.
+`ControlFlowRecovery.SourceRecovery*` and `DefaultSource*` check independent
+recovery, default O2 recovery and the conservative patch boundary. Dispatcher
+regressions preserve effects, externally used values, subsequent state reads
+and atomic accesses. GUI source-transformation
 tests cover menu/keyboard activation, cancellation with retained source,
 concurrent listing/function reads and reset on navigation. Worker source-cache
 tests count engine calls separately for each option set. `HighExprSimplify.*`

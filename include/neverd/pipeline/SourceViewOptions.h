@@ -27,7 +27,8 @@ struct SourceViewOptions {
       InstCombine | EarlyCSE | SimplifyCFG | DCE;
 
   bool Symbolic = false;
-  LLVMOptimization LLVM = LLVMOptimization::Basic;
+  bool RecoverControlFlow = true;
+  LLVMOptimization LLVM = LLVMOptimization::O2;
   uint32_t Passes = BasicPasses;
   bool operator==(const SourceViewOptions &) const = default;
 };

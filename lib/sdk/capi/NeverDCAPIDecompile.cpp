@@ -878,7 +878,8 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
   SourceViewOptions Options;
   for (const auto &Field : *Object) {
     const llvm::StringRef Key = Field.first;
-    if (Key != "symbolic" && Key != "llvm_optimization" && Key != "llvm_passes")
+    if (Key != "symbolic" && Key != "llvm_optimization" &&
+        Key != "llvm_passes" && Key != "llvm_control_flow")
       throw std::invalid_argument("unknown source option: " + Key.str());
     if (Key != "symbolic" && Stage != "llvmc")
       throw std::invalid_argument("LLVM options require llvmc");
@@ -908,6 +909,12 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
       Options.LLVM = LevelKind::Custom;
     else
       throw std::invalid_argument("unsupported LLVM source optimization");
+  }
+  if (Object->get("llvm_control_flow")) {
+    auto Enabled = Object->getBoolean("llvm_control_flow");
+    if (!Enabled)
+      throw std::invalid_argument("llvm_control_flow must be a boolean");
+    Options.RecoverControlFlow = *Enabled;
   }
   const auto *Passes = Object->getArray("llvm_passes");
   if (Options.LLVM == SourceViewOptions::LLVMOptimization::Custom) {

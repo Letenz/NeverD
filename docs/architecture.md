@@ -132,11 +132,13 @@ prepared inputs used by a later HighC enhancement. The additive
 page API keeps default behavior and bytecode support. Source options never
 change the lifting, patching or general module optimizer defaults.
 
-LLVMC defaults to a scalar cleanup sequence after ordinary frame and SSA
-promotion. O0–O3 and a bounded custom pass selection are explicit alternatives.
-Symbolic fixed-point rewriting and LLVM dispatcher recovery require the
-independent symbolic option. Native machine CFG, jump-table, ABI and exception
-proofs remain authoritative and are unaffected. Worker source edits validate
+LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
+cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
+LLVM dispatcher recovery defaults on independently of the compiler level and
+optional symbolic fixed-point expression rewriting. Recovery retains its
+targeted constant proofs; `llvm_control_flow: false` explicitly disables that
+pass. Native machine CFG, jump-table, ABI and exception proofs remain
+authoritative and are unaffected. Worker source edits validate
 against the same source options used to display their targets.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line

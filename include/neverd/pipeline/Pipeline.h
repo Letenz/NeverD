@@ -481,6 +481,9 @@ public:
     llvm::OptimizationLevel LLVMLevel = llvm::OptimizationLevel::O2;
     SymSimplifyOptions Semantic;
     bool EnableSemantic = true;
+    /// Dispatcher recovery is independent of optional expression rewriting.
+    /// Conservative patch requests run neither transformation.
+    bool EnableControlFlowRecovery = true;
     uint32_t SourcePasses = SourceViewOptions::BasicPasses;
     /// Per SemanticFixedPointPass invocation.  Deep has independent early and
     /// late invocations, so each receives this complete budget.  Zero means
