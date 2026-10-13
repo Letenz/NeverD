@@ -244,6 +244,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
+  FunctionSources.clear();
   ExternalDataIdentifiers.clear();
   const std::set<std::string> ImportCNames =
       Img ? peImportCNames(*Img) : std::set<std::string>{};
@@ -313,6 +314,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
         DebugName.empty() ? cNameOfGlobal(Name, Fn.isDeclaration())
                           : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
     FunctionSymbolNames.emplace(&Fn, CName.str());
+    FunctionSources.emplace(&Fn, DebugName.empty() ? Name.str() : DebugName);
     if (!Fn.isDeclaration())
       CName = cDefinitionName(CName, Opts.Format);
     FunctionIdentifiers.emplace(
@@ -416,6 +418,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
     }
     writeReferencedImageObjects(*OnlyFunction, Tail);
     OS << Tail;
+    recordSourceNames(Mod);
     return;
   }
 
@@ -433,6 +436,47 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   writeGlobals(Mod);
   writeImportCalleeDecls(Mod);
   OS << "\n" << Functions;
+  recordSourceNames(Mod);
+}
+
+void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
+  // The marked renders spell the same names.
+  if ((!Opts.SourceMap && !Opts.SourceNames) || SourceRecorder)
+    return;
+  std::map<std::string, CSourceName> ByIdentifier;
+  for (const llvm::Function &Fn : Mod) {
+    const auto Identifier = FunctionIdentifiers.find(&Fn);
+    const auto Source = FunctionSources.find(&Fn);
+    if (Fn.isIntrinsic() || Identifier == FunctionIdentifiers.end() ||
+        Source == FunctionSources.end())
+      continue;
+    std::optional<va_t> Entry;
+    if (auto VA = rewrite_source::getOriginalVA(Fn))
+      Entry = *VA;
+    else
+      llvm::consumeError(VA.takeError());
+    auto [It, Inserted] = ByIdentifier.try_emplace(Identifier->second);
+    CSourceName &Name = It->second;
+    if (Inserted) {
+      Name.Identifier = Identifier->second;
+      Name.Symbol = Source->second;
+      Name.Address = Entry;
+      continue;
+    }
+    // One identifier for several symbols names none of them.
+    if (Name.Symbol != Source->second)
+      Name.Symbol.clear();
+    if (Name.Address != Entry)
+      Name.Address.reset();
+  }
+  std::vector<CSourceName> Names;
+  Names.reserve(ByIdentifier.size());
+  for (auto &[Identifier, Name] : ByIdentifier)
+    Names.push_back(std::move(Name));
+  if (Opts.SourceNames)
+    *Opts.SourceNames = Names;
+  if (Opts.SourceMap)
+    Opts.SourceMap->Names = std::move(Names);
 }
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
@@ -864,6 +908,10 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         Name = "g_";
       else if (std::isdigit(static_cast<unsigned char>(Name[0])))
         Name = "g_" + Name;
+      if (std::string Comment =
+              symbolComment(cNameOfGlobal(RawName, GV.isDeclaration()), Name);
+          !Comment.empty())
+        ImageObjectSymbols.try_emplace(Name, std::move(Comment));
     } else if (!GV.hasInitializer()) {
       llvm::StringRef Resolved = Name;
       if (Resolved.starts_with("__imp_") || Resolved.starts_with("_imp_") ||
@@ -890,8 +938,9 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         CTy = "uint32_t";
       else if (VTy->isIntegerTy(64))
         CTy = "uint64_t";
-      OS << "extern " << CTy << " " << Name << "; /* 0x"
-         << llvm::utohexstr(*parseNdDataSymbol(RawName)) << " */\n";
+      OS << imageObjectSymbolLine(Name) << "extern " << CTy << " " << Name
+         << "; /* 0x" << llvm::utohexstr(*parseNdDataSymbol(RawName))
+         << " */\n";
       EmittedGlobalNames.insert(Name);
       continue;
     }
@@ -902,14 +951,17 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
     // The image's storage stays the image's in one function's output, which
     // reaches its objects by their own names.
     if (OnlyFunction && mirrorsImageStorage(GV)) {
-      OS << "extern " << (GV.isConstant() ? "const " : "") << "unsigned char "
-         << Name << "[];\n";
+      OS << imageObjectSymbolLine(Name) << "extern "
+         << (GV.isConstant() ? "const " : "") << "unsigned char " << Name
+         << "[];\n";
       EmittedGlobalNames.insert(Name);
       continue;
     }
 
     auto *Init = GV.getInitializer();
     EmittedGlobalNames.insert(Name);
+    // Every declaration below defines it.
+    OS << imageObjectSymbolLine(Name);
 
     // Lifted writable image data can be one byte array with overlapping
     // integer views.  Keep the backing range as an array; printing it as a
@@ -1071,10 +1123,14 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
       for (const llvm::Use &Op : Inst.operands())
         NoteAddresses(NoteAddresses, Op.get());
   for (const auto &[Name, Ty] : Objs) {
-    OS << "extern " << typeToCLLVM(Ty) << " " << Name << ";\n";
+    OS << imageObjectSymbolLine(Name) << "extern " << typeToCLLVM(Ty) << " "
+       << Name << ";\n";
   }
-  for (const auto &[Base, GV] : ByteArrays)
-    writeImageByteArray(*GV, namedImageObject(Base));
+  for (const auto &[Base, GV] : ByteArrays) {
+    const std::string Name = namedImageObject(Base);
+    OS << imageObjectSymbolLine(Name);
+    writeImageByteArray(*GV, Name);
+  }
   if (!Objs.empty() || !ByteArrays.empty())
     OS << "\n";
 }

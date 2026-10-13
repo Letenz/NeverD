@@ -46,6 +46,22 @@ prebuilt-LLVM guidance.
 
 ## GUI function lists and navigation
 
+`SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
+restoration of ordinary output, reuse of prepared IR, navigation invalidation
+and strict option validation. `SourceLLVMProfiles*` checks separate source and
+module cache identities. `HighSymSimplify.OrdinaryConversion*` keeps optional
+rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
+enable it through the production converter. `SymSimplifyGuard.SourceProfiles*`
+checks zero symbolic work when disabled and evaluates all LLVM profiles against
+independent integer results, including wraparound. GUI source-transformation
+tests cover menu/keyboard activation, cancellation with retained source,
+concurrent listing/function reads and reset on navigation. Worker source-cache
+tests count engine calls separately for each option set. `HighExprSimplify.*`
+checks exact masked status bits, signed extensions, shared expressions and
+effect preservation without the symbolic bridge. The x87 classification test
+executes ordinary HighC against native extended-precision encodings; ARM mode
+tests execute both ordinary and explicitly enhanced source.
+
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
 to check download consent, local/disabled/absent-identity gating, strict PDB
 application, cache reuse, 404/mismatch failure and cancellation on file changes.

@@ -107,12 +107,21 @@ struct Session {
   bool PipeRan = false;
   uint64_t PipelineFeatureGeneration = 0;
   std::optional<bool> LlvmModuleNoOpt;
+  /// Scoped by an extended source-page request; never a project/analysis
+  /// option.
+  SourceViewOptions SourceOptions;
+  struct HighIRVariant {
+    std::vector<HighFunc> HighFuncs;
+    HighSourceMap HighSources;
+  };
+  std::unique_ptr<HighIRVariant> EnhancedHighIR;
   /// One function's native LLVM module: its body, with every other function
   /// declared by its own signature.  A page shows one function, so a sibling
   /// the emitter refuses cannot hide it, and showing it emits one body.
   struct FunctionLlvmModule {
     va_t Entry = 0;
     bool NoOpt = false;
+    SourceViewOptions Options;
     std::unique_ptr<llvm::Module> Module;
     std::shared_ptr<LLVMSourceMap> Sources;
   };
@@ -145,6 +154,7 @@ struct Session {
     /// A spelled source's declarations shown as C, and its source names.
     std::vector<std::string> Unread;
     std::vector<SourceDialectName> Names;
+    SourceViewOptions Options;
   };
   /// The sources of the functions shown last, the newest first.
   std::list<FunctionSource> FunctionSources;
@@ -154,9 +164,10 @@ struct Session {
   /// were read from. Navigation can keep these image facts, but no output IR.
   std::optional<DataAccessWidths> AccessWidths;
   std::vector<std::pair<va_t, uint64_t>> AccessWidthsFunctions;
-  /// Whether every native function's call ABI was recovered for this
-  /// pipeline's LLVM emission.
-  bool NativeCallAbiRecovered = false;
+  /// Native functions prepared for LLVM call-site lowering. This must not
+  /// mutate the HighIR route's MedIR: later source variants rebuild from that
+  /// same prepared input.
+  std::optional<std::vector<MedFunc>> NativeMedFuncs;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
   /// The image's strings under the options last searched with
@@ -420,7 +431,9 @@ struct Session {
       // analysis names the function (getFunctionNameAt): a PE names its
       // functions by exports, and one entry several times where its linker
       // folded identical functions (ObDereferenceObject, ObfDereferenceObject).
-      std::string Linkage = Symbol->Name;
+      // A name functions at lower addresses take is numbered, as the analysis
+      // numbers it (`helper_0`).
+      std::string Linkage = Img.functionListName(Symbol->Addr, Symbol->Name);
       NameOrigin LinkageOrigin = Symbol->Origin;
       if (LinkageOrigin < NameOrigin::Stated)
         if (const Export *Exp = Img.findExportAt(Symbol->Addr);
@@ -520,7 +533,8 @@ struct Session {
   /// newest; null if it has not emitted one.
   FunctionSource *findFunctionSource(va_t Entry, SourceRoute Route) {
     for (auto It = FunctionSources.begin(); It != FunctionSources.end(); ++It)
-      if (It->Entry == Entry && It->Route == Route) {
+      if (It->Entry == Entry && It->Route == Route &&
+          It->Options == SourceOptions) {
         FunctionSources.splice(FunctionSources.begin(), FunctionSources, It);
         return &FunctionSources.front();
       }
@@ -537,6 +551,7 @@ struct Session {
       if (FunctionSources.size() > MaxFunctionSources)
         FunctionSources.pop_back();
       Source = &FunctionSources.front();
+      Source->Options = SourceOptions;
     }
     Source->Text = std::move(Text);
     if (!Map)
@@ -551,7 +566,8 @@ struct Session {
     // Every module lives in the context.
     FunctionLlvmModules.clear();
     FunctionSources.clear();
-    NativeCallAbiRecovered = false;
+    EnhancedHighIR.reset();
+    NativeMedFuncs.reset();
     PipeResult = {};
     LLVMCtx.reset();
     PipeRan = false;
@@ -686,14 +702,15 @@ struct Session {
     // the other functions by the signatures this recovers too; recovery
     // recomputes each function's call information, so once per pipeline is
     // enough for such modules.
-    if (!BodyMask || !NativeCallAbiRecovered) {
+    if (!BodyMask || !NativeMedFuncs) {
+      auto Prepared = PipeResult.MedFuncs;
       std::map<va_t, std::string> FuncNames;
-      for (const auto &MF : PipeResult.MedFuncs)
+      for (const auto &MF : Prepared)
         if (!MF.Name.empty())
           FuncNames[MF.Entry] = MF.Name;
-      for (auto &MF : PipeResult.MedFuncs)
+      for (auto &MF : Prepared)
         recoverCallAbi(MF, Img.Arch, FuncNames, &Img);
-      NativeCallAbiRecovered = true;
+      NativeMedFuncs = std::move(Prepared);
     }
     std::vector<std::pair<va_t, std::string>> ImportMap;
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
@@ -704,9 +721,9 @@ struct Session {
     // this function contains no recognized library operation.
     Sources = std::make_shared<LLVMSourceMap>();
     Emitter.setSourceMap(Sources.get());
-    auto Candidate = Emitter.emit(
-        PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch, ImportMap,
-        &Img, Img.abiFormat(), /*MergeableGlobals=*/false, BodyMask);
+    auto Candidate = Emitter.emit(*NativeMedFuncs, *LLVMCtx, "neverd_output",
+                                  Img.Arch, ImportMap, &Img, Img.abiFormat(),
+                                  /*MergeableGlobals=*/false, BodyMask);
     if (Sources)
       Sources->preserveExpressionOrigins(PipeResult.LibraryRecognitions);
     if (!Candidate) {
@@ -726,8 +743,8 @@ struct Session {
       if (Sources)
         Sources->refreshExpressionOrigins();
     } else {
-      const OptimizationResult Optimization =
-          Pipeline::optimizeOrPromoteModule(*Candidate, Sources.get());
+      const OptimizationResult Optimization = Pipeline::optimizeOrPromoteModule(
+          *Candidate, Sources.get(), SourceOptions);
       if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
         setError(std::string("native LLVM optimization failed: ") +
                  optimizationStopReasonName(Optimization.Stop));
@@ -751,7 +768,8 @@ struct Session {
       clearPipeline();
     for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();
          ++It)
-      if (It->Entry == Entry && It->NoOpt == NoOpt) {
+      if (It->Entry == Entry && It->NoOpt == NoOpt &&
+          It->Options == SourceOptions) {
         FunctionLlvmModules.splice(FunctionLlvmModules.begin(),
                                    FunctionLlvmModules, It);
         return &FunctionLlvmModules.front();
@@ -772,6 +790,7 @@ struct Session {
     FunctionLlvmModule Built;
     Built.Entry = Entry;
     Built.NoOpt = NoOpt;
+    Built.Options = SourceOptions;
     Built.Module = emitNativeLlvm(NoOpt, &Mask, Built.Sources);
     if (!Built.Module)
       return nullptr;

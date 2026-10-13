@@ -464,6 +464,9 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
   dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
   recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   recordDataInCode(Img, DataObjects);
+  // Static functions of several modules share names (ntoskrnl's PDB names
+  // thirteen twice).
+  Img.numberSharedFunctionNames();
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

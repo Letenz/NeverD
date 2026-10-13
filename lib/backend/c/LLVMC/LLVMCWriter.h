@@ -91,6 +91,9 @@ public:
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
+  /// Records which symbol each function identifier stands for
+  /// (CSourceMap::Names), as HighC does, from the ordinary render.
+  void recordSourceNames(const llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
   /// The C name of global \p Name: the module names a global by its symbol
   /// (cNameOfLLVMName), but a declaration of an import by the name its
@@ -705,6 +708,8 @@ public:
   std::map<const llvm::GlobalVariable *, std::string> ExternalDataIdentifiers;
   /// The C name each function's symbol spells, for its definition's comment.
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
+  /// Each function's symbol as the image spells it (CSourceName::Symbol).
+  std::map<const llvm::Function *, std::string> FunctionSources;
   /// Import entry names that are C names (SymbolDecorations.def).
   llvm::StringSet<> ImportEntryCNames;
   /// The calls a function's next render keeps as statements: its text
@@ -774,6 +779,13 @@ public:
       UniqueImmediateUsers;
   mutable CProjectionIdentifierAllocator ImageIdentifierAllocator;
   mutable std::map<va_t, std::string> ImageObjectNames;
+  /// The comment naming the symbol of each image object whose identifier is
+  /// not that symbol (symbolComment()), by identifier.
+  mutable std::map<std::string, std::string> ImageObjectSymbols;
+  /// The line before the declaration of image object \p Name that names its
+  /// symbol, as a definition names its function's; empty for an object named
+  /// as its symbol is.
+  std::string imageObjectSymbolLine(llvm::StringRef Name) const;
   /// Image data no symbol or debug information names: its name is the
   /// writer's own.
   mutable std::set<va_t> SynthesizedImageObjects;

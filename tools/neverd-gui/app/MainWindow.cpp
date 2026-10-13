@@ -951,12 +951,14 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name,
   const auto position = view->text()->currentAddress();
   const auto from = position ? position : source;
   const auto representation = view->representation();
+  const auto sourceOptions = view->text()->sourceOptions();
   session_.read(
       QStringLiteral("resolve"), {{"query", name}}, view,
-      [this, view, serial, epoch, source, from, representation, name,
-       selectSourceAddress](const QJsonObject &payload) {
+      [this, view, serial, epoch, source, from, representation, sourceOptions,
+       name, selectSourceAddress](const QJsonObject &payload) {
         if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
             view->text()->function() != source ||
+            view->text()->sourceOptions() != sourceOptions ||
             view->representation() != representation || !view->isVisible())
           return;
         const auto address = addressValue(payload.value("address"));
@@ -973,10 +975,11 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name,
           navigateExpression(name);
         }
       },
-      [this, view, name, serial, epoch, source,
-       representation](const QString &, const QString &error) {
+      [this, view, name, serial, epoch, source, representation,
+       sourceOptions](const QString &, const QString &error) {
         if (serial == codeNavigationSerial_ && epoch == session_.epoch() &&
             view->text()->function() == source &&
+            view->text()->sourceOptions() == sourceOptions &&
             view->representation() == representation && view->isVisible())
           output_->append(tr("Cannot jump to %1: %2").arg(name, error), 2);
       });
@@ -1625,14 +1628,17 @@ void MainWindow::rename() {
     }
     const QPointer<CodeView> view = code;
     const auto representation = code->representation();
+    const auto sourceOptions = code->text()->sourceOptions();
     const auto epoch = session_.epoch();
-    const auto valid = [this, view, function, representation, epoch] {
+    const auto valid = [this, view, function, representation, sourceOptions,
+                        epoch] {
       return view && session_.epoch() == epoch &&
              view->text()->function() == function &&
-             view->representation() == representation;
+             view->representation() == representation &&
+             view->text()->sourceOptions() == sourceOptions;
     };
     const auto edit = [this, view, target = *target, function = *function,
-                       representation, epoch,
+                       representation, sourceOptions, epoch,
                        valid](std::optional<Address> address) {
       if (!valid())
         return;
@@ -1654,6 +1660,7 @@ void MainWindow::rename() {
         const auto original = target.value("original").toString();
         session_.editCode({{"address", hexAddress(function)},
                            {"representation", representation},
+                           {"source_options", sourceOptions},
                            {"kind", "name"},
                            {"original", original},
                            {"name", name},
@@ -1715,12 +1722,15 @@ void MainWindow::comment() {
     }
     const QPointer<CodeView> view = code;
     const auto representation = code->representation();
+    const auto sourceOptions = code->text()->sourceOptions();
     const auto epoch = session_.epoch();
     const auto edit = [this, view, target = *target, function = *function,
-                       representation, epoch](const QString &current) {
+                       representation, sourceOptions,
+                       epoch](const QString &current) {
       if (!view || session_.epoch() != epoch ||
           view->text()->function() != function ||
-          view->representation() != representation)
+          view->representation() != representation ||
+          view->text()->sourceOptions() != sourceOptions)
         return;
       bool ok = false;
       const auto text = QInputDialog::getMultiLineText(
@@ -1732,7 +1742,8 @@ void MainWindow::comment() {
       }
       if (!ok || !view || session_.epoch() != epoch ||
           view->text()->function() != function ||
-          view->representation() != representation)
+          view->representation() != representation ||
+          view->text()->sourceOptions() != sourceOptions)
         return;
       if (const auto address = addressValue(target.value("mapped_address")))
         session_.setComment(*address, text, epoch);
@@ -1740,6 +1751,7 @@ void MainWindow::comment() {
         auto payload = target;
         payload["address"] = hexAddress(function);
         payload["representation"] = representation;
+        payload["source_options"] = sourceOptions;
         payload["kind"] = "comment";
         payload["text"] = text;
         session_.editCode(payload, epoch);
@@ -1828,9 +1840,12 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
   const auto epoch = session_.epoch();
   const auto function = view->text()->function();
   const auto representation = view->representation();
-  const auto valid = [this, view, serial, epoch, function, representation] {
+  const auto sourceOptions = view->text()->sourceOptions();
+  const auto valid = [this, view, serial, epoch, function, representation,
+                      sourceOptions] {
     return serial == codeNavigationSerial_ && epoch == session_.epoch() &&
            view->text()->function() == function &&
+           view->text()->sourceOptions() == sourceOptions &&
            view->representation() == representation && view->isVisible();
   };
   session_.read(
@@ -1924,6 +1939,8 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   const auto serial = codeNavigationSerial_;
   const auto function = view ? view->text()->function() : std::nullopt;
   const auto representation = view ? view->representation() : QString();
+  const auto sourceOptions =
+      view ? view->text()->sourceOptions() : QJsonObject();
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const QString title = (to ? tr("xrefs to %1") : tr("xrefs from %1"))
                             .arg(displayAddress(*address, digits));
@@ -1937,6 +1954,7 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   if (const auto chosen = dialog.chosen()) {
     if (origin) {
       if (view && view->isVisible() && view->text()->function() == function &&
+          view->text()->sourceOptions() == sourceOptions &&
           view->representation() == representation)
         activateCodeName(view, hexAddress(*chosen), true);
     } else {
@@ -2539,6 +2557,7 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   if (auto *code = focusedCodeView()) {
     CodeText *text = code->text();
     menu.addSeparator();
+    code->addSourceActions(menu);
     if (text->hasPrelude()) {
       const bool folded = text->preludeFolded();
       auto *declarations = menu.addAction(folded ? tr("Expand declarations")
