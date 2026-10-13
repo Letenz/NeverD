@@ -152,7 +152,10 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
         S.IndirectCall || S.MBA || S.IndirectGlobal || S.ValueLaunder ||
         S.ConstantPooling || S.BitMasking)
       return Fail("session LLVM IR transforms do not apply to native objects");
-    Report["target"] = "x86_64-unknown-linux-gnu";
+    auto Target = sourcePatchTargetTriple(S.Img);
+    if (!Target)
+      return Error(Target.takeError());
+    Report["target"] = std::move(*Target);
     Report["language"] = Options->language;
     Report["object_bytes"] = Artifact.size();
     Report["object_sha256"] =

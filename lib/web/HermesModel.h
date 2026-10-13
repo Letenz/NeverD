@@ -63,6 +63,13 @@ class Collector {
   const char *Base;
   size_t Size;
   uint64_t RemainingUnits, NodeLimit;
+  uint64_t ModelLimit, ModelBytes = 0, NodeCapacity = 0;
+
+  void storage(uint64_t Bytes) {
+    if (Bytes > ModelLimit - ModelBytes)
+      throw Error("source_model_storage_exceeded");
+    ModelBytes += Bytes;
+  }
 
   void field(uint32_t Parent, const char *Name, AST::NodePtr Child, bool Strict,
              unsigned Depth) {
@@ -150,9 +157,10 @@ class Collector {
 public:
   Collector(SourceAnalysis &Result, const char *Base, size_t Size,
             uint64_t NodeLimit = MaxJavaScriptNodes,
-            uint64_t StringLimit = MaxJavaScriptStringUnits)
+            uint64_t StringLimit = MaxJavaScriptStringUnits,
+            uint64_t ModelLimit = 128 * 1024 * 1024)
       : Result(Result), Base(Base), Size(Size), RemainingUnits(StringLimit),
-        NodeLimit(NodeLimit) {}
+        NodeLimit(NodeLimit), ModelLimit(ModelLimit) {}
 
   uint32_t collect(AST::Node *Node, uint32_t Parent = UINT32_MAX,
                    bool Strict = false, unsigned Depth = 0) {
@@ -191,7 +199,23 @@ public:
     Item.ID = identity("syntax-node",
                        {Result.ID, Item.Kind, Offset, Length, Ordinal});
     Result.Nodes.push_back(std::move(Item));
+    if (Result.Nodes.capacity() != NodeCapacity) {
+      storage((Result.Nodes.capacity() - NodeCapacity) * sizeof(SyntaxNode));
+      NodeCapacity = Result.Nodes.capacity();
+    }
     fields(Node, Index, Strict, Depth);
+    const auto &Stored = Result.Nodes[Index];
+    storage(Stored.ID.capacity() + Stored.ParentID.capacity() +
+            Stored.Kind.capacity() +
+            Stored.Children.capacity() * sizeof(SyntaxChild) +
+            Stored.Attributes.capacity() * sizeof(SyntaxAttribute));
+    for (const auto &Child : Stored.Children)
+      storage(Child.Field.capacity());
+    for (const auto &Attribute : Stored.Attributes) {
+      storage(Attribute.Field.capacity());
+      if (const auto *Text = std::get_if<std::u16string>(&Attribute.Value))
+        storage(Text->capacity() * sizeof(char16_t));
+    }
     return Index;
   }
 };

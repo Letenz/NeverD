@@ -79,14 +79,21 @@ before publication and clears them together on reimport. The generic navigation
 profile, function/call/reference IDs and direct analysis algorithm are unchanged.
 The feature result has its own profile and analysis/record identities.
 
-The parser's existing 1 MiB/100,000-node admission applies. Feature analysis
+Interactive parsing keeps its 1 MiB/100,000-node admission. Feature analysis
 adds at most 1,024 records and 2,000,000 work steps per selected source. Model
 validation, indexing, parent walks, pattern comparisons and argument scans are
 charged. Exceeding either feature limit discards its complete candidate list
 and reports `budget_exceeded`; the independently valid generic navigation
 remains available. There are at most sixteen cached source/navigation results
 per session under the existing source/node limits. Pages admit up to 512 rows.
-These limits do not claim a whole-process RSS bound.
+These limits do not claim a whole-process RSS bound. Explicit large-source
+selection retains one additional source, uses shared profile node/work limits
+and keeps the 1,024-record ceiling. The pinned macOS ARM64 Claude corpus
+qualifies all 2,364 units under that profile, including 4 tool, 129 configuration,
+261 permission, 139 MCP and 99 hook candidates. Their existing uncertainty and
+callback/source-only meaning remain unchanged; all named feature inventories
+remain partial evidence. See the
+[selection contract](web-passive-report-profile.md#explicit-large-source-selections).
 
 The navigation summary adds `client_features`: profile, analysis ID, status,
 domain counts, unresolved counts, computed-member boundary count, steps and
@@ -101,8 +108,10 @@ SDK, CLI, worker and MCP use the same existing C APIs and backend owner. CLI
 `neverd web navigate FILE script` includes feature pages alongside generic
 navigation. SDK/worker/MCP explicitly select `record_kind: features` in
 `source_navigation_records`. JavaScript/backend omission preserves the existing
-ABI/unavailable behavior and removes source navigation from discovery. No new
-C API symbols, runtime, external analyzer or extension mechanism are introduced.
+ABI/unavailable behavior and removes source navigation from discovery.
+Feature/navigation C API entry points remain unchanged; explicit large-source
+selection uses a separately documented additive operation. No runtime,
+external analyzer or extension mechanism is introduced.
 
 This profile supplies inspection candidates. Import-rooted framework attribution,
 configuration merge/dataflow, property dispatch, effective policy and registration

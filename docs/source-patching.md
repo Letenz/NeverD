@@ -42,13 +42,15 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 
 | Producer | Artifact | Verified OS runtime profile |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | Native object | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | Native object | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | Native object | ELF x64 C/C++ with a compatible Itanium runtime |
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
 These are checked OS runtime profiles, not promises for every compiler version or option. The native installers accept all four architectures in ELF, PE and Mach-O. `dyncode` and NeverC C++ are not admitted; GCC requires a matching ELF driver and cannot produce LLVM IR. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
+
+The `target` field of a native object receipt comes from the loaded image ABI, including ARM ELF floating-point flags and the distinct iOS/watchOS platforms. Compiler-produced and supplied objects use the same identity rule.
 
 The CPU matrix requires successful source, supplied-IR and native-object installation on all twelve combinations. It also covers ARMv7k watchOS and ARMv7 iOS separately, mutable/readonly state, original floating-point and stack-argument bindings, and entry execution after image rebasing. CPU execution does not certify an OS loader, C++ unwinder or arbitrary ABI; use the OS profiles above for those claims.
 
@@ -132,3 +134,5 @@ Native Windows x64 qualification at [2ed7e78fc](https://github.com/NeverSight/Ne
 The Windows workflow also prepares 27 PE replacements across x86, x64 and ARM64. `scripts/check_source_patch_pe_runtime.py` checks nonleaf calls, mutable pointer state and floating-point/stack arguments through source IR, compiled objects and supplied objects. It runs each original and patch three times: 30 process observations per architecture. x86/x64 run on Windows x64; ARM64 runs on `windows-11-arm`. The verifier requires the expected native host, matching commit and file digests, and the complete case inventory; external runners are recorded separately. This process profile does not establish ARM64 C++ exception support.
 
 The optional matrix producer is selected by `NEVERD_TEST_MATRIX_NEVERC`. NeverC 3389.1.5 passed all 66 checks for x64/ARM64 across ELF, PE and Mach-O, including IR and native-object installation and CPU execution. This compiler version does not support x86 or ARM32; use Clang for those targets, or a matching GCC driver for ELF. For NeverC PE compilation, the adapter adds `-fno-autolink`: patches resolve against the existing image without linking another CRT. Supplied objects with `.drectve` linker contracts remain rejected.
+
+Native Windows process qualification at [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) passed all 90 observations: 30 each for x86, x64 and ARM64, covering source IR, compiled objects and supplied objects. x86/x64 executed on Windows x64; ARM64 executed on `windows-11-arm`, using the same hashed images. The same run passed all 16 focused PE/object/trampoline checks and all 143 Unicorn target-matrix checks without skips. The FH3 case retained its seven x64 C++ runtime scenarios.

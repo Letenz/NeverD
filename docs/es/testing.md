@@ -291,6 +291,10 @@ min/max de enteros con y sin signo i1/8/16/32/64/128 con O0/O2: resultados
 asignados o integrados, orden de los productores y evaluación única. Los anchos
 escalares no admitidos y los operandos mal formados deben fallar explícitamente.
 
+## Contexto x87 propio de cada función x64
+
+`NeverDX86X87ConvertStateTests` compara bytes originales con LLVM nativo, HighC y LLVMC en default/NoOpt y C O0/O2. Sus fixtures fijan el contexto propio en todo host mediante `BinaryImage::X87ContextOverride`; las suites de carga entera, signo y FPU x87 también ejercitan la proyección tipada de System V. Verifica conversiones, ocho formas aritméticas, flags, MMX/EMMS, pilas llenas/vacías, llamadas, wrappers, bucles y entradas independientes. Cuatro formatos FLDENV/FRSTOR cubren excepciones pendientes, etiquetas y valores conservados; donde corresponde, cuatro RC, tres PC definidos y 64 máscaras. Los contratos Low/Med/High rechazan formas inválidas, handles falsificados y selectores truncados. Los retornos estrechos conservan efectos de llamadas y rechazan bits desconocidos requeridos. El oráculo necesita x64 y Clang; no certifica todas las instrucciones, plataformas, CPU, prioridades de fallo ni ABI de importaciones flotantes tipadas.
+
 ## Comprobaciones de control y llamadas en C estructurado
 
 `HighControlFlowSemantics.*` comprueba que mover salidas o bloques finales de bucles conserve las etiquetas referenciadas por otros saltos. Las entradas directas a las salidas iniciales y finales y la sustitución de break ejecutan el C generado con O0/O2 frente a valores de retorno esperados independientes.
@@ -1863,6 +1867,8 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 La ejecución KVM x64 verificada delega el bucle completo de instrucciones al hilo vCPU privado mediante `withExecutionOwner`. El bucle conserva la admisión, las transacciones RAM, los hooks y los presupuestos; cada entrada nativa mantiene sus controles y la prioridad de excepciones. El llamador supervisa las entradas activas y confirma la cancelación antes de regresar. Los hooks CPU no deben depender del estado local del hilo llamador. Una entrada nativa independiente conserva su finalización en el llamador. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` y `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verifican la propiedad y la cancelación real; este cambio no certifica un controlador recuperado.
 
 El flujo Windows de patches de fuente también ejecuta `scripts/check_source_patch_pe_runtime.py`: tres originales y 27 reemplazos x86/x64/ARM64, y después 30 observaciones de procesos por arquitectura. x86/x64 usan Windows x64; ARM64 usa `windows-11-arm`. Deben coincidir commit, arquitectura PE, hashes y todos los casos. Este perfil C no valida excepciones C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` selecciona NeverC ordinario. Las 66 comprobaciones de 3389.1.5 cubren x64/ARM64 con ELF, PE y Mach-O; x86/ARM32 no están disponibles y no hay cambio automático de compilador. El adaptador PE utiliza `-fno-autolink`; los objetos externos `.drectve` siguen rechazándose.
+
+La matriz también compara los recibos `target` de objetos nativos compilados y suministrados con un inventario ABI independiente. Tras probar entradas malformadas, las pruebas deben instalar y ejecutar el objeto sin modificar como control válido.
 
 
 ## Ordinary Darwin whole-file lock coverage

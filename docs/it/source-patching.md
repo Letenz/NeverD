@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
+<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
 
 [← Documentation Index](README.md)
 
@@ -44,13 +44,15 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 
 | Compilatore | Artefatto | Profilo runtime OS verificato |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | Oggetto nativo | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | Oggetto nativo | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | Oggetto nativo | ELF x64 C/C++ con runtime Itanium compatibile |
 | NeverC 3389.1.5 modalità ordinaria | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 modalità ordinaria | Oggetto nativo | ELF x64 C |
 
 La tabella descrive profili OS verificati, senza garantire ogni versione o opzione. Gli installatori nativi ELF, PE e Mach-O accettano tutte le quattro architetture. `dyncode` e NeverC C++ non sono ammessi. GCC richiede un driver ELF compatibile e non produce LLVM IR. Rilocazioni sconosciute, TLS, costruttori, LTO, simboli common/IFUNC e importazioni irrisolte falliscono esplicitamente. La ricevuta JSON registra compilatore, argomenti, associazioni e indirizzi; gli oggetti nativi includono SHA-256.
+
+Il campo `target` della ricevuta di un oggetto nativo deriva dall’ABI dell’immagine caricata, inclusi i flag in virgola mobile ARM ELF e la distinzione iOS/watchOS. Gli oggetti compilati e forniti seguono la stessa regola di identità.
 
 La matrice CPU richiede l’installazione riuscita di sorgente, IR esterno e oggetti nativi in tutte le dodici combinazioni. Verifica separatamente ARMv7k watchOS e ARMv7 iOS, dati modificabili／costanti, argomenti in virgola mobile e sullo stack di funzioni originali e ingressi dopo il cambio dell’indirizzo di caricamento. L’esecuzione CPU non certifica loader OS, unwinder C++ o ABI arbitrarie; usare i profili OS sopra.
 
@@ -134,3 +136,5 @@ La verifica nativa Windows x64 [2ed7e78fc](https://github.com/NeverSight/NeverD/
 Il workflow Windows prepara anche 27 sostituzioni PE per x86, x64 e ARM64. `scripts/check_source_patch_pe_runtime.py` verifica chiamate non foglia, stato mutabile dei puntatori e argomenti in virgola mobile o sullo stack tramite IR sorgente, oggetti compilati e oggetti forniti. Esegue ogni originale e ogni risultato tre volte: 30 osservazioni di processo per architettura. x86/x64 vengono eseguiti su Windows x64; ARM64 su `windows-11-arm`. Il verificatore richiede l’host nativo previsto, commit e digest dei file corrispondenti e tutti i casi; gli esecutori esterni sono registrati separatamente. Questo profilo non dimostra il supporto delle eccezioni C++ ARM64.
 
 `NEVERD_TEST_MATRIX_NEVERC` seleziona il compilatore facoltativo della matrice. NeverC 3389.1.5 ha superato tutti i 66 controlli x64/ARM64 per ELF, PE e Mach-O, compresa l’installazione IR/oggetto nativo e l’esecuzione CPU. Questa versione non supporta x86 o ARM32; usare Clang, oppure un driver GCC compatibile per ELF. Per compilare PE con NeverC, l’adattatore aggiunge `-fno-autolink`: i riferimenti vengono risolti nell’immagine esistente senza collegare un altro CRT. Gli oggetti forniti con contratti di collegamento `.drectve` restano rifiutati.
+
+La verifica dei processi Windows nativi [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) ha superato tutte le 90 osservazioni: 30 per ciascuna architettura x86, x64 e ARM64, tramite IR sorgente, oggetti compilati e oggetti forniti. x86/x64 sono stati eseguiti su Windows x64; ARM64 su `windows-11-arm`, usando le stesse immagini verificate tramite hash. La stessa esecuzione ha superato anche i 16 test mirati PE/oggetti/trampoline e i 143 test della matrice Unicorn, senza casi saltati. Il test FH3 ha mantenuto i suoi sette scenari C++ x64.

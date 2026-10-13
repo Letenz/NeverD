@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
+<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
 
 [← Documentation Index](README.md)
 
@@ -44,13 +44,15 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 
 | 編譯器 | 製品 | 已驗證的作業系統執行設定 |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++；Mach-O x64/ARM64 C/C++；PE x64 C/C++ FH3 |
-| Clang 22.1.6 | 原生物件 | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | 原生物件 | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | 原生物件 | ELF x64 C/C++，需要相容的 Itanium 執行階段 |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生物件 | ELF x64 C |
 
 上表是已驗證的作業系統執行設定，不保證所有編譯器版本與選項。ELF、PE、Mach-O 原生安裝器皆接入四種架構。尚未接入 `dyncode` 或 NeverC C++；GCC 需要相符的 ELF 驅動，不能產生 LLVM IR。未知重定位、TLS、建構函式、LTO、common/IFUNC 符號及未解析匯入皆明確失敗。JSON 憑據記錄編譯器身分、參數、繫結及安裝位址，原生物件另記錄 SHA-256。
+
+原生物件憑據中的 `target` 欄位來自已載入映像的 ABI，包括 ARM ELF 浮點旗標以及不同的 iOS/watchOS 平台。編譯產生的物件與外部物件使用同一項身分規則。
 
 CPU 矩陣要求十二種組合的原始碼、外部 IR 及原生物件皆成功安裝。另分別涵蓋 ARMv7k watchOS、ARMv7 iOS、可寫／唯讀狀態、原程式浮點與堆疊參數繫結，以及改變載入位址後的入口執行。CPU 執行無法證明作業系統載入器、C++ 展開器或任意 ABI 正確；應依據上表的執行設定。
 
@@ -134,3 +136,5 @@ Windows x64 原生驗收 [2ed7e78fc](https://github.com/NeverSight/NeverD/action
 Windows 工作流程還會為 x86、x64 和 ARM64 產生 27 個 PE 替換產物。`scripts/check_source_patch_pe_runtime.py` 透過原始碼 IR、編譯物件及外部物件三條路徑檢查非葉函式呼叫、可變指標狀態與浮點／堆疊參數。每個原始程式和替換產物均執行三次，即每種架構 30 次程序觀測。x86/x64 在 Windows x64 上執行，ARM64 在 `windows-11-arm` 上執行。驗證器要求原生主機架構、提交與檔案摘要相符，並檢查案例清單完整；外部執行器的結果另行標記。這組程序測試不代表 ARM64 C++ 例外支援。
 
 可透過 `NEVERD_TEST_MATRIX_NEVERC` 選擇矩陣的選用編譯器。NeverC 3389.1.5 在 x64/ARM64 × ELF、PE、Mach-O 的 66 項檢查中全部通過，包括 IR 與原生物件安裝及 CPU 執行。此編譯器版本不支援 x86 或 ARM32；這些目標使用 Clang，ELF 也可使用相符的 GCC 驅動程式。NeverC 編譯 PE 時，適配器加入 `-fno-autolink`：patch 在現有映像中解析參照，不另行連結一套 CRT。帶有 `.drectve` 連結契約的外部物件仍會被拒絕。
+
+Windows 原生程序驗收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) 的 90 次觀測全部通過：x86、x64 和 ARM64 各 30 次，涵蓋原始碼 IR、編譯物件與外部物件三條路徑。x86/x64 在 Windows x64 上執行；ARM64 在 `windows-11-arm` 上執行，使用同一批經過雜湊驗證的映像。同一輪的 16 個 PE/物件/trampoline 專項檢查與 143 個 Unicorn 目標矩陣檢查也全部通過，沒有跳過。FH3 案例繼續驗證七種 x64 C++ 執行場景。

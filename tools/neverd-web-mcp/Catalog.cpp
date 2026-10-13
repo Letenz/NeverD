@@ -391,6 +391,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Parse admitted source with the embedded parser; do not execute it.",
       {decimal("revision"), text("artifact_id"),
        choice("source_type", {"script", "module", "commonjs"})});
+  Add("web_source_analyze_large",
+      "Explicit bounded large-source analysis; retain one large source per "
+      "revision and use existing evidence pages without execution.",
+      {decimal("revision"), text("artifact_id"),
+       choice("source_type", {"script", "module", "commonjs"})});
   Page("web_source_nodes", "source_id");
   Selected("web_node_behavior_analyze", "source_id",
            "Inspect fixed Node builtin call patterns in selected source; "

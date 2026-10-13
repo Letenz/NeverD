@@ -37,7 +37,7 @@ uint32_t Context::child(uint32_t Node, std::string_view Field,
 }
 
 void Context::prepare() {
-  if (Limits.Steps > MaxInterfaceRelationSteps ||
+  if (Limits.Steps > sourceWorkLimit(S, MaxInterfaceRelationSteps) ||
       Limits.Records > MaxInterfaceSourceRelations)
     throw Error("invalid_interface_relation_limits");
   step(validateSourceModel(S));
@@ -57,9 +57,9 @@ void Context::prepare() {
   step(N.Steps);
   const auto Size = S.Nodes.size();
   if (I.Records.size() > MaxInterfaceRecords || N.Calls.size() > Size ||
-      N.Functions.size() > Size || B.Bindings.size() > MaxJavaScriptNodes ||
-      B.References.size() > MaxJavaScriptNodes ||
-      B.Scopes.size() > MaxJavaScriptNodes)
+      N.Functions.size() > Size || B.Bindings.size() > sourceLimits(S).Nodes ||
+      B.References.size() > sourceLimits(S).Nodes ||
+      B.Scopes.size() > sourceLimits(S).Nodes)
     throw Error("invalid_interface_relation_model");
   Parents.assign(Size, None);
   Calls.assign(Size, None);

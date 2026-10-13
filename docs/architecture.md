@@ -664,6 +664,14 @@ qualified bundle source partitions, fixed-profile Bun container extraction,
 map decoding, budgets and query redaction. `SourceView` owns the bounded display
 projection and original/projected range mapping; `SessionView` owns preview,
 publication and revocation. CLI/worker/MCP adapters cannot bypass those policies.
+`SourceLimits` owns parser/model admission and work scaling for explicitly
+selected interactive and large-source profiles. `ParserBudget` consumes those
+same limits; `HermesModel` charges owned AST capacities and strings separately.
+Semantic consumers validate the complete model through `SourceModel` and use
+its selected node/work bounds. The session retains one large source independently
+of interactive cache counters. Recovery-export models remain outside semantic
+admission. Transports select the additive large-source operation and reuse
+ordinary evidence pages; they do not select limits or partition input syntax.
 `tools/common/web/Backend` owns the shared C++ worker/MCP C ABI client;
 `tools/common/transport/Json` owns bounded generic JSON admission. The compiled
 `neverd-web-mcp` separates launch inputs, schemas, lifecycle and stdio framing.
@@ -2035,6 +2043,10 @@ Runtime keys may be rebuilt as shared pointer identities only at an authenticate
 KVO context tokens use a separate writable-identity proof. A uniquely named writable data symbol may be rebuilt only in the declared context argument of `addObserver:forKeyPath:options:context:`, or in a direct equality comparison with parameter 5 of the unique supported `observeValueForKeyPath:ofObject:change:context:` method at that IMP. The method encoding, assigned ABI, source parameters, SDK message declaration, exact symbol address and helper identity are revalidated. Loads, arithmetic, interior or ambiguous symbols, other parameters, other callbacks and ordinary address uses remain unresolved.
 
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
+
+## Owned x64 x87 context
+
+For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
 ## IR representations and routes
 

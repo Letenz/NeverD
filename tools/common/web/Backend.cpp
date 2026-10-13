@@ -128,6 +128,7 @@ struct API {
   WEB_API(neverd_web_html_records_json)
   WEB_API(neverd_web_asar_records_json)
   WEB_API(neverd_web_source_analyze_json)
+  WEB_API(neverd_web_source_analyze_large_json)
   WEB_API(neverd_web_source_nodes_json)
   WEB_API(neverd_web_source_bindings_analyze_json)
   WEB_API(neverd_web_source_binding_records_json)
@@ -1108,8 +1109,14 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_source_analyze" ||
+      operation == "web_source_analyze_large" ||
       operation == "web_source_map_analyze") {
-    const bool source = operation == "web_source_analyze";
+    const bool source = operation != "web_source_map_analyze";
+    const auto SourceAPI = operation == "web_source_analyze_large"
+                               ? api().neverd_web_source_analyze_large_json
+                               : api().neverd_web_source_analyze_json;
+    if (source && !SourceAPI)
+      throw Error("capability_unavailable", "Source analysis is unavailable");
     if (source)
       fields(p, {"revision", "artifact_id", "source_type"});
     else
@@ -1117,12 +1124,13 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     const auto revision = required(p, "revision", 20);
     const auto id = required(p, "artifact_id", 64);
     const auto type = source ? required(p, "source_type", 16) : std::string();
-    auto value = source ? result(api().neverd_web_source_analyze_json(
-                              session_, revision.data(), revision.size(),
-                              id.data(), id.size(), type.data(), type.size()))
-                        : result(api().neverd_web_source_map_analyze_json(
-                              session_, revision.data(), revision.size(),
-                              id.data(), id.size()));
+    auto value =
+        source
+            ? result(SourceAPI(session_, revision.data(), revision.size(),
+                               id.data(), id.size(), type.data(), type.size()))
+            : result(api().neverd_web_source_map_analyze_json(
+                  session_, revision.data(), revision.size(), id.data(),
+                  id.size()));
     analysisState_ = "partial";
     return value;
   }

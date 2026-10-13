@@ -9,12 +9,22 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../SourceModel.h"
 #include "RelationContext.h"
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
 
 namespace neverd::web {
+
+InterfaceSourceRelations analyzeInterfaceSourceRelations(
+    const SourceAnalysis &S, const SourceBindingAnalysis &B,
+    const SourceInterfaces &I, const SourceNavigation &N) {
+  return analyzeInterfaceSourceRelations(
+      S, B, I, N,
+      {MaxInterfaceSourceRelations,
+       sourceWorkLimit(S, MaxInterfaceRelationSteps)});
+}
 
 InterfaceSourceRelations analyzeInterfaceSourceRelations(
     const SourceAnalysis &S, const SourceBindingAnalysis &B,

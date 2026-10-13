@@ -282,6 +282,10 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends`는 정의되지 않은 동작 트랩을 활성화하여 O0/O2에서 두 복원 C 경로를 실행하며 모든 바이트 값과 원시 시프트 횟수를 다룹니다.
 `NeverDLLVMCIntrinsicSemanticTests`는 i1/8/16/32/64/128 부호 있는/없는 정수 min/max도 O0/O2에서 실행하여 대입 및 인라인 결과, 피연산자 생성 순서와 단일 평가를 검사합니다. 지원하지 않는 스칼라 너비와 잘못된 피연산자는 명시적으로 실패해야 합니다.
 
+## x64 x87 컨텍스트 소유권
+
+`NeverDX86X87ConvertStateTests`는 원래 바이트와 LLVM, HighC, LLVMC의 실행을 default/NoOpt 및 C O0/O2에서 비교합니다. 이 픽스처는 `BinaryImage::X87ContextOverride`로 모든 호스트에서 소유 컨텍스트를 고정하며, 정수 로드, 부호, x87 FPU 스위트는 System V의 타입 있는 투영도 검사합니다. 변환, 여덟 산술 형식, 플래그, MMX/EMMS, 가득 찬/빈 스택, 호출, 래퍼, 진입 루프와 독립 진입점을 검사합니다. 네 FLDENV/FRSTOR 형식은 대기 예외, 태그와 보존 값을 다루며 해당되는 경우 네 RC, 세 유효 PC와 64 예외 마스크를 검사합니다. Low/Med/High 계약은 잘못된 형식, 위조 핸들과 잘린 선택자를 거부합니다. 좁은 반환은 호출 효과를 유지하며 실제 필요한 미지 비트를 거부합니다. 네이티브 대조에는 x64와 Clang이 필요하며 모든 명령, 플랫폼, CPU, 오류 우선순위 또는 형식화된 부동소수점 가져오기 ABI의 검증을 주장하지 않습니다.
+
 ## 구조화된 C 제어 흐름 및 호출 검사
 
 `HighControlFlowSemantics.*`는 루프의 종료 지점이나 뒷부분을 이동할 때 다른 점프가 참조하는 레이블을 보존하는지 검사합니다. 루프 앞뒤 종료 지점으로 직접 진입하는 경우와 break 교체를 다루며, 생성된 C를 O0/O2로 실행해 독립적인 반환값 기준과 비교합니다.
@@ -1752,6 +1756,8 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
 
 소스 patch Windows 워크플로는 `scripts/check_source_patch_pe_runtime.py`도 실행합니다. x86/x64/ARM64 원본 3개와 교체 결과 27개를 생성하고 아키텍처마다 프로세스 실행 30회를 관측합니다. x86/x64는 Windows x64, ARM64는 `windows-11-arm`에서 실행하며 커밋, PE 아키텍처, 파일 해시, 전체 사례가 일치해야 합니다. 이 C 프로파일은 ARM64 C++ 예외를 검증하지 않습니다. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc`는 일반 NeverC를 선택합니다. 3389.1.5의 66개 검사는 x64/ARM64와 ELF, PE, Mach-O를 다루며 x86/ARM32는 지원하지 않습니다. 컴파일러를 자동으로 바꾸지 않습니다. PE 어댑터는 `-fno-autolink`를 사용하며 외부 `.drectve` 객체는 계속 거부합니다.
+
+행렬은 컴파일된 객체와 외부 네이티브 객체의 `target` 기록을 독립적인 ABI 목록과 비교합니다. 잘못된 객체를 검사한 뒤에는 수정하지 않은 객체를 설치하고 실행하여 유효한 입력의 대조 결과도 확인해야 합니다.
 
 
 ## Ordinary Darwin whole-file lock coverage

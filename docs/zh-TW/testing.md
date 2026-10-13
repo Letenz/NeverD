@@ -280,6 +280,10 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下啟用未定義行為陷阱，執行兩條恢復 C 路徑，涵蓋全部位元組值和原始計數。
 `NeverDLLVMCIntrinsicSemanticTests` 也在 O0/O2 下執行 i1/8/16/32/64/128 的有號與無號整數 min/max，檢查賦值與內嵌結果、運算元產生順序及單次求值。不支援的純量位寬和格式錯誤的運算元必須明確失敗。
 
+## x64 x87 上下文所有權
+
+`NeverDX86X87ConvertStateTests` 在預設/NoOpt 與 C O0/O2 路線比較原始指令及原生 LLVM、HighC、LLVMC 輸出，檢查轉換、八種算術形式、旗標、MMX/EMMS、滿/空堆疊、呼叫、包裝函式、入口迴圈與獨立入口。其測試夾具透過 `BinaryImage::X87ContextOverride` 在所有主機上固定使用自有上下文；整數載入、符號與 x87 FPU 測試集亦涵蓋 System V 的具型別投影。四種 FLDENV/FRSTOR 格式涵蓋待處理例外、標籤與保留載荷；適用情況涵蓋四種 RC、三種有效 PC 及 64 種例外遮罩。Low/Med/High 契約拒絕非法形狀、偽造控制代碼與截斷選擇器。窄回傳保留呼叫副作用，並拒絕實際需要的未知位元。原生對照需要 x64 與 Clang；不宣稱涵蓋全部指令、平台、CPU、故障優先順序或具型別的浮點匯入 ABI。
+
 ## 結構化 C 控制流程與呼叫檢查
 
 `HighControlFlowSemantics.*` 檢查移動迴圈出口或尾部時是否保留其他跳躍仍引用的標籤。測試涵蓋直接進入迴圈頭部、尾部出口及替換後的 break，並以獨立回傳值預期執行 O0/O2 編譯的產生 C。
@@ -1708,6 +1712,8 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
 
 原始碼 patch 的 Windows 工作流程還會執行 `scripts/check_source_patch_pe_runtime.py`：先產生 x86/x64/ARM64 的三份原始程式與 27 份替換產物，再為每種架構執行 30 次程序觀測。x86/x64 在 Windows x64 上執行，ARM64 在 `windows-11-arm` 上執行；提交、PE 架構、檔案雜湊及案例清單必須相符。此 C 程序配置不驗證 ARM64 C++ 例外。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 選擇普通 NeverC 產生器。3389.1.5 的 66 項配置涵蓋 x64/ARM64 × ELF、PE、Mach-O；它不支援 x86/ARM32，不能靜默切換編譯器。PE 適配器使用 `-fno-autolink`，外部 `.drectve` 物件仍會被拒絕。
+
+矩陣也會依獨立的 ABI 清單核對編譯物件與外部原生物件的 `target` 憑據。錯誤物件測試隨後必須安裝並執行未修改的物件，作為有效輸入對照。
 
 
 ## Ordinary Darwin whole-file lock coverage

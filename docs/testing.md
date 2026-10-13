@@ -698,6 +698,10 @@ ctest --test-dir build-release \
   --output-on-failure
 ```
 
+## Owned x64 x87 context
+
+`NeverDX86X87ConvertStateTests` compares original bytes with native LLVM, HighC and LLVMC at default/NoOpt and C O0/O2. Its fixtures pin the owned context on every host through `BinaryImage::X87ContextOverride`; the integer-load, sign and x87 FPU suites also exercise the typed System V projection. It checks conversions, eight arithmetic forms, flags, MMX/EMMS, full/empty stacks, calls, wrappers, entry loops and independent roots. Four FLDENV/FRSTOR formats cover pending exceptions, tags and retained payloads. All four RC values, three defined PC values and 64 exception masks are exercised where applicable. Direct Low/Med/High contracts reject malformed shapes, forged handles and truncated selectors. Narrow returns retain call effects and reject demanded unknown bits. The host oracle requires x64 and Clang; tests do not establish every instruction, native platform, CPU model, fault priority or typed floating import ABI.
+
 ## Inline C memory accesses
 
 `NeverDCMemoryCopyTests` executes HighC and LLVMC output at `-O0` and `-O2`
@@ -742,6 +746,29 @@ ctest --test-dir build-release \
 The same target compares static scalar, pointer, array and packed-record alignment through 128 bytes, global alignment, complete padded-string storage and scalar-global address identity in initializers, returns, calls, selects and pointer-to-integer conversions. Ordinary/preserved-type and whole/selected-function routes are covered where applicable.
 
 ## Offline web analysis
+
+`WebLargeSource.*` checks explicit profile identities, unchanged interactive
+refusal, complete lexical scope beyond 100,000 nodes, late source anchors,
+invalid encoding/syntax, dense over-budget input and rejection of recovery
+models by semantic consumers. Its optional pinned Claude check uses
+`NEVERD_CLAUDE_CODE_21296_CROSS_DIR` and the original NeverD exports of macOS
+ARM64 modules 141, 299, 415 and 1452; missing samples are explicit skips.
+`WebSDK.LargeSourceHasIndependentCacheAnchorsAndRevisionOwnership` checks the
+additive C API, one-source cache, interactive isolation, ordinary pages and
+revision revocation. Worker/MCP cover the same operation, capability filtering,
+private canaries and source/report/anchor parity. Run the owning Web directory,
+availability and transport suites plus both omission configurations after
+changing this shared source-profile boundary. See the
+[large-source contract](web-passive-report-profile.md#explicit-large-source-selections).
+Run CTest invocations sequentially within the same build directory, especially
+after changing build flags. GoogleTest discovery writes shared generated lists;
+concurrent owning-directory and root runs can duplicate registrations. Check
+the unique names in one generated inventory before reporting case totals.
+`WebSourceFeatures.CapturedClaudeLargeClientUnitsWhenSupplied` additionally
+checks every shipped JS unit in the retained macOS ARM64 package sequentially
+through explicit large parsing, lexical navigation, features and configuration
+order. It asserts all 2,364 units parse and records independent analysis counts.
+The existing interactive corpus case retains its narrower admission.
 
 `WebPackageSemVer.*`, `WebPackageEvidenceTime.*`, `WebPackageEvidence.*` and
 `WebPackageAdvisories.*` cover strict arbitrary-width precedence, source/time
@@ -5567,6 +5594,8 @@ profiles. This compiler does not implement x86/ARM32; an unfiltered run must
 fail those source cases rather than silently use Clang. The adapter disables
 NeverC's automatic PE default libraries with `-fno-autolink`. The same matrix
 still rejects externally supplied `.drectve` contracts without publication.
+
+The matrix also checks `target` receipts against an independent ABI inventory for compiled and supplied native objects. Malformed-object tests must then install and execute the unmodified object as a positive control.
 
 The dedicated `source-patch-windows.yml` workflow uses Clang 22.1.6, the native
 MSVC CRT and the Windows SDK. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing

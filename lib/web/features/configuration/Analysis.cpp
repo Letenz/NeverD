@@ -32,7 +32,7 @@ struct Context {
   std::vector<uint32_t> Parents, References, Initializers, CallFeatures;
   std::vector<uint32_t> Roles;
   void step(uint64_t Count = 1) {
-    if (Count > MaxConfigurationOrderSteps - A.Steps)
+    if (Count > sourceWorkLimit(S, MaxConfigurationOrderSteps) - A.Steps)
       throw Error("configuration_order_work_budget_exceeded");
     A.Steps += Count;
   }
@@ -61,7 +61,7 @@ struct Context {
         (B.Status != "ok" && B.Status != "partial") ||
         F.Records.size() > MaxJavaScriptClientFeatureRecords ||
         B.References.size() > S.Nodes.size() ||
-        B.Bindings.size() > 2 * MaxJavaScriptNodes)
+        B.Bindings.size() > 2 * sourceLimits(S).Nodes)
       throw Error("configuration_order_evidence_unavailable");
     Parents.assign(S.Nodes.size(), None);
     References.assign(S.Nodes.size(), None);

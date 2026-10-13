@@ -292,6 +292,10 @@ Integer-Min/Max für i1/8/16/32/64/128 bei O0/O2 aus und prüft zugewiesene und
 eingebettete Ergebnisse, Erzeugerreihenfolge und einmalige Auswertung. Nicht
 unterstützte skalare Breiten und fehlerhafte Operanden müssen explizit scheitern.
 
+## Funktionsgebundener x64-x87-Kontext
+
+`NeverDX86X87ConvertStateTests` vergleicht Originalbytes mit nativem LLVM, HighC und LLVMC bei default/NoOpt und C O0/O2. Seine Fixtures erzwingen den eigenen Kontext auf jedem Host über `BinaryImage::X87ContextOverride`; die Integer-Lade-, Vorzeichen- und x87-FPU-Suiten prüfen zusätzlich die typisierte System-V-Projektion. Geprüft werden Konvertierungen, acht Rechenformen, Flags, MMX/EMMS, volle/leere Stacks, Aufrufe, Wrapper, Einstiegsschleifen und unabhängige Einstiege. Vier FLDENV/FRSTOR-Formate prüfen ausstehende Ausnahmen, Tags und gespeicherte Werte; soweit anwendbar alle vier RC, drei definierten PC und 64 Ausnahmemasken. Low/Med/High-Verträge lehnen falsche Formen, gefälschte Handles und abgeschnittene Selektoren ab. Schmale Rückgaben erhalten Aufrufeffekte und verweigern benötigte unbekannte Bits. Das native Orakel benötigt x64 und Clang; vollständige Befehls-, Plattform-, CPU-, Fehlerprioritäts- oder typisierte Gleitkomma-Import-ABI-Abdeckung wird nicht behauptet.
+
 ## Kontrollfluss und Aufrufe in strukturiertem C prüfen
 
 `HighControlFlowSemantics.*` prüft, dass beim Verschieben von Schleifenausstiegen oder nachfolgenden Blöcken die von anderen Sprüngen verwendeten Labels erhalten bleiben. Direkte Einstiege in Ausstiege am Schleifenanfang und -ende sowie der Ersatz von break werden im erzeugten C mit O0/O2 gegen unabhängige Rückgabewerte geprüft.
@@ -1878,6 +1882,8 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 Die geprüfte KVM-x64-Ausführung übergibt die vollständige Befehlsschleife mit `withExecutionOwner` an den privaten vCPU-Thread. Zulassung, RAM-Transaktionen, Hooks und Budgets bleiben in dieser Schleife; jeder native Eintritt behält seine Kontrolle und Ausnahmepriorität. Der Aufrufer überwacht aktive Eintritte und wartet auf die bestätigte Abbruchbeendigung. CPU-Hooks dürfen nicht vom lokalen Zustand des aufrufenden Threads abhängen. Die Fertigstellung eines eigenständigen nativen Eintritts bleibt beim Aufrufer. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` und `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` prüfen Zuständigkeit und echten Abbruch; diese Änderung zertifiziert keinen wiederhergestellten Treiber.
 
 Der Windows-Workflow für Quellpatches führt außerdem `scripts/check_source_patch_pe_runtime.py` aus: drei Originale und 27 Ersetzungen für x86/x64/ARM64, danach 30 Prozessbeobachtungen je Architektur. x86/x64 verwenden Windows x64, ARM64 verwendet `windows-11-arm`. Commit, PE-Architektur, Dateihashes und vollständiges Inventar müssen übereinstimmen. Dieses C-Profil prüft keine ARM64-C++-Exceptions. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` wählt den normalen NeverC-Modus. Die 66 Prüfungen mit 3389.1.5 decken x64/ARM64 mit ELF, PE und Mach-O ab; x86/ARM32 sind nicht unterstützt und es gibt keinen automatischen Compilerwechsel. Der PE-Adapter verwendet `-fno-autolink`; externe `.drectve`-Objekte bleiben abgelehnt.
+
+Die Matrix vergleicht auch die `target`-Belege kompilierter und bereitgestellter nativer Objekte mit einem unabhängigen ABI-Verzeichnis. Nach den fehlerhaften Eingaben müssen die Tests das unveränderte Objekt als gültige Kontrolle installieren und ausführen.
 
 
 ## Ordinary Darwin whole-file lock coverage
