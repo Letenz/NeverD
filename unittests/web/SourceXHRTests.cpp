@@ -137,12 +137,15 @@ x.addEventListener('load', ...handlers);
   EXPECT_EQ(A.Records[4].EventKind, "spread_unresolved");
   EXPECT_EQ(A.Records[4].HandlerStatus, "spread_unresolved");
   EXPECT_EQ(A.Records[4].OptionsStatus, "spread_unresolved");
-  // The new argument-role field is scoped to XHR; legacy call adapters do
-  // not acquire a positional-argument claim by inheriting its default.
+  // All request call adapters now use the same spread-uncertainty boundary.
   const auto Direct = analyze("fetch(...args);new WebSocket(...args);");
   ASSERT_EQ(Direct.Records.size(), 2u);
-  for (const auto &R : Direct.Records)
-    EXPECT_EQ(R.ArgumentsStatus, "not_applicable");
+  for (const auto &R : Direct.Records) {
+    EXPECT_EQ(R.ArgumentsStatus, "spread_unresolved");
+    EXPECT_EQ(R.Method, "unknown");
+    EXPECT_EQ(R.URLNode, NoSourceIndex);
+    EXPECT_EQ(R.OptionsNode, NoSourceIndex);
+  }
 }
 
 TEST(WebSourceXHR, ForbiddenMethodsRemainForbiddenAcrossASCIICase) {

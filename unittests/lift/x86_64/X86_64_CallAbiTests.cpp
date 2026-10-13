@@ -12,7 +12,104 @@
 
 #include "HighCHostExecution.h"
 
-class X86_64_CallAbi : public HighCHostExecutionTest {};
+#include <fstream>
+#include <iterator>
+#include <regex>
+#include <string>
+
+class X86_64_CallAbi : public HighCHostExecutionTest {
+protected:
+  /// Lifts \p Source's object to LLVM IR, links it with \p Source renamed,
+  /// and compares \p Entry with the original over a range of arguments.
+  /// \p Callee is the source's other function.
+  void expectLiftedRunsLikeSource(const std::string &Source,
+                                  const std::string &Entry,
+                                  const std::string &Callee) {
+    if (!hasCrossTargetClang())
+      GTEST_SKIP() << "cross-target compilation requires Clang";
+    const auto SourceFile = tmpFile(Entry + ".c");
+    const auto Object = tmpFile(Entry + ".o");
+    const auto IR = tmpFile(Entry + ".ll");
+    std::ofstream(SourceFile) << Source;
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-O2", "-c",
+                                 SourceFile.string(), "-o", Object.string()});
+    ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+    const auto Lifted =
+        exec(ndBin(), {"lift", Object.string(), "-o", IR.string()});
+    ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+    const auto Reference = tmpFile(Entry + "_ref.c");
+    const auto Driver = tmpFile(Entry + "_driver.c");
+    const auto Program = tmpFile(Entry + ".exe");
+    std::ofstream(Reference) << std::regex_replace(
+        std::regex_replace(Source, std::regex("\\b" + Entry + "\\b"),
+                           "ref_" + Entry),
+        std::regex("\\b" + Callee + "\\b"), "ref_" + Callee);
+    std::ofstream(Driver) << "int " << Entry << "(int);\nint ref_" << Entry
+                          << "(int);\n"
+                          << "int main(void) {\n"
+                          << "  for (int a = -3; a < 50; a += 7)\n"
+                          << "    if (" << Entry << "(a) != ref_" << Entry
+                          << "(a))\n"
+                          << "      return 1;\n"
+                          << "  return 0;\n"
+                          << "}\n";
+    const auto Built =
+        exec(NEVERD_TEST_CLANG, {"-O1", "-w", IR.string(), Reference.string(),
+                                 Driver.string(), "-o", Program.string()});
+    ASSERT_EQ(Built.exitCode, 0) << Built.err;
+    EXPECT_EQ(exec(Program.string(), {}).exitCode, 0);
+  }
+};
+
+// The callee's `setl al; setg cl` writes the low bytes of RAX and RCX and
+// keeps the rest of each, which nothing reads: RCX is no fourth parameter,
+// and the call passes the two arguments its caller sets.
+TEST_F(X86_64_CallAbi, AByteWriteMakesNoParameter) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static int c64(long long, long long) __attribute__((noinline));
+int cmpsum(int a) {
+  unsigned h = 0, s = (unsigned)a | 1u;
+  for (int i = 0; i < 12; i++) {
+    unsigned xl = s, xh = s ^ 0x1234u, yl = s * 7u, yh = s + (unsigned)i;
+    long long x = (long long)(((unsigned long long)xh << 32) | xl);
+    long long y = (long long)(((unsigned long long)yh << 32) | yl);
+    h = h * 131u + (unsigned)(c64(x, y) + 2);
+    s = s * 1103515245u + 12345u;
+  }
+  return (int)h;
+}
+static int c64(long long a, long long b) { return a < b ? -1 : (a > b ? 1 : 0); }
+)C",
+                            "cmpsum", {"cmpsum", "c64"}, {0x71, 0, 1, -3, 77});
+}
+
+// An AVX2 callee ends with `vzeroupper`, which keeps every XMM register's
+// low lanes: that reads no vector argument, so the callee takes only its
+// pointer and its callers pass no vector value.
+TEST_F(X86_64_CallAbi, VzeroupperReadsNoVectorArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-mavx2"}, R"C(
+typedef int v8 __attribute__((vector_size(32)));
+static int sum8(const int *p) __attribute__((noinline));
+int avxsum(int a) {
+  int buf[8];
+  for (int i = 0; i < 8; i++)
+    buf[i] = (a * (i + 1)) ^ i;
+  return sum8(buf) + sum8(buf) * 3;
+}
+static int sum8(const int *p) {
+  v8 v;
+  __builtin_memcpy(&v, p, sizeof(v));
+  v = v * v + v;
+  int s = 0;
+  for (int i = 0; i < 8; i++)
+    s += v[i];
+  return s;
+}
+)C",
+                            "avxsum", {"avxsum", "sum8", "v8"},
+                            {0x71, 0, 1, -3, 77});
+}
 
 // Six register arguments and four pushed afresh on every iteration of a
 // loop, whose stack pointer is a PHI at the loop head.
@@ -65,4 +162,322 @@ static int pick_q(int x) {
 )C",
                             "pick", {"pick", "pick_p", "pick_q"},
                             {-3, 0, 1, 2, 77});
+}
+
+// At -O0 the loop leaves r >> 32 in rdx for the next indirect call and
+// computes x through rcx, but on the first iteration rdx holds what the
+// caller left there.  A register a join brings from entry is no argument:
+// passed, it was a C variable read before any assignment, which Clang
+// optimizes as it likes.
+TEST_F(X86_64_CallAbi, ARegisterAJoinBringsFromEntryIsNoArgument) {
+  KernelOptimization = "-O0";
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static long long td(long long x, int b) __attribute__((noinline));
+int retll(int a) {
+  unsigned w = (unsigned)a | 1u;
+  long long acc = (long long)(unsigned)a;
+  long long (*fp)(long long, int) = td;
+  __asm__("" : "+r"(fp));
+  for (int i = 0; i < 40; i++) {
+    w = w * 1103515245u + 12345u;
+    long long x = ((long long)w) | ((long long)(w >> 4) << 32);
+    long long r = fp(x, (int)(w >> 9));
+    acc = acc * 131 + (r ^ (r >> 32));
+    acc ^= acc >> 17;
+  }
+  return (int)(acc ^ (acc >> 32));
+}
+static long long td(long long x, int b) {
+  long long r = x * 131 + (long long)b;
+  r ^= (long long)(unsigned)((unsigned long long)x >> 32) << 28;
+  r += ((long long)b) << 33;
+  return r;
+}
+)C",
+                            "retll", {"retll", "td"}, {0, 1, -1, 0x4567, 77});
+}
+
+// `long f(long a) { return (signed char)a; }` sign-extends the low byte of
+// whatever register its caller passes.  Built apart from its callers, its C
+// must do the same: a `signed char` parameter would let Clang take the
+// caller's extension as done and return 0x1FE whole.
+TEST_F(X86_64_CallAbi, AByteReadOfAParameterTakesTheWholeRegister) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const auto Source = tmpFile("sext8.c");
+  const auto Object = tmpFile("sext8.o");
+  std::ofstream(Source) << "long sext8(long a) { return (signed char)a; }\n";
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-O2", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  const auto Decompiled = decompileToHighC(Object);
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+
+  const auto HighC = tmpFile("sext8-highc.c");
+  const auto HighCObject = tmpFile("sext8-highc.o");
+  const auto Driver = tmpFile("sext8-driver.c");
+  const auto Program = tmpFile("sext8.exe");
+  std::ofstream(HighC) << C;
+  std::ofstream(Driver) << "long sext8(long);\n"
+                           "int main(void) {\n"
+                           "  return sext8(0x1FE) == -2 && sext8(0x17F) == 127 "
+                           "? 0 : 1;\n"
+                           "}\n";
+  const auto BuiltC = exec(NEVERD_TEST_CLANG, {"-O2", "-c", HighC.string(),
+                                               "-o", HighCObject.string()});
+  ASSERT_EQ(BuiltC.exitCode, 0) << BuiltC.err << "\n" << C;
+  const auto Linked =
+      exec(NEVERD_TEST_CLANG, {"-O2", Driver.string(), HighCObject.string(),
+                               "-o", Program.string()});
+  ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
+  EXPECT_EQ(exec(Program.string(), {}).exitCode, 0) << C;
+}
+
+// Ten doubles: eight in xmm0-xmm7 and two on the stack.  The callee's lift
+// also lists the six integer argument registers, which it never reads; its
+// definition leaves them out, and so must its prototype and its calls.
+TEST_F(X86_64_CallAbi, AStackDoubleCalleeIsDeclaredAsItIsDefined) {
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu", "-ffp-contract=off"},
+      R"C(
+static double d10(double, double, double, double, double, double, double,
+                  double, double, double) __attribute__((noinline));
+int sumd10(int a) {
+  double b = (double)(a & 0xffff);
+  return (int)d10(b, b + 1, b + 2, b + 3, b + 4, b + 5, b + 6, b + 7, b + 8,
+                  b + 9);
+}
+static double d10(double a, double b, double c, double d, double e, double f,
+                  double g, double h, double i, double j) {
+  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9 +
+         j * 10;
+}
+)C",
+      "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
+}
+
+// A 32-byte record passes on the stack, and the caller copies it there with
+// two 16-byte stores; the callee reads each field with a floating-point
+// memory operand.  The call passes one argument per eight-byte slot.
+TEST_F(X86_64_CallAbi, ARecordCopiedToTheStackPassesEverySlot) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  double a, b, c, d;
+} H4;
+static double sh4(H4 s, double e) __attribute__((noinline));
+int hfa4d(int x) {
+  H4 s;
+  s.a = (double)(x & 0xff);
+  s.b = (double)((x >> 8) & 0xff);
+  s.c = (double)(x * 3);
+  s.d = (double)(x - 7);
+  return (int)sh4(s, (double)(x ^ 5));
+}
+static double sh4(H4 s, double e) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * e;
+}
+)C",
+                            "hfa4d", {"hfa4d", "sh4", "H4"},
+                            {0, 1, -1, 0x10, 0x1234, 1000});
+}
+
+// A 48-byte record passes in memory, and the callee reads no register: its
+// six slots are its parameters, after a place for each register it does not
+// read.  The caller copies the record there with three 16-byte stores from
+// its own copy.
+TEST_F(X86_64_CallAbi, ARecordInMemoryAloneTakesTheSlotsPastTheRegisters) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  long a, b, c, d, e, f;
+} S6;
+long sum6(S6 s) __attribute__((noinline));
+int bigstruct(int x) {
+  S6 s;
+  s.a = x;
+  s.b = x + 1;
+  s.c = (long)x * 2;
+  s.d = x - 3;
+  s.e = (long)x * 5;
+  s.f = x + 7;
+  return (int)sum6(s);
+}
+long sum6(S6 s) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * s.e + 6 * s.f;
+}
+)C",
+                            "bigstruct", {"bigstruct", "sum6", "S6"},
+                            {0, 1, -1, 0x1234, 1000});
+}
+
+// A record in memory before three integers: they take the first three
+// registers, and the record's slots follow every register position, the
+// three the callee does not read included.
+TEST_F(X86_64_CallAbi, ARecordInMemoryAfterRegistersTakesTheSlotsPastThem) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  long a, b, c;
+} S3;
+long mix3(S3 s, long p, long q, long r) __attribute__((noinline));
+int mixstruct(int x) {
+  S3 s;
+  s.a = x;
+  s.b = x + 1;
+  s.c = x + 2;
+  return (int)mix3(s, (long)x * 2, (long)x * 3, (long)x * 4);
+}
+long mix3(S3 s, long p, long q, long r) {
+  return s.a + 3 * s.b + 7 * s.c + p * q - r;
+}
+)C",
+                            "mixstruct", {"mixstruct", "mix3", "S3"},
+                            {0, 1, -1, 0x99, 1000});
+}
+
+// `cvtsi2sd` writes xmm0's low double and keeps its incoming upper lane,
+// and `unpcklpd xmm1, xmm0` reads only the low double of each operand: the
+// function takes no vector argument, only its int.
+TEST_F(X86_64_CallAbi, ABroadcastOfAConvertedIntTakesNoVectorArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  double a, b, c, d;
+} B4;
+static double sb4(B4 s, double e) __attribute__((noinline));
+int bcast(int x) {
+  double v = (double)x;
+  B4 s;
+  s.a = v;
+  s.b = v + 1;
+  s.c = v + 2;
+  s.d = v + 3;
+  return (int)sb4(s, v + 4);
+}
+static double sb4(B4 s, double e) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * e;
+}
+)C",
+                            "bcast", {"bcast", "sb4", "B4"},
+                            {0, 1, -1, 0x10, 77, 1000});
+}
+
+// A pointer walking a string is compared against its end through `~W`, the
+// bitwise complement of the string's address: the operator takes the address
+// as the integer it is, never the array.
+TEST_F(X86_64_CallAbi, AComplementOfAStringAddressIsAnInteger) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static const char W[] = "the_quick_brown_fox_jumps_over_the_lazy_dog_0123";
+int strroll(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  const int N = (int)(sizeof(W) - 1);
+  for (int it = 0; it < 16; it++) {
+    s = s * 1103515245u + 12345u;
+    const char *p = W + ((s >> 6) % (unsigned)N);
+    unsigned r = 0;
+    for (int k = 0; k < 12; k++) {
+      r = r * 31u + (unsigned)(unsigned char)*p;
+      p++;
+      if (!*p)
+        p = W;
+    }
+    h = h * 131u + r;
+    h ^= h >> 10;
+  }
+  return (int)h;
+}
+)C",
+                            "strroll", {"strroll", "W"}, {0, 1, -1, 0x44, 77});
+}
+
+// A System V variadic function tests AL and saves the argument registers to
+// its register save area, which va_arg reads.  It takes every one of them as
+// a parameter: the integer registers and the vector registers' doubles.
+TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsIntegerArguments) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+#include <stdarg.h>
+static int si(int n, ...) __attribute__((noinline));
+int vsum_i(int a) {
+  unsigned u = (unsigned)a;
+  return si(4, (int)u, (int)(u * 3u + 1u), (int)(u ^ 0x55u), (int)(u + 7u));
+}
+static int si(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 31 + va_arg(ap, int);
+  va_end(ap);
+  return s;
+}
+)C",
+                            "vsum_i", {"vsum_i", "si"}, {0, 1, -1, 0x41, 77});
+}
+
+static const char *const VariadicDoubles = R"C(
+#include <stdarg.h>
+static double sd(int n, ...) __attribute__((noinline));
+int vsum_d(int a) {
+  double x = (double)a;
+  return (int)sd(3, x, x * 2.0, x + 0.5);
+}
+static double sd(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  double s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 3.0 + va_arg(ap, double);
+  va_end(ap);
+  return s;
+}
+)C";
+
+// The floating arguments of a variadic call travel in the vector registers,
+// which the callee saves when AL says the caller set any.
+TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsDoubleArguments) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, VariadicDoubles,
+                            "vsum_d", {"vsum_d", "sd"}, {0, 1, -1, 7, 1000});
+}
+
+// The LLVM route reads the same parameters: its lifted callee reads the
+// doubles a caller passes.
+TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsDoubleArguments) {
+  expectLiftedRunsLikeSource(VariadicDoubles, "vsum_d", "sd");
+}
+
+static const char *const VariadicStackIntegers = R"C(
+#include <stdarg.h>
+static int sb(int n, ...) __attribute__((noinline));
+int vsum_big(int a) {
+  unsigned u = (unsigned)a;
+  return sb(8, (int)u, (int)(u + 1u), (int)(u + 2u), (int)(u + 3u),
+            (int)(u + 4u), (int)(u + 5u), (int)(u + 6u), (int)(u + 7u)) ^
+         sb(2, (int)(u * 3u), (int)(u ^ 9u));
+}
+static int sb(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 131 + va_arg(ap, int);
+  va_end(ap);
+  return s;
+}
+)C";
+
+// Past the six integer registers, va_arg reads its arguments from the stack
+// above the return address.  The callee takes each slot its widest call
+// stores there as a parameter after every register one, and a call that
+// stores fewer passes zero for the rest.
+TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsStackArguments) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"},
+                            VariadicStackIntegers, "vsum_big",
+                            {"vsum_big", "sb"}, {0, 1, -1, 0x9b, 77});
+}
+
+// A lifted call passes those slots after zero for every vector register its
+// caller left unset, as the callee takes them in that order.
+TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsStackArguments) {
+  expectLiftedRunsLikeSource(VariadicStackIntegers, "vsum_big", "sb");
 }

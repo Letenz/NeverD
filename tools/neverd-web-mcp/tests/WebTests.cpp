@@ -13,6 +13,8 @@
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/TauriFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
 #include "neverd-web-mcp/WebTools.h"
@@ -109,11 +111,93 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+    const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
+                         Name == "tauri_export" || Name == "native_analyze" ||
+                         Name == "desktop_resources_export" ||
+                         Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
   }
+}
+
+void clientSourceFeatures(Harness &H) {
+  const auto Artifact = H.import(0);
+  const auto S = H.same("web_source_analyze", {{"revision", H.Revision},
+                                               {"artifact_id", Artifact},
+                                               {"source_type", "script"}});
+  const Json Args{{"revision", H.Revision}, {"source_id", S.at("source_id")}};
+  const auto N = H.same("web_source_navigation_analyze", Args);
+  const auto &F = N.at("client_features");
+  require(F.at("profile") == "javascript-client-syntax-features-v1" &&
+              F.at("status") == "partial" && F.at("record_count") == 7 &&
+              F.at("feature_inventory_complete") == false &&
+              F.at("api_identity") == "not_authenticated" &&
+              F.at("effective_policy") == "not_analyzed",
+          "MCP promoted client syntax candidates or lost their coverage");
+  auto Page = Args;
+  Page["record_kind"] = "features";
+  Page["limit"] = 1;
+  const auto First = H.same("web_source_navigation_records", Page);
+  require(First.at("items").size() == 1 && First.at("next_offset") == 1 &&
+              First.at("items")[0].at("confidence") == "source_syntax_only" &&
+              First.at("items")[0].at("callback_source_link") ==
+                  "lexical_declaration_or_initializer" &&
+              First.at("items")[0].at("runtime_callback_target") ==
+                  "not_proven",
+          "MCP changed client callback syntax or paging");
+  Page["offset"] = 1;
+  Page["limit"] = 512;
+  const auto Rest = H.same("web_source_navigation_records", Page);
+  require(Rest.at("items").size() == 6 && Rest.at("page_complete") == true,
+          "MCP lost client pattern continuation");
+  redacted(N);
+  redacted(First);
+  redacted(Rest);
+  const auto &B = N.at("desktop_bridges");
+  require(B.at("profile") == "tauri-1-wails-2-direct-bridge-syntax-v1" &&
+              B.at("record_count") == 2 &&
+              B.at("bridge_inventory_complete") == false &&
+              B.at("native_target") == "not_resolved",
+          "MCP promoted desktop bridge syntax or lost its profile");
+  auto BridgePage = Args;
+  BridgePage["record_kind"] = "desktop_bridges";
+  BridgePage["limit"] = 1;
+  const auto BridgeFirst = H.same("web_source_navigation_records", BridgePage);
+  const auto &Row = BridgeFirst.at("items").at(0);
+  require(Row.at("form") == "window_ipc_message" &&
+              Row.at("root_resolution") == "external" &&
+              Row.at("command_status") == "literal_string_redacted" &&
+              BridgeFirst.at("next_offset") == 1,
+          "MCP changed desktop bridge syntax or continuation");
+  auto Anchor = Args;
+  Anchor["byte_offset"] = Row.at("byte_offset");
+  Anchor["byte_length"] = Row.at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  BridgePage["offset"] = 1;
+  const auto BridgeRest = H.same("web_source_navigation_records", BridgePage);
+  require(BridgeRest.at("items").size() == 1 &&
+              BridgeRest.at("page_complete") == true &&
+              BridgeRest.at("items").at(0).at("target_name_node_ids").size() ==
+                  3,
+          "MCP lost Wails target anchors");
+  redacted(BridgeFirst);
+  redacted(BridgeRest);
+  const auto &Order = N.at("configuration_order");
+  require(Order.at("object_count") == 1 && Order.at("term_count") == 4 &&
+              Order.at("effective_configuration") == "not_analyzed",
+          "MCP promoted or lost configuration source order");
+  auto ConfigPage = Args;
+  ConfigPage["record_kind"] = "config_merges";
+  const auto Config = H.same("web_source_navigation_records", ConfigPage);
+  require(Config.at("items").size() == 1 &&
+              Config.at("items")[0].at("terms")[0].at("unknown_keys") == true,
+          "MCP lost the configuration overwrite barrier");
+  redacted(Config);
+  BridgePage["execute"] = true;
+  invalid([&] { H.get("web_source_navigation_records", BridgePage); });
+  Page["execute"] = true;
+  invalid([&] { H.get("web_source_navigation_records", Page); });
 }
 
 void sourceAndMaps(Harness &H) {
@@ -149,9 +233,13 @@ void sourceAndMaps(Harness &H) {
     invalid([&] { H.get("web_source_rewrite_analyze", RewriteArgs); });
   }
   const auto Interfaces = H.same("web_interfaces_analyze", Args);
-  require(Interfaces.at("interface_count") == 5 &&
+  require(Interfaces.at("interface_count") == 9 &&
               Interfaces.at("xhr_correlation") == false &&
-              Interfaces.at("profile") == "fetch-websocket-xhr-syntax-v2",
+              Interfaces.at("fetch_member_correlation") == false &&
+              Interfaces.at("profile") ==
+                  "fetch-websocket-xhr-wrappers-syntax-v4" &&
+              Interfaces.at("wrapper_definitions") == 1 &&
+              Interfaces.at("wrapper_correlation") == false,
           "MCP lost XHR syntax evidence or changed correlation claims");
   const auto Sites =
       H.same("web_interface_records",
@@ -165,6 +253,52 @@ void sourceAndMaps(Harness &H) {
               Items[1].at("receiver_binding_id") ==
                   Items[4].at("receiver_binding_id"),
           "MCP changed XHR source links");
+  require(Items[5].at("kind") == "fetch_member_call" &&
+              Items[5].at("receiver_status") == "member_spelling_syntax_only" &&
+              Items[5].at("receiver_node_id").is_string() &&
+              Items[5].at("method") == "unknown" &&
+              Items[6].at("arguments_status") == "spread_unresolved" &&
+              Items[6].at("url_node_id").is_null() &&
+              Items[6].at("method") == "unknown",
+          "MCP promoted a member spelling or invented spread arguments");
+  require(Items[8].at("kind") == "fetch_wrapper_call" &&
+              Items[8].at("method") == "POST" &&
+              Items[8].at("wrapper_request_node_id") ==
+                  Items[7].at("node_id") &&
+              Items[8].at("wrapper_binding_id").is_string() &&
+              Items[8].at("url_argument_index") == 0 &&
+              Items[8].at("options_argument_index") == 1,
+          "MCP lost lexical wrapper forwarding anchors");
+  const auto Relations =
+      H.same("web_interface_relations_analyze",
+             {{"revision", H.Revision},
+              {"analysis_id", Interfaces.at("interface_analysis_id")}});
+  require(Relations.at("profile") == "request-source-relations-v2" &&
+              Relations.at("relation_count") == 4 &&
+              Relations.at("response_api_identity") ==
+                  "member_spelling_unverified" &&
+              Relations.at("har_correlation") == false,
+          "MCP changed request relations or response identity");
+  const Json RelationArgs{{"revision", H.Revision},
+                          {"relations_id", Relations.at("relations_id")}};
+  const auto RelationPage =
+      H.same("web_interface_relation_records", RelationArgs);
+  require(
+      RelationPage.at("items")[0].at("kind") == "await_result_const_binding" &&
+          RelationPage.at("items")[1].at("kind") ==
+              "request_function_containment" &&
+          RelationPage.at("items")[2].at("kind") == "direct_request_return" &&
+          RelationPage.at("items")[3].at("kind") ==
+              "bound_result_member_call" &&
+          RelationPage.at("items")[3].at("member_spelling") == "json" &&
+          RelationPage.at("items")[0].at("binding_id") ==
+              RelationPage.at("items")[3].at("binding_id"),
+      "MCP changed result binding anchors");
+  redacted(Relations);
+  redacted(RelationPage);
+  auto UnsafeRelation = RelationArgs;
+  UnsafeRelation["execute"] = true;
+  invalid([&] { H.get("web_interface_relation_records", UnsafeRelation); });
   auto Bindings = Args;
   Bindings["record_kind"] = "bindings";
   H.same("web_source_binding_records", Bindings);
@@ -378,6 +512,22 @@ void offlineAssessments() {
   require(Decisions.at("items").size() == 1 &&
               Decisions.at("items")[0].at("assertion_source") == "caller",
           "MCP upgraded an analyst assertion into analyzer proof");
+  const Json Journal{{"schema_version", 1},
+                     {"profile", "offline-package-review-journal-v1"},
+                     {"package_assessment_id", ID},
+                     {"review_root_id", U.at("review_root_id")},
+                     {"review_head_id", U.at("review_head_id")},
+                     {"decisions", Decisions.at("items")}};
+  Json Restore{{"revision", H.Revision},
+               {"package_assessment_id", ID},
+               {"expected_review_head", U.at("review_head_id")},
+               {"journal_json", Journal.dump()}};
+  const auto Restored = H.same("web_package_review_restore", Restore);
+  require(Restored.at("replayed") == true &&
+              Restored.at("restored_events") == 0,
+          "MCP charged a journal replay twice");
+  Restore["raw"] = true;
+  invalid([&] { H.get("web_package_review_restore", Restore); });
   const auto Report = H.same("web_package_assessment_report", Page);
   redacted(Report);
   require(Report.at("report_format") == "markdown" &&
@@ -555,9 +705,22 @@ void passiveInputs(Harness &H) {
   const Json Page{{"revision", H.Revision},
                   {"capture_id", Preview.at("capture_id")}};
   H.fail("web_har_records", Page, "har_capture_not_committed");
+  const Json ReportArgs{{"revision", H.Revision},
+                        {"har_capture_id", Preview.at("capture_id")}};
+  H.fail("web_passive_report_create", ReportArgs, "har_capture_not_committed");
   H.same("web_har_commit", {{"revision", H.Revision},
                             {"preview_token", Preview.at("preview_token")}});
   H.same("web_har_records", Page);
+  const auto HARReport = H.same("web_passive_report_create", ReportArgs);
+  require(HARReport.at("static_records") == 0 &&
+              HARReport.at("server_constraints") == "unknown" &&
+              HARReport.at("inferred_optionality") == "unknown",
+          "MCP promoted observed examples to server constraints");
+  const auto HARReportPage =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", HARReport.at("passive_report_id")}});
+  redacted(HARReportPage);
 
   Artifact = H.import(5);
   const auto Stream = H.same("web_stream_preview",
@@ -573,6 +736,19 @@ void passiveInputs(Harness &H) {
   require(Records.at("items").size() == 2 &&
               Records.at("protocol_negotiation_verified") == false,
           "Stream facts or evidence class changed");
+  const auto StreamReport =
+      H.same("web_passive_report_create",
+             {{"revision", H.Revision},
+              {"stream_capture_id", Stream.at("stream_capture_id")}});
+  const auto StreamReportPage =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", StreamReport.at("passive_report_id")}});
+  require(StreamReportPage.at("items").size() == 2 &&
+              StreamReportPage.at("items")[0].at("related_id") ==
+                  Records.at("items")[1].at("record_id"),
+          "MCP changed recorded stream relationships");
+  redacted(StreamReportPage);
 }
 
 void zipArchive(Harness &H, bool HasParser) {
@@ -730,14 +906,21 @@ int main() {
       H.get("web_native_analyze",
             {{"revision", "1"}, {"handoff_id", "CANARY"}});
     });
-    F.write("source", "fetch('https://CANARY/a?token=CANARY'); const "
-                      "privateName = 'CANARY'; while(true) {};"
-                      "const CANARY_XHR = new XMLHttpRequest();"
-                      "CANARY_XHR.open('GET','https://CANARY/a');"
-                      "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
-                      "CANARY_XHR.send('CANARY');"
-                      "CANARY_XHR.onload = CANARY_CALLBACK;"
-                      "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
+    F.write(
+        "source",
+        "const CANARY_RESULT=await "
+        "fetch('https://CANARY/a?token=CANARY');CANARY_RESULT.json(); const "
+        "privateName = 'CANARY'; while(true) {};"
+        "const CANARY_XHR = new XMLHttpRequest();"
+        "CANARY_XHR.open('GET','https://CANARY/a');"
+        "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
+        "CANARY_XHR.send('CANARY');"
+        "CANARY_XHR.onload = CANARY_CALLBACK;"
+        "this.fetch('https://CANARY/a', {method:'POST'});"
+        "fetch(...CANARY_ARGUMENTS);"
+        "const CANARY_WRAPPER=(u,i)=>fetch(u,i);"
+        "CANARY_WRAPPER('https://CANARY/wrapper',{method:'POST'});"
+        "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
     F.write(
@@ -775,6 +958,16 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
       booleanBranches(H);
+      F.write(
+          "source",
+          "function CANARY_CALLBACK(v){return v;}"
+          "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
+          "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+          "const settings={...CANARY_DEFAULTS,permissions:{deny:['CANARY']},"
+          "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
+          "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
+      clientSourceFeatures(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);
@@ -852,6 +1045,87 @@ int main() {
                                      {"source_id", Source.at("source_id")},
                                      {"byte_offset", "6"},
                                      {"byte_length", "1"}});
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "wails_extract") != Ops.end()) {
+      F.write("sea", neverd::web::wails_test::elf());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto E = H.same("web_wails_extract", Args);
+      require(E.at("table_count") == 1 && E.at("member_count") == 3 &&
+                  E.at("asset_server_binding") == "not_checked",
+              "Wails stored table evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto M = H.same("web_wails_records", Page);
+      require(M.at("next_offset") == 2 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Wails page differs or exposes private names");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_wails_extract", Invalid); });
+      auto InvalidPage = Page;
+      InvalidPage["limit"] = 129;
+      invalid([&] { H.get("web_wails_records", InvalidPage); });
+      H.fail("web_wails_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "paths"}},
+             "invalid_record_kind");
+      if (HasParser) {
+        const auto S =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(S.at("parse_status") == "parsed",
+                "Wails member source is unavailable");
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "tauri_extract") != Ops.end()) {
+      F.write("sea", neverd::web::tauri_test::image());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "tauri-phf-0.10-macho-x64-five-store-brotli-v1"},
+          {"initializer_address", "4294967552"}};
+      const auto E = H.same("web_tauri_extract", Args);
+      require(E.at("member_count") == 2 &&
+                  E.at("phf_lookup_status") == "all_keys_match_rows",
+              "Tauri native initializer evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"offset", 0},
+                      {"limit", 1}};
+      const auto M = H.same("web_tauri_records", Page);
+      require(M.at("next_offset") == 1 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Tauri page differs or exposes private bytes");
+      auto Invalid = Args;
+      Invalid["table"] = Json::object();
+      invalid([&] { H.get("web_tauri_extract", Invalid); });
+      Invalid = Page;
+      Invalid["limit"] = 129;
+      invalid([&] { H.get("web_tauri_records", Invalid); });
+      auto BadPC = Args;
+      BadPC["initializer_address"] = "4294967553";
+      H.fail("web_tauri_extract", BadPC,
+             "native_store_instruction_boundary_required");
+      if (HasParser) {
+        const auto Source =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(Source.at("parse_status") == "parsed",
+                "Tauri source selection unavailable");
       }
     }
     offlineAdvisories();

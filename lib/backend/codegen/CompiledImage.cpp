@@ -18,6 +18,10 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCFixup.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
@@ -45,8 +49,21 @@ struct CapturedFixupReference {
   bool IsCompactFunctionField = false;
 };
 
-struct PLTDisplacements {
+struct SourceDisplacements {
+  bool IsMachO = false;
   std::map<std::pair<uint64_t, std::string>, uint64_t> Targets;
+  std::map<std::pair<uint64_t, std::string>, uint64_t> MachOGOTData;
+
+  void record(const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request,
+              uint64_t Address) {
+    if (Request.IsSubtrahend)
+      return;
+    if (Request.SpecifierName == "PLT")
+      Targets[{Request.FixupVA, Request.Symbol.str()}] = Address;
+    if (IsMachO && Request.SpecifierName == "GOTPCREL" &&
+        Request.FixupKindName == "FK_Data_4" && !Request.IsPCRel)
+      MachOGOTData[{Request.FixupVA, Request.Symbol.str()}] = Address;
+  }
 
   bool validate(const CompiledImage &Image) const {
     for (const auto &Section : Image.Sections) {
@@ -72,6 +89,39 @@ struct PLTDisplacements {
         }
       }
     }
+    for (const auto &Section : Image.Sections) {
+      if (!Section.IsAllocated)
+        continue;
+      llvm::ArrayRef<uint8_t> Bytes;
+      if (Section.IsInImage) {
+        if (!rangeInBounds(Section.Offset, Section.Size, Image.Bytes.size()))
+          return false;
+        Bytes = llvm::ArrayRef<uint8_t>(Image.Bytes)
+                    .slice(Section.Offset, Section.Size);
+      } else {
+        if (Section.ExternalBytes.size() != Section.Size)
+          return false;
+        Bytes = Section.ExternalBytes;
+      }
+      for (const auto &Fixup : Section.FixupReferences) {
+        auto Target =
+            MachOGOTData.find({Section.VA + Fixup.Offset, Fixup.Symbol});
+        if (Target == MachOGOTData.end())
+          continue;
+        if (Fixup.IsPCRel || Fixup.Kind != llvm::FK_Data_4 ||
+            Fixup.BitWidth != 32 || !Fixup.SubtractSymbol.empty() ||
+            !rangeInBounds(Fixup.Offset, 4, Section.Size))
+          return false;
+        const auto Displacement = readLE<int32_t>(Bytes.data() + Fixup.Offset);
+        if (Section.VA + Fixup.Offset + 4 + Displacement !=
+            Target->second + static_cast<uint64_t>(Fixup.Addend)) {
+          llvm::WithColor::error()
+              << "compileImageForPatch: LLVM encoded an invalid Mach-O x64 "
+                 "GOT data displacement; rebuild the corrected LLVM fork\n";
+          return false;
+        }
+      }
+    }
     return true;
   }
 };
@@ -81,16 +131,15 @@ struct PatchSymbolResolvers {
   ContextualPatchSymbolResolver Contextual;
 
   void install(llvm::mc_rewrite::RewriteAddressModel &Model,
-               PLTDisplacements *PLT = nullptr) const {
+               SourceDisplacements *PLT = nullptr) const {
     if (Contextual) {
       ContextualPatchSymbolResolver Resolver = Contextual;
       Model.resolveWithContext =
           [Resolver,
            PLT](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
             auto Address = Resolver(Request);
-            if (PLT && Address && Request.SpecifierName == "PLT" &&
-                !Request.IsSubtrahend)
-              PLT->Targets[{Request.FixupVA, Request.Symbol.str()}] = *Address;
+            if (PLT && Address)
+              PLT->record(Request, *Address);
             return Address;
           };
       return;
@@ -98,9 +147,18 @@ struct PatchSymbolResolvers {
 
     if (Legacy) {
       PatchSymbolResolver Resolver = Legacy;
-      Model.resolve = [Resolver](llvm::StringRef Symbol, uint32_t Specifier) {
-        return Resolver(Symbol, Specifier);
-      };
+      if (!PLT) {
+        Model.resolve = std::move(Resolver);
+        return;
+      }
+      Model.resolveWithContext =
+          [Resolver,
+           PLT](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
+            auto Address = Resolver(Request.Symbol, Request.Specifier);
+            if (PLT && Address)
+              PLT->record(Request, *Address);
+            return Address;
+          };
     }
   }
 };
@@ -331,10 +389,35 @@ collectSourceFunctionOriginalVAs(const llvm::Module &Module) {
 }
 
 bool attachSourceFunctionOriginalVAs(
-    CompiledImage &Image, const std::map<std::string, uint64_t> &OriginalVAs) {
+    CompiledImage &Image, const std::map<std::string, uint64_t> &OriginalVAs,
+    const llvm::Module &Module) {
   if (!llvm::mc_rewrite::validateRewriteSourceFunctionOwners(
           Image.SourceFunctionOwners))
     return false;
+  if (Image.InputKind == RewriteInputKind::ReplacementIR &&
+      Image.TargetArch == Arch::ARM) {
+    for (const auto &Owner : Image.SourceFunctionOwners) {
+      if (Owner.Kind !=
+          llvm::mc_rewrite::RewriteSourceFunctionOwnerKind::FunctionEntry)
+        continue;
+      const auto *Function = Module.getFunction(Owner.SourceFunction);
+      if (!Function)
+        return false;
+      InstructionMode Mode = Image.TargetMode;
+      const auto Attribute = Function->getFnAttribute("target-features");
+      if (Attribute.isStringAttribute()) {
+        const auto Features = Attribute.getValueAsString();
+        const bool Thumb = Features.contains("+thumb-mode");
+        const bool ARM = Features.contains("-thumb-mode");
+        if (Thumb && ARM)
+          return false;
+        if (Thumb || ARM)
+          Mode = Thumb ? InstructionMode::Thumb : InstructionMode::ARM;
+      }
+      if (!Image.ReplacementFunctionModes.emplace(Owner.OwnerVA, Mode).second)
+        return false;
+    }
+  }
   for (const auto &[SourceFunction, OriginalVA] : OriginalVAs) {
     const size_t Matches =
         llvm::count_if(Image.SourceFunctionOwners, [&](const auto &Owner) {
@@ -374,9 +457,11 @@ static CompiledImage compileImageForPatchImpl(
         FixedSectionVAFn,
     uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
     RewriteInputKind InputKind) {
-  PLTDisplacements PLT;
-  PLTDisplacements *PLTCheck =
-      TargetArch == Arch::X64 && Fmt == BinaryFormat::ELF &&
+  SourceDisplacements PLT;
+  PLT.IsMachO = Fmt == BinaryFormat::MachO;
+  SourceDisplacements *PLTCheck =
+      TargetArch == Arch::X64 &&
+              (Fmt == BinaryFormat::ELF || Fmt == BinaryFormat::MachO) &&
               InputKind == RewriteInputKind::ReplacementIR
           ? &PLT
           : nullptr;
@@ -498,6 +583,24 @@ static CompiledImage compileImageForPatchImpl(
         << "compileImageForPatch: sizing compile emitted no sections\n";
     return Out;
   }
+  std::string TargetError;
+  const auto *Backend = llvm::TargetRegistry::lookupTarget(Triple, TargetError);
+  if (!Backend)
+    return Out;
+  std::unique_ptr<llvm::MCRegisterInfo> Registers(
+      Backend->createMCRegInfo(Triple));
+  std::unique_ptr<llvm::MCAsmInfo> AsmInfo(
+      Registers ? Backend->createMCAsmInfo(*Registers, Triple,
+                                           llvm::MCTargetOptions())
+                : nullptr);
+  if (!AsmInfo)
+    return Out;
+  auto NameSpecifiers = [&](std::vector<CapturedFixupReference> &Fixups) {
+    for (auto &Fixup : Fixups)
+      Fixup.Reference.SpecifierName =
+          AsmInfo->getSpecifierNameOrEmpty(Fixup.Reference.Specifier).str();
+  };
+  NameSpecifiers(Pass1Fixups);
   const std::vector<WinEHSemanticEmissionShape> Pass1WinEHSemanticShape =
       collectWinEHSemanticEmissionShape(Res1.WinEHSemanticRecords);
 
@@ -551,7 +654,7 @@ static CompiledImage compileImageForPatchImpl(
     Out.FunctionRanges = std::move(Res1.FunctionRanges);
     Out.SourceFunctionOwners = std::move(Res1.SourceFunctionOwners);
     Out.WinEHSemanticRecords = std::move(Res1.WinEHSemanticRecords);
-    if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs)) {
+    if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs, Mod)) {
       llvm::WithColor::error()
           << "compileImageForPatch: sizing compile lost exact source "
              "function ownership\n";
@@ -705,6 +808,7 @@ static CompiledImage compileImageForPatchImpl(
     auto IterMod = llvm::CloneModule(Mod);
     auto ResN = CGn.compileForRewrite(*IterMod, TargetArch, PassN, Fmt,
                                       TargetTriple, InputKind);
+    NameSpecifiers(IterationFixups);
     if (!ResN.ImageValid) {
       llvm::WithColor::error()
           << "compileImageForPatch: layout compile produced an invalid image\n";
@@ -825,7 +929,7 @@ static CompiledImage compileImageForPatchImpl(
   Out.FunctionRanges = std::move(Final.FunctionRanges);
   Out.SourceFunctionOwners = std::move(Final.SourceFunctionOwners);
   Out.WinEHSemanticRecords = std::move(Final.WinEHSemanticRecords);
-  if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs)) {
+  if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs, Mod)) {
     llvm::WithColor::error()
         << "compileImageForPatch: layout compile lost exact source "
            "function ownership\n";

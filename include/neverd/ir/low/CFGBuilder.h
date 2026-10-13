@@ -664,8 +664,8 @@ std::shared_ptr<X87CallGraphCache> createX87CallGraphCache();
 std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
     const NoReturnCalleeProver *NonReentrantProver,
     const libc::NoReturnTargetIndex *NonReentrantTargets = nullptr);
-/// Additionally retain up to 32 MiB of call-summary input blocks. This is
-/// opt-in: ordinary x87 users keep the compact graph-only cache.
+/// Additionally retain up to 32 MiB of machine bodies and function metadata.
+/// This is opt-in: ordinary x87 users keep the compact graph-only cache.
 std::shared_ptr<X87CallGraphCache>
 createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                         const libc::NoReturnTargetIndex *NonReentrantTargets,
@@ -689,6 +689,21 @@ public:
   static std::shared_ptr<const CallRegisterBody> cachedCallRegisterBody(
       const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
       va_t Entry, const std::set<va_t> *Entries,
+      const libc::NoReturnTargetIndex *NoReturnTargets,
+      const NoReturnCalleeProver *NoReturnCallees,
+      const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+      const ExecutableCodeOwnerIndex *CodeOwners);
+
+  /// Reconstruct a complete default x64 CFG from retained machine facts after
+  /// the same no-return and normalization checks as cachedCallRegisterBody.
+  /// All CFG metadata is preserved; exception records are copied from the
+  /// unchanged image, which must outlive the cache. The result is independently
+  /// owned. A miss requires the ordinary build. This is only for initial,
+  /// default-policy construction: protected tables, continuation roots, test
+  /// budgets and other nondefault settings still require their own build.
+  static std::optional<LowFunc> cachedDefaultFunction(
+      const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+      va_t Entry, const std::string &Name, const std::set<va_t> *Entries,
       const libc::NoReturnTargetIndex *NoReturnTargets,
       const NoReturnCalleeProver *NoReturnCallees,
       const detail::AbsoluteRelocationRootIndex *RelocationRoots,
@@ -1158,6 +1173,10 @@ private:
     bool Complete = true;
     std::set<va_t> Calls;
     std::vector<std::pair<va_t, bool>> NoReturnAnswers;
+    // build() copies this unchanged image record into its LowFunc. Retained
+    // bodies borrow the original instead of duplicating unbounded language
+    // metadata; image mutation must retire the enclosing cache.
+    const ExceptionFunction *Exception = nullptr;
   };
   CallRegisterBodyWitness *CollectCallRegisterBody = nullptr;
   void recordSkippedFpuFixup(const LowFunc &Func);
@@ -1367,6 +1386,11 @@ private:
     /// of Alternatives.  This is used to bind i386 outgoing stack arguments to
     /// the current CALL epoch rather than a lexical historical STORE.
     FrameMemoryMatches,
+    /// Prove a finite set for an actual CFG predecessor join, retaining
+    /// compound edge predicates on each incoming value. This guard fallback
+    /// does not replace ordinary mask/group domain ownership or treat a
+    /// logical predicate union as a control-flow join.
+    JoinedUnsignedFeasibleSet,
   };
 
   struct JumpTableValueQuery {

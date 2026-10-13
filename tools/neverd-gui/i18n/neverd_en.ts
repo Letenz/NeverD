@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Show the operand&apos;s number with its bits inverted</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>C&amp;ode</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Define instructions from the current address</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Offline package &amp;review...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Inspect local package evidence and analyst reviews</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>&amp;PDB file...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Load symbols from a selected PDB file</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1455,14 @@ Double-click to go to the declaration.</translation>
             <numerusform>%n declarations shown as C</numerusform>
             <numerusform>%n declarations shown as C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Cancelled</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Saved variable names belong to a different source rendering</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2084,62 @@ Signed: %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>The ways to load %1 are unknown: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Comment this source line:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>New name:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Rename</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Select a declared variable or an image name to rename</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Select a source line; expand folded code before commenting it</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>The selected name has no image address</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>This instruction has no source-line address mapping.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>This source line has no instruction address mapping; showing the function entry</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Load PDB file</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB files (*.pdb);;All files (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Use unverified PDB for analysis</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>This engine cannot use an unverified PDB for analysis</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2278,10 @@ Signed: %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>The files you open appear here. Choose New, or drop a file on this window.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Last opened: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2404,22 @@ Signed: %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Platform: %1, read from the code: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>An instruction is already defined at %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB loaded: %1 (%2 names, identity verified)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB display names imported: %1 (%2 names, unverified)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</translation>
     </message>
 </context>
 <context>
@@ -2529,6 +2637,40 @@ Signed: %4</translation>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Minimize</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Maximize</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Restore</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Close</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Analysis worker stopped.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Only analysis reads are allowed.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>The worker cannot restore analysis state.</translation>
     </message>
 </context>
 </TS>

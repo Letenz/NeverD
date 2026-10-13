@@ -223,3 +223,6 @@ SIDEEFFECT(Intrinsic::X86F16CReadState);
 SIDEEFFECT(Intrinsic::X86F16CStoreState);
 SIDEEFFECT(Intrinsic::X86FPComiState);
 SIDEEFFECT(Intrinsic::X86FPComiMemoryState);
+
+SIDEEFFECT(Intrinsic::X86FPMaskCompareState);
+SIDEEFFECT(Intrinsic::X86FPMaskCompareMemoryState);

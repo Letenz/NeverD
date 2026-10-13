@@ -136,11 +136,31 @@ public:
   /// even where the next section's first object starts.
   std::optional<std::string>
   ownedImageBackingAddress(const HighExpr &Const) const;
+  /// The section \p Const is anchored to when its relocation names an object
+  /// there and subtracts from it, leaving an address before the section
+  /// (i386 `table@GOTOFF - 1`; BinaryImage::RodataAnchorSeg).
+  std::optional<va_t> anchoredOwner(const HighExpr &Const) const;
+  /// \p Const as the address of its anchored section's first object less
+  /// the distance to it, as an integer.
+  std::optional<std::string> anchoredOwnerAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
   /// Notes an object the code reaches only by its address so far.
   void noteImageAddress(va_t Addr);
+  /// The name the user, the debug information or a data symbol gives the
+  /// object at an address; with a symbol's, the symbol and the comment that
+  /// reads it as its language spells it.
+  struct ImageSymbolName {
+    std::string Raw;
+    std::string Symbol;
+    std::string Readable;
+  };
+  ImageSymbolName imageSymbolName(va_t Addr) const;
+  /// The listing's name for the data a relocated pointer slot at \p Slot
+  /// holds the address of, as `&name`, where the slot's initializer is a
+  /// number (no symbol sizes the target, so C declares no object for it).
+  std::string relocatedTargetNote(va_t Slot) const;
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
@@ -289,6 +309,12 @@ public:
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// The operands call \p E passes, by index, where it passes one for each
+  /// HighIR parameter of a definition in this file: those of the parameters
+  /// the definition prints.  Empty where the operands pass in order, as an
+  /// AArch64 callee with stack parameters, which has every integer argument
+  /// register as one, read or not, does not.
+  std::vector<size_t> printedCallOperands(const HighExpr &E) const;
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
@@ -303,6 +329,10 @@ public:
   /// The type \p Func's definition declares its HighIR parameter \p Index
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// The type of the parameter \p Func's definition prints at \p Position,
+  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// prototype and a call's arguments count them, or null past the last.
+  TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
@@ -388,6 +418,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// Whether every byte of \p E from \p Bytes up is zero, as far as its
+  /// form and forwarded values show: a comparison, a constant, a zero
+  /// extension or a mask that fits.
+  bool valueFitsInBytes(const HighExpr &E, uint16_t Bytes,
+                        unsigned Depth = 0) const;
+  /// \p E as a truth test reads it: forwarded values followed, and integer
+  /// views dropped while they keep whether it is zero (a widening one, or a
+  /// narrowing one of a value that fits).  A narrowing view that may drop a
+  /// nonzero byte stays: `test %al, %al` reads one byte of EAX.
+  const HighExpr *truthTestedValue(const HighExpr *E) const;
   /// The variable \p E converts between integer or pointer types of one
   /// width, or null when a step changes the width or converts a float: a
   /// narrowed or extended view is another value than the variable it reads
@@ -809,6 +849,9 @@ public:
   /// The helper of each x86 saturating lane operation and lane width
   /// (X86SaturatingLanes.def).
   std::map<std::pair<Intrinsic, unsigned>, std::string> SaturatingLaneHelpers;
+  /// The scalar LSE builtins of NeverD's Clang the output calls, each given
+  /// a definition for other compilers (ScalarLSEFallbacks.def).
+  std::set<Intrinsic> ScalarLSEBuiltins;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
@@ -850,6 +893,9 @@ public:
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;
+  /// The functions whose emittedParamIndices are being computed, whose calls
+  /// another's walk takes as passing every operand.
+  mutable std::set<const HighFunc *> ParamIndicesInProgress;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
@@ -999,6 +1045,12 @@ public:
     uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  /// The access width that names the unnamed object \p Obj at \p Addr, as
+  /// the listing names it: the width every access the image's code states
+  /// there shares (CEmitterOptions::AccessWidths), else, without those, the
+  /// one width the emitted code accesses it with.  None names it unknown.
+  std::optional<uint64_t> dataNameWidth(va_t Addr,
+                                        const ImageObject &Obj) const;
   std::map<va_t, DataSymbolBinding> DataSymbolBindings;
   std::set<va_t> UsedDataBindings;
   std::map<std::string, std::string> ExternalDataNames;
@@ -1021,12 +1073,16 @@ public:
   std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
   /// The object code indexes at \p Addr: one a symbol sizes, else the
   /// stretch of its data section between the sized objects around it (a
-  /// table a compiler emits under an assembler-local label).
+  /// table a compiler emits under an assembler-local label), cut at the data
+  /// symbols around \p Addr, which begin objects even when unsized.
   std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
   /// The image's sized data objects by address, each as large as the
   /// largest symbol there, and the furthest end of any object up to each.
   std::vector<std::pair<va_t, uint64_t>> SizedObjects;
   std::vector<va_t> SizedObjectReach;
+  /// Where the image's data symbols begin, sized or not, in order: a PDB
+  /// public names an object without sizing it.
+  std::vector<va_t> DataSymbolStarts;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.

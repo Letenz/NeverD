@@ -23,6 +23,24 @@ extern "C" {
 /// Independent of neverd_session_t: source identities are not native addresses.
 typedef void *neverd_web_session_t;
 
+/// Explicit immutable native selection and instruction address. No caller
+/// supplied table descriptor, target execution, file sidecars or network use.
+NEVERD_API const char *neverd_web_tauri_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    uint64_t InitializerAddress, const char *Profile, size_t ProfileSize);
+NEVERD_API const char *
+neverd_web_tauri_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              uint64_t Offset, uint64_t Limit);
+/// Explicit local disclosure under fixed exclusive files; not exposed by MCP.
+NEVERD_API const char *
+neverd_web_tauri_export_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *OutputDirectory, size_t DirectorySize);
+
 /// Returns null on allocation failure or when web analysis is disabled.
 NEVERD_API neverd_web_session_t neverd_web_session_create(void);
 /// No concurrent call may be active during destruction. Null is accepted.
@@ -32,6 +50,26 @@ NEVERD_API void neverd_web_session_destroy(neverd_web_session_t Session);
 /// Null means allocation failure. Errors use schema_version/status/error.code;
 /// no untrusted source text or input name is included in ordinary diagnostics.
 NEVERD_API const char *neverd_web_capabilities_json(void);
+/// Explicit local disclosure of a supplied CEF/WebView resource descriptor.
+/// Fixed files, exclusive fresh destination and read-back hashes. No MCP raw
+/// export; framework identity and complete application recovery stay unknown.
+NEVERD_API const char *neverd_web_desktop_resources_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ManifestID, size_t ManifestIDSize,
+    const char *OutputDirectory, size_t DirectorySize);
+
+/// Selection JSON: schema_version:1 and optional interface_analysis_id,
+/// har_capture_id, stream_capture_id. At least one selection is required;
+/// observations must already be committed after redaction preview. Reports
+/// contain fixed metadata, original anchors and observed JSON type counts;
+/// values/names are withheld and server constraints/optionality stay unknown.
+NEVERD_API const char *neverd_web_passive_report_create_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *SelectionJSON, size_t SelectionSize);
+NEVERD_API const char *neverd_web_passive_report_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ReportID, size_t ReportIDSize,
+    uint64_t Offset, uint64_t Limit);
 
 /// Explicit passive transcript profile, followed by redaction preview/commit.
 /// Every dispatched current-revision preview revokes its previous token;
@@ -69,14 +107,26 @@ neverd_web_har_records_json(neverd_web_session_t Session,
                             const char *ExpectedRevision, size_t RevisionSize,
                             const char *CaptureID, size_t CaptureIDSize,
                             uint64_t Offset, uint64_t Limit);
-/// Direct external fetch/WebSocket syntax is inferred evidence, not proof of
-/// intrinsic identity, reachability or execution. No source text is returned.
+/// Direct fetch/WebSocket, unverified member-fetch and bounded XHR syntax are
+/// inferred evidence, not intrinsic identity, reachability or execution.
+/// Spread argument roles remain unresolved. No source text is returned.
 NEVERD_API const char *neverd_web_interfaces_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
 NEVERD_API const char *neverd_web_interface_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Explicit source-syntax relationships from one existing request analysis.
+/// No runtime response identity, wrapper argument flow or HAR join is inferred.
+NEVERD_API const char *neverd_web_interface_relations_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize);
+/// Metadata-only relation pages. Limit is 1..128; source, names and values
+/// remain private behind exact source-node and lexical-binding anchors.
+NEVERD_API const char *neverd_web_interface_relation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RelationsID, size_t RelationsIDSize,
     uint64_t Offset, uint64_t Limit);
 /// Explicit source and committed capture selections only. Matching method,
 /// origin and path produces candidate pairs, never an execution claim.
@@ -181,6 +231,15 @@ NEVERD_API const char *neverd_web_package_review_decisions_json(
     size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
     const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
     uint64_t Limit);
+/// Restore a bounded offline-package-review-journal-v1 chain atomically.
+/// The current history must be an exact prefix; unchanged replay is free.
+/// Every identity, finding, parent, ordinal and disposition is checked by the
+/// backend. Journals are caller assertions, never authenticated analyst proof.
+NEVERD_API const char *neverd_web_package_review_restore_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *JournalJSON,
+    size_t JournalSize);
 /// Return a bounded metadata-only Markdown report page in JSON. No file is
 /// written and no source disclosure or execution permission is granted.
 NEVERD_API const char *neverd_web_package_assessment_report_json(
@@ -423,6 +482,36 @@ neverd_web_pkg_records_json(neverd_web_session_t Session,
                             const char *RecordKind, size_t RecordKindSize,
                             uint64_t Offset, uint64_t Limit);
 
+/// Read the listed Wails/Go embed.FS profile from captured native bytes.
+/// All candidate tables and stored digest prefixes must validate. Declared
+/// producer versions do not authenticate the compiler or publisher; actual
+/// asset-server bindings and native bridges remain unverified.
+NEVERD_API const char *
+neverd_web_wails_extract_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ArtifactID, size_t ArtifactIDSize,
+                              const char *Profile, size_t ProfileSize);
+/// RecordKind is tables/members; Limit is 1..128. Private paths/build metadata
+/// stay withheld. File selection IDs feed the existing HTML/source/native
+/// consumers, with one separate immutable namespace per filesystem table.
+NEVERD_API const char *
+neverd_web_wails_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              const char *RecordKind, size_t RecordKindSize,
+                              uint64_t Offset, uint64_t Limit);
+
+/// Explicit local disclosure of complete native bytes and all selected table
+/// assets into a fresh private directory. Fixed filenames, no overwrite and
+/// SHA256 reread verification. Virtual paths are manifest data only. This raw
+/// operation is not exposed through worker/MCP; it does not run or parse
+/// assets.
+NEVERD_API const char *
+neverd_web_wails_export_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *OutputDirectory, size_t DirectorySize);
+
 /// Extract the explicitly qualified Bun container layout from admitted bytes.
 /// No execution or external tools; version/producer authentication is not
 /// implied. Source maps and JSC caches retain their original byte ranges.
@@ -459,6 +548,19 @@ NEVERD_API const char *neverd_web_source_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *SourceType, size_t SourceTypeSize);
+
+/// Explicit local raw disclosure of a captured direct-byte source selection
+/// into a NEW private directory. Uses the independent recovery parser;
+/// interactive source/cache limits remain unchanged. SourceType is required.
+/// Preserves exact original.bin and publishes readable.js only after a same
+/// parser-tree check. A successful evidence-export receipt can contain an
+/// unsuccessful readable_status and no readable file. No target execution,
+/// deleted-source recovery, overwrite or remote transport export occurs.
+NEVERD_API const char *neverd_web_source_readable_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize, const char *OutputDirectory,
+    size_t OutputDirectorySize);
 
 /// Enumerates syntax kinds, parent identities and original half-open byte
 /// spans for a previously analyzed source. Limit is 1..512.

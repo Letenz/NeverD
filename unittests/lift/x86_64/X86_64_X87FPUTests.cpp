@@ -38,11 +38,11 @@ TEST_F(X86_64_X87FPU, FdivPreservesSemantics) {
 }
 
 TEST_F(X86_64_X87FPU, FabsPreservesSemantics) {
-  verifyLowIRContains(testObj(), "test_fabs", "FLOAT_ABS");
+  verifyLowIRContains(testObj(), "test_fabs", "INT_AND");
 }
 
 TEST_F(X86_64_X87FPU, FchsPreservesSemantics) {
-  verifyLowIRContains(testObj(), "test_fchs", "FLOAT_NEG");
+  verifyLowIRContains(testObj(), "test_fchs", "INT_XOR");
 }
 
 TEST_F(X86_64_X87FPU, FsqrtPreservesSemantics) {

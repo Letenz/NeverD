@@ -30,6 +30,12 @@ InternalNoReturnIndex::InternalNoReturnIndex(
     : Img(Img), KnownFuncEntries(KnownFuncEntries),
       NoReturnTargets(NoReturnTargets), Roots(Roots), CodeOwners(CodeOwners) {}
 
+void InternalNoReturnIndex::clearMemoizedProofs() {
+  std::lock_guard<std::mutex> Lock(Mutex);
+  Proofs.clear();
+  Screens.clear();
+}
+
 bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
   if (Depth >= limits::kMaxNoReturnProofDepth ||
       !Img.hasExecutableCodeOwnerAt(Target))

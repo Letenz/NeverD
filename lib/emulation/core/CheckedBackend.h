@@ -75,10 +75,7 @@ public:
 
 protected:
   CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
-                 bool UserMode, bool Direct = false)
-      : UserMode(UserMode), Direct(Direct),
-        InstructionBytes(MaxInstructionBytes),
-        InstructionAlignment(InstructionAlignment) {}
+                 bool UserMode, bool Direct = false);
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   llvm::Expected<bool> decodeInstruction(uint64_t PC);
   const cs_insn &decodedInstruction() const { return *Decoded; }
@@ -87,6 +84,10 @@ protected:
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
+  virtual llvm::Error
+  withExecutionOwner(llvm::function_ref<llvm::Error()> Loop) {
+    return Loop();
+  }
   virtual void onGuestException() {}
   /// A direct contract admits nothing. The transport runs guest code until
   /// the processor raises an event, which this call publishes as a pending
@@ -125,9 +126,11 @@ protected:
   uint64_t WatchEpoch = 0;
 
 private:
-  llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
-                      bool &BackendFailed);
-  // Storage only: bytes, permissions and decoding are refreshed on every step.
+  struct InstructionCache;
+  std::unique_ptr<InstructionCache> CachedInstructions;
+  llvm::Error runImpl(uint64_t PC, bool &Started, bool &BackendFailed);
+  // Bytes and permissions are refreshed on every step; cached detail owns
+  // its complete instruction and is reused only after matching those bytes.
   // The execution lease rejects recursive entry before this storage is touched.
   std::vector<uint8_t> InstructionBytes;
   cs_insn *Decoded = nullptr;

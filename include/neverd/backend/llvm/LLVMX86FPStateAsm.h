@@ -32,6 +32,33 @@ inline constexpr char X86FPStateRoundMemoryConstraints[] = "=&x,r,r,~{memory}";
 inline constexpr char X86FPApprox12ValueConstraints[] = "=&x,x,~{memory}";
 inline constexpr char X86FPApprox12MemoryConstraints[] = "=&x,r,~{memory}";
 
+inline constexpr char X86FPMaskCompareAsmMetadata[] = "neverd.x86.mask-compare";
+inline llvm::Type *x86FPMaskCompareLLVMType(llvm::LLVMContext &C,
+                                            unsigned Layout) {
+  const unsigned Control = x86FPRoundStateControl(Layout);
+  const unsigned Element = x86FPMaskCompareElementBytes(Control);
+  auto *Scalar =
+      Element == 4 ? llvm::Type::getFloatTy(C) : llvm::Type::getDoubleTy(C);
+  return x86FPMaskCompareIsScalar(Control)
+             ? Scalar
+             : llvm::FixedVectorType::get(
+                   Scalar, x86FPStateSourceBytes(Layout) / Element);
+}
+inline const char *x86FPMaskCompareConstraints(bool Memory) {
+  return Memory ? "=&x,0,r,r,~{memory}" : "=&x,0,x,r,~{memory}";
+}
+inline std::string x86FPMaskCompareAsm(unsigned Layout, bool Memory) {
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  const unsigned Control = x86FPRoundStateControl(Layout);
+  return "ldmxcsr ($3)\n\t" + x86FPMaskCompareMnemonic(Control) + " $$" +
+         std::to_string(x86FPMaskCompareStateImmediate(Layout)) + "," +
+         (Memory ? std::string(Segment) + "($2)" : "$2") +
+         (Control & 4 ? ",$1" : "") + ",$0\n\tstmxcsr ($3)";
+}
+
 inline const char *x86FPComiConstraints(bool Memory) {
   return Memory ? "=&{ax},x,r,r,~{memory},~{flags}"
                 : "=&{ax},x,x,r,~{memory},~{flags}";
@@ -256,6 +283,44 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     return Value->getType()->isPointerTy() &&
            Value->getType()->getPointerAddressSpace() == 0;
   };
+  if (auto *Metadata = Call.getMetadata(X86FPMaskCompareAsmMetadata)) {
+    const auto Refuse = []() -> std::optional<std::pair<Intrinsic, unsigned>> {
+      llvm::report_fatal_error("invalid x86 FP state mask comparison asm");
+    };
+    if (Metadata->getNumOperands() != 1)
+      return Refuse();
+    auto *Constant =
+        llvm::dyn_cast<llvm::ConstantAsMetadata>(Metadata->getOperand(0).get());
+    auto *Integer =
+        Constant ? llvm::dyn_cast<llvm::ConstantInt>(Constant->getValue())
+                 : nullptr;
+    if (!Integer || !Integer->getType()->isIntegerTy(32) ||
+        Call.arg_size() != 3)
+      return Refuse();
+    const unsigned Layout = Integer->getZExtValue();
+    const unsigned Bytes = x86FPStateSourceBytes(Layout);
+    const unsigned Control = x86FPRoundStateControl(Layout);
+    const auto Space = x86FPRoundStateAddressSpace(Layout);
+    if (!x86FPMaskCompareLayoutIsValid(Control, Bytes) ||
+        (Space != NdMemoryAddressSpace::Default &&
+         Space != NdMemoryAddressSpace::X86FS &&
+         Space != NdMemoryAddressSpace::X86GS))
+      return Refuse();
+    const bool Memory = Call.getArgOperand(1)->getType()->isPointerTy();
+    const auto *Type = x86FPMaskCompareLLVMType(Call.getContext(), Layout);
+    const auto *Right = Call.getArgOperand(1)->getType();
+    if (Call.getType() != Type || Call.getArgOperand(0)->getType() != Type ||
+        !PointerIsDefault(Call.getArgOperand(2)) ||
+        (Memory ? Right->getPointerAddressSpace() !=
+                      llvmX86MemoryAddressSpace(Space)
+                : Space != NdMemoryAddressSpace::Default || Right != Type) ||
+        Asm->getConstraintString() != x86FPMaskCompareConstraints(Memory) ||
+        Asm->getAsmString() != x86FPMaskCompareAsm(Layout, Memory))
+      return Refuse();
+    return std::pair{Memory ? Intrinsic::X86FPMaskCompareMemoryState
+                            : Intrinsic::X86FPMaskCompareState,
+                     Layout};
+  }
   if (Call.arg_size() == 3 && Call.getType()->isIntegerTy(32) &&
       PointerIsDefault(Call.getArgOperand(2)))
     for (unsigned Control = 0; Control < 8; ++Control) {

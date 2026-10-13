@@ -14,21 +14,29 @@
 #include "llvm/IR/Instructions.h"
 
 #include <algorithm>
+#include <limits>
 #include <set>
+#include <stdexcept>
 
 namespace neverd {
 
 CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
-                                 bool InstructionsOnly)
-    : Map(Map), InstructionsOnly(InstructionsOnly) {
+                                 Recording Mode)
+    : Map(Map), Mode(Mode) {
+  if ((Mode == Recording::DefinitionsAndInstructions || recordsPositions()) &&
+      Map.Recognitions && !Map.Recognitions->empty())
+    throw std::invalid_argument(
+        "library coverage needs an independent source recording");
   Map.Anchors.clear();
-  if (!InstructionsOnly) {
+  if (Mode != Recording::Instructions) {
     Map.Regions.clear();
     Map.Definitions.clear();
     if (Map.Recognitions)
       for (size_t I = 0; I < Map.Recognitions->size(); ++I)
         Map.Regions.push_back({I, {}, false});
   }
+  if (recordsPositions())
+    return;
   for (size_t Salt = 0;; ++Salt) {
     Prefix = "\x1eND:" + std::to_string(Salt) + ':';
     if (!Ordinary.contains(Prefix))
@@ -47,7 +55,7 @@ void CSourceRecorder::prepareHighSources() {
   std::set<Key> Ambiguous;
   size_t Work = 250000;
   for (const auto &Source : *Map.HighSources) {
-    if (InstructionsOnly && Source.Kind != HighSourceKind::Expression &&
+    if (recordsInstructions() && Source.Kind != HighSourceKind::Expression &&
         Source.StatementKind)
       HighAnchors[{Source.Function, Source.Occurrence.Address,
                    *Source.StatementKind}]
@@ -63,7 +71,7 @@ void CSourceRecorder::prepareHighSources() {
       Alive[K] = std::move(Expr);
     }
   }
-  if (InstructionsOnly || !Map.Recognitions)
+  if (recordsInstructions() || !Map.Recognitions)
     return;
   for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
     const auto &Match = (*Map.Recognitions)[I];
@@ -149,7 +157,7 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
     if (Function == LLVMFunctions.end() ||
         Function->second != Observation.Function)
       continue;
-    if (InstructionsOnly) {
+    if (recordsInstructions()) {
       auto &Anchor = LLVMAnchors[Instruction];
       Anchor.first = Observation.Function;
       Anchor.second.insert(Observation.Occurrence);
@@ -241,6 +249,8 @@ std::string CSourceRecorder::end(size_t Event) const {
 
 llvm::StringRef CSourceRecorder::plain(llvm::StringRef Text,
                                        std::string &Storage) const {
+  if (recordsPositions())
+    return Text;
   size_t At = Text.find(Prefix);
   if (At == llvm::StringRef::npos)
     return Text;
@@ -255,7 +265,7 @@ llvm::StringRef CSourceRecorder::plain(llvm::StringRef Text,
 }
 
 std::string CSourceRecorder::definition(std::optional<va_t> Entry) {
-  if (InstructionsOnly)
+  if (Mode == Recording::Instructions)
     return {};
   DefinitionEntries.push_back(Entry);
   return Prefix + std::to_string(DefinitionEntries.size() - 1) + "D\x1f";
@@ -269,7 +279,7 @@ std::string CSourceRecorder::definition(const llvm::Function &Function) {
 
 std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
                                         std::string Text) {
-  if (InstructionsOnly)
+  if (recordsInstructions())
     return Text;
   auto It = HighRegions.find({Function, &Expr});
   if (It == HighRegions.end())
@@ -279,7 +289,7 @@ std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
 }
 
 std::optional<size_t> CSourceRecorder::function(va_t Entry) {
-  if (InstructionsOnly)
+  if (recordsInstructions())
     return std::nullopt;
   if (Map.Recognitions)
     for (size_t I = 0; I < Map.Recognitions->size(); ++I) {
@@ -301,7 +311,7 @@ std::optional<size_t>
 CSourceRecorder::instruction(const llvm::Instruction &Value) {
   auto I = LLVMRegions.find(&Value);
   auto Anchor = LLVMAnchors.find(&Value);
-  if (InstructionsOnly && Anchor != LLVMAnchors.end())
+  if (recordsInstructions() && Anchor != LLVMAnchors.end())
     return event(std::nullopt,
                  {Anchor->second.second.begin(), Anchor->second.second.end()},
                  Anchor->second.first);
@@ -314,7 +324,7 @@ std::optional<size_t> CSourceRecorder::statement(va_t Function,
                                                  const HighStmt &Stmt) {
   const auto At = HighStores.find({Function, Stmt.Addr});
   const auto Anchor = HighAnchors.find({Function, Stmt.Addr, Stmt.Kind});
-  if (InstructionsOnly && !Stmt.IsPhiCopy && Anchor != HighAnchors.end() &&
+  if (recordsInstructions() && !Stmt.IsPhiCopy && Anchor != HighAnchors.end() &&
       Anchor->second.size() == 1)
     return event(std::nullopt, {*Anchor->second.begin()}, Function);
   if (Stmt.Kind != StmtKind::Store)
@@ -326,7 +336,7 @@ std::optional<size_t> CSourceRecorder::statement(va_t Function,
 
 std::string CSourceRecorder::expression(const llvm::Instruction &Value,
                                         std::string Text) {
-  if (InstructionsOnly)
+  if (recordsInstructions())
     return Text;
   auto Event = instruction(Value);
   return Event ? begin(*Event) + Text + end(*Event) : Text;
@@ -334,8 +344,10 @@ std::string CSourceRecorder::expression(const llvm::Instruction &Value,
 
 bool CSourceRecorder::finish(llvm::StringRef Annotated,
                              llvm::StringRef Ordinary) {
+  if (recordsPositions())
+    return false;
   std::vector<CSourceRegion> Candidate =
-      InstructionsOnly ? std::vector<CSourceRegion>() : Map.Regions;
+      recordsInstructions() ? std::vector<CSourceRegion>() : Map.Regions;
   std::vector<std::set<sigs::LibraryOccurrence>> Covered(Candidate.size());
   std::string Clean;
   struct Frame {
@@ -422,12 +434,73 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
   for (auto &Region : Candidate)
     if (!Region.Mapped)
       Region.Spans.clear();
-  if (InstructionsOnly)
+  if (recordsInstructions())
     Map.Anchors = std::move(Anchors);
-  else {
+  else
     Map.Regions = std::move(Candidate);
+  if (Mode != Recording::Instructions)
     Map.Definitions = std::move(Definitions);
+  return true;
+}
+
+void CSourceRecorder::positionDefinition(std::optional<va_t> Entry,
+                                         uint64_t Offset) {
+  if (!recordsPositions() || Offset > std::numeric_limits<size_t>::max()) {
+    PositionsValid = false;
+    return;
   }
+  PositionDefinitions.push_back({Entry, static_cast<size_t>(Offset)});
+}
+
+void CSourceRecorder::positionStatement(size_t Event, uint64_t Begin,
+                                        uint64_t End) {
+  if (!recordsPositions() || Event >= Events.size() ||
+      !Events[Event].Function || Begin > End ||
+      End > std::numeric_limits<size_t>::max()) {
+    PositionsValid = false;
+    return;
+  }
+  // A suppressed statement emits no text and must not gain a navigation span.
+  if (Begin != End)
+    PositionAnchors.push_back(
+        {*Events[Event].Function,
+         {static_cast<size_t>(Begin), static_cast<size_t>(End)},
+         Events[Event].Coverage});
+}
+
+void CSourceRecorder::appendPositionBuffer(size_t First, uint64_t Size,
+                                           uint64_t Offset) {
+  if (!recordsPositions() || First > PositionAnchors.size() ||
+      Offset > std::numeric_limits<size_t>::max() ||
+      Size > std::numeric_limits<size_t>::max() - Offset) {
+    PositionsValid = false;
+    return;
+  }
+  for (size_t I = First; I < PositionAnchors.size(); ++I) {
+    auto &Span = PositionAnchors[I].Span;
+    if (Span.Begin > Span.End || Span.End > Size) {
+      PositionsValid = false;
+      return;
+    }
+  }
+  for (size_t I = First; I < PositionAnchors.size(); ++I) {
+    PositionAnchors[I].Span.Begin += Offset;
+    PositionAnchors[I].Span.End += Offset;
+  }
+}
+
+bool CSourceRecorder::finishPositions(llvm::StringRef Ordinary) {
+  if (!recordsPositions() || !PositionsValid)
+    return false;
+  for (const auto &Definition : PositionDefinitions)
+    if (Definition.Begin > Ordinary.size())
+      return false;
+  for (const auto &Anchor : PositionAnchors)
+    if (Anchor.Span.Begin >= Anchor.Span.End ||
+        Anchor.Span.End > Ordinary.size())
+      return false;
+  Map.Definitions = std::move(PositionDefinitions);
+  Map.Anchors = std::move(PositionAnchors);
   return true;
 }
 

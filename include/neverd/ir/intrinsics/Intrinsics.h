@@ -350,6 +350,9 @@ enum class Intrinsic : uint16_t {
   // Append-only: scalar comparison flags below the outgoing MXCSR.
   X86FPComiState,
   X86FPComiMemoryState,
+  // Append-only: raw scalar/packed masks below the outgoing MXCSR.
+  X86FPMaskCompareState,
+  X86FPMaskCompareMemoryState,
 
   _Count = 16000
 };
@@ -630,6 +633,7 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
+  case Intrinsic::X86FPMaskCompareMemoryState:
   case Intrinsic::X86FPComiMemoryState:
   case Intrinsic::X86FPScalarConvertMemoryState:
   case Intrinsic::X86F16CReadState:
@@ -852,6 +856,11 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     // [id,address,control,MXCSR]; widths are owned by X86FPState.h.
     return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&
            DataSize == 4 && (OutputSize == 8 || OutputSize == 12);
+  case Intrinsic::X86FPMaskCompareMemoryState:
+    return NumInputs == 6 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 1 &&
+           (OutputSize == 8 || OutputSize == 12 || OutputSize == 20 ||
+            OutputSize == 36);
   case Intrinsic::X86FPComiMemoryState:
     return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
            (DataSize == 4 || DataSize == 8) && OutputSize == 8;
@@ -1018,6 +1027,13 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   default:
     return false;
   }
+}
+
+/// An x86 instruction that stores a descriptor-table selector or the machine
+/// status word: the value it writes is what it runs for, so a function that
+/// returns it returns a value.
+constexpr bool isX86SystemRegisterStore(Intrinsic Id) {
+  return Id == Intrinsic::Sldt || Id == Intrinsic::Str || Id == Intrinsic::Smsw;
 }
 
 /// Some x86 system instructions share an intrinsic ID between r/m16 memory

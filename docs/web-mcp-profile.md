@@ -48,13 +48,32 @@ Tools use `neverd_web_` names and schema version 1; `schema_version` defaults to
 1 when omitted. The catalog covers import, metadata, artifacts, source/maps,
 bindings, primitive semantics and primitive/lexical rewrite receipts,
 modules/bundles/navigation, structural views,
-anchors, Bun/SEA/nexe/pkg/ASAR extraction, package/archive/integrity/diff evidence,
+anchors, Bun/SEA/nexe/pkg/ASAR/Wails/Tauri extraction, package/archive/integrity/diff evidence,
 selected Node source/package behavior metadata and installation traces,
 Electron/HTML, passive HAR/streams/interfaces and native loader metadata.
 Published IDs, decimal-string revisions/coordinates, evidence classes and
 backend pagination fields remain unchanged. Tool responses contain the same
 evidence object in `structuredContent` and equivalent JSON in one text block.
 Clients should discover schemas rather than assume disabled capabilities.
+
+Tauri selection adds a canonical decimal-string `initializer_address` to the
+explicit artifact/profile/revision selection. The shared native pipeline
+derives the descriptor; tools cannot accept caller-supplied tables or pointer
+proofs. Complete PHF/Brotli validation precedes metadata-only member pages.
+Raw Tauri export is omitted from MCP. See the [Tauri profile](web-tauri-profile.md).
+
+Existing source navigation also publishes the independently versioned
+`desktop_bridges` record kind. Direct Tauri/Wails candidates retain shared
+source/call/binding IDs, redacted argument roles and incomplete API/native-target
+claims. No additional tool is added; parser omission removes navigation as
+before. The same source-anchor operation resolves each row through its original
+or decoded storage. See the [bridge profile](web-desktop-bridge-profile.md).
+
+The same records tool also admits `config_merges`, under its independent
+configuration-object-order profile. Ordered terms and lexical loading syntax
+links retain source spans and unknown-key barriers while configuration values
+stay private. Loader identity and effective configuration remain unverified.
+See the [configuration profile](web-configuration-order-profile.md).
 
 `neverd_web_package_install_analyze` requires revision and package analysis ID;
 the matching package behavior ID is optional. No source selection is needed to
@@ -146,9 +165,10 @@ Standalone dependency/ABI compatibility must be tested with the actual shipped
 engine. The existing Python capability-owner checker does not validate this
 MCP surface; its C++ catalog and integration suites do.
 
-This increment does not complete all five JavaScript epics. The current
-[implementation ledger](web-analysis-implementation.md) records executed
-checks and the remaining product work.
+Raw desktop-resource export is also excluded from MCP. Selected passive reports
+use committed IDs and the shared metadata policy. The current
+[acceptance audit](web-epic-acceptance.md) owns five-epic completion claims;
+the [implementation ledger](web-analysis-implementation.md) retains exact checks.
 
 Primary protocol references: [stdio](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports),
 [lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle),

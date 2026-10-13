@@ -86,6 +86,13 @@ add_neverd_unittest(NeverDPipelineOutcomeTests
 target_include_directories(NeverDPipelineOutcomeTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/pipeline")
 
+# These fixtures require externally supplied, natively verified MSVC images.
+# Keep their optional input separate from the mandatory portable pipeline owner.
+add_neverd_unittest(NeverDNativeFinallyInputTests
+  NativeFinallyInputTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+
 add_neverd_unittest(NeverDSourceDialectTests
   backend/SourceDialectTests.cpp
   LINK_COMPONENTS BackendC
@@ -247,6 +254,27 @@ add_subdirectory(lift)
 add_subdirectory(translate)
 if(NEVERD_ENABLE_SEMANTIC_TESTS)
   add_subdirectory(semantic)
+  if(TARGET neverd_shared)
+    add_neverd_tool(NeverDSourcePatchLegacyFixture
+      SourcePatchLegacyMachOFixture.cpp
+      LINK_COMPONENTS CodeGen
+      LINK_LIBS LLVMIRReader)
+    add_neverd_unittest(NeverDSourcePatchMatrixTests
+      SourcePatchMatrixTests.cpp
+      LINK_COMPONENTS Loader
+      LINK_LIBS neverd_shared unicorn LLVMSupport
+    )
+    if(WIN32)
+      # Target selection is a private C++ codegen API, not a DLL export.
+      target_link_libraries(NeverDSourcePatchMatrixTests PRIVATE NeverDCodeGen)
+    endif()
+    target_include_directories(NeverDSourcePatchMatrixTests PRIVATE
+      ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+    target_compile_definitions(NeverDSourcePatchMatrixTests PRIVATE
+      NEVERD_TEST_CLANG="${NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE}"
+      NEVERD_TEST_LEGACY_FIXTURE="$<TARGET_FILE:NeverDSourcePatchLegacyFixture>")
+    add_dependencies(NeverDSourcePatchMatrixTests NeverDSourcePatchLegacyFixture)
+  endif()
 endif()
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(emulation)

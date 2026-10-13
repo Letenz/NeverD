@@ -36,6 +36,8 @@ struct LoadOptions {
   /// The platform whose conventions a binary file's code follows: "sysv",
   /// "windows" or "darwin"; empty reads it from the code.
   QString platform;
+  /// A manually selected PDB, with its import mode and file stamp.
+  QJsonObject pdb;
 };
 
 /// The project's writable worker and a bounded read-only analysis pool.
@@ -56,6 +58,8 @@ public:
   }
 
   bool connected() const { return connected_; }
+  /// The configured NeverD worker, also used by separate offline workbenches.
+  QString workerPath() const { return workerPath_; }
   bool loaded() const { return loaded_; }
   bool opening() const { return opening_; }
   bool dirty() const { return dirty_ || pendingWrites_ > 0; }
@@ -106,6 +110,10 @@ public:
   bool identifiesFiles() const {
     return capabilities_.contains(QStringLiteral("identify"));
   }
+  bool loadsPdbFiles() const {
+    return capabilities_.contains(QStringLiteral("pdb_load"));
+  }
+  void loadPdb(const QJsonObject &selection);
   void closeFile();
   /// Read the input file again through a fresh worker, as IDA's "Reload the
   /// input file": its bytes as they are now, with the saved names, comments
@@ -253,6 +261,7 @@ private:
   void migrateStringOptions(const QJsonArray &encodings);
   void resetState();
   void setError(const QString &text);
+  void reportPdb(const QJsonObject &result);
   /// Whether an edit aimed at \p epoch may be applied now.
   bool acceptsEdit(std::optional<quint64> epoch);
 

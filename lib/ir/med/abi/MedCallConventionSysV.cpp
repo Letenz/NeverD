@@ -12,6 +12,9 @@
 // at entry, so a function that only aligns the stack for a call with a push
 // of RAX passes no stack argument.  A libc import with a fixed prototype
 // reads exactly its parameters, through its PLT stub or its GOT slot alike.
+// A function's register parameters are those its callers pass: the ones its
+// summary lists, not a register whose old value only a byte write keeps
+// (`setg cl` merges into RCX).
 //
 //===----------------------------------------------------------------------===//
 
@@ -41,6 +44,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .StackArgumentSummary = true,
     .UndefinedIncomingScratchRegisters = true,
     .IndirectCallsTakePrecedingSetup = true,
+    .ParametersFromIncomingReads = true,
     .FormattedCallArguments = true,
 };
 

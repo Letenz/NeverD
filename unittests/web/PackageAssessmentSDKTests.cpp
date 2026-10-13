@@ -169,6 +169,21 @@ protected:
         Head.size(), Finding.data(), Finding.size(), Disposition,
         std::strlen(Disposition)));
   }
+  Object journal(const Value &A) {
+    return Object{{"schema_version", 1},
+                  {"profile", "offline-package-review-journal-v1"},
+                  {"package_assessment_id", field(A, "package_assessment_id")},
+                  {"review_root_id", field(A, "review_root_id")},
+                  {"review_head_id", field(A, "review_head_id")},
+                  {"decisions", llvm::json::Array(items(decisions(A)))}};
+  }
+  Value restore(const Value &A, const std::string &Text) {
+    const auto ID = field(A, "package_assessment_id"),
+               Head = field(A, "review_head_id");
+    return take(neverd_web_package_review_restore_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), Head.data(),
+        Head.size(), Text.data(), Text.size()));
+  }
   Value attestation(uint64_t Index, const char *Kind = "registry-dist") {
     const auto Input = artifact(Index), Descriptor = artifact(3);
     return take(neverd_web_package_attestation_import_json(
@@ -318,6 +333,72 @@ TEST_F(WebPackageAssessmentSDK, ReviewChangesPreserveEvidenceAndLastReplay) {
             std::string::npos);
   // Recreating the same evidence recipe returns the current head, not a reset.
   EXPECT_EQ(field(create(), "review_head_id"), field(U2, "review_head_id"));
+}
+
+TEST_F(WebPackageAssessmentSDK, JournalRestoresExactEvidenceAfterCaptureReset) {
+  const auto A = create();
+  const auto Finding = field(items(page(A))[0], "finding_id");
+  const auto First = append(A, Finding);
+  const auto Second = append(First, Finding, "false_positive");
+  const auto Saved = encode(Value(journal(Second)));
+  EXPECT_EQ(Saved.find("CANARY"), std::string::npos);
+  EXPECT_EQ(Saved.find("notes"), std::string::npos);
+  open();
+  const auto Fresh = create();
+  ASSERT_EQ(field(Fresh, "package_assessment_id"),
+            field(A, "package_assessment_id"));
+  ASSERT_EQ(field(Fresh, "review_head_id"), field(A, "review_root_id"));
+  const auto Restored = restore(Fresh, Saved);
+  ASSERT_EQ(field(Restored, "status"), "ok");
+  EXPECT_EQ(Restored.getAsObject()->getInteger("restored_events"), 2);
+  EXPECT_EQ(field(Restored, "review_head_id"), field(Second, "review_head_id"));
+  EXPECT_EQ(field(items(page(Restored))[0], "disposition"), "false_positive");
+  const auto BeforeReplay = encode(metadata());
+  const auto Replay = restore(Restored, Saved);
+  EXPECT_EQ(Replay.getAsObject()->getBoolean("replayed"), true);
+  EXPECT_EQ(encode(metadata()), BeforeReplay);
+  EXPECT_EQ(code(restore(Fresh, Saved)), "stale_package_review_head");
+  EXPECT_EQ(items(decisions(Restored)).size(), 2u);
+}
+
+TEST_F(WebPackageAssessmentSDK, JournalSchemaTamperingAndLateErrorsAreAtomic) {
+  const auto A = create();
+  const auto Finding = field(items(page(A))[0], "finding_id");
+  const auto First = append(A, Finding);
+  const auto Second = append(First, Finding, "false_positive");
+  const auto Saved = journal(Second);
+  open();
+  const auto Fresh = create();
+  const auto Before = encode(metadata());
+  auto Unknown = Saved;
+  Unknown["notes"] = "CANARY";
+  EXPECT_EQ(code(restore(Fresh, encode(Value(std::move(Unknown))))),
+            "invalid_package_review_journal_field");
+  auto Late = Saved;
+  (*Late.getArray("decisions"))[1].getAsObject()->operator[]("decision_id") =
+      std::string(64, 'a');
+  EXPECT_EQ(code(restore(Fresh, encode(Value(std::move(Late))))),
+            "package_review_chain_mismatch");
+  auto Foreign = Saved;
+  Foreign["package_assessment_id"] = std::string(64, 'a');
+  EXPECT_EQ(code(restore(Fresh, encode(Value(std::move(Foreign))))),
+            "package_review_owner_mismatch");
+  auto InvalidState = Saved;
+  (*InvalidState.getArray("decisions"))[0].getAsObject()->operator[](
+      "disposition") = "safe";
+  EXPECT_EQ(code(restore(Fresh, encode(Value(std::move(InvalidState))))),
+            "invalid_package_disposition");
+  EXPECT_EQ(code(restore(Fresh, R"({"schema_version":1,"schema_version":1})")),
+            "duplicate_json_key");
+  EXPECT_EQ(code(restore(Fresh, std::string(256 * 1024 + 1, 'x'))),
+            "invalid_buffer");
+  EXPECT_EQ(encode(metadata()), Before);
+  EXPECT_TRUE(items(decisions(Fresh)).empty());
+  auto RootOnly = journal(Fresh);
+  const auto Valid = restore(Fresh, encode(Value(Object(Saved))));
+  ASSERT_EQ(field(Valid, "status"), "ok");
+  EXPECT_EQ(code(restore(Valid, encode(Value(std::move(RootOnly))))),
+            "package_review_prefix_mismatch");
 }
 
 TEST_F(WebPackageAssessmentSDK,

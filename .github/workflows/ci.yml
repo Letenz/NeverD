@@ -165,12 +165,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes clang cmake lld ninja-build gcc-multilib
+          # Ubuntu 24.04 exposes the unversioned Mach-O linker here.
+          printf '%s\n' /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install cmake lld ninja
+          brew install cmake lld ninja llvm@22
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
       - name: Prepare current hosted account KVM access
@@ -197,6 +199,8 @@ jobs:
           ninja --version
           "$CC" --version
           ld.lld --version
+          lld-link --version
+          ld64.lld --version
         env:
           CC: ${{ matrix.cc }}
 
@@ -305,6 +309,16 @@ jobs:
         shell: bash
         run: |
           PYTHON_EXECUTABLE="$("$PYTHON" -c 'import sys; print(sys.executable)')"
+          source_patch_compiler_args=()
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # Apple Clang's Darwin probe-stack method is not admitted by the
+            # LLVM IR replacement backend. Select its supported frontend profile
+            # explicitly without changing the compiler used to build NeverD.
+            source_patch_clang="$(brew --prefix llvm@22)/bin/clang"
+            "$source_patch_clang" --version
+            source_patch_compiler_args+=(
+              "-DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=$source_patch_clang")
+          fi
           cmake -E make_directory build-ci/.cmake/api/v1/query
           cmake -E touch build-ci/.cmake/api/v1/query/codemodel-v2
           cmake -E touch build-ci/.cmake/api/v1/query/cmakeFiles-v1
@@ -321,7 +335,8 @@ jobs:
             -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=ON \
             -DNEVERD_ENABLE_DRIVER_EMULATION=ON \
             -DPython3_EXECUTABLE="$PYTHON_EXECUTABLE" \
-            -DNEVERD_LLVM_PREBUILT="$NEVERD_LLVM_PREBUILT_MODE"
+            -DNEVERD_LLVM_PREBUILT="$NEVERD_LLVM_PREBUILT_MODE" \
+            "${source_patch_compiler_args[@]}"
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
@@ -2321,7 +2336,7 @@ jobs:
             NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationRealignedTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
             NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests \
-            NeverDPipelineOutcomeTests neverd
+            NeverDPipelineOutcomeTests NeverDNativeFinallyInputTests neverd
       - name: Verify registration state and canonical LLVM metadata
         env:
           NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
@@ -2348,7 +2363,7 @@ jobs:
         env:
           NEVERD_NONLOCAL_FINALLY_INPUTS: build-windows-eh/nonlocal-finally
         run: |
-          build-windows-eh/bin/NeverDPipelineOutcomeTests \
+          build-windows-eh/bin/NeverDNativeFinallyInputTests \
             --gtest_filter=PipelineOutcome.NativeFinallyInputsRetainSourceLLVM \
             --gtest_output=xml:build-windows-eh/evidence/nonlocal-finally-source.xml
       - name: Execute generated x86 callback frames with real exceptions

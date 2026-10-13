@@ -25,6 +25,17 @@
 
 namespace neverd {
 
+/// The operand a move reads: an immediate of an instruction that moves
+/// only numbers (ARMLifter::movesNumbers) is a number, never an address
+/// that happens to equal it.
+static NdVar movedImmediate(ARMLifter &L, ARMLifter::LiftState &S,
+                            const cs_arm_op &Op) {
+  if (Op.type == ARM_OP_IMM && Op.shift.type == ARM_SFT_INVALID &&
+      L.movesNumbers())
+    return NdVar::scalar(static_cast<uint32_t>(Op.imm), 4);
+  return L.operandRead(S, Op);
+}
+
 bool liftCoreMove(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
                   const cs_arm &ARM) {
   switch (Insn->id) {
@@ -37,7 +48,7 @@ bool liftCoreMove(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
   case ARM_INS_MOVS: {
     if (ARM.op_count < 2)
       break;
-    NdVar Src = L.operandRead(S, ARM.operands[1]);
+    NdVar Src = movedImmediate(L, S, ARM.operands[1]);
     NdVar Dst = L.operandWrite(ARM.operands[0]);
 
     // Capstone 6 may decode `MOV{S} Rd, Rm, <shift> #imm` (disassembled with
@@ -180,7 +191,7 @@ bool liftCoreMove(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
   case ARM_INS_MOVW: {
     if (ARM.op_count < 2)
       break;
-    NdVar Src = L.operandRead(S, ARM.operands[1]);
+    NdVar Src = movedImmediate(L, S, ARM.operands[1]);
     NdVar Dst = L.operandWrite(ARM.operands[0]);
     S.emit(NdOp::COPY, Dst, {Src});
     break;
@@ -204,7 +215,7 @@ bool liftCoreMove(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
   case ARM_INS_MVN: {
     if (ARM.op_count < 2)
       break;
-    NdVar Src = L.operandRead(S, ARM.operands[1]);
+    NdVar Src = movedImmediate(L, S, ARM.operands[1]);
     NdVar Dst = L.operandWrite(ARM.operands[0]);
     if (ARM.update_flags)
       L.emitLogicalOpCarry(S, Insn, ARM.operands[1]);

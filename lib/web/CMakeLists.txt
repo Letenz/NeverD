@@ -31,12 +31,19 @@ add_neverd_component_library(NeverDWeb
   packages/assessment/Publication.cpp
   packages/assessment/Report.cpp
   SessionPackageAssessments.cpp
+  SessionPackageReviewRestore.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp
   SessionInterfaces.cpp
+  SessionInterfaceRelations.cpp
+  SessionPassiveReport.cpp
+  interfaces/report/Compose.cpp
+  interfaces/report/Shapes.cpp
+  interfaces/report/Publication.cpp
   streams/Framing.cpp
   streams/Records.cpp
+  streams/ProtocolMethods.cpp
   streams/Relations.cpp
   SessionStreams.cpp
   SessionPackages.cpp
@@ -62,7 +69,26 @@ add_neverd_component_library(NeverDWeb
   desktop/Manifest.cpp
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
+  desktop/ResourceManifest.cpp
+  desktop/wails/ELF.cpp
+  desktop/wails/PE.cpp
+  desktop/wails/Mappings.cpp
+  desktop/wails/Profiles.cpp
+  desktop/wails/BuildInfo.cpp
+  desktop/wails/Tables.cpp
+  desktop/wails/Contents.cpp
+  desktop/wails/Reader.cpp
+  SessionWails.cpp
+  SessionWailsExport.cpp
+  desktop/tauri/PHF.cpp
+  desktop/tauri/Reader.cpp
+  desktop/bridge/Publication.cpp
+  features/configuration/Publication.cpp
+  SessionTauri.cpp
+  SessionTauriExport.cpp
+  compression/Brotli.cpp
   SessionDesktop.cpp
+  SessionDesktopExport.cpp
   SessionElectron.cpp
   SessionElectronIPC.cpp
   SessionElectronEntries.cpp
@@ -87,6 +113,7 @@ add_neverd_component_library(NeverDWeb
   compression/Zstd.cpp
   SessionBun.cpp
   SessionBunExport.cpp
+  SessionReadableExport.cpp
   InputRoot.cpp
   JsonReader.cpp
   SourceLocation.cpp
@@ -100,11 +127,14 @@ add_neverd_component_library(NeverDWeb
   SessionBundles.cpp
   SessionView.cpp
   SessionNavigation.cpp
+  features/Publication.cpp
   SessionAnchor.cpp
   SessionNative.cpp
   LLVM_COMPONENTS Support
 )
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebBrotli.cmake")
+neverd_add_web_brotli()
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
   target_link_libraries(NeverDWeb PRIVATE ZLIB::ZLIB)
@@ -157,6 +187,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   include("${CMAKE_SOURCE_DIR}/cmake/NeverDJavaScriptParser.cmake")
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
+    desktop/bridge/Source.cpp
+    features/configuration/Analysis.cpp
     packages/behavior/Rules.cpp
     packages/behavior/Source.cpp
     packages/behavior/Package.cpp
@@ -166,7 +198,14 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/SourceInterfaces.cpp
     interfaces/SourceContext.cpp
     interfaces/SourceFetch.cpp
+    interfaces/SourceWrappers.cpp
     interfaces/SourceXHR.cpp
+    interfaces/RelationContext.cpp
+    interfaces/RequestLinks.cpp
+    interfaces/ResultLinks.cpp
+    interfaces/TransformationLinks.cpp
+    interfaces/SourceRelations.cpp
+    interfaces/report/Source.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
     rewrite/Rename.cpp
@@ -178,7 +217,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     rewrite/Validate.cpp
     rewrite/Export.cpp
     SourceModel.cpp SourceBindings.cpp SourceEvaluate.cpp SourceEffects.cpp SourceModules.cpp HTMLModules.cpp
-    SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
+    SourceBundles.cpp SourceView.cpp SourceNavigation.cpp
+    features/Analysis.cpp features/Recognize.cpp
+    SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
   target_link_libraries(NeverDWeb PRIVATE neverd_js_parser)
   target_compile_definitions(NeverDWeb PRIVATE NEVERD_ENABLE_WEB_JAVASCRIPT=1)
   if(MSVC)

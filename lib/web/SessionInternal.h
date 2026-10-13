@@ -17,11 +17,14 @@
 
 #include "neverd/web/Asar.h"
 #include "neverd/web/Bun.h"
+#include "neverd/web/ConfigurationOrder.h"
+#include "neverd/web/DesktopBridge.h"
 #include "neverd/web/DesktopManifest.h"
 #include "neverd/web/Electron.h"
 #include "neverd/web/ElectronEntries.h"
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
+#include "neverd/web/InterfaceRelations.h"
 #include "neverd/web/Interfaces.h"
 #include "neverd/web/Nexe.h"
 #include "neverd/web/NodeBehavior.h"
@@ -33,6 +36,7 @@
 #include "neverd/web/PackageInstall.h"
 #include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
+#include "neverd/web/PassiveReport.h"
 #include "neverd/web/Pkg.h"
 #include "neverd/web/SEA.h"
 #include "neverd/web/Session.h"
@@ -40,12 +44,14 @@
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceBundles.h"
 #include "neverd/web/SourceEffects.h"
+#include "neverd/web/SourceFeatures.h"
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
 #include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceView.h"
 #include "neverd/web/Streams.h"
+#include "neverd/web/Wails.h"
 
 #include <map>
 #include <mutex>
@@ -62,7 +68,13 @@ struct Session::Impl {
   uint64_t PreviewSequence = 0;
   std::map<std::string, SourceAnalysis> Sources;
   std::map<std::string, SourceBindingAnalysis> Bindings;
-  std::map<std::string, SourceNavigation> Navigation;
+  struct NavigationResults {
+    SourceNavigation Evidence;
+    SourceFeatures Features;
+    DesktopBridgeSource Bridges;
+    ConfigurationSourceOrder Configuration;
+  };
+  std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {
     SourceValueAnalysis Values;
     SourceEffectAnalysis Effects;
@@ -79,6 +91,8 @@ struct Session::Impl {
   std::map<std::string, SEAExtraction> SEAExtractions;
   std::map<std::string, NexeExtraction> NexeExtractions;
   std::map<std::string, PkgExtraction> PkgExtractions;
+  std::map<std::string, WailsExtraction> WailsExtractions;
+  std::map<std::string, TauriExtraction> TauriExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
   std::map<std::string, ElectronManifest> ElectronManifests;
   std::map<std::pair<std::string, std::string>, DesktopManifest>
@@ -114,7 +128,9 @@ struct Session::Impl {
   std::string HARPreviewToken;
   uint64_t HARPreviewSequence = 0;
   std::map<std::string, SourceInterfaces> InterfaceSources;
+  std::map<std::string, InterfaceSourceRelations> InterfaceRelations;
   std::map<std::string, InterfaceCorrelation> InterfaceCorrelations;
+  std::map<std::string, PassiveReport> PassiveReports;
   uint64_t CachedArchiveBytes = 0;
   struct HTMLResults {
     HTMLDocument Document;
@@ -144,7 +160,8 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && NexeExtractions.empty() &&
-                   PkgExtractions.empty() && AsarExtractions.empty() &&
+                   PkgExtractions.empty() && WailsExtractions.empty() &&
+                   TauriExtractions.empty() && AsarExtractions.empty() &&
                    ElectronManifests.empty() && DesktopManifests.empty() &&
                    HTMLDocuments.empty() && PackageAnalyses.empty() &&
                    PackageArchives.empty() && PackageIntegrity.empty() &&

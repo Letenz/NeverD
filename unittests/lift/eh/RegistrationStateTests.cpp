@@ -1460,6 +1460,137 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
   }
 }
 
+TEST(RegistrationState, OnlyCanonicalWaitPreservesLocalFinallyFrameEffects) {
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto F = makeBranchingFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    Chain.Scopes = {{-1, 0, 0x1800, true}};
+    F.Blocks.resize(7);
+    auto &Setup = F.Blocks[4];
+    Setup.Id = 4;
+    Setup.StartAddr = 0x1080;
+    Setup.EndAddr = 0x1088;
+    emitOp(Setup, 0x1080, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(32, 4)});
+    emitOp(Setup, 0x1083, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+    emitOp(Setup, 0x1086, NdOp::STORE, {},
+           {NdVar::reg(x86reg::RCX, 4), NdVar::reg(x86reg::RSP, 4)});
+    Setup.InstructionBoundaries = {
+        {0x1080, 3, 0, 1}, {0x1083, 3, 1, 1}, {0x1086, 2, 2, 1}};
+    F.Blocks[0].Succs = {4};
+    Setup.Succs = {1};
+    F.Blocks[1].Succs = {5};
+    auto &Call = F.Blocks[5];
+    Call.Id = 5;
+    Call.StartAddr = 0x1100;
+    Call.EndAddr = 0x110b;
+    Call.Succs = {2};
+    emitOp(Call, 0x1100, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    emitOp(Call, 0x1100, NdOp::STORE, {},
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(UINT32_MAX, 4)});
+    emitOp(Call, 0x1102, NdOp::INT_ADD, NdVar::reg(x86reg::RDX, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Call, 0x1105, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    emitOp(Call, 0x1105, NdOp::STORE, {},
+           {NdVar::reg(x86reg::RSP, 4), NdVar::reg(x86reg::RDX, 4)});
+    emitOp(Call, 0x1106, NdOp::CALL, {}, {NdVar::cst(0x2100, 4)});
+    Call.InstructionBoundaries = {{0x1100, 2, 0, 2},
+                                  {0x1102, 3, 2, 1},
+                                  {0x1105, 1, 3, 2},
+                                  {0x1106, 5, 5, 1}};
+    Call.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+    auto &Finally = F.Blocks[6];
+    Finally.Id = 6;
+    Finally.StartAddr = 0x1800;
+    Finally.EndAddr = 0x1808;
+    emitOp(Finally, 0x1800, NdOp::INT_ADD, NdVar::tmp(0, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-28), 4)});
+    emitOp(Finally, 0x1800, NdOp::STORE, {},
+           {NdVar::tmp(0, 4), NdVar::reg(x86reg::RBP, 4)});
+    emitOp(Finally, 0x1806, NdOp::INTRINSIC, {},
+           {NdVar::cst(uint64_t(Intrinsic::X87Wait), 2)});
+    auto &Wait = Finally.Ops.back();
+    switch (Mode) {
+    case 1:
+      Wait.Inputs[0].Offset = uint64_t(Intrinsic::Syscall);
+      break;
+    case 2:
+      Wait.addInput(NdVar::reg(x86reg::RBP, 4));
+      break;
+    case 3:
+      Wait.Inputs[0].Size = 1;
+      break;
+    case 4:
+      Wait.Output = NdVar::reg(x86reg::RAX, 4);
+      break;
+    case 5:
+      Wait.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 6:
+      Wait.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 7:
+      Wait.Inputs[0] = NdVar::reg(x86reg::RAX, 2);
+      break;
+    case 8:
+      Wait.Inputs[0].Offset |= uint64_t{1} << 16;
+      break;
+    }
+    emitOp(Finally, 0x1807, NdOp::RETURN, {}, {});
+    Finally.InstructionBoundaries = {
+        {0x1800, 6, 0, 2}, {0x1806, 1, 2, 1}, {0x1807, 1, 3, 1}};
+    Finally.InstructionBoundaries.back().Control =
+        LowInstructionControl::Return;
+    emitOp(F.Blocks[2], 0x1020, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+           {NdVar::reg(x86reg::RSP, 4)});
+    const auto SPSeq = F.Blocks[2].Ops.back().Seq;
+    emitOp(F.Blocks[2], 0x1020, NdOp::INT_ADD, NdVar::tmp(0, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-28), 4)});
+    emitOp(F.Blocks[2], 0x1020, NdOp::LOAD, NdVar::reg(x86reg::RCX, 4),
+           {NdVar::tmp(0, 4)});
+    const auto EffectSeq = F.Blocks[2].Ops.back().Seq;
+    // Close the parent registration after observing the returning finally's
+    // effects; a still-installed terminal block cannot prove its lifetime.
+    auto &Unlink = F.Blocks[3];
+    emitOp(Unlink, 0x1030, NdOp::INT_ADD, NdVar::tmp(0, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Unlink, 0x1030, NdOp::LOAD, NdVar::tmp(8, 4), {NdVar::tmp(0, 4)});
+    emitOp(Unlink, 0x1030, NdOp::STORE, {},
+           {NdVar::cst(0, 8), NdVar::tmp(8, 4)}, NdMemoryAddressSpace::X86FS);
+    Unlink.InstructionBoundaries = {{0x1030, 7, 0, 3}};
+    const std::vector<RegistrationLocalUnwindContract> Calls{{0x2100, false}};
+    const auto A =
+        analyzeRegistrationStates(F, 0, 0, nullptr, nullptr, nullptr, &Calls);
+    EXPECT_EQ(A.Complete, Mode == 0);
+    EXPECT_FALSE(A.CallFrameEffectsComplete);
+    EXPECT_TRUE(A.CallFrameEffects.empty());
+    if (Mode != 0)
+      continue;
+    EXPECT_TRUE(A.CallbackStatesComplete);
+    EXPECT_TRUE(A.RegistrationLifetimeComplete);
+    ASSERT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1}));
+    bool FoundSP = false, FoundEffect = false;
+    for (const auto &Value : A.FrameValues) {
+      if (Value.Address == 0x1020 && Value.OpSeq == SPSeq) {
+        FoundSP = true;
+        EXPECT_EQ(Value.EstablishedFrameOffset, -56);
+      }
+      if (Value.Address == 0x1020 && Value.OpSeq == EffectSeq) {
+        FoundEffect = true;
+        EXPECT_EQ(Value.EstablishedFrameOffset, 0);
+      }
+    }
+    EXPECT_TRUE(FoundSP);
+    EXPECT_TRUE(FoundEffect);
+    EXPECT_TRUE(A.Blocks[6].Reached);
+    EXPECT_TRUE(A.Blocks[6].CanDispatch);
+  }
+}
+
 TEST(RegistrationState, LocalFinallyOwnsOnlyItsAllocatedCallbackStack) {
   for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
     SCOPED_TRACE(Mutation);
@@ -1789,6 +1920,63 @@ TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
         return D.find("budget exhausted") != std::string::npos;
       }));
     }
+  }
+}
+
+TEST(RegistrationState, OnlyCanonicalWaitPreservesInitializedFrameObjects) {
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto F = makeCxxObjectCall();
+    LowBlock Effects;
+    emitOp(Effects, 0x1013, NdOp::INTRINSIC, {},
+           {NdVar::cst(uint64_t(Intrinsic::X87Wait), 2)});
+    auto &Wait = Effects.Ops.back();
+    switch (Mode) {
+    case 1:
+      Wait.Inputs[0].Offset = uint64_t(Intrinsic::Syscall);
+      break;
+    case 2:
+      Wait.addInput(NdVar::reg(x86reg::RBP, 4));
+      break;
+    case 3:
+      Wait.Inputs[0].Size = 1;
+      break;
+    case 4:
+      Wait.Output = NdVar::reg(x86reg::RAX, 4);
+      break;
+    case 5:
+      Wait.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 6:
+      Wait.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 7:
+      Wait.Inputs[0] = NdVar::reg(x86reg::RAX, 2);
+      break;
+    case 8:
+      Wait.Inputs[0].Offset |= uint64_t{1} << 16;
+      break;
+    }
+    auto &Body = F.Blocks[1];
+    auto BeforeState =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(),
+                     [](const auto &Op) { return Op.Addr == 0x1016; });
+    ASSERT_NE(BeforeState, Body.Ops.end());
+    Body.Ops.insert(BeforeState, Effects.Ops.begin(), Effects.Ops.end());
+    for (size_t I = 0; I != Body.Ops.size(); ++I)
+      Body.Ops[I].Seq = I;
+    const std::vector Contracts{objectLeafContract()};
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_EQ(A.Complete, Mode == 0);
+    EXPECT_EQ(A.CallFrameEffectsComplete, Mode == 0);
+    if (Mode == 0) {
+      EXPECT_TRUE(A.RegistrationLifetimeComplete);
+      EXPECT_TRUE(A.CxxContinuationsComplete);
+      ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+      EXPECT_EQ(A.CallFrameEffects[0].FrameReads,
+                (std::vector<RegistrationObjectExtent>{{-24, -20}}));
+    } else
+      EXPECT_TRUE(A.CallFrameEffects.empty());
   }
 }
 

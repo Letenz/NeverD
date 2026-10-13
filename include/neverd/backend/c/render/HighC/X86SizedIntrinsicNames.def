@@ -1,0 +1,23 @@
+//===- X86SizedIntrinsicNames.def - x86 C intrinsics by width ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The C intrinsic for an x86 operation one intrinsic ID covers at more than
+/// one width, by the width of its result.  The name intrinsics_x86_cnames.inc
+/// gives is the widest form's; a narrower form calls its own, whose
+/// parameters convert its operands at their width.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_X86_SIZED_C_NAME(Intrinsic, ResultBytes, Name)
+#ifndef NEVERD_X86_SIZED_C_NAME
+#define NEVERD_X86_SIZED_C_NAME(Intrinsic, ResultBytes, Name)
+#endif
+
+NEVERD_X86_SIZED_C_NAME(Pdep, 4, "_pdep_u32")
+NEVERD_X86_SIZED_C_NAME(Pext, 4, "_pext_u32")
+
+#undef NEVERD_X86_SIZED_C_NAME

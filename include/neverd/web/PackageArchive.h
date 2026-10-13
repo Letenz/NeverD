@@ -18,6 +18,8 @@ namespace neverd::web {
 
 inline constexpr std::string_view PackageArchiveProfile =
     "ustar-pax-single-gzip-v1";
+inline constexpr std::string_view PackageGNUArchiveProfile =
+    "gnu-oldtar-basic-single-gzip-v1";
 inline constexpr std::string_view ZipArchiveProfile = "zip32-local-central-v1";
 inline constexpr uint64_t MaxPackageArchiveBytes = 512ULL * 1024 * 1024;
 inline constexpr uint64_t MaxPackageArchiveFileBytes = 256ULL * 1024 * 1024;

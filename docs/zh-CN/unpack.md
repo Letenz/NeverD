@@ -36,9 +36,9 @@ PE32+ DLL 输入由 `IMAGE_FILE_DLL` 标识。建模的来宾 EXE 调用 `LoadLi
 
 `ProcessView::runtimeState(include_backing)` 为暂停的驱动提供 `WindowsDriverState`。内核所有者保存每个存活池的分配 API、精确请求大小、标签，以及有效的旧式类型或完整的新式 flags。请求内容时独立复制恰好这些字节；仅捕获元数据时不包含内容。已释放的池、借用的加载器对象以及设备对象不会成为池记录。该捕获不提供指针来源或原生初始化器，现有依赖和重定位拒绝条件继续有效。
 
-`WindowsDriverState::Entry` 保留最初 DriverEntry 的寄存器基线与返回／shadow frame、停止时的整数／XMM／浮点控制寄存器，以及当前 OS 所有的栈范围。请求 backing 时复制完整活动栈。后续分派和卸载调用仍保留原基线，并明确标记为 DriverEntry 之外的调用。这些具体观测不构成指针来源或新调用者绑定证明。
+`WindowsDriverState::Entry` 保留最初 DriverEntry 的寄存器基线与返回／shadow frame、停止时的整数／XMM／浮点控制寄存器，以及当前 OS 所有的栈范围。请求 backing 时复制完整活动栈。后续分派和卸载调用仍保留原基线，并明确标记为 DriverEntry 之外的调用。这些具体观测不构成指针来源或新调用者绑定证明。 指令获准执行后，即使寄存器和帧的数值相同或随后恢复，仍须重建新调用者的绑定；数值相等不能证明继续点的输入绑定或仍需使用的输出。
 
-即使没有遗留池或借用对象，内核映像重定位仍是独立的加载器依赖。当前重建器移除生成内容的重定位，因此默认驱动恢复返回 `unsupported_state`，不会创建或截断输出。仅显式 `snapshot_only` 输出固定基址快照并保留该诊断。原始重定位表不能证明其覆盖生成的指针。
+即使没有遗留池或借用对象，内核映像重定位仍是独立的加载器依赖。默认驱动恢复返回 `unsupported_state`，不会创建或截断输出。显式 `snapshot_only` 保留此诊断，并可保留物理写入证据仍完整的原始 DIR64 字段。字段事实通过 SHA-256 和两个映像基址绑定到已验证的输入；同值写入、ABA 恢复、映射丢失和写入跟踪不透明的执行都会撤销证据。导入修复或元数据格式化替换的字段会被排除。这份部分清单不涵盖生成指针，也不能绑定新的 DriverEntry 调用者。
 
 ```bash
 neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
@@ -90,7 +90,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 ## 重建的镜像
 
-各节保持原有 RVA，并保存观察到的内存和页面权限，包括已经执行的初始化器产生的变化。末尾的 `.neverd` 节保存新的导入目录；已存在的导出地址单元保持原位，修复导出调用和地址加载所需的新增 IAT 单元只放入新节，保留原有零填充存储。`imports` 中的 `origin` 区分由输入导入目录绑定的 `static` 单元，以及由来宾写入或为修复调用而增加的 `runtime` 单元。镜像固定在观察到的基址：生成内容的重定位未经观察，因此移除重定位目录并设置 `IMAGE_FILE_RELOCS_STRIPPED`。
+各节保留 RVA、观察到的内存和页面权限。末尾 `.neverd` 节保存新导入元数据及修复导出调用、地址加载所需的单元，保留原有零填充存储。`imports.origin` 区分输入目录的 `static` 单元和来宾写入或修复的 `runtime` 单元。生成内容的重定位仍未知。用户态映像固定在观察基址；内核快照仅可输出上文有证据的加载字段。仅当该目录非空时清除 `IMAGE_FILE_RELOCS_STRIPPED`，内核运行时依赖仍未解决。
 
 用户态节范围将 `VirtualSize`（为零时取 `SizeOfRawData`）向上对齐到来宾页；`SectionAlignment` 只定位 RVA。最后一个有效页内的节原始数据尾部保留，超出该范围的字节不映射。重建保留 `FileAlignment`，文件对齐填充补零，不从节间隙借读。此规则的原生证据仅覆盖 x64 Windows DLL。运行时准入、元数据读取和固定镜像校验共享未按页对齐的逻辑范围。零 `VirtualSize` 使用 `SizeOfRawData`，非零值仍约束元数据。加载器使用私有读取视图兼容 LLVM，并为执行、调试身份和字节认证保留原始数据。驱动映射不在用户态分页规则范围内。
 
@@ -143,3 +143,9 @@ neverd unpack packed.exe -o unpacked.exe \
 恢复的 DLL 入口与原始 PE 入口不同时，写入器生成加载器通知适配器：进程附加进入选定入口，卸载和线程通知进入原始的可执行入口，以保留外层包装函数的清理。原始入口不可用时重建失败。报告的 `entry_rva` 仍表示选定的程序入口，PE 头可以指向适配器。独立包装 DLL 测试在两种仿真架构和原生 Windows 上检查选定函数之外的清理。
 
 `runtime_state.additional_state_inventory_known` 与 `has_additional_dependencies` 报告 OS 所有者保留的私有堆、虚拟内存保留区、锁、句柄、视图及异常状态。清单缺失或仍有资源时，即使没有堆指针匹配，默认恢复也会拒绝。显式快照保留诊断；运行时恢复必须重建受支持的所有者。
+
+checked x64 执行在 DriverEntry 返回时重新验证本次加载器调用：RBX/RBP/RSI/RDI/R12–15、XMM6–15 的全部 128 位、MXCSR 控制位、FPCSR，以及方向标志清零。易失寄存器和 MXCSR 状态位允许变化。检查失败会在发布 NTSTATUS 或执行生命周期前停止。此返回检查不重建捕获入口，不证明其他调用者，也不认证 Windows 原生内核加载。
+
+驱动执行断点交接仅在前一次安装的 RAM 写监视未被触及时复用已有代码快照。已提交写入即使写回相同值，也会使此保证失效。内核服务、调度边界和新调用要求刷新；新增监视范围仍须先建立初始快照。
+
+存活内核池在地址和精确范围与池所有者一致时，保留有类型的分配依赖，不再重复归类为未知 arena 对象。池与其他对象共存或被释放时，其他对象仍是依赖。此分类不建立指针来源，也不启用原生运行时恢复。

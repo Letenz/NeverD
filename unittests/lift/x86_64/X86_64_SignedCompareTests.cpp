@@ -72,3 +72,54 @@ int search(int a) {
 )C",
                        "search", {"search"});
 }
+
+// A byte compare-and-swap loop retries until the byte it read is the one the
+// swap found.  One side reads as a signed char and the other as an unsigned
+// one; C promotes 0xC8 to -56 and to 200, so the bytes compare unsigned.
+// The bounded retry ends a loop that would never see them equal.
+TEST_F(X86_64_SignedCompare, BytesCompareEqualWhateverTheirSignedness) {
+  expectRunsLikeSource(R"C(
+static unsigned char gc8;
+int acas8(int x) {
+  unsigned s = (unsigned)x;
+  int out = 0;
+  gc8 = 0;
+  for (int k = 0; k < 64; k++) {
+    s = s * 1103515245u + 12345u;
+    unsigned char add = (unsigned char)(s >> 24), oldv, newv;
+    int tries = 0;
+    do {
+      oldv = gc8;
+      newv = (unsigned char)(oldv * 3 + add);
+    } while (!__sync_bool_compare_and_swap(&gc8, oldv, newv) && ++tries < 4);
+    out ^= (int)(unsigned char)gc8;
+  }
+  return out;
+}
+)C",
+                       "acas8", {"acas8", "gc8"});
+}
+
+// `test si, si; cmovle` clamps a negative halfword to zero: si is at most
+// zero as a signed 16-bit value.  Printed as `x <= 0` against a 32-bit zero,
+// the halfword extended without its sign, and no negative one was clamped.
+TEST_F(X86_64_SignedCompare, AHalfwordAtMostZeroComparesItsSign) {
+  expectRunsLikeSource(R"C(
+int clamp16(int a) {
+  short x[64];
+  unsigned acc = 0;
+  for (int i = 0; i < 64; i++)
+    x[i] = (short)(((a * (i + 1)) >> 2) - 300);
+  for (int i = 0; i < 64; i++) {
+    int v = x[i];
+    if (v < 0)
+      v = 0;
+    if (v > 255)
+      v = 255;
+    acc = acc * 131u + (unsigned)v;
+  }
+  return (int)acc;
+}
+)C",
+                       "clamp16", {"clamp16"});
+}

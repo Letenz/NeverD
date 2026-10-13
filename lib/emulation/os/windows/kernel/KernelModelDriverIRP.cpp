@@ -73,7 +73,12 @@ KernelModel::allocateDriverIRP(llvm::ArrayRef<uint64_t> Arguments) {
   DriverIRPAllocation Allocation;
   Allocation.Size = Size;
   Allocation.StackCount = Count;
-  DriverIRPs.emplace(*IRP, Allocation);
+  auto &Stored = DriverIRPs.emplace(*IRP, Allocation).first->second;
+  auto Watch = watchInitialization(*IRP + IRPStatusOffset,
+                                   Stored.IOStatusWritten.size());
+  if (!Watch)
+    return Watch.takeError();
+  Stored.IOStatusInitialization = std::move(*Watch);
   return *IRP;
 }
 

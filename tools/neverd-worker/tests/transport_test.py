@@ -455,6 +455,53 @@ def run(executable):
             "listing", {"address": "0xffff800012340051", "before": 0, "after": 1})["payload"]["lines"]]
         assert any("sub rsp, 100000b" in line for line in code), code
         reopened.close()
+        # function_6's bytes are a part of function_0 apart from its body: the
+        # chunk opens and closes with its function's name, reads by a label,
+        # and its lines belong to that function.
+        chunked = Path(directory) / "function-chunks.bin"
+        chunked.write_bytes(b"mock input")
+        parts = clients.enter_context(Client(executable))
+        assert parts.call("open", {"path": str(chunked)})["status"] == "ok"
+        lines = parts.call("listing", {"address": "0xffff800012340060", "before": 4, "after": 30})["payload"]["lines"]
+        texts = [" ".join(line["text"].split()) for line in lines]
+        assert "; START OF FUNCTION CHUNK FOR function_0" in texts, texts
+        assert any(text.startswith("loc_FFFF800012340060:") for text in texts), texts
+        assert "; END OF FUNCTION CHUNK FOR function_0" in texts, texts
+        assert not any("function_6" in text for text in texts), texts
+        chunk = [line for line in lines
+                 if line["kind"] == "insn" and 0xffff800012340060 <= int(line["address"], 16) < 0xffff800012340070]
+        assert chunk and all(line["function"] == "function_0" and line["function_address"] == BASE
+                             for line in chunk), chunk
+        listed = parts.call("functions", {"filter": "function_6", "limit": 50})["payload"]["items"]
+        assert listed and not any(item["address"] == "0xffff800012340060" for item in listed), listed
+        # An address in the chunk resolves to its function, so a reference
+        # there opens that function's code.
+        owner = parts.call("resolve", {"query": "0xffff800012340064"})["payload"]
+        assert owner["function_address"] == BASE and owner["address"] == "0xffff800012340064", owner
+        parts.close()
+        # A symbol whose name spells its string literal (MSVC's ??_C@) leaves
+        # the string its own name; a name the user gives it is a name again.
+        literals = Path(directory) / "literal-names.bin"
+        literals.write_bytes(b"mock input")
+        spelled = clients.enter_context(Client(executable))
+        assert spelled.call("open", {"path": str(literals)})["status"] == "ok"
+
+        def wide_lines():
+            return [" ".join(line["text"].split()) for line in spelled.call(
+                "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
+        rodata = wide_lines()
+        assert any(line.startswith("aWide:") for line in rodata), rodata
+        assert not any("??_C@" in line for line in rodata), rodata
+        # A literal among the code lists as a string there too.
+        code = [" ".join(line["text"].split()) for line in spelled.call(
+            "listing", {"address": "0xffff800012340200", "before": 0, "after": 4})["payload"]["lines"]]
+        assert any(line.startswith("aInline db 'Inline',0") for line in code), code
+        assert not any("??_C@" in line for line in code), code
+        assert spelled.call("rename", {"address": "0xffff800012343108", "name": "kWide"})["status"] == "ok"
+        rodata = wide_lines()
+        assert any(line.startswith("kWide:") for line in rodata), rodata
+        assert "text \"UTF-16LE\", 'Wide',0" in rodata, rodata
+        spelled.close()
 
     malformed = Client(executable)
     malformed.process.stdin.write(struct.pack(">I", 1) + b"{")

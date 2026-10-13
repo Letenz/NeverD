@@ -57,6 +57,8 @@ public:
   int opcodeBytes() const { return opcodeBytes_; }
   /// Refetch the loaded window (names, comments or analysis changed).
   void refresh();
+  /// Discard cached rows, selection and pending reads for a closed image.
+  void clear();
   /// Find \p text forward from the cursor among the loaded lines.
   bool findInLoaded(const QString &text, bool forward);
   /// A jump was requested and its lines have not arrived yet.

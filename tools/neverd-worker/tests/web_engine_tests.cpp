@@ -17,6 +17,8 @@
 #include "../../../unittests/web/PackageArchiveFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/TauriFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "WebEngine.h"
 
@@ -318,6 +320,7 @@ int main(int argc, char **argv) {
                   "source_navigation_analyze") != caps["operations"].end();
     Json navigationSummary, navigationRecords, navigationRequest, anchorResult,
         anchorRequest;
+    Json navigationFeatures, navigationFeatureRequest;
     Json viewPreview, viewCommit, viewRecords, viewChunk, viewQuery,
         viewCommitRequest;
     Json bundleSourceRequest, bundleRequest, bundleRecordsRequest,
@@ -430,6 +433,17 @@ int main(int argc, char **argv) {
         navigationRequest["record_kind"] = "calls";
         navigationRecords =
             web.execute("web_source_navigation_records", navigationRequest);
+        navigationFeatureRequest = bindingRequest;
+        navigationFeatureRequest["record_kind"] = "features";
+        navigationFeatures = web.execute("web_source_navigation_records",
+                                         navigationFeatureRequest);
+        check(navigationFeatures.at("client_features").at("status") ==
+                      "partial" &&
+                  navigationFeatures.at("client_features")
+                          .at("feature_inventory_complete") == false &&
+                  navigationFeatures.dump().find("SECRET_WEB") ==
+                      std::string::npos,
+              "Client source patterns lost coverage or exposed private values");
         check(navigationRecords.at("runtime_call_graph") == "not_analyzed" &&
                   navigationRecords.dump().find("SECRET_WEB") ==
                       std::string::npos,
@@ -586,6 +600,10 @@ int main(int argc, char **argv) {
                              "1", project);
         check(reply.at("payload") == navigationRecords,
               "Worker navigation records differ");
+        reply = process.call("web_source_navigation_records",
+                             navigationFeatureRequest, "1", project);
+        check(reply.at("payload") == navigationFeatures,
+              "Worker client source features differ");
         reply = process.call("web_source_anchor", anchorRequest, "1", project);
         check(reply.at("payload") == anchorResult,
               "Worker source/storage/view anchor differs");
@@ -1748,6 +1766,26 @@ int main(int argc, char **argv) {
     check(history["items"].size() == 1 &&
               history["items"][0]["assertion_source"] == "caller",
           "Worker changed immutable analyst history");
+    const Json journal{
+        {"schema_version", 1},
+        {"profile", "offline-package-review-journal-v1"},
+        {"package_assessment_id", reviewed["package_assessment_id"]},
+        {"review_root_id", reviewed["review_root_id"]},
+        {"review_head_id", reviewed["review_head_id"]},
+        {"decisions", history["items"]}};
+    Json restore{{"schema_version", 1},
+                 {"revision", packageRevision},
+                 {"package_assessment_id", reviewed["package_assessment_id"]},
+                 {"expected_review_head", reviewed["review_head_id"]},
+                 {"journal_json", journal.dump()}};
+    const auto restored = assessmentCall("web_package_review_restore", restore);
+    check(restored["replayed"] == true && restored["restored_events"] == 0,
+          "Worker charged an identical review journal twice");
+    restore["notes"] = "SECRET_WEB";
+    reply = process.call("web_package_review_restore", restore, packageRevision,
+                         packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted an arbitrary review note");
     assessmentCall("web_package_assessment_report", assessmentPage);
     assessmentSelection["raw"] = true;
     reply = process.call("web_package_assessment_create", assessmentSelection,
@@ -1881,12 +1919,18 @@ int main(int argc, char **argv) {
         "postData":{"text":"SECRET_WEB"}},
         "response":{"status":200,"content":{"text":"SECRET_WEB"}}}]}})";
       std::ofstream(interfaceRoot / "b.js")
-          << "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+          << "const SECRET_WEB_RESULT=await "
+             "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+             "SECRET_WEB_RESULT.json();"
              "const SECRET_WEB_XHR = new XMLHttpRequest();"
              "SECRET_WEB_XHR.open('GET','https://SECRET_WEB/a');"
              "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
              "SECRET_WEB_XHR.send('SECRET_WEB');"
              "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;"
+             "this.fetch('https://SECRET_WEB/a', {method:'POST'});"
+             "fetch(...SECRET_WEB_ARGUMENTS);"
+             "const SECRET_WEB_WRAPPER=(u,i)=>fetch(u,i);"
+             "SECRET_WEB_WRAPPER('https://SECRET_WEB/wrapper',{method:'POST'});"
              "const recovered='SECRET_'+'WEB_RECOVERED';const n=1+2;";
       const auto beforeInterfaces = web.revision(),
                  beforeProject = web.projectId();
@@ -1962,8 +2006,12 @@ int main(int argc, char **argv) {
         reply = process.call("web_interfaces_analyze", infer, interfaceRevision,
                              interfaceProject);
         check(reply["payload"] == analysis &&
-                  analysis["interface_count"] == 5 &&
-                  analysis["profile"] == "fetch-websocket-xhr-syntax-v2" &&
+                  analysis["interface_count"] == 9 &&
+                  analysis["fetch_member_correlation"] == false &&
+                  analysis["profile"] ==
+                      "fetch-websocket-xhr-wrappers-syntax-v4" &&
+                  analysis["wrapper_definitions"] == 1 &&
+                  analysis["wrapper_correlation"] == false &&
                   analysis["xhr_correlation"] == false,
               "Static interfaces differ");
         const Json sourcePage{
@@ -1980,8 +2028,59 @@ int main(int argc, char **argv) {
                   sites["items"][4]["handler_status"] == "value_syntax" &&
                   sites["items"][1]["receiver_binding_id"] ==
                       sites["items"][4]["receiver_binding_id"] &&
+                  sites["items"][5]["kind"] == "fetch_member_call" &&
+                  sites["items"][5]["receiver_node_id"].is_string() &&
+                  sites["items"][5]["method"] == "unknown" &&
+                  sites["items"][6]["arguments_status"] ==
+                      "spread_unresolved" &&
+                  sites["items"][6]["url_node_id"].is_null() &&
+                  sites["items"][6]["method"] == "unknown" &&
+                  sites["items"][8]["kind"] == "fetch_wrapper_call" &&
+                  sites["items"][8]["method"] == "POST" &&
+                  sites["items"][8]["wrapper_request_node_id"] ==
+                      sites["items"][7]["node_id"] &&
+                  sites["items"][8]["url_argument_index"] == 0 &&
+                  sites["items"][8]["options_argument_index"] == 1 &&
                   reply.dump().find("SECRET_WEB") == std::string::npos,
               "XHR syntax evidence differs or exposes values");
+        const auto relations =
+            web.execute("web_interface_relations_analyze", sourcePage);
+        reply = process.call("web_interface_relations_analyze", sourcePage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relations &&
+                  relations["relation_count"] == 4 &&
+                  relations["profile"] == "request-source-relations-v2" &&
+                  relations["response_api_identity"] ==
+                      "member_spelling_unverified" &&
+                  relations["har_correlation"] == false,
+              "Request relations differ or promote response identity");
+        const Json relationPage{{"schema_version", 1},
+                                {"revision", interfaceRevision},
+                                {"relations_id", relations["relations_id"]}};
+        const auto relationRecords =
+            web.execute("web_interface_relation_records", relationPage);
+        reply = process.call("web_interface_relation_records", relationPage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relationRecords &&
+                  relationRecords["items"][0]["kind"] ==
+                      "await_result_const_binding" &&
+                  relationRecords["items"][1]["kind"] ==
+                      "request_function_containment" &&
+                  relationRecords["items"][2]["kind"] ==
+                      "direct_request_return" &&
+                  relationRecords["items"][3]["kind"] ==
+                      "bound_result_member_call" &&
+                  relationRecords["items"][3]["member_spelling"] == "json" &&
+                  relationRecords["items"][0]["binding_id"] ==
+                      relationRecords["items"][3]["binding_id"] &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Request relation pages differ or expose private values");
+        auto invalidRelations = relationPage;
+        invalidRelations["execute"] = true;
+        reply = process.call("web_interface_relation_records", invalidRelations,
+                             interfaceRevision, interfaceProject);
+        check(reply["error"]["code"] == "invalid_request",
+              "Request relation pages accepted an execution field");
         for (const auto *Pass : {"string_recovery", "constant_folding"}) {
           auto RewriteArgs = infer;
           RewriteArgs["pass"] = Pass;
@@ -2208,6 +2307,27 @@ int main(int argc, char **argv) {
                 records["protocol_negotiation_verified"] == false &&
                 reply.dump().find("SECRET_WEB") == std::string::npos,
             "Stream pages differ or expose values");
+      const Json reportArgs{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"stream_capture_id", redaction["stream_capture_id"]}};
+      const auto Report = web.execute("web_passive_report_create", reportArgs);
+      reply = process.call("web_passive_report_create", reportArgs, revision,
+                           project);
+      check(reply["payload"] == Report &&
+                Report["server_constraints"] == "unknown" &&
+                Report["record_count"] == 2,
+            "Worker changed passive report evidence");
+      const Json reportPage{{"schema_version", 1},
+                            {"revision", revision},
+                            {"passive_report_id", Report["passive_report_id"]}};
+      const auto ReportRecords =
+          web.execute("web_passive_report_records", reportPage);
+      reply = process.call("web_passive_report_records", reportPage, revision,
+                           project);
+      check(reply["payload"] == ReportRecords &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed report pages or exposed values");
       auto invalid = previewArgs;
       invalid["replay"] = true;
       reply = process.call("web_stream_preview", invalid, revision, project);
@@ -2347,6 +2467,176 @@ int main(int argc, char **argv) {
       reply = process.call("web_pkg_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "pkg accepted execution option");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "wails_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "wails";
+      std::ofstream(path, std::ios::binary) << neverd::web::wails_test::elf();
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "Wails capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"artifact_id", items["items"][0]["artifact_id"]},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto extracted = web.execute("web_wails_extract", args);
+      reply = process.call("web_wails_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 3,
+            "Wails extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto records = web.execute("web_wails_records", page);
+      reply = process.call("web_wails_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Wails pages differ or reveal names");
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_wails_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "Wails accepted execution option");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "tauri_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "tauri";
+      std::ofstream(path, std::ios::binary) << neverd::web::tauri_test::image();
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "Tauri capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"artifact_id", items["items"][0]["artifact_id"]},
+          {"profile", "tauri-phf-0.10-macho-x64-five-store-brotli-v1"},
+          {"initializer_address", "4294967552"}};
+      const auto extracted = web.execute("web_tauri_extract", args);
+      reply = process.call("web_tauri_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 2,
+            "Tauri native projection differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"offset", 0},
+                      {"limit", 1}};
+      const auto records = web.execute("web_tauri_records", page);
+      reply = process.call("web_tauri_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Tauri pages differ or reveal bytes");
+      auto invalid = args;
+      invalid["table"] = Json::object();
+      reply = process.call("web_tauri_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "Tauri accepted caller-supplied table");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "source_analyze") != caps["operations"].end()) {
+      fixture.write(
+          "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
+          "const defaults=loadSettings('CANARY');"
+          "({...defaults,permissions:{},...CANARY_OVERRIDES});");
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", fixture.path()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "Desktop bridge capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto artifacts = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json sourceArgs{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"artifact_id", artifacts["items"][0]["artifact_id"]},
+          {"source_type", "script"}};
+      const auto source = web.execute("web_source_analyze", sourceArgs);
+      reply = process.call("web_source_analyze", sourceArgs, revision, project);
+      check(reply["payload"] == source, "Desktop bridge source differs");
+      Json args{{"schema_version", 1},
+                {"revision", revision},
+                {"source_id", source["source_id"]}};
+      const auto navigation =
+          web.execute("web_source_navigation_analyze", args);
+      reply = process.call("web_source_navigation_analyze", args, revision,
+                           project);
+      check(reply["payload"] == navigation &&
+                navigation["desktop_bridges"]["record_count"] == 2 &&
+                navigation["desktop_bridges"]["bridge_inventory_complete"] ==
+                    false,
+            "Worker desktop bridge coverage differs");
+      args["record_kind"] = "desktop_bridges";
+      args["limit"] = 1;
+      const auto first = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == first && first["next_offset"] == 1 &&
+                first["items"][0]["form"] == "window_ipc_message" &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker Tauri bridge page differs or reveals values");
+      args["offset"] = 1;
+      const auto rest = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == rest && rest["page_complete"] == true &&
+                rest["items"][0]["target_name_node_ids"].size() == 3 &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker Wails bridge anchors differ or reveal names");
+      args["record_kind"] = "config_merges";
+      args["offset"] = 0;
+      const auto order = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == order && order["items"].size() == 1 &&
+                order["items"][0]["terms"][0]["configuration_call_feature_id"]
+                    .is_string() &&
+                order["items"][0]["fields"][0]["possible_later_overwrite"] ==
+                    true &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker configuration source order differs or reveals values");
+      args["execute"] = true;
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["error"]["code"] == "invalid_request",
+            "Worker bridge pages accepted execution options");
     }
     process.stop();
     std::ifstream errors(fixture.root / "stderr");

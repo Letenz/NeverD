@@ -370,8 +370,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     const bool RightEq = AsEqZero(E.Operands[1].get(), XEq) &&
                          AsSignedLtZero(E.Operands[0].get(), XLt);
     if ((LeftEq || RightEq) && SameScalar(XEq.get(), XLt.get())) {
+      // The zero takes x's width: a wider one would compare x extended,
+      // and a 16-bit x zero-extended is never below zero.
+      const uint16_t Bytes = XEq->Type && XEq->Type->Size ? XEq->Type->Size : 4;
       auto Sle = HighExpr::makeBinop(NdOp::INT_SLESSEQUAL, XEq,
-                                     HighExpr::makeConst(0, 4));
+                                     HighExpr::makeConst(0, Bytes));
       return renderBinOp(*Sle, ParentPrec);
     }
   }
@@ -818,6 +821,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                        E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;
+    // A slice at or past the operand's last byte reads the zeros it extends
+    // with: a literal keeps its C width, as `(uint32_t)0` stands for a
+    // 16-byte vector of zeros, and shifting by that width or more is
+    // undefined in C.
+    if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int &&
+        E.Operands[0]->Type->Size && ByteOff >= E.Operands[0]->Type->Size &&
+        E.Type && E.Type->Kind == NdTypeKind::Int)
+      return "(" + Ty + ")0";
     // Literals retain their C spelling width, which can be much narrower than
     // their IR carrier. Shift the unsigned source bits at their declared width.
     if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int)
@@ -1068,7 +1079,15 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       }
       return false;
     };
-    (void)(ApplyEnum(A, B, true) || ApplyEnum(B, A, false));
+    const bool Enumerator = ApplyEnum(A, B, true) || ApplyEnum(B, A, false);
+    // Below int, C promotes each operand by its own signedness: a signed
+    // char holding 0xC8 is -56, an unsigned one 200.  The machine compares
+    // the bits, so both compare in the unsigned type of their width.
+    // The width is the left operand's, as the casts below take it.
+    const TypeRef &Width = E.Operands[0]->Type;
+    if (!Enumerator && Width && Width->Kind == NdTypeKind::Int &&
+        Width->Size < sizeof(int))
+      NeedsUnsignedCast = true;
   }
 
   if (NeedsUnsignedCast || NeedsSignedCast) {
@@ -1181,6 +1200,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                ")" + exprStr(*Op, 99);
       if (Op->Kind == ExprKind::Const && Op->ConstVal == 0)
         return std::string("0");
+      // A constant of the narrow width an equality compares in reads as the
+      // int it is promoted to.
+      if (Op->Kind == ExprKind::Const &&
+          (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL) &&
+          CmpSize < sizeof(int))
+        return constStr(Op->ConstVal & ((uint64_t{1} << (8 * CmpSize)) - 1),
+                        NdType::makeInt(CmpSize, false));
       // What the text certainly prints as decides over the IR's type: a
       // declared local or parameter can read in the other signedness, and
       // arithmetic printed in a variable's place reads as C converts it.

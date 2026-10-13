@@ -35,6 +35,8 @@ inline constexpr uint64_t MaxPackageAssessmentSteps = 8000000;
 inline constexpr uint64_t MaxPackageAssessmentBytes = 16 * 1024 * 1024;
 inline constexpr uint64_t MaxPackageReviewDecisions = 256;
 inline constexpr uint64_t MaxPackageReviewBytes = 256 * 1024;
+inline constexpr std::string_view PackageReviewJournalProfile =
+    "offline-package-review-journal-v1";
 
 enum class PackageFindingKind {
   Coverage,
@@ -148,4 +150,13 @@ PackageReviewUpdate appendPackageReview(const PackageAssessment &Assessment,
                                         std::string_view FindingID,
                                         PackageDisposition Disposition,
                                         PackageReviewCapacity Remaining);
+/// Validate an entire supplied chain with this assessment's authoritative
+/// identity recipe. Prior must be an exact prefix. Only a suffix is charged;
+/// an exact current-head replay is free. No partial restoration is published.
+/// Retained bytes are computed here, never trusted from a journal.
+PackageReviewUpdate restorePackageReview(const PackageAssessment &Assessment,
+                                         const PackageReviewState &Prior,
+                                         std::string_view ExpectedHead,
+                                         PackageReviewState Candidate,
+                                         PackageReviewCapacity Remaining);
 } // namespace neverd::web

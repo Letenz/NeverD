@@ -56,6 +56,7 @@ endif()
 
 add_library(neverd_shared SHARED ${NEVERD_SDK_SOURCES})
 if(NEVERD_ENABLE_WEB_ANALYSIS)
+    target_sources(neverd_shared PRIVATE capi/TauriInitializer.cpp)
     target_link_libraries(neverd_shared PRIVATE NeverDWeb)
     set_source_files_properties(capi/NeverDCAPIWeb.cpp PROPERTIES
         COMPILE_DEFINITIONS NEVERD_ENABLE_WEB_ANALYSIS=1)

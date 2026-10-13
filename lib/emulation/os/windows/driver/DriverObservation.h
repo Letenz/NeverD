@@ -8,6 +8,7 @@
 
 #include "../kernel/KernelExportRegistry.h"
 
+#include "neverd/emulation/MemoryView.h"
 #include "neverd/emulation/ProcessObserver.h"
 #include "neverd/emulation/WindowsDriverState.h"
 
@@ -21,10 +22,19 @@ class KernelModel;
 /// only request a suspension.
 class DriverObservation final : public ProcessView {
 public:
+  struct RelocationWitness {
+    MemoryView Bytes;
+    MemoryWriteWitness Writes;
+  };
+  /// Bind loader fields immediately after image copy, before model fixups.
+  static llvm::Expected<std::vector<RelocationWitness>>
+  watchRelocations(ExecutionBackend &CPU, const DriverImage &Image);
   DriverObservation(ProcessObserver *Observer, ExecutionBackend &CPU,
                     const DriverImage &Image, KernelModel &Kernel,
                     const KernelExportRegistry &Exports,
-                    const DriverResult &Result, std::string Name);
+                    const DriverResult &Result,
+                    std::vector<RelocationWitness> RelocationWrites,
+                    std::string Name);
   llvm::Error entered(bool EntryInvocation, ProcessStackView Stack);
   llvm::Error resuming();
   bool matches(uint64_t PC);
@@ -62,20 +72,27 @@ public:
   runtimeState(bool IncludeBacking) override;
   std::optional<uint64_t> nativeCallCount() const override;
   llvm::Expected<uint32_t> instructionSize(uint64_t Address) override;
+  bool watchedMemoryUnchanged() const override { return MemoryUnchanged; }
+  void setWatchedMemoryUnchanged(bool Unchanged) {
+    MemoryUnchanged = Unchanged;
+  }
 
 private:
   llvm::Error replaceWatches(std::vector<ExecutionWatch> Next);
   llvm::Expected<WindowsDriverState::RegisterFile> entryRegisters();
   llvm::Expected<WindowsDriverState::EntryContext>
   entryContext(bool IncludeBacking);
+  llvm::Expected<WindowsDriverState::ImageRelocationState> imageRelocations();
   ProcessObserver *Observer;
   ExecutionBackend &CPU;
   const DriverImage &Image;
   KernelModel &Kernel;
   const KernelExportRegistry &Exports;
   const DriverResult &Result;
+  std::vector<RelocationWitness> RelocationWrites;
   std::string Name;
   bool Started = false, EntryInvocation = false;
+  bool MemoryUnchanged = false;
   ProcessStackView Stack{};
   WindowsDriverState::RegisterFile InitialRegisters;
   std::array<uint8_t, 40> InitialFrame{};

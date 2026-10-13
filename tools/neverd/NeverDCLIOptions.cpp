@@ -510,6 +510,23 @@ cl::opt<std::string> PdbFile(
     cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
     cl::sub(HuntCmd));
 
+cl::opt<bool> PdbUnverified(
+    "pdb-unverified",
+    cl::desc("Use the --pdb file for analysis when the PE records no CodeView "
+             "identity to verify it against.  Its machine, section layout and "
+             "any identity the PE does record must still match"),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
 cl::opt<std::string> MapFile(
     "map",
     cl::desc("Load symbols from this linker .map (MSVC, lld, GNU ld, or "

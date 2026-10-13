@@ -465,13 +465,12 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (TRI.isFrameOrLinkReg(RegOff) || TRI.isStackPointer(RegOff) ||
           (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff))
         continue;
-      if (Op.CallPreservedGPRs)
-        if (auto Family = gprFamilyOf(TRI.TheArch, RegOff);
-            Family && (Op.CallPreservedGPRs >> *Family) & 1)
-          continue;
       for (int Id : Ids) {
         auto It = RegVarOfId.find(Id);
-        if (It == RegVarOfId.end() || !fullyPreserved(RegOff, It->second.Size))
+        if (It == RegVarOfId.end() ||
+            (!fullyPreserved(RegOff, It->second.Size) &&
+             !callPreservesRegisterBytes(TRI.TheArch, Op.CallPreservedGPRs,
+                                         RegOff, It->second.Size)))
           Result.insert(Id);
       }
     }

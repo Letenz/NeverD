@@ -440,6 +440,9 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
             [&](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request)
             -> std::optional<uint64_t> {
           std::string Name = Request.Symbol.str();
+          if (InputKind == RewriteInputKind::ReplacementIR &&
+              TargetArch == Arch::X86 && Name == "_GLOBAL_OFFSET_TABLE_")
+            return CodeStartVA;
           const std::string PreservedKey = resolveSourceFunctionAlias(
               Name, SourcePreparation.PreservedOriginalVAs, BinaryFormat::ELF,
               TargetArch);
@@ -523,7 +526,11 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
 
         CompiledImage Img = compileImageForPatchWithFixedSectionVAs(
             *CompileMod, TargetArch, BinaryFormat::ELF, CodeStartVA, Resolve,
-            FixedSectionVA, 0, {}, InputKind);
+            FixedSectionVA, 0,
+            InputKind == RewriteInputKind::ReplacementIR
+                ? CompileMod->getTargetTriple().str()
+                : std::string(),
+            InputKind);
         if (SymbolResolutionFailure) {
           llvm::WithColor::error() << *SymbolResolutionFailure << "\n";
           return false;
@@ -559,6 +566,8 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
         // them whose search table names the original and regenerated records.
         std::optional<uint64_t> RelocatedHdrVA;
         uint64_t RelocatedHdrSize = 0;
+        std::optional<uint64_t> RelocatedIndexVA;
+        uint64_t RelocatedIndexSize = 0;
         if (Err && !hasGeneratedELFARMEHABI(Img) && EHRegion &&
             EHRegion->HasHdr) {
           const std::string InPlaceFailure = llvm::toString(std::move(Err));
@@ -567,7 +576,11 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
               [](llvm::StringRef) -> std::optional<uint64_t> {
                 return std::nullopt;
               },
-              0, {}, InputKind);
+              0,
+              InputKind == RewriteInputKind::ReplacementIR
+                  ? CompileMod->getTargetTriple().str()
+                  : std::string(),
+              InputKind);
           if (!Img.Success || Img.Bytes.empty()) {
             llvm::WithColor::error()
                 << "elf_patch: compileImageForPatch failed after "
@@ -615,6 +628,42 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
           }
           RelocatedHdrVA = Img.BaseVA + HdrOffset;
           RelocatedHdrSize = Hdr->size();
+        } else if (Err && hasGeneratedELFARMEHABI(Img) && EHABIRegion &&
+                   InputKind == RewriteInputKind::ReplacementIR) {
+          const std::string InPlaceFailure = llvm::toString(std::move(Err));
+          auto Storage =
+              validatePatchStorageLayout(Img, elfPageSize(TargetArch));
+          if (!Storage) {
+            llvm::WithColor::error()
+                << llvm::toString(Storage.takeError()) << "\n";
+            return false;
+          }
+          const uint64_t Offset =
+              llvm::alignTo(Storage->WritableOffset ? Storage->ReadOnlySize
+                                                    : Img.Bytes.size(),
+                            4);
+          auto Index = buildRelocatedELFARMEHABIIndex(Binary, *EHABIRegion, Img,
+                                                      Img.BaseVA + Offset);
+          if (!Index) {
+            llvm::WithColor::error()
+                << InPlaceFailure << "; " << llvm::toString(Index.takeError())
+                << "\n";
+            return false;
+          }
+          if (Storage->WritableOffset) {
+            if (!rangeInBounds(Offset, Index->size(),
+                               Storage->WritableOffset)) {
+              llvm::WithColor::error() << "elf_patch: EHABI index exceeds "
+                                          "reserved read-only storage\n";
+              return false;
+            }
+            std::copy(Index->begin(), Index->end(), Img.Bytes.begin() + Offset);
+          } else {
+            Img.Bytes.resize(Offset, 0);
+            Img.Bytes.insert(Img.Bytes.end(), Index->begin(), Index->end());
+          }
+          RelocatedIndexVA = Img.BaseVA + Offset;
+          RelocatedIndexSize = Index->size();
         } else if (Err) {
           llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
           return false;
@@ -638,6 +687,10 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
             MetadataOffset =
                 std::max(MetadataOffset,
                          *RelocatedHdrVA - Img.BaseVA + RelocatedHdrSize);
+          if (RelocatedIndexVA)
+            MetadataOffset =
+                std::max(MetadataOffset,
+                         *RelocatedIndexVA - Img.BaseVA + RelocatedIndexSize);
           auto Table = prepareELFSourceRelocations(*CachedImage, *CompileMod,
                                                    Img, MetadataOffset);
           if (!Table) {
@@ -664,6 +717,18 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
           if (Retarget) {
             llvm::WithColor::error()
                 << llvm::toString(std::move(Retarget)) << "\n";
+            return false;
+          }
+        }
+        if (RelocatedIndexVA) {
+          if (Placed != Img.BaseVA) {
+            llvm::WithColor::error() << "elf_patch: EHABI image moved\n";
+            return false;
+          }
+          if (auto Error = retargetELFARMEHABIIndex(Binary, *RelocatedIndexVA,
+                                                    RelocatedIndexSize, &Img)) {
+            llvm::WithColor::error()
+                << llvm::toString(std::move(Error)) << "\n";
             return false;
           }
         }
@@ -717,7 +782,10 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                 CachedSymbols, CachedCodeRanges, TrampolineExports,
                 /*PatchedOriginalEntries=*/nullptr,
                 /*PatchedEntryMappings=*/nullptr, &InstalledFunctions,
-                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs, CachedImage);
+                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs, CachedImage,
+                InputKind == RewriteInputKind::ReplacementIR
+                    ? &Img.ReplacementFunctionModes
+                    : nullptr);
           if (!validatePatchedSourceTrampolineClosure(
                   TrampolinePlan, InstalledFunctions, TrampCount,
                   SourceDetail)) {

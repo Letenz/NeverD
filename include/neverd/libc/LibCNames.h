@@ -352,6 +352,9 @@ public:
   explicit NoReturnTargetIndex(const BinaryImage &Img,
                                NameResolver ResolveName = {});
   bool contains(const BinaryImage &Img, va_t Target) const;
+  /// Drop demand-loaded name answers between sequential runs of the same
+  /// immutable image. All querying workers must have joined first.
+  void clearMemoizedNames();
 
 private:
   const BinaryImage *Image;

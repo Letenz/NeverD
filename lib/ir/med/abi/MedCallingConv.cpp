@@ -51,6 +51,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
 // ---- variadic (...) prologue detection (MedVariadic.cpp) ----
 void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
                     BinaryFormat Fmt);
+void bindX64VariadicVectorCount(MedFunc &Func, const TargetRegInfo &TRI,
+                                uint8_t VectorRegisters);
 
 using med_calling_conv_detail::isEntryLiveInCopy;
 using med_calling_conv_detail::isRenamedEntryLiveInCopy;
@@ -440,8 +442,13 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
   // Every caller passes the register arguments this function's call-graph
   // summary says it reads (LowToMed), so its own parameter list follows the
   // same summary: a recursive call then matches the definition.  The summary
-  // covers the integer registers only.
-  const bool FromSummary = !ProtoArgs && EntryReadSummary && FromIncomingReads;
+  // covers the integer registers only.  A summary the convention says lists
+  // no parameters (a variadic prologue's vector count) is none the callers
+  // use either.
+  const bool FromSummary =
+      !ProtoArgs && EntryReadSummary && FromIncomingReads &&
+      !(Convention->SummaryListsNoParameters &&
+        Convention->SummaryListsNoParameters(*EntryReadSummary));
   if (ProtoArgs) {
     UsedParamRegs.clear();
     for (size_t I = 0; I < ParamRegs.size() && I < *ProtoArgs; ++I)
@@ -1256,9 +1263,28 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     detectVariadic(Func, TRI, TargetArch, Fmt);
 
     // x86-64/x86: also check for XMM floating-point parameters (no-op on ARM).
-    // A variadic function's FP register save area is not its parameter list.
-    if (!Func.IsVariadic)
+    // A variadic function's FP register save area is not its parameter list,
+    // except where it saves the vector registers (System V x86-64): past the
+    // named ones, they carry the floating arguments a caller passes, each
+    // promoted to double, and va_arg reads them from the area.
+    if (!Func.IsVariadic) {
       detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+    } else if (Func.takesVectorArgumentRegisters()) {
+      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      const auto VectorRegs = TRI.floatingParamRegs(TargetFormat);
+      size_t Passed = 0;
+      for (size_t K = 0; K < VectorRegs.size(); ++K)
+        if (llvm::any_of(Func.Params, [&](const MedVar &P) {
+              return P.RegOff == VectorRegs[K];
+            })) {
+          ++Passed;
+          if (K >= static_cast<size_t>(Func.VariadicFirstVectorRegister))
+            Func.FPParamScalarBytes[VectorRegs[K]] = sizeof(double);
+        }
+      if (Passed == VectorRegs.size())
+        bindX64VariadicVectorCount(Func, TRI,
+                                   static_cast<uint8_t>(VectorRegs.size()));
+    }
   }
 
   // Recover stack-passed arguments beyond the parameter registers (where they

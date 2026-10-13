@@ -2,6 +2,7 @@
 
 #include "AddressSpace.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "Session.h"
 #include "ShrinkableRow.h"
 #include "Theme.h"
@@ -437,6 +438,7 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
   table_->setModel(model_);
+  activateOnReturn(*table_);
   table_->setRootIsDecorated(false);
   table_->setUniformRowHeights(true);
   table_->setAllColumnsShowFocus(true);
@@ -457,8 +459,7 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   filter_->setVisible(false);
   filter_->installEventFilter(this);
   layout->addWidget(filter_);
-  status_->setContentsMargins(6, 2, 6, 2);
-  makeRowShrinkable(*status_);
+  makeStatusLine(*status_);
   layout->addWidget(status_);
   filterTimer_.setSingleShot(true);
   filterTimer_.setInterval(FilterDebounceMs);

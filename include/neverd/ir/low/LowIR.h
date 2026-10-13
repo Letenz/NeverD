@@ -269,7 +269,10 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
              Store = Id == Intrinsic::X86F16CStoreState;
   const unsigned ControlIndex =
       Store ? 3 : (Memory || ScalarConvert || Half ? 2 : 1);
-  const unsigned ImmediateIndex = Store ? 4 : 3;
+  const unsigned ImmediateIndex = isX86FPMaskCompareStateIntrinsic(Id)
+                                      ? (Memory ? 3 : 2)
+                                  : Store ? 4
+                                          : 3;
   const bool Fma =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPFmaStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset));
@@ -299,9 +302,11 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
                               Op.Inputs[Memory ? 3 : 2].isConst() &&
                               Op.Inputs[Memory ? 3 : 2].Offset == 0,
       .StateSize =
-          Half ? (Op.NumInputs > (Store ? 5U : 4U)
-                      ? Op.Inputs[Store ? 5 : 4].Size
-                      : 0U)
+          isX86FPMaskCompareStateIntrinsic(Id)
+              ? (Op.NumInputs > 5 ? Op.Inputs[5].Size : 0U)
+          : Half ? (Op.NumInputs > (Store ? 5U : 4U)
+                        ? Op.Inputs[Store ? 5 : 4].Size
+                        : 0U)
           : Round || Arithmetic || isX86FPComiStateIntrinsic(Id)
               ? (Op.NumInputs > (Fma ? 5U : 4U) ? Op.Inputs[Fma ? 5 : 4].Size
                                                 : 0U)

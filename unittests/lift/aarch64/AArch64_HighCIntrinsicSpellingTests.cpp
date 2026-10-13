@@ -201,3 +201,35 @@ crc_all:
   EXPECT_EQ(C.find("unknown"), std::string::npos) << C;
   expectCompiles(C);
 }
+
+// A binary16 fixed-point conversion runs as its instruction: ACLE's
+// vcvth_n_* take at most 16 fraction bits, and LLVM lowers
+// vcvth_n_f16_s32 through the 16-bit integer form.  The function takes the
+// fp16 feature the instruction needs.
+TEST_F(AArch64_HighCIntrinsicSpelling,
+       HalfFixedConversionsRunTheirInstruction) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling AArch64 requires Clang";
+  const std::string C = highCOf(R"S(
+.text
+.global half_fixed
+.type half_fixed,%function
+half_fixed:
+  scvtf h0, w0, #16
+  ucvtf h1, x1, #64
+  fcvtzs w2, h0, #20
+  fcvtzu x3, h1, #3
+  fmov w4, s0
+  add w0, w2, w4
+  add x0, x0, x3
+  ret
+.size half_fixed,.-half_fixed
+)S",
+                                "armv8.2-a+fp16");
+  for (const char *Text :
+       {"scvtf %h0, %w1, #16", "ucvtf %h0, %x1, #64", "fcvtzs %w0, %h1, #20",
+        "fcvtzu %x0, %h1, #3", "__attribute__((target(\"+fp16\")))"})
+    EXPECT_NE(C.find(Text), std::string::npos) << Text << "\n" << C;
+  EXPECT_EQ(C.find("__builtin_arm_"), std::string::npos) << C;
+  expectCompiles(C);
+}

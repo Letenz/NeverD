@@ -1252,7 +1252,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1318,6 +1318,8 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 `NeverDRunControlTests`에는 이식 가능한 `NativeEntryTests.cpp`와 Windows에서 WHP를 활성화할 때의 `WhpEntryControlTests.cpp`가 포함됩니다. 메모리 내 호스트 콜백으로 Hyper-V 없이 실행 거부, 재시도, 늦은 취소, 실제 오류 보존, 완료 결과의 우선순위와 확인된 콜백 수명을 검증합니다. `NeverDKvmRunTests`는 호출 스레드의 완료, 오류 우선순위와 재진입 거부를 확인합니다. 실제 `NeverDKvmStateTransferTests`는 `KvmStateTransferCases.def`의 원래 명령을 실행합니다. `ActualCPUExceptionOutranksStopDuringCapture`와 `PublicCPUExceptionOutranksStopDuringCapture`는 실제 레지스터/XSAVE 읽기 후 중지하여 나눗셈 예외, 원래 컨텍스트, RAM과 명시적 복구를 보존합니다. Wine의 Windows ABI에서 실행한 이식 가능한 테스트는 스레드와 제어 증거만 제공하며 네이티브 WHP 실행을 입증하지 않습니다. 사용할 수 없는 네이티브 전송은 명시적으로 건너뜁니다.
 
 `NeverDInstructionFetchTests`는 Unicorn, KVM, WHP로 x64/ARM64 checked 프로그램을 커널 모드와 사용자 모드에서 실행합니다. `InstructionFetchCases.def`는 피연산자 형식 전환, 상대 분기, 코드 별칭을 통한 게스트·호스트 쓰기, 컨텍스트 복원, 권한 철회, 독립 페이지 저장소, 페이지 끝 미리 읽기, 잘못되거나 잘린 인코딩, 재귀 실행 거부를 검사합니다. Windows 네이티브 CI에서는 모든 x64 WHP 사례가 통과해야 합니다. 사용할 수 없는 호스트/ISA 조합은 명시적으로 건너뛰며, 이식 가능한 ARM64 실행은 네이티브 ARM64 지원 증거가 아닙니다.
+
+`RepeatedOperandsSurviveCodeWorkingSetEviction`은 큰 코드 집합 실행 전후에 피연산자, 메모리 훅, 상대 분기를 다시 검증합니다. 검사 실행은 현재 명령 바이트가 일치할 때만 용량이 제한된 자체 소유 Capstone 메타데이터를 재사용합니다. 매 단계에서 현재 바이트와 실행 권한을 확인하며, 캐시 적중 시에도 전체 피연산자 정보와 디코더 별칭을 유지합니다.
 
 `WhpStateTransferTests.cpp`는 두 세대 XSAVE API에 전송을 주입하여 변경 그룹, 전체 캡처, 패딩 무시, 부분 실패, 취소, 예외 우선순위와 파티션 재생성을 확인합니다. `ContinuedStepsReuseCapturedRegistersAndFP`는 생략된 설치를 세고 `PartialTransferFailuresPreserveStateAndForceFullRetry`는 전체 복원을 요구합니다. 이는 프로토콜 검사이며 네이티브 실행 증거를 대신하지 않습니다. 기존 네이티브 FP·상태 전환·드라이버·ring3 테스트도 필수입니다.
 
@@ -1699,3 +1701,44 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts`는 파싱 완료 후에도 잘못된 센티널, 순환, 전방/범위 밖 링크, 잘못된 초기 단계와 처리기/필터 역할을 검사합니다. 초기 활성 범위와 빈 테이블 대조 사례는 EH3/EH4의 유효한 센티널을 보존합니다. 포인터 폭을 넘는 처리기와 필터 주소도 사실을 공개하지 않고 거부합니다.
 
 소스 등록 상태 솔버는 객체 대여, catch 객체 생성, local-finally 쓰기에 동일한 관리 영역 경계 검사를 적용합니다. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers`와 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells`는 EH3/EH4의 SavedESP, 예외 포인터, cookie 슬롯에 대한 읽기, 쓰기 및 부분 겹침을 검사합니다. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors`는 이후의 재로드에 의존하지 않고 저장된 진입 프레임을 보호합니다. 인접한 일반 객체는 계속 대여할 수 있습니다.
+
+`RAMReservationTests.cpp`는 동일 값과 ABA 쓰기, 유지된 범위, 주소 재사용, 공유 매핑, 롤백, 취소, 오류 전에 커밋된 쓰기와 불투명 실행에서 공개 쓰기 증명을 검증합니다. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites`는 선호 주소, 낮은 주소와 커널 주소에서 소유된 로드 사실을 검사합니다. 바이트를 복원해도 출처 증명은 복원되지 않습니다. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts`는 활성 CFG 수정과 비활성 대체 포인터 유지를 구분합니다.
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts`는 PE 출력, 독립 DIR64 판독기, 모델 재배치와 다시 쓴 디버그 레코드 제외를 검사합니다. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites`는 입력·기준 주소·순서 불일치를 거부하고 바이트가 같아도 형식화 대체를 제외합니다. 이 검사는 진단 메타데이터를 검증하며 네이티브 복구를 인증하지 않습니다.
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects`는 아홉 intrinsic 형식, finally의 부모 프레임 쓰기 효과, 복원된 인자 ESP, registration 해제 및 예외 디스패치 진입점 보존을 검사합니다. 정규 FWAIT만 통과하며 나머지 여덟 잘못된 또는 다른 intrinsic 형식은 계속 거부됩니다.
+
+`NeverDNativeFinallyInputTests`가 MSVC 입력 행렬을 별도로 담당합니다. 일반 `NeverDPipelineOutcomeTests`는 모든 CI 플랫폼에서 필수이며 선택적 네이티브 입력에 의존하지 않습니다. Windows EH 전용 작업은 검증된 이미지로 입력 대상을 빌드하고 실행합니다. macOS CI는 소스 교체용으로 Homebrew Clang 22를 명시적으로 선택하며 NeverD 빌드 컴파일러와 분리합니다. 지원하지 않는 스택 프로브 방식은 계속 거부합니다.
+
+MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템플릿 인스턴스의 많은 COFF 섹션을 지원합니다. 다른 컴파일러 설정은 변경되지 않습니다. 구성 검사는 생성된 컴파일 명령을 확인하고 네이티브 Windows CI가 컴파일과 실행을 검증합니다.
+
+검사 모드의 이중 시프트 거부는 결과와 플래그가 정의되지 않을 때 마스크 적용 후 개수와 피연산자 너비를 보고합니다. `X64DoubleShift`는 형식화된 종료와 기존 오류 API가 이유를 유지하고 레지스터와 RAM을 변경하거나 메모리 관찰을 발생시키지 않는지 확인합니다. 드라이버 픽스처는 시나리오 전달 전에도 같은 이유가 유지되는지 확인합니다.
+
+## 소스 및 네이티브 오브젝트 패치
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다. 143개 CPU 검사는 소스／IR／객체, 네 아키텍처, 세 형식, 상태, 부동소수점／스택 인수, 두 비영점 주소 변경을 요구합니다. 구형 32비트 Mach-O 컨테이너는 실제 컴파일러 코드를 유지하지만 OS 인증은 아닙니다.
+
+[소스 및 네이티브 오브젝트 패치](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*`는 CPL0 IF 해제/설정과 CPL3 대조, profile 일치와 다이제스트 분리, TF/AC/IOPL 거부, 일반 관찰을 끈 뒤에도 필수인 최종 IF 의존성, 복원과 정확/한 연산 부족 예산을 검사합니다. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput`도 사용자 소스 ABI가 암묵적으로 선택되지 않음을 확인합니다. 운영 미정의 명령 admission 및 드라이버 복구 guards는 바뀌지 않습니다.
+
+`NeverDX86X87IntegerLoadTests`는 원본 `FILD m16/m32/m64`를 Codegen, HighC, LLVMC의 default/NoOpt 및 C O0/O2와 비교합니다. binary80, 보호 바이트, 제어 워드, 정의된 C1을 모든 RC, 유효 PC, 예외 마스크에서 검사하며 모든 16비트 입력과 넓은 정수의 2의 거듭제곱 경계를 실행합니다. 순수 변환의 상태/패딩 보존, 대기/알 수 없는 예외, 정확한 메모리 범위, 잘못된 메타데이터 및 분기, 균형/불균형 루프, 알 수 없는 호출 뒤의 빈 슬롯 증명을 검사합니다. 함수 진입은 호출 규약이 정한 빈 레지스터 스택(슬롯 값은 정의되지 않음)에서 시작하며, 그 밖에서 알 수 없거나 사용 중인 목적지는 완전한 함수 게시를 거부합니다. 네이티브 oracle은 x64 GCC/Clang이 필요합니다. 전체 x87 TOP/태그/상태, 스택 오버플로 에뮬레이션, 네이티브 예외/메모리 오류 우선순위 또는 Linux/macOS/x86-32 네이티브 실행을 인증하지 않습니다. `NeverDLLVMCIntrinsicSemanticTests`는 64비트까지 스칼라 `llvm.abs`를 C O0/O2와 정의되지 않은 동작 트랩으로 실행하여 정의된 부호 있는 최솟값과 단일 평가를 검사합니다.
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
+검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.

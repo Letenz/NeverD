@@ -21,8 +21,10 @@
 
 #include "neverd/Common.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -99,6 +101,36 @@ MedLLVMEmitter::resolveDataSymbolAddress(const DataSymbolBinding &Binding) {
              ? llvm::ConstantExpr::getAdd(Address, llvm::ConstantInt::getSigned(
                                                        Integer, Binding.Addend))
              : Address;
+}
+
+llvm::Constant *MedLLVMEmitter::resolveSymbolStringLiteral(va_t Addr) {
+  if (!Img || !Mod || !Ctx)
+    return nullptr;
+  std::optional<SymbolStringLiteral> Literal;
+  if (Dbg)
+    if (const auto Data = Dbg->resolveDataObject(Addr))
+      Literal = symbolStringLiteralAt(*Img, Addr, Data->Name);
+  for (const Symbol &Sym : Img->Symbols)
+    if (!Literal && Sym.Addr == Addr && !Sym.IsFunc)
+      Literal = symbolStringLiteralAt(*Img, Addr, Sym.Name);
+  if (!Literal)
+    return nullptr;
+  const uint8_t *Bytes = Img->readVA(Addr, Literal->Size);
+  if (!Bytes)
+    return nullptr;
+  // Named as the image's data at Addr, so that C writes the literal and a
+  // patch finds the original bytes there.
+  const std::string Name = (kNdDataPrefix + llvm::utohexstr(Addr)).str() +
+                           section_names::elf::Rodata;
+  if (llvm::GlobalVariable *Existing = Mod->getNamedGlobal(Name))
+    return Existing;
+  auto *Init = llvm::ConstantDataArray::get(
+      *Ctx, llvm::ArrayRef<uint8_t>(Bytes, Literal->Size));
+  auto *GV = new llvm::GlobalVariable(
+      *Mod, Init->getType(), /*isConstant=*/true, dataLinkage(), Init, Name);
+  GV->setAlignment(llvm::Align(Literal->UnitBytes));
+  markSharedLocal(GV);
+  return GV;
 }
 
 bool MedLLVMEmitter::canResolveGlobalDataConstant(uint64_t Addr) const {

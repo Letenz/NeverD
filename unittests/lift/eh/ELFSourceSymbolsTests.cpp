@@ -133,4 +133,21 @@ TEST(ELFSourceProperties,
   llvm::consumeError(Truncated.takeError());
 }
 
+TEST_F(ELFSourceSymbols, ELF32GNUPropertiesUseFourByteDescriptorAlignment) {
+  std::vector<uint8_t> Note(28, 0);
+  writeLE<uint32_t>(Note.data(), 4);
+  writeLE<uint32_t>(Note.data() + 4, 12);
+  writeLE<uint32_t>(Note.data() + 8, llvm::ELF::NT_GNU_PROPERTY_TYPE_0);
+  std::memcpy(Note.data() + 12, "GNU\0", 4);
+  writeLE<uint32_t>(Note.data() + 16, llvm::ELF::GNU_PROPERTY_X86_ISA_1_NEEDED);
+  writeLE<uint32_t>(Note.data() + 20, 4);
+  writeLE<uint32_t>(Note.data() + 24, 1);
+  auto Good = readELFPatchPropertyNote(Note, 4);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(*Good, 0u);
+  auto Bad = readELFPatchPropertyNote(Note, 8);
+  EXPECT_FALSE(bool(Bad));
+  llvm::consumeError(Bad.takeError());
+}
+
 } // namespace

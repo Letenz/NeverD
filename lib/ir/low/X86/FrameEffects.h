@@ -26,6 +26,8 @@ inline bool isX86FramePreservingIntrinsic(const LowOp &Op, Arch Architecture) {
       Op.MemoryOrdering != NdMemoryOrdering::None)
     return false;
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (uint64_t(Id) != Op.Inputs[0].Offset)
+    return false;
   // Use complete vector storage bounds, not a PE32 GPR-count threshold: R8
   // through R15 and APX registers are integer carriers on x64.
   const bool NonIntegerOutput =
@@ -37,14 +39,15 @@ inline bool isX86FramePreservingIntrinsic(const LowOp &Op, Arch Architecture) {
   if (Id == Intrinsic::X86ReadMXCSR)
     return Op.NumInputs == 1 && Op.Output.Size == 4 && NonIntegerOutput;
   if (Id == Intrinsic::X86WriteMXCSR)
-    return Op.NumInputs == 2 && !Op.Output.Size && Op.Inputs[1].Size == 4 &&
+    return Op.NumInputs == 2 && Op.Output == NdVar() &&
+           Op.Inputs[1].Size == 4 &&
            (Op.Inputs[1].isTemp() || Op.Inputs[1].isReg() ||
             Op.Inputs[1].isConst());
   if (isX86ScalarFPStateIntrinsic(Id) || Id == Intrinsic::X86FPArithState ||
       Id == Intrinsic::X86FPArithMemoryState)
     return NonIntegerOutput &&
            x86FPStateShapeIsValid(Id, x86FPStateLowShape(Op, Architecture));
-  return Id == Intrinsic::X87Wait && Op.NumInputs == 1 && !Op.Output.Size;
+  return Id == Intrinsic::X87Wait && Op.NumInputs == 1 && Op.Output == NdVar();
 }
 
 } // namespace neverd

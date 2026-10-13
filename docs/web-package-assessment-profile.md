@@ -7,9 +7,11 @@ Inventory, integrity, advisory and attestation findings also work when the
 optional JavaScript frontend is omitted. Source and installation findings
 require results retained by that frontend.
 
-The public C API, CLI, worker and MCP use the same Session owner. GUI presentation
-and persistent review storage are not provided by this profile. Capturing a new
-revision invalidates both assessments and review histories.
+The public C API, CLI, worker and MCP use the same Session owner. The Qt workbench
+and additive [review journal profile](web-package-review-journal.md) present
+selected manifest/registry evidence and persist fixed assertions. Capturing a
+new revision invalidates retained assessments/reviews; restoration requires
+reconstructing the exact same immutable assessment.
 
 ## Explicit selection and relationships
 

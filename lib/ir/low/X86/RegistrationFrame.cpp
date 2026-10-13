@@ -6,6 +6,7 @@
 
 #include "RegistrationFrame.h"
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/lift/X86Regs.h"

@@ -106,6 +106,10 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
   return Move;
 }
 
+#define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)                          \
+  [[maybe_unused]] constexpr llvm::StringLiteral k##Id##ReferenceKind(Name);
+#include "neverd/sdk/ReferenceKinds.def"
+
 } // namespace
 
 /// The flow of \p DI, with its stack pointer move when \p StackRegisters is
@@ -281,9 +285,14 @@ std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
 }
 
 FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
+  return functionPage(S.Functions, FirstEntry, MaxFunctions);
+}
+
+FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
+                          int MaxFunctions) {
   std::vector<const FuncInfo *> Ordered;
-  Ordered.reserve(S.Functions.size());
-  for (const FuncInfo &F : S.Functions)
+  Ordered.reserve(Functions.size());
+  for (const FuncInfo &F : Functions)
     if (F.Entry >= FirstEntry)
       Ordered.push_back(&F);
   std::sort(Ordered.begin(), Ordered.end(),
@@ -307,31 +316,96 @@ FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
 }
 
 bool decodeFunctions(
-    const Session &S, const FunctionPage &Page,
+    const BinaryImage &Img, const FunctionPage &Page,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
         Visit) {
   // A function without a recorded size is decoded only up to its first
   // terminator; this bounds a corrupt or missing extent.
   constexpr uint64_t MaxUnsizedInstructions = 65536;
+  // The parts of a function its unwind records keep apart from its body,
+  // past other functions' code, are its code too: MSVC moves cold paths
+  // there.
+  std::map<va_t, std::vector<ExceptionAddressRange>> Chunks;
+  for (const auto &Chunk : Img.ExceptionMetadata.outlyingChunks())
+    Chunks[Chunk.Function].push_back(Chunk.Range);
   std::atomic<bool> DecoderFailed{false};
   parallelForEach(Page.Functions.size(), [&](auto Claim, size_t Total) {
     Decoder Local;
-    if (!Local.init(S.Img)) {
+    if (!Local.init(Img)) {
       DecoderFailed = true;
       return;
     }
     for (size_t Index = Claim(); Index < Total; Index = Claim()) {
       const FuncInfo &F = *Page.Functions[Index];
       const uint64_t Limit = F.Size > 0 ? F.Size : MaxUnsizedInstructions;
-      (void)decodeNativeRange(S.Img, Local, F.Entry, F.Size, Limit,
+      (void)decodeNativeRange(Img, Local, F.Entry, F.Size, Limit,
                               [&](const DecodedInsn &DI, const uint8_t *, int) {
                                 Visit(Index, Local, DI);
                                 return F.Size > 0 ||
                                        !Local.isFunctionTerminator(DI);
                               });
+      if (const auto It = Chunks.find(F.Entry); It != Chunks.end())
+        for (const ExceptionAddressRange &Range : It->second)
+          (void)decodeNativeRange(
+              Img, Local, Range.Begin, Range.End - Range.Begin,
+              Range.End - Range.Begin,
+              [&](const DecodedInsn &DI, const uint8_t *, int) {
+                Visit(Index, Local, DI);
+                return true;
+              });
     }
   });
   return !DecoderFailed;
+}
+
+std::optional<DataAccessWidths>
+collectDataAccessWidths(const BinaryImage &Img,
+                        llvm::ArrayRef<FuncInfo> Functions) {
+  std::vector<std::pair<va_t, unsigned>> Accesses;
+  for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
+    const FunctionPage Page =
+        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
+    // Each function's accesses, which only the thread decoding it writes.
+    std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(
+        Page.Functions.size());
+    const bool Decoded = decodeFunctions(
+        Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+          for (const InstructionRef &Ref :
+               summarizeInstructionFlow(Img, Dec, DI).Refs)
+            if (Ref.Kind == kReadReferenceKind ||
+                Ref.Kind == kWriteReferenceKind)
+              Slots[Index].emplace_back(Ref.To, Ref.Bytes);
+        });
+    if (!Decoded)
+      return std::nullopt;
+    for (const auto &Slot : Slots)
+      Accesses.insert(Accesses.end(), Slot.begin(), Slot.end());
+    Cursor = Page.NextEntry;
+  }
+  llvm::sort(Accesses);
+  DataAccessWidths Widths;
+  for (const auto &[Address, Width] : Accesses)
+    Widths.add(Address, Width);
+  return Widths;
+}
+
+const DataAccessWidths *Session::dataAccessWidths() {
+  if (!Loaded || Img.Arch == Arch::EVM || Img.Arch == Arch::SBF ||
+      !synchronizeFunctions())
+    return nullptr;
+  // The widths are read from the functions' extents.
+  std::vector<std::pair<va_t, uint64_t>> Extents;
+  Extents.reserve(Functions.size());
+  for (const FuncInfo &F : Functions)
+    Extents.emplace_back(F.Entry, F.Size);
+  if (AccessWidths && AccessWidthsFunctions == Extents)
+    return &*AccessWidths;
+  // C kept from before names data by the widths of other functions.
+  if (AccessWidths)
+    forgetEmittedSources();
+  AccessWidths = collectDataAccessWidths(Img, Functions);
+  AccessWidthsFunctions = std::move(Extents);
+  return AccessWidths ? &*AccessWidths : nullptr;
 }
 
 } // namespace neverd::sdk

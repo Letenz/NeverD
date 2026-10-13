@@ -95,7 +95,11 @@ static std::future<std::vector<uint64_t>> findSignatureEntries(Session &S) {
 /// own symbols is left exactly as it was.
 static int matchLoadedSignatures(Session &S,
                                  std::future<std::vector<uint64_t>> Entries) {
-  S.SigDB.apply(S.Img, Entries.get());
+  const auto Candidates = Entries.get();
+  // Matching can publish image symbols and personality metadata independently
+  // of library-feature generations. Retire their borrowed indexes first.
+  S.clearPipeline();
+  S.SigDB.apply(S.Img, Candidates);
   S.SigDB.identifyPersonalityRoutines(S.Img);
 
   S.refreshFunctionNames();

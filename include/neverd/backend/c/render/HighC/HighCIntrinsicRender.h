@@ -104,6 +104,17 @@ std::string renderX86TypedIntrinsicCall(
     bool GnuToolchain,
     std::function<std::string(Intrinsic, unsigned)> FPHelperName = {});
 
+/// Whether \p Id is a scalar LSE operation HighC prints as a builtin of
+/// NeverD's Clang (ScalarLSEFallbacks.def).
+bool isScalarLSEBuiltin(Intrinsic Id);
+
+/// Write, for each scalar LSE operation of \p Ids, the definition a compiler
+/// without NeverD's builtin reads it through: the GNU `__atomic` builtin of
+/// the operation, or a compare-and-swap loop where the compiler has no
+/// `__atomic` minimum or maximum.
+void writeScalarLSEFallbacks(llvm::raw_ostream &OS,
+                             const std::set<Intrinsic> &Ids);
+
 /// The lane width, in bits, of an x86 saturating lane operation
 /// (X86SaturatingLanes.def) whose C helper \p Call needs, or nullopt when
 /// \p Call is no such operation of a 1- or 2-byte lane.
@@ -185,6 +196,20 @@ const char *hiloCollapseExpr(Intrinsic Id);
 std::string renderX86AsmStatement(const char *Mnemonic,
                                   const std::vector<std::string> &Ops);
 
+/// The C intrinsic for the \p ResultBytes form of an x86 operation that \p Id
+/// covers at more than one width (X86SizedIntrinsicNames.def); null when the
+/// name intrinsicCName gives is the one.
+const char *x86SizedIntrinsicCName(Intrinsic Id, uint16_t ResultBytes);
+
+/// The register form of a descriptor-table or machine-status register
+/// instruction (SLDT, STR, SMSW and LLDT, LTR, LMSW) as GNU inline asm that
+/// runs the instruction on a C value of its operand's width: a store's
+/// \p ResultBytes destination, or a load's 16-bit source.  Empty for any
+/// other intrinsic or shape.
+std::string renderX86SystemRegisterOperand(Intrinsic Id,
+                                           const std::vector<std::string> &Ops,
+                                           uint16_t ResultBytes);
+
 //--- Arch-specific (HighCIntrinsicRenderARM.cpp) ---
 std::string
 renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
@@ -206,6 +231,15 @@ std::string renderNeonVectorIntrinsic(Intrinsic Id,
                                       llvm::ArrayRef<uint16_t> OperandBytes,
                                       uint16_t ResultBytes,
                                       bool &HasCIntrinsics);
+
+/// A binary16 fixed-point conversion (SCVTF, UCVTF to Hd; FCVTZS, FCVTZU
+/// from Hn, with fbits) as GNU inline asm that runs the instruction: one
+/// rounding at any fbits.  ACLE's vcvth_n_* take fbits up to 16 only, and
+/// LLVM lowers vcvth_n_f16_s32 through the 16-bit integer form.  \p Ops are
+/// the source, fbits and whether the integer is 64-bit ("1") or 32-bit
+/// ("0").  Empty for any other intrinsic or shape.
+std::string renderA64FixedHalfConversion(Intrinsic Id,
+                                         const std::vector<std::string> &Ops);
 
 /// Format a raw mnemonic + operands as a GCC-style `__asm__ volatile(...)`
 /// statement with register input constraints and a memory clobber.

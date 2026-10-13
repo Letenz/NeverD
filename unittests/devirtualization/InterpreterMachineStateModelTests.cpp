@@ -362,6 +362,15 @@ TEST(InterpreterMachineStateModel,
       Good.Function, static_cast<InterpreterMachineStateProfile>(255));
   EXPECT_FALSE(static_cast<bool>(BadProfile));
   llvm::consumeError(BadProfile.takeError());
+  // A valid native supervisor proof profile cannot silently select the
+  // existing CPL=3 machine-source ABI or its POPFQ permission semantics.
+  auto User = modelInterpreterMachineStateX64(Good.Function);
+  ASSERT_TRUE(static_cast<bool>(User)) << llvm::toString(User.takeError());
+  auto Kernel = modelInterpreterMachineStateX64(
+      Good.Function, InterpreterMachineStateProfile::KernelX64NoFaultV1);
+  EXPECT_FALSE(static_cast<bool>(Kernel));
+  EXPECT_NE(llvm::toString(Kernel.takeError()).find("profile"),
+            std::string::npos);
   auto Bad = Good.Function;
   Bad.Blocks[0].InstructionBoundaries.clear();
   auto Missing = modelInterpreterMachineStateX64(Bad);

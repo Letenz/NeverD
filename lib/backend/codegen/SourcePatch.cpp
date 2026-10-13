@@ -14,6 +14,7 @@
 #include "neverd/backend/codegen/MachO/MachOSignaturePolicy.h"
 #include "neverd/backend/codegen/MachO/MachOSigner.h"
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/loader/MachO/MachOARM32Mode.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -64,15 +65,22 @@ llvm::Error writeBytes(const std::filesystem::path &Path,
 
 llvm::Error validateTarget(const llvm::Module &Module,
                            const BinaryImage &Image) {
-  const char *Target = llvmCodegenTriple(Image.Arch, Image.Format);
+  if (auto Error = validateSourcePatchTarget(Image.Arch, Image.Format))
+    return Error;
+  auto Target = sourcePatchTargetTriple(Image);
   if (!Target)
-    return patchError("unsupported native target");
-  const llvm::Triple Expected(Target);
+    return Target.takeError();
+  const llvm::Triple Expected(*Target);
   const llvm::Triple Actual(Module.getTargetTriple());
-  if (Actual.getArch() != Expected.getArch() ||
+  if ((Actual.getArch() != Expected.getArch() &&
+       !((Actual.isARM() || Actual.isThumb()) &&
+         (Expected.isARM() || Expected.isThumb()))) ||
       Actual.getObjectFormat() != Expected.getObjectFormat() ||
       Actual.isOSWindows() != Expected.isOSWindows() ||
-      Actual.isOSDarwin() != Expected.isOSDarwin())
+      Actual.isOSDarwin() != Expected.isOSDarwin() ||
+      (Image.Arch == Arch::ARM &&
+       (Actual.getEnvironment() != Expected.getEnvironment() ||
+        Actual.isWatchABI() != Expected.isWatchABI())))
     return patchError("compiled target does not match the loaded binary");
   if (Module.getDataLayoutStr().empty() ||
       Module.getDataLayout().getPointerSize() != Image.getPointerSize() ||
@@ -107,6 +115,48 @@ llvm::Expected<va_t> legacyTarget(llvm::StringRef Name,
 }
 
 } // namespace
+
+llvm::Expected<std::string> sourcePatchTargetTriple(const BinaryImage &Image) {
+  const char *Default = llvmCodegenTriple(Image.Arch, Image.Format);
+  if (!Default)
+    return patchError("unsupported native target");
+  if (Image.Arch != Arch::ARM)
+    return std::string(Default);
+  if (Image.Format == BinaryFormat::ELF) {
+    if (!Image.ELFMetadata)
+      return patchError("ARM ELF requires loader-owned ABI flags");
+    const uint32_t Flags = Image.ELFMetadata->Flags;
+    const bool Hard = Flags & llvm::ELF::EF_ARM_ABI_FLOAT_HARD;
+    const bool Soft = Flags & llvm::ELF::EF_ARM_ABI_FLOAT_SOFT;
+    if (Hard && Soft)
+      return patchError("conflicting ARM ELF floating-point ABI flags");
+    if ((Flags & llvm::ELF::EF_ARM_EABIMASK) != llvm::ELF::EF_ARM_EABI_VER5)
+      return patchError("ARM ELF source replacement requires EABI5");
+    const bool Thumb =
+        Image.instructionModeAt(Image.Entry) == InstructionMode::Thumb;
+    return std::string(Thumb ? "thumbv7-unknown-linux-"
+                             : "armv7-unknown-linux-") +
+           (Hard ? "gnueabihf" : "gnueabi");
+  }
+  if (Image.Format == BinaryFormat::MachO) {
+    auto ModeInfo = macho_arm32::parseModeInfo(Image.Raw);
+    if (!ModeInfo)
+      return ModeInfo.takeError();
+    if (ModeInfo->CPUSubtype == llvm::MachO::CPU_SUBTYPE_ARM_V7K)
+      return std::string("thumbv7k-apple-watchos");
+    if (ModeInfo->CPUSubtype == llvm::MachO::CPU_SUBTYPE_ARM_V7 ||
+        ModeInfo->CPUSubtype == llvm::MachO::CPU_SUBTYPE_ARM_V7S)
+      return std::string("thumbv7-apple-ios5.0");
+    return patchError("ARM Mach-O source ABI requires ARMv7, ARMv7s or ARMv7k");
+  }
+  return std::string(Default);
+}
+
+llvm::Error validateSourcePatchTarget(Arch Architecture, BinaryFormat Format) {
+  if (!llvmCodegenTriple(Architecture, Format))
+    return patchError("unsupported native target");
+  return llvm::Error::success();
+}
 
 llvm::Expected<std::vector<SourcePatchMapping>>
 bindSourcePatch(llvm::Module &Module, const BinaryImage &Image,
@@ -284,7 +334,7 @@ llvm::Expected<PatchResult> publishSourcePatch(
   for (const PatchedFunctionEntry &Installed : Result.PatchedFunctions) {
     const auto Mode = Image.instructionModeAt(Installed.OriginalVA);
     const auto Target = getTargetCodegenInfo(Image.Arch, *Mode);
-    const uint64_t Size = Target.trampolineSize();
+    const uint64_t Size = Target.sourceTrampolineSize();
     const uint64_t Offset = Reloaded->vaToFileOffset(Installed.OriginalVA);
     std::vector<uint8_t> Expected(Size);
     if (!Reloaded->isCodeAddress(Installed.OwnerVA))
@@ -292,8 +342,8 @@ llvm::Expected<PatchResult> publishSourcePatch(
                         llvm::utohexstr(Installed.OwnerVA));
     if (!rangeInBounds(Offset, Size, Reloaded->Raw.size()))
       return patchError("candidate entry is outside file-backed storage");
-    if (!Target.writeTrampoline(Expected, 0, Installed.OwnerVA,
-                                Installed.OriginalVA, Size))
+    if (!Target.writeSourceTrampoline(Expected, 0, Installed.OwnerVA,
+                                      Installed.OriginalVA, Size))
       return patchError("installed entry has an out-of-range destination");
     if (!std::equal(Expected.begin(), Expected.end(),
                     Reloaded->Raw.begin() + Offset))
@@ -334,16 +384,14 @@ llvm::Expected<PatchResult> installSourcePatch(
     if (!Global.hasInitializer() || Global.getName() == "llvm.used" ||
         Global.getName() == "llvm.compiler.used")
       continue;
-    const bool PESource =
-        Image.Format == BinaryFormat::COFF && Image.Arch == Arch::X64;
+    const bool PESource = Image.Format == BinaryFormat::COFF;
     if (!Global.isConstant() && Image.Format != BinaryFormat::ELF &&
         Image.Format != BinaryFormat::MachO && !PESource)
       return patchError(
           "writable patch storage is not installed for this format: " +
           Global.getName());
     if (hasAddressInitializer(*Global.getInitializer()) &&
-        !(Image.Format == BinaryFormat::ELF && Image.Arch == Arch::X64) &&
-        !PESource)
+        Image.Format != BinaryFormat::ELF && !PESource)
       return patchError(
           "address initializer requires load-time relocation registration: " +
           Global.getName());

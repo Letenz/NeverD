@@ -378,6 +378,83 @@ TEST(FuncDetectorCoverage, RejectsCandidateWithUndecodableBranchArm) {
   EXPECT_EQ(Functions[0].first, Img.Entry);
 }
 
+TEST(FuncDetectorCoverage, ForwardingJumpTargetBecomesAnEntry) {
+  // GCC's frame_dummy is `endbr64; jmp register_tm_clones`, and a stripped
+  // image names the target nowhere else.  The forwarder passes its caller's
+  // frame on untouched, so the target is a function of its own rather than a
+  // block of the forwarder.
+  constexpr va_t TargetVA = 0x1000;
+  constexpr va_t ForwarderVA = 0x1010;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Entry = ForwarderVA;
+
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = TargetVA;
+  Text.Size = 0x19;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data = {
+      0xb8, 0x2a, 0x00, 0x00, 0x00, // mov eax, 42
+      0xc3,                         // ret
+      0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+      0x90, 0x90, 0x90, 0xf3, 0x0f, 0x1e, 0xfa, // endbr64
+      0xe9, 0xe7, 0xff, 0xff, 0xff,             // jmp TargetVA
+  };
+  Img.Segments.push_back(std::move(Text));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  FuncDetector Detector;
+  std::set<va_t> Entries;
+  for (const auto &Function : Detector.detect(Img, Dec))
+    Entries.insert(Function.first);
+  EXPECT_EQ(Entries, (std::set<va_t>{TargetVA, ForwarderVA}));
+  EXPECT_TRUE(Img.VerifiedFunctionEntries.count(TargetVA));
+
+  // The forwarder's jump is then a tail call rather than a path into the
+  // target's body.
+  CFGBuilder Builder;
+  Builder.setKnownFuncEntries(&Entries);
+  const LowFunc Forwarder = Builder.build(Img, Dec, ForwarderVA, "forwarder");
+  ASSERT_EQ(Forwarder.Blocks.size(), 1u);
+  EXPECT_EQ(Forwarder.Blocks[0].StartAddr, ForwarderVA);
+}
+
+TEST(FuncDetectorCoverage, LeadingJumpIntoItsOwnBodyMakesNoEntry) {
+  // Size-optimized code can enter a loop at its test, so the function's first
+  // instruction jumps forward into the function itself.
+  constexpr va_t EntryVA = 0x1000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Entry = EntryVA;
+
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = EntryVA;
+  Text.Size = 0xb;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data = {
+      0xeb, 0x03,       // jmp test
+      0x48, 0xff, 0xc7, // loop: inc rdi
+      0x80, 0x3f, 0x00, // test: cmp byte ptr [rdi], 0
+      0x75, 0xf8,       // jne loop
+      0xc3,             // ret
+  };
+  Img.Segments.push_back(std::move(Text));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  ASSERT_EQ(Functions.size(), 1u);
+  EXPECT_EQ(Functions[0].first, EntryVA);
+}
+
 TEST(FuncDetectorCoverage, DistinguishesExecutableDataExportsFromFunctions) {
   BinaryImage Img;
   Img.Arch = Arch::X64;

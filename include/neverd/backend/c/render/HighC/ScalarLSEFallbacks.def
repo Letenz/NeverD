@@ -1,0 +1,30 @@
+//===- ScalarLSEFallbacks.def - AArch64 scalar LSE in GNU C -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The scalar FEAT_LSE read-modify-write operations HighC prints as builtins
+/// of NeverD's Clang (`__builtin_arm_ldclr(value, pointer, bytes, order)`,
+/// returning the old value zero-extended).  A compiler without them reads
+/// each as the GNU `__atomic` builtin of the operation on the access width's
+/// integer: signed where the comparison is, and on the complemented value
+/// where the instruction clears the bits it is given (LDCLR).
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_SCALAR_LSE(Intrinsic, Operation, Signed, Complement)
+#ifndef NEVERD_SCALAR_LSE
+#define NEVERD_SCALAR_LSE(Intrinsic, Operation, Signed, Complement)
+#endif
+
+NEVERD_SCALAR_LSE(A64_AtomicAnd, "and", false, true)
+NEVERD_SCALAR_LSE(A64_AtomicXor, "xor", false, false)
+NEVERD_SCALAR_LSE(A64_AtomicOr, "or", false, false)
+NEVERD_SCALAR_LSE(A64_AtomicSmax, "max", true, false)
+NEVERD_SCALAR_LSE(A64_AtomicSmin, "min", true, false)
+NEVERD_SCALAR_LSE(A64_AtomicUmax, "max", false, false)
+NEVERD_SCALAR_LSE(A64_AtomicUmin, "min", false, false)
+
+#undef NEVERD_SCALAR_LSE

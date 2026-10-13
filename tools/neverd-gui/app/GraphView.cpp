@@ -67,10 +67,18 @@ GraphView::GraphView(Session &session, QWidget *parent)
       showFunction(*function_, pendingCursor_);
   });
   connect(&session_, &Session::unloaded, this, [this] {
+    ++serial_;
+    session_.cancelAnalysisReads(this);
     nodes_.clear();
     edges_.clear();
     function_.reset();
     pendingCursor_.reset();
+    bounds_ = {};
+    layoutRevision_.clear();
+    cursorNode_ = -1;
+    cursorRow_ = cursorColumn_ = 0;
+    highlight_.clear();
+    dragging_ = fitPending_ = false;
     waiting_ = false;
     update();
     emit viewChanged();

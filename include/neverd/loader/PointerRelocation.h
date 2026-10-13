@@ -17,6 +17,7 @@
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace neverd {
 
@@ -284,6 +285,25 @@ inline bool recordAbsolutePointerRelocation(BinaryImage &Img, va_t SlotVA,
 /// looked up from the root of every map it joins.
 void recordAbsolutePointerRelocations(
     BinaryImage &Img, llvm::ArrayRef<AbsolutePointerRelocation> Relocations);
+
+/// Record again, as pointers to data, the relocated pointers stored in data
+/// whose targets lie in data objects.  The loader takes a pointer into an
+/// executable section for a pointer to code, while debug information read
+/// after it can place the target in data: a kernel image keeps string
+/// literals and tables in PAGE and INIT.  \p InData says whether an address
+/// lies in a data object; a target that the image's own metadata gives to
+/// code (a function symbol, runtime function record, known code range or the
+/// entry point) stays code.  Returns how many pointers changed.
+unsigned recordDataPointerTargets(BinaryImage &Img,
+                                  llvm::function_ref<bool(va_t)> InData);
+
+/// Record in Img.DataInCode the starts of \p Objects, data objects that debug
+/// information places in sections the image gives to code, that the image's
+/// own metadata leaves to data: no function symbol or its extent, runtime
+/// function record, known code range or the entry point covers one, and no
+/// code ends at one (an assembly routine's end label is no data).  Returns
+/// how many it recorded.
+unsigned recordDataInCode(BinaryImage &Img, llvm::ArrayRef<va_t> Objects);
 
 } // namespace neverd
 

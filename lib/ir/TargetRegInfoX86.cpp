@@ -16,6 +16,8 @@
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
 
+#include <iterator>
+
 namespace neverd {
 
 //===----------------------------------------------------------------------===//
@@ -265,9 +267,37 @@ TargetRegInfo X86RegInfo = {
 static const uint64_t X64IntReturnRegs[] = {x86reg::RAX, x86reg::RDX};
 static const uint64_t X64FPReturnRegs[] = {x86reg::XMM0, x86reg::XMM1};
 
+/// Win64 passes floating arguments in the XMM registers of its four
+/// positional slots; System V in XMM0-XMM7.
+static size_t x64FloatingParamRegCount(BinaryFormat Format) {
+  return Format == BinaryFormat::COFF ? std::size(X64Win64Params)
+                                      : std::size(X64FPParams);
+}
+
+/// i386 passes vector arguments, and `sseregparm` floats, in XMM0-XMM2 under
+/// System V, XMM0-XMM3 on Darwin, and XMM0-XMM5 with Windows' __vectorcall
+/// (LLVM's CC_X86_32_Vector_* conventions); never in XMM6 or XMM7.
+constexpr size_t kX86SysVFloatingParamRegs = 3;
+constexpr size_t kX86DarwinFloatingParamRegs = 4;
+constexpr size_t kX86VectorcallFloatingParamRegs = 6;
+
+static size_t x86FloatingParamRegCount(BinaryFormat Format) {
+  switch (Format) {
+  case BinaryFormat::ELF:
+    return kX86SysVFloatingParamRegs;
+  case BinaryFormat::MachO:
+    return kX86DarwinFloatingParamRegs;
+  default:
+    return kX86VectorcallFloatingParamRegs;
+  }
+}
+
 void initX86RegInfoTables() {
   X64RegInfo.SubRegs = X64SubRegs;
   X86RegInfo.SubRegs = X64SubRegs;
+
+  X64RegInfo.FloatingParamRegCount = x64FloatingParamRegCount;
+  X86RegInfo.FloatingParamRegCount = x86FloatingParamRegCount;
 
   X64RegInfo.MinInsnAlign = limits::kMinInsnAlignX86;
   X86RegInfo.MinInsnAlign = limits::kMinInsnAlignX86;

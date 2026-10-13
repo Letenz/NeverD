@@ -492,6 +492,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
               Op.NumInputs > 3 ? Op.Inputs[3].Size : 0))
         return false;
       switch (Id) {
+      case Intrinsic::X86FPMaskCompareMemoryState:
       case Intrinsic::X86FPComiMemoryState:
       case Intrinsic::X86FPRoundMemoryState:
       case Intrinsic::X86FPScalarConvertMemoryState:
@@ -674,6 +675,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
   case NdOp::FLOAT_DIV:
   case NdOp::FLOAT_FMA:
   case NdOp::FLOAT_NEG:
+  case NdOp::FLOAT_ABS:
   case NdOp::FLOAT_SQRT:
   case NdOp::FLOAT_LESS:
     return executeFloatArith(Op);

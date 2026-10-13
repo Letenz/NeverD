@@ -1885,8 +1885,12 @@ TEST(SourceABI, AArch64CallerFieldReadsDistinguishAnHFAFromAVectorReturn) {
         Caller.StructReturnCandidates.push_back(Candidate);
       }
 
-      recoverStructReturnFromBody(Image, Result);
-      if (CallerReadsFields && WrittenLanes == 4) {
+      recoverStructReturnFromBody(Image, Result,
+                                  StructReturnEvidence::CallersAndBody);
+      // A field the callee leaves unwritten is the argument passed in its
+      // register (s3 of `return (f4){a, b, c, d};`), so a caller that reads
+      // every field proves the aggregate either way.
+      if (CallerReadsFields) {
         ASSERT_EQ(Callee.MultiReturn.size(), 4U);
         for (size_t I = 0; I < 4; ++I) {
           EXPECT_EQ(Callee.MultiReturn[I].RegOff, TRI.FPReturnRegs[I]);
@@ -1894,8 +1898,8 @@ TEST(SourceABI, AArch64CallerFieldReadsDistinguishAnHFAFromAVectorReturn) {
           EXPECT_TRUE(Callee.MultiReturn[I].IsFP);
         }
       } else {
-        // Without a caller that reads every field, or when the callee leaves
-        // one of them unwritten, the whole-vector V0 return stands.
+        // Without a caller that reads every field, the whole-vector V0
+        // return stands.
         EXPECT_TRUE(Callee.MultiReturn.empty());
         ASSERT_TRUE(Callee.ReturnType);
         EXPECT_EQ(Callee.ReturnType->Kind, NdTypeKind::Float);
@@ -1983,7 +1987,11 @@ TEST(SourceABI, AArch64BodyReturnUsesPreDCELaterRegisterReads) {
     RawReturn.Addr = Return.Addr;
     LB.Ops.push_back(RawReturn);
 
-    recoverStructReturnFromBody(Image, Result);
+    // No caller reads W1, so only the body's writes could show a field.
+    recoverStructReturnFromBody(Image, Result, StructReturnEvidence::Callers);
+    EXPECT_TRUE(MF.MultiReturn.empty());
+    recoverStructReturnFromBody(Image, Result,
+                                StructReturnEvidence::CallersAndBody);
     if (LaterRead)
       EXPECT_TRUE(MF.MultiReturn.empty());
     else {
@@ -3830,7 +3838,7 @@ TEST(SourceABI, UnsupportedArithmeticNeverManufacturesAZeroResult) {
       M.Name = "unknown_arithmetic";
       M.ReturnType = NdType::makeInt(8, false);
       MedOp Arithmetic;
-      Arithmetic.Opcode = Mutation == 0 ? NdOp::FLOAT_MIN : NdOp::FLOAT_FMA;
+      Arithmetic.Opcode = Mutation == 0 ? NdOp::EXTRACT : NdOp::FLOAT_FMA;
       Arithmetic.Output.Kind = MedVar::Reg;
       Arithmetic.Output.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
       Arithmetic.Output.Id = 30;

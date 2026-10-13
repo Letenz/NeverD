@@ -288,6 +288,9 @@ constexpr std::int64_t MaxStringMinLength = 1024;
 constexpr std::size_t EnginePageLines = 2048;
 /// Text a renamed whole-function view may hold: the engine's source budget.
 constexpr std::size_t MaxNamedViewBytes = 32 * 1024 * 1024;
+/// The text of one code page, as the engine bounds its own pages: a page
+/// ends before the line that would pass it.
+constexpr std::size_t MaxCodePageBytes = 2 * 1024 * 1024;
 constexpr std::size_t MaxNamedViewCacheBytes = 32 * 1024 * 1024;
 constexpr std::size_t MaxNamedViews = 8;
 
@@ -502,6 +505,12 @@ void Engine::requireWriter() const {
 bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
 bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
 bool Engine::identifiesFiles() { return identifyFunction() != nullptr; }
+bool Engine::loadsPdbFiles() {
+  using Inspect = const char *(*)(neverd_session_t, const char *);
+  using Load = int (*)(neverd_session_t, const char *);
+  return engineSymbol<Inspect>("neverd_session_inspect_pdb_json") &&
+         engineSymbol<Load>("neverd_session_load_pdb");
+}
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
@@ -705,11 +714,28 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     full["representation"] = representation;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    // The resolver below runs other operations, so the decoration names
+    // functions from a copy of the listing's display names.
+    auto displayNames = CodeEdits::FunctionAliases(listing().functionAliases());
+    if (sourceView && !pdbDisplayNames_.empty()) {
+      const auto &source = full.at("text").get_ref<const std::string &>();
+      for (const auto &name : full.value("source_names", Json::array())) {
+        if (!name.contains("address") || !name.at("address").is_string())
+          continue;
+        const auto begin = name.value("begin_byte", std::size_t{0});
+        const auto end = name.value("end_byte", std::size_t{0});
+        if (end <= begin || end > source.size())
+          continue;
+        if (const auto alias = listing().pdbDataName(
+                parseAddress(name.at("address").get<std::string>())))
+          displayNames.emplace(source.substr(begin, end - begin), *alias);
+      }
+    }
     if (sourceView)
       CodeEdits::decorate(
           full, codeEditRow(address), address, representation,
           backendJson(neverd_renames_json(session_)),
-          backendJson(neverd_annotations_json(session_)),
+          backendJson(neverd_annotations_json(session_)), displayNames,
           [this](const std::string &name) -> std::optional<std::uint64_t> {
             Json target;
             try {
@@ -812,7 +838,8 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   Json page = Json::object();
   for (const auto &[field, value] : namedView_.items())
     if (field != "text" && field != "rows" &&
-        !((field == "source_names" || field == "code_names") && value.is_array()))
+        !((field == "source_names" || field == "code_names") &&
+          value.is_array()))
       page[field] = value;
   page["text"] = text.substr(startByte, endByte - startByte);
   Json rows = Json::array();
@@ -894,6 +921,7 @@ void Engine::prepareFunction(std::uint64_t address) {
 Listing &Engine::newListing() {
   listing_ = std::make_unique<Listing>(session_);
   listing_->setStringOptions(stringOptions_);
+  listing_->setPdbDisplayNames(pdbDisplayNames_);
   if (analyzed_)
     listing_->loadSwitches();
   return *listing_;
@@ -1007,6 +1035,7 @@ Json Engine::metadata() const {
           {"base_address", hexAddress(neverd_session_base_addr(session_))},
           {"entry_address", hexAddress(neverd_session_entry_addr(session_))},
           {"loader_diagnostics", std::move(diagnostics)},
+          {"pdb", pdbInput_},
           {"function_count",
            deferred ? Json(nullptr) : Json(neverd_func_count(session_))},
           {"segment_count", neverd_session_segment_count(session_)},
@@ -1080,6 +1109,10 @@ Json Engine::codeEditRow(std::uint64_t address) const {
 
 Json Engine::analysisSnapshot() {
   requireLoaded();
+  if (!pdbInput_.is_null() &&
+      signatureStamp(utf8Path(pdbInput_.at("path").get<std::string>())) !=
+          pdbInput_.at("stamp"))
+    throw Error("input_changed", "Loaded PDB changed; load it again");
   for (const auto &input : signatureInputs_)
     if (signatureStamp(utf8Path(input.at("path").get<std::string>())) !=
         input.at("stamp"))
@@ -1102,6 +1135,7 @@ Json Engine::analysisSnapshot() {
           {"input_sha256", inputHash()},
           {"state", userState()},
           {"signatures", signatureInputs_},
+          {"pdb", pdbInput_},
           {"string_options", stringOptions_.empty()
                                  ? Json::object()
                                  : Json::parse(stringOptions_)}};
@@ -1121,8 +1155,17 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
                 "The analysis input differs from the open project");
-  const auto actual = userState();
-  const auto &expected = snapshot.at("state");
+  auto actual = userState();
+  auto expected = snapshot.at("state");
+  // A rename's original spelling is derived from the names the image has, and
+  // the owner's PDB and signatures are applied below, after this check. As in
+  // ProjectHistory::verifyLoadedState, only the user's values identify edits.
+  for (auto *state : {&actual, &expected})
+    if (auto renames = state->find("renames");
+        renames != state->end() && renames->is_array())
+      for (auto &row : *renames)
+        if (row.is_object())
+          row.erase("original");
   // Committed edits have one writer. Loading them is safe only when they
   // still match the version exported by that writer. A racing edit causes
   // rejection; the GUI retires this replica on the new owner revision.
@@ -1140,6 +1183,8 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
     neverd_annotation_set(
         session_, parseAddress(row.at("addr").get<std::string>()),
         row.at("text").get_ref<const std::string &>().c_str());
+  if (const auto pdb = snapshot.value("pdb", Json()); !pdb.is_null())
+    execute("pdb_load", pdb);
   for (const auto &input : snapshot.at("signatures")) {
     const auto path = utf8Path(input.at("path").get<std::string>());
     if (signatureStamp(path) != input.at("stamp"))
@@ -1354,7 +1399,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
     openOptions_ = p;
+    openOptions_.erase("pdb");
     signatureInputs_ = Json::array();
+    pdbInput_ = nullptr;
+    pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
     dirty_ = false;
     analyzed_ = false;
@@ -1397,6 +1445,23 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                            failure.what());
       }
     }
+    if (p.contains("pdb")) {
+      if (!p.at("pdb").is_object())
+        throw Error("invalid_request", "PDB selection must be an object");
+      // A saved selection names a file outside the project: one that no
+      // longer loads leaves the project open without it, and says why.  A
+      // matching PDB proves itself again by its GUID and age; only a PDB the
+      // user confirmed without that identity stays bound to its file stamp.
+      auto selection = p.at("pdb");
+      if (selection.value("mode", Json("verified")) == "verified")
+        selection.erase("stamp");
+      try {
+        execute("pdb_load", selection);
+      } catch (const std::exception &failure) {
+        warnings.push_back(std::string("The project's PDB was not loaded: ") +
+                           failure.what());
+      }
+    }
     auto result = metadata();
     for (const auto &diagnostic : result.at("loader_diagnostics"))
       warnings.push_back(diagnostic.value("message", std::string()));
@@ -1404,6 +1469,80 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return result;
   }
   requireLoaded();
+  if (operation == "pdb_inspect" || operation == "pdb_load") {
+    using Inspect = const char *(*)(neverd_session_t, const char *);
+    using Load = int (*)(neverd_session_t, const char *);
+    using LoadEx = int (*)(neverd_session_t, const char *, int);
+    const auto inspect =
+        engineSymbol<Inspect>("neverd_session_inspect_pdb_json");
+    const auto load = engineSymbol<Load>("neverd_session_load_pdb");
+    const auto loadEx = engineSymbol<LoadEx>("neverd_session_load_pdb_ex");
+    if (!inspect || !load)
+      throw Error("unsupported", "This engine cannot load a selected PDB");
+    const auto path = stringField(p, "path", {}, 32768);
+    if (path.empty())
+      throw Error("invalid_request", "Select a PDB file first");
+    if (!fs::is_regular_file(utf8Path(path)))
+      throw Error("pdb_load_failed", "The selected PDB is not a regular file");
+    const auto stamp = signatureStamp(utf8Path(path));
+    if (p.contains("stamp") && p.at("stamp") != stamp)
+      throw Error("input_changed", "The selected PDB changed; select it again");
+    const auto text = ownedString(inspect(session_, path.c_str()));
+    if (text.empty())
+      throw Error("pdb_load_failed", error());
+    auto symbols = Json::parse(text, nullptr, false);
+    if (!symbols.is_object() || !symbols.contains("names"))
+      throw Error("pdb_load_failed", "Invalid PDB inspection result");
+    const bool verified = symbols.value("verified", false);
+    const auto count = symbols.value("name_count", symbols.at("names").size());
+    if (signatureStamp(utf8Path(path)) != stamp)
+      throw Error("input_changed", "The selected PDB changed while reading it");
+    Json result{{"path", path},
+                {"verified", verified},
+                {"supports_unverified_analysis", loadEx != nullptr},
+                {"name_count", count},
+                {"stamp", stamp}};
+    if (operation == "pdb_inspect")
+      return result;
+    const auto mode = stringField(p, "mode", "verified", 16);
+    if (mode != "verified" && mode != "analysis" && mode != "display")
+      throw Error("invalid_request",
+                  "PDB mode is verified, analysis or display");
+    if (!verified && mode == "verified")
+      throw Error(
+          "pdb_identity_missing",
+          "The PE has no PDB identity; confirm using this PDB for analysis");
+    const bool forAnalysis = verified || mode == "analysis";
+    if (forAnalysis) {
+      if (!verified && !loadEx)
+        throw Error("unsupported",
+                    "This engine cannot use an unverified PDB for analysis");
+      const bool loaded = verified ? load(session_, path.c_str()) != 0
+                                   : loadEx(session_, path.c_str(), 1) != 0;
+      if (!loaded)
+        throw Error("pdb_load_failed", error());
+      pdbDisplayNames_ = Json::array();
+      analyzed_ = false;
+      preparedFunction_.reset();
+      listing_.reset();
+    } else {
+      pdbDisplayNames_ = std::move(symbols.at("names"));
+      if (listing_)
+        listing_->setPdbDisplayNames(pdbDisplayNames_);
+    }
+    pdbInput_ = {{"path", path},
+                 {"mode", verified ? "verified" : mode},
+                 {"verified", verified},
+                 {"name_count", count},
+                 {"stamp", stamp}};
+    invalidate();
+    ++revision_;
+    result["function_count"] = neverd_func_count(session_);
+    result["mode"] = pdbInput_.at("mode");
+    result["analysis"] = forAnalysis;
+    result["loaded"] = true;
+    return result;
+  }
   if (operation == "signatures_load") {
     const auto path = stringField(p, "path", {}, 32768);
     const auto mode = stringField(p, "mode", "file", 16);
@@ -1626,6 +1765,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
           }
         }
       }
+      // Code a function keeps apart from its body, such as a cold path,
+      // belongs to that function.
+      if (index < 0)
+        if (const auto owner = listing().chunkOwner(address))
+          index = neverd_func_find_by_addr(session_, *owner);
     } else {
       index = neverd_func_find_by_name(session_, query.c_str());
       if (index >= 0) {
@@ -2342,7 +2486,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         if (result.contains("text")) {
           if (!result["text"].is_string() ||
               result["text"].get_ref<const std::string &>().size() >
-                  2 * 1024 * 1024 ||
+                  MaxCodePageBytes ||
               !result.contains("rows") || !result["rows"].is_array() ||
               result["rows"].size() > limit)
             throw Error("invalid_engine_result",
@@ -2386,15 +2530,22 @@ Json Engine::execute(const std::string &operation, const Json &p) {
           textLines_.push_back(i + 1);
       textKey_ = key;
     }
+    const auto byteAt = [this](std::size_t line) {
+      return line < textLines_.size() ? textLines_[line] : textCache_.size();
+    };
     const auto start = std::min(offset, textLines_.size());
-    const auto end = start + std::min(limit, textLines_.size() - start);
-    const auto startByte =
-        start < textLines_.size() ? textLines_[start] : textCache_.size();
-    const auto endByte =
-        end < textLines_.size() ? textLines_[end] : textCache_.size();
-    if (endByte - startByte > 2 * 1024 * 1024)
+    auto end = start + std::min(limit, textLines_.size() - start);
+    const auto startByte = byteAt(start);
+    // The page ends before the line that would pass its budget; the next
+    // page starts there.
+    std::size_t fits = start;
+    while (fits < end && byteAt(fits + 1) - startByte <= MaxCodePageBytes)
+      ++fits;
+    if (fits == start && end > start)
       throw Error("budget_exceeded",
-                  "Code page exceeds 2 MiB; request fewer lines");
+                  "A code line exceeds the 2 MiB page budget");
+    end = fits;
+    const auto endByte = byteAt(end);
     return {
         {"address", hexAddress(address)},
         {"representation", representation},

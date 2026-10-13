@@ -21,11 +21,14 @@
 #include "HighDCEDetail.h"
 
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/bit.h"
 
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -37,6 +40,8 @@ namespace {
 using ByteMask = uint64_t;
 
 constexpr size_t kVisitBudget = 2000000;
+/// How deep a constant mask's concatenations and copies may nest.
+constexpr unsigned kMaxConstantMaskDepth = 16;
 
 ByteMask allBytes(uint16_t Bytes) {
   return Bytes == 0 || Bytes >= 64 ? ~ByteMask{0} : (ByteMask{1} << Bytes) - 1;
@@ -131,6 +136,9 @@ private:
   VarKeyMap<ByteMask> VarDemand;
   VarKeyMap<std::vector<const HighExpr *>> Definitions;
   VarKeySet Assigned;
+  /// Variables a join copy assigns: their definitions need not cover every
+  /// path that reaches a use.
+  VarKeySet JoinCopied;
   std::vector<const HighExpr *> Pending;
 
   /// A register, flag or temporary, which only its uses read.  A stack slot
@@ -146,9 +154,46 @@ private:
       if (S.Kind != StmtKind::Assign || !S.Dst || S.Dst->Kind != ExprKind::Var)
         return;
       Assigned.insert(varKey(S.Dst->Var));
+      if (S.IsPhiCopy)
+        JoinCopied.insert(varKey(S.Dst->Var));
       if (S.Val && readOnlyByUses(S.Dst->Var))
         Definitions[varKey(S.Dst->Var)].push_back(S.Val.get());
     });
+  }
+
+  /// The bytes of \p E that may be nonzero, where E is a constant: a number,
+  /// a concatenation or zero extension of constants, or a variable assigned
+  /// once to one (a vector mask built from two halves, `vand q, q9` after
+  /// `vmov.i32 q9, #0xff`).
+  std::optional<ByteMask> constantNonzeroBytes(const HighExpr &E,
+                                               unsigned Depth) const {
+    if (Depth > kMaxConstantMaskDepth)
+      return std::nullopt;
+    if (E.Kind == ExprKind::Const)
+      return nonzeroBytes(E.ConstVal, exprBytes(E));
+    if (E.Kind == ExprKind::BinOp && E.Op == NdOp::CONCAT &&
+        E.Operands.size() == 2 && E.Operands[0] && E.Operands[1]) {
+      const uint16_t LowBytes = exprBytes(*E.Operands[1]);
+      if (!LowBytes || LowBytes >= 64)
+        return std::nullopt;
+      const auto High = constantNonzeroBytes(*E.Operands[0], Depth + 1);
+      const auto Low = constantNonzeroBytes(*E.Operands[1], Depth + 1);
+      if (!High || !Low)
+        return std::nullopt;
+      return (*Low & allBytes(LowBytes)) | (*High << LowBytes);
+    }
+    if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::INT_ZEXT &&
+        E.Operands.size() == 1 && E.Operands[0])
+      return constantNonzeroBytes(*E.Operands[0], Depth + 1);
+    // One assignment defines the variable everywhere: an incoming value has
+    // none, and a join whose entry edge brings one is a join copy.
+    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+        !JoinCopied.count(varKey(E.Var))) {
+      const auto It = Definitions.find(varKey(E.Var));
+      if (It != Definitions.end() && It->second.size() == 1 && It->second[0])
+        return constantNonzeroBytes(*It->second[0], Depth + 1);
+    }
+    return std::nullopt;
   }
 
   void demand(const HighExpr *E, ByteMask Mask) {
@@ -210,6 +255,20 @@ private:
     });
   }
 
+  /// Demand what observable \p E reads of each operand: every byte, except
+  /// where an intrinsic reads only some bytes of its vector operands.
+  void demandOperandsOf(const HighExpr &E) {
+    E.forEachChildExpr([&](const ExprPtr &C) {
+      if (C && E.Kind == ExprKind::Call && E.IntrinsicId != Intrinsic::None)
+        if (const auto Read =
+                x86VectorOperandReadBytes(E.IntrinsicId, exprBytes(*C))) {
+          demand(C.get(), *Read);
+          return;
+        }
+      demandAll(C);
+    });
+  }
+
   void seedObservableEvaluations(const ExprPtr &Root) {
     std::vector<const HighExpr *> Stack{Root.get()};
     std::unordered_set<const HighExpr *> Seen;
@@ -219,19 +278,16 @@ private:
       if (!E || !Seen.insert(E).second)
         continue;
       --Budget;
-      const bool Observable = observableEvaluation(*E);
-      E->forEachChildExpr([&](const ExprPtr &C) {
-        if (Observable)
-          demandAll(C);
-        Stack.push_back(C.get());
-      });
+      if (observableEvaluation(*E))
+        demandOperandsOf(*E);
+      E->forEachChildExpr([&](const ExprPtr &C) { Stack.push_back(C.get()); });
     }
   }
 
   void propagate(const HighExpr &E) {
     const ByteMask D = NodeDemand[&E];
     if (observableEvaluation(E)) {
-      E.forEachChildExpr([&](const ExprPtr &C) { demandAll(C); });
+      demandOperandsOf(E);
       return;
     }
     switch (E.Kind) {
@@ -352,14 +408,20 @@ private:
       return;
     }
     case NdOp::INT_AND:
-      if (Constant(R)) {
-        demand(L.get(), D & nonzeroBytes(R->ConstVal, Bytes));
+      // A byte a constant mask clears is no byte of the other operand.
+      if (const auto Mask = constantNonzeroBytes(*R, 0)) {
+        demand(L.get(), D & *Mask);
+        if (!Constant(R))
+          demand(R.get(), D & allBytes(exprBytes(*R)));
         return;
       }
-      if (Constant(L) && integer(R)) {
-        demand(R.get(), D & nonzeroBytes(L->ConstVal, exprBytes(*R)));
-        return;
-      }
+      if (integer(R))
+        if (const auto Mask = constantNonzeroBytes(*L, 0)) {
+          demand(R.get(), D & *Mask);
+          if (!Constant(L))
+            demand(L.get(), D & allBytes(Bytes));
+          return;
+        }
       demand(L.get(), D & allBytes(Bytes));
       demand(R.get(), D & allBytes(exprBytes(*R)));
       return;
@@ -375,24 +437,63 @@ private:
       demand(R.get(), carryFill(D) & allBytes(exprBytes(*R)));
       return;
     case NdOp::INT_LEFT:
-      if (Constant(R)) {
-        demand(L.get(), leftShiftSource(D, R->ConstVal, Bytes));
-        return;
-      }
-      break;
     case NdOp::INT_RIGHT:
-    case NdOp::INT_ASHR:
-      if (Constant(R)) {
-        demand(L.get(),
-               rightShiftSource(D, R->ConstVal, Bytes, E.Op == NdOp::INT_ASHR));
-        return;
-      }
-      break;
+    case NdOp::INT_ASHR: {
+      // A shift by amounts its count can take reads the bytes it moves into
+      // a demanded one under any of them.
+      llvm::SmallVector<uint64_t, 2> Amounts;
+      if (!shiftAmounts(*R, Amounts, 0))
+        break;
+      ByteMask Source = 0;
+      for (const uint64_t Amount : Amounts)
+        Source |=
+            E.Op == NdOp::INT_LEFT
+                ? leftShiftSource(D, Amount, Bytes)
+                : rightShiftSource(D, Amount, Bytes, E.Op == NdOp::INT_ASHR);
+      demand(L.get(), Source);
+      if (!Constant(R))
+        demandAll(R);
+      return;
+    }
     default:
       break;
     }
     demandAll(L);
     demandAll(R);
+  }
+
+  /// The amounts a shift count can take: a constant, or a register or
+  /// temporary every assignment of which gives one.
+  bool shiftAmounts(const HighExpr &Count, llvm::SmallVectorImpl<uint64_t> &Out,
+                    unsigned Depth) const {
+    if (Count.Kind == ExprKind::Const) {
+      Out.push_back(Count.ConstVal);
+      return true;
+    }
+    if (Depth > 4)
+      return false;
+    // A conversion of one keeps its value within the converted width.
+    if ((Count.Kind == ExprKind::Cast ||
+         (Count.Kind == ExprKind::UnaryOp &&
+          (Count.Op == NdOp::INT_ZEXT || Count.Op == NdOp::INT_SEXT))) &&
+        Count.Operands.size() == 1 && Count.Operands[0]) {
+      const size_t First = Out.size();
+      if (!shiftAmounts(*Count.Operands[0], Out, Depth + 1))
+        return false;
+      if (const uint16_t Bytes = exprBytes(Count); Bytes && Bytes < 8)
+        for (size_t I = First; I < Out.size(); ++I)
+          Out[I] &= (uint64_t{1} << (8 * Bytes)) - 1;
+      return true;
+    }
+    if (Count.Kind != ExprKind::Var || !readOnlyByUses(Count.Var))
+      return false;
+    const auto It = Definitions.find(varKey(Count.Var));
+    if (It == Definitions.end() || It->second.empty())
+      return false;
+    for (const HighExpr *Value : It->second)
+      if (!Value || !shiftAmounts(*Value, Out, Depth + 1))
+        return false;
+    return true;
   }
 
   /// An entry value of a register or flag the function neither receives as

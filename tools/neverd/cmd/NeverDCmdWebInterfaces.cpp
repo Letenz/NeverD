@@ -48,10 +48,15 @@ bool index(size_t At, uint64_t &Value) {
 
 int runWebInterfaces() {
   const auto &Command = WebArguments[0];
+  const bool Report = Command == "report-source" || Command == "report-har" ||
+                      Command == "report-correlate";
   const bool Preview = Command == "har-preview";
-  const bool HAR = Command == "har-import";
-  const bool Correlate = Command == "interface-correlate";
-  const bool Source = Command == "interfaces" || Correlate;
+  const bool HAR = Command == "har-import" || Command == "report-har";
+  const bool Correlate =
+      Command == "interface-correlate" || Command == "report-correlate";
+  const bool Relations = Command == "interface-relations";
+  const bool Source = Command == "interfaces" || Command == "report-source" ||
+                      Correlate || Relations;
   const auto Count = WebArguments.size();
   const bool ValidCount = Preview     ? Count == 2 || Count == 3
                           : HAR       ? Count == 5
@@ -65,9 +70,13 @@ int runWebInterfaces() {
            "       neverd web har-import <root> <artifact-index> "
            "<redaction-policy> <previewed-sha256>\n"
            "       neverd web interfaces <root> <source-type> [index]\n"
+           "       neverd web interface-relations <root> <source-type> "
+           "[index]\n"
            "       neverd web interface-correlate <root> <source-type> "
            "<source-index> <har-index> <redaction-policy> "
            "<previewed-sha256>\n";
+    llvm::errs() << "report-source, report-har and report-correlate use the "
+                    "corresponding source/import/correlate arguments.\n";
     return 2;
   }
   uint64_t SourceIndex = 0, HARIndex = 0;
@@ -151,7 +160,19 @@ int runWebInterfaces() {
   auto Query =
       HAR ? neverd_web_har_records_json : neverd_web_interface_records_json;
   auto Selection = HAR ? CaptureID : AnalysisID;
-  if (Correlate) {
+  if (Relations) {
+    const auto A = reply(neverd_web_interface_relations_analyze_json(
+        G.S, Revision.data(), Revision.size(), AnalysisID.data(),
+        AnalysisID.size()));
+    if (!A)
+      return 1;
+    llvm::outs() << *A << '\n';
+    if (field(*A, "analysis_status") != "partial")
+      return 1;
+    Selection = field(*A, "relations_id");
+    Query = neverd_web_interface_relation_records_json;
+  }
+  if (Correlate && !Report) {
     const auto C = reply(neverd_web_interfaces_compare_json(
         G.S, Revision.data(), Revision.size(), AnalysisID.data(),
         AnalysisID.size(), CaptureID.data(), CaptureID.size()));
@@ -160,6 +181,22 @@ int runWebInterfaces() {
     llvm::outs() << *C << '\n';
     Selection = field(*C, "correlation_id");
     Query = neverd_web_interface_correlation_records_json;
+  }
+  if (Report) {
+    llvm::json::Object Inputs{{"schema_version", 1}};
+    if (!AnalysisID.empty())
+      Inputs["interface_analysis_id"] = AnalysisID;
+    if (!CaptureID.empty())
+      Inputs["har_capture_id"] = CaptureID;
+    std::string Text;
+    llvm::raw_string_ostream(Text) << llvm::json::Value(std::move(Inputs));
+    const auto R = reply(neverd_web_passive_report_create_json(
+        G.S, Revision.data(), Revision.size(), Text.data(), Text.size()));
+    if (!R)
+      return 1;
+    llvm::outs() << *R << '\n';
+    Selection = field(*R, "passive_report_id");
+    Query = neverd_web_passive_report_records_json;
   }
   for (uint64_t Offset = 0;;) {
     const auto Page =

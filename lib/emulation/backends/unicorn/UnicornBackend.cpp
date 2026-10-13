@@ -95,6 +95,7 @@ struct UnicornBackend::Impl {
   cs_insn *Decoded = nullptr;
   bool HasWriteWatches = false, PendingWriteWatch = false;
   uc_hook WriteWatchHook = 0;
+  llvm::Error setWrittenHook(bool Observe);
   std::vector<uc_hook> HookHandles;
   std::optional<BackendFault> FirstFault;
   std::optional<BackendFault> RecoverableFault;
@@ -406,22 +407,26 @@ struct UnicornBackend::Impl {
                       int64_t, void *Opaque) {
     auto &S = *static_cast<Impl *>(Opaque);
     S.invoke([&] {
-      if (S.HasWriteWatches && Size > 0 && !S.effectsStopped() &&
-          !S.RecoverableFault) {
-        // Resolve aliases through the shared physical mapping authority.
-        uint64_t At = Address, Remaining = uint64_t(Size);
-        while (Remaining) {
-          const uint64_t Offset = At % memory::PageSize;
-          const uint64_t Count = std::min(Remaining, memory::PageSize - Offset);
-          auto Page = S.Memory->mappings().find(At - Offset);
-          if (Page != S.Memory->mappings().end() && !Page->second.IO)
-            S.PendingWriteWatch |=
-                S.Memory->writeWatched(Page->second.Physical + Offset, Count);
-          Remaining -= Count;
-          if (Count > UINT64_MAX - At)
-            break;
-          At += Count;
+      if (Size <= 0)
+        return;
+      // The fork's AFTER event names an actual committed RAM access. Record
+      // its physical bytes even if a later stop or fault has higher priority.
+      uint64_t At = Address, Remaining = uint64_t(Size);
+      while (Remaining) {
+        const uint64_t Offset = At % memory::PageSize;
+        const uint64_t Count = std::min(Remaining, memory::PageSize - Offset);
+        auto Page = S.Memory->mappings().find(At - Offset);
+        if (Page != S.Memory->mappings().end() && !Page->second.IO) {
+          const uint64_t Physical = Page->second.Physical + Offset;
+          S.Memory->recordRAMWrite(Physical, Count);
+          S.Memory->recordRAMInitialization(Physical, Count);
+          if (S.HasWriteWatches && !S.effectsStopped() && !S.RecoverableFault)
+            S.PendingWriteWatch |= S.Memory->writeWatched(Physical, Count);
         }
+        Remaining -= Count;
+        if (Count > UINT64_MAX - At)
+          break;
+        At += Count;
       }
     });
   }
@@ -893,6 +898,22 @@ llvm::Error UnicornBackend::restoreContext(const BackendContext &Context) {
   return llvm::Error::success();
 }
 
+llvm::Error UnicornBackend::Impl::setWrittenHook(bool Observe) {
+  if (Observe && !WriteWatchHook) {
+    if (auto E =
+            check(uc_hook_add(Engine, &WriteWatchHook, UC_HOOK_MEM_WRITE_AFTER,
+                              reinterpret_cast<void *>(written), this, 1, 0),
+                  unicornDiagnostic::InstallCPUHook))
+      return E;
+  } else if (!Observe && WriteWatchHook) {
+    if (auto E = check(uc_hook_del(Engine, WriteWatchHook),
+                       unicornDiagnostic::InstallCPUHook))
+      return E;
+    WriteWatchHook = 0;
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error UnicornBackend::setMemoryWriteWatches(
     const std::vector<MemoryWriteWatch> &Watches) {
   if (auto E = State->mutableState())
@@ -902,19 +923,9 @@ llvm::Error UnicornBackend::setMemoryWriteWatches(
   for (const auto &W : Watches)
     if (!W.Size || W.Size - 1 > UINT64_MAX - W.Address)
       return diagnostic::error(diagnostic::WriteWatchRange);
-  if (!Watches.empty() && !State->WriteWatchHook) {
-    if (auto E = check(uc_hook_add(State->Engine, &State->WriteWatchHook,
-                                   UC_HOOK_MEM_WRITE_AFTER,
-                                   reinterpret_cast<void *>(Impl::written),
-                                   State.get(), 1, 0),
-                       unicornDiagnostic::InstallCPUHook))
-      return E;
-  } else if (Watches.empty() && State->WriteWatchHook) {
-    if (auto E = check(uc_hook_del(State->Engine, State->WriteWatchHook),
-                       unicornDiagnostic::InstallCPUHook))
-      return E;
-    State->WriteWatchHook = 0;
-  }
+  if (auto E = State->setWrittenHook(!Watches.empty() ||
+                                     State->Memory->hasInitializationWatches()))
+    return E;
   State->Memory->setWriteWatches(Watches);
   State->HasWriteWatches = !Watches.empty();
   return llvm::Error::success();
@@ -1026,6 +1037,9 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
   // Flush cached translations at this stopped-CPU boundary before resuming.
   if (auto E = check(uc_ctl_flush_tb(State->Engine),
                      unicornDiagnostic::InvalidateCPUTranslations))
+    return E;
+  if (auto E = State->setWrittenHook(State->HasWriteWatches ||
+                                     State->Memory->hasInitializationWatches()))
     return E;
   State->InstructionPC = PC;
   State->PendingWriteWatch = false;
