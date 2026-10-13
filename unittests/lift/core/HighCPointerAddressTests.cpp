@@ -35102,12 +35102,14 @@ std::string dumpMedBlockRanges(const std::vector<MedFunc> &Funcs) {
 }
 
 std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true,
-                              DebugContext *Dbg = nullptr) {
+                              DebugContext *Dbg = nullptr,
+                              bool SourceProjection = false) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.NoOpt = NoOpt;
   Opts.LiftMode = true;
+  Opts.SourceProjection = SourceProjection;
   Opts.OnlyFunctionEntries.insert(Entry);
   auto Result = Pipeline().run(Img, Ctx, Opts, Dbg);
   if (!Result.Success || !Result.LlvmModule)
@@ -35502,6 +35504,31 @@ TEST(HighCPointerAddresses, CorpusCalleeSavesAreNotStoresOfLaterArguments) {
   EXPECT_EQ(Source.find("(frame_base - 8) ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(frame_base + 24) ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= arg3;"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, CorpusCalleeSavesStayOutOfTheFrame) {
+  // `mov [rsp+10h], rbx` and `push rdi` save the caller's registers.  The
+  // LLVM-C view, like HighC, leaves those saves out of its frame.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/clang-cl/x86_64/fh3/gs/o0/abi-probe/"
+                    "cxx_eh_probe-clang-cl-x86_64-fh3-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+  constexpr va_t Entry = 0x140001A30;
+  BinaryLoadOptions Opts;
+  Opts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, Opts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source =
+      llvmcOnlyFunction(std::move(*Img), Entry, /*NoOpt=*/false,
+                        /*Dbg=*/nullptr, /*SourceProjection=*/true);
+  ASSERT_NE(Source.find("RtlCaptureContext("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(char*)&frame0 + 120) = 0;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("(char*)&frame0 + 80) = 0;"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
