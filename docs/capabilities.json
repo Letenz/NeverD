@@ -64,6 +64,7 @@
           "neverd_ir_llvm",
           "neverd_ir_low",
           "neverd_ir_med",
+          "neverd_ir_view_ex_json",
           "neverd_item_clear",
           "neverd_item_set",
           "neverd_items_json",
@@ -1153,6 +1154,7 @@
           "neverd_identify_json",
           "neverd_import_slots_json",
           "neverd_imports_json",
+          "neverd_ir_view_ex_json",
           "neverd_items_json",
           "neverd_operand_formats_json",
           "neverd_pdb_reference_json",
@@ -1432,13 +1434,11 @@
       ],
       "public_surfaces": {
         "c": [
-          "neverd_ir_view_ex_json",
           "neverd_ir_view_json"
         ],
         "python": [],
         "cli": [],
         "json": [
-          "neverd_ir_view_ex_json",
           "neverd_ir_view_json"
         ]
       }
