@@ -337,6 +337,53 @@ TEST(Win64CallContract, AThunkForwardsTheStackArgumentsItsImportReads) {
     EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
+TEST(Win64CallContract, OwnedX87ContextKeepsCallSetupAndTailArguments) {
+  // Win64 owns the x87 stack as one context and publishes it around every
+  // call. That transport neither ends the stores that set a call's stack
+  // arguments nor separates a tail jump from its return.
+  constexpr va_t Caller = Text, Thunk = Text + 0x60;
+  std::vector<uint8_t> Code(0x80, 0xCC);
+  std::vector<uint8_t> CallerCode = {
+      0x48, 0x83, 0xEC, 0x48,                         // sub rsp, 48h
+      0xD9, 0xE8, 0xDD, 0xD8,                         // fld1; fstp st(0)
+      0x48, 0xC7, 0x44, 0x24, 0x20, 0xF5, 0x01, 0, 0, // mov [rsp+20h], 501
+      0x48, 0xC7, 0x44, 0x24, 0x28, 0x5A, 0x02, 0, 0, // mov [rsp+28h], 602
+      0x48, 0xC7, 0x44, 0x24, 0x30, 0xBF, 0x02, 0, 0, // mov [rsp+30h], 703
+      0x48, 0xC7, 0x44, 0x24, 0x38, 0x24, 0x03, 0, 0, // mov [rsp+38h], 804
+      0x41, 0xB9, 4,    0,    0,    0,                // mov r9d, 4
+      0x41, 0xB8, 3,    0,    0,    0,                // mov r8d, 3
+      0xBA, 2,    0,    0,    0,                      // mov edx, 2
+      0xB9, 1,    0,    0,    0};                     // mov ecx, 1
+  const auto Call = throughSlot(Caller + CallerCode.size(), slot(0));
+  CallerCode.insert(CallerCode.end(), Call.begin(), Call.end());
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x48, 0xC3}) // add rsp, 48h; ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  // The thunk changes x87 state, then jumps to the import with its own
+  // caller's arguments, four of them in that caller's outgoing stack area.
+  std::vector<uint8_t> ThunkCode = {0xD9, 0xE8, 0xDD, 0xD8}; // fld1; fstp st(0)
+  const auto Jump =
+      throughSlot(Thunk + ThunkCode.size(), slot(0), /*Jump=*/true);
+  ThunkCode.insert(ThunkCode.end(), Jump.begin(), Jump.end());
+  put(Code, Thunk, ThunkCode);
+  const BinaryImage Img = makeImage(
+      Code, {{Caller, "caller"}, {Thunk, "x87_thunk"}}, {"RtlVirtualUnwind"});
+  const std::string Source = liftEntries(Img, {Caller, Thunk});
+  EXPECT_NE(Source.find("neverd_x87_"), std::string::npos) << Source;
+  const std::string CallerBody = body(Source, "caller");
+  ASSERT_FALSE(CallerBody.empty()) << Source;
+  EXPECT_NE(CallerBody.find("RtlVirtualUnwind("), std::string::npos)
+      << CallerBody;
+  for (const char *Value : {"501", "602", "703", "804"})
+    EXPECT_NE(CallerBody.find(Value), std::string::npos) << Value << '\n'
+                                                         << CallerBody;
+  const std::string ThunkBody = body(Source, "x87_thunk");
+  ASSERT_FALSE(ThunkBody.empty()) << Source;
+  EXPECT_NE(ThunkBody.find("arg7)"), std::string::npos) << ThunkBody;
+  for (const std::string &Text : {CallerBody, ThunkBody})
+    EXPECT_EQ(Text.find("unknown value"), std::string::npos) << Text;
+}
+
 TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   // One function calls each import through its slot.  calloc reads RCX and
   // RDX by the C library's arity, _initterm by the Windows C runtime's own
