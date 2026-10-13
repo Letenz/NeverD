@@ -848,6 +848,41 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
 }
 } // namespace
 
+const char *neverd_ir_view_ex_json(neverd_session_t s, neverd_va_t address,
+                                   const char *representation,
+                                   std::size_t offset, std::size_t limit,
+                                   const char *options) {
+  const auto policy = Json::parse(options ? options : "{}", nullptr, false);
+  if (!policy.is_object() ||
+      (policy.contains("symbolic") && !policy["symbolic"].is_boolean())) {
+    session(s)->error = "invalid source options";
+    return nullptr;
+  }
+  if (!policy.empty()) {
+    std::fprintf(stderr, "fixture source options %s\n", policy.dump().c_str());
+    std::fflush(stderr);
+  }
+  if (session(s)->path.ends_with("source-options-fail.bin") &&
+      policy.value("symbolic", false)) {
+    session(s)->error = "fixture transformation refused";
+    return nullptr;
+  }
+  if (session(s)->path.ends_with("source-options-slow.bin") &&
+      policy.value("symbolic", false)) {
+    std::fprintf(stderr, "fixture symbolic transformation started\n");
+    std::fflush(stderr);
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+  }
+  const char *raw =
+      neverd_ir_view_json(s, address, representation, offset, limit);
+  if (!raw)
+    return nullptr;
+  auto page = Json::parse(raw);
+  neverd_free_string(raw);
+  page["fixture_source_options"] = policy;
+  return copy(page.dump());
+}
+
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {

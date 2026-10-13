@@ -175,6 +175,18 @@ back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
 
+Native HighC keeps ordinary cleanup but skips optional symbolic expression
+simplification by default. Use the source window's **Optimization** menu or
+right-click **Symbolically simplify this function** to enable it. C through LLVM
+offers basic scalar cleanup by default, separate O0–O3 compiler pipelines, and a
+custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE. Symbolic
+simplification is a separate choice for every LLVM profile. These choices apply
+to the current function; navigating to another function restores the defaults.
+An enhancement runs in the analysis worker while the previous source remains
+visible. **Cancel transformation** stops that request, and **Restore default
+source** returns to the ordinary view. Failed enhancements retain the preceding
+source. Required machine control-flow, ABI and exception recovery still run.
+
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
 the requested function. F5 or Tab pressed while a jump is loading decompiles the

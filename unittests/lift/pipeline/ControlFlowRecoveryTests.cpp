@@ -136,6 +136,31 @@ TEST(ControlFlowRecovery, RecoversTheGraphItsOwnFlatteningHid) {
   EXPECT_GT(countOf<llvm::CondBrInst>(*F), 0u) << printFunction(*F);
 }
 
+TEST(ControlFlowRecovery, SourceDispatcherRecoveryRequiresTheSymbolicOption) {
+  for (bool Symbolic : {false, true}) {
+    SCOPED_TRACE(Symbolic);
+    llvm::LLVMContext C;
+    llvm::Module M("source", C);
+    buildBranchingFunction(M);
+    ASSERT_GT(ControlFlowFlatteningPass::inject(M), 0u);
+    SourceViewOptions Options;
+    Options.Symbolic = Symbolic;
+    Options.LLVM = SourceViewOptions::LLVMOptimization::Custom;
+    Options.Passes = 0;
+    const auto Result = Pipeline::optimizeOrPromoteModule(M, nullptr, Options);
+    EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+    EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    auto *F = M.getFunction("f");
+    ASSERT_NE(F, nullptr);
+    unsigned ReachableDispatchers = 0;
+    for (const auto &I : llvm::instructions(F))
+      if (const auto *Switch = llvm::dyn_cast<llvm::SwitchInst>(&I))
+        ReachableDispatchers += !llvm::pred_empty(Switch->getParent());
+    EXPECT_EQ(ReachableDispatchers, Symbolic ? 0u : 1u) << printFunction(*F);
+  }
+}
+
 TEST(ControlFlowRecovery, DeepRunsRecoveryBeforePromotionAndSROA) {
   // The comparison that matters.  One module is flattened and put back, the
   // other is left alone; both then go through the real optimizer. If recovery

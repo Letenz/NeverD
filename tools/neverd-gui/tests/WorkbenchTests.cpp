@@ -41,6 +41,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -1432,6 +1433,151 @@ private slots:
                  std::optional<Address>(Base));
     QTest::qWait(300);
     QCOMPARE(diagnostics.join('\n').count("fixture slow decompile started"), 1);
+  }
+
+  void sourceTransformationCancelsWithoutBlockingBrowsingOrLosingSource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(writeFixture(directory, "source-options-slow.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    const auto original = view->text()->allText();
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(!diagnostics.join('\n').contains(
+        "fixture symbolic transformation started"));
+    auto *button = view->findChild<QToolButton *>("sourceOptimization");
+    QVERIFY(button && button->isVisible() && button->isEnabled());
+    auto *menu = button->menu();
+    menu->popup(button->mapToGlobal(QPoint(0, button->height())));
+    QTRY_VERIFY(menu->isVisible());
+    auto *symbolic = menu->findChild<QAction *>("sourceSymbolic");
+    QVERIFY(symbolic);
+    QVERIFY(!symbolic->isChecked());
+    menu->setActiveAction(symbolic);
+    QTest::keyClick(menu, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(diagnostics.join('\n').contains(
+                                 "fixture symbolic transformation started"),
+                             5000);
+    QVERIFY(view->text()->loading());
+    QCOMPARE(view->text()->allText(), original);
+    bool functions = false, listing = false;
+    bench.session.read("functions", {{"offset", 512}, {"limit", 32}}, this,
+                       [&](const QJsonObject &p) {
+                         functions = !p.value("items").toArray().isEmpty();
+                       });
+    bench.session.read("listing",
+                       {{"address", hexAddress(Base + 16)}, {"after", 16}},
+                       this, [&](const QJsonObject &) { listing = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(functions && listing, 1500);
+    QMenu cancellation;
+    view->addSourceActions(cancellation);
+    auto *cancel = cancellation.findChild<QAction *>("sourceCancel");
+    QVERIFY(cancel && cancel->isEnabled());
+    cancel->trigger();
+    QVERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QCOMPARE(view->text()->allText(), original);
+    // A fresh request after retiring the blocked replica still succeeds.
+    view->text()->load(Base + 16, "source");
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+  }
+
+  void sourceTransformationFailureKeepsThePrecedingSource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "source-options-fail.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() && !view->text()->allText().isEmpty());
+    const auto original = view->text()->allText();
+    view->text()->setSourceOptions({{"symbolic", true}});
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QCOMPARE(view->text()->allText(), original);
+    QVERIFY(view->text()->status().contains("Transformation failed"));
+  }
+
+  void sourceTransformationProfilesAreIndependentAndResetOnNavigation() {
+    QTemporaryDir directory;
+    Workbench bench;
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(writeFixture(directory, "source-cache.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::ViewLLVMC)->trigger();
+    auto *view = bench.codeView("llvmc");
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() &&
+                view->text()->allText().contains("return value"));
+    for (const QString name :
+         {QStringLiteral("sourceLLVM_O3"), QStringLiteral("sourceSymbolic")}) {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *action = choices.findChild<QAction *>(name);
+      QVERIFY(action);
+      action->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+    }
+    QCOMPARE(
+        view->text()->sourceOptions().value("llvm_optimization").toString(),
+        QStringLiteral("O3"));
+    QVERIFY(view->text()->sourceOptions().value("symbolic").toBool());
+    QVERIFY(diagnostics.join('\n').contains("\"llvm_optimization\":\"O3\""));
+    QVERIFY(diagnostics.join('\n').contains("\"symbolic\":true"));
+    if (const auto capture =
+            qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+        !capture.isEmpty()) {
+      QDir().mkpath(capture);
+      const auto previous = Theme::instance().mode();
+      for (const auto mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(mode);
+        QTest::qWait(30);
+        const auto suffix = mode == Theme::Mode::Light ? "light" : "dark";
+        QVERIFY(bench.window->grab().save(capture + "/source-options-" +
+                                          suffix + ".png"));
+        QMenu choices;
+        view->addSourceActions(choices);
+        choices.popup(view->mapToGlobal(QPoint(10, 50)));
+        QTRY_VERIFY(choices.isVisible());
+        QVERIFY(choices.grab().save(capture + "/source-options-menu-" + suffix +
+                                    ".png"));
+      }
+      Theme::instance().setMode(previous);
+    }
+    QMenu defaults;
+    view->addSourceActions(defaults);
+    defaults.findChild<QAction *>("sourceDefault")->trigger();
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    view->text()->setSourceOptions({{"symbolic", true}});
+    QTRY_VERIFY(!view->text()->loading());
+    view->text()->load(Base + 16, "llvmc");
+    QTRY_VERIFY(!view->text()->loading() &&
+                view->text()->allText().contains("function_1"));
+    QVERIFY(view->text()->sourceOptions().isEmpty());
   }
 
   void largePseudocodeKeepsProcessingEvents() {

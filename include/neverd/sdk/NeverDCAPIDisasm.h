@@ -268,6 +268,20 @@ NEVERD_API const char *neverd_ir_view_json(neverd_session_t Sess,
                                            const char *Representation,
                                            size_t Offset, size_t Limit);
 
+/// Source page with request-local transformations. OptionsJSON is an object:
+/// `symbolic` (bool, default false); for llvmc, `llvm_optimization` is basic
+/// (default), O0, O1, O2, O3 or custom. Custom requires `llvm_passes`, an array
+/// drawn from instcombine, early-cse, simplifycfg and dce, run in that order.
+/// Unknown fields, invalid combinations and non-source representations fail.
+/// Options never alter ordinary views, machine analysis or project state.
+/// Return an owned UTF-8 string (neverd_free_string), or NULL with last_error
+/// set.
+NEVERD_API const char *neverd_ir_view_ex_json(neverd_session_t Sess,
+                                              neverd_va_t FuncEntry,
+                                              const char *Representation,
+                                              size_t Offset, size_t Limit,
+                                              const char *OptionsJSON);
+
 #ifdef __cplusplus
 }
 #endif

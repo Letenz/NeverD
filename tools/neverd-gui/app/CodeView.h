@@ -15,6 +15,7 @@
 class QComboBox;
 class QLabel;
 class QToolButton;
+class QMenu;
 
 namespace neverd::gui {
 
@@ -35,7 +36,10 @@ public:
 
   CodeText(Session &session, QWidget *parent = nullptr);
 
-  void load(Address function, const QString &representation);
+  void load(Address function, const QString &representation,
+            std::optional<QJsonObject> options = std::nullopt);
+  const QJsonObject &sourceOptions() const { return sourceOptions_; }
+  void setSourceOptions(const QJsonObject &options);
   void clear();
   /// Stop obsolete requests/pages, including an in-flight analysis process
   /// when no other view still subscribes to its result.
@@ -160,6 +164,7 @@ private:
   std::optional<Address> function_;
   std::optional<Address> pendingAddress_, selectedAddress_;
   QString representation_, status_, highlight_;
+  QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
   bool interrupted_ = false;
@@ -211,6 +216,7 @@ public:
   CodeText *text() const { return text_; }
   void showFunction(Address function);
   void setRepresentation(const QString &representation);
+  void addSourceActions(QMenu &menu);
   /// The representation the selector shows, loaded or still to load.
   QString representation() const;
   /// The view stays on its function instead of following the disassembly.
@@ -241,7 +247,7 @@ private:
   void updateRepresentations();
   Session &session_;
   QComboBox *selector_;
-  QToolButton *fold_, *lock_;
+  QToolButton *fold_, *lock_, *optimize_;
   QLabel *status_;
   CodeText *text_;
 };

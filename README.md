@@ -140,6 +140,12 @@ cmake --build build
 ./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
+# Optional transformations for one native function (ordinary HighC skips them)
+./build/bin/neverd decompile --func main --symbolic-simplify -o enhanced.c binary
+./build/bin/neverd decompile --func main --llvm --llvm-opt=O3 -o optimized.c binary
+./build/bin/neverd decompile --func main --llvm --llvm-opt=custom \
+  --llvm-passes=instcombine,early-cse,simplifycfg,dce -o cleaned.c binary
+
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll
 ./build/bin/neverd decompile --language=c contract.evm -o contract.c

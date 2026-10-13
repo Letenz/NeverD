@@ -99,11 +99,31 @@ these facts. Navigation still discards the preceding output IR and source.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
-revision and listing generation identify a document. A hit can answer before
-preparing the mutable single-function Session; it never marks that Session as
+revision, listing generation and source transformation options identify a
+document. A hit can answer before preparing the mutable single-function Session;
+it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Documents own text, rows and edit anchors, and project or presentation changes
 invalidate them. Oversized documents remain readable without being retained.
+
+`SourceViewOptions` owns request-local native source policy. Ordinary HighIR
+conversion skips symbolic expression simplification. An explicit source request
+may rebuild HighIR from already prepared LowIR/MedIR and library recognitions,
+retaining one enhanced variant without repeating machine/ABI recovery. A scoped
+borrow restores the ordinary result on every exit. LLVM source modules and
+emitted source caches include the options in their identity. LLVM call-site
+preparation owns a separate MedIR copy so opening that view cannot change the
+prepared inputs used by a later HighC enhancement. The additive
+`neverd_ir_view_ex_json` API validates options before preparation; the legacy
+page API keeps default behavior and bytecode support. Source options never
+change the lifting, patching or general module optimizer defaults.
+
+LLVMC defaults to a scalar cleanup sequence after ordinary frame and SSA
+promotion. O0–O3 and a bounded custom pass selection are explicit alternatives.
+Symbolic fixed-point rewriting and LLVM dispatcher recovery require the
+independent symbolic option. Native machine CFG, jump-table, ABI and exception
+proofs remain authoritative and are unaffected. Worker source edits validate
+against the same source options used to display their targets.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only

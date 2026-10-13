@@ -5,15 +5,20 @@
 #include "ShrinkableRow.h"
 #include "Theme.h"
 
+#include <QActionGroup>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QHelpEvent>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QPainter>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -247,6 +252,7 @@ void CodeText::cancel() {
   selectedAddress_.reset();
   session_.cancelAnalysisReads(this);
   if (loading_) {
+    sourceOptions_ = renderedOptions_;
     interrupted_ = true;
     loading_ = false;
     status_ = tr("Cancelled");
@@ -268,6 +274,8 @@ void CodeText::clear() {
   library_.reset({}, {}, {});
   lines_.clear();
   function_.reset();
+  sourceOptions_ = {};
+  renderedOptions_ = {};
   status_.clear();
   cursorLine_ = cursorColumn_ = 0;
   anchor_.reset();
@@ -286,13 +294,18 @@ void CodeText::clear() {
   emit statusChanged();
 }
 
-void CodeText::load(Address function, const QString &representation) {
-  cancel();
+void CodeText::load(Address function, const QString &representation,
+                    std::optional<QJsonObject> options) {
   const bool same = function_ == function && representation_ == representation;
+  const auto nextOptions =
+      options.value_or(same ? sourceOptions_ : QJsonObject());
+  cancel();
   function_ = function;
   representation_ = representation;
+  sourceOptions_ = nextOptions;
   const quint64 serial = ++serial_;
   if (!same) {
+    renderedOptions_ = {};
     lines_.clear();
     widestLine_ = 0;
     cursorLine_ = cursorColumn_ = 0;
@@ -306,11 +319,17 @@ void CodeText::load(Address function, const QString &representation) {
   // a new function opens at its definition, its prelude folded.
   foldAfterLoad_ = same && library_.libraryFolded();
   foldPreludeAfterLoad_ = !same || library_.isFolded(PreludeRegion);
-  library_.reset({}, {}, {});
+  if (!same)
+    library_.reset({}, {}, {});
   emit foldingChanged();
   status_ = tr("Decompiling…");
   emit statusChanged();
   request(0, serial);
+}
+
+void CodeText::setSourceOptions(const QJsonObject &options) {
+  if (function_ && CodeView::isSource(representation_))
+    load(*function_, representation_, options);
 }
 
 void CodeText::request(int offset, quint64 serial) {
@@ -320,6 +339,7 @@ void CodeText::request(int offset, quint64 serial) {
       QStringLiteral("decompile"),
       {{"address", hexAddress(*function_)},
        {"representation", representation_},
+       {"source_options", sourceOptions_},
        {"offset", offset},
        {"limit", PageLines}},
       this,
@@ -327,6 +347,7 @@ void CodeText::request(int offset, quint64 serial) {
         if (serial != serial_)
           return;
         appendPage(payload, offset);
+        renderedOptions_ = sourceOptions_;
         const auto next = payload.value("next_offset");
         if (!next.isNull() && next.toInt() > offset) {
           rebuildLines(true);
@@ -360,6 +381,12 @@ void CodeText::request(int offset, quint64 serial) {
           status_ +=
               QStringLiteral(" · ") +
               tr("Saved variable names belong to a different source rendering");
+        if (sourceOptions_.value("symbolic").toBool())
+          status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
+        if (representation_ == QLatin1String("llvmc"))
+          status_ +=
+              QStringLiteral(" · ") +
+              sourceOptions_.value("llvm_optimization").toString(tr("Basic"));
         updateRange();
         viewport()->update();
         if (const auto address = std::exchange(pendingAddress_, {}))
@@ -371,6 +398,12 @@ void CodeText::request(int offset, quint64 serial) {
           return;
         loading_ = false;
         pendingAddress_.reset();
+        if (!lines_.isEmpty() && sourceOptions_ != renderedOptions_) {
+          sourceOptions_ = renderedOptions_;
+          status_ = tr("Transformation failed: %1").arg(message);
+          emit statusChanged();
+          return;
+        }
         // A refused function reads in no language and names nothing.
         editNames_.clear();
         editMetadata_ = true;
@@ -396,6 +429,7 @@ void CodeText::request(int offset, quint64 serial) {
 
 void CodeText::appendPage(const QJsonObject &payload, int offset) {
   if (offset == 0) {
+    library_.reset({}, {}, {});
     editNames_.clear();
     editMetadata_ = payload.contains("code_names");
   }
@@ -1410,7 +1444,8 @@ CodeView::CodeView(Session &session, const QString &representation,
                    QWidget *parent)
     : QWidget(parent), session_(session), selector_(new QComboBox(this)),
       fold_(new QToolButton(this)), lock_(new QToolButton(this)),
-      status_(new QLabel(this)), text_(new CodeText(session, this)) {
+      optimize_(new QToolButton(this)), status_(new QLabel(this)),
+      text_(new CodeText(session, this)) {
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
@@ -1435,6 +1470,19 @@ CodeView::CodeView(Session &session, const QString &representation,
   lock_->setIcon(icon(QStringLiteral("lock")));
   lock_->setToolTip(tr("Keep this function while the disassembly moves on"));
   bar->addWidget(lock_);
+  optimize_->setObjectName(QStringLiteral("sourceOptimization"));
+  optimize_->setAutoRaise(true);
+  optimize_->setText(tr("Optimization"));
+  optimize_->setToolTip(tr("Transform the current function"));
+  optimize_->setPopupMode(QToolButton::InstantPopup);
+  auto *optimizationMenu = new QMenu(optimize_);
+  optimize_->setMenu(optimizationMenu);
+  connect(optimizationMenu, &QMenu::aboutToShow, this,
+          [this, optimizationMenu] {
+            optimizationMenu->clear();
+            addSourceActions(*optimizationMenu);
+          });
+  bar->addWidget(optimize_);
   bar->addStretch(1);
   makeRowShrinkable(*barRow);
   layout->addWidget(barRow);
@@ -1446,6 +1494,7 @@ CodeView::CodeView(Session &session, const QString &representation,
     if (text_->function())
       text_->load(*text_->function(), name);
     emit representationChanged(name);
+    updateStatus();
   });
   connect(&session_, &Session::opened, this, &CodeView::updateRepresentations);
   connect(&session_, &Session::unloaded, this,
@@ -1458,6 +1507,102 @@ CodeView::CodeView(Session &session, const QString &representation,
     const QSignalBlocker blocker(fold_);
     fold_->setChecked(text_->libraryFolded());
   });
+  updateStatus();
+}
+
+void CodeView::addSourceActions(QMenu &menu) {
+  if (!isSource(representation()) || !text_->function())
+    return;
+  auto *symbolic = menu.addAction(tr("Symbolically simplify this function"));
+  symbolic->setObjectName(QStringLiteral("sourceSymbolic"));
+  symbolic->setCheckable(true);
+  symbolic->setChecked(text_->sourceOptions().value("symbolic").toBool());
+  connect(symbolic, &QAction::triggered, this, [this](bool enabled) {
+    auto options = text_->sourceOptions();
+    if (enabled)
+      options["symbolic"] = true;
+    else
+      options.remove("symbolic");
+    text_->setSourceOptions(options);
+  });
+  if (representation() == QLatin1String("llvmc")) {
+    auto *levels = menu.addMenu(tr("LLVM optimization"));
+    auto *group = new QActionGroup(levels);
+    const auto selected = text_->sourceOptions()
+                              .value("llvm_optimization")
+                              .toString(QStringLiteral("basic"));
+    for (const auto &level : {QStringLiteral("basic"), QStringLiteral("O0"),
+                              QStringLiteral("O1"), QStringLiteral("O2"),
+                              QStringLiteral("O3"), QStringLiteral("custom")}) {
+      auto *action = levels->addAction(
+          level == QLatin1String("basic")    ? tr("Basic cleanup (default)")
+          : level == QLatin1String("custom") ? tr("Choose passes…")
+                                             : level);
+      action->setObjectName(QStringLiteral("sourceLLVM_") + level);
+      action->setCheckable(true);
+      action->setChecked(selected == level);
+      group->addAction(action);
+      connect(action, &QAction::triggered, this, [this, level] {
+        auto options = text_->sourceOptions();
+        if (level == QLatin1String("custom")) {
+          QDialog dialog(this);
+          dialog.setWindowTitle(tr("LLVM passes for this function"));
+          auto *layout = new QVBoxLayout(&dialog);
+          auto *note =
+              new QLabel(tr("Choose scalar cleanup passes. Symbolic "
+                            "simplification is controlled separately."),
+                         &dialog);
+          note->setWordWrap(true);
+          layout->addWidget(note);
+          const auto selectedPasses = options.value("llvm_passes").toArray();
+          QVector<QCheckBox *> boxes;
+          for (const auto &pass :
+               {QStringLiteral("instcombine"), QStringLiteral("early-cse"),
+                QStringLiteral("simplifycfg"), QStringLiteral("dce")}) {
+            auto *box = new QCheckBox(pass, &dialog);
+            box->setChecked(!options.contains("llvm_passes") ||
+                            selectedPasses.contains(pass));
+            boxes.push_back(box);
+            layout->addWidget(box);
+          }
+          auto *buttons = new QDialogButtonBox(
+              QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+          connect(buttons, &QDialogButtonBox::accepted, &dialog,
+                  &QDialog::accept);
+          connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                  &QDialog::reject);
+          layout->addWidget(buttons);
+          const auto function = text_->function();
+          const auto epoch = session_.epoch();
+          if (dialog.exec() != QDialog::Accepted ||
+              text_->function() != function || session_.epoch() != epoch ||
+              representation() != QLatin1String("llvmc"))
+            return;
+          QJsonArray passes;
+          for (auto *box : boxes)
+            if (box->isChecked())
+              passes.append(box->text());
+          options["llvm_passes"] = passes;
+        } else {
+          options.remove("llvm_passes");
+        }
+        if (level == QLatin1String("basic"))
+          options.remove("llvm_optimization");
+        else
+          options["llvm_optimization"] = level;
+        text_->setSourceOptions(options);
+      });
+    }
+  }
+  auto *reset = menu.addAction(tr("Restore default source"));
+  reset->setObjectName(QStringLiteral("sourceDefault"));
+  reset->setEnabled(!text_->sourceOptions().isEmpty());
+  connect(reset, &QAction::triggered, this,
+          [this] { text_->setSourceOptions({}); });
+  auto *cancel = menu.addAction(tr("Cancel transformation"));
+  cancel->setObjectName(QStringLiteral("sourceCancel"));
+  cancel->setEnabled(text_->loading());
+  connect(cancel, &QAction::triggered, text_, &CodeText::cancel);
 }
 
 void CodeView::updateRepresentations() {
@@ -1506,7 +1651,11 @@ QString CodeView::representation() const {
   return selector_->currentData().toString();
 }
 
-void CodeView::updateStatus() { status_->setText(text_->status()); }
+void CodeView::updateStatus() {
+  status_->setText(text_->status());
+  optimize_->setVisible(isSource(representation()));
+  optimize_->setEnabled(text_->function().has_value());
+}
 
 bool CodeView::locked() const { return lock_->isChecked(); }
 

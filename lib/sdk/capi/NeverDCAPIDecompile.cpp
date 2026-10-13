@@ -849,6 +849,149 @@ const char *neverd_ir_med(neverd_session_t Sess, neverd_va_t FuncEntry) {
   return dupStr(std::string());
 }
 
+namespace {
+
+SourceViewOptions readSourceOptions(llvm::StringRef Text,
+                                    llvm::StringRef Stage) {
+  if (Text.size() > 4096)
+    throw std::invalid_argument("source options exceed 4096 bytes");
+  auto Parsed = llvm::json::parse(Text);
+  if (!Parsed) {
+    llvm::consumeError(Parsed.takeError());
+    throw std::invalid_argument("source options must be a JSON object");
+  }
+  const auto *Object = Parsed->getAsObject();
+  if (!Object)
+    throw std::invalid_argument("source options must be a JSON object");
+  SourceViewOptions Options;
+  for (const auto &Field : *Object) {
+    const llvm::StringRef Key = Field.first;
+    if (Key != "symbolic" && Key != "llvm_optimization" && Key != "llvm_passes")
+      throw std::invalid_argument("unknown source option: " + Key.str());
+    if (Key != "symbolic" && Stage != "llvmc")
+      throw std::invalid_argument("LLVM options require llvmc");
+  }
+  if (Object->get("symbolic")) {
+    auto Enabled = Object->getBoolean("symbolic");
+    if (!Enabled)
+      throw std::invalid_argument("symbolic must be a boolean");
+    Options.Symbolic = *Enabled;
+  }
+  if (Object->get("llvm_optimization")) {
+    auto Level = Object->getString("llvm_optimization");
+    if (!Level)
+      throw std::invalid_argument("llvm_optimization must be a string");
+    using LevelKind = SourceViewOptions::LLVMOptimization;
+    if (*Level == "basic")
+      Options.LLVM = LevelKind::Basic;
+    else if (*Level == "O0")
+      Options.LLVM = LevelKind::O0;
+    else if (*Level == "O1")
+      Options.LLVM = LevelKind::O1;
+    else if (*Level == "O2")
+      Options.LLVM = LevelKind::O2;
+    else if (*Level == "O3")
+      Options.LLVM = LevelKind::O3;
+    else if (*Level == "custom")
+      Options.LLVM = LevelKind::Custom;
+    else
+      throw std::invalid_argument("unsupported LLVM source optimization");
+  }
+  const auto *Passes = Object->getArray("llvm_passes");
+  if (Options.LLVM == SourceViewOptions::LLVMOptimization::Custom) {
+    if (!Passes || Passes->size() > 4)
+      throw std::invalid_argument("custom requires at most four llvm_passes");
+    Options.Passes = 0;
+    for (const auto &Value : *Passes) {
+      const auto Name = Value.getAsString();
+      uint32_t Bit = 0;
+      if (Name == "instcombine")
+        Bit = SourceViewOptions::InstCombine;
+      else if (Name == "early-cse")
+        Bit = SourceViewOptions::EarlyCSE;
+      else if (Name == "simplifycfg")
+        Bit = SourceViewOptions::SimplifyCFG;
+      else if (Name == "dce")
+        Bit = SourceViewOptions::DCE;
+      else
+        throw std::invalid_argument("unsupported LLVM source pass");
+      if (Options.Passes & Bit)
+        throw std::invalid_argument("duplicate LLVM source pass");
+      Options.Passes |= Bit;
+    }
+  } else if (Object->get("llvm_passes")) {
+    throw std::invalid_argument("llvm_passes requires custom optimization");
+  }
+  return Options;
+}
+
+/// A source request borrows one variant; every exit restores ordinary views.
+struct ScopedSourceView {
+  Session &S;
+  SourceViewOptions Previous;
+  bool Swapped = false;
+  ScopedSourceView(Session &S, const SourceViewOptions &Options, bool High)
+      : S(S), Previous(S.SourceOptions) {
+    if (High && Options.Symbolic) {
+      if (!S.EnhancedHighIR) {
+        auto Variant = std::make_unique<PipelineResult>();
+        Variant->LowFuncs = S.PipeResult.LowFuncs;
+        Variant->MedFuncs = S.PipeResult.MedFuncs;
+        Variant->LibraryRecognitions = S.PipeResult.LibraryRecognitions;
+        PipelineOptions Policy;
+        Policy.SymbolicHighC = true;
+        Pipeline().rebuildHighIR(S.Img, Policy, *Variant, S.Dbg.get());
+        S.EnhancedHighIR = std::make_unique<Session::HighIRVariant>(
+            Session::HighIRVariant{std::move(Variant->HighFuncs),
+                                   std::move(Variant->HighSources)});
+      }
+      S.PipeResult.HighFuncs.swap(S.EnhancedHighIR->HighFuncs);
+      S.PipeResult.HighSources.swap(S.EnhancedHighIR->HighSources);
+      Swapped = true;
+    }
+    S.SourceOptions = Options;
+  }
+  ~ScopedSourceView() {
+    S.SourceOptions = Previous;
+    if (Swapped) {
+      S.PipeResult.HighFuncs.swap(S.EnhancedHighIR->HighFuncs);
+      S.PipeResult.HighSources.swap(S.EnhancedHighIR->HighSources);
+    }
+  }
+};
+
+} // namespace
+
+const char *neverd_ir_view_ex_json(neverd_session_t Sess, neverd_va_t FuncEntry,
+                                   const char *Representation, size_t Offset,
+                                   size_t Limit, const char *OptionsJSON) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  try {
+    const llvm::StringRef Stage = Representation ? Representation : "";
+    if ((Stage != "c" && Stage != "llvmc" && Stage != "source" &&
+         !sourceDialectFromKey(Stage)) ||
+        Limit == 0 || Limit > 2048 ||
+        Offset > static_cast<size_t>(std::numeric_limits<int64_t>::max()))
+      throw std::invalid_argument("invalid source view or paging bounds");
+    const auto Options =
+        readSourceOptions(OptionsJSON ? OptionsJSON : "{}", Stage);
+    if (!neverd_prepare_function(Sess, FuncEntry))
+      return nullptr;
+    if (S->PipeResult.EVM || S->PipeResult.SBF)
+      throw std::invalid_argument("source transformations require native code");
+    ScopedSourceView View(*S, Options, Stage != "llvmc");
+    return neverd_ir_view_json(Sess, FuncEntry, Representation, Offset, Limit);
+  } catch (const std::exception &Error) {
+    S->setError(Error.what());
+  } catch (...) {
+    S->setError("unexpected source transformation failure");
+  }
+  return nullptr;
+}
+
 const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
                                 const char *Representation, size_t Offset,
                                 size_t Limit) {
