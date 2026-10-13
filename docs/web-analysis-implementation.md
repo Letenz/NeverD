@@ -3352,6 +3352,29 @@ transports-tests,owning-web-tests,nojs-{configure,build,sdk-tests,
 transports-tests},restored-{configure,build,focused-tests},format,
 provenance,capabilities}.log`.
 
+### Issue-body re-audit correction — 2026-10-13
+
+The user requested another comparison with the original five GitHub issues.
+All remain open with zero comments; their bodies retain the October 9 scope.
+The blanket completion conclusion above is superseded by the updated
+[acceptance audit](web-epic-acceptance.md#re-audit-findings-and-follow-up).
+The named implementations and earlier verification receipts remain valid.
+
+Production CLI probes expose two #717 coverage gaps: unresolved URL templates
+and fetch header/body nodes lack a component/parameter inventory, and observed
+JSON type histograms cannot retain field types/nesting/presence. Two original
+bodies with different field structure produce identical shape summaries while
+retaining distinct observation IDs. Both checks used an unusable external-tool
+PATH, no target execution and zero stderr. Focused source, package/runtime and
+report/desktop checks passed 163 distinct cases, including a separate successful
+preserved-Claude feature-corpus run (25.73 s). These tests qualify the current
+limited contracts rather than proving the missing structures are implemented.
+
+This correction changes documentation only. It records #717 work still required
+and distinguishes recommended real CEF/WebView, minified-client navigation and
+mandatory producer-corpus qualification from unsupported universal recovery.
+It does not modify GitHub issue state or add new implementation claims.
+
 Normal integration with `origin/dev` at `be72c8ee4` preserves every Web bridge
 reader and test unchanged. The 64-step shared rebuild and integrated native
 targets pass. The complete owning Web run remains **755 passes / 28 skips out
