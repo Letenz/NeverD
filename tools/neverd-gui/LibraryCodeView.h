@@ -23,7 +23,7 @@ public:
   explicit LibraryCodeView(QObject *parent = nullptr) : QObject(parent) {}
   void reset(const QString &original, const QVariantList &mappings,
              const QJsonArray &regions, qint64 byteOffset = 0,
-             bool keepFolded = false);
+             bool keepFolded = false, bool sourceBlocks = false);
   QString text() const { return text_; }
   QVariantList mappings() const { return mappings_; }
   QVariantList regions() const;
@@ -47,6 +47,22 @@ public:
   /// Fold or unfold every library operation.
   Q_INVOKABLE void setFolded(bool folded);
   void setRegionFolded(const QString &id, bool folded);
+  /// Visible brace-block headers, separate from recognized library operations.
+  struct Block {
+    QString id;
+    int line;
+    bool folded;
+  };
+  QVector<Block> blocks() const;
+  /// The innermost visible or enclosing brace block at a display position.
+  QString blockAt(int position) const;
+  QSet<QString> foldedBlocks() const;
+  void setFoldedBlocks(const QSet<QString> &ids);
+  /// Brace topology, unaffected by renamed identifiers or added comments.
+  QString blockStructure() const { return blockStructure_; }
+  int projectedPosition(int originalPosition) const {
+    return displayPosition(originalPosition);
+  }
   Q_INVOKABLE QString regionAt(int position) const;
   Q_INVOKABLE int sourceLineAt(int position) const;
   int originalPosition(int position) const {
@@ -69,15 +85,20 @@ private:
     QVector<Span> spans;
     bool available = false;
     bool library = true;
+    int header = -1;
   };
   struct Segment {
     int begin, end, sourceBegin, sourceEnd;
     QString region;
+    bool block;
   };
   int sourcePosition(int position, bool end) const;
   int displayPosition(int position) const;
   void rebuild();
+  void addSourceBlocks();
   QString original_, text_;
+  QString blockStructure_;
+  QVector<int> sourceLines_, displayLines_;
   QVariantList originalMappings_, mappings_;
   QVector<Region> regions_;
   QVector<Segment> segments_;

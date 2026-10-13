@@ -72,7 +72,8 @@ int runWeb() {
     return runWebRewrite();
   if (!WebArguments.empty() && WebArguments[0] == "readable-export")
     return runWebReadableExport();
-  if (!WebArguments.empty() && WebArguments[0] == "desktop-manifest")
+  if (!WebArguments.empty() && (WebArguments[0] == "desktop-manifest" ||
+                                WebArguments[0] == "desktop-export"))
     return runWebDesktop();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "sea" || WebArguments[0] == "sea-source"))
@@ -97,10 +98,13 @@ int runWeb() {
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
        WebArguments[0] == "interface-relations" ||
-       WebArguments[0] == "interface-correlate"))
+       WebArguments[0] == "interface-correlate" ||
+       WebArguments[0] == "report-source" || WebArguments[0] == "report-har" ||
+       WebArguments[0] == "report-correlate"))
     return runWebInterfaces();
   if (!WebArguments.empty() && (WebArguments[0] == "stream-preview" ||
-                                WebArguments[0] == "stream-import"))
+                                WebArguments[0] == "stream-import" ||
+                                WebArguments[0] == "report-stream"))
     return runWebStreams();
   if (!WebArguments.empty() && WebArguments[0] == "integrity")
     return runWebIntegrity();

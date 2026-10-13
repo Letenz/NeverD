@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ CPU 行列は十二の組み合わせすべてでソース、外部 IR、ネイ�
 `CPU` はソース／IR／オブジェクトの設置、再ロード、正確な関数実行を意味します。ARM ELF はイメージから EABI5、ARM/Thumb 状態、浮動小数点 ABI を選択し、完全な整列済み `EHABI` 索引を登録します。PE は x64/ARM 実行時行と `HIGHLOW`/`DIR64`/`MOV32T` ベース再配置を保持し、x86 はコンパイラ登録コードを使います。Mach-O は CPU サブタイプに従い watchOS DWARF と iOS `SjLj` を区別します。ソースの ARM/Thumb 入口は相対分岐で、再ベースに耐えます。
 
 ネイティブオブジェクトは自身の境界付き関数シンボル、補助／セクション定義、アンワインド記録で範囲を検証します。MC 所有者 ID の捏造や IR 再コンパイルは行いません。COFF には正確な補助サイズまたは単一関数セクション（`-ffunction-sections`）が必要です。watchOS アダプタは実際の記録を得るため葉関数フレームを保持します。ネイティブ COFF/Mach-O 言語ハンドラは検証済みオブジェクト構成外です。C++ 例外には検証済み IR 経路を使ってください。固定 exidx レジストリを持つ静的 ARM アンワインダ、未登録 Mach-O 絶対ポインタ、未対応 RELRO は拒否します。
+
+GCC C オブジェクトも ELF x86、ARM32、ARM64 に設置し、Linux QEMU user mode で実行しました。アダプタはイメージから ARM/Thumb を選択し、GNU property は ELF ポインタ幅で整列します。
 
 <!-- i18n-section: references -->
 ## 元の参照と記憶領域
@@ -127,4 +129,4 @@ ctest --test-dir build-source -L \
 
 LLVM のビルド用コピーは Mach-O x64 の GOT データ参照も修正します。Clang の型付き catch 表は 4 バイト再配置フィールドの末尾を基準にします。r3/r4 は 4 バイトずれるため、公開前検証で未修正の結果を拒否します。開発 Mac の x64 Mach-O ケースは Rosetta 2、ARM64 ケースは直接実行します。
 
-Windows x64 のネイティブ検証 [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) では、PE/オブジェクト/trampoline の専用テスト 15 件とターゲット行列テスト 48 件が、スキップなしですべて成功しました。FH3 のテストは C++ の実行シナリオ 7 種類を検証しました。Clang 22.1.6 とネイティブの MSVC、Windows SDK を使用しています。
+Windows x64 のネイティブ検証 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) では、PE/オブジェクト/trampoline の専用テスト 16 件と CPU ターゲット行列テスト 143 件が、スキップなしですべて成功しました。FH3 のテストは C++ の実行シナリオ 7 種類を検証し、ターゲット行列は Unicorn を使用します。Clang 22.1.6、ネイティブの MSVC と Windows SDK、統合 LLVM を使用しました。

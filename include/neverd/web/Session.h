@@ -35,6 +35,14 @@ public:
   /// Revalidate the selected input before atomically publishing the preview.
   std::string commit(std::string_view Token);
   std::string metadata() const;
+  std::string exportDesktopResources(std::string_view ExpectedRevision,
+                                     std::string_view ManifestID,
+                                     std::string_view OutputDirectory);
+  std::string createPassiveReport(std::string_view ExpectedRevision,
+                                  std::string_view SelectionJSON);
+  std::string passiveReportRecords(std::string_view ExpectedRevision,
+                                   std::string_view ReportID, uint64_t Offset,
+                                   uint64_t Limit) const;
   std::string previewStream(std::string_view ExpectedRevision,
                             std::string_view ArtifactID,
                             std::string_view Profile);

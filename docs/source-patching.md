@@ -62,6 +62,8 @@ The CPU matrix requires successful source, supplied-IR and native-object install
 
 Native objects use their own bounded function symbols, auxiliary/section definitions and unwind records; they never receive invented MC owner IDs or an IR recompilation. COFF producers need exact auxiliary sizes or singleton function sections (`-ffunction-sections`). The watchOS compiler adapter retains leaf frames to obtain real unwind rows. Native COFF/Mach-O language handlers remain outside the verified object profile; use the verified IR route for C++ exceptions. A statically linked ARM unwinder with a baked exidx registry is refused, as are unregistered absolute pointers in Mach-O and unsupported RELRO storage.
 
+GCC C objects were also installed and executed on ELF x86, ARM32 and ARM64 through Linux QEMU user mode. The adapter selects ARM/Thumb from the image, and GNU property records use the ELF pointer-width alignment.
+
 <!-- i18n-section: references -->
 ## Original references and storage
 
@@ -125,4 +127,4 @@ ctest --test-dir build-source -L \
 
 The scoped LLVM copy also corrects Mach-O x64 GOT data references: Clang’s typed-catch table is relative to the end of its four-byte relocation word. The r3/r4 prebuilt misanchors that reference by four bytes. Publication validates the encoded field and refuses the uncorrected producer. On the development Mac, x64 Mach-O runtime cases use Rosetta 2; ARM64 cases execute directly.
 
-Native Windows x64 qualification at [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) passed all 15 focused PE/object/trampoline checks and all 48 target-matrix checks without skips. The FH3 case executed seven C++ runtime scenarios. This run used Clang 22.1.6 with native MSVC and Windows SDK inputs.
+Native Windows x64 qualification at [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) passed all 16 focused PE/object/trampoline checks and all 143 CPU target-matrix checks without skips. The FH3 case executed seven C++ runtime scenarios; the target matrix uses Unicorn. This run used Clang 22.1.6 with native MSVC and Windows SDK inputs and integrated LLVM.

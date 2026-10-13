@@ -1517,6 +1517,8 @@ DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码�
 
 `isCanonicalX87Wait` 为普通 registration 转移和经过验证的 local-finally 返回提供同一套正常路径帧保留规则。FWAIT 操作及异常分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。该规则不授予非局部 finally 退出或原生恢复证明。
 
+受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。
+
 ## x64 x87 上下文所有权
 
 在 x64 提升中，`ir/X87Context.h` 统一规定编码准入，`CFGBuilderX86Fpu` 管理函数内的可变上下文，保存 CW、SW、运行时 TOP、简化标签和八个原始 binary80 载荷。函数入口和独立入口捕获状态；普通边在目标入口重新捕获前发布状态。调用及扩展状态保存/恢复会导出并刷新上下文，没有本地 x87 指令的包装函数也遵循此规则。入口回边保留已有上下文。LLVM、HighC、LLVMC 消费同一契约，HighC 使用具名助手和固定对齐存储。MMX 连接物理别名，EMMS 清空标签。具体执行要求经过认证的状态和内存，拒绝未知效果，仅显式原生参考模式允许依赖实现的结果。上文的静态 TOP/标签证明继续用于 x86-32。这些 x64 回归不代表所有 CPU、指令、故障优先级或源语言浮点返回 ABI 均已验证。

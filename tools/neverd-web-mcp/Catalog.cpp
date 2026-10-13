@@ -353,11 +353,20 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "evidence classes remain separate.",
       {decimal("revision"), text("analysis_id"), text("capture_id")});
   Page("web_interface_correlation_records", "correlation_id", false, 128);
+  Add("web_passive_report_create",
+      "Compose selected source, committed HAR and/or committed stream "
+      "metadata. "
+      "Observed type summaries withhold all values; server constraints remain "
+      "unknown. Same-method candidates do not prove source execution.",
+      {decimal("revision"), text("interface_analysis_id", 64, false),
+       text("har_capture_id", 64, false),
+       text("stream_capture_id", 64, false)});
+  Page("web_passive_report_records", "passive_report_id", false, 128);
   Add("web_desktop_manifest_analyze",
-      "Inspect explicitly selected NW.js or VS Code extension manifest "
+      "Inspect explicitly selected desktop manifest or supplied local resource "
       "evidence.",
       {decimal("revision"), text("artifact_id"),
-       choice("input_kind", {"nwjs", "vsix"})});
+       choice("input_kind", {"nwjs", "vsix", "cef-assets", "webview-assets"})});
   Selected("web_electron_manifest_analyze", "artifact_id",
            "Analyze captured Electron manifest entry metadata.");
   Selected(

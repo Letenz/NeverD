@@ -273,6 +273,10 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
     return "0";
   if (Val <= limits::kDecimalConstThreshold)
     return std::to_string(Val);
+  // A constant of a type wider than eight bytes is its value zero-extended:
+  // a negative literal would convert to that type sign-extended.
+  if (Type && Type->Kind == NdTypeKind::Int && Type->Size > 8)
+    return "0x" + llvm::utohexstr(Val);
 
   if (Val == 0xFFFFFFFFFFFFFFFFULL)
     return "-1";
@@ -561,6 +565,10 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         (E.Type->Size == 1 || E.Type->Size == 2))
       return "((" + typeToC(E.Type) + ")(~" + exprStr(*E.Operands[0], 99) +
              "))";
+    // Past eight bytes C complements an operand in its own narrower type;
+    // the machine complements every byte of the result.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int && E.Type->Size > 8)
+      return "~(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
     return "~" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_NEG2: {
     // Reuse the integer subtraction rule for -x, including signed-minimum
@@ -835,7 +843,22 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::FLOAT_ISNAN:
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
-  case NdOp::FLOAT_UINT2FLOAT:
+  case NdOp::FLOAT_UINT2FLOAT: {
+    // The conversion reads its operand as a signed or an unsigned integer of
+    // its width, whatever C type the operand's text has: `(float)(x ^ 9)` of
+    // an unsigned x converts an unsigned value.
+    const HighExpr &Source = *E.Operands[0];
+    if (isPlainInteger(Source.Type)) {
+      const bool Signed = E.Op == NdOp::FLOAT_INT2FLOAT;
+      const uint16_t Width = Source.Type->Size;
+      return "(" + typeToC(E.Type) + ")" +
+             (declaredLocalInteger(Source, Width, Signed)
+                  ? exprStr(Source, 99)
+                  : castOperandText(integerView(
+                        Source, NdType::makeInt(Width, Signed), 99)));
+    }
+    return "(" + typeToC(E.Type) + ")" + exprStr(Source, 99);
+  }
   case NdOp::FLOAT_FLOAT2FLOAT:
     return "(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
   default:
@@ -1886,6 +1909,25 @@ std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)
     return exprStr(E);
+  // A view wider than its source extends it, with zeros or its sign.  The
+  // source's text says so only where C's own conversion to the wide type
+  // extends the same way: zeros for an unsigned source, its sign for a
+  // signed one.  A zero-extended signed source keeps the extension's text.
+  if (P->Type && E.Type && P->Type->Size < E.Type->Size) {
+    bool Zero = false, Sign = false;
+    for (const HighExpr *Cur = &E; Cur && Cur != P;
+         Cur = Cur->Operands.empty() ? nullptr : Cur->Operands[0].get())
+      if (Cur->Kind == ExprKind::UnaryOp &&
+          (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT) &&
+          Cur->Operands.size() == 1 && Cur->Operands[0] &&
+          Cur->Operands[0]->Type && Cur->Type &&
+          Cur->Operands[0]->Type->Size < Cur->Type->Size)
+        (Cur->Op == NdOp::INT_ZEXT ? Zero : Sign) = true;
+    const bool SourceSigned =
+        P->Type->Kind == NdTypeKind::Int && P->Type->IsSigned;
+    if ((Zero && Sign) || (Zero && SourceSigned) || (Sign && !SourceSigned))
+      return exprStr(E);
+  }
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi ||
       P->Kind == ExprKind::Const || P->Kind == ExprKind::Load)
     return exprStr(*P);
@@ -3750,7 +3792,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
     return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
   // Slot load of `*(vtbl + imm)` where `vtbl` is `*obj` (MSVC vfptr at 0).
   // Keep the inner vfptr load; `obj + imm` would name a field, not a method.
-  if (Depth >= 1 && Base) {
+  // Only one load reads the slot: under a second (`**(p + imm)`, a call
+  // through a field's pointer to a function pointer) the sum is the field.
+  if (Depth == 1 && Base) {
     const HighExpr *Addr = peelIntegerViewOps(Base);
     if (Addr && Addr->Kind == ExprKind::BinOp && Addr->Op == NdOp::INT_ADD &&
         Addr->Operands.size() == 2 && Addr->Operands[0] && Addr->Operands[1]) {
@@ -3938,6 +3982,123 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
       }
     }
     break;
+  }
+  return E;
+}
+
+/// The width of the integer or pointer \p E holds, or 0 for another value
+/// or an untyped one.
+static uint16_t integerViewWidth(const HighExpr &E) {
+  if (E.Type)
+    return E.Type->Kind == NdTypeKind::Int || E.Type->Kind == NdTypeKind::Ptr
+               ? E.Type->Size
+               : 0;
+  return E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi ? E.Var.Size : 0;
+}
+
+bool HighCWriter::valueFitsInBytes(const HighExpr &E, uint16_t Bytes,
+                                   unsigned Depth) const {
+  if (Bytes >= 8)
+    return true;
+  if (Depth > limits::kMaxIntegerViewUnwrapDepth)
+    return false;
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+    const auto It = ValueForward.find(varName(E.Var));
+    if (It != ValueForward.end() && It->second && It->second != &E)
+      return valueFitsInBytes(*It->second, Bytes, Depth + 1);
+  }
+  const uint16_t Width = integerViewWidth(E);
+  if (Width && Width <= Bytes)
+    return true;
+  auto Fits = [&](size_t I) {
+    return I < E.Operands.size() && E.Operands[I] &&
+           valueFitsInBytes(*E.Operands[I], Bytes, Depth + 1);
+  };
+  // A sign extension keeps a fitting value's high bytes zero only where its
+  // own top byte is.
+  auto ExtensionFits = [&](bool Signed) {
+    if (E.Operands.empty() || !E.Operands[0])
+      return false;
+    const uint16_t In = integerViewWidth(*E.Operands[0]);
+    if (!In)
+      return false;
+    if (Width <= In || !Signed)
+      return Fits(0);
+    return Bytes < In && Fits(0);
+  };
+  switch (E.Kind) {
+  case ExprKind::Const:
+    return (E.ConstVal >> (8 * Bytes)) == 0;
+  case ExprKind::Cast:
+  case ExprKind::BitCast:
+    return ExtensionFits(E.Operands.empty() || !E.Operands[0] ||
+                         !E.Operands[0]->Type || E.Operands[0]->Type->IsSigned);
+  case ExprKind::UnaryOp:
+    if (E.Op == NdOp::BOOL_NOT)
+      return true;
+    if (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT)
+      return ExtensionFits(E.Op == NdOp::INT_SEXT);
+    return false;
+  case ExprKind::BinOp:
+    switch (E.Op) {
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+      return true;
+    case NdOp::INT_AND:
+      return Fits(0) || Fits(1);
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+      return Fits(0) && Fits(1);
+    case NdOp::SUBBYTES:
+      return E.Operands.size() == 2 && E.Operands[1] &&
+             E.Operands[1]->Kind == ExprKind::Const &&
+             E.Operands[1]->ConstVal == 0 && Fits(0);
+    default:
+      return false;
+    }
+  default:
+    return false;
+  }
+}
+
+const HighExpr *HighCWriter::truthTestedValue(const HighExpr *E) const {
+  for (unsigned Depth = 0; E && Depth < limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      const auto It = ValueForward.find(varName(E->Var));
+      if (It == ValueForward.end() || !It->second || It->second == E)
+        return E;
+      E = It->second;
+      continue;
+    }
+    const bool View =
+        !E->Operands.empty() && E->Operands[0] &&
+        (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+         (E->Kind == ExprKind::UnaryOp &&
+          (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) ||
+         (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+          E->Operands.size() == 2 && E->Operands[1] &&
+          E->Operands[1]->Kind == ExprKind::Const &&
+          E->Operands[1]->ConstVal == 0));
+    if (!View)
+      return E;
+    // An extension, or a reinterpretation of the same bits, is zero just
+    // where its operand is; a conversion or a byte view may narrow it.
+    const HighExpr &Inner = *E->Operands[0];
+    if (E->Kind != ExprKind::BitCast && E->Kind != ExprKind::UnaryOp) {
+      const uint16_t Outer = integerViewWidth(*E);
+      const uint16_t In = integerViewWidth(Inner);
+      if (!Outer || !In || (Outer < In && !valueFitsInBytes(Inner, Outer)))
+        return E;
+    }
+    E = &Inner;
   }
   return E;
 }
@@ -5540,8 +5701,7 @@ std::string HighCWriter::condStr(const HighExpr &E) {
 }
 
 std::string HighCWriter::condStrImpl(const HighExpr &E) {
-  const HighExpr *Cur = forwardedExpr(&E);
-  Cur = unwrapIntegerView(Cur);
+  const HighExpr *Cur = truthTestedValue(&E);
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
       return false;
@@ -5559,22 +5719,16 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
       Cur->Operands[0] && Cur->Operands[1] && Cur->Op == NdOp::INT_EQUAL) {
     const HighExpr *X = nullptr;
     if (IsZeroLike(Cur->Operands[1]))
-      X = forwardedExpr(Cur->Operands[0].get());
+      X = truthTestedValue(Cur->Operands[0].get());
     else if (IsZeroLike(Cur->Operands[0]))
-      X = forwardedExpr(Cur->Operands[1].get());
+      X = truthTestedValue(Cur->Operands[1].get());
     if (X) {
       if (const HighExpr *Call = typedCallResult(X))
         return "!" + exprStr(*Call, 99);
-      X = unwrapIntegerView(X);
-      if (X && X->Kind == ExprKind::Call)
+      if (X->Kind == ExprKind::Call)
         return "!" + exprStr(*X, 99);
     }
   }
-  if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES &&
-      Cur->Operands.size() == 2 && Cur->Operands[0] && Cur->Operands[1] &&
-      Cur->Operands[1]->Kind == ExprKind::Const &&
-      Cur->Operands[1]->ConstVal == 0)
-    return condStr(*Cur->Operands[0]);
   if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Operands.size() == 2 &&
       Cur->Operands[0] && Cur->Operands[1] &&
       (Cur->Op == NdOp::BOOL_AND || Cur->Op == NdOp::BOOL_OR)) {
@@ -5657,8 +5811,8 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
     }
     return L + " || " + R;
   }
-  // Boolean context: a leftover narrowing cast of a scalar / call is
-  // `test eax`, not a sanitizer wrap. Keep wraps on add/sub/mul.
+  // Boolean context: a view the test keeps whether it reads zero through is
+  // no sanitizer wrap. Keep wraps on add/sub/mul.
   if (Cur && Cur != &E &&
       (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi ||
        Cur->Kind == ExprKind::Call))

@@ -15,6 +15,8 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <optional>
+
 namespace {
 #if (defined(__x86_64__) || defined(_M_X64)) &&                                \
     (defined(__clang__) || defined(__GNUC__))
@@ -215,23 +217,37 @@ TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
-      for (unsigned Scenario = 0; Scenario < 9; ++Scenario) {
+      for (unsigned Scenario = 0; Scenario < 15; ++Scenario) {
         std::vector<uint8_t> Bytes;
-        if (Scenario != 1)
+        // These entries have no FNINIT. The x64 context captures the actual
+        // incoming stack rather than assuming that its tags are empty.
+        if (Scenario != 1 && Scenario != 9 && Scenario != 10)
           Bytes = {0xdb, 0xe3}; // fninit authenticates empty tags
-        if (Scenario == 2 || Scenario == 3)
+        if (Scenario == 2 || Scenario == 3 || Scenario == 9 || Scenario == 11 ||
+            Scenario == 12)
           for (unsigned I = 0; I < 8; ++I)
             Bytes.insert(Bytes.end(), {0xd9, 0xe8}); // fill all slots
         if (Scenario == 3)
           Bytes.insert(Bytes.end(), {0x85, 0xc9, 0x74, 0x02, 0xdd, 0xd8});
         if (Scenario == 4)
           Bytes.insert(Bytes.end(), {0xd9, 0xe8, 0xdd, 0xd8}); // pop frees slot
-        if (Scenario == 5)
-          Bytes.insert(Bytes.end(),
-                       {0xff, 0xd0}); // unknown call invalidates tags
+        // Calls export and refresh initially empty (5) or full (12) stacks.
+        if (Scenario == 5 || Scenario == 12)
+          Bytes.insert(Bytes.end(), {0xff, 0xd0}); // call rax
         if (Scenario == 6)
           Bytes.insert(Bytes.end(),
                        {0x85, 0xc9, 0x74, 0x02, 0xd9, 0xe8}); // two TOPs
+        // Only a state restore replaces tags, not an unrelated intrinsic.
+        if (Scenario == 13)
+          Bytes.insert(Bytes.end(), {0x0f, 0xa2}); // cpuid
+        if (Scenario == 14)
+          Bytes.insert(Bytes.end(), {0xdd, 0x22}); // frstor [rdx]
+        // Direct calls also preserve the runtime context (10, 11).
+        std::optional<size_t> CallAt;
+        if (Scenario == 10 || Scenario == 11) {
+          CallAt = Bytes.size();
+          Bytes.insert(Bytes.end(), {0xe8, 0, 0, 0, 0});
+        }
         const va_t Address = Entry + Bytes.size();
         Bytes.insert(Bytes.end(), {0xdf, 0x2a});
         if (Scenario == 7 || Scenario == 8) {
@@ -243,6 +259,13 @@ TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
           Bytes.insert(Bytes.end(), {0xdb, 0x3a});
         }
         Bytes.push_back(0xc3);
+        if (CallAt) {
+          // The callee is a bare return after the function.
+          const uint32_t Displacement = uint32_t(Bytes.size() - (*CallAt + 5));
+          for (unsigned I = 0; I < 4; ++I)
+            Bytes[*CallAt + 1 + I] = uint8_t(Displacement >> (8 * I));
+          Bytes.push_back(0xc3);
+        }
         auto Image = image(Bytes, Format);
         llvm::LLVMContext Context;
         PipelineOptions Options;

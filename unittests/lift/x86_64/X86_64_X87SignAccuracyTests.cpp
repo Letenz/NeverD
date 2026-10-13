@@ -397,6 +397,64 @@ TEST(X87SignContract, EveryIncomingBranchAndLoopRetainsTheRuntimeContext) {
           }
 }
 
+TEST(X87SignContract, AFunctionBoundaryProvesNoSourceValue) {
+  // The calling convention empties the register stack at the boundary but
+  // defines no slot, so a sign change or FXAM there still reads no value.
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Opcode : {0xe0U, 0xe1U, 0xe5U}) {
+      auto Image =
+          signControlFlowImage({0xd9, uint8_t(Opcode), 0xdb, 0x3a, 0xc3},
+                               Format); // op; fstp [rdx]; ret
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.SourceProjection = true;
+      Options.OnlyFunctionEntries = {Entry};
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_EQ(Result.FunctionAudits.size(), 1U);
+      const auto &Audit = Result.FunctionAudits[0];
+      EXPECT_EQ(Audit.Disposition,
+                PipelineFunctionDisposition::RejectedIncomplete)
+          << Opcode;
+      EXPECT_NE(std::find(Audit.UnsupportedInstructions.begin(),
+                          Audit.UnsupportedInstructions.end(), Entry),
+                Audit.UnsupportedInstructions.end())
+          << Opcode;
+      EXPECT_FALSE(Audit.HasLLVMDefinition);
+    }
+}
+
+TEST(X87SignContract, AValueInstructionKeepsOtherSlotsFull) {
+  // fninit; fld1; fld1; <value op>; fstp st(0); fabs; fstp [rdx]; ret. The
+  // value instruction defines st(0) alone, so the first load stays full.
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (uint8_t Value :
+         {0xfeU, 0xf0U, 0xfdU, 0xf8U}) { // fsin f2xm1 fscale fprem
+      auto Image =
+          signControlFlowImage({0xdb, 0xe3, 0xd9, 0xe8, 0xd9, 0xe8, 0xd9, Value,
+                                0xdd, 0xd8, 0xd9, 0xe1, 0xdb, 0x3a, 0xc3},
+                               Format);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.SourceProjection = true;
+      Options.OnlyFunctionEntries = {Entry};
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_EQ(Result.FunctionAudits.size(), 1U);
+      const auto &Audit = Result.FunctionAudits[0];
+      EXPECT_EQ(std::find(Audit.UnsupportedInstructions.begin(),
+                          Audit.UnsupportedInstructions.end(), Entry + 10),
+                Audit.UnsupportedInstructions.end())
+          << unsigned(Value);
+      EXPECT_EQ(Audit.Disposition, PipelineFunctionDisposition::Accepted)
+          << unsigned(Value) << ':' << Result.Error;
+    }
+}
+
 class X87SignFixture : public X86FPStateFixture {
 protected:
   bool ObserveC1 = false;

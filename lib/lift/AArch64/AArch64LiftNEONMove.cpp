@@ -81,6 +81,11 @@ bool liftNEONMove(AArch64Lifter &L, AArch64Lifter::LiftState &S,
       }
       S.emit(NdOp::COPY, Dst, {Acc});
     } else {
+      // The scalar form (`movi d0, #0`) writes the whole D register: the
+      // immediate at its width, whose upper bytes a narrower constant would
+      // leave unwritten.
+      if (Src.isConst() && Src.Size < Dst.Size && Dst.Size <= 8)
+        Src = NdVar::cst(Src.Offset, Dst.Size);
       S.emit(NdOp::COPY, Dst, {Src});
     }
     break;

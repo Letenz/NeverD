@@ -26,7 +26,6 @@
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/X86FPState.h"
-#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterBody.h"
@@ -60,6 +59,29 @@ namespace {
 bool isStReg(const NdVar &V) {
   return V.isReg() && V.Offset >= x86reg::ST0 && V.Offset <= x86reg::ST7 &&
          ((V.Offset - x86reg::ST0) % x86reg::FPURegStride == 0);
+}
+
+// The intrinsics that load or reinitialize the whole x87 state, or stand for
+// an x87 operation NeverD does not model, may leave any tags. Value
+// instructions define only their outputs (their pops are the lifter's TOP
+// changes), and other intrinsics, such as an IDIV's divide-error
+// precondition, do not touch the register stack.
+bool replacesX87Tags(Intrinsic Kind) {
+  switch (Kind) {
+  case Intrinsic::X87Op:
+  case Intrinsic::X87Fldenv:
+  case Intrinsic::X87Frstor:
+  case Intrinsic::X87Fnsave:
+  case Intrinsic::Fxrstor:
+  case Intrinsic::Fxrstor64Mem:
+  case Intrinsic::Xrstor:
+  case Intrinsic::Xrstor64:
+  case Intrinsic::Xrstors:
+  case Intrinsic::Xrstors64:
+    return true;
+  default:
+    return false;
+  }
 }
 
 bool isX87SignOperation(const LowOp &Op) {
@@ -1982,8 +2004,14 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
             if ((State.Full & State.Payload) & Bit)
               ProvenTags[{Id, O}] = false;
           }
+          // A callee returns under its calling convention, the contract the
+          // TOP pass above already applies to every call it cannot prove:
+          // the slots the call found empty are empty again (a callee that
+          // "pops" with FINCSTP would break that), and those it found full
+          // are its arguments or clobbers, so unknown. A proven return
+          // definition below fills one slot.
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-            State = {}; // The return definition below can establish one slot.
+            State = Tags{0, State.Empty, 0};
           if (Op.Opcode == NdOp::INTRINSIC) {
             if (!Op.NumInputs || !Op.Inputs[0].isConst()) {
               State = {};
@@ -2007,13 +2035,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
               } else if (Kind == Intrinsic::X87Ffree && Op.NumInputs == 3 &&
                          isStReg(Op.Inputs[1])) {
                 makeEmpty(x86reg::stRegIndex(Op.Inputs[1].Offset));
-              } else if (Kind != Intrinsic::X87Fincstp &&
-                         Kind != Intrinsic::X87Fnclex &&
-                         Kind != Intrinsic::X87Wait &&
-                         Kind != Intrinsic::X87ReadStatus &&
-                         !isX87ConstantControlIntrinsic(Kind)) {
-                // Restores, resumable traps and unknown extensions may replace
-                // tags. A subsequent explicit definition can recover a slot.
+              } else if (replacesX87Tags(Kind)) {
+                // A subsequent explicit definition can recover a slot.
                 State = {};
               }
             }
@@ -2050,11 +2073,18 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         return It != Roots.end() &&
                (*It == Block.StartAddr || *It < Block.EndAddr);
       };
+      // A call boundary empties the register stack: the platform contract
+      // X87CallEffects already applies to every callee. The entry's payload
+      // stays undefined, so this proves only a push's empty destination;
+      // FXAM and sign changes still need the function's own definitions.
+      // Other roots, including exception landings, keep an unknown state.
+      const bool CallBoundary =
+          Block.StartAddr == Func.Entry && Block.ExceptionalPreds.empty();
       if (Block.StartAddr == Func.Entry || Block.Preds.empty() ||
           !Block.ExceptionalPreds.empty() ||
           rootWithin(Func.ModuleAnalysisRoots) ||
           rootWithin(CurrentImg->CodeRefTargets))
-        seed(Block.Id, {});
+        seed(Block.Id, CallBoundary ? Tags{0, 0xff, 0} : Tags{});
     }
     auto solve = [&]() {
       while (!Work.empty() && Budget) {

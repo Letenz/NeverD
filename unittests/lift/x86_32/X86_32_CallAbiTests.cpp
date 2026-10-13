@@ -127,6 +127,42 @@ int use2(int a) {
 // quotient in EDX and the first argument in ECX, as Clang leaves them in a
 // regparm caller.  The host cannot run i386 function pointers, so the test
 // counts the arguments of each call through the pointer.
+// `mov ecx, [esp+ebp+0Ch]; call [ecx]`: the call reads the method through
+// the object's table pointer, two loads under an address that adds a
+// constant; the C must not take the inner sum for a table slot.
+TEST_F(X86_32_CallAbi, ACallThroughAFieldsTableLoadsTwice) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+struct obj;
+typedef int (*method)(struct obj *, int);
+struct table { method m; int tag; };
+struct obj { const struct table *vt; int val; };
+static int addm(struct obj *, int) __attribute__((noinline));
+static int mulm(struct obj *, int) __attribute__((noinline));
+static const struct table va = {addm, 10};
+static const struct table vm = {mulm, 20};
+int vcall(int a) {
+  unsigned s = (unsigned)a | 1u;
+  struct obj o[4];
+  long acc = 0;
+  for (int i = 0; i < 4; i++) {
+    o[i].vt = (i & 1) ? &vm : &va;
+    o[i].val = (int)(s + (unsigned)i);
+  }
+  for (int i = 0; i < 64; i++) {
+    s = s * 1103515245u + 12345u;
+    struct obj *q = &o[(s >> 5) & 3u];
+    acc += q->vt->m(q, (int)(s >> 9)) + q->vt->tag;
+    acc ^= acc >> 6;
+  }
+  return (int)(acc + o[0].val + o[3].val);
+}
+static int addm(struct obj *o, int x) { o->val += x; return o->val; }
+static int mulm(struct obj *o, int x) { o->val *= (x | 1); return o->val; }
+)C",
+                       "vcall", {"vcall", "addm", "mulm", "va", "vm"});
+}
+
 TEST_F(X86_32_CallAbi, AFunctionPointerCallTakesItsStackArguments) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "cross-target compilation requires Clang";
@@ -298,4 +334,63 @@ int fp3(int x) {
 double d3(double a, double b, double c) { return a + 2 * b + 3 * c; }
 )C",
                        "fp3", {"fp3", "d3"});
+}
+
+// Sign-extending bytes in place, `punpcklwd %xmm1, %xmm4` takes its low
+// half from XMM4 before the function wrote it, and `psrad $24` shifts that
+// half out.  i386 passes no argument in XMM4 (System V uses XMM0-XMM2), so
+// it is no parameter that would move the stack argument.
+TEST_F(X86_32_CallAbi, AnXmmRegisterPastTheArgumentOnesIsNoParameter) {
+  HostFlags = {"-m32", "-msse2"};
+  expectRunsLikeSource(R"C(
+int narrowarr(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int it = 0; it < 120; it++) {
+    s = s * 1103515245u + 12345u;
+    unsigned char b[24];
+    signed char sb[24];
+    unsigned short w[24];
+    for (int i = 0; i < 24; i++) {
+      s = s * 1103515245u + 12345u;
+      b[i] = (unsigned char)(s >> 9);
+      sb[i] = (signed char)(s >> 17);
+      w[i] = (unsigned short)(s >> 3);
+    }
+    unsigned acc = 0;
+    for (int i = 0; i < 24; i++)
+      acc += (unsigned)b[i] + (unsigned)(int)sb[i] + (unsigned)w[i];
+    h = h * 131u + acc;
+    h ^= h >> 12;
+  }
+  return (int)h;
+}
+)C",
+                       "narrowarr", {"narrowarr"});
+}
+
+// The same idiom on the high words, `punpckhwd %xmm1, %xmm2; psrad $16`,
+// takes XMM2's incoming words, which can carry an argument, and shifts
+// them out of every lane: a shift moves bytes, and reads none it drops.
+TEST_F(X86_32_CallAbi, BytesAShiftDropsAreNotRead) {
+  HostFlags = {"-m32", "-msse2"};
+  expectRunsLikeSource(R"C(
+int ssum16(int a) {
+  short v[13];
+  unsigned s = (unsigned)a | 1u;
+  for (int i = 0; i < 13; i++) {
+    v[i] = (short)(s >> 4);
+    s = s * 1103515245u + 12345u;
+  }
+  long long acc = 0;
+  for (int r = 0; r < 60; r++) {
+    int sum = 0;
+    for (int i = 0; i < 13; i++)
+      sum += (int)v[i];
+    acc = acc * 131 + sum;
+    v[r % 13] ^= (short)r;
+  }
+  return (int)(unsigned)(acc ^ (acc >> 32));
+}
+)C",
+                       "ssum16", {"ssum16"});
 }

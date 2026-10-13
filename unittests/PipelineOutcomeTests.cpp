@@ -96,12 +96,14 @@ public:
     PipelineOptions Options;
     Options.LiftMode = true;
     Options.NoOpt = true;
-    return Pipeline().runPatchLiftMode(Image, Context, Options, Result);
+    return Pipeline().runPatchLiftMode(Image, Context, Options, Result,
+                                       /*Dbg=*/nullptr);
   }
 
   static bool runLift(const BinaryImage &Image, llvm::LLVMContext &Context,
                       const PipelineOptions &Options, PipelineResult &Result) {
-    return Pipeline().runPatchLiftMode(Image, Context, Options, Result);
+    return Pipeline().runPatchLiftMode(Image, Context, Options, Result,
+                                       /*Dbg=*/nullptr);
   }
 };
 

@@ -440,8 +440,8 @@ private:
     case NdOp::INTRINSIC: {
       // An instruction run for its effect (a fence, a breakpoint, a system
       // call) or one C has no name for leaves no value the function means;
-      // the x64 debug service returns its status, and an x87 state read
-      // (fnstsw, fnstcw) the state.
+      // the x64 debug service returns its status, an x87 state read (fnstsw,
+      // fnstcw) the state, and `str`, `sldt` or `smsw` the register it reads.
       const Intrinsic Id = Op.NumInputs >= 1 && Op.Inputs[0].isConst()
                                ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
                                : Intrinsic::None;
@@ -449,6 +449,7 @@ private:
                               Id != Intrinsic::CetRdSsp &&
                               !x86FPStateReturnsValue(Id) &&
                               !x87ContextReturnsValue(Id) &&
+                              !isX86SystemRegisterStore(Id) &&
                               (isSideeffectIntrinsic(Id) || !intrinsicCName(Id))
                           ? ReturnedValue::Undefined
                           : ReturnedValue::Other);

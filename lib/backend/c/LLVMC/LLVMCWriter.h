@@ -115,6 +115,7 @@ public:
   void writeFunction(llvm::Function &Fn);
   void writeAnalysisOnlyFunction(llvm::Function &Fn);
   void writeFunctionProjection(llvm::Function &Fn);
+  void renderFunctionProjection(llvm::Function &Fn);
   void setupFunction(llvm::Function &Fn);
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
@@ -550,8 +551,16 @@ public:
   const llvm::AllocaInst *joinAllocaForCallArg(const llvm::Value *Arg,
                                                const llvm::CallBase &Call);
   bool phiPrintedAsJoinCallArg(const llvm::PHINode *Phi);
+  /// \p Arg as the call spells it; \p PointerSpelling, when given, says
+  /// whether the text is an address, as valueStr reports it.
   std::string callArgStr(const llvm::Value *Arg, const llvm::CallBase &Call,
-                         unsigned ArgIdx);
+                         unsigned ArgIdx, bool *PointerSpelling = nullptr);
+  /// Whether the declaration written for \p Call's callee is its LLVM
+  /// prototype, with an integer parameter at \p ArgIdx: C converts no
+  /// address to it implicitly.
+  bool declaredParameterIsInteger(const llvm::CallBase &Call,
+                                  llvm::StringRef CalleeName,
+                                  unsigned ArgIdx) const;
   std::optional<std::string> enumeratorDisplay(const TypeRef &Ty,
                                                uint64_t Val) const;
   TypeRef enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const;
@@ -698,6 +707,9 @@ public:
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
   /// Import entry names that are C names (SymbolDecorations.def).
   llvm::StringSet<> ImportEntryCNames;
+  /// The calls a function's next render keeps as statements: its text
+  /// printed each other than once where the analysis inlined it.
+  std::set<const llvm::CallBase *> StatementCalls;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;

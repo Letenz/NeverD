@@ -60,7 +60,8 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
 /// (imageStringLiteral), or the literal a symbol's name spells there (MSVC's
 /// `??_C@`, among the image's symbols or \p Dbg's), wherever the image keeps
 /// it: a kernel keeps its literals among its code.  The literal a symbol
-/// spells may be empty (`L""`).
+/// spells may be empty (`L""`), and is written whole: any character, escaped
+/// where it is not printable, and the zeros past its terminator.
 std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
                                            const DebugContext *Dbg, va_t Addr,
                                            bool AllowEmpty = false);
