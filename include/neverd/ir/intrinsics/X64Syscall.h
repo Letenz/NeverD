@@ -8,11 +8,16 @@
 #define NEVERD_IR_INTRINSICS_X64SYSCALL_H
 
 #include "neverd/Common.h"
+#include "neverd/lift/X86Regs.h"
 
 #include <cstdint>
 #include <optional>
 
 namespace neverd {
+
+/// The registers a Linux x86-64 syscall takes its arguments in, in order.
+inline constexpr uint64_t kLinuxX64SyscallArgumentRegisters[] = {
+    x86reg::RDI, x86reg::RSI, x86reg::RDX, x86reg::R10, x86reg::R8, x86reg::R9};
 
 /// Return the number of arguments Linux syscall \p Number reads on \p Target.
 /// Unknown numbers have no established arity in this table and must retain
