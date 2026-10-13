@@ -10,7 +10,6 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -28,95 +27,6 @@
 
 namespace neverd {
 
-void CFGBuilder::closeRegistrationCxxContinuations(const BinaryImage &Img,
-                                                   Decoder &Dec,
-                                                   LowFunc &Func) {
-  if (Img.Arch != Arch::X86 || !Func.ExceptionMetadata ||
-      !Func.ExceptionMetadata->Registration || !Func.ExceptionMetadata->Cxx ||
-      !Func.RegistrationStates)
-    return;
-
-  std::set<va_t> AddedRoots;
-  std::set<va_t> AddedPersistent;
-  std::set<va_t> Quarantined;
-  size_t WorkUsed = 0;
-  bool Failed = false;
-  auto Charge = [&](size_t Amount) {
-    if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
-      Failed = true;
-      return false;
-    }
-    WorkUsed += Amount;
-    return true;
-  };
-  for (;;) {
-    const auto Candidates = Func.RegistrationStates->CxxContinuations;
-    if (!Charge(Candidates.size() + Func.Blocks.size() + 1))
-      break;
-    std::set<va_t> ProvenTargets;
-    bool Grew = false;
-    for (const RegistrationCxxContinuation &Continuation : Candidates) {
-      const va_t Target = Continuation.TargetVA;
-      if (Quarantined.count(Target) || !isOwnedInteriorTarget(Img, Target)) {
-        Failed = true;
-        continue;
-      }
-      ProvenTargets.insert(Target);
-      if (!DurableCFGRoots.count(Target) || !BlockStarts.count(Target) ||
-          !Insns.count(Target)) {
-        if (!AddedRoots.count(Target) &&
-            AddedRoots.size() == limits::kMaxRegistrationEHRecords) {
-          Failed = true;
-          break;
-        }
-        BlockStarts.insert(Target);
-        if (DurableCFGRoots.insert(Target).second)
-          AddedRoots.insert(Target);
-        if (PersistentCFGRoots.insert(Target).second)
-          AddedPersistent.insert(Target);
-        // Runtime resumption supplies a reaching frame/state; this is not an
-        // independent ordinary entry with unknown incoming registers.
-        if (!ExploredAddrs.count(Target))
-          explore(Img, Dec, Target);
-        Grew = true;
-      }
-      if (!Insns.count(Target)) {
-        Failed = true;
-        Quarantined.insert(Target);
-        ProvenTargets.erase(Target);
-      }
-    }
-    bool Withdrew = false;
-    for (auto It = AddedRoots.begin(); It != AddedRoots.end();) {
-      if (ProvenTargets.count(*It)) {
-        ++It;
-        continue;
-      }
-      if (AddedPersistent.erase(*It))
-        PersistentCFGRoots.erase(*It);
-      DurableCFGRoots.erase(*It);
-      Quarantined.insert(*It);
-      It = AddedRoots.erase(It);
-      Withdrew = Failed = true;
-    }
-    if (!Grew && !Withdrew)
-      break;
-    splitBlocks();
-    rebuildBlocks(Func);
-    multiStageResolve(Img, Dec, Func);
-    convertIndirectTailCalls(Func);
-  }
-  if (Failed) {
-    auto &State = *Func.RegistrationStates;
-    State.Complete = State.CallbackStatesComplete =
-        State.CxxContinuationsComplete = State.RegistrationLifetimeComplete =
-            State.ChainOperationsComplete = State.ImageReadsComplete = false;
-    State.ChainAccesses.clear();
-    State.Diagnostics.push_back(
-        "C++ continuation ownership or CFG closure is not proven");
-  }
-}
-
 void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   for (LowBlock &Block : Func.Blocks) {
     Block.ExceptionalSuccs.clear();
@@ -131,6 +41,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     std::optional<std::vector<RegistrationCleanupFrameContract>> Cleanups;
     std::optional<std::vector<RegistrationCalleeStackContract>> Stacks;
     std::optional<std::vector<RegistrationLocalUnwindContract>> LocalUnwinds;
+    std::optional<std::vector<RegistrationSEHControlContract>> SEHControls;
     const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
     RegistrationCallCalleeIndex *CalleeIndex = nullptr;
     if (CurrentImg) {
@@ -145,6 +56,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       }
       Stacks = CalleeIndex->stackContracts(Func);
       LocalUnwinds = CalleeIndex->localUnwindContracts(Func);
+      SEHControls = CalleeIndex->sehControlContracts(Func);
     }
     if (CheckCalls) {
       Callees = CalleeIndex->contracts(Func);
@@ -159,14 +71,28 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           Check &&
           coff_loader::hasCheckedX86CookieCheckSuccessPath(*CurrentImg, *Check))
         CookieCheckVA = *Check;
-    Func.RegistrationStates = analyzeRegistrationStates(
-        Func,
-        CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
-            ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
-            : 0,
-        CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
-        CheckCalls && Cleanups ? &*Cleanups : nullptr,
-        Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr);
+    if (CurrentImg && !Metadata.Cxx &&
+        Metadata.Personality == ExceptionPersonality::ExceptHandler3)
+      Func.RegistrationStates = analyzeCheckedX86SEHStates(
+          *CurrentImg, Func, Stacks ? &*Stacks : nullptr,
+          LocalUnwinds ? &*LocalUnwinds : nullptr,
+          SEHControls ? &*SEHControls : nullptr, CalleeIndex);
+    else
+      Func.RegistrationStates = analyzeRegistrationStates(
+          Func,
+          CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
+              ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
+              : 0,
+          CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
+          CheckCalls && Cleanups ? &*Cleanups : nullptr,
+          Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
+          SEHControls ? &*SEHControls : nullptr);
+    if (CurrentImg && !SEHControls) {
+      Func.RegistrationStates->Complete = false;
+      Func.RegistrationStates->SEHInvocationExitsComplete = false;
+      Func.RegistrationStates->Diagnostics.push_back(
+          "SEH physical-control proof budget exhausted");
+    }
     if (CurrentImg && !LocalUnwinds) {
       Func.RegistrationStates->Complete = false;
       Func.RegistrationStates->Diagnostics.push_back(

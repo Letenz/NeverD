@@ -15,11 +15,14 @@
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
+#include "neverd/DataAccessWidths.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -41,6 +44,21 @@
 namespace neverd {
 
 namespace {
+/// The image address of function \p Base, if it is one.
+std::optional<va_t> functionAddress(const llvm::Value *Base) {
+  const auto *Fn = llvm::dyn_cast<llvm::Function>(Base->stripPointerCasts());
+  if (!Fn)
+    return std::nullopt;
+  auto VA = rewrite_source::getOriginalVA(*Fn);
+  if (!VA) {
+    llvm::consumeError(VA.takeError());
+    return std::nullopt;
+  }
+  if (!*VA)
+    return std::nullopt;
+  return static_cast<va_t>(**VA);
+}
+
 std::string integerConstantText(const llvm::APInt &Bits) {
   if (Bits.getBitWidth() == 1)
     return Bits.isZero() ? "0" : "1";
@@ -295,9 +313,37 @@ bool LLVMCWriter::isImageDataAddress(va_t Addr) const {
   const Segment *Seg = Img->getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
     return false;
+  // Data the debug information places among the code is data.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return false;
+    return isCodeSectionData(Img, Addr);
   return true;
+}
+
+std::optional<va_t>
+LLVMCWriter::codeSectionAddress(const llvm::ConstantInt &CI) const {
+  if (!Img || !CurMod ||
+      CI.getBitWidth() != CurMod->getDataLayout().getPointerSizeInBits())
+    return std::nullopt;
+  const va_t Addr = CI.getZExtValue();
+  const Segment *Seg = Img->getSegmentFor(Addr);
+  if (!Seg || !Seg->isExecutable() || Seg->isWritable())
+    return std::nullopt;
+  return Addr;
+}
+
+std::optional<std::string>
+LLVMCWriter::codeSectionAddressText(const llvm::ConstantInt &CI) const {
+  const auto Addr = codeSectionAddress(CI);
+  if (!Addr)
+    return std::nullopt;
+  std::string Text;
+  if (auto Literal = stringLiteralAt(Img, Dbg, *Addr, /*AllowEmpty=*/true))
+    Text = std::move(*Literal);
+  else if (isCodeSectionData(Img, *Addr))
+    Text = "&" + namedImageObject(*Addr);
+  else
+    return std::nullopt;
+  return "(" + typeToCLLVM(CI.getType()) + ")(uintptr_t)" + Text;
 }
 
 std::optional<va_t>
@@ -336,8 +382,7 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
       Raw = It->second;
   if (Raw.empty() && Dbg) {
     if (auto Data = Dbg->resolveDataObject(Addr);
-        Data && !Data->Name.empty() &&
-        !llvm::StringRef(Data->Name).starts_with("??_C@"))
+        Data && !Data->Name.empty() && !isStringLiteralName(Data->Name))
       Raw = Data->Name;
   }
   if (Raw.empty() && Img) {
@@ -359,10 +404,16 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
     const bool PointerSlot =
         (Img && (Img->CodePtrRelocSlots.count(Addr) ||
                  Img->DataPtrRelocSlots.count(Addr))) ||
-        (Use != ImageDataUses.end() && Use->second.CallSlot);
+        (Use != ImageDataUses.end() && Use->second.CallSlot &&
+         !(Opts.AccessWidths && Opts.AccessWidths->at(Addr).has_value()));
     std::optional<uint64_t> AccessBytes;
-    if (Use != ImageDataUses.end() && Use->second.AccessBytes.size() == 1)
+    if (Opts.AccessWidths) {
+      if (const auto Width = Opts.AccessWidths->at(Addr); Width && *Width)
+        AccessBytes = *Width;
+    } else if (Use != ImageDataUses.end() &&
+               Use->second.AccessBytes.size() == 1) {
       AccessBytes = *Use->second.AccessBytes.begin();
+    }
     Raw = makeDataName(Addr, PointerSlot, AccessBytes);
     SynthesizedImageObjects.insert(Addr);
   }
@@ -625,8 +676,10 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       return "(((__uint128_t)0x" + llvm::utohexstr(High) +
              "ULL << 64) | (__uint128_t)0x" + llvm::utohexstr(Low) + "ULL)";
     }
-    if (auto Lit = imageStringLiteral(Img, CI->getZExtValue(),
-                                      /*AllowEmpty=*/true))
+    if (auto Text = codeSectionAddressText(*CI))
+      return *Text;
+    if (auto Lit = stringLiteralAt(Img, Dbg, CI->getZExtValue(),
+                                   /*AllowEmpty=*/true))
       return *Lit;
     return integerConstantText(CI->getValue());
   }
@@ -678,8 +731,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     if (CE->getOpcode() == llvm::Instruction::IntToPtr) {
       if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(CE->getOperand(0));
           CI && CI->getBitWidth() <= 64)
-        if (auto Lit = imageStringLiteral(Img, CI->getZExtValue(),
-                                          /*AllowEmpty=*/true))
+        if (auto Lit = stringLiteralAt(Img, Dbg, CI->getZExtValue(),
+                                       /*AllowEmpty=*/true))
           return *Lit;
     }
     if (CE->getOpcode() == llvm::Instruction::BitCast ||
@@ -2477,6 +2530,9 @@ void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
 std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V))
+    if (auto Text = codeSectionAddressText(*CI))
+      return *Text;
   if (UseScalarExpressionTypes)
     if (auto Text = scalarExpressionText(V))
       return *Text;
@@ -2524,7 +2580,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     if (std::string Addr = ctorThisAddress(*CB); !Addr.empty())
       return AddressText(std::move(Addr));
   if (auto VA = imageDataVA(V))
-    if (auto Lit = imageStringLiteral(Img, *VA, /*AllowEmpty=*/true))
+    if (auto Lit = stringLiteralAt(Img, Dbg, *VA, /*AllowEmpty=*/true))
       return AddressText(*Lit);
   if (!llvm::isa<llvm::LoadInst>(V)) {
     if (auto Acc = frameSlotAccess(V, 0, /*AddressOf=*/true))
@@ -2818,6 +2874,36 @@ LLVMCWriter::targetPointerMaskIdentity(const llvm::BinaryOperator &Op) {
   // truncate a valid host address before the matching inttoptr.
   return "(" + typeToCLLVM(Op.getType()) + ")(uintptr_t)(" +
          valueStr(Cast->getOperand(0)) + ")";
+}
+
+std::optional<std::string>
+LLVMCWriter::lowBitsMaskCast(const llvm::BinaryOperator &Op) {
+  if (Op.getOpcode() != llvm::Instruction::And || !Op.getType()->isIntegerTy())
+    return std::nullopt;
+  const unsigned Width = Op.getType()->getIntegerBitWidth();
+  if (Width != 16 && Width != 32 && Width != 64)
+    return std::nullopt;
+  const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Op.getOperand(1));
+  const llvm::Value *Base = Op.getOperand(0);
+  if (!Mask) {
+    Mask = llvm::dyn_cast<llvm::ConstantInt>(Base);
+    Base = Op.getOperand(1);
+  }
+  if (!Mask || llvm::isa<llvm::Constant>(Base))
+    return std::nullopt;
+  for (unsigned Bits : {8U, 16U, 32U}) {
+    if (Bits >= Width ||
+        Mask->getValue() != llvm::APInt::getLowBitsSet(Width, Bits))
+      continue;
+    // With a target data layout InstCombine canonicalizes zext(trunc X) to
+    // this mask. C states the same bits as the cast through the narrow
+    // unsigned carrier that castStr prints for zext(trunc X). The operand
+    // text is not inspected, so source-map delimiters cannot change it.
+    return "(" + typeToCLLVM(Op.getType()) + ")((" +
+           typeToCLLVM(llvm::IntegerType::get(Op.getContext(), Bits)) + ")(" +
+           integerPointerOperandStr(Base) + "))";
+  }
+  return std::nullopt;
 }
 
 std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
@@ -3126,6 +3212,15 @@ std::string LLVMCWriter::gepExpr(const llvm::GEPOperator &GEP) {
   llvm::APInt Offset(Bits, 0);
   if (!GEP.collectOffset(Layout, Bits, Variables, Offset))
     throw std::runtime_error("unsupported LLVM C GEP offset");
+  // The emitter reaches a literal the image keeps among the code from a
+  // function's address; it reads as its text, as HighC shows it.
+  if (Variables.empty())
+    if (const auto Function = functionAddress(GEP.getPointerOperand())) {
+      const llvm::APInt Address = llvm::APInt(Bits, *Function) + Offset;
+      if (auto Literal = stringLiteralAt(Img, Dbg, Address.getZExtValue(),
+                                         /*AllowEmpty=*/true))
+        return *Literal;
+    }
   const std::string Carrier = "uint" + std::to_string(Bits) + "_t";
   std::string Base = valueStr(GEP.getPointerOperand());
   if (const auto *Global =
@@ -3185,6 +3280,8 @@ std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
     if (auto Identity =
             targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst)))
       return *Identity;
+    if (auto Cast = lowBitsMaskCast(llvm::cast<llvm::BinaryOperator>(Inst)))
+      return *Cast;
     const bool NeedsIntegerPointerOperand = Inst.getType()->isIntegerTy();
     std::string LHS =
         logicalShiftLhs(Inst, NeedsIntegerPointerOperand
@@ -3331,12 +3428,15 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
   }
   HasCIntrinsics = true;
   std::string Ptr = valueStr(AI.getPointerOperand());
+  bool TypedPointer = false;
   if (AI.getType()->isIntegerTy()) {
     const uint16_t Width =
         static_cast<uint16_t>(AI.getType()->getIntegerBitWidth() / 8);
     if (auto Acc = typedRecordAccess(AI.getPointerOperand(), Width,
-                                     /*EnterNestedAtZero=*/false))
+                                     /*EnterNestedAtZero=*/false)) {
       Ptr = "&" + Acc->Text;
+      TypedPointer = true;
+    }
   }
   std::string Val = valueStr(AI.getValOperand());
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(
@@ -3375,6 +3475,10 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
            OldName + ", " + NextName + ", 0, " + Ord +
            ", __ATOMIC_RELAXED)); " + OldName + "; })";
   }
+  // The builtins take their width from what the pointer points to, which
+  // an address spelled as `void *` or an integer does not say.
+  if (!TypedPointer)
+    Ptr = "(" + typeToCLLVM(AI.getType()) + " *)(" + Ptr + ")";
   return std::string(Op) + "(" + Ptr + ", " + Val + ", " + Ord + ")";
 }
 

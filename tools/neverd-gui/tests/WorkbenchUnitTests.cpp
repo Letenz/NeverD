@@ -5,27 +5,36 @@
 #include "Docking.h"
 #include "Expression.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "LoadFileDialog.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "Theme.h"
+#include "TitleBar.h"
+#include "WindowFrame.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QDirIterator>
 #include <QFile>
 #include <QFontInfo>
 #include <QHash>
+#include <QHoverEvent>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMetaEnum>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -37,6 +46,7 @@
 #include <QSqlQuery>
 #include <QStyleOptionButton>
 #include <QStyleOptionComboBox>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
@@ -243,7 +253,10 @@ private slots:
   }
 
   void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
-    const QFont font(QStringLiteral("Consolas"), 10);
+    // The code views' font: Consolas where it exists, else the system's
+    // fixed font.
+    QFont font = Theme::defaultCodeFont();
+    font.setPointSize(10);
     const auto color = [](int role) {
       return QColor::fromHsv((role * 30) % 360, 160, 230);
     };
@@ -988,6 +1001,222 @@ private slots:
              theme.chrome(QStringLiteral("FloatingWindowBorder")));
   }
 
+  void tabsShowCloseButtonsWhenCurrentOrHovered() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    DockPair pair;
+    pair.right->addDockWidgetAsTab(
+        DockPair::dock("tabbed", DockPair::LeftColor));
+    QVERIFY(QTest::qWaitForWindowExposed(&pair.window));
+    QTabBar *bar = nullptr;
+    for (auto *candidate : pair.window.findChildren<QTabBar *>())
+      if (candidate->count() == 2)
+        bar = candidate;
+    QVERIFY(bar);
+    const auto side =
+        static_cast<QTabBar::ButtonPosition>(bar->style()->styleHint(
+            QStyle::SH_TabBar_CloseButtonPosition, nullptr, bar));
+    const int current = bar->currentIndex();
+    const int other = 1 - current;
+    const auto closable = [&](int index) {
+      return bar->tabButton(index, side)->isVisible();
+    };
+    QVERIFY(closable(current));
+    QVERIFY(!closable(other));
+
+    // A hovered tab shows its button in the room it kept.
+    const QRect room = bar->tabRect(other);
+    const QPointF center = room.center();
+    QHoverEvent hover(QEvent::HoverMove, center, bar->mapToGlobal(center),
+                      center);
+    QCoreApplication::sendEvent(bar, &hover);
+    QVERIFY(closable(other));
+    QCOMPARE(bar->tabRect(other), room);
+    QHoverEvent leave(QEvent::HoverLeave, QPointF(-1, -1), QPointF(-1, -1),
+                      center);
+    QCoreApplication::sendEvent(bar, &leave);
+    QVERIFY(!closable(other));
+
+    // The button moves with the current tab.
+    bar->setCurrentIndex(other);
+    QVERIFY(closable(other));
+    QVERIFY(!closable(current));
+  }
+
+  void mnemonicsShowWhileAltIsHeld() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    QLabel label(QStringLiteral("&Address"));
+    label.show();
+    const auto underlined = [&] {
+      return label.style()->styleHint(QStyle::SH_UnderlineShortcut, nullptr,
+                                      &label);
+    };
+    QCOMPARE(underlined(), 0);
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+    QCoreApplication::sendEvent(&label, &press);
+    QCOMPARE(underlined(), 1);
+    QCoreApplication::sendEvent(&label, &release);
+    QCOMPARE(underlined(), 0);
+
+    // A menu that Alt opened keeps them until it closes.
+    QCoreApplication::sendEvent(&label, &press);
+    QMenu menu;
+    menu.addAction(QStringLiteral("&Open"));
+    menu.popup(label.mapToGlobal(QPoint()));
+    QVERIFY(QTest::qWaitForWindowExposed(&menu));
+    QCoreApplication::sendEvent(&label, &release);
+    QCOMPARE(underlined(), 1);
+    menu.hide();
+    QTRY_COMPARE(underlined(), 0);
+
+    // An Alt whose release went elsewhere ends with the next plain input.
+    QCoreApplication::sendEvent(&label, &press);
+    QMouseEvent move(QEvent::MouseMove, QPointF(3, 3),
+                     label.mapToGlobal(QPointF(3, 3)), Qt::NoButton,
+                     Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&label, &move);
+    QCOMPARE(underlined(), 0);
+  }
+
+  void windowFrameResizesFromEdgesAndCorners() {
+    // The visible window spans [10, 390) x [10, 290) inside its shadow.
+    const QSize size(400, 300);
+    const QMargins shadow(10, 10, 10, 10);
+    const auto at = [&](int x, int y) {
+      return WindowFrame::edgesAt(QPoint(x, y), size, shadow);
+    };
+    QCOMPARE(at(200, 150), Qt::Edges());
+    QCOMPARE(at(2, 150), Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(at(12, 150), Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(at(14, 150), Qt::Edges());
+    QCOMPARE(at(395, 150), Qt::Edges(Qt::RightEdge));
+    QCOMPARE(at(200, 5), Qt::Edges(Qt::TopEdge));
+    QCOMPARE(at(200, 292), Qt::Edges(Qt::BottomEdge));
+    QCOMPARE(at(5, 5), Qt::TopEdge | Qt::LeftEdge);
+    // Within a corner's reach an edge resizes both ways.
+    QCOMPARE(at(12, 20), Qt::TopEdge | Qt::LeftEdge);
+    QCOMPARE(at(380, 292), Qt::BottomEdge | Qt::RightEdge);
+    // Without a shadow the edges lie just inside the window.
+    QCOMPARE(WindowFrame::edgesAt(QPoint(1, 150), size, QMargins()),
+             Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(WindowFrame::edgesAt(QPoint(5, 150), size, QMargins()),
+             Qt::Edges());
+  }
+
+  void titleBarControlsTheWindow() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    QWidget window;
+    auto *menus = new QMenuBar;
+    menus->addMenu(QStringLiteral("&File"));
+    auto *bar = new TitleBar(window, menus);
+    QCOMPARE(menus->parentWidget(), bar);
+    QAction palette;
+    int runs = 0;
+    connect(&palette, &QAction::triggered, &window, [&runs] { ++runs; });
+    bar->setCommandCenterAction(&palette);
+    bar->setCommandCenterText(QStringLiteral("xxd"),
+                              QStringLiteral("NeverD - xxd /tmp"));
+    auto *layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(QMargins());
+    layout->addWidget(bar);
+    layout->addStretch();
+    window.resize(900, 400);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const auto button = [&](const char *name) {
+      return bar->findChild<QAbstractButton *>(QLatin1String(name));
+    };
+    QVERIFY(button("minimizeButton") && button("maximizeButton") &&
+            button("closeButton"));
+    QCOMPARE(button("maximizeButton")->accessibleName(),
+             QStringLiteral("Maximize"));
+
+    // The command center names the file and runs its command.
+    auto *center = button("commandCenter");
+    QVERIFY(center && center->isVisible());
+    QCOMPARE(center->text(), QStringLiteral("xxd"));
+    QTest::mouseClick(center, Qt::LeftButton);
+    QCOMPARE(runs, 1);
+
+    // The maximize button and a double click on the bar's empty part toggle
+    // the maximized state, and the button then offers to restore.
+    QTest::mouseClick(button("maximizeButton"), Qt::LeftButton);
+    QTRY_VERIFY(window.isMaximized());
+    QCOMPARE(button("maximizeButton")->accessibleName(),
+             QStringLiteral("Restore"));
+    const QPoint empty(center->geometry().right() + 20, bar->height() / 2);
+    QVERIFY(!bar->childAt(empty));
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier, empty);
+    QTRY_VERIFY(!window.isMaximized());
+
+    // Full screen hides the window controls.
+    window.showFullScreen();
+    QTRY_VERIFY(!button("closeButton")->isVisible());
+    window.showNormal();
+    QTRY_VERIFY(button("closeButton")->isVisible());
+  }
+
+  void dialogTitleBarOffersTheButtonsItsFlagsAskFor() {
+    QDialog dialog;
+    dialog.setWindowTitle(QStringLiteral("Jump anywhere"));
+    auto *bar = new TitleBar(dialog);
+    dialog.resize(500, 300);
+    bar->setGeometry(0, 0, 500, bar->sizeHint().height());
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    const auto button = [](TitleBar *owner, const char *name) {
+      return owner->findChild<QAbstractButton *>(QLatin1String(name));
+    };
+    // A dialog's bar has no command center and offers Close alone.
+    QVERIFY(!button(bar, "commandCenter"));
+    QVERIFY(button(bar, "closeButton")->isVisible());
+    QVERIFY(!button(bar, "maximizeButton")->isVisible());
+    QVERIFY(!button(bar, "minimizeButton")->isVisible());
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier,
+                       QPoint(20, bar->height() / 2));
+    QVERIFY(!dialog.isMaximized());
+    QTest::mouseClick(button(bar, "closeButton"), Qt::LeftButton);
+    QTRY_VERIFY(!dialog.isVisible());
+
+    // A dialog whose flags ask for Maximize offers it.
+    QDialog resizable(
+        nullptr, Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+                     Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+    auto *second = new TitleBar(resizable);
+    resizable.resize(500, 300);
+    second->setGeometry(0, 0, 500, second->sizeHint().height());
+    resizable.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&resizable));
+    QAbstractButton *maximize = button(second, "maximizeButton");
+    QVERIFY(maximize->isVisible());
+    QTest::mouseClick(maximize, Qt::LeftButton);
+    QTRY_VERIFY(resizable.isMaximized());
+  }
+
+  void returnOpensTheCurrentItemOnce() {
+    // macOS item views would edit the item on Return instead of opening it;
+    // elsewhere the filter must not open it twice.
+    QListWidget list;
+    list.addItems({QStringLiteral("first"), QStringLiteral("second")});
+    activateOnReturn(list);
+    list.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&list));
+    list.setCurrentRow(1);
+    QStringList opened;
+    connect(&list, &QListWidget::itemActivated, &list,
+            [&opened](QListWidgetItem *item) { opened << item->text(); });
+    QTest::keyClick(&list, Qt::Key_Return);
+    QCOMPARE(opened, QStringList{QStringLiteral("second")});
+    QTest::keyClick(&list, Qt::Key_Enter, Qt::KeypadModifier);
+    QCOMPARE(opened.size(), 2);
+  }
+
   void themeDrawsFlatControls() {
     auto &theme = Theme::instance();
     for (const auto mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
@@ -1041,8 +1270,10 @@ private slots:
       QVERIFY(glyph > 4);
 
       // Text fields type in the code font; read-only text reads as content.
-      QVERIFY(QFontInfo(edit->font()).fixedPitch());
-      QVERIFY(!QFontInfo(box->font()).fixedPitch());
+      // The families are what the theme asks for: a platform without the
+      // code font (Windows offscreen) resolves it to another face.
+      QCOMPARE(edit->font().family(), theme.codeFont().family());
+      QVERIFY(box->font().family() != theme.codeFont().family());
       QCOMPARE(pixel(log, log->rect().center()),
                theme.chrome(QStringLiteral("Base")));
       // Dialog buttons carry no icons.

@@ -1,6 +1,9 @@
 #include "HighCHostExecution.h"
 #include "NeverDLiftFixture.h"
 
+#include <cstring>
+#include <string_view>
+
 namespace {
 
 // Keep the generated declaration and body intact. Only the named intrinsic is
@@ -30,29 +33,40 @@ std::string generatedFunction(const std::string &Source,
   return {};
 }
 
-void expectIntrinsicStyle(const std::string &Source) {
+void expectIntrinsicStyle(const std::string &Source, bool LLVMPath = false) {
   // Linux SYSCALL has no equivalent MSVC intrinsic: its established C
   // projection uses GNU constraints to preserve the Linux register ABI.
-  // Other system instructions must continue to use the existing C intrinsics.
-  const std::string SyscallAsm = "__asm__ volatile(\"syscall\"";
+  // LLVM CPU queries also retain their side-effect and memory ordering
+  // contract through constrained assembly. HighC keeps its source intrinsics.
   size_t Search = 0;
-  unsigned Syscalls = 0;
+  unsigned AsmCount = 0;
   while ((Search = Source.find("__asm__ volatile", Search)) !=
          std::string::npos) {
-    EXPECT_EQ(Source.compare(Search, SyscallAsm.size(), SyscallAsm), 0)
+    const auto Asm = std::string_view(Source).substr(Search);
+    EXPECT_TRUE(Asm.starts_with("__asm__ volatile(\"syscall\"") ||
+                (LLVMPath && (Asm.starts_with("__asm__ volatile(\"cpuid\"") ||
+                              Asm.starts_with("__asm__ volatile(\"xgetbv\""))))
         << Source.substr(Search, 200);
-    Search += SyscallAsm.size();
-    ++Syscalls;
+    Search += std::strlen("__asm__ volatile");
+    ++AsmCount;
   }
-  EXPECT_EQ(Syscalls, 1u) << Source;
-  for (const char *Name : {"test_rdtsc_intrinsic", "test_pause_intrinsic",
-                           "test_mfence_intrinsic", "test_lfence_intrinsic",
-                           "test_sfence_intrinsic", "test_cpuid_intrinsic",
-                           "test_clflush_intrinsic", "test_xgetbv_intrinsic",
-                           "test_rdtscp_intrinsic", "test_wrmsr_intrinsic"}) {
+  // The fixture has two CPUID occurrences, one XGETBV and one SYSCALL.
+  EXPECT_EQ(AsmCount, LLVMPath ? 4u : 1u) << Source;
+  for (const char *Name :
+       {"test_rdtsc_intrinsic", "test_pause_intrinsic", "test_mfence_intrinsic",
+        "test_lfence_intrinsic", "test_sfence_intrinsic",
+        "test_cpuid_intrinsic", "test_cpuid_return_eax",
+        "test_clflush_intrinsic", "test_xgetbv_intrinsic",
+        "test_rdtscp_intrinsic", "test_wrmsr_intrinsic"}) {
     const auto Body = generatedFunction(Source, Name);
     ASSERT_FALSE(Body.empty()) << Name;
-    EXPECT_EQ(Body.find("__asm__ volatile"), std::string::npos) << Body;
+    if (LLVMPath && (std::strcmp(Name, "test_cpuid_intrinsic") == 0 ||
+                     std::strcmp(Name, "test_cpuid_return_eax") == 0 ||
+                     std::strcmp(Name, "test_xgetbv_intrinsic") == 0)) {
+      EXPECT_NE(Body.find("__asm__ volatile"), std::string::npos) << Body;
+      EXPECT_NE(Body.find(": \"memory\");"), std::string::npos) << Body;
+    } else
+      EXPECT_EQ(Body.find("__asm__ volatile"), std::string::npos) << Body;
   }
 }
 
@@ -215,19 +229,21 @@ TEST_F(X86_64_Intrinsics, LlvmC_UsesCorrectStyle) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  expectIntrinsicStyle(content);
+  expectIntrinsicStyle(content, /*LLVMPath=*/true);
 }
 
-TEST_F(X86_64_Intrinsics, LlvmC_CpuidUsesIntrinsic) {
+TEST_F(X86_64_Intrinsics, LlvmC_CpuidRetainsOrderedRegisterContract) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("__cpuid") != std::string::npos)
-      << "Expected __cpuid(cpuInfo, ...) in LLVM C decompile:\n"
-      << content.substr(0, 3000);
-  EXPECT_TRUE(content.find("cpuInfo[") != std::string::npos)
-      << "Expected cpuInfo array extraction in LLVM C decompile:\n"
-      << content.substr(0, 3000);
+  const auto Body = generatedFunction(content, "test_cpuid_intrinsic");
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.find("__asm__ volatile(\"cpuid\""), std::string::npos) << Body;
+  for (const char *Operand :
+       {"\"=a\"(cpuInfo[0])", "\"=b\"(cpuInfo[1])", "\"=c\"(cpuInfo[2])",
+        "\"=d\"(cpuInfo[3])", "\"a\"((uint32_t)(0))", "\"c\"((uint32_t)(0))",
+        ": \"memory\""})
+    EXPECT_NE(Body.find(Operand), std::string::npos) << Body;
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_ClflushUsesIntrinsic) {
@@ -239,13 +255,16 @@ TEST_F(X86_64_Intrinsics, LlvmC_ClflushUsesIntrinsic) {
       << content.substr(0, 3000);
 }
 
-TEST_F(X86_64_Intrinsics, LlvmC_XgetbvUsesIntrinsic) {
+TEST_F(X86_64_Intrinsics, LlvmC_XgetbvRetainsOrderedRegisterContract) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("_xgetbv") != std::string::npos)
-      << "Expected _xgetbv() in LLVM C decompile:\n"
-      << content.substr(0, 3000);
+  const auto Body = generatedFunction(content, "test_xgetbv_intrinsic");
+  ASSERT_FALSE(Body.empty());
+  for (const char *Operand :
+       {"__asm__ volatile(\"xgetbv\"", "\"=a\"(xcr[0])", "\"=d\"(xcr[1])",
+        "\"c\"((uint32_t)(0))", ": \"memory\""})
+    EXPECT_NE(Body.find(Operand), std::string::npos) << Body;
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_RdtscUsesIntrinsic) {
@@ -769,6 +788,104 @@ __attribute__((target("sse4.2"))) int checksum(int a) {
                             {0, 1, -1, 0x7F, 0x12345678, -0x7FFFFFFF});
 }
 
+// The 32-bit PEXT and PDEP print as the _u32 intrinsics.  The _u64 ones would
+// sign-extend int operands, and PEXT would pack the extra mask bits of a
+// negative value into the result.
+TEST_F(X86_64_HighCIntrinsics, ThirtyTwoBitPextAndPdepRunLikeTheSource) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+__attribute__((target("bmi2"))) int bits(int a) {
+  unsigned m = (unsigned)a * 2654435761u | 0x80000001u;
+  return (int)(__builtin_ia32_pext_si((unsigned)a, m) +
+               __builtin_ia32_pdep_si((unsigned)a, m));
+}
+)C",
+                            "bits", {"bits"},
+                            {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
+}
+
+// A gather clears each mask element as it loads it: after the first the
+// mask is {0, -1, -1, -1}, a 256-bit constant the C writes as the complement
+// of 2^64 - 1.  Printed `~-1`, C complemented an int and loaded only the
+// first element.
+TEST_F(X86_64_HighCIntrinsics, AGatherKeepsTheMaskOfTheElementsLeft) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef int v4si __attribute__((vector_size(16)));
+typedef long long v4di __attribute__((vector_size(32)));
+__attribute__((target("avx2"))) int gather(int a) {
+  unsigned long long t[64], x = (unsigned)a | 1ull;
+  for (int i = 0; i < 64; i++) {
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    t[i] = x;
+  }
+  v4si vi = {a & 63, (a >> 4) & 63, (a >> 8) & 63, (a >> 12) & 63};
+  v4di m = {-1, -1, -1, -1}, s = {0, 0, 0, 0};
+  v4di g = __builtin_ia32_gatherd_q256(s, (const long long *)t, vi, m, 8);
+  unsigned long long r = 0;
+  for (int i = 0; i < 4; i++)
+    r += (unsigned long long)g[i];
+  return (int)(r ^ (r >> 32));
+}
+)C",
+                            "gather", {"gather"},
+                            {0, 1, -1, 0x13579, 0x12345678});
+}
+
+// VPERMD names its indices before its data, and the lifter keeps that order;
+// _mm256_permutevar8x32_epi32 takes the data first.
+TEST_F(X86_64_HighCIntrinsics, APermuteByIndexTakesTheDataFirst) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef int v8si __attribute__((vector_size(32)));
+__attribute__((target("avx2"))) int permd(int a) {
+  v8si b = {a, a, a, a, a, a, a, a};
+  v8si io = {0, 1, 2, 3, 4, 5, 6, 7};
+  v8si x = b * 7 + io, idx = (b + io) & 7;
+  v8si z = __builtin_ia32_permvarsi256(x, idx);
+  return z[0] + z[1] * 2 + z[2] * 3 + z[3] * 4 + z[4] * 5 + z[5] * 6 +
+         z[6] * 7 + z[7] * 8;
+}
+)C",
+                            "permd", {"permd"}, {0, 1, -1, 0x4d, 77, 0x12345});
+}
+
+// `xor edx, edx; div rsi` divides the zero-extended rax.  The guard that
+// traps where the quotient does not fit took the dividend's signed source,
+// so a dividend with its top bit set extended by its sign and trapped.
+TEST_F(X86_64_HighCIntrinsics, AnUnsignedDivisionGuardZeroExtends) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+long udivide(long a, long b) __attribute__((noinline));
+int quotient(int a) {
+  return (int)udivide((long)(0xFFFFFFFF00000000ul ^ (unsigned)a),
+                      (long)((a & 0xFF) + 1));
+}
+long udivide(long a, long b) {
+  unsigned long ua = (unsigned long)a, ub = (unsigned long)b;
+  if (ub == 0)
+    return 0;
+  return (long)(ua / ub);
+}
+)C",
+                            "quotient", {"quotient", "udivide"},
+                            {0, 1, -1, 0x7F, 0x12345678});
+}
+
+// MULSD and ADDSS read their constant-pool operand through the address they
+// take, so each constant is the double or float the instruction reads.
+TEST_F(X86_64_HighCIntrinsics, ConstantPoolOperandsKeepTheirWidth) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+int scale(int a) {
+  double x = (double)a * 1e-4;
+  float y = (float)a + 2.5f;
+  unsigned long long b;
+  unsigned c;
+  __builtin_memcpy(&b, &x, 8);
+  __builtin_memcpy(&c, &y, 4);
+  return (int)(b ^ (b >> 32) ^ c);
+}
+)C",
+                            "scale", {"scale"},
+                            {0, 1, -1, 31416, 0x12345, -0x7FFFFFFF});
+}
+
 // An instruction past the x86-64 baseline prints as its intrinsic in a
 // function that takes the intrinsic's target feature, so the C compiles with
 // no -m option.
@@ -851,3 +968,69 @@ cas16:
                                      "-ffreestanding", "-std=gnu11"});
   EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
 }
+
+// The magnitude mask of an fabs is a double constant that `vmovddup` loads
+// from memory and broadcasts, which HighC folds to its eight bytes: the
+// intrinsic reads only those, and they widen to its vector operand.
+TEST_F(X86_64_HighCIntrinsics, ABroadcastConstantWidensToItsVector) {
+  HostFlags = {"-mfma"};
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu", "-mfma", "-fno-math-errno"}, R"C(
+int fma_chain(int a) {
+  unsigned h = (unsigned)a, acc = 0;
+  double s = 1.0;
+  for (int i = 0; i < 64; i++) {
+    h = h * 1103515245u + 12345u;
+    double x = (double)(int)(h & 0x1FFFF) * 0.0000131 - 3.0;
+    double y = (double)(int)((h >> 8) & 0x1FFFF) * 0.0000071 + 1.0;
+    s = __builtin_fma(x, y, s);
+    if (s > 1e9 || s < -1e9)
+      s *= 0.0009765625;
+    unsigned long long bb;
+    __builtin_memcpy(&bb, &s, 8);
+    acc = acc * 131u + (unsigned)bb + (unsigned)(bb >> 32);
+  }
+  return (int)acc;
+}
+)C",
+      "fma_chain", {"fma_chain"}, {0, 1, -1, 0x4567, 77});
+}
+
+namespace {
+
+class X86_64_SystemRegister : public HighCHostExecutionTest {};
+
+// `str %eax` stores the task register's selector, zero extended, in the
+// register.  The C runs the instruction itself on a value of that width
+// through GNU inline asm and returns it.  Nothing executes here: a CPU with
+// UMIP refuses STR in user mode.
+TEST_F(X86_64_SystemRegister, AStoredSelectorIsTheValueReturned) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const auto Source = tmpFile("kernel.c");
+  const auto Object = tmpFile("kernel.o");
+  std::ofstream(Source) << "unsigned long str32(unsigned long x) {\n"
+                           "  __asm__ volatile(\"str %k0\" : \"+r\"(x));\n"
+                           "  return x;\n"
+                           "}\n";
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-O1", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  const auto Decompiled = decompileToHighC(Object);
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_NE(C.find("__asm__ volatile(\"str %0\" : \"=r\"("), std::string::npos)
+      << C;
+  EXPECT_EQ(C.find("void str32"), std::string::npos) << C;
+  const auto HostSource = tmpFile("host.c");
+  std::ofstream(HostSource) << C;
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-std=gnu11", "-c", HostSource.string(), "-o",
+                               tmpFile("host.o").string()});
+  EXPECT_EQ(Built.exitCode, 0) << Built.err << "\n" << C;
+}
+
+} // namespace

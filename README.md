@@ -324,10 +324,15 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
   --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
-neverd patch --from-c repl.c --func 0x401000 -o patched binary
+neverd patch --from-source repl.c --entry replacement --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+Source patches can select Clang, NeverC ordinary mode, or GCC through the
+[verified source/object profiles](docs/source-patching.md). Native objects
+preserve producer machine code; compiler/runtime compatibility and exception
+propagation are checked per profile.
 
 For a 32-bit ARM binary that omits a function's ARM/Thumb mode metadata, assert
 the entry mode before decompiling:

@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>オペランドの数値をビット反転して表示します</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>コード(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>現在のアドレスから命令を定義します</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>オフラインのパッケージレビュー(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>ローカルのパッケージの証拠とアナリストのレビューを調べます</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB ファイル(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>選択した PDB ファイルからシンボルを読み込む</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1452,22 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>C で表示した宣言 %n 個</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>保存された変数名は別のソース表示のものです</translation>
+    </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>ブロックを展開 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2088,78 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>%1 の読み込み方法が不明です: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>このソース行へのコメント：</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>新しい名前：</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>名前の変更</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>名前を変更する宣言済みの変数またはイメージ内の名前を選択してください</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>ソース行を選択してください。折りたたまれたコードは展開してからコメントしてください</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>選択した名前にはイメージ内のアドレスがありません</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>この命令にはソース行へのアドレス対応がありません。</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>このソース行には命令アドレスへの対応がありません。関数の入口を表示します</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB ファイル (*.pdb);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>未検証の PDB を解析に使用</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>この PE には PDB の照合識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
+
+この PDB を解析に使用しますか？シンボル、型、関数シグネチャ、アドレス範囲を解析の入力として使用します。誤った PDB を選ぶと解析結果が不正確になる可能性があります。</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>このエンジンは未検証の PDB による解析に対応していません</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>行</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>列</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>コード</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>関数の読み込みが完了してから参照を検索してください</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2298,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>開いたファイルがここに表示されます。[新規] を選ぶか、このウィンドウにファイルをドロップしてください。</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>最終オープン：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2424,22 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1 にはすでに命令が定義されています</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB を読み込みました: %1（%2 個の名前、識別情報を検証済み）</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB の表示名をインポートしました: %1（%2 個の名前、未検証）</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
 </context>
 <context>
@@ -2525,6 +2657,147 @@ Signed: %4</source>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>最小化</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>最大化</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>元に戻す</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>解析プロセスが停止しました。</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>解析の読み取りのみが許可されています。</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>解析プロセスは解析状態を復元できません。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>シンボルのダウンロードがタイムアウトしました。</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>デバッグシンボルのダウンロード</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>%1 に一致するローカル PDB は読み込まれていません。
+
+Microsoft シンボルサーバーから %2 のダウンロードを試みますか？Microsoft がこのビルドのシンボルを公開している場合のみ取得できます。
+
+PDB ファイル名とビルド識別子を送信します。バイナリはアップロードしません。一致するシンボルは自動的にキャッシュされ、読み込まれます。</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>ダウンロード</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>今はしない</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>シンボルキャッシュのディレクトリを作成できません: %1</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>%1 に一時シンボルファイルを開けません: %2</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>シンボルのダウンロードをキャンセルしました。</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>%1 をダウンロード中…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>シンボルファイルが 2 GiB のダウンロード制限を超えています。</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>このビルドに一致するシンボルは Microsoft にありません。</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>シンボルのダウンロード失敗：%1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>ダウンロードしたシンボルファイルは空です。</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>シンボルファイル %1 に書き込めません: %2</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>圧縮シンボルファイルが無効です。</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>%1 に一時シンボルディレクトリを作成できません: %2</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>シンボルを展開中…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>圧縮シンボルファイルを展開できませんでした。</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>圧縮シンボルには Windows が必要です。</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>ダウンロードしたシンボルを検証中…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>PDB が読み込まれたファイルと一致しません。</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>検証済み PDB を %1 に保存できません: %2</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>シンボルの検証失敗：%1</translation>
     </message>
 </context>
 </TS>

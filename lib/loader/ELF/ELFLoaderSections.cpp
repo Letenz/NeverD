@@ -15,6 +15,7 @@
 #include "ELFSymbolCollector.h"
 
 #include "neverd/loader/BinaryImageFlags.h"
+#include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/BinaryFormat/ELF.h"
@@ -42,13 +43,6 @@ namespace {
 /// `$x`, each optionally followed by `.` and a suffix.  They are the
 /// toolchain's markers, not names: one sits at the start of practically every
 /// function and data section, at the address of the symbol that names it.
-bool isMappingSymbolName(llvm::StringRef Name) {
-  if (Name.size() < 2 || Name[0] != '$')
-    return false;
-  if (Name[1] != 'a' && Name[1] != 'd' && Name[1] != 't' && Name[1] != 'x')
-    return false;
-  return Name.size() == 2 || Name[2] == '.';
-}
 
 } // namespace
 

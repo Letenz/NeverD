@@ -24,12 +24,19 @@
 
 class HighCHostExecutionTest : public NeverDLiftTest {
 protected:
+  /// Flags for the host build, such as -m32 for C decompiled from a 32-bit
+  /// target, whose addresses travel in 32-bit integers.
+  std::vector<std::string> HostFlags;
+  /// The optimization level the kernel is built at: -O0 keeps every local in
+  /// a frame slot.
+  std::string KernelOptimization = "-O2";
+
   /// Compile \p Kernel with Clang and \p TargetFlags, decompile it to HighC,
   /// and expect the C of \p Entry, which takes and returns an int, to return
   /// what \p Kernel's does for each of \p Values.  Only the int the ABI
   /// returns is compared: the C may return the whole register.  \p Names are
-  /// the kernel's functions, renamed in the reference copy.  An unknown value
-  /// in the C fails.
+  /// the kernel's functions and globals, renamed in the reference copy.  An
+  /// unknown value in the C fails.
   void expectHighCRunsLikeSource(const std::vector<std::string> &TargetFlags,
                                  const std::string &Kernel,
                                  const std::string &Entry,
@@ -53,7 +60,7 @@ protected:
     const auto Object = tmpFile("kernel.o");
     std::ofstream(Source) << Kernel;
     std::vector<std::string> Args = TargetFlags;
-    Args.insert(Args.end(), {"-O2", "-fno-stack-protector",
+    Args.insert(Args.end(), {KernelOptimization, "-fno-stack-protector",
                              "-fno-asynchronous-unwind-tables", "-c",
                              Source.string(), "-o", Object.string()});
     const auto Compiled = exec(Compiler, Args);
@@ -72,7 +79,7 @@ protected:
     std::string Reference = Kernel;
     for (const std::string Name : Names)
       Reference = std::regex_replace(
-          Reference, std::regex("\\b" + Name + "\\("), "ref_" + Name + "(");
+          Reference, std::regex("\\b" + Name + "\\b"), "ref_" + Name);
     std::string Main = "int main(void) {\n  static const int Values[] = {";
     for (int Value : Values)
       Main += std::to_string(Value) + ", ";
@@ -83,9 +90,15 @@ protected:
     const auto HostSource = tmpFile("host.c");
     const auto Program = tmpFile("host.exe");
     std::ofstream(HostSource) << C << "\n" << Reference << "\n" << Main;
-    const auto Built =
-        exec(NEVERD_TEST_CLANG, {"-std=gnu11", "-O2", HostSource.string(), "-o",
-                                 Program.string()});
+    // The C reads and writes scalars through plain pointer casts, which its
+    // header says to build with -fno-strict-aliasing, as the semantic grid
+    // does.
+    std::vector<std::string> HostArgs = {"-std=gnu11", "-O2",
+                                         "-fno-strict-aliasing"};
+    HostArgs.insert(HostArgs.end(), HostFlags.begin(), HostFlags.end());
+    HostArgs.insert(HostArgs.end(),
+                    {HostSource.string(), "-o", Program.string()});
+    const auto Built = exec(NEVERD_TEST_CLANG, HostArgs);
     ASSERT_EQ(Built.exitCode, 0) << Built.err << "\n" << C;
     EXPECT_EQ(exec(Program.string(), {}).exitCode, 0) << C;
   }

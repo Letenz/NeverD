@@ -375,7 +375,15 @@ void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
     }
     AArch64->lift(Insn.Raw, Ops, ScalarWideImmediate);
   } else if (ARM) {
-    ARM->lift(Insn.Raw, Ops);
+    bool Unrelocated = false;
+    if (Insn.Raw)
+      for (const RelocatedScalarOperand &Scalar : ScalarRelocs)
+        Unrelocated |=
+            Scalar.Semantics ==
+                RelocatedScalarOperand::Kind::ARMELFUnrelocatedInstruction &&
+            Scalar.FieldVA == Insn.Raw->address &&
+            Scalar.Width == Insn.Raw->size;
+    ARM->lift(Insn.Raw, Ops, Unrelocated);
   } else {
     LowOp Nop;
     Nop.Opcode = NdOp::NOP;

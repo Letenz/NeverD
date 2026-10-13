@@ -17,6 +17,10 @@
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/ELF/ELFARMEHABIPatch.h"
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
+#include "neverd/backend/codegen/ELF/ELFSectionPatch.h"
+#include "neverd/backend/codegen/ELF/ELFSourceRelocations.h"
+#include "neverd/backend/codegen/ELF/ELFSourceSymbols.h"
+#include "neverd/backend/codegen/PatchStorage.h"
 #include "neverd/object/ELFLayout.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -94,13 +98,16 @@ struct ExecSegmentPlan {
 std::optional<ExecSegmentPlan>
 planExecSegment(bool Is64, uint64_t MaxVA, uint64_t BinarySize,
                 uint16_t OldPhNum, uint16_t PhdrSize, uint64_t PageSize,
-                uint64_t CodeSize) {
-  if (OldPhNum >= std::numeric_limits<uint16_t>::max())
+                uint64_t CodeSize, bool SplitStorage) {
+  const uint16_t AddedHeaders = SplitStorage ? 2 : 1;
+  if (OldPhNum >= llvm::ELF::PN_XNUM - AddedHeaders)
     return std::nullopt;
 
   ExecSegmentPlan Plan;
-  Plan.NewPhNum = OldPhNum + 1;
+  Plan.NewPhNum = OldPhNum + AddedHeaders;
   Plan.PhdrTableSize = static_cast<uint64_t>(Plan.NewPhNum) * PhdrSize;
+  const uint64_t PrefixSize =
+      SplitStorage ? llvm::alignTo(Plan.PhdrTableSize, 16) : Plan.PhdrTableSize;
 
   const std::optional<uint64_t> SegmentFileOffset =
       checkedAlignUp(BinarySize, PageSize);
@@ -111,11 +118,9 @@ planExecSegment(bool Is64, uint64_t MaxVA, uint64_t BinarySize,
   Plan.SegmentVA = *SegmentVA;
 
   const std::optional<uint64_t> CodeFileOffset =
-      checkedAdd(Plan.SegmentFileOffset, Plan.PhdrTableSize);
-  const std::optional<uint64_t> CodeVA =
-      checkedAdd(Plan.SegmentVA, Plan.PhdrTableSize);
-  const std::optional<uint64_t> FileSize =
-      checkedAdd(Plan.PhdrTableSize, CodeSize);
+      checkedAdd(Plan.SegmentFileOffset, PrefixSize);
+  const std::optional<uint64_t> CodeVA = checkedAdd(Plan.SegmentVA, PrefixSize);
+  const std::optional<uint64_t> FileSize = checkedAdd(PrefixSize, CodeSize);
   const std::optional<uint64_t> MemorySize =
       FileSize ? checkedAlignUp(*FileSize, PageSize) : std::nullopt;
   const std::optional<uint64_t> OutputSize =
@@ -262,7 +267,8 @@ uint64_t ELFPatcher::plannedExecSegmentVA(const std::vector<uint8_t> &Binary,
   const uint64_t PageSize = elfPageSize(TargetArch);
   const std::optional<ExecSegmentPlan> Plan =
       planExecSegment(Layout.Is64, Layout.MaxVA, Binary.size(), EHdr.PhNum,
-                      getELFPhdrSize(Layout.Is64), PageSize, /*CodeSize=*/0);
+                      getELFPhdrSize(Layout.Is64), PageSize, /*CodeSize=*/0,
+                      InputKind != RewriteInputKind::LiftedIR);
   return Plan ? Plan->CodeVA : 0;
 }
 
@@ -270,6 +276,13 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
                                        llvm::ArrayRef<uint8_t> Code,
                                        llvm::StringRef /*SegName*/,
                                        Arch TargetArch) {
+  return appendPatchSegments(Binary, Code, TargetArch, std::nullopt);
+}
+
+uint64_t ELFPatcher::appendPatchSegments(std::vector<uint8_t> &Binary,
+                                         llvm::ArrayRef<uint8_t> Code,
+                                         Arch TargetArch,
+                                         std::optional<uint64_t> WritableVA) {
   PatchLayout Layout;
   if (!parseLayout(Binary, Layout))
     return 0;
@@ -282,10 +295,14 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
   uint16_t OldPhNum = EHdr.PhNum;
 
   const uint64_t TextSize = Code.size();
-  const std::optional<ExecSegmentPlan> Plan =
-      planExecSegment(Is64, Layout.MaxVA, Binary.size(), OldPhNum, PhdrSize,
-                      PageSize, TextSize);
+  const std::optional<ExecSegmentPlan> Plan = planExecSegment(
+      Is64, Layout.MaxVA, Binary.size(), OldPhNum, PhdrSize, PageSize, TextSize,
+      InputKind != RewriteInputKind::LiftedIR);
   if (!Plan)
+    return 0;
+  if (WritableVA && (InputKind == RewriteInputKind::LiftedIR ||
+                     *WritableVA % PageSize || *WritableVA <= Plan->CodeVA ||
+                     *WritableVA - Plan->CodeVA >= Code.size()))
     return 0;
 
   std::vector<uint8_t> OldPhdrs(static_cast<size_t>(OldPhNum) * PhdrSize);
@@ -317,8 +334,10 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
   NewPF.Offset = Plan->SegmentFileOffset;
   NewPF.VAddr = Plan->SegmentVA;
   NewPF.PAddr = Plan->SegmentVA;
-  NewPF.FileSz = Plan->FileSize;
-  NewPF.MemSz = Plan->MemorySize;
+  NewPF.FileSz = WritableVA ? *WritableVA - Plan->SegmentVA : Plan->FileSize;
+  // All bytes in this RX segment are file-backed. Advertising page padding
+  // as BSS asks the OS loader to zero a non-writable mapping.
+  NewPF.MemSz = NewPF.FileSz;
   NewPF.Align = PageSize;
   writeELFPhdr(NewPhdr, Is64, NewPF);
 
@@ -326,6 +345,17 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
               OldPhdrs.size());
   std::memcpy(Binary.data() + Plan->SegmentFileOffset + OldPhdrs.size(),
               NewPhdr, PhdrSize);
+  if (WritableVA) {
+    ELFPhdrFields Data = NewPF;
+    const uint64_t Offset = *WritableVA - Plan->SegmentVA;
+    Data.Flags = llvm::ELF::PF_R | llvm::ELF::PF_W;
+    Data.Offset = Plan->SegmentFileOffset + Offset;
+    Data.VAddr = Data.PAddr = *WritableVA;
+    Data.FileSz = Data.MemSz = Plan->FileSize - Offset;
+    writeELFPhdr(Binary.data() + Plan->SegmentFileOffset + OldPhdrs.size() +
+                     PhdrSize,
+                 Is64, Data);
+  }
 
   for (uint16_t I = 0; I < Plan->NewPhNum; ++I) {
     uint8_t *PH = Binary.data() + Plan->SegmentFileOffset + I * PhdrSize;
@@ -405,15 +435,31 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
         auto IsExecutable = [&](uint64_t VA) {
           return CachedImage && CachedImage->isCodeAddress(VA);
         };
-        auto Resolve = [&](llvm::StringRef Sym,
-                           uint32_t) -> std::optional<uint64_t> {
-          std::string Name = Sym.str();
+        std::optional<std::string> SymbolResolutionFailure;
+        auto Resolve =
+            [&](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request)
+            -> std::optional<uint64_t> {
+          std::string Name = Request.Symbol.str();
+          if (InputKind == RewriteInputKind::ReplacementIR &&
+              TargetArch == Arch::X86 && Name == "_GLOBAL_OFFSET_TABLE_")
+            return CodeStartVA;
           const std::string PreservedKey = resolveSourceFunctionAlias(
               Name, SourcePreparation.PreservedOriginalVAs, BinaryFormat::ELF,
               TargetArch);
           if (!PreservedKey.empty())
             return SerializeResolvedCode(
                 SourcePreparation.PreservedOriginalVAs.at(PreservedKey), true);
+          if (InputKind == RewriteInputKind::ReplacementIR) {
+            if (SymbolResolutionFailure || !CachedImage)
+              return std::nullopt;
+            auto Resolved =
+                resolveELFSourceSymbol(*CachedImage, *CompileMod, Request);
+            if (!Resolved) {
+              SymbolResolutionFailure = llvm::toString(Resolved.takeError());
+              return std::nullopt;
+            }
+            return *Resolved;
+          }
           if (CachedExports) {
             for (auto &E : *CachedExports)
               if (E.Name == Name)
@@ -458,7 +504,13 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
         std::optional<ELFEHFrameRegion> EHRegion = findELFEHFrameRegion(Binary);
         auto FixedSectionVA =
             [&](llvm::StringRef Name) -> std::optional<uint64_t> {
-          if (EHRegion && Name == section_names::elf::EhFrame)
+          // A compiler's section alignment need not match the old table's
+          // logical end (a four-byte terminator often follows an eight-byte
+          // aligned section). Source replacements use the separately placed
+          // records and the relocated search-table path below.
+          if (EHRegion && Name == section_names::elf::EhFrame &&
+              !(InputKind == RewriteInputKind::ReplacementIR &&
+                EHRegion->HasHdr))
             return EHRegion->AppendVA;
           return std::nullopt;
         };
@@ -474,7 +526,15 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
 
         CompiledImage Img = compileImageForPatchWithFixedSectionVAs(
             *CompileMod, TargetArch, BinaryFormat::ELF, CodeStartVA, Resolve,
-            FixedSectionVA);
+            FixedSectionVA, 0,
+            InputKind == RewriteInputKind::ReplacementIR
+                ? CompileMod->getTargetTriple().str()
+                : std::string(),
+            InputKind);
+        if (SymbolResolutionFailure) {
+          llvm::WithColor::error() << *SymbolResolutionFailure << "\n";
+          return false;
+        }
         if (!Img.Success || Img.Bytes.empty()) {
           llvm::WithColor::error()
               << "elf_patch: compileImageForPatch failed (success="
@@ -506,6 +566,8 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
         // them whose search table names the original and regenerated records.
         std::optional<uint64_t> RelocatedHdrVA;
         uint64_t RelocatedHdrSize = 0;
+        std::optional<uint64_t> RelocatedIndexVA;
+        uint64_t RelocatedIndexSize = 0;
         if (Err && !hasGeneratedELFARMEHABI(Img) && EHRegion &&
             EHRegion->HasHdr) {
           const std::string InPlaceFailure = llvm::toString(std::move(Err));
@@ -513,7 +575,12 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
               *CompileMod, TargetArch, BinaryFormat::ELF, CodeStartVA, Resolve,
               [](llvm::StringRef) -> std::optional<uint64_t> {
                 return std::nullopt;
-              });
+              },
+              0,
+              InputKind == RewriteInputKind::ReplacementIR
+                  ? CompileMod->getTargetTriple().str()
+                  : std::string(),
+              InputKind);
           if (!Img.Success || Img.Bytes.empty()) {
             llvm::WithColor::error()
                 << "elf_patch: compileImageForPatch failed after "
@@ -527,8 +594,19 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                 << SourceDetail << "\n";
             return false;
           }
+          auto Storage =
+              InputKind == RewriteInputKind::ReplacementIR
+                  ? validatePatchStorageLayout(Img, elfPageSize(TargetArch))
+                  : llvm::Expected<PatchStorageLayout>(PatchStorageLayout{});
+          if (!Storage) {
+            llvm::WithColor::error()
+                << llvm::toString(Storage.takeError()) << "\n";
+            return false;
+          }
           const uint64_t HdrOffset =
-              llvm::alignTo(Img.Bytes.size(), dweh::kEhFrameHdrAlignment);
+              llvm::alignTo(Storage->WritableOffset ? Storage->ReadOnlySize
+                                                    : Img.Bytes.size(),
+                            dweh::kEhFrameHdrAlignment);
           auto Hdr = buildRelocatedELFEHFrameHdr(
               Binary, *EHRegion, Img, *CompileMod, Img.BaseVA + HdrOffset);
           if (!Hdr) {
@@ -536,18 +614,94 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                                      << llvm::toString(Hdr.takeError()) << "\n";
             return false;
           }
-          Img.Bytes.resize(static_cast<size_t>(HdrOffset), 0);
-          Img.Bytes.insert(Img.Bytes.end(), Hdr->begin(), Hdr->end());
+          if (Storage->WritableOffset) {
+            if (!rangeInBounds(HdrOffset, Hdr->size(),
+                               Storage->WritableOffset)) {
+              llvm::WithColor::error() << "elf_patch: unwind search table "
+                                          "exceeds reserved RX storage\n";
+              return false;
+            }
+            std::copy(Hdr->begin(), Hdr->end(), Img.Bytes.begin() + HdrOffset);
+          } else {
+            Img.Bytes.resize(static_cast<size_t>(HdrOffset), 0);
+            Img.Bytes.insert(Img.Bytes.end(), Hdr->begin(), Hdr->end());
+          }
           RelocatedHdrVA = Img.BaseVA + HdrOffset;
           RelocatedHdrSize = Hdr->size();
+        } else if (Err && hasGeneratedELFARMEHABI(Img) && EHABIRegion &&
+                   InputKind == RewriteInputKind::ReplacementIR) {
+          const std::string InPlaceFailure = llvm::toString(std::move(Err));
+          auto Storage =
+              validatePatchStorageLayout(Img, elfPageSize(TargetArch));
+          if (!Storage) {
+            llvm::WithColor::error()
+                << llvm::toString(Storage.takeError()) << "\n";
+            return false;
+          }
+          const uint64_t Offset =
+              llvm::alignTo(Storage->WritableOffset ? Storage->ReadOnlySize
+                                                    : Img.Bytes.size(),
+                            4);
+          auto Index = buildRelocatedELFARMEHABIIndex(Binary, *EHABIRegion, Img,
+                                                      Img.BaseVA + Offset);
+          if (!Index) {
+            llvm::WithColor::error()
+                << InPlaceFailure << "; " << llvm::toString(Index.takeError())
+                << "\n";
+            return false;
+          }
+          if (Storage->WritableOffset) {
+            if (!rangeInBounds(Offset, Index->size(),
+                               Storage->WritableOffset)) {
+              llvm::WithColor::error() << "elf_patch: EHABI index exceeds "
+                                          "reserved read-only storage\n";
+              return false;
+            }
+            std::copy(Index->begin(), Index->end(), Img.Bytes.begin() + Offset);
+          } else {
+            Img.Bytes.resize(Offset, 0);
+            Img.Bytes.insert(Img.Bytes.end(), Index->begin(), Index->end());
+          }
+          RelocatedIndexVA = Img.BaseVA + Offset;
+          RelocatedIndexSize = Index->size();
         } else if (Err) {
           llvm::WithColor::error() << llvm::toString(std::move(Err)) << "\n";
           return false;
         }
 
         uint64_t TextSize = Img.Bytes.size();
+        std::optional<uint64_t> WritableVA;
+        ELFSourceRelocationTable Relocations;
+        if (InputKind == RewriteInputKind::ReplacementIR) {
+          auto Storage =
+              validatePatchStorageLayout(Img, elfPageSize(TargetArch));
+          if (!Storage) {
+            llvm::WithColor::error()
+                << llvm::toString(Storage.takeError()) << "\n";
+            return false;
+          }
+          if (Storage->WritableOffset)
+            WritableVA = Img.BaseVA + Storage->WritableOffset;
+          uint64_t MetadataOffset = Storage->ReadOnlySize;
+          if (RelocatedHdrVA)
+            MetadataOffset =
+                std::max(MetadataOffset,
+                         *RelocatedHdrVA - Img.BaseVA + RelocatedHdrSize);
+          if (RelocatedIndexVA)
+            MetadataOffset =
+                std::max(MetadataOffset,
+                         *RelocatedIndexVA - Img.BaseVA + RelocatedIndexSize);
+          auto Table = prepareELFSourceRelocations(*CachedImage, *CompileMod,
+                                                   Img, MetadataOffset);
+          if (!Table) {
+            llvm::WithColor::error()
+                << llvm::toString(Table.takeError()) << "\n";
+            return false;
+          }
+          Relocations = *Table;
+        }
         uint64_t Placed =
-            appendExecSegment(Binary, Img.Bytes, kNdTextSection, TargetArch);
+            appendPatchSegments(Binary, Img.Bytes, TargetArch, WritableVA);
         if (Placed == 0) {
           llvm::WithColor::error() << "elf_patch: appendExecSegment failed\n";
           return false;
@@ -563,6 +717,31 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
           if (Retarget) {
             llvm::WithColor::error()
                 << llvm::toString(std::move(Retarget)) << "\n";
+            return false;
+          }
+        }
+        if (RelocatedIndexVA) {
+          if (Placed != Img.BaseVA) {
+            llvm::WithColor::error() << "elf_patch: EHABI image moved\n";
+            return false;
+          }
+          if (auto Error = retargetELFARMEHABIIndex(Binary, *RelocatedIndexVA,
+                                                    RelocatedIndexSize, &Img)) {
+            llvm::WithColor::error()
+                << llvm::toString(std::move(Error)) << "\n";
+            return false;
+          }
+        }
+
+        if (InputKind == RewriteInputKind::ReplacementIR) {
+          if (auto Error = installELFSourceRelocations(Binary, Relocations)) {
+            llvm::WithColor::error()
+                << llvm::toString(std::move(Error)) << "\n";
+            return false;
+          }
+          if (auto Error = registerELFPatchSections(Binary, Img.Sections)) {
+            llvm::WithColor::error()
+                << llvm::toString(std::move(Error)) << "\n";
             return false;
           }
         }
@@ -603,7 +782,10 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                 CachedSymbols, CachedCodeRanges, TrampolineExports,
                 /*PatchedOriginalEntries=*/nullptr,
                 /*PatchedEntryMappings=*/nullptr, &InstalledFunctions,
-                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs, CachedImage);
+                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs, CachedImage,
+                InputKind == RewriteInputKind::ReplacementIR
+                    ? &Img.ReplacementFunctionModes
+                    : nullptr);
           if (!validatePatchedSourceTrampolineClosure(
                   TrampolinePlan, InstalledFunctions, TrampCount,
                   SourceDetail)) {
@@ -631,6 +813,8 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
       Patch, InstalledFunctions, [](const PatchedFunctionEntry &Installed) {
         return Installed.OriginalVA;
       });
+  if (Patch.Success)
+    Patch.PatchedFunctions = std::move(InstalledFunctions);
   return Patch;
 }
 

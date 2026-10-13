@@ -23,6 +23,7 @@
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/ir/intrinsics/X86StringCompare.h"
+#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 #include "neverd/lift/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1285,6 +1286,14 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 
 } // anonymous namespace
 
+const char *x86SizedIntrinsicCName(Intrinsic Id, uint16_t ResultBytes) {
+#define NEVERD_X86_SIZED_C_NAME(ID, Bytes, Name)                               \
+  if (Id == Intrinsic::ID && ResultBytes == (Bytes))                           \
+    return Name;
+#include "neverd/backend/c/render/HighC/X86SizedIntrinsicNames.def"
+  return nullptr;
+}
+
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
          Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||
@@ -1532,17 +1541,34 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
   if (Width != 16 && Callee.starts_with("_mm_"))
     Spelled =
         (Width == 32 ? "_mm256_" : "_mm512_") + Callee.drop_front(4).str();
+  // The lifted operand each argument of the C intrinsic is.
+  std::vector<size_t> Order(Call.Operands.size());
+  for (size_t I = 0; I < Order.size(); ++I)
+    Order[I] = I;
+#define NEVERD_X86_C_OPERAND_ORDER(ID, First, Second)                          \
+  if (Call.IntrinsicId == Intrinsic::ID && Order.size() >= 2) {                \
+    Order[0] = (First);                                                        \
+    Order[1] = (Second);                                                       \
+  }
+#include "neverd/backend/c/render/HighC/X86IntrinsicOperandOrder.def"
   std::string S = "__builtin_bit_cast(" + Raw + ", " + Spelled + "(";
   for (size_t I = 0; I < Call.Operands.size(); ++I) {
-    const HighExpr *Op = Call.Operands[I].get();
+    const HighExpr *Op = Call.Operands[Order[I]].get();
     if (I > 0)
       S += ", ";
     if (!Op) {
       S += "0";
       continue;
     }
+    // An operand narrower than the vector carries every byte the intrinsic
+    // reads of it, as the low double of movddup's memory operand does: it
+    // widens to the vector, whatever bytes past it hold.
+    const auto Read = x86VectorOperandReadBytes(Call.IntrinsicId, Width);
+    const bool Widens = Op->Type && Op->Type->Kind == NdTypeKind::Int &&
+                        Op->Type->Size < Width && Read &&
+                        (*Read >> Op->Type->Size) == 0;
     if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
-        Op->Type->Size == Width)
+        (Op->Type->Size == Width || Widens))
       S += "__builtin_bit_cast(" + Vector + ", (" + Raw + ")(" + ExprFn(*Op) +
            "))";
     else
@@ -1575,15 +1601,66 @@ std::string renderX86TypedIntrinsicCall(
         (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
                       : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
         "(";
+    if (isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
+      for (unsigned Index : Memory ? std::vector<unsigned>{0, 3, 4}
+                                   : std::vector<unsigned>{2, 3, 4}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto &Operand = *Call.Operands[Index];
+        const auto Text = ExprFn(Operand);
+        Result += Memory && Index == 0 ? "(void *)(uintptr_t)(" + Text + ")"
+                  : Operand.Type->Kind == NdTypeKind::Float
+                      ? "__builtin_bit_cast(" +
+                            x86FPStateRawCType(Operand.Type->Size) + ", " +
+                            Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
+    if (isX86FPComiStateIntrinsic(Call.IntrinsicId)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
+      for (unsigned Index : Memory ? std::vector<unsigned>{2, 0, 3}
+                                   : std::vector<unsigned>{1, 2, 3}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto &Operand = *Call.Operands[Index];
+        const auto Text = ExprFn(Operand);
+        Result += Memory && Index == 0 ? "(void *)(uintptr_t)(" + Text + ")"
+                  : Operand.Type->Kind == NdTypeKind::Float
+                      ? "__builtin_bit_cast(" +
+                            x86FPStateRawCType(Operand.Type->Size) + ", " +
+                            Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
+    if (isX86F16CStateIntrinsic(Call.IntrinsicId)) {
+      const bool Store = Call.IntrinsicId == I::X86F16CStoreState;
+      for (unsigned Index : Store ? std::vector<unsigned>{0, 1, 4}
+                                  : std::vector<unsigned>{0, 3}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto Text = ExprFn(*Call.Operands[Index]);
+        Result += isX86FPStateMemoryIntrinsic(Call.IntrinsicId) && Index == 0
+                      ? "(void *)(uintptr_t)(" + Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
     const bool Round = isX86FPRoundStateIntrinsic(Call.IntrinsicId);
     const bool Approx12 = isX86FPApprox12Intrinsic(Call.IntrinsicId);
     const bool Arithmetic = isX86FPArithStateIntrinsic(Call.IntrinsicId);
+    const bool ScalarConvert =
+        isX86FPScalarConvertStateIntrinsic(Call.IntrinsicId) ||
+        isX86FPPackedConvertStateIntrinsic(Call.IntrinsicId);
     const bool Fma = isX86FPFmaStateIntrinsic(Call.IntrinsicId);
     const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
     const unsigned Operands =
         Arithmetic ? (Fma ? 4 : 3)
         : Approx12 ? 1
-        : Round || isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+        : Round || ScalarConvert ||
+                isX86FPConversionStateIntrinsic(Call.IntrinsicId)
             ? 2
             : Call.Operands.size();
     for (unsigned Index = 0; Index < Operands; ++Index) {
@@ -1595,9 +1672,10 @@ std::string renderX86TypedIntrinsicCall(
                                     ? Operands
                                     : (Memory ? (Index == 0 ? 0 : Index + 1)
                                               : Index + 1))
-                         : Approx12 ? (Memory ? 0 : 1)
-                         : Round    ? (Index == 0 ? (Memory ? 0 : 1) : 3)
-                                    : Index];
+                         : ScalarConvert ? (Index == 0 ? 0 : 2)
+                         : Approx12      ? (Memory ? 0 : 1)
+                         : Round         ? (Index == 0 ? (Memory ? 0 : 1) : 3)
+                                         : Index];
       const auto Text = ExprFn(Operand);
       if (Memory && Index == 0)
         Result += "(void *)(uintptr_t)(" + Text + ")";
@@ -1972,6 +2050,38 @@ const char *hiloCollapseExpr(Intrinsic Id) {
     return "__rdtscp()";
   default:
     return nullptr;
+  }
+}
+
+std::string renderX86SystemRegisterOperand(Intrinsic Id,
+                                           const std::vector<std::string> &Ops,
+                                           uint16_t ResultBytes) {
+  using I = Intrinsic;
+  const char *Mnemonic = intrinsicAsmMnemonic(Id);
+  if (!Mnemonic)
+    return {};
+  switch (Id) {
+  case I::Sldt:
+  case I::Str:
+  case I::Smsw: {
+    // `str %eax` writes the selector zero extended, `str %ax` its low word:
+    // the instruction runs on a register of the destination's width.
+    if (!Ops.empty() ||
+        (ResultBytes != 2 && ResultBytes != 4 && ResultBytes != 8))
+      return {};
+    const std::string Type = "uint" + std::to_string(8 * ResultBytes) + "_t";
+    return "({ " + Type + " neverd_value; __asm__ volatile(\"" + Mnemonic +
+           " %0\" : \"=r\"(neverd_value)); neverd_value; })";
+  }
+  case I::Lldt:
+  case I::Ltr:
+  case I::Lmsw:
+    if (Ops.size() != 1)
+      return {};
+    return "__asm__ volatile(\"" + std::string(Mnemonic) +
+           " %0\" : : \"r\"((uint16_t)(" + Ops[0] + ")))";
+  default:
+    return {};
   }
 }
 

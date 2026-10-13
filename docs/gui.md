@@ -81,21 +81,37 @@ worker never links the test engine.
 
 ## Layout
 
-A start without a file shows the quick start over the default desktop, as IDA
-does. Drag its window edges or lower-right grip to resize it; the next opening
-remembers that size. The action pane stays the same width while the recent
-files use the available space. Its side pane holds the ways to start: **New**
-(N) disassembles a new file, **Go** (G) works on your own and **Previous** (P)
-loads the selected recent file; the one Enter takes has a subtle row background,
-and keyboard focus has a thin neutral outline. The actions use matching line
-icons without individual tiles. Each recent file shows its format in an outlined
-file icon (ELF, PE, Mach-O, a NeverD database or a plain binary file),
-its name above the folder and last-opened time. Long names retain both ends;
-hovering shows the full path and time. Delete or its context menu forgets it.
-A file dragged over the dialog shows that a drop opens it. **Display at
-startup** decides whether the next start shows it again; **File → Quick start**
-shows it any time. Behind it is the default desktop:
+**File → Offline package review** opens a separate modeless evidence workbench.
+Preview/capture a local file or directory, select a manifest/lock file or an
+available tar/tgz/zip member, and optionally select captured registry declarations.
+The table keeps evidence, binding, confidence and analyst disposition separate.
+Review files contain fixed assertions and opaque IDs; loading previews them and
+explicit restoration verifies the whole chain against the same assessment.
+Analysis uses the shared C++ backend and never launches the input. See the
+[workflow and limits](web-package-review-journal.md).
 
+A start without a file shows the quick start alone, as IDA does: the workbench
+appears once you choose how to start, and closing the quick start quits. Drag
+its window edges or lower-right grip to resize it; the next opening remembers
+that size. The action pane stays the same width while the recent files use the
+available space. Its side pane holds the ways to start: **New** (N) asks for a
+file to disassemble over the quick start, which stays if you cancel, **Go** (G)
+or Escape works on your own and **Previous** (P) loads the selected recent
+file; the one Enter takes has a subtle row background, and keyboard focus has a
+thin neutral outline. The actions use matching line icons without individual
+tiles. Each recent file shows its format in an outlined file icon (ELF, PE,
+Mach-O, a NeverD database or a plain binary file), its name above the folder
+and last-opened time. Long names retain both ends; hovering shows the full path
+and time. Delete or its context menu forgets it. A file dragged over the dialog
+shows that a drop opens it. **Display at startup** decides whether the next
+start shows it again; **File → Quick start** shows it any time, over the
+workbench. The workbench opens with the default desktop:
+
+- the title bar the window draws itself, as Visual Studio Code does: the
+  application icon, the menus, a command center that names the open file and
+  opens the command palette (**Ctrl+Shift+P**), and the minimize, maximize and
+  close buttons (on macOS the menus stay in the menu bar and the system's
+  traffic lights take the buttons' place);
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
   and external symbols, with the current position; click or drag to navigate;
@@ -107,9 +123,11 @@ shows it any time. Behind it is the default desktop:
 - **Output** across the bottom, with a command line for expressions and
   workbench commands;
 - the status bar with the background analysis indicator (`AU: idle` or busy
-  with progress), the search direction and free disk space.
+  with progress), the search direction and free disk space. It shares the
+  windows' surface below a hairline, as in Visual Studio Code's Modern themes.
 
-Every window is a dock: drag tabs to split, stack or float them. Docked windows
+Every window is a dock: drag tabs to split, stack or float them. A tab shows
+its close button while it is current or under the pointer. Docked windows
 are one hairline apart; drag the line to resize its neighbors, or double-click
 it to share their space evenly. A window narrows to about the width of its tab:
 a status line or a row of buttons that no longer fits is cut at the window's
@@ -135,9 +153,10 @@ operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
 differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
-their classic forms in the listing, function list and jumps: import thunks after
-their import, the entry point `start`, and `main` as passed to the C runtime's
-start routine.
+their classic forms in the listing, function list, jumps and source views:
+import thunks after their import, the entry point `start`, and `main` as passed
+to the C runtime's start routine. The pseudocode of `sub_13E0` therefore defines
+`main`, and a rename of the function still wins over the classic name.
 
 **Graph view** (Space) lays the current function out in layers with the
 conditional (green/red) and unconditional edges routed around blocks; panning
@@ -194,9 +213,14 @@ shows its initial value (`int32_t counter = 5;`). Every initializer spells the
 image's bytes exactly: text another encoding than UTF-8 holds is escaped, with
 the decoded text in a comment beside it. Unnamed data is named as the listing
 names it, so a name in the pseudocode matches the disassembly operand and
-double-clicking it goes there: `off_3FC0` for a slot holding a pointer or one
-the code calls through, the size of its accesses otherwise (`qword_3FB8`,
-`dword_4010`), and `unk_` for data reached by its address alone. The command
+double-clicking it goes there: `off_3FC0` for a slot the loader relocates a
+pointer into or one the code only calls through, otherwise the size of every
+access the image's code makes to it (`qword_3FB8`, `dword_4010`), even where
+the function shown only takes its address, and `unk_` where those accesses
+differ or there are none. Literals and data that the debug information
+places among the code, as a kernel keeps them in PAGE, read as their text and
+their names, and a pointer slot whose target C declares no object for names
+it in a comment (`= 0x140CFCA88; /* &KiNonNumaDistance */`). The command
 line's `neverd decompile` prints the same declarations.
 
 A function's address reads as the function: `_start` passes `main`, not
@@ -282,6 +306,17 @@ in the image's language, EVM bytecode as Solidity and an SBF program as Rust.
 `neverd headers --json` lists the languages a program offers under
 `language.pseudocode`.
 
+Pseudocode, C and LLVM C also fold multiline brace blocks, including `if/else`,
+`while`, `do`, `for` and `switch`. Click the arrow beside the header's line number,
+or use Ctrl+Shift+[ to collapse the current block and Ctrl+Shift+] to expand it;
+Keypad -/+ work too. The header and closing line stay visible, so an `else`
+keeps its own arrow. Nested blocks retain their folding state when their parent
+is expanded. Line numbers remain the original source numbers, and copying or
+exporting includes the hidden code. Instruction and local-reference navigation
+and text search expand every fold hiding the target. Refreshing the same function
+preserves block folds while its brace structure is unchanged. Braces in comments
+and quoted strings do not define folding ranges; incomplete source stays expanded.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
@@ -305,6 +340,15 @@ Encoding Standard, and a string reads as text only when its characters keep to
 one script. Settings from versions that searched one code page keep it as the
 preferred one.
 
+A string literal that a symbol names is a string wherever it lies and however
+short it is. MSVC names each literal it pools by its type, its size and its
+first bytes (`??_C@_15OHIPBLFN@?$AAS?$AAA@` is L"SA"), and a kernel such as
+ntoskrnl keeps them among its code in PAGE and INIT. The string takes its
+automatic name, `aSa` as IDA names it, instead of the symbol's, unless you
+name it yourself, and shows whichever encodings are searched; `neverd strings`
+lists it too. The image's bytes must start as the name spells them, so a
+stale symbol file adds no strings.
+
 **Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
 command line) lists every instruction that refers to a string: directly, into
 the middle of one (the text from that character on), or by reading a pointer
@@ -324,6 +368,14 @@ anywhere** (G) takes an address, a name or an expression such as `main+0x10`
 and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
+
+In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
+lists its occurrences in the current function, with source line, column and
+code. The list uses the variable's identity from the complete loaded document,
+so similarly spelled names, member names, strings and comments are excluded.
+Selecting an occurrence stays in the originating code window, expands any fold
+that hides the row and selects the identifier. Renamed locals keep their
+original identity. A source reload or project close retires the old list.
 
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
@@ -354,6 +406,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
 | Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
+| Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the current pseudocode brace block |
 | Ctrl+F5 | Write the function's pseudocode to a C file |
 | Alt+A | String literal options |
 | Ctrl+W | Save the database |
@@ -361,7 +414,10 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
-Shortcuts** lists every command with its key.
+Shortcuts** lists every command with its key. Menus, buttons and labels
+underline their access keys while Alt is held, as on Windows and GNOME, and a
+menu that Alt and its letter opened keeps them until it closes; Alt and the
+letter work either way.
 
 A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 `cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
@@ -395,10 +451,41 @@ closes.
 Without a remembered size the window opens centered at three quarters of the
 screen's width and four fifths of its height. GNOME maximizes a window that
 opens at nearly the size of the screen, and a maximized window does not resize
-from its edges; IDA opens that way. Under Wayland GNOME draws no frame and the
+from its edges; IDA opens that way.
+
+The workbench draws its own title bar. Drag the title bar's empty part to
+move the window, and double-click it to maximize or restore the window (on
+macOS, to do what the system setting for title bar double clicks asks). The
+title bar dims while the window is inactive, and full screen hides its icon
+and window buttons. Dialogs draw a title bar of their own: the dialog's title
+in the middle, Close, and Maximize for a dialog that offers it, such as the
+quick start.
+
+How the rest of the frame is drawn depends on the system:
+
+- On Linux the window has no system frame. It resizes from every edge and
+  corner, starting four pixels inside its visible edge. Under Wayland GNOME
+  draws no shadow for such a window, so the window draws a ten-pixel shadow of
+  its own, and that band resizes the window too, as GNOME's own windows allow;
+  under X11 GNOME draws the shadow.
+- On Windows the window keeps the system frame without its caption, so
+  Windows still draws its edges and shadow, snaps and animates it and resizes
+  it from its sides and bottom; the top edge resizes it through the title bar.
+- On macOS the window keeps its frame and traffic lights, and its title bar
+  turns transparent with the workbench's own drawn under it.
+
+To keep the system's whole frame instead, set `nativeTitleBar=true` in the
+`[ui]` group of the NeverD settings (`~/.config/NeverSight/NeverD.conf` on
+Linux); the workbench reads it at startup.
+
+With the window manager's frame under Wayland, GNOME draws no frame and the
 one Qt draws resizes only from a few pixels outside the visible edge, so the
 last four pixels inside the left, right and bottom edges resize the window
-too, under the matching cursor.
+too, under the matching cursor. When Qt updates the size limits of a maximized
+window, as on leaving full screen, it tells GNOME the window has no maximum
+width but a maximum height, which GNOME reads as a maximum width of zero: the
+restored window stopped resizing sideways, and a vertical resize narrowed it.
+The window therefore keeps a finite maximum size larger than any screen.
 
 ## Loading a new file
 
@@ -495,6 +582,48 @@ indicator, and **Options → Load debug information** reads the PDB, DWARF or
 linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
+
+When debug-information loading is enabled and a PE has no loaded PDB, the
+workbench offers **Download debug symbols** if its CodeView record supplies a
+unique valid PDB name and build identity. **Download** tries the Microsoft public
+symbol server; **Not now** continues without a network request. The request sends
+only the PDB basename and identity, not the binary. A valid PE is not necessarily
+a Microsoft product, and Microsoft may have no symbols for its build.
+
+Downloads run in the background with a cancel button. The engine verifies the
+PDB against the current image before applying it; failed downloads or mismatches
+leave analysis intact and report the reason in Output. Closing or switching
+files, or starting a manual PDB selection, cancels the pending download. Verified
+files are cached under the application's cache directory in
+`symbols/microsoft/<pdb-name>/<build-key>/` and verified again before reuse.
+Direct HTTPS PDB downloads are supported on every desktop platform; Windows
+also tries the compressed `.pd_` variant. Symbol-store `file.ptr` indirection is
+not followed. Transfers have a 2 GiB limit, a 30-second inactivity timeout and a
+10-minute overall deadline. See Microsoft's
+[public symbol server documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+
+**File → Load file → PDB file...** selects a PDB anywhere on disk for the
+currently loaded PE. A matching CodeView identity applies its debug symbols and
+refreshes function names, the listing and open code views while preserving
+user renames, comments and other edits. Output reports the selected path and
+whether the identity was verified. A missing, malformed or mismatched PDB
+leaves the current session usable.
+
+If the PE has no CodeView identity, the dialog asks whether to use the selected
+PDB for analysis after machine and section-layout checks. Confirming loads it
+through the same supported analysis path as a matching PDB, including symbols,
+types, function signatures and available debug ranges. Output distinguishes
+user confirmation from verified build identity. An existing but mismatched or
+ambiguous identity cannot be overridden. This route currently supports modern
+RSDS PDBs; a matching legacy NB10 PDB uses the ordinary authenticated loader.
+The chosen file and analysis mode accompany read-only analysis replicas and
+are remembered on reload and in saved databases. Older display-only selections
+keep that mode until the PDB is selected again and confirmed for analysis.
+The PDB remains an external file. Reopening the database checks a matching PDB
+again by its identity, and a PDB confirmed without one must still be the file
+that was confirmed. A selection that no longer loads leaves the database open
+without it, and Output says why; select the PDB again to restore it. On the
+command line, `--pdb <file> --pdb-unverified` makes the same choice for one run.
 
 ## Databases
 

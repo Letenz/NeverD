@@ -26,5 +26,12 @@ NEVERD_ARM_TARGET_FEATURE(A64_Crc32cb, "+crc")
 NEVERD_ARM_TARGET_FEATURE(A64_Crc32ch, "+crc")
 NEVERD_ARM_TARGET_FEATURE(A64_Crc32cw, "+crc")
 NEVERD_ARM_TARGET_FEATURE(A64_Crc32cx, "+crc")
+// vmull_p64, which PMULL of 64-bit lanes prints as.
+NEVERD_ARM_TARGET_FEATURE(A64_Pmull, "+aes")
+// The binary16 fixed-point conversions, run as their instructions.
+NEVERD_ARM_TARGET_FEATURE(A64_ScvtfFixed, "+fp16")
+NEVERD_ARM_TARGET_FEATURE(A64_UcvtfFixed, "+fp16")
+NEVERD_ARM_TARGET_FEATURE(A64_FcvtzsFixed, "+fp16")
+NEVERD_ARM_TARGET_FEATURE(A64_FcvtzuFixed, "+fp16")
 
 #undef NEVERD_ARM_TARGET_FEATURE

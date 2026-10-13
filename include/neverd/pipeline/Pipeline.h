@@ -53,6 +53,29 @@ class PipelineTestPeer;
 class Decoder;
 class LLVMSourceMap;
 
+/// Optional facts for consecutive restricted x64 analyses of an unchanged
+/// image. Owns the indexes borrowed by bounded machine-graph/body caches, not
+/// output IR or caller-dependent summaries. The image and debug context must
+/// outlive the cache; reset it before changing either, including symbols,
+/// exception metadata, bytes or analysis policy. Function selection may vary.
+/// Pipeline checks the exact function-entry and verified-entry inventories.
+/// Additive CodeRefTargets publication is allowed, as for the raw graph cache.
+/// Use from one pipeline invocation at a time; its internal workers join
+/// before run() returns. Other architectures and whole-image runs stay local.
+class PipelineAnalysisCache {
+public:
+  PipelineAnalysisCache() = default;
+  PipelineAnalysisCache(const PipelineAnalysisCache &) = delete;
+  PipelineAnalysisCache &operator=(const PipelineAnalysisCache &) = delete;
+  void reset() { Facts.reset(); }
+
+private:
+  friend class Pipeline;
+  friend class PipelineTestPeer;
+  struct Impl;
+  std::shared_ptr<Impl> Facts;
+};
+
 struct PipelineOptions {
   /// Read-only library presentation rules. These never supply a source ABI,
   /// rewrite a body, or authorize a runtime model. The snapshot must outlive
@@ -121,6 +144,9 @@ struct PipelineOptions {
   /// used to recover Windows catch-funclet continuation roots.  Production
   /// callers always use the compiled safety limit.
   std::optional<size_t> EHContinuationEvidenceBudgetForTesting;
+  /// Borrowed for this run only. See PipelineAnalysisCache's lifetime and
+  /// invalidation contract; nullptr preserves independent analysis.
+  PipelineAnalysisCache *AnalysisCache = nullptr;
 };
 
 enum class PipelineFunctionDisposition {
@@ -540,7 +566,8 @@ private:
 
   /// Shortcut path: MedIR -> LLVM IR (skip HighIR).
   bool runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
-                        const PipelineOptions &Opts, PipelineResult &Result);
+                        const PipelineOptions &Opts, PipelineResult &Result,
+                        const DebugContext *Dbg);
 
   /// Emit + verify + optimize the MedIR functions in parallel and return the
   /// combined module in \p Ctx.  The functions are split into shards; each
@@ -570,7 +597,8 @@ private:
                   const std::vector<std::pair<va_t, std::string>> &Imports,
                   const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt,
                   unsigned NumThreads, bool RecordSources = false,
-                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {});
+                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
+                  const DebugContext *Dbg = nullptr);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

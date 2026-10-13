@@ -22,6 +22,7 @@
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
+#include "neverd/support/ProloguePatterns.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -116,6 +117,53 @@ bool hasBoundedSemanticTerminator(const BinaryImage &Img, Decoder &Dec,
   return Found;
 }
 
+/// The target of the direct unconditional jump that is the whole body of the
+/// x86 function at \p Entry, after an optional indirect-branch-tracking
+/// marker, or InvalidVA when its first transfer is anything else.
+va_t forwardingJumpTarget(const BinaryImage &Img, Decoder &Dec, va_t Entry) {
+  const Segment *Seg = Img.getSegmentFor(Entry);
+  if (!Seg || Entry < Seg->VA)
+    return InvalidVA;
+  const size_t Off = static_cast<size_t>(Entry - Seg->VA);
+  if (Off >= Seg->Data.size())
+    return InvalidVA;
+  const uint8_t *Bytes = Seg->Data.data() + Off;
+  const size_t Size = Seg->Data.size() - Off;
+  const size_t Marker = x86BranchTargetMarkerLength(Bytes, Size);
+  const va_t Jump = Entry + static_cast<va_t>(Marker);
+  if (!Img.hasExecutableCodeOwnerAt(Jump) ||
+      !Dec.selectMode(Img, Jump, Img.instructionModeAt(Jump)))
+    return InvalidVA;
+  DecodedInsn DI;
+  const int Sz = Dec.decodeOneForLift(Bytes + Marker, Size - Marker, Jump, DI);
+  if (Sz <= 0 || !DI.Raw ||
+      !Img.hasExecutableCodeOwnerRange(Jump, static_cast<uint64_t>(Sz)))
+    return InvalidVA;
+  std::vector<LowOp> Ops;
+  try {
+    Dec.liftToLow(DI, Ops);
+  } catch (const UnliftedInstruction &) {
+    return InvalidVA;
+  }
+  va_t Target = InvalidVA;
+  for (const LowOp &Op : Ops)
+    switch (Op.Opcode) {
+    case NdOp::BRANCH:
+      if (Target != InvalidVA || Op.NumInputs == 0 || !Op.Inputs[0].isConst())
+        return InvalidVA;
+      Target = Op.Inputs[0].Offset;
+      break;
+    case NdOp::COND_BR:
+    case NdOp::INDIR_BR:
+    case NdOp::CALL:
+    case NdOp::RETURN:
+      return InvalidVA;
+    default:
+      break;
+    }
+  return Target;
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -180,8 +228,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   }
   const std::set<va_t> ExceptionThunks =
       Img.ExceptionMetadata.registrationScopeThunks();
-  const auto CxxPointerRoles =
-      coff_loader::getCheckedX86CxxCallbackPointerRoles(Img);
+  const auto RegistrationPointerRoles =
+      coff_loader::getCheckedX86RegistrationPointerRoles(Img);
   std::set<va_t> IndependentEntries = Entries;
   IndependentEntries.insert(ExceptionEntries.begin(), ExceptionEntries.end());
   for (const auto &Sym : Img.Symbols)
@@ -201,8 +249,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       continue;
     if (ExceptionThunks.count(Sym.Addr))
       continue;
-    if (Sym.Origin == NameOrigin::Synthesized && CxxPointerRoles &&
-        CxxPointerRoles->RuntimeOnlyPointerTargets.count(Sym.Addr))
+    if (Sym.Origin == NameOrigin::Synthesized && RegistrationPointerRoles &&
+        RegistrationPointerRoles->RuntimeOnlyPointerTargets.count(Sym.Addr))
       continue;
     if (Img.hasExecutableCodeOwnerAt(Sym.Addr)) {
       Entries.insert(Sym.Addr);
@@ -266,9 +314,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
         continue;
       const va_t Target = normalizeCodeAddress(readPtr(Bytes, Img.is64Bit()),
                                                Img.Arch, Img.Mode);
-      if (CxxPointerRoles)
-        if (const auto Source = CxxPointerRoles->Sources.find(Slot);
-            Source != CxxPointerRoles->Sources.end() &&
+      if (RegistrationPointerRoles)
+        if (const auto Source = RegistrationPointerRoles->Sources.find(Slot);
+            Source != RegistrationPointerRoles->Sources.end() &&
             Source->second == Target)
           continue;
       if (Img.hasExecutableCodeOwnerAt(Target) && !IsMachOLocalLabel(Target)) {
@@ -298,8 +346,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
   }
 
-  if (CxxPointerRoles)
-    for (va_t Target : CxxPointerRoles->RuntimeOnlyPointerTargets)
+  if (RegistrationPointerRoles)
+    for (va_t Target : RegistrationPointerRoles->RuntimeOnlyPointerTargets)
       if (!IndependentEntries.count(Target) && !DirectCallTargets.count(Target))
         Entries.erase(Target);
 
@@ -309,6 +357,13 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   auto IsCoveredMachODirectCallTarget = [&](va_t Addr) {
     return Img.Format == BinaryFormat::MachO &&
            DirectCallTargets.count(Addr) != 0;
+  };
+  auto IsCoveredImportCallTarget = [&](va_t Addr) {
+    // One linker-generated unwind row can cover the whole PLT. A direct
+    // call to an exact import veneer still names a distinct callable entry;
+    // the coarse stub range alone is not enough to establish that identity.
+    return DirectCallTargets.count(Addr) != 0 && Img.isImportStubAt(Addr) &&
+           Img.findImportStubAt(Addr) != nullptr;
   };
   auto IsX86LinkedCallOrRelocTarget = [&](va_t Addr) {
     return IsX86LinkedCOFF && (DirectCallTargets.count(Addr) != 0 ||
@@ -404,6 +459,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
         Keep[I] = 1;
       else if (UntypedCOFFExports.count(Addr) ||
                IsCoveredMachODirectCallTarget(Addr) ||
+               IsCoveredImportCallTarget(Addr) ||
                ExplicitFunctionStarts.count(
                    normalizeCodeAddress(Addr, Img.Arch, Img.Mode)) != 0 ||
                !InsideKnownButNotStart(Addr))
@@ -458,6 +514,49 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       if (Keep[I])
         Kept.push_back(std::move(Results[I]));
     Results = std::move(Kept);
+
+    // A function whose whole body is one direct unconditional jump, after an
+    // optional indirect-branch-tracking marker, passes its caller's return
+    // address, stack and arguments on untouched, so the jump target is
+    // callable on the same evidence.  GCC's frame_dummy (`endbr64; jmp
+    // register_tm_clones`) is the usual case: in a stripped image nothing else
+    // names the target, and the forwarder would otherwise absorb its body.  A
+    // target between the forwarder and the next entry is the forwarder's own
+    // code, such as a loop entered at its test, and stays inside it.
+    if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64) {
+      std::set<va_t> Starts;
+      for (const auto &R : Results)
+        Starts.insert(R.first);
+      const bool PreviousDetail = Dec.detailEnabled();
+      // Every target is a new start, so a chain of forwarders ends.
+      std::vector<va_t> Forwarders(Starts.begin(), Starts.end());
+      while (!Forwarders.empty()) {
+        std::vector<va_t> Targets;
+        for (va_t Forwarder : Forwarders) {
+          Dec.setDetail(true);
+          Dec.resetX86FpuState();
+          const va_t Target = forwardingJumpTarget(Img, Dec, Forwarder);
+          if (Target == InvalidVA || Starts.count(Target) ||
+              Img.findImportAt(Target) || !Img.hasExecutableCodeOwnerAt(Target))
+            continue;
+          const auto Next = Starts.upper_bound(Forwarder);
+          if (Target > Forwarder && (Next == Starts.end() || Target < *Next))
+            continue;
+          if (!verifyFunctionDecode(Img, Dec, Target))
+            continue;
+          Starts.insert(Target);
+          Entries.insert(Target);
+          VerifiedCandidates.insert(
+              normalizeCodeAddress(Target, Img.Arch, Img.Mode));
+          Results.push_back(
+              {Target, (kAutoFuncPrefix + llvm::utohexstr(Target)).str()});
+          Targets.push_back(Target);
+        }
+        Forwarders = std::move(Targets);
+      }
+      Dec.resetX86FpuState();
+      Dec.setDetail(PreviousDetail);
+    }
   }
 
   // Reject auto-detected entries that fall strictly *inside* a sized function
@@ -522,7 +621,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       Filtered.reserve(Results.size());
       for (auto &R : Results) {
         if (InsideSized(R.first) && !FunctionSymbolStarts.count(R.first) &&
-            !IsCoveredMachODirectCallTarget(R.first))
+            !IsCoveredMachODirectCallTarget(R.first) &&
+            !IsCoveredImportCallTarget(R.first))
           continue;
         Filtered.push_back(R);
       }

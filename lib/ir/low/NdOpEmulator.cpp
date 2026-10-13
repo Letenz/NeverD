@@ -16,6 +16,7 @@
 #include "neverd/ir/low/NdOpEmulator.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <algorithm>
@@ -262,6 +263,11 @@ NdOpEmulator::resolveMemoryAddress(const LowOp &Op, uint64_t Offset) const {
     return std::nullopt;
   if (Img.Arch == Arch::X86)
     return (It->second + Offset) & UINT64_C(0xffffffff);
+  if (Img.Arch == Arch::X64)
+    // FS/GS base addition is modulo 2^64. In particular a negative raw
+    // offset may wrap to a valid low canonical linear address. Access owners
+    // still validate the complete resolved range and mapped permissions.
+    return It->second + Offset;
   if (Offset > UINT64_MAX - It->second)
     return std::nullopt;
   return It->second + Offset;
@@ -486,7 +492,13 @@ bool NdOpEmulator::step(const LowOp &Op) {
               Op.NumInputs > 3 ? Op.Inputs[3].Size : 0))
         return false;
       switch (Id) {
+      case Intrinsic::X86FPMaskCompareMemoryState:
+      case Intrinsic::X86FPComiMemoryState:
       case Intrinsic::X86FPRoundMemoryState:
+      case Intrinsic::X86FPScalarConvertMemoryState:
+      case Intrinsic::X86F16CReadState:
+      case Intrinsic::X86F16CStoreState:
+      case Intrinsic::X86FPPackedConvertMemoryState:
       case Intrinsic::X86FPApprox12MemoryState:
       case Intrinsic::X86FPArithMemoryState:
         return executeX86ScalarFPState(Op);
@@ -578,7 +590,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
       if (Id == Intrinsic::X87Fprem || Id == Intrinsic::X87Fprem1 ||
           Id == Intrinsic::X87ReadStatus || Id == Intrinsic::X87Fninit ||
           Id == Intrinsic::X87Fnclex || Id == Intrinsic::X87Wait ||
-          Id == Intrinsic::X87Ffree || Id == Intrinsic::X87Fincstp)
+          Id == Intrinsic::X87Ffree || Id == Intrinsic::X87Fincstp ||
+          isX87ConstantControlIntrinsic(Id))
         return executeX87(Op);
       if (Id == Intrinsic::MaskedLoadB || Id == Intrinsic::MaskedLoadW ||
           Id == Intrinsic::MaskedLoadD || Id == Intrinsic::MaskedLoadQ ||
@@ -662,6 +675,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
   case NdOp::FLOAT_DIV:
   case NdOp::FLOAT_FMA:
   case NdOp::FLOAT_NEG:
+  case NdOp::FLOAT_ABS:
   case NdOp::FLOAT_SQRT:
   case NdOp::FLOAT_LESS:
     return executeFloatArith(Op);

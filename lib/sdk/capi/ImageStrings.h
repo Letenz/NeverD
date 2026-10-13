@@ -34,6 +34,9 @@ struct ImageString {
   strings::Encoding Kind = strings::Encoding::ASCII;
   /// The characters as UTF-8.
   std::string Text;
+  /// Whether a symbol names the bytes as a string literal (MSVC's `??_C@`),
+  /// rather than the scan finding text there.
+  bool Literal = false;
 };
 
 /// One scan of the image and the options it was made with.
@@ -48,7 +51,8 @@ struct ImageStringScan {
 std::string parseStringOptions(const char *Json, strings::ScanOptions &Options);
 
 /// The strings of the loaded image under \p Options, in address order: data
-/// segments whole, and the data sections of code segments.
+/// segments whole, the data sections of code segments, and the literals the
+/// image's symbols name wherever they lie and however short they are.
 const std::vector<ImageString> &
 imageStrings(Session &S, const strings::ScanOptions &Options);
 

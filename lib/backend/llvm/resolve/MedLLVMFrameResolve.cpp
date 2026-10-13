@@ -20,6 +20,8 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
+#include "neverd/ir/med/MedDynamicStack.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -215,106 +217,37 @@ bool MedLLVMEmitter::varMayBeFrameAddress(const MedVar &V) const {
   return Result;
 }
 
-bool MedLLVMEmitter::varIsStackPtrDerived(const MedVar &V, int Depth) const {
-  const uint64_t SpOff = getTargetRegInfo(TargetArch).StackPointer;
-  // Cycle-detecting walk: a loop-carried stack pointer is defined by a PHI
-  // whose back-edge feeds itself (`sp_next = phi(sp_init, sp_next - size)`), so
-  // the recursion must not re-enter a PHI it is already exploring.
-  std::set<std::pair<int, int>> VisitedPhis;
-  std::function<bool(const MedVar &, int)> rec = [&](const MedVar &Cur,
-                                                     int D) -> bool {
-    if (Cur.isConst() || !CurMedFunc || D > limits::kMaxStackPtrTraceDepth)
-      return false;
-    if (Cur.Kind == MedVar::Reg && Cur.SSAVer == 0 && SpOff != 0 &&
-        Cur.RegOff == SpOff)
-      return true;
-    // An in-loop dynamic allocation subtracts from the loop-carried SP, which
-    // is a PHI (`sp_next = phi(sp_entry, sp_prev - size)`).  The PHI is stack-
-    // pointer-derived when any incoming value is; the visited set breaks the
-    // self-referential back-edge so the cycle terminates (the entry edge
-    // reaches the entry SP and proves it).  Without this an alloca inside a
-    // loop is left as raw integer SP arithmetic into the fixed logical frame,
-    // so its memory aliases unreserved stack a later call clobbers.
-    if (const PhiNode *Phi = lookupPhi(Cur)) {
-      if (!VisitedPhis.insert({Cur.Id, Cur.SSAVer}).second)
-        return false;
-      for (const auto &A : Phi->Args)
-        if (rec(A.second, D + 1))
-          return true;
-      return false;
-    }
-    const MedOp *Def = lookupDef(Cur);
-    if (!Def || Def->NumInputs < 1)
-      return false;
-    switch (Def->Opcode) {
-    case NdOp::COPY:
-    case NdOp::SUBBYTES:
-    case NdOp::INT_ZEXT:
-    case NdOp::INT_SEXT:
-    case NdOp::INT_AND:
-    case NdOp::INT_ADD:
-    case NdOp::INT_SUB:
-      return rec(Def->Inputs[0], D + 1);
-    default:
-      return false;
-    }
+MedDynamicStackLookups MedLLVMEmitter::dynamicStackLookups() const {
+  MedDynamicStackLookups L;
+  L.Func = CurMedFunc;
+  L.StackPointer = getTargetRegInfo(TargetArch).StackPointer;
+  L.Definition = [this](const MedVar &V) { return lookupDef(V); };
+  L.Phi = [this](const MedVar &V) { return lookupPhi(V); };
+  L.ReloadSources = [this](const MedOp &Load, std::vector<MedVar> &Sources) {
+    return collectFrameReloadSources(Load, Sources);
   };
-  return rec(V, Depth);
+  return L;
+}
+
+bool MedLLVMEmitter::varIsStackPtrDerived(const MedVar &V, int Depth) const {
+  return medStackPointerDerived(V, dynamicStackLookups(), Depth);
 }
 
 bool MedLLVMEmitter::varReaches(const MedVar &V, const MedVar &Target,
                                 int Depth) const {
-  if (!CurMedFunc || Depth > limits::kMaxStackPtrTraceDepth)
-    return false;
-  if (V.Kind == Target.Kind && V.Id == Target.Id && V.SSAVer == Target.SSAVer)
-    return true;
-  if (V.isConst())
-    return false;
-  const MedOp *Def = lookupDef(V);
-  if (!Def || Def->NumInputs < 1)
-    return false;
-  switch (Def->Opcode) {
-  case NdOp::COPY:
-  case NdOp::SUBBYTES:
-  case NdOp::INT_ZEXT:
-  case NdOp::INT_SEXT:
-    return varReaches(Def->Inputs[0], Target, Depth + 1);
-  default:
-    return false;
-  }
+  return medValueReaches(V, Target, dynamicStackLookups(), Depth);
 }
 
 llvm::Value *
 MedLLVMEmitter::tryEmitDynamicStackAlloc(const MedOp &Op,
                                          llvm::IRBuilder<> &Builder) {
-  if (!FrameBaseInt || Op.Opcode != NdOp::INT_SUB || Op.NumInputs < 2 ||
-      !CurMedFunc)
+  if (!FrameBaseInt)
     return nullptr;
-  const MedVar &Size = Op.Inputs[1];
-  // A constant decrement is the fixed prologue frame, not a dynamic allocation.
-  if (Size.isConst())
+  const MedVar *SizePtr =
+      medDynamicStackAllocationSize(Op, dynamicStackLookups());
+  if (!SizePtr)
     return nullptr;
-  // `sp - size`: minuend is the stack pointer, subtrahend a runtime byte count
-  // (and not itself a stack pointer, which would be a pointer difference).
-  if (!varIsStackPtrDerived(Op.Inputs[0]) || varIsStackPtrDerived(Size))
-    return nullptr;
-  // The result must become the new stack pointer: written straight to SP
-  // (`sub sp,sp,xN`) or copied there through a width chain (i386 routes the
-  // value `ecx -> esp`).  This rules out any other `sp - value`.
-  uint64_t SpOff = getTargetRegInfo(TargetArch).StackPointer;
-  bool ReachesSp = (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == SpOff);
-  for (const auto &Blk : CurMedFunc->Blocks) {
-    if (ReachesSp)
-      break;
-    for (const auto &O : Blk.Ops)
-      if (O.Output.Kind == MedVar::Reg && O.Output.RegOff == SpOff &&
-          O.NumInputs >= 1 && varReaches(O.Inputs[0], Op.Output)) {
-        ReachesSp = true;
-        break;
-      }
-  }
-  if (!ReachesSp)
-    return nullptr;
+  const MedVar &Size = *SizePtr;
 
   llvm::Value *SizeVal = getVar(Size, Builder);
   if (!SizeVal || !SizeVal->getType()->isIntegerTy())
@@ -330,95 +263,16 @@ MedLLVMEmitter::tryEmitDynamicStackAlloc(const MedOp &Op,
 
 std::pair<int, int> MedLLVMEmitter::sizeRootKey(const MedVar &V,
                                                 int Depth) const {
-  if (!CurMedFunc || V.isConst() || Depth > limits::kMaxStackPtrTraceDepth)
-    return {V.Id, V.SSAVer};
-  const MedOp *Def = lookupDef(V);
-  if (!Def || Def->NumInputs < 1)
-    return {V.Id, V.SSAVer};
-  switch (Def->Opcode) {
-  case NdOp::COPY:
-  case NdOp::INT_ZEXT:
-  case NdOp::INT_SEXT:
-    return sizeRootKey(Def->Inputs[0], Depth + 1);
-  case NdOp::SUBBYTES:
-    return Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
-                   Def->Inputs[1].ConstVal == 0
-               ? sizeRootKey(Def->Inputs[0], Depth + 1)
-               : std::make_pair(V.Id, V.SSAVer);
-  default:
-    return {V.Id, V.SSAVer};
-  }
+  return medSizeRootKey(V, dynamicStackLookups(), Depth);
 }
 
 std::optional<std::pair<std::pair<int, int>, int64_t>>
 MedLLVMEmitter::addrSlotKey(const MedVar &V, int Depth,
                             bool ThroughRegs) const {
-  if (V.isConst() || Depth > limits::kMaxStackPtrTraceDepth)
-    return std::nullopt;
-  // A register anchors the key (frame/stack pointer base); never trace past it,
-  // so a load and store of the same slot share an identical base.  ThroughRegs
-  // threads only the TOP-LEVEL register's definition (escape detection): a slot
-  // address copied into a parameter register before a call keys to the same
-  // slot while the inner stack/frame-pointer register still anchors (threading
-  // it would diverge from the load/store form via prologue self-copies).
-  if (V.Kind == MedVar::Reg && !(ThroughRegs && Depth == 0))
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  if (!CurMedFunc)
-    return std::nullopt;
-  const MedOp *Def = lookupDef(V);
-  if (!Def || Def->NumInputs < 1 ||
-      Def->RegistrationRoot != MedOp::RegistrationRootKind::None)
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  // Slot identity follows the guest operation's modular width.  Accumulate as
-  // raw bits so 64-bit wrap is defined and narrow guests do not become i64.
-  auto applyConstantOffset = [&](const auto &Base, uint64_t Constant,
-                                 bool Subtract) -> decltype(addrSlotKey(V)) {
-    const unsigned Bytes = Def->Output.Size;
-    if (Bytes == 0 || Bytes > sizeof(uint64_t))
-      return std::nullopt;
-    uint64_t Bits = std::bit_cast<uint64_t>(Base.second);
-    Bits = Subtract ? Bits - Constant : Bits + Constant;
-    if (Bytes < sizeof(uint64_t)) {
-      const unsigned Width = Bytes * 8;
-      const uint64_t Mask = (uint64_t{1} << Width) - 1;
-      Bits &= Mask;
-      if (Bits & (uint64_t{1} << (Width - 1)))
-        Bits |= ~Mask;
-    }
-    return std::make_pair(Base.first, std::bit_cast<int64_t>(Bits));
-  };
-  switch (Def->Opcode) {
-  case NdOp::COPY:
-  case NdOp::INT_ZEXT:
-  case NdOp::INT_SEXT:
-    return addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs);
-  case NdOp::SUBBYTES:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
-        Def->Inputs[1].ConstVal == 0)
-      return addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs);
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  case NdOp::INT_ADD:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst()) {
-      if (auto B = addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs))
-        return applyConstantOffset(*B, Def->Inputs[1].ConstVal,
-                                   /*Subtract=*/false);
-    }
-    if (Def->NumInputs >= 2 && Def->Inputs[0].isConst()) {
-      if (auto B = addrSlotKey(Def->Inputs[1], Depth + 1, ThroughRegs))
-        return applyConstantOffset(*B, Def->Inputs[0].ConstVal,
-                                   /*Subtract=*/false);
-    }
-    return std::nullopt;
-  case NdOp::INT_SUB:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst()) {
-      if (auto B = addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs))
-        return applyConstantOffset(*B, Def->Inputs[1].ConstVal,
-                                   /*Subtract=*/true);
-    }
-    return std::nullopt;
-  default:
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  }
+  MedDefLookup DefOf;
+  if (CurMedFunc)
+    DefOf = [this](const MedVar &Value) { return lookupDef(Value); };
+  return medAddressSlotKey(V, DefOf, Depth, ThroughRegs);
 }
 
 std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
@@ -427,6 +281,25 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   if (!CurMedFunc || V.isConst())
     return std::nullopt;
 
+  const bool Cacheable = !Bindings && !SharedProofBudget &&
+                         !FrameProofBudgetForTesting &&
+                         FeasibleEdgeState != FeasibleEdgeCacheState::Building;
+  const auto QueryKey =
+      std::make_pair(addressProvenanceVarKey(V), RequireEntryStackPointer);
+  if (Cacheable) {
+    if (ClosedFrameSlotCacheFor != CurMedFunc) {
+      ClosedFrameSlotCacheFor = CurMedFunc;
+      ClosedFrameSlotCache.clear();
+    }
+    if (auto It = ClosedFrameSlotCache.find(QueryKey);
+        It != ClosedFrameSlotCache.end()) {
+      ++AddressProvenanceWork.FrameSlotCacheHits;
+      return It->second;
+    }
+  }
+  // Building/publishing feasible edges invalidates dependent proofs, including
+  // queries already in progress. Do not publish a result from that generation.
+  const uint64_t Generation = FrameReloadCacheGeneration;
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
   const uint64_t SpOff = TRI.StackPointer;
   const uint64_t FpOff = TRI.FramePointer;
@@ -741,107 +614,33 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
       ProvenSlots.emplace(Key, *Proof);
     return Proof;
   };
-  return rec(V, 0);
+  auto Result = rec(V, 0);
+  if (Cacheable && ClosedFrameSlotCacheFor == CurMedFunc &&
+      Generation == FrameReloadCacheGeneration &&
+      FeasibleEdgeState != FeasibleEdgeCacheState::Building)
+    ClosedFrameSlotCache.emplace(QueryKey, Result);
+  return Result;
 }
 
 bool MedLLVMEmitter::varIsReloadedStackPtr(const MedVar &V, int Depth) const {
-  if (!CurMedFunc || V.isConst() || Depth > limits::kMaxStackPtrTraceDepth)
-    return false;
-  const MedOp *Def = lookupDef(V);
-  if (!Def || Def->NumInputs < 1)
-    return false;
-  switch (Def->Opcode) {
-  case NdOp::COPY:
-  case NdOp::INT_ZEXT:
-  case NdOp::INT_SEXT:
-    return varIsReloadedStackPtr(Def->Inputs[0], Depth + 1);
-  case NdOp::SUBBYTES:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
-        Def->Inputs[1].ConstVal == 0)
-      return varIsReloadedStackPtr(Def->Inputs[0], Depth + 1);
-    return false;
-  case NdOp::LOAD: {
-    if (Def->MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      return false;
-    std::vector<MedVar> Sources;
-    if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
-      return false;
-    return std::all_of(
-        Sources.begin(), Sources.end(),
-        [&](const MedVar &Source) { return varIsStackPtrDerived(Source); });
-  }
-  default:
-    return false;
-  }
+  return medReloadedStackPointer(V, dynamicStackLookups(), Depth);
 }
 
 llvm::Value *
 MedLLVMEmitter::tryResolveDynVlaAddr(const MedOp &Op,
                                      llvm::IRBuilder<> & /*Builder*/) {
-  if (DynVlaBases.empty() || Op.NumInputs < 2 ||
-      (Op.Opcode != NdOp::INT_ADD && Op.Opcode != NdOp::INT_SUB))
+  if (DynVlaBases.empty())
     return nullptr;
-
-  auto findDef = [&](const MedVar &V) { return lookupDef(V); };
-
-  // The negation behind an INT_ADD's offset (`old_sp + (-size)`): look through
-  // the width casts the negated size threads through, then follow an INT_NEG2
-  // or `0 - size` to the size itself.  Returns the size operand, or nullptr
-  // when the offset is not a negated runtime value.
-  auto negatedSize = [&](const MedVar &OffIn) -> const MedVar * {
-    MedVar Off = OffIn;
-    for (int Guard = 0; Guard <= limits::kMaxStackPtrTraceDepth; ++Guard) {
-      const MedOp *Def = findDef(Off);
-      if (!Def || Def->NumInputs < 1)
-        return nullptr;
-      switch (Def->Opcode) {
-      case NdOp::COPY:
-      case NdOp::INT_ZEXT:
-      case NdOp::INT_SEXT:
-        Off = Def->Inputs[0];
-        continue;
-      case NdOp::SUBBYTES:
-        if (Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
-            Def->Inputs[1].ConstVal == 0) {
-          Off = Def->Inputs[0];
-          continue;
-        }
-        return nullptr;
-      case NdOp::INT_NEG2:
-        return &Def->Inputs[0];
-      case NdOp::INT_SUB:
-        if (Def->NumInputs >= 2 && Def->Inputs[0].isConst() &&
-            Def->Inputs[0].ConstVal == 0)
-          return &Def->Inputs[1];
-        return nullptr;
-      default:
-        return nullptr;
-      }
-    }
-    return nullptr;
-  };
-
-  // Candidate (stack-pointer base, runtime size) pairs for this op.
-  auto tryPair = [&](const MedVar &Base, const MedVar *SizeV) -> llvm::Value * {
-    if (!SizeV || SizeV->isConst() ||
-        (!varIsStackPtrDerived(Base) && !varIsReloadedStackPtr(Base)))
-      return nullptr;
-    auto It = DynVlaBases.find(sizeRootKey(*SizeV));
-    return It != DynVlaBases.end() ? It->second : nullptr;
-  };
-
-  if (Op.Opcode == NdOp::INT_SUB) {
-    if (auto *V = tryPair(Op.Inputs[0], &Op.Inputs[1]))
-      return V;
-    return nullptr;
-  }
-  // INT_ADD: either operand may be the SP base; the other must be a negated
-  // size.
-  if (auto *V = tryPair(Op.Inputs[0], negatedSize(Op.Inputs[1])))
-    return V;
-  if (auto *V = tryPair(Op.Inputs[1], negatedSize(Op.Inputs[0])))
-    return V;
-  return nullptr;
+  llvm::Value *Base = nullptr;
+  medTryDynamicStackAddressSizes(
+      Op, dynamicStackLookups(), [&](const MedVar &Size) {
+        auto It = DynVlaBases.find(sizeRootKey(Size));
+        if (It == DynVlaBases.end())
+          return false;
+        Base = It->second;
+        return true;
+      });
+  return Base;
 }
 
 bool MedLLVMEmitter::isStackProbeCall(const MedOp &Op) const {

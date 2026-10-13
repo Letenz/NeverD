@@ -17,3 +17,4 @@ SIDEEFFECT(Intrinsic::ArmHlt);
 SIDEEFFECT(Intrinsic::ArmUdf);
 // exclusive / atomic
 SIDEEFFECT(Intrinsic::ArmClrex);
+SIDEEFFECT(Intrinsic::ArmLinuxSyscall);

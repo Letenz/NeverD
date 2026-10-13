@@ -10,6 +10,7 @@
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
+#include <bit>
 #include <utility>
 
 namespace neverd::registration_state {
@@ -25,21 +26,27 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 }
 
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
-  if (Exhausted ||
-      !charge(Source.Levels.size() + Source.Frame.cellCount() +
-              Source.Frame.OtherRegisterBytes.size() +
-              Incoming[Target].Frame.cellCount() +
-              Incoming[Target].Frame.OtherRegisterBytes.size() +
-              Source.CxxCatchStacks.size() +
-              Incoming[Target].CxxCatchStacks.size() +
-              Source.RuntimeObject.cellCount() +
-              Source.RuntimeObject.OtherRegisterBytes.size() +
-              Incoming[Target].RuntimeObject.cellCount() +
-              Incoming[Target].RuntimeObject.OtherRegisterBytes.size() +
-              Source.InitializedFrameBytes.size() +
-              Incoming[Target].InitializedFrameBytes.size() + 10))
+  if (Exhausted || !charge(1 + Source.Activation.JumpCaptureCalls.size() +
+                           Source.Activation.Callers.size() +
+                           2 * std::bit_width(States[Target].size() + 1)))
     return;
-  Domain &Dest = Incoming[Target];
+  auto [It, New] = States[Target].try_emplace(Source.Activation);
+  auto &Node = It->second;
+  if (New)
+    Node.Facts.Invalid = InvalidBlocks[Target];
+  Domain &Dest = Node.Incoming;
+  if (!charge(Source.Levels.size() + Source.Frame.cellCount() +
+              Source.Frame.OtherRegisterBytes.size() + Dest.Frame.cellCount() +
+              Dest.Frame.OtherRegisterBytes.size() + Source.catchCellCount() +
+              Dest.catchCellCount() + Source.RuntimeObject.cellCount() +
+              Source.RuntimeObject.OtherRegisterBytes.size() +
+              Dest.RuntimeObject.cellCount() +
+              Dest.RuntimeObject.OtherRegisterBytes.size() +
+              Source.InitializedFrameBytes.size() +
+              Dest.InitializedFrameBytes.size() +
+              Source.JumpCaptures.size() * 14 + Dest.JumpCaptures.size() * 14 +
+              Source.sehCallerCellCount() + Dest.sehCallerCellCount() + 10))
+    return;
   bool Changed = !Dest.Reached;
   if (!Dest.Reached) {
     Dest = Source;
@@ -50,9 +57,44 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     Changed |= Before != Dest.Levels.size();
     Changed |= Dest.Frame.merge(Source.Frame);
     Changed |= Dest.RuntimeObject.merge(Source.RuntimeObject);
-    if (Dest.RuntimeIdentity != Source.RuntimeIdentity &&
-        Dest.RuntimeIdentity) {
-      Dest.RuntimeIdentity.reset();
+    if (Dest.SEHCallers.size() != Source.SEHCallers.size()) {
+      Changed |= !Dest.Unknown;
+      Dest.Unknown = true;
+    } else {
+      for (size_t C = 0; C != Dest.SEHCallers.size(); ++C) {
+        auto &Caller = Dest.SEHCallers[C];
+        const auto &Other = Source.SEHCallers[C];
+        if (Caller.Activation != Other.Activation ||
+            Caller.OtherCallback != Other.OtherCallback ||
+            Caller.OrdinaryCallStack != Other.OrdinaryCallStack ||
+            Caller.StackRestore != Other.StackRestore) {
+          Changed |= !Dest.Unknown;
+          Dest.Unknown = true;
+        }
+        Changed |= Caller.Stack.merge(Other.Stack);
+      }
+    }
+    if (Dest.JumpBindingsIntact && !Source.JumpBindingsIntact) {
+      Dest.JumpBindingsIntact = false;
+      Changed = true;
+    }
+    for (auto Capture = Dest.JumpCaptures.begin();
+         Capture != Dest.JumpCaptures.end();) {
+      const auto Other = Source.JumpCaptures.find(Capture->first);
+      if (Other == Source.JumpCaptures.end() ||
+          Other->second != Capture->second) {
+        Capture = Dest.JumpCaptures.erase(Capture);
+        Changed = true;
+      } else
+        ++Capture;
+    }
+    if (Dest.OrdinaryCallStack &&
+        Dest.OrdinaryCallStack != Source.OrdinaryCallStack) {
+      Dest.OrdinaryCallStack.reset();
+      Changed = true;
+    }
+    if (Dest.StackRestore && Dest.StackRestore != Source.StackRestore) {
+      Dest.StackRestore.reset();
       Changed = true;
     }
     for (auto It = Dest.InitializedFrameBytes.begin();
@@ -79,10 +121,8 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     MergeFlag(Dest.Installed, Source.Installed);
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
-  if (Changed && !Queued[Target]) {
-    Work.push_back(Target);
-    Queued[Target] = true;
-  }
+  if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))
+    Work.emplace(Order[Target], Target, Source.Activation);
 }
 
 void RegistrationStateSolver::dispatch(
@@ -96,12 +136,22 @@ void RegistrationStateSolver::dispatch(
     return;
   }
   Domain Root;
+  if (!KnownCxx && Callback)
+    Root.Activation = {Address, SearchFilter};
+  if (!KnownCxx && Callback) {
+    if (!charge(Source.JumpCaptures.size() + 1))
+      return;
+    for (const auto &[Offset, Capture] : Source.JumpCaptures)
+      Root.Activation.JumpCaptureCalls.emplace_back(Offset, Capture.Call);
+  }
   Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
   Root.Frame.Cells = Source.Frame.Cells;
   Root.Frame.EntryCells = Source.Frame.EntryCells;
+  Root.JumpCaptures = Source.JumpCaptures;
+  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
   Root.InitializedFrameBytes = Source.InitializedFrameBytes;
   Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
   Root.RuntimeObject.forgetCellValues();
@@ -117,7 +167,11 @@ void RegistrationStateSolver::dispatch(
   if ((Chain.hasCxxCallbackStack() && CxxCatch) || (!KnownCxx && Callback)) {
     if (!charge(Root.Frame.cellCount() + 8))
       return;
-    Root.Frame.enterCallback(Address);
+    if (!KnownCxx && SearchFilter && !EH4 && !Chain.RealignedFrame &&
+        Chain.RegistrationOffset == -16 && Chain.TryLevelOffset == -4)
+      Root.Frame.enterSEHFilter(Address, *Chain.RegistrationOffset - 4);
+    else
+      Root.Frame.enterCallback(Address);
   }
   Root.Unknown = Unknown || Source.Unknown;
   Root.Parent = !Callback;
@@ -128,42 +182,9 @@ void RegistrationStateSolver::dispatch(
       return;
     if (!enterCxxCatch(Root, Source, CxxCatch->first, CxxCatch->second))
       return;
-    if (CheckRuntimeObjects) {
-      const auto Object = CatchObjects.find(*CxxCatch);
-      const auto &Catch =
-          EH.Cxx->TryBlocks[CxxCatch->first].Handlers[CxxCatch->second];
-      if (Catch.CatchObjectOffset && Object == CatchObjects.end())
-        CompleteCatchObjects = false;
-      if (Object != CatchObjects.end()) {
-        const auto &C = Object->second;
-        const uint16_t SlotBytes = C.Reference ? 4 : uint16_t(C.ObjectSize);
-        const auto SP =
-            Root.Frame.load(*Chain.RegistrationOffset - 4, 4).Offset;
-        const auto Offset = Chain.cxxSourceFrameOffset(C.FrameOffset);
-        const int64_t End = int64_t(Offset.value_or(0)) + SlotBytes;
-        if (!SP || !Offset || Source.Unknown || Unknown || *Offset < *SP ||
-            *Offset < -int64_t(limits::kMaxRegistrationEHStateWork) ||
-            End > *Chain.cxxRuntimeFrameOffset() ||
-            (*Offset < int64_t(*Chain.TryLevelOffset) + 4 &&
-             int64_t(*Chain.RegistrationOffset) - 4 < End) ||
-            !charge(SlotBytes + Root.Frame.cellCount() +
-                    Root.RuntimeObject.cellCount())) {
-          CompleteCatchObjects = false;
-        } else {
-          Root.Frame.store(*Offset, SlotBytes, {});
-          for (int64_t Byte = *Offset; Byte < End; ++Byte)
-            Root.InitializedFrameBytes.insert(int32_t(Byte));
-          Root.RuntimeObject.store(*Offset, SlotBytes,
-                                   C.Reference ? FrameValue::frame(0)
-                                               : FrameValue{});
-          if (C.Reference)
-            Root.RuntimeIdentity = C;
-        }
-      }
-    }
     // Unwinding and catch-object construction may change local objects.
-    // Keep only frame taint for their old values. Runtime administration is
-    // separate: the link word and SavedESP remain owned by the EH frame.
+    // Keep only frame taint until their write footprints establish that a
+    // particular alias survives. Runtime administration has separate owners.
     for (auto It = Root.Frame.Cells.begin(); It != Root.Frame.Cells.end();) {
       const auto Offset = It->first;
       if (Offset != *Chain.RegistrationOffset &&
@@ -176,6 +197,40 @@ void RegistrationStateSolver::dispatch(
         It = Root.Frame.Cells.erase(It);
       else
         ++It;
+    }
+    preserveCxxFrameCells(Root, Source);
+    if (CheckRuntimeObjects) {
+      const auto Object = CatchObjects.find(*CxxCatch);
+      const auto &Catch =
+          EH.Cxx->TryBlocks[CxxCatch->first].Handlers[CxxCatch->second];
+      if (Catch.CatchObjectOffset && Object == CatchObjects.end())
+        CompleteCatchObjects = false;
+      if (Object != CatchObjects.end()) {
+        const auto &C = Object->second;
+        const uint16_t SlotBytes = C.Reference ? 4 : uint16_t(C.ObjectSize);
+        const auto SP =
+            Root.CxxCatchStacks.size() == 1
+                ? Root.CxxCatchStacks.begin()->front().SavedStackOffset
+                : std::nullopt;
+        const auto Offset = Chain.cxxSourceFrameOffset(C.FrameOffset);
+        const int64_t End = int64_t(Offset.value_or(0)) + SlotBytes;
+        if (!SP || !Offset || Source.Unknown || Unknown || *Offset < *SP ||
+            *Offset < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
+            End > *Chain.cxxRuntimeFrameOffset() ||
+            !frameObjectIsDisjointFromAdministration(*Offset, End) ||
+            !charge(SlotBytes + Root.Frame.cellCount() +
+                    Root.RuntimeObject.cellCount())) {
+          CompleteCatchObjects = false;
+        } else {
+          Root.Frame.store(*Offset, SlotBytes, {});
+          for (int64_t Byte = *Offset; Byte < End; ++Byte)
+            Root.InitializedFrameBytes.insert(int32_t(Byte));
+          Root.RuntimeObject.store(*Offset, SlotBytes,
+                                   C.Reference ? FrameValue::exceptionObject(
+                                                     C.TryIndex, C.CatchIndex)
+                                               : FrameValue{});
+        }
+      }
     }
   }
   Root.Installed = true;
@@ -191,6 +246,17 @@ void RegistrationStateSolver::seedEntries() {
   // them with zero and then expose the invented value.
   for (auto &Register : Initial.Frame.Registers)
     Register.MayBeFrame = true;
+  if (Conditional) {
+    for (unsigned Index = 0; Index != Initial.Frame.Registers.size(); ++Index)
+      Initial.Frame.Registers[Index].SavedRegister = uint8_t(Index + 1);
+    FrameValue PC;
+    PC.MayBeFrame = PC.ReturnPC = true;
+    Initial.Frame.Cells[4] = PC;
+    for (const auto &[Offset, Value] : Conditional->Arguments)
+      Initial.Frame.store(Offset, 4, Value);
+    for (const auto &[Offset, Value] : Conditional->ObjectCells)
+      Initial.Frame.store(Offset, 4, Value);
+  }
   Initial.Frame.OtherRegistersMayBeFrame = true;
   // After push EBP, the canonical direct prologue establishes EBP at this
   // incoming SP minus four bytes. Do not assume later reads still name it.

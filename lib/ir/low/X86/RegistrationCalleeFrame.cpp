@@ -6,6 +6,7 @@
 
 #include "RegistrationABIPrivate.h"
 #include "RegistrationFrame.h"
+#include "RegistrationFrameEffects.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -43,11 +44,11 @@ struct PrivateFrameState {
 };
 } // namespace
 
-bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
-                           size_t &Work, ImageFrameEffects &Effects,
-                           bool BorrowECX,
-                           RegistrationThrowCalleeABI *ThrowProof,
-                           bool *IndependentScalarReturn) {
+bool hasPrivateCallerFrame(
+    const LowFunc &Function, const BinaryImage &Image, size_t &Work,
+    ImageFrameEffects &Effects, bool BorrowECX,
+    RegistrationThrowCalleeABI *ThrowProof, bool *IndependentScalarReturn,
+    const std::map<int32_t, registration_state::FrameValue> *ScalarArguments) {
   if (IndependentScalarReturn)
     *IndependentScalarReturn = true;
   using namespace registration_state;
@@ -67,6 +68,14 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
   FrameValue CallerPC;
   CallerPC.MayBeFrame = CallerPC.ReturnPC = true;
   Initial.Frame.Cells[4] = CallerPC;
+  if (ScalarArguments)
+    for (const auto &[Offset, Value] : *ScalarArguments) {
+      if (Offset < 8 || Offset > 128 || (Offset & 3) || Value.MayBeFrame)
+        return false;
+      Initial.Frame.store(Offset, 4, Value);
+      for (int Byte = 0; Byte != 4; ++Byte)
+        Initial.Initialized.insert(Offset + Byte);
+    }
   if (BorrowECX) {
     Initial.Frame.Registers[x86reg::RCX / x86reg::GeneralRegStride] = {};
     Initial.Borrow.Registers[x86reg::RCX / x86reg::GeneralRegStride] =
@@ -112,7 +121,9 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       size_t RegisterBytes = Op.Output.Size;
       for (unsigned Index = 0; Index != Op.NumInputs; ++Index)
         RegisterBytes += Op.Inputs[Index].Size;
-      if (!Charge(1 + RegisterBytes) || Op.Opcode == NdOp::INTRINSIC ||
+      if (!Charge(1 + RegisterBytes) ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !registration_state::isFramePreservingIntrinsic(Op)) ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return false;
       Transfer.beginInstruction(Op.Addr);
@@ -132,7 +143,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           const int64_t End = int64_t(*Object.Offset) + Memory.AccessSize;
           if (Address.Offset || Address.Constant || Address.MayBeFrame ||
               *Object.Offset < 0 || End > INT32_MAX ||
-              End > limits::kMaxRegistrationEHStateWork)
+              End > limits::kMaxSourceCallBorrowedBytes)
             return false;
           if (Op.Opcode != NdOp::STORE)
             Effects.ECXReads.emplace(*Object.Offset, int32_t(End));
@@ -152,7 +163,10 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           if ((!Address.Offset && !Address.Constant) ||
               (Address.MayBeFrame && !Address.Offset) ||
               (Address.Offset &&
-               int64_t(*Address.Offset) + Memory.AccessSize > 8))
+               int64_t(*Address.Offset) + Memory.AccessSize > 8 &&
+               (!ScalarArguments || Memory.AccessSize != 4 ||
+                !ScalarArguments->count(*Address.Offset) ||
+                Op.Opcode != NdOp::LOAD)))
             return false;
           if (Address.Constant && *Address.Constant != 0) {
             const auto *Owner = Image.getSegmentFor(*Address.Constant);
@@ -230,6 +244,12 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             return false;
           const auto Object = State.Frame.load(*SP, 4);
           const auto Table = State.Frame.load(*SP + 4, 4);
+          if (Object.Constant == 0 && Table.Constant == 0 &&
+              !Object.MayBeFrame && !Table.MayBeFrame) {
+            ThrowProof->IsRethrow = true;
+            Threw = true;
+            break;
+          }
           if (!Object.Offset || Object.ReturnPC || Object.FrameOnlyFromCall ||
               !Table.Constant || Table.MayBeFrame)
             return false;
@@ -275,6 +295,12 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                 .Offset;
         if (!SP)
           return false;
+        if (ScalarArguments) {
+          // A closed RaiseException invocation reads no argument array.
+          // Its callbacks remain obligations of the enclosing SEH solver.
+          if (!hasClosedRegistrationRaise(Image, Op, State.Frame))
+            return false;
+        }
         unsigned Pop = 0;
         if (Op.NumInputs == 1 && Op.Inputs[0].isConst())
           if (auto Known =

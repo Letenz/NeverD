@@ -34,6 +34,10 @@ bool liftSIMDConvert(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar A = L.operandRead(S, ARM.operands[0]);
     NdVar B = L.operandRead(S, ARM.operands[1]);
+    // The immediate form compares with #0, which is +0.0 at the compared
+    // register's width: a 4-byte zero against a double is no comparison.
+    if (B.isConst() && B.Offset == 0 && B.Size != A.Size)
+      B = NdVar::cst(0, A.Size);
     // VCMP writes the FPSCR flags (not the CPSR flags); a later VMRS commits
     // them to CPSR.  Writing CPSR directly here would let a second VCMP clobber
     // the flags a pending conditional still needs (d_minmax: two vcmp before

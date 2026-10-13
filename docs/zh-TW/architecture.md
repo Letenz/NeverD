@@ -7,6 +7,12 @@
 本指南說明貢獻者安全修改 NeverD 所需理解的生產邊界。內容刻意只涵蓋
 NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部架構。
 
+## 原始碼與物件替換邊界
+
+`SourcePatchCompiler` 負責編譯器身分與製品選擇。`validateSourcePatchTarget` 統一決定原始碼與外部 IR 的目標准入，目標三元組本身不足以證明支援。`bindSourcePatch` 確認 IR 入口映射；`PatchObject` 負責原生區段、重定位與 FDE 範圍證據。`publishSourcePatch` 暫存、檢查並獨占發佈完整交易。`COFFSourceImage` 負責 PE x86/x64/ARM32/ARM64 的新儲存與展開表；提升後的重寫仍要求獨立的原 EH 證據。參見[原始碼 patch](source-patching.md)。
+
+`sourcePatchTargetTriple` 從映像確定 ARM 指令模式、ELF 浮點 ABI 與 Mach-O CPU 子類型。`COFFPatchObject` 和 `MachOPatchObject` 依物件自身符號、輔助／區段定義及展開記錄驗證範圍，不虛構 MC 識別碼；格式安裝器負責註冊實際展開表。
+
 ## 系統邊界
 
 ```mermaid
@@ -194,6 +200,8 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 架構 lifter 負責交易式的未定義輸出附屬中繼資料：每次嘗試前清除舊證據，只為精確對應的成功提升發布效果。`Missing` 表示證據缺失，不等於空的 `Complete` 描述。一般 LowIR 保持確定的選定值。`LowIRUndefinedIndependence` 負責對傳入的完整無環 LowIR 圖進行有界關係證明，共用一般輸入，並保留新產生未定義值的來源關聯；它綁定完整指令邊界與操作摘要，拒絕不完整證明。超出下述有限原生路徑範圍的一般原生圖認證、迴圈不變量及原生程式碼到 C 的等價證明，仍屬於獨立工作。
 
+`FreshChoiceProjection` 是獨立性檢查器的內部元件。它在同一個不可變符號上下文中重用一般值的零投影，只允許加入前一次投影完成後新建的 fresh leaf。有界結果表在容量之外回退至原有替換演算法。兩次執行仍保留各自的新鮮選擇；節點限額、查詢成本和證明義務不變。
+
 `Decoder` 在指令形式審核與重定位比對之前修正 x64 運算元前綴造成的 disp32 長度誤報。ModRM/SIB 邊界、完整欄位、有號位移、記憶體運算元及尾隨立即數配置必須一致。完整解碼、提升解碼及啟用詳細資訊的輕量解碼共用此正規化。它只修改編碼長度中繼資料；真正的 i386 disp16、disp8、moffs 及無運算元詳細資訊的解碼維持原有行為。
 
 傳統純量 SHL/SAL、SHR、SAR 為 8/16/32/64 位元運算元提供隨次數變化的未定義位元證據。遮罩後次數為零時保留所有旗標；非零時 AF 任意，大於一時 OF 任意，SHL/SHR 次數達到運算元位寬時 CF 任意；SAR 的進位仍有定義。指令內布林守衛使用目的地重疊寫入前保存的遮罩次數，無論是否要求中繼資料，都產生相同操作。未審核編碼不會發布部分效果。
@@ -216,9 +224,11 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 `AllowOverlappingNativeInstructions` 是預設關閉的獨立選項，用於有限原生獨立性證明及原生到 LowIR 的精化證明。每個入口皆獨立解碼和驗證；交疊指令位元組必須與先前所有指令及不可變讀取證據一致，包括候選程式的讀取。候選 LowIR 位址只是標籤，不是位元組證據。`MaxNativeInstructionBytes` 預設為 1048576，每次取得新入口時，在比較前按完整指令長度扣帳，包括重複的交疊位元組。預算耗盡或位元組衝突均拒絕憑證。選項及額度綁定至證明摘要。靜態 LowIR、歸納循環證明和推斷拒絕此選項，空循環計畫也不例外；精確 LLVM 介面和 CLI 維持原有預設行為。
 
-原生封裝旗標證明要求選項和契約同時指定 `X64FlagsProfile = UserX64NoFaultV1`，既有執行布林選項不會自動啟用它。正規化的共享入口旗標與持續保存的系統旗標使用和機器狀態原始碼包裝器相同的 PUSHFQ/POPFQ 純量轉換，包括 CPL3/IOPL0 遮罩。每次 POPFQ 都須證明兩次執行中的 TF/AC 為零，不能將此條件當作假設。即使關閉暫存器或已寫堆疊框架觀察，仍須比較最終系統旗標。憑證綁定環境模型版本和精確轉換摘要。在此明確 CET 關閉環境下，獨立核驗的正規 RDSSPD/RDSSPQ 位元組可投影為精確 NOP，並記錄具型別的憑據；原始 `Missing` 中繼資料保持不變，32 位元目標也保留整個暫存器。正規 INCSSPD/INCSSPQ 保留為依賴環境模型的 #UD 邊界，並記錄原始不可達指令的憑據；任意可行造訪都違反無故障契約，即使運算元為零。其他 CET 指令、CET 開啟執行及靜態 LowIR API 的環境模型仍不支援。有限迴圈每次造訪均保留狀態並產生新的未定義選擇，不代表迴圈不變量證明。
+使用者態 `UserX64NoFaultV1`：原生封裝旗標證明要求選項和契約同時指定 `X64FlagsProfile = UserX64NoFaultV1`，既有執行布林選項不會自動啟用它。正規化的共享入口旗標與持續保存的系統旗標使用和機器狀態原始碼包裝器相同的 PUSHFQ/POPFQ 純量轉換，包括 CPL3/IOPL0 遮罩。每次 POPFQ 都須證明兩次執行中的 TF/AC 為零，不能將此條件當作假設。即使關閉暫存器或已寫堆疊框架觀察，仍須比較最終系統旗標。憑證綁定環境模型版本和精確轉換摘要。在此明確 CET 關閉環境下，獨立核驗的正規 RDSSPD/RDSSPQ 位元組可投影為精確 NOP，並記錄具型別的憑據；原始 `Missing` 中繼資料保持不變，32 位元目標也保留整個暫存器。正規 INCSSPD/INCSSPQ 保留為依賴環境模型的 #UD 邊界，並記錄原始不可達指令的憑據；任意可行造訪都違反無故障契約，即使運算元為零。其他 CET 指令、CET 開啟執行及靜態 LowIR API 的環境模型仍不支援。有限迴圈每次造訪均保留狀態並產生新的未定義選擇，不代表迴圈不變量證明。
 
-`checkLowIRRefinement` 與 `checkBinaryLowIRRefinement` 提供針對確定性 LowIR 候選的獨立建構式精化證明。`LiftedBits` 在每次未定義值產生時選擇原提升器計算的位元；`ZeroBits` 僅在已審核的條件生效時選擇零。證書記錄每個動態出現，複製與溢出保留同一選擇。兩邊共用純量、實體堆疊、記憶體及旗標執行器與入口快照；所有可行路徑必須終止並涵蓋完整允許入口域，比較 RETURN 運算元、指定暫存器、原生系統旗標及兩邊已寫堆疊位元組的聯集，並維持入口位置保留約束。執行與關係檢查共用預算，另設 `MaxTerminalPairs` 上限。證書分別綁定候選、原始證據、見證策略及預算。見證失敗不排除其他見證；有限展開不證明迴圈不變量、特定 CPU 相等性或 C 後端等價性，也不取代未定義狀態獨立性證明。兩類關係介面皆拒絕與證明器記憶體暫存區重疊的輸入暫存值。 二進位精化 API 要求選項與觀察契約同時使用 `UserX64NoFaultV1`。
+`KernelX64NoFaultV1` 加入明確的原生證明 CPL0/IOPL0 契約：停用影子堆疊，沒有非同步事件、偵錯例外派發或權限層級切換。POPFQ 可寫入 IF；兩次執行都必須證明 TF/AC/IOPL 保持零，最終系統 flags（含 IF）始終必須觀察。共用 `X64MachineFlags` 擁有者選擇 profile masks，選項、契約與證書摘要必須相符。核心 API、IRQL、資源生命週期與例外派發不在此契約內。使用者態 machine-source 與 LLVM factory 仍拒絕此核心 profile；它不提供原始碼 ABI 或還原驅動程式認證。
+
+`checkLowIRRefinement` 與 `checkBinaryLowIRRefinement` 提供針對確定性 LowIR 候選的獨立建構式精化證明。`LiftedBits` 在每次未定義值產生時選擇原提升器計算的位元；`ZeroBits` 僅在已審核的條件生效時選擇零。證書記錄每個動態出現，複製與溢出保留同一選擇。兩邊共用純量、實體堆疊、記憶體及旗標執行器與入口快照；所有可行路徑必須終止並涵蓋完整允許入口域，比較 RETURN 運算元、指定暫存器、原生系統旗標及兩邊已寫堆疊位元組的聯集，並維持入口位置保留約束。執行與關係檢查共用預算，另設 `MaxTerminalPairs` 上限。證書分別綁定候選、原始證據、見證策略及預算。見證失敗不排除其他見證；有限展開不證明迴圈不變量、特定 CPU 相等性或 C 後端等價性，也不取代未定義狀態獨立性證明。兩類關係介面皆拒絕與證明器記憶體暫存區重疊的輸入暫存值。 二進位精化 API 要求選項與觀察契約同時使用 `UserX64NoFaultV1` / `KernelX64NoFaultV1`。
 
 `LowIRUndefinedIndependence` 將每次可選重試綁定至完整的原始查詢及其輸入域。`CompleteModel` 驗證完整候選賦值；`CompletedTargetFacts` 僅保留完成窮舉的單值結果。`ConditionalImplication` 管理有界重寫，以及屬於同一符號上下文、輸入域與完整求解器策略的未搜尋編碼，每個新目標仍須證明。`DomainCoverage` 證明因子蘊含關係與每個等值或布林分區。重試保留共用查詢/節點上限和原始求解器設定；未知、格式錯誤或不完整結果不能授予憑證。
 
@@ -697,6 +707,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 共用的 `encodeX64XsaveState` / `decodeX64XsaveState` 編解碼層擁有標準及壓縮 FP/SSE 封包、實體 TOP 輪轉、缺失元件的初始狀態和原子驗證。WHP 使用完整 XSAVE API，優先選擇 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，舊 XSAVE API 作為相容路徑。個別的舊 x87 暫存器介面不能取代完整封包。非初始擴充元件、格式錯誤的標頭、非法控制位元和截斷擷取明確失敗。WHP 映射錯誤保留 HRESULT、GPA 和大小供診斷。
 
 `CheckedX64Instructions.def` 透過既有 CPU 後端准入 8/16/32/64 位元無號 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用獨立的 `X64IntegerCases.def` 編碼和預期值，在兩種特權級驗證部分暫存器保留、32 位元零擴展、乘積高低兩部分、已定義的 CF/OF 結果及符號擴展不改變旗標。一般 RAM 乘法保留完整存取範圍的權限檢查和讀取觀察回呼；故障或觀察回呼停止會保留隱式輸出暫存器及 PC。裝置運算元仍不支援。這些案例也在 checked Unicorn 上執行；不可用的原生後端明確略過。
+
+同一受檢 x64 指令清單支援 16/32/64 位元 `BSF` 和 `BSR`。所選處理器執行原始指令，包含零來源值；ISA 層不會為架構未定義的目的值編造可攜結果。暫存器和一般 RAM 來源沿用完整範圍存取檢查及效果發生前的觀察器；裝置運算元和非法 LOCK 形式在回呼或資料效果前拒絕。
 
 `X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 要求自然對齊；修改型 MMIO 操作要求明確的預備原子交易提供者。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
@@ -1434,6 +1446,32 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 普通 RAM 的 `XCHG` 支援未對齊的 8/16/32/64 位元運算元，包含顯式 LOCK 前綴與隱式加鎖兩種形式。共用 RAM 交易保留入口有效位址、序列化發布結果，並捨棄取消或錯誤時的寫入；處理器執行原始交換指令。`X64Address` 涵蓋位址與暫存器重疊、部分暫存器寫入、快取列與頁面跨界、觀察回呼及缺頁錯誤。MMIO 交換仍要求提供者契約和自然對齊，其他 LOCK 指令系列沿用既有准入規則。
 
 DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩，並拒絕未建模的訊號狀態操作。Select 與 Pselect 共用 immediateSelect，統一處理位元圖、容量下界、提供方與依序複製；timeval 與 timespec 保留各自的欄位寬度及邊界。完整的非空遮罩需要後續的訊號狀態模型。
+
+`isCheckedX86SafeSEHHandlerReference` 使用既有 SafeSEH 解碼器、不可變的表與標頭位元組，以及具有重定位的 load-config 指標，驗證保留的 PE32 處理器入口。LLVM 在輸出任何函式本體前宣告此來源身分，包括分片省略的本體。表成員資格不證明語言 personality、可呼叫 ABI 或原生 EH 重建權限；各使用端仍執行獨立檢查。
+
+`proveLowSEHEstablisherFrame` 統一擁有 LowIR 與 SSA 使用的 Windows x64 父框架證明。它在有界查詢中檢查正規化展開動作、完整指令與 CFG 來源，以及所有可到達的受保護前綴；SSA 另外檢查轉換後的 ABI 效果。通過證明的處理器入口只提供固定 SP 座標，不還原已儲存的記憶體事實。一般 catch 傳回分析保留原有入口域；獨立的區域展開位址清單掃描已宣告的啟用根，不沿例外邊傳遞暫存器值。執行階段身分、確切接續用途與全模組排他性仍分別約束發布。
+
+每次整函式堆疊框架查詢只驗證一次不可變 CFG，並按處理常式索引受保護區塊；預算依實際存取的工作量扣減。SEH finally 回呼擁有獨立的呼叫堆疊，因此與 finally 共用入口的程式碼不能據此證明 except 主體的父框架 SP。
+
+一般內部返回必須同時保住被呼叫者的返回位址和父函式的入口返回位址。同一套可達寫入證明檢查兩種座標；仍允許寫入已證明配置的父函式區域空間。
+
+LLVM 發射器只在目前不可變的 MedFunc 內重用已完成、採用預設預算的堆疊槽查詢。入口 SP 要求與完整值身分分別限定答案。具有繫結值或共用預算的查詢不重用；重建可行邊或發射模組時清空快取，跨越重建的查詢不能發布結果。
+
+`_local_unwind2` 使用無符號停止邊界：遇到 -1 哨兵或不高於請求邊界的層級就停止，即使父層級連結跳過了該索引。共用的 PE32 EH3 求解器合併實際停止層級，並且只合併經過的 finally 回呼的效果；零步展開保留傳入的登錄層級和堆疊框架記憶體事實。堆疊框架參數、執行階段欄位和回呼堆疊的既有證明仍然必須成立。
+
+`_local_unwind2` 的停止上界是數值運算元，而非作用域表索引。任何已知的 32 位元無符號上界都可用於證明零步退出；只有實際目前層級才索引作用域表。動態上界和無效目前層級仍無法獲得證明。
+
+`RegistrationScopeGraph` 統一 COFF 解析與 LowIR 的 EH3/EH4 索引及框架哨兵規則。狀態分析在發布事實前，重新檢查初始層級、指向先前記錄的父層級連結、處理器位址及過濾器/finally 角色。初始活動範圍保留框架哨兵；空表只允許該哨兵。指令位元組、可執行位址歸屬及框架安裝仍分別證明。 處理器及過濾器位址亦須符合 PE32 指標寬度。
+
+核心欄位初始化由獨立的實體 RAM 記錄管理，權限驗證維持純檢查。成功的主機寫入、已提交的受檢交易及精確的軟體寫後事件，只確認實際提交的位元組，包括同值寫入及故障前已完成的寫入。暫時寫入、回復、提交前取消的嘗試及不透明失效不建立初始化證據。自有位圖隨保留的實體切片跨別名生效，查詢無須讀取客體 RAM。軟體事件只證明所報告的寫入，不代表完整寫入涵蓋；具型別的模型服務保留各自明確的初始化契約。
+
+`MemoryWriteWitness` 保留精確的實體配置切片，與 RAM reservation 共用已提交寫入的失效機制。同值、部分及別名寫入會使記錄失效；無法完整追蹤寫入的執行會保守地撤銷證明。建立和查詢要求實體擁有者已停止。驅動觀察在映像複製後、工作階段修正前綁定已驗證的 DIR64 欄位，只有映射配置和寫入歷史仍相符時才保留載入事實。這些事實不涵蓋產生的指標，也不提供原生核心狀態重建器。
+
+驅動程式載入器以已驗證檔案的 SHA-256 繫結重定位事實。PE 重建使用這些自有事實，在輸出診斷 DIR64 記錄前排除匯入修復或中繼資料格式化替換的欄位。此層不能推斷生成指標的重定位，也不能解除核心執行階段拒絕。
+
+`isX86FramePreservingIntrinsic` 為一般 registration 轉移和經驗證的 local-finally 返回統一檢查 FWAIT、MXCSR 與浮點算術形式。原始操作與例外分派保持完整；不支援的 intrinsic 和畸形形式仍是不透明操作。此規則不授予非區域 finally 退出或原生還原證明。
+
+受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

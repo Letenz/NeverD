@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86ApproxReference.h"
+#include "X86FPConvertRounding.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -385,18 +386,32 @@ bool NdOpEmulator::executeFloatArith(const LowOp &Op) {
     return true;
   }
 
+  if (Op.Opcode == NdOp::FLOAT_NEG || Op.Opcode == NdOp::FLOAT_ABS) {
+    if (Op.NumInputs != 1 || Op.Output.Size != Op.Inputs[0].Size ||
+        (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+        (Op.Output.Size != 4 && Op.Output.Size != 8 && Op.Output.Size != 10))
+      return false;
+    if (!Op.Inputs[0].isConst()) {
+      if (!Op.Inputs[0].isReg() && !Op.Inputs[0].isTemp())
+        return false;
+      const auto Known = getRegisterBytes(Op.Inputs[0].Offset);
+      if (!Known || Known->size() < Op.Inputs[0].Size)
+        return false;
+    }
+    auto Bits = readOperandBytes(Op.Inputs[0]);
+    if (Op.Opcode == NdOp::FLOAT_NEG)
+      Bits.back() ^= 0x80;
+    else
+      Bits.back() &= 0x7f;
+    writeOutputBytes(Op.Output, Bits);
+    return true;
+  }
+
   if (Op.NumInputs < 1 || Op.Output.Size != Op.Inputs[0].Size ||
       (Op.Output.Size != sizeof(float) && Op.Output.Size != sizeof(double)))
     return false;
 
   const uint64_t A = readOperand(Op.Inputs[0]);
-  if (Op.Opcode == NdOp::FLOAT_NEG) {
-    writeOutput(Op.Output, A ^ (Op.Output.Size == sizeof(float)
-                                    ? UINT64_C(0x0000000080000000)
-                                    : UINT64_C(0x8000000000000000)));
-    return true;
-  }
-
   if (Op.Opcode == NdOp::FLOAT_SQRT) {
     if (Op.Output.Size == sizeof(float)) {
       const uint32_t Bits = static_cast<uint32_t>(A);
@@ -1396,7 +1411,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
 
     const std::vector<uint8_t> Source = readOperandBytes(Op.Inputs[2]);
     std::vector<uint8_t> Result(Op.Output.Size, 0);
-    uint32_t Raised = 0;
+    uint32_t PreRaised = 0, PostRaised = 0;
     if (HalfToSingle) {
       const size_t Elements = Op.Output.Size / 4;
       for (size_t Element = 0; Element < Elements; ++Element) {
@@ -1405,7 +1420,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
         uint32_t Converted = 0;
         if ((Bits & 0x7c00U) == 0x7c00U && Fraction != 0) {
           if ((Fraction & 0x0200U) == 0)
-            Raised |= 1U << 0;
+            PreRaised |= 1U << 0;
           Converted = (static_cast<uint32_t>(Bits & 0x8000U) << 16) |
                       0x7f800000U | (static_cast<uint32_t>(Fraction) << 13) |
                       0x00400000U;
@@ -1415,7 +1430,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
           const llvm::APFloat::opStatus Status =
               Value.convert(llvm::APFloat::IEEEsingle(),
                             llvm::APFloat::rmNearestTiesToEven, &LosesInfo);
-          Raised |= statusFlags(Status);
+          PostRaised |= statusFlags(Status);
           Converted =
               static_cast<uint32_t>(Value.bitcastToAPInt().getZExtValue());
         }
@@ -1436,7 +1451,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
         if (Denormal && Daz) {
           Bits &= 0x80000000U;
         } else if (Denormal) {
-          Raised |= 1U << 1;
+          PreRaised |= 1U << 1;
         }
 
         uint16_t Converted = 0;
@@ -1444,7 +1459,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
         const uint32_t EffectiveFraction = Bits & 0x007fffffU;
         if (EffectiveExponent == 0x7f800000U && EffectiveFraction != 0) {
           if ((EffectiveFraction & 0x00400000U) == 0)
-            Raised |= 1U << 0;
+            PreRaised |= 1U << 0;
           Converted = static_cast<uint16_t>(
               ((Bits >> 16) & 0x8000U) | 0x7c00U |
               ((EffectiveFraction >> 13) & 0x03ffU) | 0x0200U);
@@ -1454,22 +1469,35 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
           bool LosesInfo = false;
           const llvm::APFloat::opStatus Status =
               Value.convert(llvm::APFloat::IEEEhalf(), Rounding, &LosesInfo);
-          Raised |= statusFlags(Status);
+          const uint32_t LaneFlags = statusFlags(Status);
+          PostRaised |= LaneFlags;
           Converted =
               static_cast<uint16_t>(Value.bitcastToAPInt().getZExtValue());
           const bool NonzeroFinite =
               (Bits & 0x7fffffffU) != 0 && EffectiveExponent != 0x7f800000U;
-          if (NonzeroFinite && (Converted & 0x7c00U) == 0)
-            Raised |= 1U << 4;
+          if (NonzeroFinite) {
+            const int Exponent =
+                x86NarrowRoundedExponent(Bits, 8, 23, 10, Rounding);
+            if (Exponent > 15)
+              PostRaised |= 0x28;
+            const bool UnderflowMasked = SuppressExceptions || (MXCSR & 0x800);
+            // F16C ignores FTZ. Exact tiny results raise UE only when UM is
+            // clear.
+            if (Exponent < -14 && ((LaneFlags & 0x20) || !UnderflowMasked))
+              PostRaised |= 0x10;
+          }
         }
         writeWord(Result, Element * 2, Converted);
       }
     }
 
     if (!SuppressExceptions) {
-      MXCSR |= Raised;
-      const uint32_t Unmasked = Raised & ~(MXCSR >> 7) & 0x3fU;
-      if (Unmasked != 0)
+      // Operand exceptions across all lanes precede numerical exceptions.
+      MXCSR |= PreRaised;
+      if (PreRaised & ~(MXCSR >> 7) & 0x3fU)
+        return false;
+      MXCSR |= PostRaised;
+      if (PostRaised & ~(MXCSR >> 7) & 0x3fU)
         return false;
     }
     writeOutputBytes(Op.Output, Result);

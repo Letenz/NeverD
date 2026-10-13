@@ -51,6 +51,11 @@ public:
                              llvm::ArrayRef<uint8_t> Code,
                              llvm::StringRef SegName, Arch TargetArch) override;
 
+  /// Install a separately authenticated native producer image. MC owner and
+  /// range identities remain absent; storage and segment receipts are shared.
+  llvm::Error appendReplacementImage(std::vector<uint8_t> &Binary,
+                                     const CompiledImage &Image);
+
 private:
   struct PatchLayout : PatchLayoutBase {
     uint32_t NCmds = 0;
@@ -82,6 +87,7 @@ private:
     uint64_t SegmentVMSize = 0;
     uint64_t SegmentFileOff = 0;
     uint64_t SegmentFileSize = 0;
+    uint64_t WritableSize = 0;
     uint64_t LinkeditVA = 0;
     uint64_t LinkeditVMSize = 0;
     uint64_t LinkeditFileOff = 0;
@@ -96,7 +102,8 @@ private:
   uint64_t appendExecSegmentImpl(std::vector<uint8_t> &Binary,
                                  llvm::ArrayRef<uint8_t> Code,
                                  llvm::StringRef SegName, Arch TargetArch,
-                                 ExecSegmentInstallReceipt *Receipt);
+                                 ExecSegmentInstallReceipt *Receipt,
+                                 uint64_t WritableOffset = 0);
   bool validateExecSegmentInstall(const std::vector<uint8_t> &Binary,
                                   Arch TargetArch,
                                   const ExecSegmentInstallReceipt &Receipt);

@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineMedAudit.h"
+#include "PipelineSEHRuntimeMemory.h"
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Common.h"
@@ -71,6 +72,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   for (const auto &[Entry, Hint] : SourceHints)
     SourceEntryHints.emplace(Entry, *Hint);
   auto SourceCalleeHints = SourceEntryHints;
+  const auto SEHRuntimeMemory =
+      collectLowSEHRuntimeMemory(Img, Result.LowFuncs);
   std::map<va_t, const LowFunc *> SourceCalleeFunctions;
   for (const auto &F : Result.LowFuncs)
     SourceCalleeFunctions.emplace(F.Entry, &F);
@@ -117,6 +120,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setSourceEntryTypeHints(&SourceEntryHints);
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
     Local.setSourceCalleeFunctions(&SourceCalleeFunctions);
+    Local.setSEHFrameCallees(&SourceCalleeFunctions);
+    Local.setSEHRuntimeMemory(&SEHRuntimeMemory);
     Local.setObjCBlockCaptureCallFields(&Opts.ObjCBlockCaptureFields);
     Local.setObjCBlockParameterReceivers(&Opts.ObjCBlockParameterReceivers);
     Local.setObjCBlockCaptureReceivers(&Opts.ObjCBlockCaptureReceivers);

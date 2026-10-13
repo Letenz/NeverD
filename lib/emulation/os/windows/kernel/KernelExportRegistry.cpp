@@ -226,6 +226,10 @@ KernelExportRegistry::insertProviderFunction(uint64_t PDO,
 
 const KernelExportRegistry::Export *
 KernelExportRegistry::lookup(uint64_t Address) const {
+  // Ordinary instructions cannot name a service gate. Share the registry's
+  // complete gate ranges with access validation before searching identities.
+  if (!overlapsThunk(Address))
+    return nullptr;
   auto I = Exports.find(Address);
   return I == Exports.end() ? nullptr : &I->second;
 }

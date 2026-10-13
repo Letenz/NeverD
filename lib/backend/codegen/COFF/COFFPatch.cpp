@@ -13,12 +13,15 @@
 
 #include "neverd/backend/codegen/COFF/COFFPatch.h"
 
+#include "COFFTrampolineRegions.h"
+
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/codegen/COFF/COFFReloc.h"
+#include "neverd/backend/codegen/COFF/COFFSourceImage.h"
 #include "neverd/object/PELayout.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -393,10 +396,22 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
         }
 
         auto CompileMod = llvm::CloneModule(Mod);
+        const bool SourceReplacement =
+            InputKind == RewriteInputKind::ReplacementIR;
+        if (SourceReplacement) {
+          auto Admission =
+              planCOFFSourcePatch(*CompileMod, *CachedImage, TargetArch);
+          if (!Admission) {
+            llvm::WithColor::error()
+                << llvm::toString(Admission.takeError()) << "\n";
+            return false;
+          }
+        }
         SourceFunctionPreparation SourcePreparation;
         std::string SourceDetail;
         if (!prepareSourceFunctionsForPatch(*CompileMod, CachedImage,
-                                            SourcePreparation, SourceDetail)) {
+                                            SourcePreparation, SourceDetail,
+                                            InputKind)) {
           llvm::WithColor::error()
               << "coff_patch: source identity preparation failed: "
               << SourceDetail << "\n";
@@ -407,7 +422,9 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
           return true;
         }
         auto EHPlanOrErr =
-            planCOFFExceptionPatch(*CompileMod, *CachedImage, TargetArch);
+            SourceReplacement
+                ? planCOFFSourcePatch(*CompileMod, *CachedImage, TargetArch)
+                : planCOFFExceptionPatch(*CompileMod, *CachedImage, TargetArch);
         if (!EHPlanOrErr) {
           llvm::WithColor::error()
               << llvm::toString(EHPlanOrErr.takeError()) << "\n";
@@ -477,8 +494,24 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
             return SerializeResolvedCode(Callee->second, true);
           std::string Key = resolveSymbolAlias(Name, Layout.IATMap);
           auto It = Layout.IATMap.find(Key);
-          if (It != Layout.IATMap.end())
-            return SerializeResolvedCode(Layout.ImageBase + It->second, false);
+          if (It != Layout.IATMap.end()) {
+            if (!SourceReplacement ||
+                llvm::StringRef(Name).starts_with("__imp_"))
+              return SerializeResolvedCode(Layout.ImageBase + It->second,
+                                           false);
+            std::optional<uint64_t> Stub;
+            for (const auto &[VA, Import] : CachedImage->ImportStubIndices) {
+              if (Import >= CachedImage->Imports.size() ||
+                  CachedImage->Imports[Import].Name != Name ||
+                  !CachedImage->findImportStubAt(VA) ||
+                  !CachedImage->isCodeAddress(VA))
+                continue;
+              if (Stub && *Stub != VA)
+                return std::nullopt;
+              Stub = VA;
+            }
+            return Stub;
+          }
           if (CachedExports) {
             for (auto &E : *CachedExports)
               if (E.Name == Name)
@@ -516,9 +549,9 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
           F.setDSOLocal(true);
         }
 
-        CompiledImage Img =
-            compileImageForPatch(*CompileMod, TargetArch, BinaryFormat::COFF,
-                                 CodeVA, Resolve, Layout.ImageBase);
+        CompiledImage Img = compileImageForPatch(
+            *CompileMod, TargetArch, BinaryFormat::COFF, CodeVA, Resolve,
+            Layout.ImageBase, {}, InputKind);
         if (!Img.Success || Img.Bytes.empty()) {
           llvm::WithColor::error()
               << "coff_patch: compileImageForPatch failed\n";
@@ -556,14 +589,22 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
 
         size_t TrampCount = 0;
         if (HasExactSourcePlan) {
-          if (!TrampolinePlan.OriginalVAs.empty())
-            TrampCount = installTrampolines(
-                Binary, Img.SymbolAddrs, Layout.TextVA, Layout.TextSize,
-                Layout.TextFileOff, Layout.ImageBase, TargetArch, CachedMode,
+          auto Regions = collectCOFFSourceTrampolineRegions(
+              Binary, *CachedImage, TrampolinePlan.OriginalVAs);
+          if (!Regions) {
+            llvm::WithColor::error()
+                << llvm::toString(Regions.takeError()) << '\n';
+            return false;
+          }
+          for (const auto &Region : *Regions)
+            TrampCount += installTrampolines(
+                Binary, Img.SymbolAddrs, Region.SectionVA, Region.SectionSize,
+                Region.SectionFileoff, Layout.ImageBase, TargetArch, CachedMode,
                 CachedSymbols, CachedCodeRanges, TrampolineExports,
                 &PatchedOriginalEntries, &PatchedEntryMappings,
                 &InstalledFunctions, TrampolinePlan.Owners,
-                TrampolinePlan.OriginalVAs);
+                TrampolinePlan.OriginalVAs, CachedImage,
+                SourceReplacement ? &Img.ReplacementFunctionModes : nullptr);
           if (!validatePatchedSourceTrampolineClosure(
                   TrampolinePlan, InstalledFunctions, TrampCount,
                   SourceDetail)) {
@@ -581,6 +622,17 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
               &InstalledFunctions);
         }
 
+        if (SourceReplacement) {
+          if (auto Error = installCOFFSourceImage(Binary, *CachedImage, Img)) {
+            llvm::WithColor::error()
+                << llvm::toString(std::move(Error)) << "\n";
+            return false;
+          }
+          Result.Success = true;
+          Result.CodeSize = Img.Bytes.size();
+          Result.TrampolineCount = TrampCount;
+          return true;
+        }
         COFFExceptionDirectoryUpdate EHUpdate;
         if (TargetArch != Arch::X86) {
           auto Prepared = prepareCOFFExceptionDirectory(
@@ -661,6 +713,8 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
       Patch, InstalledFunctions, [](const PatchedFunctionEntry &Installed) {
         return Installed.OriginalVA;
       });
+  if (Patch.Success)
+    Patch.PatchedFunctions = std::move(InstalledFunctions);
   return Patch;
 }
 

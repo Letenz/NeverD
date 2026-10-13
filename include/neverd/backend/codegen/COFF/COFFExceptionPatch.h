@@ -10,6 +10,7 @@
 #include "neverd/Common.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -27,6 +28,28 @@ namespace neverd {
 
 struct BinaryImage;
 struct CompiledImage;
+
+/// Common original-image protection and malformed-input admission for both
+/// source and native object replacement.
+llvm::Error validateCOFFReplacementFeatures(const BinaryImage &Image,
+                                            Arch TargetArch);
+
+/// Format-owned decoding shared by lifted and replacement installation.
+/// Words retain the physical x64/ARM row; Begin/End are normalized code RVAs.
+struct COFFRuntimeFunctionRecord {
+  uint32_t Begin = 0, End = 0, Unwind = 0;
+  uint32_t Handler = 0, HandlerData = 0;
+  bool HasLanguageHandler = false;
+  std::array<uint32_t, 3> Words{};
+  uint8_t WordCount = 0;
+  friend bool operator==(const COFFRuntimeFunctionRecord &A,
+                         const COFFRuntimeFunctionRecord &B) {
+    return A.WordCount == B.WordCount && A.Words == B.Words;
+  }
+};
+llvm::Expected<COFFRuntimeFunctionRecord> decodeCOFFRuntimeFunction(
+    llvm::ArrayRef<uint8_t> Record, Arch Architecture,
+    llvm::function_ref<const uint8_t *(uint32_t, uint64_t)> ReadAtRVA);
 
 /// Return an executable personality thunk already validated in \p Image.
 /// \p SymbolName may be either the canonical runtime name or the stable
@@ -77,6 +100,14 @@ llvm::Error retainCOFFCxxGroupRewriteContractsForReplacement(
 llvm::Expected<COFFExceptionPatchPlan>
 planCOFFExceptionPatch(const llvm::Module &Mod, const BinaryImage &Image,
                        Arch TargetArch);
+
+/// Admit an explicitly supplied replacement body, independently of the old
+/// function's lifted EH contract. The x64 source profile installs compiler
+/// CFI/FH3 records while preserving all original runtime rows. Its installation
+/// contract is implemented in COFFSourceImage, separately from lifted EH.
+llvm::Expected<COFFExceptionPatchPlan>
+planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
+                    Arch TargetArch);
 
 enum class COFFGeneratedLanguageModel : uint8_t {
   SEH,

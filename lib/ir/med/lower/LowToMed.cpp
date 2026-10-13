@@ -18,12 +18,16 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
+#include "neverd/ir/med/X86RegistrationEntry.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -563,6 +567,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   if (Low.RegistrationStates && Image)
     Func.RegistrationCallerCleanupABIComplete =
         hasCallerCleanupRegistrationABI(Low, *Image);
+  if (Low.ExceptionMetadata && Low.ExceptionMetadata->Cxx && Image)
+    Func.RegistrationCxxEntryPopBytes =
+        getCheckedX86RegistrationCxxParentABI(Low, *Image);
   if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
       TheArch == Arch::AArch64 && Image->Arch == TheArch) {
     Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);
@@ -731,14 +738,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
               LowOpIndex - Boundary.FirstOp < Boundary.OpCount)
             MOp.DoesNotReturn = hasLowInstructionControlFlag(
                 Boundary.ControlFlags, LowInstructionControlFlag::NoReturn);
+          if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+            MOp.DoesNotReturn |= x86_registration::hasNoReturnCallEffect(
+                Low, LB, LowOpIndex, Boundary);
         }
-        if (Low.RegistrationStates)
-          if (const auto *Call =
-                  Low.RegistrationStates->callFrameEffect(LOp.Addr, LOp.Seq))
-            if (LOp.Opcode == NdOp::CALL && LOp.NumInputs == 1 &&
-                LOp.Inputs[0].isConst() && LOp.Inputs[0].Size == 4 &&
-                LOp.Inputs[0].Offset == Call->Target)
-              MOp.DoesNotReturn |= Call->DoesNotReturn;
       }
 
       if (LOp.Output.Size > 0)
@@ -747,42 +750,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       // A register/temp XOR with itself is a machine zero idiom, including
       // 128/256/512-bit vector containers. Eliminate the read before liveness
       // and SSA: folding only in HighIR leaves a false incoming FP parameter.
-      // Keep effect-bearing operations and mismatched-width slices intact.
-      const bool SelfXor =
-          LOp.Opcode == NdOp::INT_XOR && LOp.NumInputs == 2 &&
-          LOp.MemoryOrdering == NdMemoryOrdering::None &&
-          LOp.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          (LOp.Output.isReg() || LOp.Output.isTemp()) && LOp.Output.Size &&
-          (LOp.Inputs[0].isReg() || LOp.Inputs[0].isTemp()) &&
-          LOp.Inputs[0] == LOp.Inputs[1] &&
-          LOp.Output.Size == LOp.Inputs[0].Size;
-      // `or r, -1` and `and r, 0` (MSVC sets a register to all ones or zero
-      // this way) do not depend on the register's old value.  Folding them
-      // here keeps that value from becoming a read before SSA: otherwise a
-      // path where it is undefined merges `0 /* unknown */` into it.
-      const auto AbsorbingConstant = [&]() -> std::optional<uint64_t> {
-        if ((LOp.Opcode != NdOp::INT_OR && LOp.Opcode != NdOp::INT_AND) ||
-            LOp.NumInputs != 2 ||
-            LOp.MemoryOrdering != NdMemoryOrdering::None ||
-            LOp.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-            !(LOp.Output.isReg() || LOp.Output.isTemp()) || !LOp.Output.Size ||
-            LOp.Output.Size > 8)
-          return std::nullopt;
-        const uint64_t Mask = LOp.Output.Size == 8
-                                  ? ~uint64_t{0}
-                                  : (uint64_t{1} << (8 * LOp.Output.Size)) - 1;
-        for (unsigned I = 0; I < 2; ++I) {
-          const NdVar &C = LOp.Inputs[I];
-          if (!C.isConst())
-            continue;
-          const uint64_t V = C.Offset & Mask;
-          if (LOp.Opcode == NdOp::INT_OR && V == Mask)
-            return Mask;
-          if (LOp.Opcode == NdOp::INT_AND && V == 0)
-            return 0;
-        }
-        return std::nullopt;
-      }();
+      const bool SelfXor = isLowSelfXor(LOp);
+      // `or r, -1` and `and r, 0` do not depend on the register's old value.
+      // Folding them here keeps that value from becoming a read before SSA:
+      // otherwise a path where it is undefined merges `0 /* unknown */` into
+      // it.
+      const std::optional<uint64_t> AbsorbingConstant =
+          lowAbsorbingConstant(LOp);
       if (SelfXor) {
         MOp.Opcode = NdOp::COPY;
         MOp.addInput(MedVar::makeConst(0, LOp.Output.Size,
@@ -795,6 +769,34 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
         for (uint8_t I = 0; I < LOp.NumInputs; ++I)
           MOp.addInput(ndVarToMedVar(LOp.Inputs[I]));
       }
+      // A supervisor call under a known operating system's ABI reads its
+      // number and argument registers and writes its result register.
+      if (Image && LOp.Opcode == NdOp::INTRINSIC && LOp.NumInputs == 2 &&
+          LOp.Inputs[0].isConst() && LOp.Inputs[1].isConst())
+        if (const SyscallConvention *Syscall = syscallConvention(
+                *Image, TheArch, static_cast<Intrinsic>(LOp.Inputs[0].Offset),
+                LOp.Inputs[1].Offset)) {
+          MedVar Id = MOp.Inputs[0];
+          Id.ConstVal = static_cast<uint64_t>(Syscall->Modeled);
+          const uint16_t Size = Syscall->RegisterSize;
+          // A syscall the block numbers just before the call, and whose
+          // arity is verified, reads only its own argument registers.
+          std::optional<unsigned> Read;
+          if (const auto Number = blockRegisterConstant(
+                  LB.Ops, LowOpIndex, Syscall->NumberRegister, Size))
+            Read = linuxSyscallArgumentCount(TheArch, *Number);
+          MOp.NumInputs = 0;
+          MOp.addInput(Id);
+          MOp.addInput(
+              ndVarToMedVar(NdVar::reg(Syscall->NumberRegister, Size)));
+          for (uint8_t I = 0; I < Syscall->ArgumentCount; ++I)
+            MOp.addInput(Read && I >= *Read
+                             ? MedVar::makeConst(
+                                   0, Size, ConstantAddressProvenance::Scalar)
+                             : ndVarToMedVar(NdVar::reg(
+                                   Syscall->ArgumentRegisters[I], Size)));
+          MOp.Output = ndVarToMedVar(NdVar::reg(Syscall->ResultRegister, Size));
+        }
       DispatchCallDefinedArgs = DispatchDefined;
       // A register an indirect call goes through, loaded from an import's
       // slot, names that import as the slot would (`mov rax, [rip+slot];
@@ -1106,6 +1108,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     debugVerifyMedFunc(Func, "mergeLoopCarriedVectorReads");
 
     detectCc(Func, TheArch, Fmt);
+    completeX86RegistrationEntryParameters(Func);
     debugVerifyMedFunc(Func, "detectCc");
 
     propagate(Func);

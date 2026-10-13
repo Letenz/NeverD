@@ -110,6 +110,45 @@ struct TargetCodegenInfo {
     return 0;
   }
 
+  /// Source replacement keeps generated and original entry states identical.
+  /// Use a relative A32 B so a PIE needs no new absolute pointer in old text.
+  uint64_t sourceTrampolineSize() const {
+    return TheArch == Arch::ARM ? 4 : trampolineSize();
+  }
+  bool writeSourceTrampoline(std::vector<uint8_t> &Data, uint64_t FromOff,
+                             uint64_t TargetVA, uint64_t FromVA,
+                             uint64_t MaxOverwriteBytes = ~uint64_t(0)) const {
+    if (TheArch != Arch::ARM)
+      return writeTrampoline(Data, FromOff, TargetVA, FromVA,
+                             MaxOverwriteBytes);
+    if (Mode == InstructionMode::Thumb) {
+      if (TargetVA > UINT32_MAX || FromVA > UINT32_MAX || (TargetVA & 1) ||
+          (FromVA & 1) || MaxOverwriteBytes < 4 ||
+          !rangeInBounds(FromOff, 4, Data.size()))
+        return false;
+      const int64_t Delta =
+          int64_t(TargetVA) - int64_t(FromVA) - branch::ThumbPCOffset;
+      if ((Delta & 1) || !llvm::isInt<25>(Delta))
+        return false;
+      const auto [High, Low] = branch::t32Jump(Delta);
+      writeLE<uint16_t>(Data.data() + FromOff, High);
+      writeLE<uint16_t>(Data.data() + FromOff + 2, Low);
+      return true;
+    }
+    if (Mode != InstructionMode::ARM)
+      return false;
+    if (TargetVA > UINT32_MAX || FromVA > UINT32_MAX || (TargetVA & 3) ||
+        (FromVA & 3) || MaxOverwriteBytes < 4 ||
+        !rangeInBounds(FromOff, 4, Data.size()))
+      return false;
+    const int64_t Delta = int64_t(TargetVA) - int64_t(FromVA) - 8;
+    if (Delta < -(int64_t(1) << 25) || Delta >= (int64_t(1) << 25))
+      return false;
+    writeLE<uint32_t>(Data.data() + FromOff,
+                      0xea000000 | (uint32_t(Delta >> 2) & 0xffffff));
+    return true;
+  }
+
   /// Write a direct-branch trampoline into \p Data at byte offset \p FromOff
   /// (virtual address \p FromVA) targeting \p TargetVA.  Returns false if it
   /// does not fit or the displacement is out of branch range.
@@ -121,17 +160,30 @@ struct TargetCodegenInfo {
         !rangeInBounds(FromOff, TrampolineSize, Data.size()))
       return false;
     if (TheArch == Arch::X64 || TheArch == Arch::X86) {
-      int32_t Disp =
-          static_cast<int32_t>(TargetVA - (FromVA + x86::kJmpRel32Len));
+      if (TheArch == Arch::X86 &&
+          (FromVA > UINT32_MAX || TargetVA > UINT32_MAX))
+        return false;
+      if (FromVA > UINT64_MAX - x86::kJmpRel32Len)
+        return false;
+      const uint64_t NextVA = FromVA + x86::kJmpRel32Len;
+      if (TheArch == Arch::X64 &&
+          ((TargetVA >= NextVA && TargetVA - NextVA > INT32_MAX) ||
+           (TargetVA < NextVA && NextVA - TargetVA > uint64_t(INT32_MAX) + 1)))
+        return false;
+      int32_t Disp = static_cast<int32_t>(TargetVA - NextVA);
       Data[FromOff] = x86::kJmpRel32;
       writeLE<int32_t>(Data.data() + FromOff + 1, Disp);
       return true;
     }
     if (TheArch == Arch::AArch64) {
-      int64_t Diff =
-          static_cast<int64_t>(TargetVA) - static_cast<int64_t>(FromVA);
-      if (Diff < -aarch64::kBranchRange || Diff >= aarch64::kBranchRange)
+      if ((FromVA & 3) || (TargetVA & 3))
         return false;
+      const bool Forward = TargetVA >= FromVA;
+      const uint64_t Distance = Forward ? TargetVA - FromVA : FromVA - TargetVA;
+      if ((Forward && Distance >= uint64_t(aarch64::kBranchRange)) ||
+          (!Forward && Distance > uint64_t(aarch64::kBranchRange)))
+        return false;
+      const int64_t Diff = Forward ? int64_t(Distance) : -int64_t(Distance);
       uint32_t Imm26 = static_cast<uint32_t>((Diff >> 2) & aarch64::kImm26Mask);
       writeLE<uint32_t>(Data.data() + FromOff, aarch64::kB_Op | Imm26);
       return true;

@@ -9,7 +9,9 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/PointerRelocation.h"
 
+#include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -166,4 +168,57 @@ TEST(PointerRelocationBatch, RecordsWhatEachRelocationInTurnWould) {
 TEST(PointerRelocationBatch, RecordsWhatEachRelocationInTurnWouldForThumb) {
   // No address of an ARM image is classified by its section alone.
   expectBatchMatchesEachInTurn(Arch::ARM, InstructionMode::Thumb);
+}
+
+TEST(PointerRelocationBatch, PointersToDataInCodeBecomePointersToData) {
+  // A kernel keeps string literals and tables in its executable PAGE.  The
+  // loader takes a pointer in .data to them for a pointer to code until the
+  // debug information places its target in data.
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  const SegmentFlags Code = SegmentFlags::Readable | SegmentFlags::Executable;
+  const SegmentFlags Writable = SegmentFlags::Readable | SegmentFlags::Writable;
+  addSegment(Img, 0x1000, 0x100, Code);
+  addOwner(Img, "PAGE", 0x1000, 0x100, Code);
+  addSegment(Img, 0x3000, 0x100, Writable);
+  addOwner(Img, ".data", 0x3000, 0x100, Writable);
+  Symbol Routine;
+  Routine.Name = "routine";
+  Routine.Addr = 0x1000;
+  Routine.Size = 0x20;
+  Routine.IsFunc = true;
+  Img.Symbols.push_back(Routine);
+
+  // Inside the routine; a named string; an unnamed table after it; bytes
+  // nothing describes.
+  const std::vector<AbsolutePointerRelocation> Pointers = {
+      {0x3000, 0x1010, InvalidVA},
+      {0x3008, 0x1040, InvalidVA},
+      {0x3010, 0x1060, InvalidVA},
+      {0x3018, 0x1080, InvalidVA}};
+  for (const AbsolutePointerRelocation &Pointer : Pointers) {
+    const uint64_t Value = Pointer.TargetVA;
+    std::memcpy(Img.Segments[1].Data.data() + (Pointer.SlotVA - 0x3000), &Value,
+                sizeof(Value));
+  }
+  recordAbsolutePointerRelocations(Img, Pointers);
+  ASSERT_EQ(Img.CodePtrRelocSlots,
+            (std::set<va_t>{0x3000, 0x3008, 0x3010, 0x3018}));
+
+  // The debug information places even the routine's interior in data; the
+  // routine's own symbol keeps it code.
+  const std::set<va_t> InData = {0x1010, 0x1040, 0x1060};
+  const auto Places = [&](va_t Addr) { return InData.count(Addr) != 0; };
+  EXPECT_EQ(recordDataPointerTargets(Img, Places), 2u);
+  EXPECT_EQ(Img.CodePtrRelocSlots, (std::set<va_t>{0x3000, 0x3018}));
+  EXPECT_EQ(Img.DataPtrRelocSlots, (std::set<va_t>{0x3008, 0x3010}));
+  EXPECT_EQ(Img.DataPtrRelocTargetOwners.at(0x3008), 0x1000u);
+  EXPECT_EQ(Img.DataPtrRelocTargetOwners.at(0x3010), 0x1000u);
+  EXPECT_TRUE(Img.RelocDataAddrs.count(0x1040));
+  EXPECT_TRUE(Img.RelocDataAddrs.count(0x1060));
+  EXPECT_TRUE(Img.WritableRelocDataAddrs.empty());
+  // Done once, it is done.
+  EXPECT_EQ(recordDataPointerTargets(Img, Places), 0u);
 }

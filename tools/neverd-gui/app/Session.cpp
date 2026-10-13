@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QJsonDocument>
 #include <QSaveFile>
 #include <QSet>
 #include <QSettings>
@@ -424,9 +425,15 @@ void Session::sendOpen(const QString &requested, const QString &path,
                        const QString &database,
                        const QHash<QString, QByteArray> &state,
                        LoadOptions options) {
+  if (options.pdb.isEmpty())
+    options.pdb =
+        QJsonDocument::fromJson(state.value(QStringLiteral("pdb-input.json")))
+            .object();
   QJsonObject payload{{"path", path},
                       {"debug_info", options.debugInfo},
                       {"analysis", options.analysis}};
+  if (!options.pdb.isEmpty())
+    payload.insert(QStringLiteral("pdb"), options.pdb);
   if (!options.loader.isEmpty())
     payload.insert(QStringLiteral("loader"), options.loader);
   if (options.loader == QLatin1String("binary")) {
@@ -489,6 +496,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
                   : tr("Platform: %1, as chosen").arg(platform),
               0);
         }
+        if (const auto pdb = payload.value("pdb").toObject(); !pdb.isEmpty())
+          reportPdb(pdb);
         if (std::exchange(reloading_, false))
           emit message(tr("Reloaded the input file"), 0);
         emit opened();
@@ -651,8 +660,11 @@ void Session::save() {
 void Session::packDatabase() {
   if (databasePath_.isEmpty() || readOnly())
     return;
-  const auto state =
-      stateProvider_ ? stateProvider_() : QHash<QString, QByteArray>{};
+  auto state = stateProvider_ ? stateProvider_() : QHash<QString, QByteArray>{};
+  if (!loadOptions_.pdb.isEmpty())
+    state.insert(
+        QStringLiteral("pdb-input.json"),
+        QJsonDocument(loadOptions_.pdb).toJson(QJsonDocument::Compact));
   // Quitting waits for the database like it waits for an edit.
   ++pendingWrites_;
   emit stateChanged();
@@ -680,8 +692,12 @@ void Session::saveDatabaseState() {
   if (databasePath_.isEmpty() || readOnly() ||
       !QFileInfo::exists(databasePath_) || !stateProvider_)
     return;
-  if (const auto error =
-          ProjectDatabase::saveState(databasePath_, stateProvider_());
+  auto state = stateProvider_();
+  if (!loadOptions_.pdb.isEmpty())
+    state.insert(
+        QStringLiteral("pdb-input.json"),
+        QJsonDocument(loadOptions_.pdb).toJson(QJsonDocument::Compact));
+  if (const auto error = ProjectDatabase::saveState(databasePath_, state);
       !error.isEmpty())
     emit message(tr("Could not update the database: %1").arg(error), 1);
 }
@@ -845,6 +861,38 @@ void Session::loadSignatures(const QString &path, bool tree) {
                              .arg(payload.value("byte_matches").toInt()),
                          0);
           });
+}
+
+void Session::loadPdb(const QJsonObject &selection) {
+  if (!loaded_ || !loadsPdbFiles())
+    return;
+  command(QStringLiteral("pdb_load"), selection,
+          [this](const QJsonObject &result) {
+            loadOptions_.pdb = {{"path", result.value("path")},
+                                {"mode", result.value("mode")},
+                                {"stamp", result.value("stamp")}};
+            functionCount_ =
+                result.value("function_count").toInteger(functionCount_);
+            metadata_.insert(QStringLiteral("debug_info"), result);
+            metadata_.insert(QStringLiteral("pdb"), loadOptions_.pdb);
+            metadata_.remove(QStringLiteral("pdb_download"));
+            emit functionsChanged();
+            emit stateChanged();
+            reportPdb(result);
+          });
+}
+
+void Session::reportPdb(const QJsonObject &result) {
+  emit message(
+      (result.value("verified").toBool()
+           ? tr("PDB loaded: %1 (%2 names, identity verified)")
+       : result.value("mode").toString() == QLatin1String("analysis")
+           ? tr("PDB loaded for analysis: %1 (%2 names, user confirmed, "
+                "identity unverified)")
+           : tr("PDB display names imported: %1 (%2 names, unverified)"))
+          .arg(QDir::toNativeSeparators(result.value("path").toString()))
+          .arg(result.value("name_count").toInteger()),
+      result.value("verified").toBool() ? 0 : 1);
 }
 
 void Session::setStringOptions(const QStringList &encodings,

@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>피연산자의 숫자를 비트를 반전하여 표시합니다</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>코드(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>현재 주소부터 명령어를 정의합니다</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>오프라인 패키지 검토(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>로컬 패키지 증거와 분석가 검토를 살펴봅니다</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB 파일(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>선택한 PDB 파일에서 심볼 불러오기</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1452,22 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>C로 표시한 선언 %n개</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>취소됨</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>저장된 변수 이름은 다른 소스 렌더링에 속합니다</translation>
+    </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>블록 펼치기 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>블록 접기 (Ctrl+Shift+[)</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2088,78 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>%1을(를) 불러오는 방법을 알 수 없습니다: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>이 소스 줄의 주석:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>새 이름:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>이름 바꾸기</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>이름을 바꿀 선언된 변수나 이미지의 이름을 선택하세요</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>소스 줄을 선택하세요. 접힌 코드는 펼친 뒤 주석을 다세요</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>선택한 이름에는 이미지 주소가 없습니다</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>이 명령어에는 소스 줄 주소 매핑이 없습니다.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>이 소스 줄에는 명령어 주소 매핑이 없습니다. 함수 진입점을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 파일 (*.pdb);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>검증되지 않은 PDB로 분석</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>이 PE에는 PDB 일치 식별 정보(GUID/age)가 없습니다. 선택한 PDB의 아키텍처와 섹션 배치는 일치하지만 같은 빌드인지 확인할 수 없습니다.
+
+이 PDB를 분석에 사용하시겠습니까? 심볼, 형식, 함수 시그니처와 주소 범위를 분석 입력으로 사용합니다. 잘못된 PDB를 선택하면 분석 결과가 부정확할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>이 엔진은 검증되지 않은 PDB를 분석에 사용할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>행</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>열</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>코드</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>함수 불러오기가 완료된 후 참조를 찾으세요</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2298,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>연 파일이 여기에 표시됩니다. [새 파일]을 선택하거나 이 창에 파일을 놓으세요.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>마지막으로 연 날짜: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2424,22 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>플랫폼: %1, 코드에서 판별: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1에 이미 명령어가 정의되어 있습니다</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB를 불러왔습니다: %1 (%2개 이름, 식별 정보 검증됨)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB 표시 이름을 가져왔습니다: %1 (%2개 이름, 검증되지 않음)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>분석용 PDB를 불러왔습니다: %1 (%2개 이름, 사용자 확인됨, 식별 정보 미검증)</translation>
     </message>
 </context>
 <context>
@@ -2525,6 +2657,147 @@ Signed: %4</source>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>최소화</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>최대화</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>이전 크기로 복원</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>닫기</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>분석 프로세스가 중지되었습니다.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>분석 읽기만 허용됩니다.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>분석 프로세스가 분석 상태를 복원할 수 없습니다.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>심볼 다운로드 시간이 초과되었습니다.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>디버그 심볼 다운로드</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>%1에 맞는 로컬 PDB를 불러오지 못했습니다.
+
+Microsoft 심볼 서버에서 %2 다운로드를 시도하시겠습니까? Microsoft가 이 빌드의 심볼을 제공하는 경우에만 다운로드할 수 있습니다.
+
+PDB 파일 이름과 빌드 식별자만 전송하며 바이너리는 업로드하지 않습니다. 일치하는 심볼은 자동으로 캐시하고 불러옵니다.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>다운로드</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>나중에</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>심볼 캐시 디렉터리를 만들 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>%1에서 임시 심볼 파일을 열 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>심볼 다운로드가 취소되었습니다.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>%1 다운로드 중…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>심볼 파일이 2 GiB 다운로드 제한을 초과합니다.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft에 이 빌드와 일치하는 심볼이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>심볼 다운로드 실패: %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>다운로드한 심볼 파일이 비어 있습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>심볼 파일 %1에 쓸 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>압축된 심볼 파일이 유효하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>%1에 임시 심볼 디렉터리를 만들 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>심볼 압축 해제 중…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>심볼 파일의 압축을 해제할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>압축된 심볼은 Windows가 필요합니다.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>다운로드한 심볼 검증 중…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>PDB가 불러온 파일과 일치하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>검증된 PDB를 %1에 저장할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>심볼 검증 실패: %1</translation>
     </message>
 </context>
 </TS>

@@ -20,6 +20,8 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
@@ -1225,6 +1227,8 @@ void MedLLVMEmitter::invalidateFeasibleEdgeDependentCaches() const {
   SelfRecurrenceCache.clear();
   StableOffsetCacheFor = nullptr;
   StableOffsetCache.clear();
+  ClosedFrameSlotCacheFor = nullptr;
+  ClosedFrameSlotCache.clear();
   IndexedGlobalBaseCacheFor = nullptr;
   IndexedGlobalBaseCache.clear();
   InductionBasesFor = nullptr;
@@ -2545,8 +2549,8 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     return false;
   };
 
-  std::function<bool(const MedVar &, int, std::set<Key>, std::set<FrameSlotKey>,
-                     std::set<Key>)>
+  std::function<bool(const MedVar &, int, std::set<Key> &,
+                     std::set<FrameSlotKey> &, std::set<Key> &)>
       prove;
   // Prove a closed scalar value graph only if the full path-sensitive proof
   // exhausts its node or depth budget. Shared arithmetic diamonds behind loop
@@ -2585,6 +2589,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
       // bodies can exceed that limit before reaching their scalar initializer.
       if (Path.size() >= 512 || --Budget < 0)
         return false;
+      ++AddressProvenanceWork.ClosedScalarNodes;
       Active.emplace(Node, Path.size());
       Path.push_back(Start);
       const bool Valid = [&]() {
@@ -2698,11 +2703,12 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
   // Keep this context local to the mask's source walk: the same unknown
   // constant used as an unmasked pointer still needs table-base provenance.
   bool InBoundedNumericMask = false;
-  std::function<bool(const MedVar &, int, std::set<Key>, std::set<FrameSlotKey>,
-                     std::set<Key>)>
-      proveUncached = [&](const MedVar &Start, int Depth, std::set<Key> Seen,
-                          std::set<FrameSlotKey> ActiveFrameSlots,
-                          std::set<Key> AnchoredPhis) -> bool {
+  size_t ContextGeneration = 0;
+  std::function<bool(const MedVar &, int, std::set<Key> &,
+                     std::set<FrameSlotKey> &, std::set<Key> &)>
+      proveUncached = [&](const MedVar &Start, int Depth, std::set<Key> &Seen,
+                          std::set<FrameSlotKey> &ActiveFrameSlots,
+                          std::set<Key> &AnchoredPhis) -> bool {
     // Recognize a scalar recurrence before applying the acyclic-depth budget:
     // a long lowered arithmetic chain can return to its PHI only after dozens
     // nodes.  Every non-cyclic initialization arm is still audited below.
@@ -2746,6 +2752,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     }
     if (RemainingProofNodes-- <= 0)
       return stableOffsetFailure("budget", Start, Depth);
+    ++AddressProvenanceWork.StableOffsetNodes;
     auto constantIsMappedAddress = [&](uint64_t Value, uint16_t Size) {
       if (!Img || Value == 0)
         return false;
@@ -2791,7 +2798,13 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
             Start, [&](const MedVar &V) { return lookupDef(V); },
             [&](const MedVar &V) { return traceControlConst(V); }))
       return true;
-    Seen.insert(keyOf(Start));
+    // One path owns each insertion. Restore it on every return instead of
+    // copying the entire active path for each operand of a shared value DAG.
+    const auto [SeenIt, AddedSeen] = Seen.insert(keyOf(Start));
+    auto RestoreSeen = llvm::scope_exit([&] {
+      if (AddedSeen)
+        Seen.erase(SeenIt);
+    });
 
     if (const PhiNode *Nested = lookupPhi(Start)) {
       bool SawPotential = false;
@@ -2832,7 +2845,11 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
       }
       if (!SawInitializer && !scalarRecurrenceHasInitializer(Start))
         return stableOffsetFailure("unanchored-phi-component", Start, Depth);
-      AnchoredPhis.insert(keyOf(Start));
+      const auto [AnchorIt, AddedAnchor] = AnchoredPhis.insert(keyOf(Start));
+      auto RestoreAnchor = llvm::scope_exit([&] {
+        if (AddedAnchor)
+          AnchoredPhis.erase(AnchorIt);
+      });
       for (const PhiArm &Arm : Arms) {
         if (!Arm.Recurrent)
           continue;
@@ -2964,8 +2981,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
       const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
       const auto ExactFrameSlot = canonicalFrameSlotKey(Def->Inputs[0]);
       const auto ReloadFrameRoot = frameRoot(Def->Inputs[0], 0, {});
-      if (ReloadFrameRoot && ActiveFrameDomains.count(*ReloadFrameRoot))
+      if (ReloadFrameRoot && ActiveFrameDomains.count(*ReloadFrameRoot)) {
+        ++ContextGeneration;
         return true;
+      }
       if (ExactFrameSlot) {
         // A loop-carried scalar can be represented through memory rather than
         // an SSA PHI: load(slot), update, store(slot), backedge. Once the exact
@@ -2973,12 +2992,19 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
         // that slot again is the recurrence edge, not an unproved new source.
         // The outer source set still audits every non-cyclic initialization,
         // so a pointer initializer or an uninitialized path remains rejected.
-        if (ActiveFrameSlots.count(*ExactFrameSlot))
+        if (ActiveFrameSlots.count(*ExactFrameSlot)) {
+          ++ContextGeneration;
           return true;
+        }
         std::vector<MedVar> Sources;
         const bool CompleteSources = collectFrameReloadSources(*Def, Sources);
         if (CompleteSources && !Sources.empty()) {
-          ActiveFrameSlots.insert(*ExactFrameSlot);
+          const auto [SlotIt, AddedSlot] =
+              ActiveFrameSlots.insert(*ExactFrameSlot);
+          auto RestoreSlot = llvm::scope_exit([&] {
+            if (AddedSlot)
+              ActiveFrameSlots.erase(SlotIt);
+          });
           bool SawAnchoredSource = false;
           for (const MedVar &Source : Sources) {
             // A memory-carried recurrence returns the value being computed to
@@ -2988,6 +3014,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
             // require a separately proven initializer/source below; a slot
             // whose reaching definitions are only cyclic remains unproved.
             if (!Source.isConst() && Seen.count(keyOf(Source))) {
+              ++ContextGeneration;
               if (reachesAnchoredPhi(Source, AnchoredPhis))
                 SawAnchoredSource = true;
               continue;
@@ -3019,8 +3046,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
       // a particular reaching value.
       if (ReloadFrameRoot) {
         const FrameRootKey Root = *ReloadFrameRoot;
-        if (ActiveFrameDomains.count(Root))
+        if (ActiveFrameDomains.count(Root)) {
+          ++ContextGeneration;
           return true;
+        }
 
         auto sameOrUnknownFrameRoot = [&](const MedVar &Address) {
           if (!varMayBeFrameAddress(Address))
@@ -3399,16 +3428,17 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
         return stableOffsetFailure("unstable-input", Start, Depth);
     return true;
   };
-  // Reuse only completed proofs independent of recurrence or memory authority.
+  // Reuse completed proofs only when they borrow no active recurrence or
+  // memory assumption. A scalar LOAD with independently proven sources is
+  // reusable; an active frame slot/domain or skipped path-local source is not.
   // The bounded-mask mode can treat an unknown numeric immediate as a scalar,
   // so its certificates live in a separate cache partition. A context-dependent
   // descendant invalidates every enclosing proof, including arithmetic parents;
-  // excluding only PHI and LOAD cache entries is not enough.
+  // excluding only the context-dependent leaf cache entries is not enough.
   std::map<std::pair<AddressProvenanceVarKey, bool>, int> IndependentProofs;
-  size_t ContextGeneration = 0;
-  prove = [&](const MedVar &Start, int Depth, std::set<Key> Seen,
-              std::set<FrameSlotKey> ActiveFrameSlots,
-              std::set<Key> AnchoredPhis) -> bool {
+  prove = [&](const MedVar &Start, int Depth, std::set<Key> &Seen,
+              std::set<FrameSlotKey> &ActiveFrameSlots,
+              std::set<Key> &AnchoredPhis) -> bool {
     if (Forbidden && sameVar(Start, *Forbidden))
       return stableOffsetFailure("forbidden", Start, Depth);
     if (valueIsAuthenticatedModelZero(Start))
@@ -3429,12 +3459,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     const size_t GenerationBefore = ContextGeneration;
     const MedOp *Def = Start.isConst() ? nullptr : lookupDef(Start);
     if ((!Start.isConst() && lookupPhi(Start)) ||
-        (Def && Def->Opcode == NdOp::LOAD) ||
         (Cycle && !isExactSelfCopy(Def, Start)))
       ++ContextGeneration;
     const bool Result =
-        proveUncached(Start, Depth, std::move(Seen),
-                      std::move(ActiveFrameSlots), std::move(AnchoredPhis));
+        proveUncached(Start, Depth, Seen, ActiveFrameSlots, AnchoredPhis);
     if (Result && !Cycle && Depth <= 128 &&
         GenerationBefore == ContextGeneration) {
       auto [It, Inserted] = IndependentProofs.emplace(CacheKey, Depth);
@@ -3443,7 +3471,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     }
     return Result;
   };
-  bool Result = prove(V, 0, {}, {}, {});
+  std::set<Key> Seen, AnchoredPhis;
+  std::set<FrameSlotKey> ActiveFrameSlots;
+  bool Result = prove(V, 0, Seen, ActiveFrameSlots, AnchoredPhis);
   if (!Result && (RemainingProofNodes <= 0 || RecursiveDepthExhausted))
     Result = proveClosedScalarGraph(V);
   Exhausted = !Result && RemainingProofNodes <= 0;

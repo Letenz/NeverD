@@ -18,6 +18,7 @@
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Loader.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -34,9 +35,56 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <tuple>
 #include <vector>
 
 using namespace neverd;
+
+TEST(DebugInfoDiscovery, SymbolStoreKeyUsesUniqueCodeViewIdentity) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.DynInfo.PDBPath = "C:\\build\\Private\\NTKERNEL.PDB";
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  PDBBuildIdentity Identity;
+  Identity.Guid = {0x78, 0x56, 0x34, 0x12, 0xbc, 0x9a, 0xf0, 0xde,
+                   0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
+  Identity.Age = 0x2a;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  auto Request = pdbSymbolRequest(Img);
+  ASSERT_TRUE(Request);
+  EXPECT_EQ(Request->FileName, "ntkernel.pdb");
+  EXPECT_EQ(Request->Key, "123456789ABCDEF0123456789ABCDEF02a");
+  Identity.Kind = PDBIdentityKind::NB10;
+  Identity.Signature = 0x1234abcd;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  Request = pdbSymbolRequest(Img);
+  ASSERT_TRUE(Request);
+  EXPECT_EQ(Request->Key, "1234ABCD2a");
+  Img.Format = BinaryFormat::ELF;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+}
+
+TEST(DebugInfoDiscovery, MissingAmbiguousOrUnsafePdbCannotRequestSymbols) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.DynInfo.PDBPath = "kernel.pdb";
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+  PDBBuildIdentity Identity;
+  Identity.Guid[0] = 1;
+  Identity.Age = 1;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Ambiguous;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  for (const auto *Path : {"", ".pdb", "kernel.dll", "bad:stream.pdb",
+                           "bad?query.pdb", "bad\nname.pdb"}) {
+    Img.DynInfo.PDBPath = Path;
+    EXPECT_FALSE(pdbSymbolRequest(Img)) << Path;
+  }
+  Img.DynInfo.PDBPath = "kernel.pdb";
+  Img.DynInfo.CodeViewPDBIdentity->Age = 0;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+}
 
 namespace {
 
@@ -806,6 +854,101 @@ TEST(ApplyDebugSymbolsTest, PublishesNamesOnlyDataObjectsWithoutExtents) {
   EXPECT_EQ(Img.Symbols[0].Name, "__security_cookie");
   EXPECT_EQ(Img.Symbols[0].Addr, 0x1400050E0u);
   EXPECT_FALSE(Img.Symbols[0].IsFunc);
+}
+
+// The loader guesses a function after padding wherever the next bytes read
+// as a prologue; MSVC keeps string literals in .text, and `push rdi` is a
+// wide string's first letter.  A data object the debug information names
+// there refutes the guess, but not code metadata.
+TEST(ApplyDebugSymbolsTest, DataRefutesAFunctionGuessedAfterPadding) {
+  BinaryImage Img;
+  for (const va_t Addr : {0x1400u, 0x1500u, 0x1600u}) {
+    Symbol Guess = Symbol::makeFunc(Addr);
+    Guess.IsBoundaryGuess = true;
+    Img.Symbols.push_back(Guess);
+  }
+  Img.KnownCodeRanges.push_back({0x1600, 0x1610});
+  FakeDebugContext Dbg(
+      {}, {{"??_C@_1BE@BDEKEKBI@?$AAW?$AAI?$AAN", 0x1400, 0, false},
+           {"table_or_code", 0x1600, 0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(findFunc(Img, 0x1400), nullptr);
+  EXPECT_NE(findFunc(Img, 0x1500), nullptr);
+  EXPECT_NE(findFunc(Img, 0x1600), nullptr);
+}
+
+// A pointer .data holds to such a literal points to data: the guess the
+// literal refutes claims no pointer to it as one to code.
+TEST(ApplyDebugSymbolsTest, PointerToALiteralWhereAGuessWasPointsToData) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  const SegmentFlags Code = SegmentFlags::Readable | SegmentFlags::Executable;
+  const SegmentFlags Writable = SegmentFlags::Readable | SegmentFlags::Writable;
+  for (const auto &[VA, Name, Flags] :
+       {std::tuple{va_t{0x1000}, "PAGE", Code},
+        std::tuple{va_t{0x3000}, ".data", Writable}}) {
+    Segment Seg;
+    Seg.VA = VA;
+    Seg.Size = Seg.FileSz = 0x100;
+    Seg.Flags = Flags;
+    Seg.Data.assign(0x100, 0);
+    Img.Segments.push_back(Seg);
+    Section Sec;
+    Sec.Name = Name;
+    Sec.VA = VA;
+    Sec.Size = Sec.FileSz = 0x100;
+    Sec.Flags = Flags;
+    Sec.Data.assign(0x100, 0);
+    Img.Sections.push_back(std::move(Sec));
+  }
+  Symbol Guess = Symbol::makeFunc(0x1040);
+  Guess.IsBoundaryGuess = true;
+  Img.Symbols.push_back(Guess);
+  const uint64_t Literal = 0x1040;
+  std::memcpy(Img.Segments[1].Data.data(), &Literal, sizeof(Literal));
+  recordAbsolutePointerRelocations(Img, {{0x3000, Literal, InvalidVA}});
+  ASSERT_TRUE(Img.CodePtrRelocSlots.count(0x3000));
+
+  FakeDebugContext Dbg(
+      {}, {{"??_C@_1BE@BDEKEKBI@?$AAW?$AAI?$AAN", Literal, 0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(findFunc(Img, Literal), nullptr);
+  EXPECT_FALSE(Img.CodePtrRelocSlots.count(0x3000));
+  EXPECT_TRUE(Img.DataPtrRelocSlots.count(0x3000));
+}
+
+// A kernel keeps tables among its code, where the debug information names
+// them as data and its PDB marks assembly labels the same way.  An address
+// the image's code metadata covers, or where that code ends (a routine's end
+// label), stays code, a literal names no object, and data outside the code
+// needs no record.
+TEST(ApplyDebugSymbolsTest, DataAmongCodeIsWhereNoCodeIs) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  for (const auto &[VA, Flags] :
+       {std::pair{va_t{0x1000},
+                  SegmentFlags::Readable | SegmentFlags::Executable},
+        std::pair{va_t{0x3000},
+                  SegmentFlags::Readable | SegmentFlags::Writable}}) {
+    Segment Seg;
+    Seg.VA = VA;
+    Seg.Size = Seg.FileSz = 0x100;
+    Seg.Flags = Flags;
+    Seg.Data.assign(0x100, 0);
+    Img.Segments.push_back(std::move(Seg));
+  }
+  Img.KnownCodeRanges.push_back({0x1000, 0x1020});
+  FakeDebugContext Dbg({}, {{"KiServiceLabel", 0x1010, 0, false},
+                            {"KiServiceEnd", 0x1020, 0, false},
+                            {"NlsRegKeyName", 0x1040, 0, false},
+                            {"??_C@_15OHIPBLFN@?$AAS?$AAA@", 0x1060, 0, false},
+                            {"NlsSectionLock", 0x3000, 0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(Img.DataInCode, std::set<va_t>{0x1040});
 }
 
 TEST(ApplyDebugSymbolsTest, PublishesOnlyAuthenticatedTypedObjectExtents) {

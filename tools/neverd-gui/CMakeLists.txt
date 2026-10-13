@@ -40,6 +40,13 @@ target_include_directories(neverd_gui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(neverd_gui_core PUBLIC cxx_std_20)
 target_link_libraries(neverd_gui_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
 
+# Offline package presentation and local journals; all analysis stays in the
+# shared worker/C API owner. No LLVM or input runtime enters this target.
+add_library(neverd_gui_web STATIC
+  web/ReviewJournal.cpp web/PackageSession.cpp web/FindingModel.cpp
+  web/PackageReviewDialog.cpp)
+target_link_libraries(neverd_gui_web PUBLIC neverd_gui_core Qt6::Widgets)
+
 # The workbench: views, windows and the command set.
 file(GLOB NEVERD_GUI_APP_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/app/*.cpp")
@@ -51,8 +58,23 @@ target_include_directories(neverd_gui_app PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
   "${neverd_docking_SOURCE_DIR}/src")
-target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core Qt6::Widgets Qt6::Svg
+target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core neverd_gui_web Qt6::Widgets Qt6::Svg
   Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)
+# A window that draws its own frame tells the Wayland compositor where its
+# shadow ends, and drops the Windows caption, through Qt's private native
+# window interfaces.
+target_link_libraries(neverd_gui_app PRIVATE Qt6::GuiPrivate)
+# How a window loses the system's title bar differs by platform
+# (app/WindowFramePlatform.h).
+if(WIN32)
+  target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameWindows.cpp)
+elseif(APPLE)
+  enable_language(OBJCXX)
+  target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameMac.mm)
+  target_link_libraries(neverd_gui_app PRIVATE "-framework AppKit")
+else()
+  target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameUnix.cpp)
+endif()
 file(GLOB NEVERD_GUI_ICONS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.svg")
 qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd
@@ -72,7 +94,7 @@ target_link_libraries(neverd-gui PRIVATE neverd_gui_app)
 file(GLOB NEVERD_TRANSLATIONS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.ts")
 if(NEVERD_TRANSLATIONS)
   qt_add_translations(neverd-gui TS_FILES ${NEVERD_TRANSLATIONS}
-    SOURCE_TARGETS neverd-gui neverd_gui_app neverd_gui_core
+    SOURCE_TARGETS neverd-gui neverd_gui_app neverd_gui_core neverd_gui_web
     QM_FILES_OUTPUT_VARIABLE NEVERD_QM_FILES)
   qt_add_resources(neverd-gui "app_translations" PREFIX /i18n
     BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${NEVERD_QM_FILES})
@@ -88,8 +110,9 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/server.py"
 
 if(BUILD_TESTING)
   option(NEVERD_GUI_CI_DIAGNOSTICS
-    "Write file diagnostics for the Windows GUI controller test runner" OFF)
+    "Write file diagnostics for the Windows GUI unit and controller test runners" OFF)
   set(_neverd_controller_test_log_args)
+  set(_neverd_units_test_log_args)
   if(NEVERD_GUI_CI_DIAGNOSTICS)
     if(NOT WIN32 OR NOT "$ENV{CI}" STREQUAL "true" OR
        NOT "$ENV{GITHUB_ACTIONS}" STREQUAL "true")
@@ -101,8 +124,25 @@ if(BUILD_TESTING)
       -o "${_neverd_gui_ci_log_dir}/controller.txt,txt"
       -o "${_neverd_gui_ci_log_dir}/controller.xml,xml"
       -o "-,txt")
+    # A crash loses what a pipe buffered; the file keeps each line.
+    set(_neverd_units_test_log_args
+      -o "${_neverd_gui_ci_log_dir}/units.txt,txt"
+      -o "-,txt")
   endif()
   find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+  if(NEVERD_WORKER_WEB_ENGINE_TESTS)
+    qt_add_executable(neverd-gui-web-tests tests/WebReviewTests.cpp)
+    target_link_libraries(neverd-gui-web-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_include_directories(neverd-gui-web-tests PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../unittests/web")
+    target_compile_definitions(neverd-gui-web-tests PRIVATE
+      TEST_WEB_WORKER="$<TARGET_FILE:neverd-worker>")
+    add_dependencies(neverd-gui-web-tests neverd-worker)
+    add_test(NAME NeverDGuiWebReview COMMAND neverd-gui-web-tests)
+    set_tests_properties(NeverDGuiWebReview PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+    set_target_properties(neverd-gui-web-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  endif()
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   target_sources(neverd-gui PRIVATE tests/WidgetsProbe.cpp)
   target_compile_definitions(neverd-gui PRIVATE NEVERD_GUI_TEST_PROBES=1)
@@ -122,11 +162,24 @@ if(BUILD_TESTING)
 
   qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
   target_link_libraries(neverd-gui-unit-tests PRIVATE neverd_gui_app Qt6::Test)
-  add_test(NAME NeverDGuiUnits COMMAND neverd-gui-unit-tests)
+  # A console program on Windows too, so CTest records what failed.
+  set_target_properties(neverd-gui-unit-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiUnits COMMAND neverd-gui-unit-tests
+    ${_neverd_units_test_log_args})
   set_tests_properties(NeverDGuiUnits PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
   if(TARGET neverd-worker-test-server)
+    qt_add_executable(neverd-gui-symbol-tests tests/MicrosoftSymbolsTests.cpp)
+    target_link_libraries(neverd-gui-symbol-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_compile_definitions(neverd-gui-symbol-tests PRIVATE
+      TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>")
+    add_dependencies(neverd-gui-symbol-tests neverd-worker-test-server)
+    set_target_properties(neverd-gui-symbol-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME NeverDGuiMicrosoftSymbols COMMAND neverd-gui-symbol-tests)
+    set_tests_properties(NeverDGuiMicrosoftSymbols PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
     qt_add_executable(neverd-gui-tests tests/WorkbenchTests.cpp)
     target_link_libraries(neverd-gui-tests PRIVATE neverd_gui_app Qt6::Test)
     target_compile_definitions(neverd-gui-tests PRIVATE
@@ -134,8 +187,9 @@ if(BUILD_TESTING)
     add_dependencies(neverd-gui-tests neverd-worker-test-server)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
+    # Over a minute on a Linux runner, about twice that on macOS and Windows.
     set_tests_properties(NeverDGuiController PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
       --worker $<TARGET_FILE:neverd-worker-test-server>)
     set_tests_properties(NeverDGuiWidgets PROPERTIES

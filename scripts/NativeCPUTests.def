@@ -339,6 +339,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "CommittedWriteStopsBeforeTheFollowingInstruction/"
     "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.UnobservedStoresInvalidatePhysicalWriteWitnesses/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64."
     "WriteInAResumedFetchWatchIsCommittedExactlyOnce/"
     "{backend}")
@@ -1897,6 +1900,48 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64Integer.MissingSourcePagePreservesBothProductHalves/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanPreservesWidthsAndDefinedFlags/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanPreservesWidthsAndDefinedFlags/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanReadStopPreservesDestinationAndFlags/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanReadStopPreservesDestinationAndFlags/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanCrossPageReadChecksCompleteSpan/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanCrossPageReadChecksCompleteSpan/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanDeviceSourceRejectsWithoutCallbacks/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanDeviceSourceRejectsWithoutCallbacks/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/"
     "{backend}Supervisor")
@@ -2549,6 +2594,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "InstructionFetch.AlternatingFormsKeepFreshOperandsAndRelativeBranches/"
     "{backend_title}X64User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.RepeatedOperandsSurviveCodeWorkingSetEviction/"
+    "{backend_title}X64Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Checked/InstructionFetch.RepeatedOperandsSurviveCodeWorkingSetEviction/"
+    "{backend_title}X64User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Checked/InstructionFetch.GuestAliasStoreChangesTheNextInstruction/"
     "{backend_title}X64Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -2807,6 +2858,20 @@ NEVERD_NATIVE_CPU_KVM_OWNER(NeverDKvmStateTransferTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST
 // Host protocol tests supplement actual non-exiting native vCPU cancellation.
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.OwnedNativeDeadlineIsAcknowledgedBeforeTheLoopRetires")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.OwnedNativeStopPreservesCompletionFailureAndNextRun")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.OwnedLoopAndNativeCompletionRejectRecursiveOwners")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.ThrowingOwnedLoopReleasesItsBorrowedCallback")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.MissingOwnedLoopRejectsBeforeNativeEntry")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmCancellation.OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
 NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST("KvmRun.RetriesTransientHostInterruptions")
 NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
     "KvmRun.RepeatedInterruptionsRespectDeadline")
@@ -2864,6 +2929,10 @@ NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
 #endif
 #ifdef NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES
 // Ioctl capture and failed optional-capability queries must always work.
+NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES(
+    "Native/KvmStateTransfer.PublicHooksShareTheNativeExecutionOwner/",
+    "unittests/emulation/KvmStateTransferCases.def",
+    "NEVERD_KVM_STATE_BASE_PARAMETER")
 // Additional synchronized-register modes execute when the host supports them.
 NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES(
     "Native/"

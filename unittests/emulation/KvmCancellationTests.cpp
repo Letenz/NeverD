@@ -120,6 +120,20 @@ TEST_F(KvmCancellation, DeadlineInterruptsANonExitingNativeVCPU) {
   EXPECT_EQ(VM->Run->exit_reason, KVM_EXIT_HLT);
 }
 
+TEST_F(KvmCancellation, OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU) {
+  prepare(Loop);
+  EXPECT_EQ(llvm::toString(VM->withExecutionOwner(
+                [&] { return run(DeadlineMicroseconds); })),
+            diagnostic::KvmRun);
+  EXPECT_TRUE(entered());
+  checkHostSignalState();
+  prepare(Halt);
+  EXPECT_EQ(llvm::toString(VM->withExecutionOwner(
+                [&] { return run(DeadlineMicroseconds); })),
+            "");
+  EXPECT_EQ(VM->Run->exit_reason, KVM_EXIT_HLT);
+}
+
 TEST_F(KvmCancellation, StopAcknowledgesEachEntryBeforeItCanResumeOrRetire) {
   for (unsigned I = 0; I < ResumeCount; ++I) {
     SCOPED_TRACE(I);

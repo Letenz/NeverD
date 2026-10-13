@@ -1,5 +1,8 @@
 // AArch64 intrinsic enum entries — included by intrinsics.h.
 // Range: 6000 – 10999.  New entries go at the bottom.
+// The entries are laid out by hand in groups, which clang-format would run
+// together as one expression; it leaves the rest of the file alone.
+// clang-format off
 
 // Supervisor / hypervisor / secure-monitor calls.
 Svc = 6000,
@@ -197,3 +200,7 @@ A64_SveIndex,
 // byte/halfword forms and acquire/release suffixes without multiplying IDs.
 A64_AtomicAnd, A64_AtomicOr, A64_AtomicXor,
 A64_AtomicSmax, A64_AtomicSmin, A64_AtomicUmax, A64_AtomicUmin,
+
+// A Linux supervisor call: the number in x8, the arguments in x0-x5 and the
+// result in x0 (MedSyscallConvention.h).
+A64LinuxSyscall,

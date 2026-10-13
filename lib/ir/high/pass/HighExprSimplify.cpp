@@ -422,12 +422,47 @@ static ExprPtr mergeOrderAndEquality(const ExprPtr &E) {
   return nullptr;
 }
 
+/// `(a - b < 0) != sborrow(a, b)` is `a < b`, and `==` is `b <= a`: the
+/// sign and signed-overflow flags of one subtraction, as AArch64's `b.lt`
+/// (N != V) and x86's `jl` (SF != OF) test them.
+static ExprPtr signedOrderFromFlags(const ExprPtr &E) {
+  if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+      (E->Op != NdOp::INT_NOTEQUAL && E->Op != NdOp::INT_EQUAL))
+    return nullptr;
+  for (unsigned I = 0; I < 2; ++I) {
+    const ExprPtr &Sign = E->Operands[I], &Borrow = E->Operands[1 - I];
+    if (!Sign || !Borrow || Sign->Kind != ExprKind::BinOp ||
+        Sign->Op != NdOp::INT_SLESS || Sign->Operands.size() != 2 ||
+        !isZeroConst(Sign->Operands[1]) || Borrow->Kind != ExprKind::BinOp ||
+        Borrow->Op != NdOp::INT_SBOR || Borrow->Operands.size() != 2)
+      continue;
+    const ExprPtr &Difference = Sign->Operands[0];
+    if (!Difference || Difference->Kind != ExprKind::BinOp ||
+        Difference->Op != NdOp::INT_SUB || Difference->Operands.size() != 2 ||
+        !Difference->Type || !Borrow->Operands[0] ||
+        !Borrow->Operands[0]->Type ||
+        Difference->Type->Size != Borrow->Operands[0]->Type->Size ||
+        !sameIntegerValue(Difference->Operands[0], Borrow->Operands[0]) ||
+        !sameIntegerValue(Difference->Operands[1], Borrow->Operands[1]))
+      continue;
+    const bool Less = E->Op == NdOp::INT_NOTEQUAL;
+    auto Order =
+        HighExpr::makeBinop(Less ? NdOp::INT_SLESS : NdOp::INT_SLESSEQUAL,
+                            Less ? Borrow->Operands[0] : Borrow->Operands[1],
+                            Less ? Borrow->Operands[1] : Borrow->Operands[0]);
+    Order->Type = E->Type;
+    return Order;
+  }
+  return nullptr;
+}
+
 static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
-                                  const HighExprSet &OrderedMemory) {
+                                  const HighExprSet &OrderedMemory,
+                                  bool &Changed) {
   if (!E || !Seen.insert(E.get()).second)
     return;
   for (auto &Op : E->Operands)
-    simplifyExprRecursive(Op, Seen, OrderedMemory);
+    simplifyExprRecursive(Op, Seen, OrderedMemory, Changed);
 
   // Atomic accesses are observable even when the surrounding value appears
   // algebraically redundant.  Keep the containing expression intact so a
@@ -435,8 +470,13 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
   if (OrderedMemory.count(E.get()))
     return;
 
+  auto Replace = [&](ExprPtr Value) {
+    Changed |= E != Value;
+    E = std::move(Value);
+  };
+
   if (auto Joined = joinLocalSlices(E)) {
-    E = std::move(Joined);
+    Replace(std::move(Joined));
     return;
   }
 
@@ -474,13 +514,13 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
           High->Type->Size + Low->Type->Size == Joined->Type->Size &&
           discardableIntegerValue(High, Budget)) {
         if (Low->Type->IsSigned == E->Type->IsSigned) {
-          E = Low;
+          Replace(Low);
         } else {
           auto Cast = std::make_shared<HighExpr>();
           Cast->Kind = ExprKind::Cast;
           Cast->Type = Cast->CastTo = E->Type;
           Cast->Operands = {Low};
-          E = std::move(Cast);
+          Replace(std::move(Cast));
         }
         return;
       }
@@ -534,13 +574,13 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       break;
     if (PartOffset == 0 && Part->Type->Size == Bytes) {
       if (Part->Type->IsSigned == E->Type->IsSigned) {
-        E = Part;
+        Replace(Part);
       } else {
         auto Cast = std::make_shared<HighExpr>();
         Cast->Kind = ExprKind::Cast;
         Cast->Type = Cast->CastTo = E->Type;
         Cast->Operands = {Part};
-        E = std::move(Cast);
+        Replace(std::move(Cast));
       }
       return;
     }
@@ -550,7 +590,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
         Part, HighExpr::makeConst(PartOffset, E->Operands[1]->Type
                                                   ? E->Operands[1]->Type->Size
                                                   : 4)};
-    E = std::move(Slice);
+    Replace(std::move(Slice));
     Narrowed = true;
   }
 
@@ -558,7 +598,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       !E->Operands.empty() && E->Operands[0]->Kind == ExprKind::UnaryOp &&
       E->Operands[0]->Op == NdOp::BOOL_NOT &&
       !E->Operands[0]->Operands.empty()) {
-    E = E->Operands[0]->Operands[0];
+    Replace(E->Operands[0]->Operands[0]);
     return;
   }
 
@@ -605,7 +645,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       Negated->Op = NegOp;
       if (SwapOperands)
         std::swap(Negated->Operands[0], Negated->Operands[1]);
-      E = std::move(Negated);
+      Replace(std::move(Negated));
     }
   }
 
@@ -617,10 +657,10 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
         Demanded != E->Operands[0]) {
       auto Copy = std::make_shared<HighExpr>(*E);
       Copy->Operands[0] = std::move(Demanded);
-      E = std::move(Copy);
+      Replace(std::move(Copy));
     }
     if (ExprPtr Narrowed = narrowTruncatedOp(E->Operands[0], E->Type))
-      E = std::move(Narrowed);
+      Replace(std::move(Narrowed));
     return;
   }
 
@@ -636,13 +676,13 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
         Kept->Type->Size == E->Type->Size &&
         harmlessIntegerValue(E->Operands[Taken ? 2 : 1], Budget)) {
       if (Kept->Type->IsSigned == E->Type->IsSigned) {
-        E = Kept;
+        Replace(Kept);
       } else {
         auto Cast = std::make_shared<HighExpr>();
         Cast->Kind = ExprKind::Cast;
         Cast->Type = Cast->CastTo = E->Type;
         Cast->Operands = {Kept};
-        E = std::move(Cast);
+        Replace(std::move(Cast));
       }
       return;
     }
@@ -691,17 +731,21 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       break;
     }
     if (Result) {
-      E = HighExpr::makeConst(*Result ? 1 : 0, E->Type->Size);
+      Replace(HighExpr::makeConst(*Result ? 1 : 0, E->Type->Size));
       return;
     }
   }
 
   if (ExprPtr Merged = mergeOrderAndEquality(E)) {
-    E = std::move(Merged);
+    Replace(std::move(Merged));
+    return;
+  }
+  if (ExprPtr Order = signedOrderFromFlags(E)) {
+    Replace(std::move(Order));
     return;
   }
 
-  discardMaskedConcatHigh(E);
+  Changed |= discardMaskedConcatHigh(E);
 
   // Sub-piece identity elimination.  SUBBYTES(x, 0) that extracts x's full
   // width, or the low bytes of a zero/sign-extended value back to its
@@ -717,22 +761,22 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       // the whole register value.
       auto Copy = std::make_shared<HighExpr>(*E);
       Copy->Operands[0] = std::move(Demanded);
-      E = std::move(Copy);
+      Replace(std::move(Copy));
     }
     if (ExprPtr Narrowed = narrowTruncatedOp(E->Operands[0], E->Type)) {
-      E = std::move(Narrowed);
+      Replace(std::move(Narrowed));
       return;
     }
     const auto &Val = E->Operands[0];
     if (Val->Type && Val->Type->Size == E->Type->Size) {
-      E = Val;
+      Replace(Val);
       return;
     }
     if (Val->Kind == ExprKind::UnaryOp &&
         (Val->Op == NdOp::INT_ZEXT || Val->Op == NdOp::INT_SEXT) &&
         !Val->Operands.empty() && Val->Operands[0]->Type &&
         Val->Operands[0]->Type->Size == E->Type->Size) {
-      E = Val->Operands[0];
+      Replace(Val->Operands[0]);
       return;
     }
   }
@@ -740,7 +784,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
   if (E->Operands[1]->Kind == ExprKind::Const &&
       E->Operands[1]->ConstVal == 0) {
     if (E->Op == NdOp::INT_LESS) {
-      E = HighExpr::makeConst(0, 1);
+      Replace(HighExpr::makeConst(0, 1));
       return;
     }
   }
@@ -754,12 +798,14 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
     auto SubExpr = E->Operands[0];
     E->Operands[0] = SubExpr->Operands[0];
     E->Operands[1] = SubExpr->Operands[1];
+    Changed = true;
   }
 
   if (E->Op == NdOp::INT_ADD && E->Operands[1]->Kind == ExprKind::Const) {
     int64_t SignedVal = static_cast<int64_t>(E->Operands[1]->ConstVal);
     if (SignedVal < 0) {
       E->Op = NdOp::INT_SUB;
+      Changed = true;
       E->Operands[1] = HighExpr::makeConst(
           uint64_t(0) - static_cast<uint64_t>(SignedVal),
           E->Operands[1]->Type ? E->Operands[1]->Type->Size : 8);
@@ -772,22 +818,22 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
     for (unsigned I = 0; I < 2; ++I)
       if (isZeroConst(E->Operands[I]) && E->Operands[1 - I] &&
           isEffectFree(*E->Operands[1 - I])) {
-        E = HighExpr::makeConst(0, E->Type->Size);
+        Replace(HighExpr::makeConst(0, E->Type->Size));
         return;
       }
 
   if (E->Op == NdOp::INT_SUB && E->Operands[1]->Kind == ExprKind::Const &&
       E->Operands[1]->ConstVal == 0)
-    E = E->Operands[0];
+    Replace(E->Operands[0]);
   else if (E->Op == NdOp::INT_ADD && E->Operands[0]->Kind == ExprKind::Const &&
            E->Operands[0]->ConstVal == 0)
-    E = E->Operands[1];
+    Replace(E->Operands[1]);
   else if (E->Op == NdOp::INT_MULT && E->Operands[1]->Kind == ExprKind::Const &&
            E->Operands[1]->ConstVal == 1)
-    E = E->Operands[0];
+    Replace(E->Operands[0]);
 }
 
-void simplifyAllExprs(std::vector<HighStmt> &Stmts) {
+bool simplifyAllExprs(std::vector<HighStmt> &Stmts) {
   std::vector<ExprPtr> Roots;
   walkStmts(Stmts, [&](const HighStmt &S) {
     forEachRhsExpr(S, [&](const ExprPtr &EP) { Roots.push_back(EP); });
@@ -797,11 +843,13 @@ void simplifyAllExprs(std::vector<HighStmt> &Stmts) {
   // one graph-wide effect analysis remains valid throughout this pass.
   const auto OrderedMemory = findOrderedMemoryAncestors(Roots);
   HighExprSet Seen;
+  bool Changed = false;
   walkStmts(Stmts, [&](HighStmt &S) {
     forEachRhsExpr(S, [&](ExprPtr &EP) {
-      simplifyExprRecursive(EP, Seen, OrderedMemory);
+      simplifyExprRecursive(EP, Seen, OrderedMemory, Changed);
     });
   });
+  return Changed;
 }
 
 } // namespace neverd

@@ -11,6 +11,7 @@
 
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <utility>
@@ -19,6 +20,50 @@ namespace neverd {
 
 using X86FPStateCHelperNames =
     std::map<std::pair<Intrinsic, unsigned>, std::string>;
+
+template <typename Stream>
+inline void writeX86FPComiCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                                  const std::string &Name, bool StateAddress) {
+  const unsigned Control = x86FPRoundStateControl(Layout);
+  const unsigned Bytes = x86FPComiElementBytes(Control);
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const bool Memory = Id == Intrinsic::X86FPComiMemoryState;
+  const std::string Raw = Bytes == 4 ? "uint32_t" : "uint64_t";
+  const std::string Float = Bytes == 4 ? "float" : "double";
+  OS << "/* Original scalar comparison, flags and MXCSR completion. */\n"
+     << "static inline ";
+  if (Control & 4)
+    OS << "__attribute__((target(\"avx\"))) ";
+  OS << (StateAddress ? "uint32_t" : "uint64_t") << " " << Name << "(" << Raw
+     << " left_bits, " << (Memory ? "void *address" : Raw + " right_bits")
+     << ", " << (StateAddress ? "void *state_address" : "uint32_t state")
+     << ") {\n";
+  if (StateAddress)
+    OS << "    uint32_t state; __builtin_memcpy(&state,state_address,4);\n";
+  OS << "    " << Float << " left; __builtin_memcpy(&left,&left_bits," << Bytes
+     << ");\n";
+  if (!Memory)
+    OS << "    " << Float << " right; __builtin_memcpy(&right,&right_bits,"
+       << Bytes << ");\n";
+  OS << "    uint32_t flags;\n    __asm__ volatile(\"ldmxcsr %1\\n\\t"
+     << x86FPComiMnemonic(Control) << " ";
+  if (Memory)
+    OS << (Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+           : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                  : "")
+       << "(%3)";
+  else
+    OS << "%3";
+  OS << ",%2\\n\\tlahf\\n\\tmovzbl %%ah,%%eax\\n\\tstmxcsr %1\" : "
+        "\"=&a\"(flags), \"+m\"(state) : \"x\"(left), "
+     << (Memory ? "\"r\"(address)" : "\"x\"(right)")
+     << " : \"cc\", \"memory\");\n";
+  if (StateAddress)
+    OS << "    __builtin_memcpy(state_address,&state,4);\n    return "
+          "flags;\n}\n\n";
+  else
+    OS << "    return (uint64_t)flags | ((uint64_t)state << 32);\n}\n\n";
+}
 
 inline std::string x86FPStateRawCType(unsigned Bytes) {
   return Bytes <= 8 ? "uint" + std::to_string(Bytes * 8) + "_t"
@@ -233,7 +278,295 @@ writeX86FPArithStateCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
        << Bytes * 8 << ");\n}\n\n";
 }
 
+template <typename Stream>
+inline void
+writeX86FPMaskCompareCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                             const std::string &Name, bool StateAddress) {
+  const unsigned Control = x86FPRoundStateControl(Layout);
+  const unsigned Bytes = x86FPStateSourceBytes(Layout);
+  const bool Scalar = x86FPMaskCompareIsScalar(Control);
+  const bool Memory = Id == Intrinsic::X86FPMaskCompareMemoryState;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const auto Raw = x86FPStateRawCType(Bytes);
+  const auto Return = StateAddress ? Raw : x86FPStateRawCType(Bytes + 4);
+  OS << "/* Raw comparison mask and MXCSR complete in the original "
+        "instruction. */\n"
+     << "static inline ";
+  if (Control & 4)
+    OS << "__attribute__((target(\"avx\"))) ";
+  OS << Return << " " << Name << "(";
+  if (Memory)
+    OS << "void *address, " << Raw << " left_bits";
+  else
+    OS << Raw << " left_bits, " << Raw << " right_bits";
+  OS << ", " << (StateAddress ? "void *state_address" : "uint32_t state")
+     << ") {\n";
+  if (StateAddress)
+    OS << "    uint32_t state; __builtin_memcpy(&state,state_address,4);\n";
+  const char *Element = Control & 1 ? "double" : "float";
+  if (!Scalar)
+    OS << "    typedef " << Element << " fp_vector __attribute__((vector_size("
+       << Bytes << ")));\n";
+  const std::string Type = Scalar ? Element : "fp_vector";
+  OS << "    " << Type << " value; __builtin_memcpy(&value,&left_bits," << Bytes
+     << ");\n";
+  if (!Memory)
+    OS << "    " << Type << " right; __builtin_memcpy(&right,&right_bits,"
+       << Bytes << ");\n";
+  OS << "    __asm__ volatile(\"ldmxcsr %1\\n\\t"
+     << x86FPMaskCompareMnemonic(Control) << " $"
+     << x86FPMaskCompareStateImmediate(Layout) << ",";
+  if (Memory)
+    OS << (Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+           : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                  : "")
+       << "(%2)";
+  else
+    OS << "%2";
+  if (Control & 4)
+    OS << ",%0";
+  OS << ",%0\\n\\tstmxcsr %1\" : \"+x\"(value), \"+m\"(state) : "
+     << (Memory ? "\"r\"(address)" : "\"x\"(right)") << " : \"memory\");\n"
+     << "    " << Raw << " result; __builtin_memcpy(&result,&value," << Bytes
+     << ");\n";
+  if (StateAddress)
+    OS << "    __builtin_memcpy(state_address,&state,4); return result;\n}\n\n";
+  else
+    OS << "    return (" << Return << ")result | ((" << Return << ")state << "
+       << Bytes * 8 << ");\n}\n\n";
+}
+
+inline std::string x86FPScalarConvertCHelperName(Intrinsic Id,
+                                                 unsigned Layout) {
+  const unsigned Control = (Layout >> 8) & 0xff;
+  std::string Name = "neverd_x86_" + x86FPScalarConvertMnemonic(Control) +
+                     "_source" +
+                     std::to_string(x86FPStateSourceBytes(Layout) * 8);
+  if (Id == Intrinsic::X86FPScalarConvertMemoryState) {
+    const auto Space = x86FPRoundStateAddressSpace(Layout);
+    Name += Space == NdMemoryAddressSpace::X86FS   ? "_memory_fs"
+            : Space == NdMemoryAddressSpace::X86GS ? "_memory_gs"
+                                                   : "_memory";
+  }
+  return Name;
+}
+
+template <typename Stream>
+inline void
+writeX86FPScalarConvertCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                               const std::string &Name, bool StateAddress) {
+  const unsigned Control = (Layout >> 8) & 0xff;
+  const unsigned SourceBytes = x86FPScalarConvertSourceBytes(Control);
+  const unsigned Bytes = x86FPScalarConvertDestinationBytes(Control);
+  const bool Memory = Id == Intrinsic::X86FPScalarConvertMemoryState;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const auto Raw = x86FPStateRawCType(Bytes);
+  const auto Result = StateAddress ? Raw : x86FPStateRawCType(Bytes + 4);
+  OS << "/* Scalar conversion bits and MXCSR complete together. */\n"
+     << "static inline ";
+  if (Control & 8)
+    OS << "__attribute__((target(\"avx\"))) ";
+  OS << Result << " " << Name << "("
+     << (Memory ? "void *address" : x86FPStateRawCType(SourceBytes) + " bits")
+     << ", " << (StateAddress ? "void *state_address" : "uint32_t state")
+     << ") {\n";
+  if (StateAddress)
+    OS << "    uint32_t state;\n"
+       << "    __builtin_memcpy(&state, state_address, 4);\n";
+  OS << "    " << ((Control & 4) ? "double" : "float") << " converted = 0;\n"
+     << "    " << Raw << " result;\n";
+  if (!Memory) {
+    OS << "    "
+       << (x86FPScalarConvertIsInteger(Control)
+               ? (SourceBytes == 8 ? "int64_t" : "int32_t")
+               : (SourceBytes == 8 ? "double" : "float"))
+       << " value;\n    __builtin_memcpy(&value, &bits, " << SourceBytes
+       << ");\n";
+  }
+  OS << "    __asm__ volatile(\"ldmxcsr %1\\n\\t"
+     << x86FPScalarConvertAsmMnemonic(Control) << " ";
+  if (Memory)
+    OS << (Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+           : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                  : "")
+       << "(%2)";
+  else
+    OS << "%2";
+  OS << ((Control & 8) ? ",%0" : "") << ",%0\\n\\tstmxcsr %1\"\n"
+     << "        : \"+x\"(converted), \"+m\"(state) : "
+     << (Memory || x86FPScalarConvertIsInteger(Control) ? "\"r\"" : "\"x\"")
+     << "(" << (Memory ? "address" : "value") << ") : \"memory\");\n"
+     << "    __builtin_memcpy(&result, &converted, " << Bytes << ");\n";
+  if (StateAddress)
+    OS << "    __builtin_memcpy(state_address, &state, 4);\n    return "
+          "result;\n}\n\n";
+  else
+    OS << "    return (" << Result << ")result | ((" << Result << ")state << "
+       << Bytes * 8 << ");\n}\n\n";
+}
+
+inline std::string x86F16CCHelperName(Intrinsic Id, unsigned Layout) {
+  std::string Name = std::string("neverd_x86_") +
+                     x86F16CMnemonic((Layout >> 8) & 3) + "_source" +
+                     std::to_string(x86FPStateSourceBytes(Layout) * 8) + "_i" +
+                     std::to_string((Layout >> 16) & 7);
+  if (Id != Intrinsic::X86F16CState) {
+    Name += Id == Intrinsic::X86F16CStoreState ? "_store" : "_read";
+    const auto Space = x86FPRoundStateAddressSpace(Layout);
+    if (Space == NdMemoryAddressSpace::X86FS)
+      Name += "_fs";
+    if (Space == NdMemoryAddressSpace::X86GS)
+      Name += "_gs";
+  }
+  return Name;
+}
+template <typename Stream>
+inline void writeX86F16CCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                                const std::string &Name, bool StateAddress) {
+  const bool Store = Id == Intrinsic::X86F16CStoreState,
+             Read = Id == Intrinsic::X86F16CReadState;
+  const unsigned Control = (Layout >> 8) & 3,
+                 SourceBytes = x86F16CSourceBytes(Control),
+                 Bytes = x86F16CDestinationBytes(Control);
+  const auto Raw = x86FPStateRawCType(Bytes);
+  const auto Return = Store          ? (StateAddress ? "void" : "uint32_t")
+                      : StateAddress ? Raw
+                                     : x86FPStateRawCType(Bytes + 4);
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                               : "";
+  OS << "/* F16C owns floating state and the complete memory access. */\n"
+     << "static inline __attribute__((target(\"avx,f16c\"))) " << Return << " "
+     << Name << "(";
+  if (Store || Read)
+    OS << "void *address, ";
+  if (!Read)
+    OS << x86FPStateRawCType(SourceBytes) << " bits, ";
+  OS << (StateAddress ? "void *state_address" : "uint32_t state") << ") {\n";
+  if (StateAddress)
+    OS << "    uint32_t state; __builtin_memcpy(&state,state_address,4);\n";
+  if (!Read)
+    OS << "    typedef " << (x86F16CIsNarrow(Control) ? "float" : "uint16_t")
+       << " source_vector __attribute__((vector_size("
+       << std::max(16u, SourceBytes) << ")));\n"
+       << "    source_vector value = {0}; __builtin_memcpy(&value,&bits,"
+       << SourceBytes << ");\n";
+  if (!Store)
+    OS << "    typedef " << (x86F16CIsNarrow(Control) ? "uint16_t" : "float")
+       << " result_vector __attribute__((vector_size(" << Bytes << ")));\n"
+       << "    result_vector converted; " << Raw << " result;\n";
+  if (Store) {
+    OS << "    __asm__ volatile(\"ldmxcsr %0\\n\\tvcvtps2ph $"
+       << ((Layout >> 16) & 7) << ",%2," << Segment
+       << "(%1)\\n\\tstmxcsr %0\" : \"+m\"(state) : \"r\"(address), "
+          "\"x\"(value) : \"memory\");\n";
+  } else {
+    OS << "    __asm__ volatile(\"ldmxcsr %1\\n\\t" << x86F16CMnemonic(Control)
+       << " ";
+    if (x86F16CIsNarrow(Control))
+      OS << "$" << ((Layout >> 16) & 7) << ",";
+    OS << (Read ? std::string(Segment) + "(%2)" : "%2")
+       << ",%0\\n\\tstmxcsr %1\" : \"=&x\"(converted), \"+m\"(state) : "
+       << (Read ? "\"r\"(address)" : "\"x\"(value)") << " : \"memory\");\n"
+       << "    __builtin_memcpy(&result,&converted," << Bytes << ");\n";
+  }
+  if (StateAddress) {
+    OS << "    __builtin_memcpy(state_address,&state,4);\n";
+    if (!Store)
+      OS << "    return result;\n";
+  } else if (Store)
+    OS << "    return state;\n";
+  else
+    OS << "    return (" << Return << ")result | ((" << Return << ")state << "
+       << Bytes * 8 << ");\n";
+  OS << "}\n\n";
+}
+
+inline std::string x86FPPackedConvertCHelperName(Intrinsic Id,
+                                                 unsigned Layout) {
+  std::string Name =
+      "neverd_x86_" + x86FPPackedConvertMnemonic((Layout >> 8) & 0xff) +
+      "_source" + std::to_string(x86FPStateSourceBytes(Layout) * 8);
+  if (Id == Intrinsic::X86FPPackedConvertMemoryState) {
+    const auto Space = x86FPRoundStateAddressSpace(Layout);
+    Name += Space == NdMemoryAddressSpace::X86FS   ? "_memory_fs"
+            : Space == NdMemoryAddressSpace::X86GS ? "_memory_gs"
+                                                   : "_memory";
+  }
+  return Name;
+}
+template <typename Stream>
+inline void
+writeX86FPPackedConvertCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                               const std::string &Name, bool StateAddress) {
+  const unsigned Control = (Layout >> 8) & 0xff, Kind = Control & 7;
+  const unsigned SourceBytes = x86FPPackedConvertSourceBytes(Control);
+  const unsigned Bytes = x86FPPackedConvertDestinationBytes(Control);
+  const unsigned SourceElement = x86FPPackedConvertSourceElementBytes(Control);
+  const unsigned Element = x86FPPackedConvertDestinationElementBytes(Control);
+  const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const auto Raw = x86FPStateRawCType(Bytes);
+  const auto Return = StateAddress ? Raw : x86FPStateRawCType(Bytes + 4);
+  OS << "/* Packed conversion and MXCSR complete as one instruction. "
+        "*/\nstatic inline ";
+  if (Control & 8)
+    OS << "__attribute__((target(\"avx\"))) ";
+  OS << Return << " " << Name << "("
+     << (Memory ? "void *address" : x86FPStateRawCType(SourceBytes) + " bits")
+     << ", " << (StateAddress ? "void *state_address" : "uint32_t state")
+     << ") {\n";
+  if (StateAddress)
+    OS << "    uint32_t state; __builtin_memcpy(&state,state_address,4);\n";
+  OS << "    typedef "
+     << (Kind >= 4      ? "int32_t"
+         : Element == 8 ? "double"
+                        : "float")
+     << " result_vector __attribute__((vector_size(" << Bytes << ")));\n"
+     << "    result_vector converted;\n    " << Raw << " result;\n";
+  if (!Memory)
+    OS << "    typedef "
+       << (Kind < 2             ? "int32_t"
+           : SourceElement == 8 ? "double"
+                                : "float")
+       << " source_vector __attribute__((vector_size("
+       << std::max(16u, SourceBytes) << ")));\n"
+       << "    source_vector value = {0}; __builtin_memcpy(&value,&bits,"
+       << SourceBytes << ");\n";
+  OS << "    __asm__ volatile(\"ldmxcsr %1\\n\\t"
+     << x86FPPackedConvertAsmMnemonic(Control, Memory) << " ";
+  if (Memory)
+    OS << (Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+           : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                  : "")
+       << "(%2)";
+  else
+    OS << "%2";
+  OS << ",%0\\n\\tstmxcsr %1\" : \"=&x\"(converted), \"+m\"(state) : "
+     << (Memory ? "\"r\"(address)" : "\"x\"(value)") << " : \"memory\");\n"
+     << "    __builtin_memcpy(&result,&converted," << Bytes << ");\n";
+  if (StateAddress)
+    OS << "    __builtin_memcpy(state_address,&state,4);\n    return "
+          "result;\n}\n\n";
+  else
+    OS << "    return (" << Return << ")result | ((" << Return << ")state << "
+       << Bytes * 8 << ");\n}\n\n";
+}
+
 inline std::string x86FPScalarValueCHelper(Intrinsic Id, unsigned Bytes) {
+  if (isX86FPMaskCompareStateIntrinsic(Id))
+    return x86FPMaskCompareMnemonic(x86FPRoundStateControl(Bytes)) +
+           "_mask_state_" + std::to_string(Bytes);
+  if (isX86FPComiStateIntrinsic(Id))
+    return std::string(x86FPComiMnemonic(x86FPRoundStateControl(Bytes))) +
+           "_flags_state_" + std::to_string(Bytes);
+  if (isX86F16CStateIntrinsic(Id))
+    return x86F16CCHelperName(Id, Bytes) + "_value";
+  if (isX86FPPackedConvertStateIntrinsic(Id))
+    return x86FPPackedConvertCHelperName(Id, Bytes) + "_value";
+  if (isX86FPScalarConvertStateIntrinsic(Id))
+    return x86FPScalarConvertCHelperName(Id, Bytes) + "_value";
   if (isX86FPArithStateIntrinsic(Id))
     return x86FPArithStateCHelperName(Id, Bytes) + "_value";
   if (isX86FPApprox12Intrinsic(Id))
@@ -254,6 +587,26 @@ inline void writeX86FPScalarValueCHelpers(Stream &OS,
                                           const X86FPStateCHelperNames &Used) {
   for (const auto &[Shape, Name] : Used) {
     const auto [Id, Bytes] = Shape;
+    if (isX86FPMaskCompareStateIntrinsic(Id)) {
+      writeX86FPMaskCompareCHelper(OS, Id, Bytes, Name, true);
+      continue;
+    }
+    if (isX86FPComiStateIntrinsic(Id)) {
+      writeX86FPComiCHelper(OS, Id, Bytes, Name, true);
+      continue;
+    }
+    if (isX86F16CStateIntrinsic(Id)) {
+      writeX86F16CCHelper(OS, Id, Bytes, Name, true);
+      continue;
+    }
+    if (isX86FPPackedConvertStateIntrinsic(Id)) {
+      writeX86FPPackedConvertCHelper(OS, Id, Bytes, Name, true);
+      continue;
+    }
+    if (isX86FPScalarConvertStateIntrinsic(Id)) {
+      writeX86FPScalarConvertCHelper(OS, Id, Bytes, Name, true);
+      continue;
+    }
     if (isX86FPArithStateIntrinsic(Id)) {
       writeX86FPArithStateCHelper(OS, Id, Bytes, Name, true);
       continue;
@@ -310,6 +663,16 @@ inline void writeX86FPScalarValueCHelpers(Stream &OS,
 }
 
 inline std::string x86FPStateCHelper(Intrinsic Id, unsigned ScalarBytes) {
+  if (isX86FPMaskCompareStateIntrinsic(Id))
+    return std::string("neverd_") + x86FPScalarValueCHelper(Id, ScalarBytes);
+  if (isX86FPComiStateIntrinsic(Id))
+    return std::string("neverd_") + x86FPScalarValueCHelper(Id, ScalarBytes);
+  if (isX86F16CStateIntrinsic(Id))
+    return x86F16CCHelperName(Id, ScalarBytes);
+  if (isX86FPPackedConvertStateIntrinsic(Id))
+    return x86FPPackedConvertCHelperName(Id, ScalarBytes);
+  if (isX86FPScalarConvertStateIntrinsic(Id))
+    return x86FPScalarConvertCHelperName(Id, ScalarBytes);
   if (isX86FPArithStateIntrinsic(Id))
     return x86FPArithStateCHelperName(Id, ScalarBytes);
   if (isX86FPApprox12Intrinsic(Id))
@@ -330,6 +693,26 @@ inline void writeX86FPStateCHelpers(llvm::raw_ostream &OS,
                                     const X86FPStateCHelperNames &Used) {
   for (const auto &[Shape, Name] : Used) {
     const auto [Id, Bytes] = Shape;
+    if (isX86FPMaskCompareStateIntrinsic(Id)) {
+      writeX86FPMaskCompareCHelper(OS, Id, Bytes, Name, false);
+      continue;
+    }
+    if (isX86FPComiStateIntrinsic(Id)) {
+      writeX86FPComiCHelper(OS, Id, Bytes, Name, false);
+      continue;
+    }
+    if (isX86F16CStateIntrinsic(Id)) {
+      writeX86F16CCHelper(OS, Id, Bytes, Name, false);
+      continue;
+    }
+    if (isX86FPPackedConvertStateIntrinsic(Id)) {
+      writeX86FPPackedConvertCHelper(OS, Id, Bytes, Name, false);
+      continue;
+    }
+    if (isX86FPScalarConvertStateIntrinsic(Id)) {
+      writeX86FPScalarConvertCHelper(OS, Id, Bytes, Name, false);
+      continue;
+    }
     if (isX86FPArithStateIntrinsic(Id)) {
       writeX86FPArithStateCHelper(OS, Id, Bytes, Name, false);
       continue;

@@ -7,11 +7,19 @@
 #ifndef NEVERD_IR_LOW_X86_REGISTRATIONABIPRIVATE_H
 #define NEVERD_IR_LOW_X86_REGISTRATIONABIPRIVATE_H
 
+#include "RegistrationFrame.h"
+
 #include "neverd/ir/low/RegistrationABI.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <set>
 #include <utility>
+
+namespace neverd {
+class Decoder;
+struct LowInstructionBoundary;
+} // namespace neverd
 
 namespace neverd::registration_abi {
 
@@ -23,15 +31,59 @@ struct ImageFrameEffects {
   std::set<std::pair<int32_t, int32_t>> ECXWrites;
 };
 
+template <typename Set, typename Vector>
+void copyExtents(const Set &From, Vector &To) {
+  for (const auto &[Begin, End] : From) {
+    if (!To.empty() && Begin <= To.back().End)
+      To.back().End = std::max(To.back().End, End);
+    else
+      To.push_back({Begin, End});
+  }
+}
+
+std::optional<std::vector<RegistrationRuntimeThrowInfo>>
+collectRegistrationRuntimeThrowInfos(const LowFunc &Function,
+                                     const BinaryImage &Image, size_t &Work);
+
+bool chargeDecodedCallee(size_t &Work, const LowFunc &Function);
+bool hasImmutableCalleeInstruction(const BinaryImage &Image,
+                                   const LowInstructionBoundary &Boundary,
+                                   Decoder &Dec);
+bool collectCalleeCodeRanges(const LowFunc &Function, const BinaryImage &Image,
+                             size_t &Work,
+                             std::vector<ExceptionAddressRange> &Ranges);
+
 bool chargeCalleeWork(size_t &Work, size_t Amount);
+
+struct CleanupFramePrefix {
+  unsigned Size = 0;
+  uint8_t BaseRegister = 5;
+  int32_t BaseOffset = 0;
+  bool CallsLeaf = false;
+  std::optional<RegistrationCleanupParentFrame> RealignedParent;
+};
+
+std::optional<CleanupFramePrefix>
+getCleanupFramePrefix(const BinaryImage &Image, va_t Target, size_t &Work);
+
+std::optional<uint16_t> parentPopBytes(const LowFunc &Function,
+                                       const BinaryImage &Image);
+
 std::optional<uint32_t>
 checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target);
 bool callerPCIsNotReadBack(const ImageFrameEffects &Effects);
-bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
-                           size_t &Work, ImageFrameEffects &Effects,
-                           bool BorrowECX = false,
-                           RegistrationThrowCalleeABI *ThrowProof = nullptr,
-                           bool *IndependentScalarReturn = nullptr);
+bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
+                             const registration_state::FrameState &State,
+                             size_t &Work);
+bool hasClosedRegistrationRaise(const BinaryImage &Image, const LowOp &Op,
+                                const registration_state::FrameState &State);
+bool hasPrivateCallerFrame(
+    const LowFunc &Function, const BinaryImage &Image, size_t &Work,
+    ImageFrameEffects &Effects, bool BorrowECX = false,
+    RegistrationThrowCalleeABI *ThrowProof = nullptr,
+    bool *IndependentScalarReturn = nullptr,
+    const std::map<int32_t, registration_state::FrameValue> *ScalarArguments =
+        nullptr);
 
 } // namespace neverd::registration_abi
 

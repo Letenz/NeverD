@@ -17,6 +17,7 @@
 #include "neverd/web/Interfaces.h"
 
 #include <cstdlib>
+#include <filesystem>
 using namespace neverd::web;
 
 namespace {
@@ -75,9 +76,131 @@ TEST(WebSourceInterfaces, ShadowedWrittenAndDynamicCalleesAreNotGlobals) {
   EXPECT_EQ(Eval.Status, "unavailable");
   EXPECT_EQ(Eval.Reason, "interface_source_dynamic_eval");
   EXPECT_TRUE(Eval.Records.empty());
-  EXPECT_TRUE(
-      analyze("client.fetch('https://x/a'); new client.WebSocket('wss://x');")
-          .Records.empty());
+  const auto Members =
+      analyze("client.fetch('https://x/a'); new client.WebSocket('wss://x');");
+  ASSERT_EQ(Members.Records.size(), 1u);
+  EXPECT_EQ(Members.Records[0].Kind, "fetch_member_call");
+  EXPECT_EQ(Members.Records[0].Method, "unknown");
+  EXPECT_EQ(Members.Records[0].ReceiverStatus, "member_spelling_syntax_only");
+}
+
+TEST(WebSourceInterfaces, SpreadNeverInventsArgumentsOrFetchDefaults) {
+  const auto A = analyze(R"(
+fetch(...REQUEST_ARGUMENTS);
+fetch(...REQUEST_ARGUMENTS, 'https://x/a');
+fetch('https://x/a', {method:'POST'}, ...REQUEST_ARGUMENTS);
+fetch(...[], {method:'POST'});
+new WebSocket(...SOCKET_ARGUMENTS);
+fetch(...REQUEST_ARGUMENTS, ...MORE);
+new WebSocket('wss://x/a', ...SOCKET_OPTIONS);
+fetch('https://x/a');
+)");
+  ASSERT_EQ(A.Status, "partial");
+  ASSERT_EQ(A.Records.size(), 8u);
+  for (size_t I = 0; I < 7; ++I) {
+    const auto &R = A.Records[I];
+    EXPECT_EQ(R.ArgumentsStatus, "spread_unresolved");
+    EXPECT_EQ(R.Method, "unknown");
+    EXPECT_EQ(R.MethodStatus, "spread_unresolved");
+    EXPECT_EQ(R.URLStatus, "spread_unresolved");
+    EXPECT_EQ(R.OptionsStatus, "spread_unresolved");
+    EXPECT_EQ(R.BodyStatus, "spread_unresolved");
+    EXPECT_EQ(R.URLNode, NoSourceIndex);
+    EXPECT_EQ(R.OptionsNode, NoSourceIndex);
+    EXPECT_EQ(R.MethodNode, NoSourceIndex);
+    EXPECT_EQ(R.HeadersNode, NoSourceIndex);
+    EXPECT_EQ(R.BodyNode, NoSourceIndex);
+    EXPECT_FALSE(R.Endpoint.comparable());
+    EXPECT_NE(R.Node, NoSourceIndex);
+  }
+  EXPECT_EQ(A.Records[7].Method, "GET");
+  EXPECT_EQ(A.Records[7].ArgumentsStatus, "positional");
+  const auto H = capture(R"({"request":{"method":"GET","url":"https://x/a"}})");
+  const auto C = correlateInterfaces(A, H);
+  ASSERT_EQ(C.Pairs.size(), 1u);
+  EXPECT_EQ(C.Pairs[0].Source, 7u);
+}
+
+TEST(WebSourceInterfaces, MemberFetchSpellingKeepsReceiverButNeverAPIIdentity) {
+  const auto A = analyze(R"(
+const client = obtainClient();
+client.fetch('https://x/a', {method:'POST',body:'PRIVATE_BODY'});
+this.fetch(...PRIVATE_ARGUMENTS);
+client?.fetch('https://x/a');
+client.fetch?.('https://x/a');
+client['fetch']('https://x/a');
+new client.fetch('https://x/a');
+client.post('https://x/a');
+)");
+  ASSERT_EQ(A.Status, "partial");
+  ASSERT_EQ(A.Records.size(), 4u);
+  for (const auto &R : A.Records) {
+    EXPECT_EQ(R.Kind, "fetch_member_call");
+    EXPECT_EQ(R.ReceiverStatus, "member_spelling_syntax_only");
+    EXPECT_NE(R.ReceiverNode, NoSourceIndex);
+    EXPECT_EQ(R.Method, "unknown");
+    EXPECT_EQ(R.ConstructorNode, NoSourceIndex);
+    EXPECT_EQ(R.URLNode, NoSourceIndex);
+    EXPECT_EQ(R.OptionsNode, NoSourceIndex);
+    EXPECT_EQ(R.HeadersNode, NoSourceIndex);
+    EXPECT_EQ(R.BodyNode, NoSourceIndex);
+    EXPECT_FALSE(R.Endpoint.comparable());
+  }
+  EXPECT_NE(A.Records[0].ReceiverBinding, NoSourceIndex);
+  EXPECT_EQ(A.Records[0].OptionsStatus, "wrapper_options_not_interpreted");
+  EXPECT_EQ(A.Records[0].URLStatus, "wrapper_arguments_not_interpreted");
+  EXPECT_EQ(A.Records[1].ArgumentsStatus, "spread_unresolved");
+  EXPECT_EQ(A.Records[1].ReceiverBinding, NoSourceIndex);
+  EXPECT_TRUE(A.Records[2].Optional);
+  EXPECT_TRUE(A.Records[3].Optional);
+  const auto H =
+      capture(R"({"request":{"method":"POST","url":"https://x/a"}})");
+  const auto C = correlateInterfaces(A, H);
+  EXPECT_EQ(C.EligibleSources, 0u);
+  EXPECT_TRUE(C.Pairs.empty());
+}
+
+TEST(WebSourceInterfaces, ClaudeCode21296MemberFetchCandidateWhenSupplied) {
+  const auto *Base = std::getenv("NEVERD_CLAUDE_CODE_21296_CROSS_DIR");
+  if (!Base)
+    GTEST_SKIP()
+        << "Optional NeverD-exported pinned platform sources not supplied";
+  const auto Path =
+      std::filesystem::path(Base) / "darwin-arm64" / "recovered" / "m00928.js";
+  const auto Snapshot = neverd::web::capture(Path.string(), Limits{});
+  ASSERT_EQ(Snapshot.Artifacts.size(), 1u);
+  const auto &Raw = Snapshot.Artifacts[0];
+  ASSERT_EQ(Raw.BlobHash,
+            "a5e52526ae954aa74deb80cf1bb2372d1f4b77e1886bba69d55e30c51efa2cd2");
+  ASSERT_EQ(Raw.Content.size(), 159827u);
+  const auto Text = Raw.Content.read(0, Raw.Content.size(), MaxJavaScriptBytes);
+  const auto S = inspectJavaScript(Raw.ID, Text, "module");
+  ASSERT_EQ(S.ParseStatus, "parsed");
+  const auto A = analyzeSourceInterfaces(S, analyzeSourceBindings(S),
+                                         analyzeSourceValues(S));
+  ASSERT_EQ(A.Status, "partial");
+  ASSERT_EQ(A.Records.size(), 1u);
+  ASSERT_LT(A.Records[0].Node, S.Nodes.size());
+  EXPECT_EQ(S.Nodes[A.Records[0].Node].Start, 150734u);
+  EXPECT_EQ(S.Nodes[A.Records[0].Node].End - S.Nodes[A.Records[0].Node].Start,
+            36u);
+  size_t Spreads = 0;
+  for (const auto &R : A.Records) {
+    EXPECT_EQ(R.Kind, "fetch_member_call");
+    EXPECT_EQ(R.Method, "unknown");
+    EXPECT_EQ(R.ReceiverStatus, "member_spelling_syntax_only");
+    ASSERT_LT(R.ReceiverNode, S.Nodes.size());
+    ASSERT_LT(R.Node, S.Nodes.size());
+    if (R.ArgumentsStatus == "spread_unresolved") {
+      ++Spreads;
+      EXPECT_EQ(R.URLNode, NoSourceIndex);
+      EXPECT_EQ(R.OptionsNode, NoSourceIndex);
+      EXPECT_FALSE(R.Endpoint.comparable());
+    }
+  }
+  EXPECT_EQ(Spreads, 1u);
+  RecordProperty("member_fetch_candidates", std::to_string(A.Records.size()));
+  RecordProperty("unresolved_spreads", std::to_string(Spreads));
 }
 
 TEST(WebSourceInterfaces, OptionsDoNotGuessThroughInheritanceOrEffects) {

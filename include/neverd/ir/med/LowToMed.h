@@ -29,6 +29,7 @@
 #include <vector>
 
 namespace neverd {
+class LowSEHRuntimeMemory;
 
 struct BinaryImage;
 
@@ -70,6 +71,14 @@ public:
   void
   setSourceCalleeFunctions(const std::map<va_t, const LowFunc *> *Functions) {
     SourceCalleeFunctions = Functions;
+  }
+  /// Current decoded bodies used by an SEH frame receipt. Source signatures
+  /// cannot substitute for this semantic dependency check.
+  void setSEHRuntimeMemory(const LowSEHRuntimeMemory *Memory) {
+    SEHRuntimeMemory = Memory;
+  }
+  void setSEHFrameCallees(const std::map<va_t, const LowFunc *> *Functions) {
+    SEHFrameCallees = Functions;
   }
   void setObjCBlockCaptureCallFields(
       const std::map<va_t, ObjCBlockCaptureCallFields> *Fields) {
@@ -301,6 +310,8 @@ private:
   const std::map<va_t, SourceFunctionTypeHint> *SourceEntryTypeHints = nullptr;
   const std::map<va_t, SourceFunctionTypeHint> *SourceCalleeTypeHints = nullptr;
   const std::map<va_t, const LowFunc *> *SourceCalleeFunctions = nullptr;
+  const std::map<va_t, const LowFunc *> *SEHFrameCallees = nullptr;
+  const LowSEHRuntimeMemory *SEHRuntimeMemory = nullptr;
   const std::map<va_t, ObjCBlockCaptureCallFields> *ObjCBlockCaptureFields =
       nullptr;
   const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>

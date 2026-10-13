@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/RegistrationScopeGraph.h"
 
 #include <algorithm>
 #include <utility>
@@ -19,11 +20,16 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationCalleeFrameContract> *Callees,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds)
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *SEHControls,
+    ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
+    const EH3JumpRuntime *JumpRuntime)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
       CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),
-      Stacks(Stacks), LocalUnwinds(LocalUnwinds),
+      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
+      Conditional(Conditional), BoundCallees(BoundCallees),
+      JumpRuntime(JumpRuntime),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -31,23 +37,43 @@ RegistrationStateSolver::RegistrationStateSolver(
       CheckCalls(Callees != nullptr),
       CheckRuntimeObjects(KnownCxx && CheckCalls),
       CheckCleanups(KnownCxx && Cleanups != nullptr),
-      Facts(Function.Blocks.size()), Incoming(Function.Blocks.size()),
-      Queued(Function.Blocks.size()), CompleteCalls(CheckCalls),
-      CompleteCleanups(CheckCleanups),
+      InvalidBlocks(Function.Blocks.size()), States(Function.Blocks.size()),
+      CompleteCalls(CheckCalls), CompleteCleanups(CheckCleanups),
       CompleteCatchObjects(CheckRuntimeObjects),
       CompleteRuntimeObjects(CheckRuntimeObjects) {}
 
 RegistrationStateAnalysis RegistrationStateSolver::run() {
-  if (!initialize() || !initializeContracts())
+  if (!initialize())
     return std::move(Result);
+  if (!initializeOrder()) {
+    Result.Diagnostics.push_back(
+        "registration-state ordering budget exhausted");
+    return std::move(Result);
+  }
+  if (!initializeContracts())
+    return std::move(Result);
+  if (SEHControls) {
+    for (const auto &Control : *SEHControls)
+      if (!charge(1) || Control.Address >= Control.EndAddress ||
+          !SEHControlIndex.emplace(Control.Address, Control).second) {
+        Result.SEHInvocationExitsComplete = false;
+        Result.Diagnostics.push_back(
+            "SEH physical control evidence is invalid");
+        return std::move(Result);
+      }
+    Result.SEHControls = *SEHControls;
+  }
   initializeCookies();
   collectOccurrences();
   seedEntries();
   while (!Work.empty() && !Exhausted) {
-    const size_t I = Work.front();
-    Work.pop_front();
-    Queued[I] = false;
-    if (!transferBlock(I))
+    const auto [Priority, I, Activation] = *Work.begin();
+    Work.erase(Work.begin());
+    auto &State = States[I].at(Activation);
+    // Transfers can merge back into this node. Keep the input snapshot stable
+    // while ordinary and exceptional successors update their own activations.
+    const Domain Before = State.Incoming;
+    if (!transferBlock(I, Before, State.Facts))
       return std::move(Result);
   }
   return finish();
@@ -125,6 +151,19 @@ bool RegistrationStateSolver::initialize() {
       return false;
     }
   }
+  if (!KnownCxx) {
+    if (!charge(StateCount + 1) ||
+        !hasValidRegistrationScopeGraph(Chain, EH4)) {
+      Result.Diagnostics.push_back("invalid SEH registration scope graph");
+      return false;
+    }
+    // The frame sentinel remains a valid state even if installation starts
+    // directly in a checked active scope.
+    AllLevels.insert(registrationOutsideTryLevel(EH4));
+    for (const auto &Scope : Chain.Scopes)
+      if (Scope.IsFinally)
+        FinallyTargets.insert(Scope.HandlerVA);
+  }
   AllLevels.insert(*Chain.SeededTryLevel);
   for (size_t I = 0; I < StateCount; ++I)
     AllLevels.insert(static_cast<int32_t>(I));
@@ -153,7 +192,7 @@ bool RegistrationStateSolver::initialize() {
     if (!ValidImmediate || Store.EndVA != Block.EndAddr ||
         Boundary == Block.InstructionBoundaries.end() ||
         !Stores.emplace(Store.StoreVA, Store).second)
-      Facts[I].Invalid = true;
+      InvalidBlocks[I] = true;
   }
   bool HasInstallBoundary = false;
   for (const LowBlock &Block : Function.Blocks)
@@ -161,7 +200,9 @@ bool RegistrationStateSolver::initialize() {
          Block.InstructionBoundaries)
       HasInstallBoundary |=
           Instruction.Address == Chain.ChainInstallVA &&
-          Instruction.Size == Chain.chainInstallInstructionSize() &&
+          Instruction.Size != 0 &&
+          Instruction.Control == LowInstructionControl::None &&
+          Instruction.Address <= InvalidVA - Instruction.Size &&
           Instruction.Address + Instruction.Size == Block.EndAddr;
   if (!HasInstallBoundary) {
     Result.Diagnostics.push_back(
@@ -174,6 +215,14 @@ bool RegistrationStateSolver::initialize() {
 bool RegistrationStateSolver::charge(size_t Amount) {
   if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
     Exhausted = true;
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.SEHInvocationExitsComplete = false;
+    Result.SEHInvocationExits.clear();
+    Result.SEHJumpResumptionsComplete = false;
+    Result.SEHJumpResumptions.clear();
+    Result.SEHExceptionAccessesComplete = false;
+    Result.SEHExceptionAccesses.clear();
     return false;
   }
   WorkUsed += Amount;
@@ -188,12 +237,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeFrameContract> *Callees,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds) {
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *SEHControls) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return {};
   return registration_state::RegistrationStateSolver(
              Function, SecurityCookieVA, CookieCheckVA, Callees, Cleanups,
-             Stacks, LocalUnwinds)
+             Stacks, LocalUnwinds, SEHControls)
       .run();
 }
 } // namespace neverd

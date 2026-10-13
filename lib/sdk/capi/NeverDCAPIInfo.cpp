@@ -20,6 +20,7 @@
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/support/FilePath.h"
@@ -269,13 +270,29 @@ const char *neverd_unwind_frame_json(neverd_session_t Sess,
   const ExceptionFunction *F = S->Img.ExceptionMetadata.findFunction(Address);
   if (!F || !F->CodeRange.isValid())
     return dupStr(std::string("null"));
+  // A primary record's frame spans the chained fragments that continue its
+  // body, which its handler governs.
+  const va_t End = F->Kind == RuntimeFunctionKind::Chained ? F->CodeRange.End
+                                                           : F->contiguousEnd();
   llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
-                         {"end", vaHex(F->CodeRange.End)},
+                         {"end", vaHex(End)},
                          {"encoding", getExceptionEncodingName(F->Encoding)},
                          {"language_data", F->hasLanguageTable()}};
   if (!F->PersonalityName.empty())
     Obj["personality"] = jsonSafeText(F->PersonalityName);
   return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
+}
+
+const char *neverd_function_chunks_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
+  llvm::json::Array Arr;
+  for (const auto &Chunk : S->Img.ExceptionMetadata.outlyingChunks())
+    Arr.push_back(llvm::json::Object{{"begin", vaHex(Chunk.Range.Begin)},
+                                     {"end", vaHex(Chunk.Range.End)},
+                                     {"function", vaHex(Chunk.Function)}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
 const char *neverd_exports_json(neverd_session_t Sess) {
@@ -366,6 +383,8 @@ static void writeStringRow(llvm::json::OStream &J, const ImageString &String) {
     J.attribute("chars", static_cast<int64_t>(String.Chars));
     J.attribute("encoding", strings::encodingName(String.Kind));
     J.attribute("length", static_cast<int64_t>(String.Bytes));
+    if (String.Literal)
+      J.attribute("literal", true);
     J.attribute("value", String.Text);
   });
 }
@@ -595,9 +614,13 @@ static const char *symbolRows(Session &S, bool Data) {
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);
   llvm::json::OStream J(OS);
-  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size) {
+  // A user's name is a name even where the symbol's spells a literal.
+  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size,
+                       bool Literal) {
     J.object([&] {
       J.attribute("addr", vaHex(Addr));
+      if (Literal)
+        J.attribute("literal", true);
       J.attribute("name", jsonSafeText(Name));
       J.attribute("size", static_cast<int64_t>(Size));
     });
@@ -609,11 +632,11 @@ static const char *symbolRows(Session &S, bool Data) {
         continue;
       const auto Rename = S.Renames.find(Sym.Addr);
       if (Rename == S.Renames.end()) {
-        Row(Sym.Addr, Sym.Name, Sym.Size);
+        Row(Sym.Addr, Sym.Name, Sym.Size, isStringLiteralName(Sym.Name));
         continue;
       }
       Renamed.insert(Sym.Addr);
-      Row(Sym.Addr, Rename->second, Sym.Size);
+      Row(Sym.Addr, Rename->second, Sym.Size, false);
     }
     for (const auto &[Addr, Name] : S.Renames) {
       if (Renamed.count(Addr) ||
@@ -621,7 +644,7 @@ static const char *symbolRows(Session &S, bool Data) {
              return F.Entry == Addr;
            })))
         continue;
-      Row(Addr, Name, 0);
+      Row(Addr, Name, 0, false);
     }
   });
   OS.flush();
@@ -786,6 +809,13 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   }
   if (!DI.PDBPath.empty())
     Dyn["pdb_path"] = DI.PDBPath;
+  if (const auto Request = pdbSymbolRequest(S->Img))
+    Dyn["pdb_symbol"] =
+        llvm::json::Object{{"file", Request->FileName}, {"key", Request->Key}};
+  Root["debug_info"] =
+      llvm::json::Object{{"enabled", S->DbgRequest.Enabled},
+                         {"kind", debugInfoKindName(S->DbgKind)},
+                         {"path", pathToUTF8(S->DbgPath)}};
   if (!DI.UUID.empty())
     Dyn["uuid"] = DI.UUID;
   if (!DI.MinOSVersion.empty())

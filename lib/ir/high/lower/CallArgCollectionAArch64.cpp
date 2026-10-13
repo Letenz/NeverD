@@ -12,7 +12,6 @@
 
 #include "CallArgCollectionDetail.h"
 
-#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -44,12 +43,7 @@ void collectCallArgsAArch64(const CallArgScan &Scan,
       break;
   }
   Spilled.FirstStackSlot = FirstStackSlot;
-  const BinaryFormat Format =
-      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
-  const auto ParamRegs = Scan.TRI->integerParamRegs(Format);
-  if (FirstStackSlot == static_cast<int>(ParamRegs.size()))
-    Spilled.StoreScanWindow = limits::kAArch64FullBankCallArgStoreScanWindow;
-  collectSpilledStackArgs(Spilled, Found);
+  collectFullBankStackArgs(Spilled, Found);
   (void)Args;
 }
 

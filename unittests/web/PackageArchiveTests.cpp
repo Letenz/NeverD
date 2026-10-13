@@ -90,6 +90,75 @@ TEST_F(WebPackageArchive, GzipCRCSizeSingleStreamAndCompleteTailAreRequired) {
   EXPECT_THROW(extractPackageArchive(artifact(Gzip), "tgz", 1024), Error);
 }
 
+TEST_F(WebPackageArchive, OldGNUUsesTimestampsInsteadOfTheUstarPrefix) {
+  auto First = tarMember("package/", "", '5');
+  auto File = tarMember("package/cli.js", "throw 'DO_NOT_EXECUTE';");
+  for (auto *Member : {&First, &File}) {
+    Member->replace(257, 8, std::string("ustar  \0", 8));
+    tarNumber(*Member, 345, 12, 123456);
+    tarNumber(*Member, 357, 12, 654321);
+    tarChecksum(*Member);
+  }
+  const auto Tar = finishTar(First + File);
+  const auto A = extractPackageArchive(artifact(Tar), "tar");
+  ASSERT_EQ(A.Members.size(), 2u);
+  EXPECT_EQ(A.Profile, PackageGNUArchiveProfile);
+  EXPECT_EQ(A.Format, "tar");
+  EXPECT_EQ(A.Members[1].Path, "package/cli.js");
+  EXPECT_EQ(A.Members[1].Content.read(0, A.Members[1].Size),
+            "throw 'DO_NOT_EXECUTE';");
+  EXPECT_EQ(A.Members[1].Offset, 1024u);
+  const auto Again = extractPackageArchive(artifact(Tar), "tar");
+  EXPECT_EQ(Again.ID, A.ID);
+  EXPECT_EQ(Again.Members[1].ID, A.Members[1].ID);
+  if (packageGzipAvailable()) {
+    const auto G = extractPackageArchive(artifact(storedGzip(Tar)), "tgz");
+    EXPECT_EQ(G.Profile, PackageGNUArchiveProfile);
+    EXPECT_EQ(G.Members[1].Path, A.Members[1].Path);
+    EXPECT_EQ(G.Members[1].BlobHash, A.Members[1].BlobHash);
+    EXPECT_NE(G.ID, A.ID);
+  }
+}
+
+TEST_F(WebPackageArchive, OldGNUExtensionsMixedHeadersAndHostileNamesRefuse) {
+  auto Member = tarMember("package/a", "one");
+  Member.replace(257, 8, std::string("ustar  \0", 8));
+  tarChecksum(Member);
+  for (const auto At : {369u, 381u, 386u, 482u, 483u, 511u}) {
+    auto Bad = Member;
+    Bad[At] = '1';
+    tarChecksum(Bad);
+    EXPECT_THROW(extractPackageArchive(artifact(finishTar(Bad)), "tar"), Error);
+  }
+  for (const char Type : {'L', 'K', 'S', 'D', 'M', 'V', 'x', 'g'}) {
+    auto Bad = Member;
+    Bad[156] = Type;
+    tarChecksum(Bad);
+    EXPECT_THROW(extractPackageArchive(artifact(finishTar(Bad)), "tar"), Error);
+  }
+  for (const auto Name : {"../escape", "/absolute", "a\\b"}) {
+    auto Bad = tarMember(Name, "one");
+    Bad.replace(257, 8, std::string("ustar  \0", 8));
+    tarChecksum(Bad);
+    EXPECT_THROW(extractPackageArchive(artifact(finishTar(Bad)), "tar"), Error);
+  }
+  const auto Ustar = tarMember("package/b", "two");
+  EXPECT_THROW(
+      extractPackageArchive(artifact(finishTar(Member + Ustar)), "tar"), Error);
+  EXPECT_THROW(
+      extractPackageArchive(artifact(finishTar(Ustar + Member)), "tar"), Error);
+  auto Bad = Member;
+  Bad[345] = char(0x80);
+  tarChecksum(Bad);
+  EXPECT_THROW(extractPackageArchive(artifact(finishTar(Bad)), "tar"), Error);
+  Bad = Member;
+  Bad[0] ^= 1;
+  EXPECT_THROW(extractPackageArchive(artifact(finishTar(Bad)), "tar"), Error);
+  EXPECT_THROW(
+      extractPackageArchive(artifact(finishTar(Member + Member)), "tar"),
+      Error);
+}
+
 TEST_F(WebPackageArchive, PaxPathsApplyOnlyToTheFollowingMember) {
   const auto Long = "package/" + std::string(180, 'p') + ".js";
   const auto Bytes =

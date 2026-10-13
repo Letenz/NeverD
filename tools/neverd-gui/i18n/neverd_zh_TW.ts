@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>以位元反相的形式顯示運算元的數字</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>程式碼(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>從目前位址開始定義指令</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>離線套件審查(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>檢視本機套件證據與分析師審查</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB 檔案(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>從所選 PDB 檔案載入符號</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1452,22 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>%n 個宣告以 C 顯示</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>已儲存的變數名稱屬於另一份原始碼呈現</translation>
+    </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>展開程式碼區塊 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>摺疊程式碼區塊 (Ctrl+Shift+[)</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2088,78 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>無法確定 %1 的載入方式：%2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>此原始碼行的註解：</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>新名稱：</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>重新命名</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>請選擇要重新命名的已宣告變數或映像中的名稱</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>請選擇一行原始碼；摺疊的程式碼請先展開再加上註解</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>所選名稱沒有映像位址</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>此指令沒有到原始碼行的位址對應。</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>此原始碼行沒有到指令位址的對應；顯示函式進入點</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>載入 PDB 檔案</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 檔案 (*.pdb);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>使用未驗證的 PDB 進行分析</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>此 PE 缺少 PDB 比對識別碼（GUID/age）。所選 PDB 的架構與區段配置相符，但無法確認它屬於同一次建置。
+
+是否使用此 PDB 進行分析？其符號、類型、函式簽章及位址範圍將作為分析輸入。選擇錯誤的 PDB 可能導致錯誤的分析結果。</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>目前引擎不支援使用未驗證的 PDB 進行分析</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>行</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>欄</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>程式碼</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>請等待函式載入完成後再尋找參照</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2298,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>你開啟過的檔案會顯示在這裡。選擇「新增」，或將檔案拖放到此視窗。</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>上次開啟：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2424,22 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>平台：%1，從程式碼識別：%2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1 處已定義了指令</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>已載入 PDB：%1（%2 個名稱，身分已驗證）</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>已匯入 PDB 顯示名稱：%1（%2 個名稱，未驗證）</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>已載入 PDB 用於分析：%1（%2 個名稱，使用者已確認，身分未驗證）</translation>
     </message>
 </context>
 <context>
@@ -2525,6 +2657,147 @@ Signed: %4</source>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>最小化</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>最大化</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>還原</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>關閉</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>分析程序已停止。</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>只允許讀取分析結果。</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>分析程序無法還原分析狀態。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>符號下載逾時。</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>下載偵錯符號</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>未能為 %1 載入相符的本機 PDB。
+
+是否嘗試從 Microsoft 符號伺服器下載 %2？只有 Microsoft 提供此版本的符號時才能下載成功。
+
+將傳送 PDB 檔名和版本識別碼，不會上傳二進位檔案。相符的符號將自動快取並載入。</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>下載</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>暫不下載</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>無法建立符號快取目錄：%1</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>無法在 %1 中開啟暫存符號檔案：%2</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>已取消符號下載。</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>正在下載 %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>符號檔案超過 2 GiB 下載限制。</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft 沒有此版本的相符符號。</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>符號下載失敗：%1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>下載的符號檔案為空。</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>無法寫入符號檔案 %1：%2</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>壓縮的符號檔案無效。</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>無法在 %1 中建立暫存符號目錄：%2</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>正在解壓縮符號…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>無法解壓縮符號檔案。</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>壓縮符號需要 Windows。</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>正在驗證下載的符號…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>PDB 與已載入檔案不相符。</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>無法將已驗證的 PDB 儲存至 %1：%2</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>符號驗證失敗：%1</translation>
     </message>
 </context>
 </TS>

@@ -29,9 +29,8 @@ DisassemblyView::DisassemblyView(Session &session, const AddressSpace &space,
   stack_->addWidget(listing_);
   stack_->addWidget(graph_);
   layout->addWidget(stack_, 1);
-  status_->setContentsMargins(6, 2, 6, 2);
   status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  makeRowShrinkable(*status_);
+  makeStatusLine(*status_);
   layout->addWidget(status_);
   const auto applyFont = [this] {
     QFont font = Theme::instance().codeFont();
@@ -63,6 +62,9 @@ DisassemblyView::DisassemblyView(Session &session, const AddressSpace &space,
   });
   connect(&session_, &Session::unloaded, this, [this] {
     disconnect(graphNavigation_);
+    disconnect(graphAfterJumpConnection_);
+    graphAfterJump_ = false;
+    restoring_ = false;
     history_.clear();
     historyIndex_ = 0;
     status_->clear();
@@ -75,6 +77,10 @@ bool DisassemblyView::graphMode() const {
 }
 
 void DisassemblyView::setGraphMode(bool graph) {
+  if (!graph) {
+    disconnect(graphAfterJumpConnection_);
+    graphAfterJump_ = false;
+  }
   if (graph == graphMode())
     return;
   disconnect(graphNavigation_);
@@ -83,7 +89,7 @@ void DisassemblyView::setGraphMode(bool graph) {
     if (listing_->jumpPending()) {
       if (!graphAfterJump_) {
         graphAfterJump_ = true;
-        connect(
+        graphAfterJumpConnection_ = connect(
             listing_, &ListingView::jumpSettled, this,
             [this] {
               graphAfterJump_ = false;

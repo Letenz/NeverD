@@ -143,6 +143,35 @@ neon_shift_left_unsigned:
   expectCompiles(C);
 }
 
+// The polynomial multiplies print by their shape: PMUL of 8 or 16 bytes,
+// PMULL of byte pairs, and PMULL of the 64-bit lanes, whose function takes
+// the AES feature vmull_p64 needs.
+TEST_F(AArch64_HighCIntrinsicSpelling, PolynomialMultipliesUseTheirShape) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling AArch64 requires Clang";
+  const std::string C = highCOf(R"S(
+.text
+.global neon_polynomial
+.type neon_polynomial,%function
+neon_polynomial:
+  ldp q0, q1, [x0]
+  pmul v2.16b, v0.16b, v1.16b
+  pmul v3.8b, v0.8b, v1.8b
+  pmull v4.8h, v0.8b, v1.8b
+  pmull v5.1q, v0.1d, v1.1d
+  stp q2, q3, [x1]
+  stp q4, q5, [x1, #32]
+  ret
+.size neon_polynomial,.-neon_polynomial
+)S",
+                                "armv8-a+aes");
+  for (const char *Name : {"vmulq_p8(", "vmul_p8(", "vmull_p8(", "vmull_p64(",
+                           "__attribute__((target(\"+aes\")))"})
+    EXPECT_NE(C.find(Name), std::string::npos) << Name << "\n" << C;
+  EXPECT_EQ(C.find("unknown"), std::string::npos) << C;
+  expectCompiles(C);
+}
+
 // CRC32 and CRC32C of each operand width print as the ACLE intrinsic, the
 // function taking the target feature arm_acle.h requires.
 TEST_F(AArch64_HighCIntrinsicSpelling, Crc32UsesAcleWithTheCrcFeature) {
@@ -170,5 +199,37 @@ crc_all:
                            "__crc32cd(", "__attribute__((target(\"+crc\")))"})
     EXPECT_NE(C.find(Name), std::string::npos) << Name << "\n" << C;
   EXPECT_EQ(C.find("unknown"), std::string::npos) << C;
+  expectCompiles(C);
+}
+
+// A binary16 fixed-point conversion runs as its instruction: ACLE's
+// vcvth_n_* take at most 16 fraction bits, and LLVM lowers
+// vcvth_n_f16_s32 through the 16-bit integer form.  The function takes the
+// fp16 feature the instruction needs.
+TEST_F(AArch64_HighCIntrinsicSpelling,
+       HalfFixedConversionsRunTheirInstruction) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling AArch64 requires Clang";
+  const std::string C = highCOf(R"S(
+.text
+.global half_fixed
+.type half_fixed,%function
+half_fixed:
+  scvtf h0, w0, #16
+  ucvtf h1, x1, #64
+  fcvtzs w2, h0, #20
+  fcvtzu x3, h1, #3
+  fmov w4, s0
+  add w0, w2, w4
+  add x0, x0, x3
+  ret
+.size half_fixed,.-half_fixed
+)S",
+                                "armv8.2-a+fp16");
+  for (const char *Text :
+       {"scvtf %h0, %w1, #16", "ucvtf %h0, %x1, #64", "fcvtzs %w0, %h1, #20",
+        "fcvtzu %x0, %h1, #3", "__attribute__((target(\"+fp16\")))"})
+    EXPECT_NE(C.find(Text), std::string::npos) << Text << "\n" << C;
+  EXPECT_EQ(C.find("__builtin_arm_"), std::string::npos) << C;
   expectCompiles(C);
 }

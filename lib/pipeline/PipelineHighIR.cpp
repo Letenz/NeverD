@@ -27,12 +27,10 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <map>
-#include <queue>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -114,6 +112,8 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   // corresponding definition on the HighIR route as well as the LLVM route.
   recoverStructReturnFromCallers(Img, Result);
   propagateStructReturnForwarderShapes(Img, Result);
+  recoverStructReturnFromBody(Img, Result, StructReturnEvidence::Callers);
+  recoverVectorReturnFromCallers(Img, Result);
   materializeKnownStructReturnCallSites(Img, Result);
   bindFloatCallResults(Img, Result);
   settleReturnContracts(Img, Result, Dbg);
@@ -128,73 +128,15 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     recoverModuleCallAbi(Img, Result, AllFuncNames);
     matchCallsToCalleeSignatures(Img, Result);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
-  } else if (Img.Arch == Arch::ARM) {
-    const auto &TRI = getTargetRegInfo(Img.Arch);
-    std::map<va_t, int> RegisterArity;
-    std::map<va_t, int> TotalArity;
-    for (const MedFunc &MF : Result.MedFuncs) {
-      int MaxRegister = -1;
-      for (const MedVar &Param : MF.Params)
-        MaxRegister = std::max(
-            MaxRegister,
-            TRI.integerArgumentLayout(false).registerIndex(Param.RegOff));
-      RegisterArity[MF.Entry] = MaxRegister + 1;
-      TotalArity[MF.Entry] = static_cast<int>(MF.Params.size());
-    }
-    // A wrapper may only forward its live-in registers to another wrapper.
-    // Probe calls to a fixed point before mutating the real MedIR so an
-    // outer -> middle -> leaf chain is independent of function order.
-    std::map<va_t, std::vector<size_t>> DirectCallers;
-    std::set<va_t> Entries;
-    for (const MedFunc &MF : Result.MedFuncs)
-      Entries.insert(MF.Entry);
-    for (size_t I = 0; I < Result.MedFuncs.size(); ++I)
-      for (const MedBlock &Block : Result.MedFuncs[I].Blocks)
-        for (const MedOp &Op : Block.Ops)
-          if (Op.Opcode == NdOp::CALL && Op.NumInputs > 0 &&
-              Op.Inputs[0].isConst() &&
-              Entries.count(Op.Inputs[0].ConstVal) != 0)
-            DirectCallers[Op.Inputs[0].ConstVal].push_back(I);
-    std::queue<size_t> Work;
-    std::vector<bool> Queued(Result.MedFuncs.size(), true);
-    for (size_t I = 0; I < Result.MedFuncs.size(); ++I)
-      Work.push(I);
-    while (!Work.empty()) {
-      const size_t I = Work.front();
-      Work.pop();
-      Queued[I] = false;
-      MedFunc Probe = Result.MedFuncs[I];
-      recoverCallAbi(Probe, Img.Arch, AllFuncNames, &Img, &RegisterArity,
-                     &TotalArity);
-      int MaxRegister = -1;
-      int MaxIndex = -1;
-      for (const MedVar &Param : Probe.Params) {
-        if (Param.RegOff != kNoParamReg) {
-          const int Index =
-              TRI.integerArgumentLayout(false).registerIndex(Param.RegOff);
-          MaxRegister = std::max(MaxRegister, Index);
-          MaxIndex = std::max(MaxIndex, Index);
-        } else if (Param.Kind == MedVar::Param) {
-          MaxIndex = std::max(MaxIndex, Param.Id);
-        }
-      }
-      const bool Grew = MaxRegister + 1 > RegisterArity[Probe.Entry] ||
-                        MaxIndex + 1 > TotalArity[Probe.Entry];
-      RegisterArity[Probe.Entry] =
-          std::max(RegisterArity[Probe.Entry], MaxRegister + 1);
-      TotalArity[Probe.Entry] = std::max(TotalArity[Probe.Entry], MaxIndex + 1);
-      if (!Grew)
-        continue;
-      for (size_t Caller : DirectCallers[Probe.Entry])
-        if (!Queued[Caller]) {
-          Queued[Caller] = true;
-          Work.push(Caller);
-        }
-    }
-    for (MedFunc &MF : Result.MedFuncs)
-      recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &RegisterArity,
-                     &TotalArity);
-    propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
+    // A variadic callee takes its call sites' overflow arguments as trailing
+    // stack parameters, which MedToHigh seeds where its va_arg walk reads
+    // them, as lift mode does for the LLVM emitter.
+    finalizeVariadicCallees(Result.MedFuncs, Img.Arch, Img.abiFormat());
+  } else {
+    // A convention whose calls take their arguments from callee summaries
+    // recovers no call arguments here: a System V variadic callee's overflow
+    // is the stack its calls store.
+    sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch);
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {
@@ -242,6 +184,10 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   NameResolver.setBinaryImage(&Img);
   NameResolver.setFuncNames(&AllFuncNames);
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
+  std::map<va_t, int> VariadicVectorCallees;
+  for (const MedFunc &MF : Result.MedFuncs)
+    if (MF.takesVectorArgumentRegisters())
+      VariadicVectorCallees[MF.Entry] = MF.VariadicOverflowCount;
 
   const size_t Total = Result.MedFuncs.size();
   // A worker failure invalidates the whole stage. Keep output private until
@@ -264,9 +210,15 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
 
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
     MedToHighConverter Local;
+    // The outer helper runs small batches on the caller. Only those batches
+    // can lend their unused worker allowance to a large function's independent
+    // semantic segments; parallel function workers must not nest another pool.
+    Local.setSemanticThreadLimit(
+        Total < limits::kMinParallelIRWorkItems ? workerThreadCount() : 1);
     Local.setBinaryImage(&Img);
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
+    Local.setVariadicVectorCallees(&VariadicVectorCallees);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});

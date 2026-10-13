@@ -103,7 +103,10 @@ public:
   void writeGlobals(llvm::Module &Mod);
   void writeImageByteArray(const llvm::GlobalVariable &Global,
                            llvm::StringRef Name);
-  void writeReferencedImageObjects(const llvm::Function &Fn);
+  /// Declare the image objects \p Fn reads or writes, and those whose
+  /// addresses alone its printed \p Text names.
+  void writeReferencedImageObjects(const llvm::Function &Fn,
+                                   llvm::StringRef Text);
   void writeForwardDecls(llvm::Module &Mod);
 
   //--- Function rendering (LLVMCFuncWriter.cpp) ---
@@ -112,6 +115,7 @@ public:
   void writeFunction(llvm::Function &Fn);
   void writeAnalysisOnlyFunction(llvm::Function &Fn);
   void writeFunctionProjection(llvm::Function &Fn);
+  void renderFunctionProjection(llvm::Function &Fn);
   void setupFunction(llvm::Function &Fn);
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
@@ -547,8 +551,16 @@ public:
   const llvm::AllocaInst *joinAllocaForCallArg(const llvm::Value *Arg,
                                                const llvm::CallBase &Call);
   bool phiPrintedAsJoinCallArg(const llvm::PHINode *Phi);
+  /// \p Arg as the call spells it; \p PointerSpelling, when given, says
+  /// whether the text is an address, as valueStr reports it.
   std::string callArgStr(const llvm::Value *Arg, const llvm::CallBase &Call,
-                         unsigned ArgIdx);
+                         unsigned ArgIdx, bool *PointerSpelling = nullptr);
+  /// Whether the declaration written for \p Call's callee is its LLVM
+  /// prototype, with an integer parameter at \p ArgIdx: C converts no
+  /// address to it implicitly.
+  bool declaredParameterIsInteger(const llvm::CallBase &Call,
+                                  llvm::StringRef CalleeName,
+                                  unsigned ArgIdx) const;
   std::optional<std::string> enumeratorDisplay(const TypeRef &Ty,
                                                uint64_t Val) const;
   TypeRef enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const;
@@ -605,6 +617,13 @@ public:
   //--- Expression rendering (LLVMCExprWriter.cpp) ---
   std::string resolveNdDataName(llvm::StringRef Name) const;
   bool isImageDataAddress(va_t Addr) const;
+  /// The address among the code that \p CI holds, which the LLVM emitter
+  /// keeps as a number: it gives only data sections globals to point into.
+  std::optional<va_t> codeSectionAddress(const llvm::ConstantInt &CI) const;
+  /// \p CI as the literal or the debug information's data object at its
+  /// address among the code, as HighC spells it.
+  std::optional<std::string>
+  codeSectionAddressText(const llvm::ConstantInt &CI) const;
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
@@ -638,6 +657,7 @@ public:
   std::string integerPointerOperandStr(const llvm::Value *Operand);
   std::optional<std::string>
   targetPointerMaskIdentity(const llvm::BinaryOperator &Op);
+  std::optional<std::string> lowBitsMaskCast(const llvm::BinaryOperator &Op);
   std::string castStr(unsigned Opcode, const std::string &Src,
                       llvm::Type *SrcTy, llvm::Type *DstTy);
   std::string cmpStr(llvm::CmpInst::Predicate Pred, const std::string &LHS,
@@ -676,6 +696,8 @@ public:
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
+  /// The helper each modeled supervisor call in the unit prints through.
+  std::map<Intrinsic, std::string> SyscallHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
   /// Exact projected prototypes captured while rendering definitions. They
   /// include source presentation choices such as inferred void and sret.
@@ -685,6 +707,9 @@ public:
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
   /// Import entry names that are C names (SymbolDecorations.def).
   llvm::StringSet<> ImportEntryCNames;
+  /// The calls a function's next render keeps as statements: its text
+  /// printed each other than once where the analysis inlined it.
+  std::set<const llvm::CallBase *> StatementCalls;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;

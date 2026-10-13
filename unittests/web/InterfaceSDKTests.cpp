@@ -19,6 +19,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 namespace {
 using Value = llvm::json::Value;
@@ -144,6 +145,16 @@ protected:
     return take(neverd_web_interfaces_compare_json(
         S, Revision.data(), Revision.size(), Source.data(), Source.size(),
         Capture.data(), Capture.size()));
+  }
+  Value relations(std::string ID) {
+    return take(neverd_web_interface_relations_analyze_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size()));
+  }
+  Value relationRecords(std::string ID, uint64_t Offset = 0,
+                        uint64_t Limit = 128) {
+    return take(neverd_web_interface_relation_records_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), Offset,
+        Limit));
   }
 };
 
@@ -282,6 +293,60 @@ TEST_F(WebInterfaceSDK, SourceAndCorrelationCachesAreBounded) {
       1);
 }
 
+TEST_F(WebInterfaceSDK,
+       WrapperMetadataKeepsCallerAndDefinitionAnchorsRedacted) {
+  std::ofstream(Root / "b0.js") << R"(
+const CANARY_WRAPPER=(CANARY_OPTIONS,CANARY_URL)=>fetch(CANARY_URL,CANARY_OPTIONS);
+CANARY_WRAPPER({method:'POST',headers:{Authorization:'CANARY_TOKEN'},
+               body:'CANARY_BODY'},'https://CANARY_HOST/CANARY_PATH');
+CANARY_WRAPPER(...CANARY_ARGUMENTS);
+)";
+  open();
+  const auto A = source();
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-wrappers-syntax-v4");
+  EXPECT_EQ(field(A, "wrapper_profile"), "direct-lexical-fetch-forwarding-v1");
+  EXPECT_EQ(A.getAsObject()->getInteger("wrapper_definitions"), 1);
+  EXPECT_FALSE(
+      A.getAsObject()->getBoolean("wrapper_correlation").value_or(true));
+  const auto ID = field(A, "interface_analysis_id");
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 3u);
+  EXPECT_EQ(field(Items[1], "kind"), "fetch_wrapper_call");
+  EXPECT_EQ(field(Items[1], "wrapper_request_node_id"),
+            field(Items[0], "node_id"));
+  EXPECT_FALSE(field(Items[1], "wrapper_binding_id").empty());
+  EXPECT_FALSE(field(Items[1], "wrapper_node_id").empty());
+  EXPECT_FALSE(field(Items[1], "url_parameter_node_id").empty());
+  EXPECT_FALSE(field(Items[1], "options_parameter_node_id").empty());
+  EXPECT_EQ(Items[1].getAsObject()->getInteger("url_argument_index"), 1);
+  EXPECT_EQ(Items[1].getAsObject()->getInteger("options_argument_index"), 0);
+  EXPECT_EQ(field(Items[1], "method"), "POST");
+  EXPECT_FALSE(field(Items[1], "headers_node_id").empty());
+  EXPECT_FALSE(field(Items[1], "body_node_id").empty());
+  EXPECT_EQ(field(Items[2], "arguments_status"), "spread_unresolved");
+  EXPECT_TRUE(field(Items[2], "url_node_id").empty());
+  EXPECT_TRUE(field(Items[2], "options_node_id").empty());
+  EXPECT_FALSE(Items[2].getAsObject()->getInteger("url_argument_index"));
+  EXPECT_FALSE(Items[2].getAsObject()->getInteger("options_argument_index"));
+  EXPECT_EQ(field(Items[1], "wrapper_binding_id"),
+            field(Items[2], "wrapper_binding_id"));
+  EXPECT_EQ(compare(ID, admit()).getAsObject()->getInteger("pair_count"), 0);
+  const auto Again = source();
+  EXPECT_EQ(field(Again, "interface_analysis_id"), ID);
+  const auto OldRevision = Revision;
+  open();
+  EXPECT_EQ(code(take(neverd_web_interface_records_json(
+                S, OldRevision.data(), OldRevision.size(), ID.data(), ID.size(),
+                0, 128))),
+            "stale_revision");
+  EXPECT_EQ(
+      code(take(neverd_web_interface_records_json(
+          S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128))),
+      "unknown_interface_analysis");
+}
+
 TEST_F(WebInterfaceSDK, XHRMetadataRetainsSyntaxLinksAndWithholdsAllValues) {
   std::ofstream(Root / "b0.js") << R"(
 const CANARY_REQUEST = new XMLHttpRequest();
@@ -296,8 +361,8 @@ CANARY_REQUEST.send(...CANARY_ARGUMENTS);
 )";
   open();
   const auto A = source();
-  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v2");
-  EXPECT_EQ(field(A, "receiver_identity"), "lexical_syntax_only");
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-wrappers-syntax-v4");
+  EXPECT_EQ(field(A, "receiver_identity"), "lexical_and_member_syntax_only");
   EXPECT_EQ(field(A, "request_ordering"), "not_analyzed");
   EXPECT_FALSE(A.getAsObject()->getBoolean("xhr_correlation").value_or(true));
   const auto ID = field(A, "interface_analysis_id");
@@ -327,7 +392,299 @@ CANARY_REQUEST.send(...CANARY_ARGUMENTS);
   EXPECT_TRUE(field(Items[6], "body_node_id").empty());
   EXPECT_EQ(compare(ID, admit()).getAsObject()->getInteger("pair_count"), 0);
 }
+
+TEST_F(WebInterfaceSDK, MemberAndSpreadPublicationKeepExplicitUncertainty) {
+  std::ofstream(Root / "b0.js") << R"(
+const CANARY_CLIENT = obtainClient();
+CANARY_CLIENT.fetch('https://CANARY_HOST/CANARY_PATH', {method:'POST',body:'CANARY_BODY'});
+this.fetch(...CANARY_ARGUMENTS);
+fetch(...CANARY_ARGUMENTS);
+new WebSocket(...CANARY_ARGUMENTS);
+fetch('https://CANARY_HOST/CANARY_PATH', {method:'POST'});
+)";
+  open();
+  const auto A = source();
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-wrappers-syntax-v4");
+  EXPECT_EQ(field(A, "fetch_member_identity"), "property_spelling_unverified");
+  EXPECT_FALSE(
+      A.getAsObject()->getBoolean("fetch_member_correlation").value_or(true));
+  EXPECT_EQ(field(A, "spread_argument_resolution"), "not_analyzed");
+  const auto ID = field(A, "interface_analysis_id");
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 5u);
+  EXPECT_EQ(field(Items[0], "kind"), "fetch_member_call");
+  EXPECT_FALSE(field(Items[0], "receiver_node_id").empty());
+  EXPECT_FALSE(field(Items[0], "receiver_binding_id").empty());
+  EXPECT_EQ(field(Items[0], "method"), "unknown");
+  EXPECT_EQ(field(Items[0], "url_status"), "wrapper_arguments_not_interpreted");
+  EXPECT_TRUE(field(Items[0], "url_node_id").empty());
+  EXPECT_TRUE(field(Items[0], "options_node_id").empty());
+  EXPECT_TRUE(field(Items[0], "body_node_id").empty());
+  for (size_t I = 1; I < 4; ++I) {
+    EXPECT_EQ(field(Items[I], "arguments_status"), "spread_unresolved");
+    EXPECT_EQ(field(Items[I], "method"), "unknown");
+    for (const auto *Name : {"url_node_id", "options_node_id", "method_node_id",
+                             "headers_node_id", "body_node_id"})
+      EXPECT_TRUE(field(Items[I], Name).empty());
+  }
+  const auto C = compare(ID, admit());
+  EXPECT_EQ(C.getAsObject()->getInteger("pair_count"), 1);
+  const auto CID = field(C, "correlation_id");
+  const auto Pairs = take(neverd_web_interface_correlation_records_json(
+      S, Revision.data(), Revision.size(), CID.data(), CID.size(), 0, 128));
+  const auto &Matched = *Pairs.getAsObject()->getArray("items");
+  ASSERT_EQ(Matched.size(), 1u);
+  EXPECT_EQ(field(Matched[0], "interface_id"), field(Items[4], "interface_id"));
+}
 #endif
+
+#if NEVERD_TEST_WEB_JAVASCRIPT
+TEST_F(WebInterfaceSDK,
+       RequestRelationsKeepPrivateValuesAndRuntimeClaimsSeparate) {
+  std::ofstream(Root / "b0.js", std::ios::trunc) << R"(
+async function CANARY_WRAPPER() {
+  const CANARY_RESULT = await fetch('https://CANARY_HOST/CANARY_PATH',
+      {method:'POST',body:'CANARY_BODY'});
+  CANARY_RESULT.json();
+  return fetch(...CANARY_ARGUMENTS);
+}
+fetch(...CANARY_ARGUMENTS).then(CANARY_HANDLER);
+)";
+  open();
+  const auto Request = source();
+  const auto ID = field(Request, "interface_analysis_id");
+  const auto A = relations(ID);
+  EXPECT_EQ(field(A, "profile"), "request-source-relations-v2");
+  EXPECT_EQ(field(A, "analysis_status"), "partial");
+  EXPECT_EQ(field(A, "response_api_identity"), "member_spelling_unverified");
+  EXPECT_EQ(field(A, "wrapper_argument_flow"), "not_analyzed");
+  EXPECT_EQ(field(A, "callback_parameter_roles"), "not_assigned");
+  EXPECT_FALSE(
+      A.getAsObject()->getBoolean("source_execution_observed").value_or(true));
+  EXPECT_FALSE(A.getAsObject()->getBoolean("har_correlation").value_or(true));
+  EXPECT_EQ(A.getAsObject()->getInteger("relation_count"), 6);
+  const auto RID = field(A, "relations_id");
+  const auto Page = relationRecords(RID, 0, 2);
+  ASSERT_EQ(Page.getAsObject()->getArray("items")->size(), 2u);
+  EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), 2);
+  EXPECT_EQ(relationRecords(RID, 6).getAsObject()->getArray("items")->size(),
+            0u);
+  EXPECT_EQ(code(relationRecords(RID, 7)), "invalid_page");
+  EXPECT_EQ(code(relationRecords(RID, 0, 129)), "invalid_page");
+  EXPECT_EQ(code(relations("unknown")), "unknown_interface_analysis");
+  const auto H = admit();
+  const auto Joined = compare(ID, H);
+  EXPECT_EQ(Joined.getAsObject()->getInteger("pair_count"), 1);
+  EXPECT_EQ(field(relations(ID), "relations_id"), RID);
+  const auto OldRevision = Revision;
+  open();
+  EXPECT_EQ(code(take(neverd_web_interface_relation_records_json(
+                S, OldRevision.data(), OldRevision.size(), RID.data(),
+                RID.size(), 0, 1))),
+            "stale_revision");
+  EXPECT_EQ(code(relationRecords(RID)), "unknown_interface_relations");
+}
+
+TEST_F(WebInterfaceSDK,
+       LocalAndPublishedNavigationGiveIdenticalRequestRelations) {
+  std::ofstream(Root / "b0.js", std::ios::trunc)
+      << "const CANARY_RESULT = await fetch(...CANARY_ARGS); "
+         "CANARY_RESULT.text();";
+  open();
+  auto Request = source();
+  const auto Before = relations(field(Request, "interface_analysis_id"));
+  const auto BeforeID = field(Before, "relations_id");
+  const auto BeforeSteps = Before.getAsObject()->getInteger("steps");
+  const auto BeforeItems =
+      relationRecords(BeforeID).getAsObject()->getArray("items")->size();
+  open();
+  Request = source();
+  const auto SourceID = field(Request, "source_id");
+  const auto Navigation = take(neverd_web_source_navigation_analyze_json(
+      S, Revision.data(), Revision.size(), SourceID.data(), SourceID.size()));
+  EXPECT_EQ(field(Navigation, "navigation_id"), field(Before, "navigation_id"));
+  const auto After = relations(field(Request, "interface_analysis_id"));
+  EXPECT_EQ(field(After, "relations_id"), BeforeID);
+  EXPECT_EQ(After.getAsObject()->getInteger("steps"), BeforeSteps);
+  EXPECT_EQ(relationRecords(BeforeID).getAsObject()->getArray("items")->size(),
+            BeforeItems);
+}
+
+TEST_F(WebInterfaceSDK, RelationRecordExhaustionKeepsRequestPagesAvailable) {
+  {
+    std::ofstream O(Root / "b0.js", std::ios::trunc);
+    for (unsigned I = 0; I < 2050; ++I)
+      O << "const CANARY_RESULT_" << I << " = await fetch(url); CANARY_RESULT_"
+        << I << ".json();\n";
+  }
+  open();
+  const auto Request = source();
+  ASSERT_EQ(field(Request, "analysis_status"), "partial");
+  ASSERT_EQ(Request.getAsObject()->getInteger("interface_count"), 2050);
+  const auto ID = field(Request, "interface_analysis_id");
+  const auto A = relations(ID);
+  EXPECT_EQ(field(A, "analysis_status"), "budget_exceeded");
+  EXPECT_EQ(field(A, "reason"), "interface_relation_record_budget_exceeded");
+  EXPECT_EQ(A.getAsObject()->getInteger("relation_count"), 0);
+  const auto RID = field(A, "relations_id");
+  EXPECT_TRUE(relationRecords(RID).getAsObject()->getArray("items")->empty());
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  EXPECT_EQ(Page.getAsObject()->getArray("items")->size(), 128u);
+  EXPECT_EQ(field(Page, "analysis_status"), "partial");
+}
+#endif
+
+TEST_F(WebInterfaceSDK, PassiveReportsRequireCommitAndKeepEvidenceClasses) {
+  auto Create = [&](std::string Text) {
+    return take(neverd_web_passive_report_create_json(
+        S, Revision.data(), Revision.size(), Text.data(), Text.size()));
+  };
+  auto Read = [&](std::string ID, uint64_t At = 0, uint64_t Limit = 128) {
+    return take(neverd_web_passive_report_records_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), At, Limit));
+  };
+  const auto P = preview();
+  const auto Capture = field(P, "capture_id");
+  const auto Selection =
+      "{\"schema_version\":1,\"har_capture_id\":\"" + Capture + "\"}";
+  EXPECT_EQ(code(Create(Selection)), "har_capture_not_committed");
+  EXPECT_EQ(code(Create("{\"schema_version\":1}")),
+            "passive_report_empty_selection");
+  EXPECT_EQ(code(Create("{\"schema_version\":1,\"raw\":true}")),
+            "invalid_passive_report_selection");
+#if !NEVERD_TEST_WEB_JAVASCRIPT
+  EXPECT_EQ(
+      code(Create("{\"schema_version\":1,\"interface_analysis_id\":\"a\"}")),
+      "capability_unavailable");
+#endif
+  commit(field(P, "preview_token"));
+  const auto R = Create(Selection);
+  const auto ID = field(R, "passive_report_id");
+  ASSERT_FALSE(ID.empty());
+  EXPECT_EQ(field(Create(Selection), "passive_report_id"), ID);
+  EXPECT_EQ(R.getAsObject()->getInteger("record_count"), 3);
+  EXPECT_EQ(R.getAsObject()->getInteger("static_records"), 0);
+  EXPECT_EQ(field(R, "server_constraints"), "unknown");
+  EXPECT_EQ(field(R, "inferred_optionality"), "unknown");
+  EXPECT_EQ(code(Read(ID, 0, 129)), "invalid_page");
+  EXPECT_FALSE(
+      Read(ID, 0, 1).getAsObject()->getBoolean("page_complete").value_or(true));
+  EXPECT_TRUE(Read(ID, 2, 1)
+                  .getAsObject()
+                  ->getBoolean("page_complete")
+                  .value_or(false));
+#if NEVERD_TEST_WEB_JAVASCRIPT
+  const auto Analysis = field(source(), "interface_analysis_id");
+  const auto Both =
+      Create("{\"schema_version\":1,\"har_capture_id\":\"" + Capture +
+             "\",\"interface_analysis_id\":\"" + Analysis + "\"}");
+  EXPECT_EQ(Both.getAsObject()->getInteger("http_candidates"), 1);
+  const auto Pages = Read(field(Both, "passive_report_id"));
+  std::set<std::string> Classes;
+  for (const auto &Item : *Pages.getAsObject()->getArray("items"))
+    Classes.insert(field(Item, "evidence_class"));
+  EXPECT_EQ(Classes,
+            (std::set<std::string>{"static_inference", "imported_observation",
+                                   "candidate_correlation"}));
+#endif
+  open();
+  EXPECT_EQ(code(Read(ID)), "unknown_passive_report");
+}
+
+TEST_F(WebInterfaceSDK, PassiveStructureRetainsFieldsAcrossSingleRowPages) {
+  std::ofstream(Root / "a0.har") << R"({"log":{"version":"1.2","entries":[{
+        "request":{"method":"POST","url":"https://CANARY/a",
+          "postData":{"mimeType":"application/json",
+                      "text":"{\"CANARY_PARENT\":{\"CANARY_CHILD\":null}}"}},
+        "response":{"status":200}}]}})";
+  open();
+  const auto Capture = admit();
+  const auto Selection =
+      "{\"schema_version\":1,\"har_capture_id\":\"" + Capture + "\"}";
+  const auto Report = take(neverd_web_passive_report_create_json(
+      S, Revision.data(), Revision.size(), Selection.data(), Selection.size()));
+  ASSERT_EQ(field(Report, "status"), "ok");
+  EXPECT_EQ(field(Report, "profile"), "passive-evidence-shape-report-v2");
+  EXPECT_EQ(field(Report, "schema_meaning"), "observed_structure_and_presence");
+  const auto ID = field(Report, "passive_report_id");
+  std::set<std::string> Nodes, Parents, IDs;
+  uint64_t Values = 0, Schemas = 0, Rows = 0;
+  for (;;) {
+    const auto Page = take(neverd_web_passive_report_records_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), Rows, 1));
+    ASSERT_EQ(field(Page, "status"), "ok");
+    const auto *Items = Page.getAsObject()->getArray("items");
+    ASSERT_NE(Items, nullptr);
+    ASSERT_EQ(Items->size(), 1u);
+    const auto &R = (*Items)[0];
+    EXPECT_TRUE(IDs.insert(field(R, "record_id")).second);
+    Values += field(R, "kind") == "observed_json_value_node";
+    Schemas += field(R, "kind") == "observed_json_schema_node";
+    if (const auto *S = R.getAsObject()->getObject("structure")) {
+      const auto Node = S->getString("node_id").value_or("").str();
+      const auto Parent = S->getString("parent_node_id").value_or("").str();
+      if (!Node.empty())
+        EXPECT_TRUE(Nodes.insert(Node).second);
+      if (!Parent.empty())
+        Parents.insert(Parent);
+    }
+    ++Rows;
+    if (Page.getAsObject()->getBoolean("page_complete").value_or(false))
+      break;
+    ASSERT_LT(Rows, 20u);
+  }
+  EXPECT_EQ(Values, 3u);
+  EXPECT_EQ(Schemas, 3u);
+  EXPECT_EQ(Rows, 9u);
+  for (const auto &P : Parents)
+    EXPECT_TRUE(Nodes.count(P));
+}
+
+TEST_F(WebInterfaceSDK,
+       PassiveStreamSelectionPreservesSourceAndProtocolLimits) {
+  std::ofstream(Root / "bad.har")
+      << R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"CANARY":"CANARY"}})"
+      << '\n';
+  std::ofstream(Root / "b0.js")
+      << "function f(){checkPermission(CANARY);executeTool(CANARY);"
+         "runHooks(CANARY);const c={hooks:{},mcpServers:{},permissions:{}};"
+         "send({jsonrpc:'2.0',method:'tools/call',params:{CANARY:'CANARY'}});}";
+  open();
+  const auto &Artifact = Artifacts[11];
+  const std::string Profile = "mcp-2025-06-18-stdio-jsonl-v1";
+  const auto Preview = take(neverd_web_stream_preview_json(
+      S, Revision.data(), Revision.size(), Artifact.data(), Artifact.size(),
+      Profile.data(), Profile.size()));
+  const auto Stream = field(Preview, "stream_capture_id");
+  auto Create = [&](std::string Text) {
+    return take(neverd_web_passive_report_create_json(
+        S, Revision.data(), Revision.size(), Text.data(), Text.size()));
+  };
+  auto Selection =
+      "{\"schema_version\":1,\"stream_capture_id\":\"" + Stream + "\"}";
+  EXPECT_EQ(code(Create(Selection)), "stream_capture_not_committed");
+  const auto Token = field(Preview, "preview_token");
+  take(neverd_web_stream_commit_json(S, Revision.data(), Revision.size(),
+                                     Token.data(), Token.size()));
+  EXPECT_EQ(
+      Create(Selection).getAsObject()->getInteger("mcp_method_candidates"), 0);
+#if NEVERD_TEST_WEB_JAVASCRIPT
+  const auto Analysis = field(source(), "interface_analysis_id");
+  const auto R =
+      Create("{\"schema_version\":1,\"stream_capture_id\":\"" + Stream +
+             "\",\"interface_analysis_id\":\"" + Analysis + "\"}");
+  EXPECT_EQ(R.getAsObject()->getInteger("mcp_method_candidates"), 1);
+  const auto ID = field(R, "passive_report_id");
+  const auto Page = take(neverd_web_passive_report_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  EXPECT_GT(Page.getAsObject()->getArray("items")->size(), 5u);
+  EXPECT_EQ(Page.getAsObject()->getBoolean("permission_enforcement_verified"),
+            false);
+#endif
+}
 
 #ifdef NEVERD_WEB_TEST_CLI
 TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
@@ -361,6 +718,8 @@ TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   EXPECT_EQ(Output.find("observation_id"), std::string::npos);
   ASSERT_EQ(Run({"har-import", Path, "1", Policy, Hash}), 0);
   EXPECT_NE(Output.find("observation_id"), std::string::npos);
+  ASSERT_EQ(Run({"report-har", Path, "1", Policy, Hash}), 0);
+  EXPECT_NE(Output.find("passive-evidence-shape-report-v2"), std::string::npos);
 #if NEVERD_TEST_WEB_JAVASCRIPT
   std::ofstream(Root / "b0.js", std::ios::app)
       << "const CANARY_XHR=new XMLHttpRequest();"
@@ -373,9 +732,25 @@ TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   EXPECT_NE(Output.find("\"kind\":\"xhr_open\""), std::string::npos);
   EXPECT_NE(Output.find("\"kind\":\"xhr_send\""), std::string::npos);
   EXPECT_NE(Output.find("\"kind\":\"xhr_event_handler\""), std::string::npos);
+  std::ofstream(Root / "b0.js", std::ios::app)
+      << "const CANARY_RESULT=await "
+         "fetch(...CANARY_ARGS);CANARY_RESULT.json();";
+  EXPECT_EQ(Run({"interface-relations", Path, "module", "6"}), 0);
+  EXPECT_NE(Output.find("request-source-relations-v2"), std::string::npos);
+  EXPECT_NE(Output.find("await_result_const_binding"), std::string::npos);
+  EXPECT_NE(Output.find("bound_result_member_call"), std::string::npos);
+  EXPECT_NE(
+      Output.find("\"response_api_identity\":\"member_spelling_unverified\""),
+      std::string::npos);
   EXPECT_EQ(
       Run({"interface-correlate", Path, "module", "6", "1", Policy, Hash}), 0);
   EXPECT_NE(Output.find("\"pair_count\":1"), std::string::npos);
+  EXPECT_EQ(Run({"report-source", Path, "module", "6"}), 0);
+  EXPECT_NE(Output.find("source_interface"), std::string::npos);
+  EXPECT_EQ(Run({"report-correlate", Path, "module", "6", "1", Policy, Hash}),
+            0);
+  EXPECT_NE(Output.find("http_source_observation_candidate"),
+            std::string::npos);
 #endif
   std::ofstream(Root / "a0.har", std::ios::app) << " ";
   EXPECT_EQ(Run({"har-import", Path, "1", Policy, Hash}), 1);

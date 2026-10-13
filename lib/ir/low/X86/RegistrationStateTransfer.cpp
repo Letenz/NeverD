@@ -4,11 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationFrameEffects.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <utility>
@@ -24,12 +27,13 @@ bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
 
 } // namespace
 
-bool RegistrationStateSolver::transferBlock(size_t I) {
+bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
+                                            BlockFacts &Facts) {
   const LowBlock &Block = Function.Blocks[I];
-  const Domain Before = Incoming[I];
-  if (!charge(Before.CxxCatchStacks.size() + 1))
+  if (!charge(Before.catchCellCount() + Before.sehCallerCellCount() + 1))
     return true;
   Domain After = Before;
+  std::optional<Domain> CallException;
   FrameTransfer Transfer(
       After.Frame, *Chain.RegistrationOffset, EH4 ? SecurityCookieVA : 0,
       Chain.RealignedFrame ? &*Chain.RealignedFrame : nullptr);
@@ -38,52 +42,86 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
   std::optional<RegistrationCxxContinuation> CatchReturn;
   bool NoReturnAtExit = false;
   va_t NoReturnEnd = InvalidVA;
+  va_t InvocationEnd = InvalidVA;
   auto Invalidate = [&] {
-    Facts[I].Invalid = true;
+    Facts.Invalid = true;
     After.Unknown = true;
     After.Levels.clear();
   };
+  if (SEHControls && !KnownCxx && Before.Callback && Before.Activation.Entry &&
+      FinallyTargets.count(*Before.Activation.Entry) &&
+      !validateSEHInvocationBlock(I)) {
+    Invalidate();
+    Result.SEHInvocationExitsComplete = false;
+  }
   for (const LowOp &Op : Block.Ops) {
-    // Ambiguous frame loads inspect every tracked cell. Charge that work,
-    // not just the number of lifted operations, before entering the scan.
+    Transfer.beginInstruction(Op.Addr);
+    RuntimeTransfer.beginInstruction(Op.Addr);
+    const auto Memory = lowMemoryOperands(Op);
+    size_t MemoryWork = 0;
+    if (Memory.Address && Op.Opcode == NdOp::LOAD &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      const auto Address = Transfer.read(*Memory.Address);
+      MemoryWork = After.Frame.memoryAccessWork(Address, Memory.AccessSize);
+      if (CheckRuntimeObjects && Address.Offset)
+        MemoryWork += After.RuntimeObject.memoryAccessWork(
+            FrameValue::frame(*Address.Offset), Memory.AccessSize);
+    }
+    // Known frame accesses visit an ordered interval. Ambiguous addresses
+    // retain the full-scan charge before inspecting possible pointer cells.
     size_t RegisterBytes = Op.Output.Size;
     for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
       RegisterBytes += Op.Inputs[Input].Size;
-    if (!charge(
-            1 + RegisterBytes +
-            ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE)
-                 ? After.Frame.cellCount() + 2 * After.RuntimeObject.cellCount()
-                 : 0)))
+    if (!charge(1 + RegisterBytes + MemoryWork))
       break;
-    Transfer.beginInstruction(Op.Addr);
-    RuntimeTransfer.beginInstruction(Op.Addr);
     const FrameValue Value = Transfer.evaluate(Op, After.Installed);
-    FrameValue RuntimeValue = RuntimeTransfer.evaluate(Op, After.Installed);
+    if (Memory.Address && Memory.StoredValue &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      invalidateJumpRuntimeBindings(After, Transfer.read(*Memory.Address),
+                                    Memory.AccessSize);
+    if (Conditional &&
+        (!checkConditionalMemory(After.Frame, Op, Transfer,
+                                 &After.InitializedFrameBytes) ||
+         !conditionalReturn(After, Op) || !conditionalCall(After.Frame, Op)))
+      Invalidate();
+    FrameValue RuntimeValue;
+    if (CheckRuntimeObjects) {
+      if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
+        const auto Address = Transfer.read(Op.Inputs[0]);
+        if (Address.Offset)
+          RuntimeValue =
+              After.RuntimeObject.load(Address.Offset, Op.Output.Size);
+      } else
+        RuntimeValue = RuntimeTransfer.evaluate(Op, After.Installed);
+    }
     if (CheckRuntimeObjects &&
         (Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::COND_BR ||
          Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL))
       for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
         if (RuntimeTransfer.read(Op.Inputs[Input]).MayBeFrame)
           CompleteRuntimeObjects = false;
-    if (CheckRuntimeObjects && Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
-      const auto Address = Transfer.read(Op.Inputs[0]);
-      RuntimeValue = After.RuntimeObject.load(Address.Offset, Op.Output.Size);
-      if (!Address.Offset)
-        RuntimeValue = {};
+    recordCatchReturn(I, After, Op, Transfer, Facts, CatchReturn);
+    if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN) {
+      if (!callbackCanReturn(After) || !callbackReturnInstruction(I, Op)) {
+        Invalidate();
+        if (SEHControls)
+          Result.SEHInvocationExitsComplete = false;
+      } else
+        Facts.CallbackReturnAtExit = true;
     }
-    recordCatchReturn(I, After, Op, Transfer, CatchReturn);
-    if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN &&
-        (!callbackCanReturn(After) || !callbackReturnInstruction(I, Op)))
-      Invalidate();
-    if (Op.Seq >= 0 && Op.Output.Size != 0 && Value.MayBeFrame) {
+    transferSEHExit(I, After, Op, Facts);
+    // Different activations can execute the same source occurrence. Remember
+    // scalar/unknown observations too: a frame value in only one invocation
+    // cannot authorize an exact frame projection for the shared instruction.
+    if (Op.Seq >= 0 && Op.Output.Size != 0) {
       if (!charge(1))
         break;
       auto [It, New] =
-          FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+          FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq),
+                              Value.MayBeFrame ? Value : FrameValue{});
       if (!New)
         It->second = registration_state::join(It->second, Value);
     }
-    const auto Memory = lowMemoryOperands(Op);
     if (Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       const auto Address = Transfer.read(*Memory.Address);
@@ -100,11 +138,12 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     }
     bool RuntimeMemory = false;
     RuntimeMemory =
-        recordRuntimeMemory(I, After, Op, Transfer, RuntimeTransfer);
+        recordRuntimeMemory(I, After, Op, Transfer, RuntimeTransfer, Facts);
+    RuntimeMemory |= recordSEHExceptionMemory(I, After, Op, Transfer, Facts);
     if (Exhausted)
       break;
 
-    if (EH4 && Op.Opcode == NdOp::INTRINSIC)
+    if (EH4 && Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op))
       CompleteCookies = false;
     if (EH4 && Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
@@ -156,7 +195,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
     }
-    if (Op.Opcode == NdOp::INTRINSIC) {
+    if (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) {
       CompleteImageReads = false;
       if (CheckCalls) {
         CompleteCalls = false;
@@ -190,7 +229,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           Op.Opcode == NdOp::LOAD ? Op.Output.Size : Memory.StoredValue->Size;
       std::optional<RegistrationIncomingFrameAccess> Access;
       if (Address.MayBeFrame && !Address.Offset && !Address.EntryOffset &&
-          !Address.CallbackAddress)
+          !Address.CallbackAddress && !RuntimeMemory)
         ConsistentIncomingAccesses = false;
       const auto IncomingOffset =
           Chain.RealignedFrame ? Address.EntryOffset : Address.Offset;
@@ -252,6 +291,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           After.Unknown = false;
           After.Uninstalled = false;
           After.Installed = true;
+          After.JumpCaptures.clear();
           ProvenInstallation = true;
           if (EH4 && !cookiesReady(After.Frame))
             CompleteCookies = false;
@@ -263,6 +303,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           After.Unknown = false;
           After.Uninstalled = true;
           After.Installed = false;
+          After.JumpCaptures.clear();
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
         } else {
           CompleteChainOperations = false;
@@ -270,6 +311,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           After.Installed = After.Uninstalled = true;
         }
       } else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        invalidateJumpCaptures(After, Address, Width);
         if (Chain.hasCxxCallbackStack() && !After.Installed &&
             After.Uninstalled && Address.Offset == Chain.TryLevelOffset &&
             Width == 4 && Stored.Constant == uint32_t(*Chain.SeededTryLevel)) {
@@ -332,13 +374,15 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
                      Chain.RealignedFrame->SavedParentFrameOffset, 4))
           Invalidate();
         if (Address.Offset) {
-          if (!charge(After.Frame.cellCount() + 1))
+          if (!charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             break;
           After.Frame.store(*Address.Offset, Width, Stored);
-          if (CheckCalls) {
-            const auto SP = parentStackOffset(After);
+          if (CheckCalls || Conditional) {
+            auto SP = parentStackOffset(After);
+            if (Conditional && !SP && After.Frame.CallbackEntry)
+              SP = After.Frame.load(*Chain.RegistrationOffset - 8, 4).Offset;
             const int64_t End = int64_t(*Address.Offset) + Width;
-            if (SP && *Address.Offset >= *SP && End <= 0) {
+            if (SP && *Address.Offset >= *SP && End <= (Conditional ? 4 : 0)) {
               if (!charge(Width))
                 break;
               for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
@@ -352,7 +396,8 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
         } else if (Address.CallbackAddress) {
           if (!After.Frame.callbackMemoryIsPrivate(*Address.CallbackAddress,
                                                    Width) ||
-              !charge(After.Frame.cellCount() + Width + 1))
+              !charge(After.Frame.memoryAccessWork(Address, Width, true) +
+                      Width + 1))
             Invalidate();
           else
             After.Frame.storeCallback(Address.CallbackAddress->Offset, Width,
@@ -362,7 +407,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           // the newly allocated frame. Do not guess aliases below it.
           if (*Address.EntryOffset < -12 ||
               int64_t(*Address.EntryOffset) + Width > 4 || After.Installed ||
-              !charge(After.Frame.cellCount() + 1))
+              !charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             Invalidate();
           else
             After.Frame.storeEntry(*Address.EntryOffset, Width, Stored);
@@ -383,15 +428,61 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     }
     std::optional<FrameValue> CallSP;
     bool CheckedCall = false;
-    if (auto Call = transferCall(I, After, Op)) {
-      CheckedCall = true;
-      CallSP = Call->StackPointer;
-      NoReturnAtExit = Call->DoesNotReturn;
-      if (NoReturnAtExit)
-        NoReturnEnd = Call->EndAddress;
-    }
-    if (auto SP = transferLocalUnwind(I, After, Op))
+    const bool JumpCapture = transferJumpCapture(I, After, Op, Facts, CallSP);
+    const bool JumpResume = transferJumpResume(I, After, Op, Facts);
+    if (!JumpCapture && !JumpResume &&
+        !transferOrdinaryFinally(I, After, Op, Facts, CallSP))
+      if (auto Call = transferCall(I, After, Op, Facts)) {
+        CheckedCall = true;
+        CallSP = Call->StackPointer;
+        NoReturnAtExit = Call->DoesNotReturn;
+        if (NoReturnAtExit)
+          NoReturnEnd = Call->EndAddress;
+      }
+    if (auto SP = transferLocalUnwind(I, After, Op, Facts))
       CallSP = *SP;
+    if (!CallSP)
+      CallSP = transferControlFP(Before, After, Op, Facts, CallException);
+    if (!CallSP && JumpRuntime && JumpRuntime->Raise &&
+        After.JumpBindingsIntact && !After.Unknown && !Facts.Invalid &&
+        After.Installed && !After.Uninstalled &&
+        !After.Activation.SearchFilter &&
+        JumpRuntime->Raise(Op, After.Frame, WorkUsed)) {
+      const auto SP =
+          After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+      if (SP.Offset && *SP.Offset <= int64_t(*Chain.RegistrationOffset) - 24)
+        CallSP = FrameValue::frame(*SP.Offset + 16);
+      else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
+                                         *SP.CallbackAddress, 16, true))
+        CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
+                                           SP.CallbackAddress->Offset + 16);
+    }
+    if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,
+                                CallException))
+      break;
+    if (!JumpCapture && !JumpResume && !CallSP && !Facts.InvocationAtExit &&
+        (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+         (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)))) {
+      if (After.Callback)
+        for (const auto &[Offset, Capture] : After.JumpCaptures)
+          ModifiedCallbackCaptures.insert(Capture.Call);
+      After.JumpCaptures.clear();
+    }
+    if (!JumpResume && !CallSP && !Facts.InvocationAtExit && SEHControls &&
+        !KnownCxx && Before.Callback && Before.Activation.Entry &&
+        FinallyTargets.count(*Before.Activation.Entry) &&
+        ((Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
+         ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          !LocalUnwindTargets.count({Op.NumInputs && Op.Inputs[0].isConst()
+                                         ? Op.Inputs[0].Offset
+                                         : InvalidVA,
+                                     Op.Opcode == NdOp::INDIR_CALL})))) {
+      // A returning stack declaration does not bound effects on the parent
+      // or on the suspended invocation. Other runtime calls need their own
+      // argument and callback contracts before they can enter this domain.
+      Invalidate();
+      Result.SEHInvocationExitsComplete = false;
+    }
     // The CFG's exact instruction already owns the no-return decision.
     // A missing memory-borrow contract cannot create an ordinary return from
     // it. Keep transferCall's refusal and the exceptional dispatch below.
@@ -431,7 +522,11 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
         CallSP = Transfer.evaluate(Adjust, After.Installed);
       }
     }
+    recordSEHStackRestore(Op, After, Transfer, Value);
     Transfer.write(Op, Value, CookieCheckVA);
+    if (JumpCapture)
+      After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
+          FrameValue::constant(0);
     if (CheckRuntimeObjects) {
       RuntimeTransfer.write(Op, RuntimeValue);
       if (CheckedCall) {
@@ -456,7 +551,14 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     }
     if (CallSP)
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] = *CallSP;
-    if (CheckCalls && Op.Output.isReg() &&
+    if (const auto SP = parentStackOffset(After))
+      std::erase_if(After.JumpCaptures,
+                    [&](const auto &Capture) { return *SP > Capture.first; });
+    if ((CheckCalls || Conditional) &&
+        !(Conditional &&
+          After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+              .CallbackAddress) &&
+        Op.Output.isReg() &&
         Op.Output.Offset / x86reg::GeneralRegStride ==
             x86reg::RSP / x86reg::GeneralRegStride) {
       const auto SP = parentStackOffset(After);
@@ -470,20 +572,48 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
             After.InitializedFrameBytes.lower_bound(*SP));
       }
     }
-    if (NoReturnAtExit)
+    if (Facts.InvocationAtExit && Op.Opcode == NdOp::CALL) {
+      const auto Source = Boundaries.find(Op.Addr);
+      if (Source != Boundaries.end())
+        InvocationEnd =
+            Source->second.second.Address + Source->second.second.Size;
+      break;
+    }
+    if (NoReturnAtExit || (JumpResume && Facts.InvocationAtExit))
       break;
   }
   for (auto It = Stores.lower_bound(Block.StartAddr);
        It != Stores.end() && It->first < Block.EndAddr; ++It)
     if ((!NoReturnAtExit || It->first < NoReturnEnd) &&
+        (InvocationEnd == InvalidVA || It->first < InvocationEnd) &&
         !ProvenStores.count(It->first))
       Invalidate();
-  if (Facts[I].Invalid)
+  if (Facts.Invalid)
     After.Unknown = true;
-  Facts[I].InstalledAtExit = After.Installed;
-  Facts[I].CxxContinuationAtExit = CatchReturn.has_value();
-  Facts[I].NoReturnAtExit = NoReturnAtExit;
-  if (!NoReturnAtExit) {
+  Facts.InstalledAtExit = After.Installed;
+  Facts.CxxContinuationAtExit = CatchReturn.has_value();
+  Facts.NoReturnAtExit = NoReturnAtExit;
+  if (!NoReturnAtExit && !Facts.InvocationAtExit) {
+    std::optional<va_t> SelectedBranch;
+    if (!Facts.Invalid && !After.Unknown && Block.Succs.size() == 2 &&
+        !Block.Ops.empty()) {
+      const auto &Branch = Block.Ops.back();
+      if (Branch.Opcode == NdOp::COND_BR && Branch.NumInputs == 2 &&
+          Branch.Inputs[0].isConst()) {
+        const auto Condition = Transfer.read(Branch.Inputs[1]);
+        const auto Taken = Entries.find(Branch.Inputs[0].Offset);
+        const auto Fallthrough = Entries.find(Block.EndAddr);
+        if (Condition.Constant && !Condition.MayBeFrame &&
+            Taken != Entries.end() && Fallthrough != Entries.end() &&
+            Taken != Fallthrough &&
+            llvm::is_contained(Block.Succs,
+                               Function.Blocks[Taken->second].Id) &&
+            llvm::is_contained(Block.Succs,
+                               Function.Blocks[Fallthrough->second].Id))
+          SelectedBranch =
+              *Condition.Constant ? Branch.Inputs[0].Offset : Block.EndAddr;
+      }
+    }
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {
@@ -491,46 +621,14 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
             "registration-state CFG has a missing edge");
         return false;
       }
-      merge(It->second, After);
+      if (!SelectedBranch ||
+          Function.Blocks[It->second].StartAddr == *SelectedBranch)
+        merge(It->second, After);
     }
   }
-  if (CatchReturn) {
-    const auto Resume = Entries.find(CatchReturn->TargetVA);
-    if (Resume != Entries.end()) {
-      if (!charge(After.Frame.cellCount() + After.RuntimeObject.cellCount() +
-                  2))
-        return true;
-      Domain Continued = After;
-      auto Stack = *Continued.CxxCatchStacks.begin();
-      Stack.pop_back();
-      Continued.Parent = Stack.empty();
-      Continued.Callback = !Stack.empty();
-      Continued.OtherCallback = false;
-      Continued.CxxCatchStacks.clear();
-      if (!Stack.empty())
-        Continued.CxxCatchStacks.insert(std::move(Stack));
-      Continued.RuntimeIdentity.reset();
-      const int32_t SavedSlot = *Chain.RegistrationOffset - 4;
-      Continued.Frame.store(SavedSlot, 4,
-                            FrameValue::frame(CatchReturn->SavedStackOffset));
-      Continued.RuntimeObject.store(SavedSlot, 4, {});
-      if (Chain.hasCxxCallbackStack()) {
-        Continued.Frame.leaveCallback();
-        // The CRT's call frame does not promise the callback's general
-        // registers at its continuation. The restore block rebuilds them.
-        for (auto &Register : Continued.Frame.Registers)
-          Register = {{}, {}, false, true};
-        Continued.Frame.OtherRegisterBytes.clear();
-        Continued.Frame.OtherRegistersMayBeFrame = true;
-      }
-      Continued.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
-          FrameValue::frame(*Chain.cxxRuntimeFrameOffset());
-      Continued.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
-          FrameValue::frame(CatchReturn->SavedStackOffset);
-      merge(Resume->second, Continued);
-    }
-  }
-  dispatchBlock(I, Before);
+  if (CatchReturn)
+    resumeCxxCatch(After, *CatchReturn);
+  dispatchBlock(I, CallException ? *CallException : Before, Facts);
   return true;
 }
 

@@ -24,6 +24,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -1711,6 +1712,11 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
             targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst))) {
       emitIndent(Indent);
       OS << Name << " = " << *Identity << ";\n";
+      return;
+    }
+    if (auto Cast = lowBitsMaskCast(llvm::cast<llvm::BinaryOperator>(Inst))) {
+      emitIndent(Indent);
+      OS << Name << " = " << *Cast << ";\n";
       return;
     }
     if (Inst.getOpcode() == llvm::Instruction::URem ||
@@ -3672,6 +3678,30 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::abs && Call.getType()->isIntegerTy() &&
+      Call.getType()->getIntegerBitWidth() <= 64) {
+    const unsigned Bits = Call.getType()->getIntegerBitWidth();
+    const std::string Source = freshVar("abs_bits");
+    emitIndent(Indent);
+    OS << "{ uint64_t " << Source << " = (uint64_t)("
+       << valueStr(Call.getArgOperand(0)) << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent + 1);
+    // Unsigned subtraction also handles the signed minimum when
+    // is_int_min_poison is false. With true that input is poison, so this is a
+    // valid refinement.
+    OS << getName(&Call) << " = ((" << Source << " & UINT64_C("
+       << (uint64_t(1) << (Bits - 1)) << ")) ? UINT64_C(0) - " << Source
+       << " : " << Source << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
   if ((IID == llvm::Intrinsic::ctpop || IID == llvm::Intrinsic::ctlz ||
        IID == llvm::Intrinsic::cttz) &&
       Call.getType()->isIntegerTy() &&
@@ -3871,6 +3901,25 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (!IA)
     return false;
 
+  // A modeled supervisor call prints through the helper that keeps each
+  // value in the register its kernel reads.
+  if (const SyscallConvention *Syscall =
+          modeledSyscallInlineAsm(Opts.TheArch, Call)) {
+    const auto Helper = SyscallHelperNames.find(Syscall->Modeled);
+    if (Helper == SyscallHelperNames.end())
+      llvm::report_fatal_error("uncollected supervisor call C helper");
+    std::string Expression = Helper->second + "(";
+    for (unsigned I = 0; I < Call.arg_size(); ++I)
+      Expression += (I ? ", " : "") + valueStr(Call.getArgOperand(I));
+    Expression += ")";
+    emitIndent(Indent);
+    if (!Call.use_empty())
+      OS << Name << " = " << Expression << ";\n";
+    else
+      OS << "(void)" << Expression << ";\n";
+    return true;
+  }
+
   if (auto Width = classifyX86ShadowStackReadAsm(Call)) {
     const unsigned Word = Call.getType()->getIntegerBitWidth() / 8;
     if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
@@ -3891,6 +3940,23 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return true;
   }
 
+  if (auto Selector = classifyX87ConstantAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error(
+          "x87 constant/control C projection requires x86");
+    emitIndent(Indent);
+    if (*Selector >= 7) {
+      OS << "__asm__ volatile(\"" << (*Selector == 7 ? "fnstcw" : "fldcw")
+         << " (%0)\" :: \"r\"(" << valueStr(Call.getArgOperand(0))
+         << ") : \"memory\");\n";
+    } else {
+      OS << "__asm__ volatile(\"fldcw (%1)\\n\\t"
+         << X87ConstantMnemonics[*Selector] << "\\n\\tfstpt (%0)\" :: \"r\"("
+         << valueStr(Call.getArgOperand(0)) << "), \"r\"("
+         << valueStr(Call.getArgOperand(1)) << ") : \"st\", \"memory\");\n";
+    }
+    return true;
+  }
   if (auto Shape = classifyX86FPStateAsm(Call)) {
     if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
       llvm::report_fatal_error("x86 FP state C projection requires x86");
@@ -3918,6 +3984,110 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                     integerPointerOperandStr(Call.getArgOperand(0)) + ")"
               : BitcastInput(0);
       const std::string Expression = Helper->second + "(" + Source + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPMaskCompareStateIntrinsic(Id)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Id);
+      const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));
+      const auto RawInput = [&](unsigned I) {
+        return "__builtin_bit_cast(" + RawType + ", " +
+               valueStr(Call.getArgOperand(I)) + ")";
+      };
+      std::string Expression = Helper->second + "(";
+      if (Memory)
+        Expression += "(void *)(uintptr_t)(" +
+                      integerPointerOperandStr(Call.getArgOperand(1)) + "), " +
+                      RawInput(0);
+      else
+        Expression += RawInput(0) + ", " + RawInput(1);
+      Expression += ", (void *)" + valueStr(Call.getArgOperand(2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPComiStateIntrinsic(Id)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Id);
+      const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));
+      const auto RawInput = [&](unsigned Index) {
+        return "__builtin_bit_cast(" + RawType + ", " +
+               valueStr(Call.getArgOperand(Index)) + ")";
+      };
+      const auto Right =
+          Memory ? "(void *)(uintptr_t)(" +
+                       integerPointerOperandStr(Call.getArgOperand(1)) + ")"
+                 : RawInput(1);
+      const auto Expression = Helper->second + "(" + RawInput(0) + ", " +
+                              Right + ", (void *)" +
+                              valueStr(Call.getArgOperand(2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86F16CStateIntrinsic(Id)) {
+      const bool Store = Id == Intrinsic::X86F16CStoreState,
+                 Read = Id == Intrinsic::X86F16CReadState;
+      std::string Expression = Helper->second + "(";
+      if (Store || Read)
+        Expression += "(void*)(uintptr_t)(" +
+                      integerPointerOperandStr(Call.getArgOperand(0)) + "), ";
+      if (!Read)
+        Expression +=
+            "(" + x86FPStateRawCType(x86FPStateSourceBytes(Bytes)) +
+            ")__builtin_bit_cast(" +
+            x86FPStateRawCType(std::max(16u, x86FPStateSourceBytes(Bytes))) +
+            ", " + valueStr(Call.getArgOperand(Store ? 1 : 0)) + "), ";
+      Expression +=
+          "(void*)" + valueStr(Call.getArgOperand(Store ? 2 : 1)) + ")";
+      if (Store)
+        OS << Expression << ";\n";
+      else if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPPackedConvertStateIntrinsic(Id)) {
+      const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
+      const std::string Source =
+          Memory ? "(void*)(uintptr_t)(" +
+                       integerPointerOperandStr(Call.getArgOperand(0)) + ")"
+                 : "(" + x86FPStateRawCType(x86FPStateSourceBytes(Bytes)) +
+                       ")__builtin_bit_cast(" +
+                       x86FPStateRawCType(
+                           std::max(16u, x86FPStateSourceBytes(Bytes))) +
+                       ", " + valueStr(Call.getArgOperand(0)) + ")";
+      const std::string Expression = Helper->second + "(" + Source +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(1)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPScalarConvertStateIntrinsic(Id)) {
+      const bool Memory = Id == Intrinsic::X86FPScalarConvertMemoryState;
+      const std::string Source =
+          Memory ? "(void*)(uintptr_t)(" +
+                       integerPointerOperandStr(Call.getArgOperand(1)) + ")"
+                 : "__builtin_bit_cast(" +
+                       x86FPStateRawCType(x86FPStateSourceBytes(Bytes)) + ", " +
+                       valueStr(Call.getArgOperand(1)) + ")";
+      const std::string Expression = Helper->second + "(" + Source +
+                                     ", (void*)" +
+                                     valueStr(Call.getArgOperand(2)) + ")";
       if (!Call.use_empty())
         OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
            << ", " << Expression << ");\n";
@@ -4587,13 +4757,30 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
-    std::string Argument = callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    bool PointerSpelling = false;
+    std::string Argument =
+        callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx, &PointerSpelling);
     const auto *Callee = Call.getCalledFunction();
-    if (!Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
+    const bool HeaderInteger =
+        !Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
         libc::headerFor(CalleeName) &&
-        libc::isObjectPointerParameter(CalleeName, ArgIdx) &&
-        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy())
+        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    // A header's pointer parameter takes the integer that holds an address
+    // converted, an object's or a function's (qsort's comparison).
+    if (HeaderInteger && libc::isObjectPointerParameter(CalleeName, ArgIdx))
       Argument = "(void *)(uintptr_t)(" + Argument + ")";
+    else if (const auto Function =
+                 HeaderInteger
+                     ? libc::functionPointerParameter(CalleeName, ArgIdx)
+                     : std::nullopt)
+      Argument =
+          "(" + std::string(*Function) + ")(uintptr_t)(" + Argument + ")";
+    // An address, such as a string literal, passed where the callee is
+    // declared to take an integer converts to it.
+    else if (PointerSpelling &&
+             declaredParameterIsInteger(Call, CalleeName, ArgIdx))
+      Argument = "(" + typeToCLLVM(Call.getArgOperand(ArgIdx)->getType()) +
+                 ")(uintptr_t)(" + Argument + ")";
     Expr += Argument;
   }
   Expr += ")";
@@ -5002,8 +5189,10 @@ std::string LLVMCWriter::comparedOperandText(const llvm::Value *V,
 }
 
 std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
-                                    const llvm::CallBase &Call,
-                                    unsigned ArgIdx) {
+                                    const llvm::CallBase &Call, unsigned ArgIdx,
+                                    bool *PointerSpelling) {
+  if (PointerSpelling)
+    *PointerSpelling = false;
   const llvm::BasicBlock *BB = Call.getParent();
   if (const llvm::PHINode *Phi = joinPhiForCallArg(Arg, BB))
     return getName(Phi);
@@ -5043,7 +5232,22 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
                 enumeratorDisplay(debugCallArgType(*FS, ArgIdx, Opts), Val))
           return *Name;
   }
-  return valueStr(Arg);
+  return valueStr(Arg, PointerSpelling);
+}
+
+bool LLVMCWriter::declaredParameterIsInteger(const llvm::CallBase &Call,
+                                             llvm::StringRef CalleeName,
+                                             unsigned ArgIdx) const {
+  // Headers and the MSVC table declare their own prototypes, and a module's
+  // own definition its C one; others are declared as LLVM types them.
+  const llvm::Function *Callee = Call.getCalledFunction();
+  if (!Callee || Callee->isIntrinsic() || Opts.PreserveLLVMFunctionTypes ||
+      (!Callee->isDeclaration() && !OnlyFunction) ||
+      libc::isKnownFunction(CalleeName) || msvcCallee(CalleeName, Opts.Format))
+    return false;
+  const llvm::FunctionType *Type = Callee->getFunctionType();
+  return ArgIdx < Type->getNumParams() &&
+         Type->getParamType(ArgIdx)->isIntegerTy();
 }
 
 bool LLVMCWriter::writeExclusiveSkip(

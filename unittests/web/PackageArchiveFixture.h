@@ -59,6 +59,16 @@ inline std::string pax(std::string_view Key, std::string_view Value) {
     Length = Record.size() + 1 + std::to_string(Length).size();
   return std::to_string(Length) + " " + Record;
 }
+inline std::string oldGNUTarMember(std::string_view Path,
+                                   std::string_view Bytes, char Type = '0',
+                                   std::string_view Link = {}) {
+  auto B = tarMember(Path, Bytes, Type, Link);
+  B.replace(257, 8, "ustar  \0", 8);
+  tarNumber(B, 345, 12, 1700000000);
+  tarNumber(B, 357, 12, 1700000001);
+  tarChecksum(B);
+  return B;
+}
 inline std::string finishTar(std::string Members) {
   Members.append(1024, '\0');
   return Members;

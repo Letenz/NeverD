@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Mostrar el número del operando con sus bits invertidos</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>Códi&amp;go</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Definir instrucciones a partir de la dirección actual</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Revisión de &amp;paquetes sin conexión...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Inspeccionar la evidencia local de los paquetes y las revisiones de los analistas</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>Archivo &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Cargar símbolos desde un archivo PDB seleccionado</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1455,22 @@ Haz doble clic para ir a la declaración.</translation>
             <numerusform>%n declaración mostrada en C</numerusform>
             <numerusform>%n declaraciones mostradas en C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Cancelado</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Los nombres de variables guardados pertenecen a otra representación del código fuente</translation>
+    </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Expandir bloque (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Contraer bloque (Ctrl+Shift+[)</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2092,78 @@ Con signo: %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>Se desconoce cómo cargar %1: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Comentario de esta línea de código fuente:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Nuevo nombre:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Renombrar</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Selecciona una variable declarada o un nombre de la imagen para renombrarlo</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Selecciona una línea de código fuente; despliega el código plegado antes de comentarlo</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>El nombre seleccionado no tiene una dirección en la imagen</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Esta instrucción no tiene una asignación de dirección a una línea de código fuente.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Esta línea de código fuente no tiene una asignación a la dirección de una instrucción; se muestra la entrada de la función</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Cargar archivo PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Archivos PDB (*.pdb);;Todos los archivos (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Usar PDB sin verificar para el análisis</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>Este PE no tiene identidad PDB (GUID/age). La arquitectura y la disposición de secciones del PDB seleccionado coinciden, pero no se puede verificar su compilación.
+
+¿Usar esta PDB para el análisis? Sus símbolos, tipos, firmas de funciones y rangos de direcciones se usarán como datos de análisis. Una PDB incorrecta puede producir resultados erróneos.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Este motor no puede usar una PDB sin verificar para el análisis</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Línea</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>Columna</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Código</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>Espere a que la función termine de cargarse antes de buscar referencias</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2302,10 @@ Con signo: %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Aquí aparecen los archivos que abre. Elija Nuevo o suelte un archivo en esta ventana.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Abierto por última vez: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2428,22 @@ Con signo: %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Plataforma: %1, detectada en el código: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>Ya hay una instrucción definida en %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB cargado: %1 (%2 nombres, identidad verificada)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Nombres de visualización PDB importados: %1 (%2 nombres, sin verificar)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB cargada para el análisis: %1 (%2 nombres, confirmada por el usuario, identidad sin verificar)</translation>
     </message>
 </context>
 <context>
@@ -2529,6 +2661,147 @@ Con signo: %4</translation>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Minimizar</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Maximizar</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Restaurar</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>El proceso de análisis se detuvo.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Solo se permiten lecturas del análisis.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>El proceso de análisis no puede restaurar el estado del análisis.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>Se agotó el tiempo de descarga de los símbolos.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>Descargar símbolos de depuración</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>No se cargó un PDB local compatible con %1.
+
+¿Intentar descargar %2 del servidor de símbolos de Microsoft? Solo funcionará si Microsoft publica símbolos para esta compilación.
+
+Se enviarán el nombre del PDB y el identificador de compilación; no se subirá el binario. Los símbolos compatibles se almacenarán en caché y cargarán automáticamente.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>Descargar</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>Ahora no</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>No se puede crear el directorio de caché de símbolos: %1</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>No se puede abrir un archivo temporal de símbolos en %1: %2</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>Descarga de símbolos cancelada.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>Descargando %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>El archivo de símbolos supera el límite de descarga de 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft no tiene símbolos compatibles para esta compilación.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>Error al descargar símbolos: %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>El archivo de símbolos descargado está vacío.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>No se puede escribir el archivo de símbolos %1: %2</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>El archivo de símbolos comprimido no es válido.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>No se puede crear un directorio temporal de símbolos en %1: %2</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>Descomprimiendo símbolos…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>No se pudo descomprimir el archivo de símbolos.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>Los símbolos comprimidos requieren Windows.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>Verificando los símbolos descargados…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>El PDB no corresponde al archivo cargado.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>No se puede guardar el PDB verificado en %1: %2</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>Error al verificar símbolos: %1</translation>
     </message>
 </context>
 </TS>

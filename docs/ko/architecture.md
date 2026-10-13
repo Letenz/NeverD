@@ -8,6 +8,12 @@
 설명합니다. 의도적으로 NeverD 소유 코드만 다루며 LLVM, Capstone, Unicorn
 서브모듈은 각자의 내부 아키텍처를 유지합니다.
 
+## 소스 및 오브젝트 대체 경계
+
+`SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x86/x64/ARM32/ARM64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
+
+`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다.
+
 ## 시스템 경계
 
 ```mermaid
@@ -196,6 +202,8 @@ SSA 구성 한도를 넘는 큰 복원 함수는 `--llvm`을 통해 제한된 �
 
 아키텍처 lifter는 미정의 출력의 부가 메타데이터를 트랜잭션 방식으로 관리합니다. 각 시도 전에 이전 증거를 지우고 정확히 대응하는 성공한 리프트에만 효과를 게시합니다. `Missing`은 증거가 없다는 뜻이며 빈 `Complete` 설명과 다릅니다. 일반 LowIR은 선택된 결정적 값을 유지합니다. `LowIRUndefinedIndependence`는 전달받은 완전한 비순환 LowIR 그래프의 제한된 관계 증명을 담당하며, 일반 입력을 공유하고 새 미정의 값의 상관관계를 보존합니다. 전체 명령 경계와 연산 다이제스트에 증거를 결합하고 불완전한 증명을 거부합니다. 아래 유한 네이티브 실행 경로 범위를 넘는 일반 네이티브 그래프 인증, 루프 불변식, 네이티브 코드에서 C로의 동등성 증명은 별도 작업입니다.
 
+`FreshChoiceProjection`은 독립성 검사기의 내부 구성 요소입니다. 하나의 불변 심볼릭 컨텍스트에서 일반 값의 영 투영을 재사용하며, 이전 투영이 끝난 뒤 생성된 새 리프만 추가할 수 있습니다. 결과 테이블의 용량 밖에서는 기존 치환으로 돌아갑니다. 두 실행의 개별 선택, 노드 한도, 질의 비용 및 증명 의무는 유지됩니다.
+
 `Decoder`는 명령 형식 감사와 재배치 일치 검사 전에 x64 피연산자 접두사로 인한 disp32 너비 오보를 바로잡습니다. ModRM/SIB 경계, 전체 필드, 부호 있는 변위, 메모리 피연산자와 뒤따르는 즉시값 배치가 일치해야 합니다. 전체 디코딩, 리프팅용 디코딩, 상세 정보가 있는 경량 디코딩이 같은 정규화를 사용합니다. 인코딩 너비 메타데이터만 바꾸며 실제 i386 disp16, disp8, moffs 및 피연산자 상세 정보 없는 디코딩은 기존 동작을 유지합니다.
 
 기존 스칼라 SHL/SAL, SHR, SAR는 8/16/32/64비트 피연산자에 대해 횟수별 미정의 비트 증거를 제공합니다. 마스킹한 횟수가 0이면 모든 플래그를 보존하고, 0이 아니면 AF, 1보다 크면 OF, SHL/SHR에서 피연산자 비트 폭 이상이면 CF가 임의 값입니다. SAR의 CF는 정의됩니다. 명령 내부 불리언 가드는 겹치는 대상 쓰기 전에 저장한 횟수를 사용하며 메타데이터 요청 여부와 관계없이 동일한 연산을 생성합니다. 감사하지 않은 인코딩은 부분 효과를 게시하지 않습니다.
@@ -218,9 +226,11 @@ SSA 구성 한도를 넘는 큰 복원 함수는 `--llvm`을 통해 제한된 �
 
 `AllowOverlappingNativeInstructions`는 유한 네이티브 독립성 증명과 네이티브에서 LowIR로의 정제에 사용하는 별도 옵션이며 기본값은 꺼짐입니다. 각 진입점을 독립적으로 디코딩하고 검증하며, 겹치는 명령어 바이트는 후보의 읽기를 포함한 모든 이전 명령어 및 불변 읽기 증거와 일치해야 합니다. 후보 LowIR 주소는 레이블이며 바이트 증거가 아닙니다. `MaxNativeInstructionBytes`의 기본값은 1048576이며, 새로 가져온 각 진입점의 전체 명령어 크기를 중복 바이트까지 포함하여 비교 전에 차감합니다. 예산 소진이나 바이트 충돌은 인증서를 거부합니다. 옵션과 한도는 증명 다이제스트에 포함됩니다. 정적 LowIR, 귀납적 루프 증명과 추론은 빈 루프 계획에서도 이 옵션을 거부합니다. 정확한 LLVM API와 CLI의 기본 동작은 유지됩니다.
 
-네이티브 패킹 플래그 증명은 옵션과 계약 모두에 `X64FlagsProfile = UserX64NoFaultV1`을 지정해야 하며, 기존 실행 Boolean 옵션으로 자동 활성화되지 않습니다. 정규화된 공유 진입 플래그와 지속되는 시스템 플래그는 기계 상태 소스 래퍼와 같은 PUSHFQ/POPFQ 스칼라 변환 및 CPL3/IOPL0 마스크를 사용합니다. 매 POPFQ에서 두 실행의 TF/AC가 모두 0임을 증명하며 이 조건을 경로 가정으로 사용하지 않습니다. 레지스터나 기록된 프레임 관찰을 꺼도 최종 시스템 플래그는 항상 비교합니다. 인증서는 프로파일 버전과 정확한 변환 다이제스트를 결합합니다. 이 명시적 CET 비활성 프로파일에서는 독립적으로 검사한 정규 RDSSPD/RDSSPQ 바이트를 정확한 NOP로 투영하고 타입이 있는 증거를 기록할 수 있습니다. 원래 `Missing` 메타데이터는 유지되며 32비트 대상도 전체 레지스터를 보존합니다. 정규 INCSSPD/INCSSPQ는 프로파일에 따른 #UD 경계로 보존하고 도달할 수 없는 원본 명령의 증거를 기록합니다. 실행 가능한 방문은 피연산자가 0이어도 무결함 실행 계약을 위반합니다. 다른 CET 명령, CET 활성 실행 및 정적 LowIR API의 프로파일은 지원하지 않습니다. 유한 루프의 매 방문은 상태를 보존하고 새로운 미정의 선택을 생성하지만 불변식 증명은 아닙니다.
+사용자 모드 `UserX64NoFaultV1`: 네이티브 패킹 플래그 증명은 옵션과 계약 모두에 `X64FlagsProfile = UserX64NoFaultV1`을 지정해야 하며, 기존 실행 Boolean 옵션으로 자동 활성화되지 않습니다. 정규화된 공유 진입 플래그와 지속되는 시스템 플래그는 기계 상태 소스 래퍼와 같은 PUSHFQ/POPFQ 스칼라 변환 및 CPL3/IOPL0 마스크를 사용합니다. 매 POPFQ에서 두 실행의 TF/AC가 모두 0임을 증명하며 이 조건을 경로 가정으로 사용하지 않습니다. 레지스터나 기록된 프레임 관찰을 꺼도 최종 시스템 플래그는 항상 비교합니다. 인증서는 프로파일 버전과 정확한 변환 다이제스트를 결합합니다. 이 명시적 CET 비활성 프로파일에서는 독립적으로 검사한 정규 RDSSPD/RDSSPQ 바이트를 정확한 NOP로 투영하고 타입이 있는 증거를 기록할 수 있습니다. 원래 `Missing` 메타데이터는 유지되며 32비트 대상도 전체 레지스터를 보존합니다. 정규 INCSSPD/INCSSPQ는 프로파일에 따른 #UD 경계로 보존하고 도달할 수 없는 원본 명령의 증거를 기록합니다. 실행 가능한 방문은 피연산자가 0이어도 무결함 실행 계약을 위반합니다. 다른 CET 명령, CET 활성 실행 및 정적 LowIR API의 프로파일은 지원하지 않습니다. 유한 루프의 매 방문은 상태를 보존하고 새로운 미정의 선택을 생성하지만 불변식 증명은 아닙니다.
 
-`checkLowIRRefinement`와 `checkBinaryLowIRRefinement`는 결정적 LowIR 후보에 대한 별도의 구성적 정제를 검증합니다. `LiftedBits`는 각 미정의 값 생성 시 원래 리프터가 계산한 비트를 선택하고, `ZeroBits`는 감사된 조건이 활성화된 비트만 0으로 선택합니다. 각 동적 발생을 기록하며 복사와 스필은 같은 선택을 유지합니다. 두 프로그램은 기존 스칼라, 물리 스택, 메모리, 플래그 실행기와 진입 스냅샷을 공유합니다. 모든 실행 가능한 경로가 종료하고 허용된 전체 진입 영역을 덮어야 하며, RETURN 피연산자, 지정 레지스터, 필수 네이티브 시스템 플래그와 양쪽이 쓴 프레임 바이트의 합집합이 일치하고 진입 보존 계약을 만족해야 합니다. 실행 및 관계 검사 예산을 공유하며 `MaxTerminalPairs`도 적용합니다. 인증서는 후보, 원본 증거, 선택 정책과 한도를 결합합니다. 선택 실패가 다른 선택을 배제하지는 않습니다. 유한 전개는 루프 불변식, 특정 CPU 일치 또는 C 백엔드 동등성을 증명하지 않으며 미정의 상태 독립성 검사를 대체하지 않습니다. 두 API 모두 증명용 메모리 임시 영역과 겹치는 입력 임시 값을 거부합니다. 바이너리 정제 API는 옵션과 관찰 계약 양쪽에 일치하는 `UserX64NoFaultV1`을 요구합니다.
+`KernelX64NoFaultV1`은 명시적 네이티브 증명 CPL0/IOPL0 계약을 추가합니다. 섀도 스택, 비동기 이벤트, 디버그 예외 전달과 권한 전환은 제외됩니다. POPFQ는 IF를 쓰며 두 실행 모두 TF/AC/IOPL이 0임을 증명해야 합니다. IF를 포함한 최종 시스템 flags 관찰은 필수입니다. 공유 `X64MachineFlags`가 profile masks를 선택하고 옵션, 계약, 인증서 다이제스트가 일치해야 합니다. 커널 API, IRQL, 자원 수명과 예외 전달은 범위 밖입니다. 사용자 machine-source 및 LLVM factory는 커널 profile을 계속 거부하며 소스 ABI나 복구 드라이버 인증을 제공하지 않습니다.
+
+`checkLowIRRefinement`와 `checkBinaryLowIRRefinement`는 결정적 LowIR 후보에 대한 별도의 구성적 정제를 검증합니다. `LiftedBits`는 각 미정의 값 생성 시 원래 리프터가 계산한 비트를 선택하고, `ZeroBits`는 감사된 조건이 활성화된 비트만 0으로 선택합니다. 각 동적 발생을 기록하며 복사와 스필은 같은 선택을 유지합니다. 두 프로그램은 기존 스칼라, 물리 스택, 메모리, 플래그 실행기와 진입 스냅샷을 공유합니다. 모든 실행 가능한 경로가 종료하고 허용된 전체 진입 영역을 덮어야 하며, RETURN 피연산자, 지정 레지스터, 필수 네이티브 시스템 플래그와 양쪽이 쓴 프레임 바이트의 합집합이 일치하고 진입 보존 계약을 만족해야 합니다. 실행 및 관계 검사 예산을 공유하며 `MaxTerminalPairs`도 적용합니다. 인증서는 후보, 원본 증거, 선택 정책과 한도를 결합합니다. 선택 실패가 다른 선택을 배제하지는 않습니다. 유한 전개는 루프 불변식, 특정 CPU 일치 또는 C 백엔드 동등성을 증명하지 않으며 미정의 상태 독립성 검사를 대체하지 않습니다. 두 API 모두 증명용 메모리 임시 영역과 겹치는 입력 임시 값을 거부합니다. 바이너리 정제 API는 옵션과 관찰 계약 양쪽에 일치하는 `UserX64NoFaultV1` / `KernelX64NoFaultV1`을 요구합니다.
 
 `LowIRUndefinedIndependence`는 각 선택적 재시도를 원래의 전체 질의와 입력 영역에 연결합니다. `CompleteModel`은 후보의 전체 변수 할당을 검증하고, `CompletedTargetFacts`는 열거가 완료된 단일 값만 보관합니다. `ConditionalImplication`은 같은 컨텍스트, 영역 및 전체 솔버 정책에 속하는 제한된 재작성과 검색 전 인코딩을 관리하며, 새 목표마다 증명을 요구합니다. `DomainCoverage`는 인자의 함의와 모든 등식 또는 불리언 분할을 증명합니다. 재시도는 공유 질의/노드 한도와 원래 솔버 설정을 유지하며, 알 수 없거나 잘못되거나 불완전한 결과는 인증서를 만들지 못합니다.
 
@@ -743,6 +753,8 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존합니다.
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
+
+동일한 검사형 x64 명령 목록은 16/32/64비트 `BSF`와 `BSR`을 허용합니다. 입력이 0인 경우도 선택한 프로세서가 원래 명령을 실행하며, ISA 계층은 정의되지 않은 목적지에 이식 가능한 값을 만들어 넣지 않습니다. 일반 RAM의 전체 범위 검사와 효과 발생 전 관찰을 유지하고, 장치 피연산자와 잘못된 LOCK 형식은 콜백이나 데이터 효과 전에 거부합니다.
 
 `X64BitInstructions.def`는 16/32/64비트 레지스터 및 일반 RAM의 `BT/BTS/BTR/BTC`를 허용합니다. 레지스터 비트 인덱스는 피연산자 너비의 부호 있는 값으로 전체 워드를 선택하며, 즉시값은 기준 워드 안에 머뭅니다. 주소 너비에 따른 절단은 FS/GS 기준 주소를 더하기 전에 적용됩니다. 프로세서가 CF와 쓰기 값을 제공하고, `RAMTransaction`은 관찰 콜백이 수락할 때까지 결과를 비공개로 유지합니다. 전체 범위 권한 검사는 독립 페이지 할당과 별칭을 포함하며, 중지·콜백 실패·페이지 접근 거부 시 원래 CPU와 RAM을 보존합니다. LOCK은 자연 정렬을 요구하며 수정 MMIO는 명시적인 준비형 원자 연산 제공자가 필요합니다. `X64BitStringTests.cpp`는 독립 인코딩을 실제 x64 호스트 실행과 비교하고 음수 인덱스, 너비 절단, 페이지 경계 접근, 취소, 잘못된 LOCK 형식을 검사합니다. [Intel 명령어 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요.
 
@@ -1483,6 +1495,32 @@ DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 �
 일반 RAM의 `XCHG`는 명시적 LOCK 접두사 유무와 관계없이 정렬되지 않은 8/16/32/64비트 피연산자를 허용합니다. 공유 RAM 트랜잭션은 진입 시 유효 주소를 유지하고 결과 게시를 직렬화하며 취소나 오류 시 쓰기를 폐기합니다. 프로세서는 원래 교환 명령을 실행합니다. `X64Address`는 주소와 레지스터 중첩, 부분 레지스터 쓰기, 캐시 라인 및 페이지 경계, 관찰자와 미매핑 페이지 오류를 검증합니다. MMIO 교환의 제공자 계약과 자연 정렬 요구 사항, 다른 LOCK 명령 계열의 기존 허용 규칙은 유지됩니다.
 
 DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를 읽고 모델링되지 않은 신호 상태 작업을 거부합니다. Select와 Pselect는 immediateSelect에서 비트맵, 용량 하한, 공급자 및 순서대로 복사를 공유하며 timeval과 timespec은 각 필드 폭과 경계를 유지합니다. 완전한 NULL이 아닌 마스크에는 향후 신호 상태 모델이 필요합니다.
+
+`isCheckedX86SafeSEHHandlerReference`는 기존 SafeSEH 디코더, 변경 불가능한 테이블과 헤더 바이트, 재배치된 load-config 포인터로 보존할 PE32 처리기 진입점을 인증합니다. LLVM은 분할 과정에서 생략된 본문을 포함해 모든 본문을 출력하기 전에 이 소스 식별자를 선언합니다. 테이블 소속은 언어 personality, 호출 ABI 또는 네이티브 EH 재구성 권한을 증명하지 않으며 각 소비자의 독립 검사는 유지됩니다.
+
+`proveLowSEHEstablisherFrame`은 LowIR과 SSA가 공유하는 Windows x64 부모 프레임 증명의 소유자입니다. 제한된 분석에서 정규화된 해제 동작, 완전한 명령 및 CFG 출처, 도달하는 모든 보호 구간 앞부분을 확인하며 SSA는 변환된 ABI 효과도 검사합니다. 인증된 처리기 진입은 고정 SP 좌표만 제공하며 저장된 메모리 사실을 복원하지 않습니다. 일반 catch 반환 분석은 기존 진입 영역을 유지하고 별도의 로컬 해제 주소 조사는 예외 간선으로 레지스터 값을 전달하지 않고 선언된 실행 루트를 방문합니다. 런타임 식별, 정확한 연속 주소 사용 및 전체 모듈 배타성은 별도의 게시 요건입니다.
+
+함수 전체의 프레임 조회는 불변 CFG를 한 번만 검증하고 보호된 블록을 처리기별로 색인합니다. 예산은 실제로 수행한 작업에 따라 차감합니다. SEH finally 콜백은 별도의 호출 스택을 가지므로 finally와 진입점을 공유하는 코드로 except 본문의 부모 프레임 SP를 증명할 수 없습니다.
+
+일반 내부 반환은 피호출자의 반환 주소와 부모 함수 진입의 반환 주소를 모두 보존해야 합니다. 같은 도달 쓰기 증명이 두 좌표를 검사하며, 할당이 증명된 부모 지역 저장소에 대한 쓰기는 허용합니다.
+
+LLVM 방출기는 현재의 불변 MedFunc 안에서 완료된 기본 예산 스택 슬롯 질의만 재사용합니다. 진입 SP 요구와 전체 값 식별 정보가 답을 구분합니다. 값 바인딩이나 공유 예산이 있는 질의는 재사용하지 않으며, 실행 가능한 간선 재구축과 모듈 방출 시 캐시를 비웁니다. 재구축을 거친 질의는 결과를 게시할 수 없습니다.
+
+`_local_unwind2`는 부호 없는 중단 경계를 사용하며, 부모 링크가 요청 인덱스를 건너뛰더라도 -1 센티널이나 요청 경계 이하의 단계에서 멈춥니다. 공통 PE32 EH3 솔버는 실제 중단 단계와 통과한 finally 콜백의 효과만 합치며, 0단계 해제는 입력 등록 단계와 프레임 메모리 사실을 유지합니다. 프레임 인자, 런타임 필드, 콜백 스택에 대한 기존 증명은 계속 필수입니다.
+
+`_local_unwind2`의 종료 상한은 범위 테이블 인덱스가 아닌 수치 피연산자입니다. 알려진 모든 32비트 부호 없는 상한으로 반복 없는 종료를 증명할 수 있으며, 실제 현재 단계만 테이블을 참조합니다. 동적 상한과 유효하지 않은 현재 단계는 계속 증명되지 않은 상태로 남습니다.
+
+`RegistrationScopeGraph`는 COFF 파서와 LowIR에서 EH3/EH4 인덱스 및 프레임 센티널 규칙을 공유합니다. 상태 분석은 사실을 공개하기 전에 초기 단계, 이전 레코드로 향하는 상위 링크, 처리기 주소 및 필터/finally 역할을 다시 검증합니다. 초기 활성 범위도 센티널을 유지하며 빈 테이블은 센티널만 허용합니다. 명령 바이트, 실행 주소 소유권 및 프레임 설치 증명은 별도로 유지합니다. 처리기와 필터 주소도 PE32 포인터 폭 안에 있어야 합니다.
+
+커널 필드 초기화는 별도의 물리 RAM 기록이 관리하며 권한 검증은 순수한 검사로 유지됩니다. 성공한 호스트 쓰기, 커밋된 검사 트랜잭션, 정확한 소프트웨어 쓰기 후 이벤트는 동일 값 저장과 오류 전 완료된 쓰기를 포함하여 실제 커밋된 바이트만 정의합니다. 임시 쓰기, 롤백, 커밋 전에 취소된 시도, 불투명한 무효화는 초기화 근거를 만들지 않습니다. 소유 비트맵은 보존된 물리 슬라이스와 별칭을 따라가며 게스트 RAM을 읽지 않고 조회할 수 있습니다. 소프트웨어 이벤트는 보고된 쓰기만 증명하며 전체 쓰기 추적을 보장하지 않습니다. 타입이 있는 모델 서비스는 명시적인 초기화 계약을 유지합니다.
+
+`MemoryWriteWitness`는 정확한 물리 할당 범위를 유지하고 RAM reservation과 커밋된 쓰기의 무효화 처리를 공유합니다. 동일 값, 부분 쓰기와 별칭 쓰기는 기록을 무효화하며, 완전히 추적할 수 없는 실행은 증명을 보수적으로 폐기합니다. 생성과 조회에는 소유자의 정지가 필요합니다. 드라이버 관찰은 이미지 복사 후 세션 수정 전에 검증된 DIR64 필드를 연결하고, 할당과 쓰기 이력이 일치할 때만 소유된 사실을 게시합니다. 이 사실은 생성된 포인터나 네이티브 커널 상태 복원을 보장하지 않습니다.
+
+드라이버 로더는 검증된 파일의 SHA-256에 재배치 사실을 연결합니다. PE 재구축은 소유된 사실을 사용하고 진단 DIR64 레코드를 출력하기 전에 가져오기 수정이나 메타데이터 형식화가 대체한 필드를 제외합니다. 이 계층은 생성 포인터의 재배치를 추론하거나 커널 런타임 거부를 해제할 수 없습니다.
+
+`isX86FramePreservingIntrinsic`는 일반 registration 전이와 검증된 local-finally 반환에서 FWAIT, MXCSR 및 부동소수점 연산의 형식 검사를 공유합니다. 원래 연산과 예외 디스패치는 유지됩니다. 지원하지 않는 intrinsic 및 잘못된 형식은 여전히 불투명하며, 이 규칙은 비지역 finally 종료나 네이티브 복원 증명을 제공하지 않습니다.
+
+검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

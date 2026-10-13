@@ -172,10 +172,20 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
       callArgumentConvention(TargetArch, Fmt);
   bool Marked = false;
   std::optional<int> FirstVariadicRegister;
+  std::optional<int> FirstVariadicVectorRegister;
   switch (TargetArch) {
-  case Arch::X64:
-    Marked = hasX64VariadicPrologue(S);
+  case Arch::X64: {
+    uint64_t VaStartWord = 0;
+    Marked = hasX64VariadicPrologue(S, VaStartWord);
+    // fp_offset, past the integer save slots, steps over each named vector
+    // register's.  The integer registers stay parameters: every call passes
+    // them all.
+    if (Marked)
+      FirstVariadicVectorRegister =
+          static_cast<int>(((VaStartWord >> 32) - limits::kX64VaFpOffsetMin) /
+                           limits::kX64VaFpOffsetStep);
     break;
+  }
   case Arch::X86:
     Marked = hasI386VariadicPrologue(S);
     break;
@@ -216,6 +226,7 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
   Func.VariadicOverflowBase =
       Base.value_or(TRI.CallPushesReturnAddress ? TRI.PointerSize : 0);
   Func.VariadicFirstRegister = FirstVariadicRegister.value_or(-1);
+  Func.VariadicFirstVectorRegister = FirstVariadicVectorRegister.value_or(-1);
 }
 
 } // namespace neverd

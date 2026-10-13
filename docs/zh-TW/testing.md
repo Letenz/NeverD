@@ -195,6 +195,8 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDLowIRUndefinedIndependenceTests` 檢查完整無環 LowIR 圖的兩次執行獨立性。兩側共用一般入口輸入；每次新產生的架構未定義值在複製、重疊寫入、溢出儲存與重新載入中保持來源關聯。控制述詞先於路徑假設接受檢查。憑證要求 `Complete` 效果中繼資料，並精確綁定每條指令的完整邊界與操作摘要。缺少證據、可達迴圈、呼叫、未知別名或預算耗盡都會拒絕憑證。結論受明確觀察項與無故障堆疊框架契約限制，並非原生程式碼到 C 的完整等價證明。
 
+`FreshChoiceProjection.*` 歸屬 `NeverDInterpreterSpecializationTests`。獨立符號上下文與原有替換演算法比較精確節點順序，位元組輸入 oracle 檢查投影值及保留的選擇。迴歸涵蓋上下文和 leaf 准入、零容量及精確容量、回退，以及共用增量鏈的總遍歷工作量，不採用計時門檻。
+
 以下行為採用預設的嚴格審計契約。`NeverDOriginalBinaryUndefinedIndependenceTests` 使用獨立撰寫、固定映射的 x64 位元組，驗證實體原生 CALL/RET、改寫的返回目標、有限間接目標全集和不可變載入。同一測試目標也檢查直接分支完整收集、精確位元組／效果／映射／讀取見證綁定、外層返回時入口 RSP 及返回位址槽保持，以及堆疊框架與映像分離前提的可滿足性。缺失或重疊指令、不符合精確陷阱和明確環境投影規則的未審計分支、不終止或超出預算的迴圈、不完整目標列舉、執行設定／契約不符和預算耗盡均須拒絕，且不產生憑證或殘餘程式碼。成功要求每條可行原生路徑完整結束。此選用閘門不認證迴圈不變量、例外分派、啟用 CET 的執行或原生程式碼到 C 的等價性；一般恢復仍獨立可用。該目標也檢查嚴格提升的 `INT3`/`UD2` 終止邊界及其完整位元組、操作摘要綁定。未定義輸出附屬中繼資料的 `Missing` 必須保持不變；僅經符號執行證明不可達的陷阱可進入憑證，任意可行陷阱路徑都須傳回 `ContractViolation`，且無憑證、無殘餘程式碼。不建模陷阱後的循序執行或例外恢復，不使用 `codeFollowsTrap`，靜態 LowIR API 的支援範圍保持不變。
 
 實體返回回歸涵蓋直接及間接呼叫跳過無效行內位元組、可達的錯誤返回位置、完整目標列舉及恰好和不足的預算。完整狀態關係拒絕被改動的結果；獨立 C 經 O1/O2 編譯後也必須保留完整框架寫入，返回值相同不能掩蓋返回槽位元組變化。
@@ -1168,6 +1170,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `CheckedX64Instructions.def` 透過既有 CPU 後端准入 8/16/32/64 位元無號 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用獨立的 `X64IntegerCases.def` 編碼和預期值，在兩種特權級驗證部分暫存器保留、32 位元零擴展、乘積高低兩部分、已定義的 CF/OF 結果及符號擴展不改變旗標。一般 RAM 乘法保留完整存取範圍的權限檢查和讀取觀察回呼；故障或觀察回呼停止會保留隱式輸出暫存器及 PC。裝置運算元仍不支援。這些案例也在 checked Unicorn 上執行；不可用的原生後端明確略過。
 
+`X64Integer.BitScan*` 使用獨立編碼及純量位元索引 oracle，涵蓋位元寬度、零輸入、暫存器重疊、已定義旗標、跨頁 RAM、觀察器停止、記憶體錯誤和非法 LOCK／裝置運算元。零來源值的目的暫存器和未定義旗標不採用可攜值假設。七項案例在兩個特權層級執行，KVM/WHP 原生驗收要求對應主機的全部十四項通過；不可用平台明確略過。
+
 `X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 僅支援自然對齊的記憶體修改形式；MMIO 與硬體平行 SMP 仍不支援。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。MOVS/STOS/LODS 的 REPNE 形式與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
@@ -1204,7 +1208,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 4 image memory checks = 5451`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5508`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1271,6 +1275,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `NeverDInstructionFetchTests` 透過 Unicorn、KVM 與 WHP，在核心態與使用者態執行 x64/ARM64 checked 程式。`InstructionFetchCases.def` 涵蓋運算元形式切換、相對分支、客體與主機經程式碼別名寫入、上下文還原、權限撤銷、獨立頁面儲存、頁尾預讀、無效或截斷編碼及遞迴執行拒絕。Windows 原生 CI 要求所有 x64 WHP 案例通過。無法使用的主機/ISA 組合明確略過；可攜式 ARM64 執行不構成原生 ARM64 支援證據。
 
+`RepeatedOperandsSurviveCodeWorkingSetEviction` 在執行較大的程式碼集前後，重複驗證運算元、記憶體掛鉤及相對分支。受檢執行僅在目前指令位元組一致時重用有容量上限且自行持有的 Capstone 中繼資料；每一步仍讀取目前位元組並檢查執行權限。快取命中保留完整運算元詳情及解碼器別名。
+
 `WhpStateTransferTests.cpp` 對兩代 XSAVE API 注入暫存器傳輸，檢查精確變更組、完整擷取、填補忽略、部分失敗、取消、例外優先順序與分區重建。`ContinuedStepsReuseCapturedRegistersAndFP` 統計省略的安裝；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢復。這些是協定檢查，而非原生執行證據；既有原生 FP、狀態轉換、驅動及 ring3 測試仍屬必要驗證。
 
 `CancelledDirectRunPublishesACompleteBoundary` 驗證 direct 執行確認取消後發佈的完整狀態。`FailedDirectCapturePreservesStateAndForcesFullRetry` 要求取消期間暫存器、XSAVE 或中繼資料擷取失敗時保留呼叫方狀態，隨後完整重試；兩代 API 都不得發佈部分暫存器前綴。
@@ -1326,6 +1332,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 `WindowsLifetimeTests.cpp` 將固定通知序列與獨立原生 Windows 程序及 KVM/WHP/Unicorn 執行比對，涵蓋正常結束、進入點返回、兩個 DLL 初始化失敗、四處提早結束及無進入點 DLL。另驗證回呼故障、共用預算、重定位 TLS 欄位及 TLS 總容量。原生進入點返回探針保留初始執行緒控制代碼，重複64 次核對執行緒結束碼及精確執行緒／程序通知序列。觀察後終止其餘子程序執行緒，不將程序結束碼視為進入點返回值。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 涵蓋加殼映像的還原；參見[脫殼](unpack.md)。`UnpackGeneratedTests.cpp` 用測試自己加殼的程式，在 x86-64 和 ARM64 上檢查入口規則。`X64ReturnPrefixTests.cpp` 在每種傳輸上檢查雙位元組近返回，並確認其它帶前綴的返回仍被拒絕。`WindowsDeferredTests.cpp` 檢查不透明入口與已停止行程的觀察；`ExecutionSessionTests.cpp` 檢查執行監視。 `DirectX64Tests.cpp` 另驗證部分頁監視、跨頁取指、恢復後僅執行一次、服務邊界、非法指令和逾時狀態。
+
+`DirectX64.UnobservedStoresInvalidatePhysicalWriteWitnesses` 檢查未設定寫入監視時的改值、同值及還原原值寫入。直接執行保守地使舊的實體寫入歷史失效；無效指令和逾時退出亦然。停止後可建立新歷史，執行監視及已提交寫入通知維持原有行為。
 
 `LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`、`ExplicitSnapshotsKeepExternalHeapDependenciesVisible` 與 `ReleasedHeapStateDoesNotBlockRecovery` 在可用的逐指令與直接執行後端上比較獨立編譯的啟動及入口行為。`HeapReferencesInCapturedTLSCannotBeDiscarded` 涵蓋僅存在於 TLS 的相依性。公開介面測試要求拒絕時保留既有輸出檔案，並驗證 C API 與 CLI 的明確快照一致。位址匹配是保守證據，不是原生執行證明。
 
@@ -1435,6 +1443,10 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDOwnInteriorCallTests` 涵蓋 x86 與 x86-64 函式直接 call 自身 unwind 範圍內標籤的情況，分別在 Microsoft x64 `.pdata` 條目、System V x86-64 DWARF FDE 與 i386 DWARF FDE 下測試。只為壓入返回位址而做的 call 會提升為壓堆疊加跳轉，x86-64 直線與迴圈兩種情形產生的 C 在 `-O0` 與 `-O2` 下以 AddressSanitizer 與未定義行為陷阱執行。返回時恰好彈出該 call 自身返回位址的目標仍是一般呼叫；切換堆疊之後的返回或低於入口堆疊指標的返回會被拒絕。從 i386 註冊鏈還原的範圍不能界定函式本體，因此其中的 call 仍是 call。
 
+將目標判定為一般子程序前，返回位址槽檢查會拒絕重疊寫入、未知寫入、原子寫入及效果未證明的被呼叫函式寫入。PE、ELF 和 Mach-O 案例涵蓋返回位址的部分寬度破壞及 i386 擴寬記憶體位址。私有堆疊寫入、捨棄的返回位址和終止分支仍可通過驗證。
+
+同一內部呼叫點的混合出口保留兩種行為：已證明的裸近 RET 彈出自身未被破壞的返回位址，並續接至精確位置；丟棄該位址的出口保留原有控制流程。`MixedExitsResumeOnlyTheMatchingInvocation` 涵蓋 PE/ELF/Mach-O x64 與 ELF i386，驗證最佳化及未最佳化 LLVM，並在啟用消毒器時執行 x64 C。配套案例涵蓋重複呼叫，並拒絕多個呼叫點共用 RET、獨立或例外入口、續接區塊揭露的新前驅、未封閉的間接出口、返回位址損壞、帶立即數清理堆疊的返回及語言執行階段中繼資料。每次重建 CFG 都須重新證明呼叫歸屬；這不授權共用 SEH 回呼返回。 非區域出口還須單獨證明父函式返回槽：外層 RET 必須在精確的入口 SP 處讀取原始入口返回位址。釋放過多堆疊空間，以及破壞或可能別名該位址的寫入均被拒絕；不重疊的私有寫入仍可通過。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 與 `QDomNode::isDocument` 的形態檢查 x86-64 System V 呼叫約定。摘要顯示會讀取某個引數暫存器的直接被呼叫者會收到呼叫者的值，包括原樣傳遞的傳入 `this`；虛擬呼叫會取得支配區塊載入 `RDI` 的物件；在某條路徑上不寫 `RAX` 就返回、在其他路徑上只傳遞被呼叫者結果的方法為 void；在比較鏈之前寫入 `AL` 的位元組在每條路徑上都是返回值。產生的程式在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 檢查 CoreImage 提供方、CIImage 工廠、完整 48 位元組邏輯記錄與 x2 指標，拒絕缺失或錯誤的提供方、x86_64 及衝突宣告。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 區分原始呼叫與沿用相同機器位址的結果賦值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒絕 24 類憑據、參數、儲存、框架、中繼資料、匯入、重複呼叫與儲存 IR 的修改，包括同時一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 執行未修改的產生 C，對照獨立從編譯器觀察到的 x2 指標接收函式，檢查六個浮點位元模式、選擇器與接收者身分、單次求值、傳回物件、合法副本寫入、輸入不變性與邊界保護。其他主機略過此實體 ABI 執行測試。
@@ -1492,7 +1504,7 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `LowIRLoopInference.ProjectedCounterCopies*` 涵蓋在遞增前經由帶獨立標籤的字複製計數器位段的巢狀迴圈。144 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4 位元組位段、直接或快取退出條件，以及整字複製對照。投影相等關係必須在儲存的到達狀態和每條傳入轉移上成立；高位保持獨立。轉移域蘊含證明可辨識由不同參數表示的加法遞推。捨棄高位標籤、無效更新、缺少保護，以及推斷或最終證明預算少一單位時仍會拒絕。
 
-`LowIRLoopInference.TransferredCounters*` 涵蓋計數器在不同切點間搬移儲存位置、且其他迴圈可繞過各切點的情況。精確的符號單位步長轉移僅用於提出來源計數器保護條件，以及允許一個切點使用不同位置的備用排名；所有條件和排名仍須通過完整轉移證明。192 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4/8 位元組計數器、獨立標籤及位置不變的對照。結果或標籤變更、錯誤排名映射、不終止更新、缺少保護及推斷或最終證明預算不足均會被拒絕。計數器遍歷使用既有符號節點限額，可選圖選擇器的工作預算可維持為零。 案例同時涵蓋遞減至零及遞增至輸入上界。晚發現計數器時，待所有切點範本重建後再剪除界限及位元區段保護條件；其他擴展與獨立證明照常執行。
+`LowIRTransferredCounterState.*` 與 `LowIRLoopInference.TransferredCountersKeepProofBoundaries` 涵蓋計數器在不同切點間搬移儲存位置、且其他迴圈可繞過各切點的情況。精確的符號單位步長轉移僅用於提出來源計數器保護條件，以及允許一個切點使用不同位置的備用排名；所有條件和排名仍須通過完整轉移證明。192 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4/8 位元組計數器、獨立標籤及位置不變的對照。結果或標籤變更、錯誤排名映射、不終止更新、缺少保護及推斷或最終證明預算不足均會被拒絕。計數器遍歷使用既有符號節點限額，可選圖選擇器的工作預算可維持為零。 案例同時涵蓋遞減至零及遞增至輸入上界。晚發現計數器時，待所有切點範本重建後再剪除界限及位元區段保護條件；其他擴展與獨立證明照常執行。 完整狀態矩陣依儲存空間、方向和遷移方式分為 12 個具名參數組，每組包含 16 種組合；CTest 分別回報並限制每組的執行時間。
 
 `LowIRLoopRefinement.GuardedCuts*` 與 `BinaryLowIRLoopRefinement.GuardedCuts*` 涵蓋同址切點、暫存器、框架及原生系統旗標、兩種位元組序、未匹配的有限與循環路徑、重疊及錯配拒絕、前綴泛化、未定義值見證、錯誤中繼資料、摘要與共用預算。獨立原生測試證明兩個 R10 上下文共用循環位址，並確認未稽核邊界檢查先於選擇條件。一般 ABI 認證仍是獨立工作。
 
@@ -1610,9 +1622,84 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `NeverDUnpackDriverTests` 涵蓋 DriverEntry 恢復、靜態／動態核心匯入、殘留核心資源、入口 ABI／控制狀態、畸形匯出、排程、要求／卸載生命週期、C API／CLI 一致性與 PE 檢查碼。原生驅動清單要求對應 KVM／WHP 案例執行；Windows 另以 ImageHlp 對照。這不代表原生核心載入驗收。見[脫殼](unpack.md)。
 
+`NeverDKernelSnapshotTests` 檢查終止性記憶體故障和不支援指令之後的物件診斷快照。已提交的裝置和分派狀態仍可讀取，原始故障保留，CPU 存取仍被禁止。損壞的歸屬關係、循環裝置串列、無效驅動程式擴充和部分初始化的分派指標仍會失敗。原生 KVM／WHP 驗收要求對應後端案例執行。
+
+`KernelUnpackStateTests.cpp` 為 `NeverDKernelSnapshotTests` 增加九個可攜式案例，涵蓋集區配置契約、內容副本、已釋放物件的生命週期、缺失記憶體和剩餘相依性。終止故障案例也擷取存活集區。`UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` 驗證工作階段銷毀後的公開觀察狀態。這些案例納入原生驅動必測門檻，不構成原生核心還原認證。
+
+受監視寫入的觀察回歸驗證下一條指令執行前的可見性、不依賴寫入日誌的準確指令計數，以及觀察者錯誤傳播。對應 KVM／WHP 後端必須涵蓋 legacy 和 checked 兩種契約。
+
+`UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction`; `UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors`.
+
 ## 原生不透明狀態檢查
 
 `X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
+
+`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。 新增四種情況在父函式恢復後立即再次拋出例外，另有兩種檢查純量輸入與呼叫端擁有、帶相鄰 guard 的計數器。x86 註冊鏈在每次呼叫之後與恢復標籤處檢查。必須使用 schema 2 觀測；只比較最終註冊鏈的舊報告不能證明這些涵蓋範圍。
+
+`scripts/check_windows_native_seh_resume.py` 單獨測試 Windows x64 LLVM/CRT 的實驗性續接協定，涵蓋 O0/O2。`_local_unwind` 接收捕獲的實體 SP 與取址的父函式續接點，與逸出的來源框架單元分開。MASM 呼叫端檢查八個保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路徑執行呼叫後的操作，非局部路徑跳過這些操作，所有路徑隨後再次拋出例外。報告保留工具鏈與雜湊。原生成功不授予 NeverD 重建憑據，也未解決 PE32 出口、逸出記憶體的存取權限、任意巢狀或兩條 C 路線。請在原生 x64 MSVC 環境中指定 `--output`。 工作流程參數 `windows_eh_protocol_only` 直接執行這些原生實驗，不重新建置 NeverD；它與引擎迴歸涵蓋範圍分開。
+
+`RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
+
+`PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 檢查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的最佳化與未最佳化原始碼投影。單函式和分片 LLVM 發射保留相同的不完整原生 EH 明確契約；二進位重寫仍拒絕該契約。
+
+`RegistrationCallNoReturn` 拒絕變更的指令範圍、目標、操作範圍、條件呼叫，以及錯誤架構或格式下的使用。對齊堆疊 PE32 案例同時檢查已獨立證明終止的呼叫和依賴目前證明刪除的普通後繼邊；記憶體證據失效不能重新產生已不存在的普通邊。
+
+`SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
+
+`LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上檢查父返回位址損壞和不相交的父區域變數寫入。只保住被呼叫者的返回位址不能授權一般呼叫。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 與 AArch64 上限制重複肯定及否定查詢的工作量。上下文測試保留繫結值、入口 SP、位寬與零預算的拒絕，並在暫時或重建的可行圖及函式切換後捨棄舊答案。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 也檢查低於邊界的提前停止、哨兵退出、父層級跳過請求索引，以及不同停止層級的合併。實際經過的 finally 函式本體缺失時仍須拒絕；跳過的清理不能提供堆疊框架寫入效果。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 亦涵蓋表外常數上界、無符號高半區及 -2。零步退出保留原層級與框架記憶體事實；動態上界及無效目前層級仍遭拒絕。
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 檢查解析已完成但含錯誤哨兵、循環、前向或越界連結、無效初始層級及處理器/過濾器角色的記錄。初始活動範圍與空表對照案例驗證 EH3/EH4 的合法框架哨兵仍被保留。 超出指標寬度的處理器及過濾器位址也會遭拒，且不發布事實。
+
+原始碼登記狀態求解器對物件借用、catch 物件建構與 local-finally 寫入共用管理區邊界檢查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 與 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 涵蓋 EH3/EH4 對 SavedESP、例外指標與 cookie 槽的讀取、寫入及部分重疊。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 獨立檢查入口框架保存槽，無須依賴後續重新載入才發現覆寫。相鄰一般物件仍可合法借用。
+
+`RAMReservationTests.cpp` 驗證公開寫入記錄的同值及 ABA 寫入、保留切片、位址重用、兄弟映射、回復、取消、故障前已提交寫入和不透明執行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在偏好、向下重定位和核心載入位址檢查具有獨立生命週期的載入事實：還原位元組不會恢復已失效的來源證明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 區分活動 CFG 指標替換與未啟用 CFG 的後援指標保留。
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 檢查 PE 輸出、獨立 DIR64 讀取器、模型重定位及對重寫除錯記錄的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒絕來源、基址或順序不符，並排除格式化替換，即使位元組相同。這些檢查驗證診斷中繼資料，不代表原生復原成功。
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` 檢查九種 intrinsic 形式、finally 的父框架寫入效果、還原後的參數 ESP、registration 移除與保留的例外分派入口。僅規範 FWAIT 通過，其餘八種畸形或不同 intrinsic 形式繼續拒絕。
+
+`NeverDNativeFinallyInputTests` 獨立承載 MSVC 輸入矩陣。通用 `NeverDPipelineOutcomeTests` 在所有 CI 平台仍須執行，不依賴可選原生夾具。聚焦 Windows EH 作業以已驗證映像編譯並執行原生輸入目標。macOS CI 為原始碼替換夾具明確選用 Homebrew Clang 22，與建置 NeverD 的編譯器獨立；不支援的替換堆疊探測方法仍被拒絕。
+
+MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實例產生更多 COFF 節；其他編譯器設定不變。設定檢查核對實際產生的測試編譯命令，編譯及執行仍由原生 Windows CI 驗證。
+
+檢查模式的雙移位在目標和 flags 未定義時，報告遮罩後的計數及運算元寬度。`X64DoubleShift` 驗證型別化退出與舊錯誤介面保留原因，且沒有暫存器或 RAM 改變以及記憶體存取觀察；驅動夾具驗證該原因在情境派發前仍保留。
+
+## 原始碼與原生物件 patch
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+目前矩陣要求 143 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
+
+[原始碼與原生物件 patch](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*` 檢查 CPL0 IF 清除／設定與 CPL3 反向控制、profile 匹配及摘要區分、TF/AC/IOPL 拒絕、關閉一般觀察後仍須檢查最終 IF 相依、還原與精確／少一操作預算。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` 也確認此原生核心 profile 不能默默選用使用者態原始碼 ABI。正式未定義指令 admission 與驅動還原 guards 未變更。
+
+`NeverDX86X87IntegerLoadTests` 比較原始 `FILD m16/m32/m64` 與 Codegen、HighC、LLVMC 的預設/NoOpt 和 C O0/O2 路徑，觀察完整 binary80、保護位元組、控制字及已定義的 C1，涵蓋全部 RC、有效 PC 和異常遮罩。具體執行遍歷所有 16 位輸入與寬整數的二次冪邊界，檢查純轉換保留浮點狀態與填充位元組。反例涵蓋待處理/未知異常、精確記憶體範圍、畸形中繼資料，以及分支、平衡/不平衡迴圈和未知呼叫後的全路徑空槽證明。函式入口依呼叫慣例從空暫存器堆疊開始，槽內取值未定義；其他位置未知或已佔用的目標槽拒絕完整函式發布。原生 oracle 要求 x64 GCC/Clang；不認證完整 x87 TOP/標籤/狀態交付、堆疊溢位模擬、原生異常與記憶體故障優先級或 Linux/macOS/x86-32 原生執行。`NeverDLLVMCIntrinsicSemanticTests` 亦以 C O0/O2 和未定義行為陷阱執行至 64 位的純量 `llvm.abs`，檢查已定義的最小有號值與單次求值。
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
+受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
 
 
 ## Ordinary Darwin whole-file lock coverage

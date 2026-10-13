@@ -1,5 +1,4 @@
-//===- RegistrationABI.h - Checked PE32 registration call ABI -----*- C++
-//-*-===//
+//===- RegistrationABI.h - PE32 registration call ABI ---------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -19,6 +18,15 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct RegistrationStateAnalysis;
+class RegistrationCallCalleeIndex;
+
+RegistrationStateAnalysis analyzeCheckedX86SEHStates(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::vector<RegistrationCalleeStackContract> *Stacks,
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *Controls,
+    RegistrationCallCalleeIndex *Index = nullptr);
 
 /// Prove the entry ESP is restored at every ordinary near return and that
 /// all return-pop immediates agree. Unchecked calls invalidate ESP; an explicit
@@ -26,7 +34,9 @@ struct LowFunc;
 /// retain no memory values. SEH bodies also require complete current
 /// registration state/lifetime evidence to separate dispatcher returns and
 /// seed established EBP at except entries. Neither route infers saved-stack
-/// memory values or grants memory-effect authority.
+/// memory values or grants memory-effect authority. A termination-only SEH
+/// frame has no exceptional parent entry and uses the ordinary register-only
+/// proof, including a separate proof for every called finally.
 std::optional<uint32_t>
 getCheckedX86CalleeStackPop(const BinaryImage &Image, va_t Target,
                             size_t *CumulativeWork = nullptr);
@@ -63,19 +73,47 @@ std::optional<RegistrationLeafCalleeABI>
 getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
                                        size_t *CumulativeWork = nullptr);
 
-/// A checked MSVC cleanup relay borrows its object from the establisher EBP
-/// and tail-jumps to a separately checked leaf. The parent still proves this
-/// object's bounds, initialization and separation at every unwind dispatch.
+struct RegistrationCleanupCallABI {
+  int32_t ObjectFrameOffset = 0;
+  RegistrationLeafCalleeABI Leaf;
+};
+
+/// Coordinates read by a realigned cleanup before calling its leaves. The
+/// parent state proof must establish the saved entry EBP and keep it intact.
+struct RegistrationCleanupParentFrame {
+  int32_t BaseOffset = 0;
+  int32_t SavedParentFrameOffset = 0;
+};
+
+/// A checked cleanup relay derives each ECX object from the establisher EBP.
+/// It tail-jumps to one leaf or saves/restores runtime EBP around an ordered
+/// sequence of leaf calls. The parent must prove every borrow at dispatch.
 struct RegistrationCleanupRelayABI {
   va_t Target = InvalidVA;
   va_t EndAddress = InvalidVA;
-  int32_t ObjectFrameOffset = 0;
-  RegistrationLeafCalleeABI Leaf;
+  std::vector<RegistrationCleanupCallABI> Calls;
+  std::optional<RegistrationCleanupParentFrame> RealignedParent;
+
+  /// Bind a cached byte proof to this invocation's frame. This checks only
+  /// coordinates; the parent's LowIR proof owns contents and lifetime.
+  bool matchesParentFrame(const RegistrationChainInfo &Chain) const;
 };
 
 std::optional<RegistrationCleanupRelayABI>
 getCheckedX86RegistrationCleanupRelayABI(const BinaryImage &Image, va_t Target,
                                          size_t *CumulativeWork = nullptr);
+
+/// The exact two-argument stdcall runtime import and its transparent jump stub.
+/// This proves an entry ABI only; a rethrow occurrence must also prove two null
+/// arguments and an active catch in the source state solver.
+struct RegistrationThrowImportABI {
+  va_t Target = InvalidVA;
+  va_t IATVA = InvalidVA;
+};
+
+std::optional<RegistrationThrowImportABI>
+getCheckedX86RegistrationThrowImportABI(const BinaryImage &Image, va_t Target,
+                                        size_t *CumulativeWork = nullptr);
 
 struct RegistrationThrowCalleeABI {
   va_t Target = InvalidVA;
@@ -85,6 +123,9 @@ struct RegistrationThrowCalleeABI {
   va_t ThrowCallEndVA = InvalidVA;
   int ThrowOpSeq = -1;
   int32_t ObjectOffset = 0;
+  /// Exactly two null arguments reuse the active CRT exception. No new object
+  /// or ThrowInfo is supplied, and the caller must prove an active catch.
+  bool IsRethrow = false;
   coff_loader::X86SimpleCxxThrowInfo ThrowInfo;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
@@ -92,8 +133,8 @@ struct RegistrationThrowCalleeABI {
   std::vector<ExceptionAddressRange> CodeRanges;
 };
 
-/// Prove a closed PE32 helper that initializes a private scalar object and
-/// terminates through the exact VCRUNTIME140 _CxxThrowException import. The
+/// Prove a closed PE32 helper that initializes a private scalar object or
+/// rethrows, then terminates through the exact VCRUNTIME140 import. The
 /// original helper is preserved; no source frame pointer may escape except
 /// its checked object argument and an observable real caller PC.
 std::optional<RegistrationThrowCalleeABI>
@@ -112,6 +153,9 @@ public:
   RegistrationCallCalleeIndex &
   operator=(const RegistrationCallCalleeIndex &) = delete;
   bool ownsImage(const BinaryImage &Other) const { return &Image == &Other; }
+  /// Bill decoded state propagation, including unsuccessful helper analyses,
+  /// to this invocation closure's cumulative work budget.
+  bool chargeStateWork(size_t Amount);
   std::optional<uint32_t> stackPop(va_t Target);
   std::optional<std::vector<RegistrationCalleeFrameContract>>
   contracts(const LowFunc &Function);
@@ -121,6 +165,8 @@ public:
   stackContracts(const LowFunc &Function);
   std::optional<std::vector<RegistrationLocalUnwindContract>>
   localUnwindContracts(const LowFunc &Function);
+  std::optional<std::vector<RegistrationSEHControlContract>>
+  sehControlContracts(const LowFunc &Function);
 
 private:
   const BinaryImage &Image;
@@ -137,6 +183,13 @@ private:
 /// contract. Indirect targets, incomplete bodies and tail-only bodies provide
 /// no such proof. The final writer replays this check from immutable input.
 bool hasCallerCleanupRegistrationABI(
+    const LowFunc &Function, const BinaryImage &Image,
+    std::vector<ExceptionAddressRange> *CallerPCWrites = nullptr);
+
+/// Prove the C++ parent's exact RET cleanup separately from its runtime
+/// callbacks, and replay the preserved call/frame closure. The returned byte
+/// count is not the decoder's maximum across unrelated return instructions.
+std::optional<uint16_t> getCheckedX86RegistrationCxxParentABI(
     const LowFunc &Function, const BinaryImage &Image,
     std::vector<ExceptionAddressRange> *CallerPCWrites = nullptr);
 } // namespace neverd

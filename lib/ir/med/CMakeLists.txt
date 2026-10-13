@@ -1,10 +1,16 @@
 add_neverd_component_library(NeverDIRMed
   MedLibraryRecognition.cpp
   MedComLibraryRecognition.cpp
+  MedDispatchSlots.cpp
+  MedDynamicStack.cpp
   X86/RegistrationFrame.cpp
   X86/RegistrationCallback.cpp
+  X86/RegistrationCatchContext.cpp
+  X86/RegistrationCleanupContext.cpp
   X86/RegistrationCall.cpp
+  X86/RegistrationEntry.cpp
   X86/RegistrationRoots.cpp
+  X86/RegistrationReachability.cpp
   abi/MedABIPass.cpp
   abi/MedABIPassI386.cpp
   abi/MedABIPassSupport.cpp
@@ -18,6 +24,8 @@ add_neverd_component_library(NeverDIRMed
   abi/MedCallConventionWin64.cpp
   abi/MedCallingConv.cpp
   abi/MedCallingConvX86.cpp
+  abi/MedSyscallConvention.cpp
+  abi/MedSyscallConventionLinux.cpp
   abi/MedVariadic.cpp
   abi/MedVariadicAArch64.cpp
   abi/MedVariadicARM.cpp
@@ -58,3 +66,9 @@ add_neverd_component_library(NeverDIRMed
   Loader
   Sigs
 )
+
+# A class/struct mismatch in a forward declaration changes MSVC's decorated
+# names between include orders and can leave the shared engine unlinked.
+if(MSVC)
+  target_compile_options(NeverDIRMed PRIVATE /we4099)
+endif()

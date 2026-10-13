@@ -20,11 +20,21 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace neverd {
 
 struct BinaryImage;
+
+/// A symbol-store lookup derived only from a unique, valid PE CodeView record.
+/// These are path components, not a URL or permission to contact a server.
+struct PDBSymbolRequest {
+  std::string FileName;
+  std::string Key;
+};
+
+std::optional<PDBSymbolRequest> pdbSymbolRequest(const BinaryImage &Img);
 
 /// Which loader produced a DebugContext.
 enum class DebugInfoKind { None, DWARF, PDB, Map };
@@ -44,6 +54,11 @@ struct DebugInfoRequest {
   /// Set false to read the image alone.  The escape hatch for a stale or
   /// mismatched companion file that names functions worse than the image does.
   bool Enabled = true;
+
+  /// Explicit user choice permits the named PDB to supply analysis input
+  /// when the PE's CodeView identity is absent. Automatic discovery never
+  /// uses this exception; machine, sections and present identities must match.
+  bool AllowMissingPDBIdentity = false;
 };
 
 /// Outcome of a discovery attempt.
