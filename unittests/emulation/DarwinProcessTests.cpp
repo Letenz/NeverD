@@ -6,13 +6,13 @@
 #include "DarwinAdvisoryLockTestData.h"
 #include "DarwinCreatedAdvisoryLockTestData.h"
 #include "DarwinCreatedAttributeTestData.h"
+#include "DarwinCreatedDirectoryFileSystemTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinDirectoryModeTestData.h"
 #include "DarwinDirectoryOwnershipTestData.h"
 #include "DarwinDirectoryTimestampTestData.h"
 #include "DarwinEntropyTestData.h"
-#include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinModeTestData.h"
@@ -3046,6 +3046,79 @@ TEST_P(DarwinProcess,
       EXPECT_FALSE(R->Services.back().Result);
       EXPECT_FALSE(R->Services.back().Error);
     }
+  }
+}
+
+TEST_P(DarwinProcess,
+       CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/child";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (bool Literal : {false, true}) {
+    const char *Mode = Literal ? "virtual-created-directory-filesystem"
+                               : "created-directory-filesystem";
+    const auto Wanted =
+        darwin_test::createdDirectoryFileSystemServices(Literal);
+    ASSERT_EQ(Wanted.size(), Literal ? 35u : 33u);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = darwin_test::createdDirectoryFileSystemOptions();
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 56);
+      EXPECT_EQ(R->StandardOutput,
+                darwin_test::createdDirectoryFileSystemOutput(Literal));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Output)
+          EXPECT_EQ(E.Arguments[1], *W.Output);
+        const auto N = W.Number & 0xffffff;
+        if (N == 345 || N == 346)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+  }
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    Options.DarwinFiles = darwin_test::createdDirectoryFileSystemOptions();
+    auto &F = Options.DarwinFiles->FileSystemObservations;
+    if (Variant == 0)
+      F.reset();
+    else if (Variant == 1)
+      F->Objects.clear();
+    else {
+      F->CreatedDirectoryObjects = false;
+      F->CreatedRegularObjects = Variant == 2;
+    }
+    auto R = run("created-directory-filesystem");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(
+        R->Diagnostic,
+        Variant == 0
+            ? "Darwin filesystem observation environment is not configured"
+            : "Darwin object filesystem snapshot is not configured");
+    EXPECT_TRUE(R->StandardOutput.empty());
+    ASSERT_EQ(R->Services.size(), 4u);
+    EXPECT_EQ(R->Services.back().Number, Class | 346);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
   }
 }
 

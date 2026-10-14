@@ -2259,7 +2259,8 @@ NEVERD_EMULATION_DOC_TOKEN(
     "created_regular_objects defaultfalse / true requires complete "
     "CreationPolicy / successful new regular uses actual bound parent snapshot")
 NEVERD_EMULATION_DOC_TOKEN(
-    Darwin, "initial children unbound parents new directories links receive "
+    Darwin, "initial children unbound parents default-created directories "
+            "links receive "
             "none / no fsid device inode or pathname prefix inference")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
@@ -2453,3 +2454,32 @@ NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "219 owned native directory ownership observations / ARM64 O0 O1 "
             "O2 / native5s compiler120s build1200s parallel2 guest5000000us "
             "quantum1024 public30s")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "FileSystemObservations CreatedDirectoryObjects=false / "
+            "filesystem_observations.created_directory_objects strict Boolean "
+            "/ independent CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory filesystem binding requires complete "
+            "CreationPolicy.Namespace / successful mkdir binds actual parent "
+            "DirectoryNode.FileSystem before publication")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "unbound parent snapshot remains unknown / creation succeeds "
+            "without manufacturing a snapshot / zero snapshot explicitly known")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "actual snapshots survive moves exchanges dup held rmdir and metadata "
+    "invalidation / replacement objects bind their own actual parent")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "filesystem owner and directory stat UID GID independent / no "
+            "attribute namespace mount identity or global fsid inference")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created-directory-filesystem33 authored services / "
+            "virtual-created-directory-filesystem35 services / main56 stdout D "
+            "/ independent4400 guarded payload bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "102 owned ARM64 native filesystem observations O0 O1 O2 / native "
+            "common77 mandatory92 per platform ARM64276")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "125 initial private and strict JSON checks / five software C CLI "
+            "Python profiles / three matching ARM64 HVF profiles required")

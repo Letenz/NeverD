@@ -1562,7 +1562,7 @@ DirectoryNode owns separate ModeTime, TimestampTime and namespace MutationTime/D
 
 DarwinTimestamps.cpp keeps the existing utimes/futimes request import, error order, explicit versus NULL authorization and declared requested-time storage decision. After shared status/authorization it selects the actual File or Directory provider and CurrentMetadata. Directory timestamp writes preserve all unrelated stat bytes, enumeration/cursors/flags, budgets, namespace, mode/ownership, xattr and VM authority. Namespace changes still require independent time and shape; timestamp-created CurrentMetadata cannot replace either, and invalidation cannot be reversed.
 
-The shared strict timed-object JSON parser admits created_directory_objects only for Mode, Ownership and Timestamp provider types. Required objects, strict Boolean, time parsing and shared budgets remain authoritative; other provider types reject this field. The existing public FileModeCreatedDirectoryObjects constant identifier and its wire string remain compatible. No syscall or pure C function was added. Full dyld/Mach IPC/ObjC/Swift/Foundation/UIKit execution and physical-device evidence remain incomplete.
+The shared strict object-provider header admits created_directory_objects only for Mode, Ownership, Timestamp and FileSystem provider types. Required objects, strict Boolean, each purpose's entry parser and shared budgets remain authoritative; other provider types reject this field. The existing public FileModeCreatedDirectoryObjects constant identifier and its wire string remain compatible. No syscall or pure C function was added. Full dyld/Mach IPC/ObjC/Swift/Foundation/UIKit execution and physical-device evidence remain incomplete.
 
 ## Explicit ordinary directory ownership
 
@@ -1577,3 +1577,11 @@ DarwinOwnership.cpp selects actual File or Directory metadata and provider after
 Directory ownership preserves unrelated stat bytes, cursors, flags, enumeration versions, accounting, xattrs, VM and filesystem snapshots. Namespace mutation still needs independent time and shape, even after an attribute call publishes CurrentMetadata. Missing premises permanently invalidate the complete record. Actual providers follow dup, moves, exchanges and held removal; a reused name receives a different object.
 
 The strict shared timed-object parser admits created_directory_objects for exactly Mode, Ownership and Timestamp, with a single type decision. Required objects, exact Boolean, time validation and common budgets remain authoritative. The existing FileModeCreatedDirectoryObjects identifier and wire string remain compatible. No syscall, C function, constructor, dependency or scheduling policy changed.
+
+## Filesystem snapshots for created directories
+
+新增獨立建立開關，可將新目錄繫結至實際父目錄已宣告的檔案系統快照。移動和刪除後，已開啟的描述元仍保留原繫結。完整 Apple 執行階段、框架和實體 iOS 驗證仍未完成。
+
+DarwinFiles owns admission and the successful mkdir publication boundary. The appended FileSystemObservations.CreatedDirectoryObjects defaultsfalse and requires complete CreationPolicy.Namespace when enabled. Before publishing a complete new DirectoryNode, it binds Node->Parent->FileSystem only through this independent flag. An unbound parent leaves a null pointer and does not prevent otherwise valid creation. No path prefix, filesystem_id/device/inode match, mount enumeration or stat observation supplies a missing snapshot.
+
+DarwinFileSystems.cpp remains the single LP642168-byte serializer and query owner. The shared strict object-provider header admits created_directory_objects for Mode, Ownership, Timestamp and FileSystem; each purpose keeps its entry parser. Initial Objects and created regular/directory flags remain independent. The actual binding survives moves/exchanges, dup and held rmdir; reused names create separate objects. Namespace/stat invalidation never clears or repairs the binding. Path queries retain effective ancestor SEARCH, while descriptor queries borrow no target stat, credentials or access flags. No C function, dispatch, authorization, dependency pin or scheduling change.

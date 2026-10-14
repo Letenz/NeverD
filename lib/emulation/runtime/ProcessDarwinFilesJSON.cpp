@@ -333,7 +333,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     constexpr bool DirectoryProvider =
         std::is_same_v<ProviderType, DarwinModeMutationOptions> ||
         std::is_same_v<ProviderType, DarwinOwnershipMutationOptions> ||
-        std::is_same_v<ProviderType, DarwinFileTimestampMutationOptions>;
+        std::is_same_v<ProviderType, DarwinFileTimestampMutationOptions> ||
+        std::is_same_v<ProviderType, DarwinFileSystemOptions>;
     const llvm::json::Value *CreatedDirectories = nullptr;
     if constexpr (DirectoryProvider) {
       if (Environment)

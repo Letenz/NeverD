@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 15a333abcb55d367c26a3597ec97a1a28a8a4167a4956f4cf762d16abd27e8c9 -->
+<!-- i18n-source: 772e4943c990c310f34e739698aa991ffc0befeb1a89c2e71169b6bfca918401 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1565,7 +1565,7 @@ reserved seven uint32 words zero / bounded UTF8 NUL-free names / all sixteen JSO
 explicit exact immediate mount-stat provider / no host query mount identity quota live refresh MAC refusal wait or process mountpoint rewrite
 initial regular and directory bindings / actual Contents DirectoryNode / no target filestat prerequisite or recovery
 created_regular_objects defaultfalse / true requires complete CreationPolicy / successful new regular uses actual bound parent snapshot
-initial children unbound parents new directories links receive none / no fsid device inode or pathname prefix inference
+initial children unbound parents default-created directories links receive none / no fsid device inode or pathname prefix inference
 effective ordinary ancestor search uses shared authorizer and group knowledge / FD query borrows no target DAC credentials or access flags
 pathname and low32 FD kind before output / ENOENT2 EBADF9 EFAULT14 / individually partial output unsupported before effects
 both immutable query domains reject even empty filesystem declaration / all57 other logical file routes closed before preflight
@@ -1710,3 +1710,24 @@ Original owned nonroot ARM64 macOS O0/O1/O2 probes retain219 observations, inclu
 The SDK-free directory-ownership-mutations workload checks61 authored calls and29 guarded whole stat records, returning55/O. Virtual initial and created variants independently check every stat byte and fixed times; creation adds mkdir for62 calls. The common native workload captures no native service trace and compares actual native ctime rather than inventing its value. All four ID patterns use the base carrier per route, while upper carriers repeat active-both requests. The independent native219 observations and private model checks retain full Cartesian typing. Namespace shape uses the separately declared virtual all-child policy, not inferred native filesystem link counts.
 
 Original implementation and probes use [pinned XNU ownership ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No implementation was copied.
+
+## Filesystem snapshots for created directories
+
+独立した作成フラグにより、新しいディレクトリは実際の親に宣言されたファイルシステムのスナップショットを保持できます。移動と削除後も開いた記述子は元の関連を保持します。完全な Apple ランタイムと実機 iOS 検証は未完了です。
+
+```text
+FileSystemObservations CreatedDirectoryObjects=false / filesystem_observations.created_directory_objects strict Boolean / independent CreatedRegularObjects
+created directory filesystem binding requires complete CreationPolicy.Namespace / successful mkdir binds actual parent DirectoryNode.FileSystem before publication
+unbound parent snapshot remains unknown / creation succeeds without manufacturing a snapshot / zero snapshot explicitly known
+actual snapshots survive moves exchanges dup held rmdir and metadata invalidation / replacement objects bind their own actual parent
+filesystem owner and directory stat UID GID independent / no attribute namespace mount identity or global fsid inference
+created-directory-filesystem33 authored services / virtual-created-directory-filesystem35 services / main56 stdout D / independent4400 guarded payload bytes
+102 owned ARM64 native filesystem observations O0 O1 O2 / native common77 mandatory92 per platform ARM64276
+125 initial private and strict JSON checks / five software C CLI Python profiles / three matching ARM64 HVF profiles required
+```
+
+Set darwin_files.filesystem_observations.created_directory_objects to the strict Boolean true to opt in. The provider still requires objects (an empty array is valid); entries retain all sixteen snapshot fields and the existing shared2168-byte/path charge. CreationPolicy must include namespace_policy, with the existing explicit mutable parent, complete parent identity and umask prerequisites. False or omission preserves the default closed new-directory domain.
+
+Each successful complete mkdir uses its actual parent’s bound snapshot if present. A zero snapshot is known; absence remains unknown and statfs64/fstatfs64 refuse a missing provider before output preflight. A regular child of a bound created directory needs the independent created_regular_objects flag; another new directory needs the directory flag. Initial children and symbolic vnodes receive no implicit grant. Filesystem owner remains independent of stat UID/GID, including after chown. Mode, timestamp, namespace, quota and mount identity authority are not inferred.
+
+Queries preserve every declared2168-byte payload and zero padding, descriptor state and unrelated full stat bytes. An existing descriptor retains its actual snapshot through parent/child moves, exchange, invalidated stat and held deletion. A replacement binds its own actual parent. Counters stay fixed declared observations; no advancing live mount is claimed. Original probes use the previously pinned XNU statfs64/fstatfs64 declarations and native SDK LP64 layout; no implementation was copied.

@@ -147,7 +147,12 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
             case_input = catalogue / "work" / "data"
         if mode == "hard-links":
             (case_input.parent / "attributes").write_bytes(b"x")
-        if mode in ("directory-mode-mutations", "directory-timestamp-mutations", "directory-ownership-mutations"):
+        if mode == "created-directory-filesystem":
+            catalogue = initial_root / mode
+            catalogue.mkdir(mode=0o700)
+            catalogue.chmod(0o700)
+            case_input = catalogue / "dir"
+        elif mode in ("directory-mode-mutations", "directory-timestamp-mutations", "directory-ownership-mutations"):
             case_input = initial_root / mode / "dir"
             case_input.mkdir(parents=True, mode=0o700)
             case_input.chmod(0o700)

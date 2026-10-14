@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "DarwinFileSystemTestData.h"
+#include "DarwinCreatedDirectoryFileSystemTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
@@ -551,6 +551,269 @@ TEST_P(DarwinFileSystemTest,
   const auto FD = open("/link", 0x200000);
   refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemKind);
 }
+
+TEST(DarwinFileSystemOptions, CreatedDirectoryFlagNeedsCompleteNamespace) {
+  auto O = darwin_test::fileSystemOptions();
+  EXPECT_FALSE(O.FileSystemObservations->CreatedDirectoryObjects);
+  O.FileSystemObservations->CreatedDirectoryObjects = true;
+  auto E = validateFileOptions(O);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::FileCreationPolicy);
+  O.CreationPolicy =
+      darwin_test::createdDirectoryFileSystemOptions().CreationPolicy;
+  O.MutableDirectories.insert("/");
+  O.InitialUmask = 022;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.CreationPolicy->Namespace.reset();
+  E = validateFileOptions(O);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::FileCreationPolicy);
+  O.FileSystemObservations->CreatedDirectoryObjects = false;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+
+TEST_P(DarwinFileSystemTest,
+       CreatedDirectoryAndRegularSnapshotFlagsAreSeparate) {
+  for (bool Directory : {false, true})
+    for (bool Regular : {false, true}) {
+      Options =
+          darwin_test::createdDirectoryFileSystemOptions(Directory, Regular);
+      reset();
+      const auto Initial = open();
+      refused(route(), args(Initial, 1), diagnostic::FileSystemProvider);
+      ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+      const auto Dir = open("/dir");
+      if (Directory)
+        EXPECT_EQ(capture(Dir, "/dir"), darwin_test::fileSystemRecord());
+      else
+        refused(route(), args(Dir, 1, "/dir"), diagnostic::FileSystemProvider);
+      const auto Child = open("/dir/leaf", 0x202);
+      if (Directory && Regular)
+        EXPECT_EQ(capture(Child, "/dir/leaf"), darwin_test::fileSystemRecord());
+      else
+        refused(route(), args(Child, 1, "/dir/leaf"),
+                diagnostic::FileSystemProvider);
+      ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700});
+      const auto Grandchild = open("/dir/sub");
+      if (Directory)
+        EXPECT_EQ(capture(Grandchild, "/dir/sub"),
+                  darwin_test::fileSystemRecord());
+      else
+        refused(route(), args(Grandchild, 1, "/dir/sub"),
+                diagnostic::FileSystemProvider);
+      ok(ServiceKind::Symlink, {path("leaf"), path("/dir/link", Base + 128)});
+      const auto Link = open("/dir/link", 0x200000);
+      refused(ServiceKind::Fstatfs64, {Link, 1}, diagnostic::FileSystemKind);
+    }
+}
+
+TEST_P(DarwinFileSystemTest,
+       CreatedDirectoriesDistinguishZeroAndUnboundParents) {
+  for (bool Bound : {false, true}) {
+    Options = darwin_test::createdDirectoryFileSystemOptions(true, true);
+    Options->FileSystemObservations->Objects.clear();
+    if (Bound)
+      Options->FileSystemObservations->Objects["/"] = {};
+    reset();
+    ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+    const auto Dir = open("/dir");
+    const auto Leaf = open("/dir/leaf", 0x202);
+    for (const auto &V :
+         {std::pair<uint64_t, const char *>{Dir, "/dir"}, {Leaf, "/dir/leaf"}})
+      if (Bound) {
+        Record Expected{};
+        std::fill_n(Expected.begin(), 16, 0xa5);
+        std::fill_n(Expected.end() - 16, 16, 0xa5);
+        EXPECT_EQ(capture(V.first, V.second), Expected);
+        error(route(), args(V.first, 1, V.second), 14);
+      } else
+        refused(route(), args(V.first, 1, V.second),
+                diagnostic::FileSystemProvider);
+  }
+}
+
+TEST_P(DarwinFileSystemTest,
+       CreatedDirectoriesUseMovedAndExchangedActualParent) {
+  for (bool Swap : {false, true}) {
+    Options = darwin_test::createdDirectoryFileSystemOptions(true, true);
+    for (const auto &V :
+         {std::pair<const char *, uint64_t>{"/a", 10}, {"/b", 11}}) {
+      Options->Directories.insert(V.first);
+      Options->Metadata[V.first] = darwin_test::modeMetadata(0040700, V.second);
+      Options->MutableDirectories.insert(V.first);
+      Options->DirectoryMutationPolicies[V.first] = {16, {91, 92}};
+    }
+    Options->MovableDirectories.insert("/a");
+    Options->ExchangeableDirectories = {"/a", "/b"};
+    Options->Directories.insert("/");
+    Options->SwapRenameDirectories.insert("/");
+    Options->FileSystemObservations->Objects["/a"] =
+        darwin_test::fileSystemSnapshot();
+    Options->FileSystemObservations->Objects["/a"].Owner = 17;
+    Options->FileSystemObservations->Objects["/b"] =
+        darwin_test::fileSystemSnapshot();
+    Options->FileSystemObservations->Objects["/b"].Owner = 23;
+    reset();
+    const auto Parent = open("/a"), Other = open("/b");
+    const auto From = path("/a"), To = path(Swap ? "/b" : "/moved", Base + 128);
+    if (Swap)
+      ok(ServiceKind::RenameAtX, {UINT64_MAX, From, UINT64_MAX, To, 2});
+    else
+      ok(ServiceKind::Rename, {From, To});
+    const std::string Name = std::string(Swap ? "/b" : "/moved") + "/child";
+    ok(ServiceKind::Mkdir, {path(Name), 0700});
+    const auto Child = open(Name);
+    EXPECT_EQ(capture(Child, Name), darwin_test::directoryFileSystemRecord(17));
+    const auto LeafName = Name + "/leaf";
+    const auto Leaf = open(LeafName, 0x202);
+    EXPECT_EQ(capture(Leaf, LeafName),
+              darwin_test::directoryFileSystemRecord(17));
+    if (FDRoute) {
+      EXPECT_EQ(capture(Parent), darwin_test::directoryFileSystemRecord(17));
+      EXPECT_EQ(capture(Other), darwin_test::directoryFileSystemRecord(23));
+    }
+    // A later child move to root preserves the original bound snapshot.
+    ok(ServiceKind::Rename, {path(Name), path("/child", Base + 128)});
+    EXPECT_EQ(capture(Child, "/child"),
+              darwin_test::directoryFileSystemRecord(17));
+    EXPECT_EQ(capture(Leaf, "/child/leaf"),
+              darwin_test::directoryFileSystemRecord(17));
+  }
+}
+
+TEST_P(DarwinFileSystemTest,
+       HeldRemovedDirectoryAndReplacementHaveSeparateSnapshots) {
+  Options = darwin_test::createdDirectoryFileSystemOptions();
+  Options->Directories.insert("/dir");
+  Options->Metadata["/dir"] = darwin_test::modeMetadata(0040700, 10);
+  Options->RemovableDirectories.insert("/dir");
+  Options->FileSystemObservations->Objects["/dir"] =
+      darwin_test::fileSystemSnapshot();
+  Options->FileSystemObservations->Objects["/dir"].Owner = 17;
+  reset();
+  const auto Old = open("/dir"), Dup = ok(ServiceKind::Dup, {Old});
+  ok(ServiceKind::Rmdir, {path("/dir")});
+  error(ServiceKind::Statfs64, {path("/dir"), 1}, 2);
+  refused(ServiceKind::Fstat64, {Old, Base + Page * 2 + 8},
+          diagnostic::DirectoryMutated);
+  ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+  const auto New = open("/dir");
+  EXPECT_EQ(capture(New, "/dir"), darwin_test::fileSystemRecord());
+  for (auto FD : {Old, Dup}) {
+    Record Expected;
+    Expected.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Expected));
+    ok(ServiceKind::Fstatfs64, {FD, Base + Page + 16});
+    llvm::cantFail(Space->read(Base + Page, Expected));
+    EXPECT_EQ(Expected, darwin_test::directoryFileSystemRecord(17));
+  }
+  ok(ServiceKind::Close, {Old});
+  error(ServiceKind::Fstatfs64, {Old, 1}, 9);
+  ok(ServiceKind::Close, {Dup});
+  EXPECT_EQ(capture(New, "/dir"), darwin_test::fileSystemRecord());
+}
+
+TEST_P(DarwinFileSystemTest,
+       CreatedDirectorySnapshotsDoNotGrantAttributeMutations) {
+  Options = darwin_test::createdDirectoryFileSystemOptions(true, true);
+  Options->ModeMutations.emplace();
+  Options->OwnershipMutations.emplace();
+  Options->TimestampMutations.emplace();
+  reset();
+  ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+  const auto Dir = open("/dir");
+  const auto Before = status(Dir);
+  refused(ServiceKind::Fchmod, {Dir, 0700}, diagnostic::FileModeProvider);
+  refused(ServiceKind::Fchown, {Dir, UINT32_MAX, UINT32_MAX},
+          diagnostic::FileOwnershipProvider);
+  std::array<uint8_t, 32> Times{};
+  llvm::cantFail(Space->write(Base + 256, Times));
+  refused(ServiceKind::Futimes, {Dir, Base + 256},
+          diagnostic::FileTimestampProvider);
+  EXPECT_EQ(capture(Dir, "/dir"), darwin_test::fileSystemRecord());
+  EXPECT_EQ(status(Dir), Before);
+  Options->OwnershipMutations.emplace().CreatedDirectoryObjects = true;
+  Credentials->GroupAccessList = {20, 31};
+  reset();
+  ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+  const auto Changed = open("/dir");
+  ok(ServiceKind::Fchown, {Changed, UINT32_MAX, 31});
+  EXPECT_EQ(capture(Changed, "/dir"), darwin_test::fileSystemRecord());
+  const auto Leaf = open("/dir/leaf", 0x202);
+  EXPECT_EQ(capture(Leaf, "/dir/leaf"), darwin_test::fileSystemRecord());
+  const auto ChildStatus = status(Leaf);
+  EXPECT_EQ(ChildStatus[28], 31);
+  EXPECT_EQ(ChildStatus[29], 0);
+  EXPECT_EQ(ChildStatus[30], 0);
+  EXPECT_EQ(ChildStatus[31], 0);
+}
+
+TEST_P(DarwinFileSystemTest,
+       SnapshotSurvivesInvalidStatWithoutRepairingPathSearch) {
+  Options = darwin_test::createdDirectoryFileSystemOptions();
+  Options->Directories.insert("/dir");
+  Options->Metadata["/dir"] = darwin_test::modeMetadata(0040700, 10);
+  Options->MutableDirectories.insert("/dir");
+  Options->FileSystemObservations->Objects["/dir"] =
+      darwin_test::fileSystemSnapshot();
+  reset();
+  const auto Parent = open("/dir");
+  ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700});
+  refused(ServiceKind::Fstat64, {Parent, Base + Page * 2 + 8},
+          diagnostic::DirectoryMutated);
+  Record B;
+  B.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, B));
+  ok(ServiceKind::Fstatfs64, {Parent, Base + Page + 16});
+  llvm::cantFail(Space->read(Base + Page, B));
+  EXPECT_EQ(B, darwin_test::fileSystemRecord());
+  refused(ServiceKind::Statfs64, {path("/dir/sub"), 1},
+          diagnostic::DirectoryMutated);
+  refused(ServiceKind::Fstat64, {Parent, Base + Page * 2 + 8},
+          diagnostic::DirectoryMutated);
+}
+
+TEST_P(DarwinFileSystemTest,
+       CreatedDirectoryQueriesPreserveFullStatAndDescriptionFlags) {
+  Options = darwin_test::createdDirectoryFileSystemOptions();
+  reset();
+  error(ServiceKind::Mkdir, {path("/"), 0700}, 17);
+  error(ServiceKind::Mkdir, {1, 0700}, 14);
+  ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+  const auto Dir = open("/dir"), Dup = ok(ServiceKind::Dup, {Dir});
+  const auto Before = status(Dir);
+  ok(ServiceKind::Fcntl, {Dup, 2, 1});
+  const auto Flags = ok(ServiceKind::Fcntl, {Dup, 3});
+  for (uint64_t High : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL}) {
+    EXPECT_EQ(capture(Dup, "/dir", High), darwin_test::fileSystemRecord());
+    EXPECT_EQ(status(Dir), Before);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Dup, 1}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Dup, 3}), Flags);
+  }
+  error(route(), args(Dir, 1, "/dir"), 14);
+  EXPECT_EQ(status(Dir), Before);
+}
+
+TEST_P(DarwinFileSystemTest,
+       FailedDirectoryCreationCannotConsumeNextInodeOrBinding) {
+  Options = darwin_test::createdDirectoryFileSystemOptions();
+  Options->CreationPolicy->FirstInode = UINT64_MAX;
+  reset();
+  error(ServiceKind::Mkdir, {path("/"), 0700}, 17);
+  error(ServiceKind::Mkdir, {1, 0700}, 14);
+  ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+  const auto Dir = open("/dir");
+  EXPECT_EQ(capture(Dir, "/dir"), darwin_test::fileSystemRecord());
+  const auto Before = status(Dir);
+  for (unsigned I = 16; I != 24; ++I)
+    EXPECT_EQ(Before[I], 0xff);
+  refused(ServiceKind::Mkdir, {path("/next"), 0700},
+          diagnostic::FileCreationInode);
+  error(ServiceKind::Statfs64, {path("/next"), 1}, 2);
+  EXPECT_EQ(capture(Dir, "/dir"), darwin_test::fileSystemRecord());
+  EXPECT_EQ(status(Dir), Before);
+}
+
 class DarwinMountEnumerationTest : public DarwinFileSystemTest {
 protected:
   static constexpr auto K = ServiceKind::Getfsstat64;

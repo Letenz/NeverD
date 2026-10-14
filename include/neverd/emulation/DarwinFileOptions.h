@@ -291,6 +291,11 @@ struct DarwinFileSystemOptions {
   /// Initial children, unbound parents, mkdir/symlink and descendants through
   /// new unbound directories receive none. Reused names inherit no old grant.
   bool CreatedRegularObjects = false;
+  /// Independent new-directory relation. True requires complete CreationPolicy
+  /// with Namespace; successful mkdir uses its actual parent bound snapshot,
+  /// if present. No snapshot is manufactured for an unbound parent. Initial
+  /// objects, symlinks and other purposes receive no grant from this flag.
+  bool CreatedDirectoryObjects = false;
 };
 
 /// One live, accessible mount with an explicit cached observation. Refreshed

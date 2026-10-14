@@ -9331,6 +9331,100 @@ static int file_system_same_stable(const union file_system_guard *a,
       return 352;
   return 0;
 }
+static int directory_file_system_status(u64 fd,
+                                        union full_barrier_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0040000)
+    return 369;
+  return 0;
+}
+
+/* Original SDK-free directory creation controls. The common workload compares
+ * stable native fields; virtual-only writes expose every guarded payload byte.
+ */
+static __attribute__((noinline)) int
+created_directory_filesystem(const char *name, unsigned literal) {
+  unsigned error, size = 0;
+  char moved[4096];
+  while (name[size]) {
+    if (size >= 4088)
+      return 370;
+    moved[size] = name[size];
+    ++size;
+  }
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[size + i] = suffix[i];
+  if (mode_result(136, (u64)name, 0700, 0, 0, 0))
+    return 370;
+  const u64 dir = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 371;
+  const u64 dup = call(41, dir, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 371;
+  union file_system_guard first, current;
+  union full_barrier_stat_guard before, after;
+  if (file_system_capture(346, dir, &first) ||
+      file_system_capture(345, (u64)name, &current) ||
+      file_system_same_stable(&first, &current) ||
+      directory_file_system_status(dir, &before))
+    return 372;
+  const u64 highs[] = {0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 2; ++i)
+    if (file_system_capture(highs[i] | 346, highs[i] | dup, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(highs[i] | 345, (u64)name, &current) ||
+        file_system_same_stable(&first, &current))
+      return 373;
+  if (directory_file_system_status(dir, &after) ||
+      timestamp_same(&before, &after) || full_barrier_flags(dir, 0))
+    return 374;
+  if (literal && (call(4, 1, (u64)first.bytes, 2200, 0, 0, 0, &error) != 2200 ||
+                  error || secondary))
+    return 375;
+  if (file_system_result(346, -1UL, 1, 9) ||
+      file_system_result(346, dir, 1, 14) ||
+      file_system_result(345, (u64) "", 1, 2) ||
+      mode_result(128, (u64)name, (u64)moved, 0, 0, 0) ||
+      file_system_result(345, (u64)name, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      file_system_capture(345, (u64)moved, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(137, (u64)moved, 0, 0, 0, 0) ||
+      file_system_result(345, (u64)moved, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(136, (u64)name, 0700, 0, 0, 0))
+    return 376;
+  const u64 replacement = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || file_system_capture(346, replacement, &current) ||
+      file_system_same_stable(&first, &current) ||
+      directory_file_system_status(replacement, &after) ||
+      before.words[2] == after.words[2])
+    return 377;
+  if (literal &&
+      (call(4, 1, (u64)current.bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+       secondary))
+    return 378;
+  if (file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(6, dir, 0, 0, 0, 0) || file_system_result(346, dir, 1, 9) ||
+      mode_result(6, dup, 0, 0, 0, 0) ||
+      mode_result(6, replacement, 0, 0, 0, 0) ||
+      mode_result(137, (u64)name, 0, 0, 0, 0) ||
+      call(4, 1, (u64) "D", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 379;
+  return 0;
+}
+
 static __attribute__((noinline)) int filesystem_observations(const char *path) {
   unsigned error;
   const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
@@ -9565,6 +9659,15 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "virtual-mount-enumeration")) {
     const int status = mount_enumeration(1);
     return status ? status : 53;
+  }
+  if (equal(argv[1], "created-directory-filesystem") ||
+      equal(argv[1], "virtual-created-directory-filesystem")) {
+    const int status =
+        argc < 3 ? 370
+                 : created_directory_filesystem(
+                       argv[2],
+                       equal(argv[1], "virtual-created-directory-filesystem"));
+    return status ? status : 56;
   }
   if (equal(argv[1], "filesystem-observations")) {
     const int status = argc < 3 ? 349 : filesystem_observations(argv[2]);

@@ -1870,6 +1870,9 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
     if (Options->TimestampMutations &&
         Options->TimestampMutations->CreatedDirectoryObjects)
       Node->TimestampTime = &Policy->Mutation.Time;
+    if (Options->FileSystemObservations &&
+        Options->FileSystemObservations->CreatedDirectoryObjects)
+      Node->FileSystem = Node->Parent->FileSystem;
   }
   Directories.emplace(File.Path, std::move(Node));
   *StorageUsed += Charge;

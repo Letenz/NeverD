@@ -1172,6 +1172,140 @@ class ProcessIntegrationTests(unittest.TestCase):
                 self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
 
 
+    def test_darwin_created_directory_filesystems_keep_parent_and_held_lifetime(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        root = {"device": 7, "inode": 1, "mode": 0o40700, "link_count": 2,
+                "uid": 501, "gid": 20, "size": 0, "block_size": 512, "blocks": 0,
+                "flags": 0, "generation": 9,
+                "access_time": {"seconds": 1, "nanoseconds": 2},
+                "modification_time": {"seconds": 3, "nanoseconds": 4},
+                "change_time": {"seconds": 5, "nanoseconds": 6},
+                "birth_time": {"seconds": 7, "nanoseconds": 8}}
+        snapshot = {"block_size": 270544960, "io_size": -4096,
+                    "blocks": "18364758544493064720", "free_blocks": "72623859790382856",
+                    "available_blocks": 0, "files": "18446744073709551615", "free_files": 9,
+                    "filesystem_id": [-1, -2147483648], "owner": 4294967294, "type": 26,
+                    "flags": 16909060, "subtype": 7, "type_name": "virtfs",
+                    "mount_point": "/虚拟", "mounted_from": "neverd:declared",
+                    "extended_flags": 2271560481}
+        base = {"files": [], "directories": [{"path": "/", "metadata": root, "mutable": True,
+                "mutation_policy": {"directory_entry_size": 16,
+                                    "mutation_time": {"seconds": 91, "nanoseconds": 92}}}],
+                "working_directory": "/", "umask": 18,
+                "creation_policy": {"first_inode": 100, "block_size": 512, "generation": 9,
+                    "creation_time": {"seconds": 41, "nanoseconds": 42},
+                    "mutation_policy": {"allocation_unit": 512,
+                                        "mutation_time": {"seconds": 101, "nanoseconds": 102}},
+                    "namespace_policy": {"symbolic_link_allocation_unit": 512,
+                                         "directory_entry_size": 32, "directory_blocks": 7}},
+                "filesystem_observations": {"objects": [{"path": "/", "snapshot": snapshot}],
+                                           "created_directory_objects": True,
+                                           "created_regular_objects": False}}
+        # Independent literal2168-byte record, with16-byte guards on both sides.
+        prefix = bytes.fromhex("4030201000f0ffff1032547698badcfe08070605040302010000000000000000ffffffffffffffff0900000000000000ffffffff00000080feffffff1a0000000403020107000000")
+        record = bytearray(b"\xa5" * 16 + b"\0" * 2168 + b"\xa5" * 16)
+        record[16:88] = prefix
+        record[88:95] = b"virtfs\0"
+        mount = "/虚拟".encode() + b"\0"
+        record[104:104 + len(mount)] = mount
+        record[1128:1144] = b"neverd:declared\0"
+        record[2152:2156] = bytes.fromhex("21436587")
+        self.assertEqual(len(record), 2200)
+        mask = (1 << 64) - 1
+        common = [(136,0,False,None,None),(5,3,False,None,None),
+                  (41,4,False,3,None),(346,0,False,3,None),
+                  (345,0,False,None,None),(339,0,False,3,None)]
+        for high in (0x1234567800000000, 0xffffffff00000000):
+            common.extend([(high|346,0,False,high|4,None),(high|345,0,False,None,None)])
+        common.extend([(339,0,False,3,None),(92,0,False,3,None)])
+        middle = [(346,9,True,mask,1),(346,14,True,3,1),(345,2,True,None,1),
+                  (128,0,False,None,None),(345,2,True,None,1),(346,0,False,4,None),
+                  (345,0,False,None,None),(137,0,False,None,None),
+                  (345,2,True,None,1),(346,0,False,4,None),(136,0,False,None,None),
+                  (5,5,False,None,None),(346,0,False,5,None),(339,0,False,5,None)]
+        tail = [(346,0,False,4,None),(6,0,False,3,None),(346,9,True,3,1),
+                (6,0,False,4,None),(6,0,False,5,None),(137,0,False,None,None),
+                (4,1,False,1,None)]
+        for file, profile in (("macos-arm64","macos-macho64-v1"),
+                              ("macos-x86_64","macos-macho64-v1"),
+                              ("ios-arm64","ios-macho64-v1"),
+                              ("ios-simulator-arm64","ios-simulator-macho64-v1"),
+                              ("ios-simulator-x86_64","ios-simulator-macho64-v1")):
+            cls = 0x2000000 if file.endswith("x86_64") else 0
+            path = str(Path(fixtures) / file)
+            for variant in range(6):
+                literal, missing = variant == 1, variant >= 2
+                files = json.loads(json.dumps(base))
+                if variant == 2:
+                    del files["filesystem_observations"]
+                elif variant == 3:
+                    files["filesystem_observations"]["objects"] = []
+                elif variant >= 4:
+                    files["filesystem_observations"]["created_directory_objects"] = False
+                    files["filesystem_observations"]["created_regular_objects"] = variant == 4
+                request = {"backend":"unicorn","instruction_quantum":1024,
+                           "timeout_microseconds":5000000,
+                           "arguments":["guest","virtual-created-directory-filesystem" if literal
+                                        else "created-directory-filesystem","/child"],
+                           "darwin_system":{"credentials":{"real_uid":700,"effective_uid":501,
+                                                         "real_gid":31,"effective_gid":20}},
+                           "darwin_files":files}
+                original = json.dumps(request, sort_keys=True)
+                for repeat in range(1 if missing else 2):
+                    with self.subTest(file=file, variant=variant, repeat=repeat):
+                        result = session.emulate_process(path, profile, json.dumps(request))
+                        self.assertEqual(result["stop_reason"], "unsupported_service" if missing else "exited", result["diagnostic"])
+                        self.assertEqual(result["stderr_hex"], "")
+                        self.assertEqual(result["stdout_hex"], "" if missing else
+                                         (bytes(record)*2+b"D").hex() if literal else "44")
+                        calls = result["services"]
+                        if missing:
+                            self.assertEqual(len(calls), 4)
+                            self.assertEqual(calls[-1]["number"], format(cls|346, "x"))
+                            self.assertIsNone(calls[-1]["result"])
+                            self.assertNotIn("error", calls[-1])
+                            self.assertEqual(result["diagnostic"],
+                                "Darwin filesystem observation environment is not configured" if variant == 2
+                                else "Darwin object filesystem snapshot is not configured")
+                        else:
+                            self.assertEqual(result["exit_status"], 56)
+                            emit = [(4,2200,False,1,None)] if literal else []
+                            wanted = common + emit + middle + emit + tail
+                            self.assertEqual(len(calls), 35 if literal else 33)
+                            for call, (number,value,error,obj,out) in zip(calls, wanted):
+                                self.assertEqual(call["number"], format(cls|number, "x"))
+                                self.assertEqual(call["result"], format(value, "x"))
+                                self.assertEqual(call["error"], error)
+                                for index, known in enumerate((obj, out)):
+                                    if known is not None:
+                                        self.assertEqual(call["arguments"][index], format(known, "x"))
+                                if number&0xffffff in (345,346):
+                                    self.assertEqual(call["arguments"][2:], [format(mask, "x")]*4)
+                        self.assertEqual(json.dumps(request, sort_keys=True), original)
+                        self.assertEqual(host.call("neverd_session_is_loaded",handle), 0)
+            malformed = json.loads(original)
+            malformed["darwin_files"]["filesystem_observations"]["created_directory_objects"] = 1
+            with self.assertRaises(NeverDError):
+                session.emulate_process(path, profile, json.dumps(malformed))
+            self.assertEqual(host.call("neverd_session_is_loaded",handle), 0)
+
+
+
     def test_darwin_mount_enumeration_keeps_order_and_refresh_cache(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
