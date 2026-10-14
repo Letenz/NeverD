@@ -125,6 +125,11 @@ def main():
         "lib/neverd.lib", "sdk/neverd/sdk/NeverDCAPIWeb.h",
         "share/neverd/licenses/LLVM-LICENSE.TXT",
         "share/neverd/licenses/icu/ICU-77.1-LICENSE",
+        "share/neverd/licenses/capstone/LICENSE.TXT",
+        "share/neverd/licenses/capstone/LICENSE_BSD_3_CLAUSE.txt",
+        "share/neverd/licenses/capstone/LICENSE_LLVM.TXT",
+        "share/neverd/licenses/capstone/CREDITS.TXT",
+        "share/neverd/licenses/zlib/LICENSE",
     } <= members:
         raise ValueError("Incomplete or duplicate product members")
     repository = os.environ.get("GITHUB_REPOSITORY", "NeverSight/NeverD")
