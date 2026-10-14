@@ -69,6 +69,9 @@ authorization header, never as a URL or workflow input, and does not replace
 archive or per-artifact hash checks. Without a token, public pinned archives
 retain the existing download behavior. Remove temporary access tokens and stop
 temporary serving endpoints after the qualification completes.
+Interrupted downloads receive at most two retries, including partial-file and
+HTTP/2 stream errors. Curl resets its explicit output file before retrying;
+no archive is unpacked until the complete-file SHA-256 passes.
 
 The optional explicit `snapshot_witness` input selects `original` by default
 or the independently recorded `2026-10-13` witness. The latter requires
