@@ -3694,6 +3694,9 @@ level, the requested jump value (including zero becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+CLI coverage includes both patch modes from emitted IR and directly from the
+original EXE, with default optimization and `--no-opt`. Both pipeline paths
+must preserve `optnone` runtime callback roots and register snapshots.
 The source-input unit rejects edits to capture/resume identities, the private
 buffer, register snapshots, restored state and argument slot. Its unwind-adapter
 controls change the copy extent, physical registration field, virtual EBP,

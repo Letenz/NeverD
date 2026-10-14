@@ -123,12 +123,25 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
   for (const MedCallInfo &Call : Func.CallInfos) {
     const auto Block = llvm::find_if(
         Func.Blocks, [&](const auto &B) { return B.Id == Call.BlockId; });
-    const auto Jump = Block != Func.Blocks.end() && Call.OpIdx >= 0 &&
-                              size_t(Call.OpIdx) < Block->Ops.size()
-                          ? Jumps->find(Block->Ops[Call.OpIdx].Addr)
-                          : Jumps->end();
+    const auto *Operation = Block != Func.Blocks.end() && Call.OpIdx >= 0 &&
+                                    size_t(Call.OpIdx) < Block->Ops.size()
+                                ? &Block->Ops[Call.OpIdx]
+                                : nullptr;
+    const auto Jump = Operation ? Jumps->find(Operation->Addr) : Jumps->end();
+    // The cookie is decoded by XOR with EBP, so conservative address taint
+    // reaches its recovered ECX argument. The exact source occurrence proves
+    // that value is the image cookie; native lowering replaces this check with
+    // the compiler's physical-frame check instead of passing a frame address.
+    const bool CookieCheck =
+        Operation && Operation->Opcode == NdOp::CALL &&
+        Operation->NumInputs == 1 && Operation->Inputs[0].isConst() &&
+        Operation->Inputs[0].ConstVal == States.CookieCheckVA &&
+        States.SecurityCookiesComplete &&
+        States.cookieCheck(Operation->Addr, Operation->OriginSeq) &&
+        Call.Args.size() == 1 && Call.Args.front().Size == 4;
     for (size_t I = 0; I < Call.Args.size(); ++I)
-      if (IsFrame(Call.Args[I]) && (I != 0 || Jump == Jumps->end()))
+      if (IsFrame(Call.Args[I]) &&
+          (I != 0 || (Jump == Jumps->end() && !CookieCheck)))
         return std::nullopt;
   }
   for (const MedBlock &Block : Func.Blocks)

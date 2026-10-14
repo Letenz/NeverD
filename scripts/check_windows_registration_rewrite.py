@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-binary", required=True, type=Path)
     parser.add_argument("--patch-binary", type=Path,
-                        help="also execute the CLI section and inplace patch paths")
+                        help="execute CLI section/inplace paths from IR and EXE, with and without optimization")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--compiler", default="clang")
     parser.add_argument("--linker", default="lld-link")
@@ -268,18 +268,21 @@ def main(argv: list[str] | None = None) -> int:
                   (output / "collision-patched.exe", True)]
         if args.patch_binary:
             for mode in ("section", "inplace"):
-                destination = output / f"cli-{mode}.exe"
-                destination.unlink(missing_ok=True)
-                command = [str(args.patch_binary.resolve()), "patch", str(original),
-                           f"--from-ir={output / 'registration.ll'}", f"--mode={mode}",
-                           "--no-opt", "-o", str(destination)]
-                result = subprocess.run(command, env=environment, capture_output=True,
-                                        text=True, errors="replace", timeout=args.timeout)
-                report["steps"].append({"command": command, "exit_code": result.returncode,
-                                        "stdout": result.stdout, "stderr": result.stderr})
-                if result.returncode or not destination.is_file():
-                    raise ValueError(f"CLI {mode} reconstruction failed")
-                images.append((destination, True))
+                inputs = (("ir", [f"--from-ir={output / 'registration.ll'}", "--no-opt"]),
+                          ("exe-no-opt", ["--max-func=1", "--no-debug", "--no-opt"]),
+                          ("exe-opt", ["--max-func=1", "--no-debug"]))
+                for source, options in inputs:
+                    destination = output / f"cli-{mode}-{source}.exe"
+                    destination.unlink(missing_ok=True)
+                    command = [str(args.patch_binary.resolve()), "patch", str(original),
+                               *options, f"--mode={mode}", "-o", str(destination)]
+                    result = subprocess.run(command, env=environment, capture_output=True,
+                                            text=True, errors="replace", timeout=args.timeout)
+                    report["steps"].append({"command": command, "exit_code": result.returncode,
+                                            "stdout": result.stdout, "stderr": result.stderr})
+                    if result.returncode or not destination.is_file():
+                        raise ValueError(f"CLI {mode} {source} reconstruction failed")
+                    images.append((destination, True))
         for image, generated in images:
             report["observations"].append(observe(image, generated, launcher,
                                                  environment, args.timeout, expected_trace))

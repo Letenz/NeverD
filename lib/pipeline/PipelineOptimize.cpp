@@ -47,6 +47,7 @@
 #include "llvm/IR/StructuralHash.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
@@ -241,7 +242,7 @@ static bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
   const bool AllowNarrowStackView =
       llvm::Triple(Mod.getTargetTriple()).isArch32Bit();
   for (llvm::Function &F : Mod) {
-    if (F.isDeclaration() ||
+    if (F.isDeclaration() || F.hasOptNone() ||
         !F.getEntryBlock().getName().starts_with(kFrameSetupBlock))
       continue;
     llvm::PtrToIntInst *EntrySP = nullptr;
@@ -350,7 +351,7 @@ static bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
 static bool fixLiftedStackPointers(llvm::Module &Mod) {
   bool Changed = false;
   for (llvm::Function &F : Mod) {
-    if (F.isDeclaration())
+    if (F.isDeclaration() || F.hasOptNone())
       continue;
 
     llvm::Value *FrameBase = nullptr;
@@ -420,7 +421,11 @@ void Pipeline::promoteScaffoldingAllocas(llvm::Module &Mod) {
   llvm::FunctionAnalysisManager FAM;
   llvm::CGSCCAnalysisManager CGAM;
   llvm::ModuleAnalysisManager MAM;
-  llvm::PassBuilder PB;
+  llvm::PassInstrumentationCallbacks PIC;
+  llvm::OptNoneInstrumentation OptNone(/*DebugLogging=*/false);
+  OptNone.registerCallbacks(PIC);
+  llvm::PassBuilder PB(nullptr, llvm::PipelineTuningOptions(), std::nullopt,
+                       &PIC);
   PB.registerModuleAnalyses(MAM);
   PB.registerCGSCCAnalyses(CGAM);
   PB.registerFunctionAnalyses(FAM);
@@ -452,7 +457,11 @@ runOptimizationPipeline(llvm::Module &Mod,
   llvm::FunctionAnalysisManager FAM;
   llvm::CGSCCAnalysisManager CGAM;
   llvm::ModuleAnalysisManager MAM;
-  llvm::PassBuilder PB;
+  llvm::PassInstrumentationCallbacks PIC;
+  llvm::OptNoneInstrumentation OptNone(/*DebugLogging=*/false);
+  OptNone.registerCallbacks(PIC);
+  llvm::PassBuilder PB(nullptr, llvm::PipelineTuningOptions(), std::nullopt,
+                       &PIC);
 
   if (!Options.Conservative && Options.EnableSemantic &&
       Options.Strength == Pipeline::OptStrength::Deep) {
