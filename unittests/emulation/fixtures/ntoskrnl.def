@@ -97,3 +97,7 @@ EXPORTS
   KeGetCurrentThread
   PsGetCurrentThreadId
   PsGetThreadId
+  RtlAnsiStringToUnicodeString
+  RtlUnicodeStringToAnsiString
+  RtlFreeUnicodeString
+  RtlFreeAnsiString
