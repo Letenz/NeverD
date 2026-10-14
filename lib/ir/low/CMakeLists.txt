@@ -11,6 +11,7 @@ add_neverd_component_library(NeverDIRLowValidation
   X86/SEHFrameCRTControl.cpp
   X86/SEHFrameFormat.cpp
   Windows/SEHScalarFormat.cpp
+  Windows/SEHImageFormat.cpp
   X87PartialRemainder.cpp
 
   LINK_COMPONENTS
