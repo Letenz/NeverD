@@ -2200,28 +2200,19 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           if (RoundCertificate &&
               (GroupMembers < 4 || GroupMembers > 8 || GroupMembers % 2 != 0))
             return 0;
-          if (RoundCertificate && !RoundCertificate->Domains.empty()) {
-            // The complete domains and physical runs are bounded at 64 entries
-            // each. Pay for all vector copies and map comparisons before
-            // reading a cached certificate, including eventual destruction.
-            if (!consumeBudgetProducts(
-                    {{GroupMembers, 64 * 32},
-                     {GuardedGroupProofContext->Roots.size(), 8}}))
+          if (RoundCertificate && RoundCertificate->JointProof) {
+            bool ReuseIncomplete = false;
+            if (!EvidenceBudget ||
+                !finiteJumpTableJointProofMatches(
+                    *RoundCertificate->JointProof, Rec, Info, PhysicalTargets,
+                    *EvidenceBudget, ReuseIncomplete)) {
+              // A single changed member invalidates the whole joint result.
+              RoundCertificate->JointProof.reset();
+              if (ReuseIncomplete && IncompleteIndexDomain)
+                *IncompleteIndexDomain = true;
               return 0;
-            const auto Physical =
-                RoundCertificate->PhysicalTargets.find(Rec.Addr);
-            if (Physical == RoundCertificate->PhysicalTargets.end() ||
-                Physical->second != PhysicalTargets ||
-                RoundCertificate->Domains.size() != GroupMembers ||
-                RoundCertificate->PhysicalTargets.size() != GroupMembers ||
-                RoundCertificate->HypothesisEdges.size() != GroupMembers ||
-                GuardedGroupProofContext->Edges.size() != GroupMembers ||
-                !RoundCertificate->Domains.count(Rec.Addr) ||
-                RoundCertificate->HypothesisEdges !=
-                    GuardedGroupProofContext->Edges ||
-                RoundCertificate->Roots != GuardedGroupProofContext->Roots)
-              return 0;
-            JointDomains = RoundCertificate->Domains;
+            }
+            JointDomains = RoundCertificate->JointProof->Domains;
           } else {
             CFGBuilder Scratch;
             bool ScratchIncomplete = false;
@@ -2232,27 +2223,40 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                 *IncompleteIndexDomain = true;
               return 0;
             }
+            FiniteJumpTableJointProof JointProof;
             bool JointIncomplete = false;
             const bool JointProven = proveCandidateFiniteAbsoluteSiblings(
-                Scratch, Rec, Info, PhysicalTargets, JointDomains,
-                EvidenceBudget, &JointIncomplete);
+                Scratch, Rec, Info, PhysicalTargets, JointProof, EvidenceBudget,
+                &JointIncomplete);
             if (!JointProven) {
               if (JointIncomplete && IncompleteIndexDomain)
                 *IncompleteIndexDomain = true;
               return 0;
             }
             if (RoundCertificate) {
-              if (JointDomains.size() != GroupMembers ||
+              if (JointProof.Domains.size() != GroupMembers ||
                   GuardedGroupProofContext->Edges.size() != GroupMembers ||
                   RoundCertificate->PhysicalTargets.size() != GroupMembers ||
                   !consumeBudgetProducts(
                       {{GroupMembers, 64 * 32},
-                       {GuardedGroupProofContext->Roots.size(), 8}}))
+                       {GuardedGroupProofContext->Roots.size(), 8}}) ||
+                  JointProof.PhysicalTargets !=
+                      RoundCertificate->PhysicalTargets)
                 return 0;
-              RoundCertificate->Domains = JointDomains;
-              RoundCertificate->HypothesisEdges =
-                  GuardedGroupProofContext->Edges;
-              RoundCertificate->Roots = GuardedGroupProofContext->Roots;
+              bool ReuseIncomplete = false;
+              if (!finiteJumpTableJointProofMatches(
+                      JointProof, Rec, Info, PhysicalTargets, *EvidenceBudget,
+                      ReuseIncomplete)) {
+                if (ReuseIncomplete && IncompleteIndexDomain)
+                  *IncompleteIndexDomain = true;
+                return 0;
+              }
+              RoundCertificate->JointProof =
+                  std::make_shared<FiniteJumpTableJointProof>(
+                      std::move(JointProof));
+              JointDomains = RoundCertificate->JointProof->Domains;
+            } else {
+              JointDomains = std::move(JointProof.Domains);
             }
           }
           const auto CurrentDomain = JointDomains.find(Rec.Addr);

@@ -366,6 +366,8 @@ add_neverd_unittest(NeverDLiftTests
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
+  core/ModuleJumpTableBudgetTests.cpp
+  core/ModuleAdjacentTableTests.cpp
   core/JumpTableProposalLFPTests.cpp
   format/PatchFormatTests.cpp
   format/PatchFormatCOFFARMTests.cpp
@@ -1136,6 +1138,8 @@ add_neverd_unittest(NeverDJumpTableTests
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
+  core/ModuleJumpTableBudgetTests.cpp
+  core/ModuleAdjacentTableTests.cpp
   core/JumpTableProposalLFPTests.cpp
   LINK_COMPONENTS Pipeline Support
 )

@@ -1095,6 +1095,24 @@ newly reached backedge cannot reuse an entry-only domain. A complete
 single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+The specialized i386/ELF joint finite proof returns one owned result after every
+consumer replays its selector, LOAD address and target role on the restricted
+owner graph. It retains separate physical, preceding-phase and restricted edge
+sets, exact selector/LOAD/target use points and an owned source snapshot. Round
+reuse compares the current operations, occurrence inventories, boundaries and
+borrowed protection sets by value; a changed member revokes the whole result.
+Both joint graph replays require each supplied root to be an exact real block
+entry and each reachable ordinary indirect branch to belong to the complete
+member edge map. A nonmember's nonempty raw target vector cannot establish
+completeness. Ordinary returns and proved direct branches remain valid exits;
+missing roots, malformed earlier branches and incomplete work refuse the joint
+result. These checks share the graph and budget used by the numerical replay.
+This narrow owner refuses nonempty conditional code-root input until its exact
+local ownership and storage exclusions have their own admission. Ordinary graph
+queries retain their existing conditional-root policy.
+Numerical coordinate membership supplies neither input known bits nor negative
+dependency/origin authority. Other architecture/format admission remains with
+its existing proof owners.
 Guard identity can name a contained architectural register lane at its exact
 full-register writer. The shared reaching-value resolver names that complete
 definition and retains the lane's offset and width, so a comparison of AL or
@@ -1142,6 +1160,20 @@ Each reaching-definition lookup starts strictly before the previous one and
 debits the candidate evidence account, so the finite prefix itself bounds
 these walks. Recursive expression and selector proofs retain their separate
 depth limits; longer copies grant no address, target or domain authority.
+
+The frozen resolver graph validates scalar operation shapes before retaining
+their records. Known integer/boolean operations require their complete explicit
+input count, nonzero operand/result widths and scalar operand spaces; every
+opcode must fit the LowOp input array. Malformed records make the graph
+incomplete rather than supplying an unconstrained value or a negative dependency
+certificate. Validation debits the same shared graph work account on cold and
+cached queries; unsupported opcodes acquire no semantics from this check.
+
+Frame-memory reaching values include an unknown entry arm at every active proof
+root, including roots with loop predecessors. A future back-edge STORE cannot
+certify first-iteration contents or an authenticated writer. Definite writers
+before the use still provide ordinary value evidence; independent scalar masks
+may still prove bounds on an otherwise unknown loaded value.
 
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
@@ -1228,6 +1260,44 @@ their independent roots. The group publishes and withdraws atomically; a
 missing owner, changed member, observable table use or exhausted proof retains
 the unresolved transfers. Module-wide mutation and consumer arbitration still
 owns the final publication decision.
+
+Module arbitration keeps input capacity, retained evidence and repeated work
+separate. The LowIR inventory admits at most 400000 operations; its queue still
+has 65536 debits, and block transfers share 1048576 operation debits across
+functions, fixed-point visits and final use recording. Address-occurrence
+screening uses the scan account. Retained anchors, field-index nodes and every
+source reference use the evidence account. One frozen field index preserves
+all matching contexts, including imprecise and conflicting sources; a missing
+PC-relative occurrence retains the loader field's container rather than
+authorizing its approximate numeric target. Any exhaustion protects every
+requested relocation slot and rejects writable dispatch owners.
+
+An x86/x64 absolute dispatch may name the preceding table's one-past address
+without using that preceding object. `CFGBuilder::proveInstructionLocalTableSource`
+replays the complete table proof against the frozen final LowIR, including
+x87 normalization. It binds the exact loader field to a full-width address
+operation and its unique instruction-local LOAD. The imported graph must keep
+every root and ordinary edge, with direct targets at block starts; exposed
+temporaries, repeated instruction contexts and exceptional graphs refuse the
+query. Module arbitration may exclude only that exact source when its complete
+physical envelope is disjoint from every old owner envelope. Equal fields in
+independent contexts remain separate sources. All imports and fresh resolver
+queries share one cumulative proof balance; exhaustion withdraws earlier grants.
+Complete plain structural unwind records do not introduce language dispatch.
+The shared source-unwind classifier is authoritative; all overlapping image
+records, fragments, explicit entries and malformed but identifiable FDE starts
+are checked even when the final annotation is absent. A contiguous per-slot
+storage inventory must partition the freshly proved runtime envelope exactly.
+Other architectures and complex tables retain their existing conservative rules.
+
+DWARF frame-section decoding failures remain structural failures on every
+FDE-backed function from that section in Itanium and Darwin. A later language
+refresh cannot clear them; complete sections add no new refresh authority.
+Darwin preserves consumed CIE personalities and LSDAs, refuses unresolved or
+conflicting providers, and retains foreign or oversized FDEs as separate
+records. Provider slots share one binding rule with routine naming, including unnamed
+relative relocations; equal file values cannot equate distinct bound slots. These rules grant no
+native exception reconstruction or frame-memory authority.
 
 CFG construction also owns indirect tail-call classification. For an AArch64
 candidate without a proved dispatch, `IndirectTailFrame` checks the necessary

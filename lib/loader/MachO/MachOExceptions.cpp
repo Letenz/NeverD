@@ -124,22 +124,88 @@ void parseDarwinExceptions(BinaryImage &Img) {
 
   // Resolving a personality routine to a name is the expensive part and the
   // same handful of routines recur across every entry, so cache by address.
-  std::map<va_t, std::pair<std::string, ExceptionPersonality>> NameCache;
+  std::map<std::pair<va_t, va_t>, std::pair<std::string, ExceptionPersonality>>
+      NameCache;
   auto resolvePersonality = [&](va_t Routine, va_t Slot, std::string &Name,
                                 ExceptionPersonality &Personality) {
-    const va_t Key = Routine != 0 ? Routine : Slot;
-    if (Key == 0)
+    const auto Key = std::make_pair(Routine, Slot);
+    if (Routine == 0 && Slot == 0)
       return;
     auto It = NameCache.find(Key);
     if (It == NameCache.end()) {
       std::string Resolved = resolveRoutineName(Img, Routine, Slot);
       It = NameCache
-               .emplace(Key, std::make_pair(Resolved,
-                                            classifyPersonalityName(Resolved)))
+               .emplace(Key,
+                        std::make_pair(Resolved,
+                                       Resolved.empty()
+                                           ? ExceptionPersonality::Unknown
+                                           : classifyPersonalityName(Resolved)))
                .first;
     }
     Name = It->second.first;
     Personality = It->second.second;
+  };
+
+  // A compact entry and its FDE are two descriptions of the same frame.
+  // Consuming the FDE must preserve its CIE's dispatch provider and LSDA,
+  // including disagreements with the compact description.
+  auto mergeDwarfLanguage = [&](ExceptionFunction &F) {
+    if (!F.Dwarf)
+      return;
+    const DwarfCIE *CIE = Out.findCIE(F.Dwarf->CIESectionOffset);
+    auto Incomplete = [&](const char *Diagnostic) {
+      F.ParseStatus = mergeExceptionParseStatus(F.ParseStatus,
+                                                ExceptionParseStatus::Partial);
+      F.Diagnostics.emplace_back(Diagnostic);
+    };
+    if (!CIE) {
+      Incomplete("attached DWARF FDE has no decoded CIE");
+      return;
+    }
+    if (F.HandlerDataVA && F.Dwarf->LSDAVA &&
+        F.HandlerDataVA != F.Dwarf->LSDAVA)
+      Incomplete("compact unwind and DWARF FDE disagree on LSDA");
+    else if (!F.HandlerDataVA)
+      F.HandlerDataVA = F.Dwarf->LSDAVA;
+
+    if (!CIE->PersonalityVA && !CIE->PersonalitySlotVA)
+      return;
+    if (F.Compact &&
+        (F.PersonalityVA || (F.Compact->NativeEncoding & kPersonalityMask))) {
+      const uint32_t Index =
+          (F.Compact->NativeEncoding & kPersonalityMask) >> kPersonalityShift;
+      const va_t Slot = Index && Index <= Compact.PersonalitySlots.size()
+                            ? Compact.PersonalitySlots[Index - 1]
+                            : 0;
+      const bool SameProvider =
+          sameRoutineProvider(Img, F.PersonalityVA, Slot, CIE->PersonalityVA,
+                              CIE->PersonalitySlotVA);
+      if (!SameProvider) {
+        Incomplete("compact unwind and DWARF CIE disagree on personality");
+        return;
+      }
+    }
+    F.PersonalityVA = CIE->PersonalityVA;
+    resolvePersonality(CIE->PersonalityVA, CIE->PersonalitySlotVA,
+                       F.PersonalityName, F.Personality);
+    if (F.Personality == ExceptionPersonality::Unknown)
+      Incomplete("unknown DWARF CIE personality");
+  };
+
+  auto attachDwarf = [&](ExceptionFunction &F, size_t Index) {
+    const DwarfFDE &FDE = Frames.FDEs[Index];
+    const auto Range = ExceptionAddressRange::fromStartAndSize(
+        FDE.InitialLocation, FDE.AddressRange);
+    if (!Range || Range->Begin != F.CodeRange.Begin ||
+        Range->End > F.CodeRange.End) {
+      F.ParseStatus = mergeExceptionParseStatus(F.ParseStatus,
+                                                ExceptionParseStatus::Partial);
+      F.Diagnostics.emplace_back(
+          "compact unwind range does not enclose its declared DWARF FDE");
+      return;
+    }
+    F.Dwarf = FDE;
+    FDEConsumed[Index] = true;
   };
 
   // Keep every alias, using indices that remain valid when a new function
@@ -219,8 +285,11 @@ void parseDarwinExceptions(BinaryImage &Img) {
                             ? Compact.PersonalitySlots[Index - 1]
                             : 0;
       F.PersonalityVA = Entry.PersonalityVA;
-      resolvePersonality(Entry.PersonalityVA, Slot, F.PersonalityName,
-                         F.Personality);
+      if (!Entry.PersonalityVA && !Slot)
+        F.Personality = ExceptionPersonality::Unknown;
+      else
+        resolvePersonality(Entry.PersonalityVA, Slot, F.PersonalityName,
+                           F.Personality);
       if (F.Personality == ExceptionPersonality::Unknown) {
         F.ParseStatus = mergeExceptionParseStatus(
             F.ParseStatus, ExceptionParseStatus::Partial);
@@ -231,10 +300,7 @@ void parseDarwinExceptions(BinaryImage &Img) {
     if (Entry.Kind == CompactUnwindKind::DwarfFDE) {
       auto It = FDEByOffset.find(Entry.DwarfFDEOffset);
       if (It != FDEByOffset.end()) {
-        F.Dwarf = Frames.FDEs[It->second];
-        FDEConsumed[It->second] = true;
-        if (F.HandlerDataVA == 0)
-          F.HandlerDataVA = F.Dwarf->LSDAVA;
+        attachDwarf(F, It->second);
       } else {
         F.ParseStatus = mergeExceptionParseStatus(
             F.ParseStatus, ExceptionParseStatus::Partial);
@@ -245,11 +311,13 @@ void parseDarwinExceptions(BinaryImage &Img) {
                It != FDEByAddress.end()) {
       // A frame can carry both: the compact entry describes the prologue and
       // the FDE the full rule set.  Keeping both loses nothing.
-      F.Dwarf = Frames.FDEs[It->second];
-      FDEConsumed[It->second] = true;
+      attachDwarf(F, It->second);
     }
 
+    mergeDwarfLanguage(F);
     attachLSDA(Img, Bases, F.HandlerDataVA, F);
+    if (F.Dwarf)
+      dwarf_eh::inheritFrameSectionDecodeStatus(Frames, F);
     Out.ParseStatus = mergeExceptionParseStatus(Out.ParseStatus, F.ParseStatus);
 
     recordFunctionRange(F.CodeRange);
@@ -273,15 +341,14 @@ void parseDarwinExceptions(BinaryImage &Img) {
     if (auto Range = ExceptionAddressRange::fromStartAndSize(
             FDE.InitialLocation, FDE.AddressRange))
       F.CodeRange = *Range;
-    F.PersonalityVA = CIE->PersonalityVA;
-    if (CIE->PersonalityVA != 0 || CIE->PersonalitySlotVA != 0) {
-      F.PersonalityName =
-          resolveRoutineName(Img, CIE->PersonalityVA, CIE->PersonalitySlotVA);
-      F.Personality = classifyPersonalityName(F.PersonalityName);
+    else {
+      F.ParseStatus = ExceptionParseStatus::Malformed;
+      F.Diagnostics.emplace_back("DWARF FDE describes an invalid code range");
     }
-    F.HandlerDataVA = FDE.LSDAVA;
-    attachLSDA(Img, Bases, FDE.LSDAVA, F);
     F.Dwarf = std::move(FDE);
+    mergeDwarfLanguage(F);
+    attachLSDA(Img, Bases, F.HandlerDataVA, F);
+    dwarf_eh::inheritFrameSectionDecodeStatus(Frames, F);
     Out.ParseStatus = mergeExceptionParseStatus(Out.ParseStatus, F.ParseStatus);
     recordFunctionRange(F.CodeRange);
     Out.Functions.push_back(std::move(F));

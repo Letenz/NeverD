@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -442,6 +443,102 @@ struct ResolverGraphCacheTestAccess {
     B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::cst(8, 8);
   }
 
+  static void malformedScalar(CFGBuilder &B, unsigned Variant) {
+    auto &Op = B.Insns.at(0x100).Ops.front();
+    if (Variant == 0) {
+      Op.Opcode = NdOp::INT_ADD;
+      // Missing second input must not become an independent scalar root.
+    } else if (Variant == 1) {
+      Op.Opcode = NdOp::SELECT;
+      Op.addInput(NdVar::scalar(7, 8));
+    } else if (Variant == 2)
+      Op.NumInputs = std::size(Op.Inputs) + 1;
+    else if (Variant == 3)
+      Op.Inputs[0].Size = 0;
+    else if (Variant == 4)
+      Op.Output.Size = 0;
+    else
+      Op.Inputs[0].Space = VnodeSpace::RAM;
+  }
+
+  static std::vector<Query> seedEntryMemory(CFGBuilder &B,
+                                            const BinaryImage &Image,
+                                            bool Initialize, bool Loop) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100, 0x103};
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    const auto SP = NdVar::reg(TRI.StackPointer, Width);
+    const auto Address = NdVar::tmp(0x8000, Width);
+    const auto Read = NdVar::reg(TRI.IntReturnReg, Width);
+    auto Emit = [&](va_t Addr, NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      auto &Rec = B.Insns[Addr];
+      Rec.Addr = Addr;
+      Rec.Size = 1;
+      LowOp Op;
+      Op.Addr = Addr;
+      Op.Seq = static_cast<int>(Rec.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Rec.Ops.push_back(Op);
+      return Rec.Ops.back();
+    };
+    auto SlotAddress = [&](va_t Addr) {
+      Emit(Addr, NdOp::INT_ADD, Address,
+           {SP, NdVar::scalar(uint64_t{0} - Width, Width)});
+    };
+    SlotAddress(0x100);
+    if (Initialize)
+      Emit(0x100, NdOp::STORE, {}, {Address, NdVar::scalar(7, Width)});
+    const int LoadSeq = Emit(0x100, NdOp::LOAD, Read, {Address}).Seq;
+    Emit(0x100, NdOp::INT_AND, Read, {Read, NdVar::scalar(3, Width)});
+    const int UseSeq = Emit(0x100, NdOp::NOP, {}, {}).Seq;
+    SlotAddress(0x101);
+    const int StoreSeq =
+        Emit(0x101, NdOp::STORE, {}, {Address, NdVar::scalar(7, Width)}).Seq;
+    if (Loop) {
+      Emit(0x102, NdOp::COND_BR, {},
+           {NdVar::address(0x100, Width), NdVar::reg(TRI.FlagZF, 1)});
+      B.Insns.at(0x102).IsBranch = B.Insns.at(0x102).IsCond = true;
+      B.Insns.at(0x102).BranchTarget = 0x100;
+    } else
+      Emit(0x102, NdOp::NOP, {}, {});
+    Emit(0x103, NdOp::RETURN, {}, {});
+    B.Insns.at(0x103).IsRet = true;
+
+    Query Memory;
+    Memory.Candidate = SP;
+    Memory.UseAddr = 0x100;
+    Memory.UseSeq = LoadSeq;
+    Memory.FrameByteAddend = -Width;
+    Memory.FrameMemorySize = Width;
+    Memory.Relation = Relation::FrameMemoryMatches;
+    Memory.Alternatives = {{NdVar::scalar(7, Width), InvalidVA, -1, false}};
+    Memory.AlternativeFrameValueOffsets = {0};
+    Query Writer = Memory;
+    Writer.Relation = Relation::AuthenticatedFrameMemory;
+    Writer.Alternatives.clear();
+    Writer.AlternativeFrameValueOffsets.clear();
+    Writer.AuthenticatedFrameStoreWriters = {
+        {NdVar::scalar(7, Width), 0x101, StoreSeq, false}};
+    if (Initialize)
+      Writer.AuthenticatedFrameStoreWriters.push_back(
+          {NdVar::scalar(7, Width), 0x100, LoadSeq - 1, false});
+    Query Numeric;
+    Numeric.Candidate = Read;
+    Numeric.UseAddr = 0x100;
+    Numeric.UseSeq = UseSeq;
+    Numeric.Relation = Relation::UnsignedLessThan;
+    Numeric.UnsignedUpperBound = 4;
+    return {Memory, Writer, Numeric};
+  }
+
   static void addBackedge(CFGBuilder &B) {
     auto &R = B.Insns.at(0x103);
     R.IsRet = false;
@@ -530,6 +627,385 @@ struct ResolverGraphCacheTestAccess {
   }
 
   static va_t nodeAddress(size_t Node) { return 0x100 + 2 * Node; }
+
+  struct RoleReplayFixture {
+    RoleInfo Info;
+    std::map<va_t, std::vector<va_t>> Hypothesis{{0x101, {0x103, 0x200}}};
+    std::map<va_t, std::vector<va_t>> Restricted{{0x101, {0x103}}};
+  };
+  static RoleReplayFixture seedRoleReplay(CFGBuilder &B,
+                                          const BinaryImage &Image) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.ActiveJumpTableProofRoots = B.PersistentCFGRoots;
+    B.BlockStarts = {0x100, 0x101, 0x103, 0x200, 0x201};
+    const auto Index = NdVar::reg(0, 8);
+    const auto Address = NdVar::reg(0x40, 8);
+    const auto Target = NdVar::reg(0x48, 8);
+    auto Emit = [&](va_t Addr, NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      auto &Rec = B.Insns[Addr];
+      Rec.Addr = Addr;
+      Rec.Size = 1;
+      LowOp Op;
+      Op.Addr = Addr;
+      Op.Seq = static_cast<int>(Rec.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Rec.Ops.push_back(Op);
+      return Rec.Ops.back();
+    };
+    Emit(0x100, NdOp::COPY, Index, {NdVar::scalar(7, 8)});
+    Emit(0x100, NdOp::INT_ADD, Address, {NdVar::address(0x4000, 8), Index});
+    Emit(0x101, NdOp::LOAD, Target, {Address});
+    Emit(0x101, NdOp::INDIR_BR, {}, {NdVar::reg(0x50, 8)});
+    B.Insns.at(0x101).IsBranch = B.Insns.at(0x101).IsIndirect = true;
+    Emit(0x103, NdOp::INDIR_BR, {}, {Target});
+    B.Insns.at(0x103).IsBranch = B.Insns.at(0x103).IsIndirect = true;
+    // The extra H edge may clobber the LOAD address before another iteration
+    // and may reach the final branch without the authenticated target value.
+    Emit(0x200, NdOp::COPY, Address, {NdVar::scalar(0x5000, 8)});
+    Emit(0x200, NdOp::COPY, Target, {NdVar::scalar(0, 8)});
+    Emit(0x200, NdOp::COND_BR, {},
+         {NdVar::address(0x101, 8),
+          NdVar::reg(getTargetRegInfo(Image.Arch).FlagZF, 1)});
+    Emit(0x201, NdOp::BRANCH, {}, {NdVar::address(0x103, 8)});
+    B.Insns.at(0x201).IsBranch = true;
+    B.Insns.at(0x201).BranchTarget = 0x103;
+    B.Insns.at(0x200).IsBranch = B.Insns.at(0x200).IsCond = true;
+    B.Insns.at(0x200).BranchTarget = 0x101;
+    RoleReplayFixture Fixture;
+    auto &Info = Fixture.Info;
+    Info.setBaseAddr(0x4000);
+    Info.EntrySize = 8;
+    Info.RelocAbsolute = true;
+    Info.IndexValueAtUse = Index;
+    Info.IndexUseAddr = 0x100;
+    Info.IndexUseSeq = 1;
+    Info.TableLoadAddr = 0x101;
+    Info.TableLoadSeq = 0;
+    CFGBuilder::JumpTableLoadRole Role;
+    Role.Load = {Target, 0x101, 0, true};
+    Role.LoadWidth = 8;
+    Role.AllowedBases = {0x4000};
+    Role.Indices = {{Index, 0x100, 1, false}};
+    Role.AddressScale = 1;
+    Info.LoadRoles = {Role};
+    Info.TargetLoads = {Role.Load};
+    CFGBuilder::GuardedJumpTableGroupProofContext Context;
+    Context.Roots = B.PersistentCFGRoots;
+    Context.Edges = Fixture.Hypothesis;
+    B.GuardedGroupProofContext = Context;
+    return Fixture;
+  }
+  static Answer replayRoles(CFGBuilder &B, RoleInfo Info,
+                            const std::map<va_t, std::vector<va_t>> &Edges,
+                            bool UseGroupContext) {
+    Answer Result;
+    Result.Remaining = 1000000;
+    bool AddressComplete = false;
+    bool TargetComplete = false;
+    const bool Address =
+        B.tableLoadAddressesMatchRole(Info, &Result.Remaining, &AddressComplete,
+                                      true, &Edges, nullptr, UseGroupContext);
+    const bool Target = B.branchTargetDependsOnTableLoad(
+        B.Insns.at(0x103), Info, &Result.Remaining, &TargetComplete, true,
+        &Edges, UseGroupContext);
+    Result.Values = {Address, Target};
+    Result.QueryComplete = {AddressComplete, TargetComplete};
+    Result.Complete = AddressComplete && TargetComplete;
+    return Result;
+  }
+
+  struct FiniteControlFixture {
+    std::map<va_t, std::vector<va_t>> Members{{0x163, {0x180, 0x190}},
+                                              {0x173, {0x180, 0x190}}};
+    std::set<va_t> Roots{0x100};
+    std::vector<Query> Selectors;
+  };
+
+  static FiniteControlFixture seedFiniteControl(CFGBuilder &B,
+                                                const BinaryImage &Image) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100, 0x120, 0x140, 0x160, 0x170, 0x180, 0x190};
+    const auto EAX = NdVar::reg(0, 4);
+    const auto ECX = NdVar::reg(8, 4);
+    const auto EBX = NdVar::reg(24, 4);
+    const auto ESP = NdVar::reg(32, 4);
+    const auto EDI = NdVar::reg(56, 4);
+    auto Emit = [&](va_t Addr, uint16_t Size, NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      auto &Rec = B.Insns[Addr];
+      Rec.Addr = Addr;
+      Rec.Size = Size;
+      LowOp Op;
+      Op.Addr = Addr;
+      Op.Seq = static_cast<int>(Rec.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Rec.Ops.push_back(Op);
+      return Rec.Ops.back();
+    };
+    auto Direct = [&](va_t Addr, va_t Target) {
+      Emit(Addr, 2, NdOp::BRANCH, {}, {NdVar::address(Target, 4)});
+      B.Insns.at(Addr).IsBranch = true;
+      B.Insns.at(Addr).BranchTarget = Target;
+    };
+    Emit(0x100, 3, NdOp::INT_SUB, ESP, {ESP, NdVar::scalar(4, 4)});
+    Emit(0x103, 7, NdOp::STORE, {}, {ESP, NdVar::scalar(0, 4)});
+    Emit(0x10a, 2, NdOp::INDIR_BR, {}, {ECX});
+    B.Insns.at(0x10a).IsBranch = B.Insns.at(0x10a).IsIndirect = true;
+    B.Insns.at(0x10a).JumpTableTargets = {0x120};
+    Emit(0x120, 2, NdOp::COPY, EAX, {EDI});
+    Emit(0x122, 3, NdOp::INT_AND, EAX, {EAX, NdVar::scalar(1, 4)});
+    Emit(0x125, 3, NdOp::STORE, {}, {ESP, EAX});
+    Direct(0x128, 0x160);
+    Emit(0x140, 7, NdOp::STORE, {}, {ESP, NdVar::scalar(2, 4)});
+    Direct(0x147, 0x160);
+    FiniteControlFixture Fixture;
+    for (va_t Load : {0x160, 0x170}) {
+      Emit(Load, 3, NdOp::LOAD, EAX, {ESP});
+      const va_t Branch = Load + 3;
+      const auto Offset = NdVar::tmp(0x8000, 4);
+      const auto Address = NdVar::tmp(0x8004, 4);
+      const auto Target = NdVar::tmp(0x8008, 4);
+      Emit(Branch, 7, NdOp::INT_MULT, Offset, {EAX, NdVar::scalar(4, 4)});
+      Emit(Branch, 7, NdOp::INT_ADD, Address, {EBX, Offset});
+      Emit(Branch, 7, NdOp::LOAD, Target, {Address});
+      Emit(Branch, 7, NdOp::INDIR_BR, {}, {Target});
+      B.Insns.at(Branch).IsBranch = B.Insns.at(Branch).IsIndirect = true;
+      Query Q;
+      Q.Candidate = EAX;
+      Q.UseAddr = Branch;
+      Q.UseSeq = 0;
+      Q.Relation = Relation::UnsignedFeasibleSet;
+      Q.UnsignedUpperBound = 2;
+      Fixture.Selectors.push_back(Q);
+    }
+    Direct(0x180, 0x170);
+    Emit(0x190, 3, NdOp::INT_ADD, ESP, {ESP, NdVar::scalar(4, 4)});
+    Emit(0x193, 1, NdOp::RETURN, {}, {});
+    B.Insns.at(0x193).IsBranch = B.Insns.at(0x193).IsIndirect = true;
+    B.Insns.at(0x193).IsRet = true;
+    return Fixture;
+  }
+
+  static void makeFiniteControlDirect(CFGBuilder &B) {
+    auto &Rec = B.Insns.at(0x10a);
+    Rec.IsIndirect = false;
+    Rec.BranchTarget = 0x120;
+    Rec.JumpTableTargets.clear();
+    Rec.Ops.front().Opcode = NdOp::BRANCH;
+    Rec.Ops.front().Inputs[0] = NdVar::address(0x120, 4);
+  }
+
+  static void exposeFiniteControlStore(CFGBuilder &B) {
+    B.Insns.at(0x10a).JumpTableTargets = {0x120, 0x140};
+  }
+  static void modelFiniteControlInteriorRoot(CFGBuilder &B) {
+    B.BlockStarts.insert(0x103);
+  }
+  static void omitFiniteControlConditionalRoot(CFGBuilder &B) {
+    B.Insns.erase(0x140);
+    B.Insns.erase(0x147);
+    B.DiscoveredCodeRefSources[0x140] = {0x120};
+  }
+  static void hideFiniteControlBranchBeforeLast(CFGBuilder &B,
+                                                FiniteControlFixture &Fixture) {
+    auto &Rec = B.Insns.at(0x103);
+    Rec.IsBranch = Rec.IsIndirect = true;
+    Fixture.Members.emplace(0x103, std::vector<va_t>{0x120});
+  }
+
+  struct ControlAnswer {
+    std::set<va_t> Reachable;
+    bool Complete = false;
+    bool Closed = false;
+    size_t Remaining = 0;
+    bool operator==(const ControlAnswer &) const = default;
+  };
+  static ControlAnswer finiteControl(CFGBuilder &B,
+                                     const FiniteControlFixture &Fixture,
+                                     bool Strict = true,
+                                     size_t Budget = 1000000) {
+    ControlAnswer A;
+    A.Remaining = Budget;
+    // Also exercise clearing stale positive outputs on resource refusal.
+    A.Complete = A.Closed = true;
+    A.Reachable = B.candidateReachableInstructions(
+        B.Insns.at(0x163), Fixture.Members.at(0x163), Fixture.Roots, {},
+        &A.Remaining, &A.Complete, &Fixture.Members, &A.Closed,
+        /*UseGroupContext=*/false, Strict);
+    return A;
+  }
+  static Answer finiteSelectors(CFGBuilder &B,
+                                const FiniteControlFixture &Fixture) {
+    B.ActiveJumpTableProofRoots = Fixture.Roots;
+    return scopedBatch(B, nullptr, Fixture.Selectors, 1000000, 0,
+                       &Fixture.Members.at(0x163), nullptr, &Fixture.Members,
+                       0x163);
+  }
+  static void malformedFiniteControlRoot(CFGBuilder &B,
+                                         FiniteControlFixture &Fixture,
+                                         unsigned Variant) {
+    if (Variant == 0)
+      Fixture.Roots.insert(0x999);
+    else if (Variant == 1)
+      Fixture.Roots.insert(0x101); // An interior instruction byte.
+    else if (Variant == 2)
+      Fixture.Roots.insert(0x103); // Real instruction, missing block boundary.
+    else {
+      Fixture.Roots.insert(0x120);
+      if (Variant == 3)
+        B.Insns.at(0x120).IsInstructionGuard = true;
+      else if (Variant == 4)
+        B.Insns.at(0x120).Size = 0;
+      else
+        ++B.Insns.at(0x120).Addr;
+    }
+  }
+
+  using JointProof = CFGBuilder::FiniteJumpTableJointProof;
+
+  static JointProof seedFiniteJointReuse(CFGBuilder &B,
+                                         const BinaryImage &Image,
+                                         RoleInfo &Info) {
+    Info = seedLocalLoadRole(B, Image, 0);
+    Info.EntrySize = 4;
+    Info.RelocAbsolute = true;
+    Info.PhysicalCapacity = 5;
+    auto &Role = Info.LoadRoles.front();
+    Role.LoadWidth = 4;
+    Role.AddressScale = 4;
+    Role.AddressIndex = {};
+    for (auto &[Addr, Rec] : B.Insns) {
+      (void)Addr;
+      for (auto &Op : Rec.Ops) {
+        if (Op.Output.Size)
+          Op.Output.Size = 4;
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (Op.Inputs[I].Size)
+            Op.Inputs[I].Size = 4;
+      }
+    }
+    Role.Load.Value.Size = 4;
+    Role.Indices.front().Value.Size = 4;
+    Info.IndexValueAtUse = Role.Indices.front().Value;
+    Info.IndexUseAddr = Role.Indices.front().Addr;
+    Info.IndexUseSeq = Role.Indices.front().Seq;
+    Info.TargetLoads = {Role.Load};
+    const auto Target = Role.Load.Value;
+    auto &First = B.Insns.at(Role.Load.Addr);
+    First.IsRet = false;
+    First.IsBranch = First.IsIndirect = true;
+    First.Ops.back().Opcode = NdOp::INDIR_BR;
+    CFGBuilder::GuardedJumpTableGroupKey Key;
+    Key.OwnerBegin = 0x4000;
+    Key.OwnerEnd = 0x4028;
+    Key.MemberCount = 4;
+    Key.Kind = CFGBuilder::GuardedJumpTableGroupKind::FiniteAdjacentGOTOFF;
+    CFGBuilder::GuardedJumpTableGroupProofContext Context;
+    Context.Roots = B.PersistentCFGRoots;
+    JointProof Proof;
+    Proof.Roots = Context.Roots;
+    for (unsigned I = 0; I < 4; ++I) {
+      const va_t Branch = I ? 0x200 + I : Role.Load.Addr;
+      if (I) {
+        auto &Rec = B.Insns[Branch];
+        Rec.Addr = Branch;
+        Rec.Size = 1;
+        Rec.IsBranch = Rec.IsIndirect = true;
+        LowOp Op;
+        Op.Addr = Branch;
+        Op.Opcode = NdOp::INDIR_BR;
+        Op.addInput(Target);
+        Rec.Ops.push_back(Op);
+      }
+      Key.Members[I] = Branch;
+      const auto &Op = B.Insns.at(Branch).Ops.back();
+      Proof.Indices.emplace(Branch, Role.Indices.front());
+      Proof.LoadRoles.emplace(Branch, Role);
+      Proof.TargetUses.emplace(Branch,
+                               Occurrence{Target, Op.Addr, Op.Seq, false});
+      Proof.Domains.emplace(Branch, std::vector<uint32_t>{1, 4});
+      Proof.PhysicalTargets.emplace(
+          Branch, std::vector<va_t>{0x300, 0x301, 0x302, 0x303, 0x304});
+      Proof.RestrictedEdges.emplace(Branch, std::vector<va_t>{0x301, 0x304});
+      Context.Edges.emplace(Branch, Proof.PhysicalTargets.at(Branch));
+      Context.EmptyEdges.emplace(Branch, std::vector<va_t>{});
+    }
+    Proof.HypothesisEdges = Context.Edges;
+    B.GuardedGroupIdentity = Key;
+    B.GuardedGroupProofContext = Context;
+    size_t Remaining = 1000000;
+    bool Incomplete = false;
+    Proof.Source = B.freezeFiniteJumpTableSource(Remaining, Incomplete);
+    EXPECT_FALSE(Incomplete);
+    EXPECT_TRUE(Proof.Source);
+    return Proof;
+  }
+
+  static bool reuseFiniteJoint(const CFGBuilder &B, const JointProof &Proof,
+                               const RoleInfo &Info, size_t &Remaining,
+                               bool &Incomplete) {
+    const va_t Branch = B.GuardedGroupIdentity->Members.front();
+    return B.finiteJumpTableJointProofMatches(Proof, B.Insns.at(Branch), Info,
+                                              Proof.PhysicalTargets.at(Branch),
+                                              Remaining, Incomplete);
+  }
+  static void mutateFiniteJointSource(CFGBuilder &B, unsigned Variant) {
+    const va_t Branch = B.GuardedGroupIdentity->Members.front();
+    switch (Variant) {
+    case 0:
+      ++B.Insns.begin()->second.Ops.front().Inputs[0].Offset;
+      break;
+    case 1:
+      B.Insns.at(Branch).Ops.front().MemoryAddressSpace =
+          NdMemoryAddressSpace::X86FS;
+      break;
+    case 2:
+      ++B.Insns.at(Branch).Ops.back().Inputs[0].Offset;
+      break;
+    case 3:
+      ++B.Insns.at(Branch).Ops.front().Seq;
+      break;
+    case 4:
+      B.BlockStarts.erase(0x100);
+      B.BlockStarts.insert(0x101);
+      break;
+    case 5:
+      B.CurrentFuncEntry = 0x101;
+      break;
+    case 6:
+      B.RelocatedInstructionScalarModelOccurrences.push_back({});
+      break;
+    case 7:
+      B.RelocationCFGRootSources[0x300] = {0x4000};
+      break;
+    case 8:
+      ++B.GuardedGroupIdentity->OwnerBegin;
+      break;
+    case 9:
+      ++B.GuardedGroupIdentity->OwnerEnd;
+      break;
+    case 10:
+      ++B.GuardedGroupIdentity->Members[1];
+      break;
+    case 11:
+      std::swap(B.GuardedGroupIdentity->Members[1],
+                B.GuardedGroupIdentity->Members[2]);
+      break;
+    }
+  }
 
   static void seedControlGraph(CFGBuilder &B, const BinaryImage &Image,
                                const std::vector<std::array<int, 2>> &Edges,
@@ -1876,6 +2352,314 @@ TEST(ResolverValueQueryCache, OversizedCompletedInputRunsWithoutRetention) {
   ASSERT_GT(Access::stats(B)[1], 0u);
   EXPECT_EQ(Access::batch(B, {Q}), Small);
   EXPECT_EQ(Access::stats(B)[0], 1u);
+}
+
+TEST(ResolverValueQueryCache, MalformedScalarRecordsCannotPublishProofs) {
+  for (const auto Architecture :
+       {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Architecture;
+      Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                       ? Bitness::Bits32
+                       : Bitness::Bits64;
+      Image.Format = Format;
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      for (unsigned Variant = 0; Variant != 6; ++Variant) {
+        SCOPED_TRACE(Variant);
+        CFGBuilder B;
+        Access::seed(B, Image);
+        const auto Valid = Access::batch(B, {Access::valueQuery()});
+        ASSERT_TRUE(Valid.Complete);
+        ASSERT_EQ(Valid.Values, (std::vector<bool>{true}));
+        Access::malformedScalar(B, Variant);
+        const auto Refused = Access::batch(B, {Access::valueQuery()});
+        EXPECT_FALSE(Refused.Complete);
+        EXPECT_EQ(Refused.Values, (std::vector<bool>{false}));
+        EXPECT_EQ(Refused.QueryComplete, (std::vector<bool>{false}));
+        EXPECT_EQ(Access::batch(B, {Access::valueQuery()}), Refused);
+        Access::clear(B);
+        EXPECT_EQ(Access::batch(B, {Access::valueQuery()}), Refused);
+      }
+    }
+}
+
+TEST(ResolverValueQueryCache,
+     EntryMemoryCannotBorrowAStoreFromALaterIteration) {
+  for (const auto Architecture :
+       {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Architecture;
+      Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                       ? Bitness::Bits32
+                       : Bitness::Bits64;
+      Image.Format = Format;
+      for (bool Initialize : {false, true})
+        for (bool Loop : {false, true})
+          for (bool Reverse : {false, true}) {
+            SCOPED_TRACE(static_cast<unsigned>(Architecture));
+            SCOPED_TRACE(static_cast<unsigned>(Format));
+            SCOPED_TRACE(Initialize);
+            SCOPED_TRACE(Loop);
+            SCOPED_TRACE(Reverse);
+            CFGBuilder B;
+            auto Queries = Access::seedEntryMemory(B, Image, Initialize, Loop);
+            if (Reverse)
+              std::reverse(Queries.begin(), Queries.end());
+            const auto Answer = Access::batch(B, Queries);
+            EXPECT_TRUE(Answer.Complete);
+            EXPECT_EQ(Answer.Values,
+                      Reverse
+                          ? (std::vector<bool>{true, Initialize, Initialize})
+                          : (std::vector<bool>{Initialize, Initialize, true}));
+            EXPECT_EQ(Access::batch(B, Queries), Answer);
+            Access::clear(B);
+            EXPECT_EQ(Access::batch(B, Queries), Answer);
+            const size_t Work = 1000000 - Answer.Remaining;
+            const auto Exact = Access::batch(B, Queries, Work);
+            EXPECT_TRUE(Exact.Complete);
+            EXPECT_EQ(Exact.Values, Answer.Values);
+            const auto Short = Access::batch(B, Queries, Work - 1);
+            EXPECT_FALSE(Short.Complete);
+            EXPECT_EQ(Short.Values, (std::vector<bool>{false, false, false}));
+            EXPECT_EQ(Short.QueryComplete,
+                      (std::vector<bool>{false, false, false}));
+            Access::clear(B);
+            EXPECT_EQ(Access::batch(B, Queries, Work - 1), Short);
+          }
+    }
+}
+
+TEST(ResolverValueQueryCache, FiniteJointReuseRequiresCurrentSourceAndRoles) {
+  // The fixture supplies a previously completed numerical result directly;
+  // this exercises its production reuse gate, not construction of the theorem.
+  // Real four/six-consumer GOTOFF fixtures exercise that construction
+  // separately.
+  auto Image = image();
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  for (unsigned Variant = 0; Variant < 23; ++Variant) {
+    SCOPED_TRACE(Variant);
+    CFGBuilder B;
+    Access::RoleInfo Info;
+    std::set<va_t> Protected{0x4000};
+    std::set<va_t> Known{0x800};
+    B.setProtectedJumpTableRelocationSlots(&Protected);
+    B.setKnownFuncEntries(&Known);
+    const auto Proof = Access::seedFiniteJointReuse(B, Image, Info);
+    size_t Remaining = 1000000;
+    bool Incomplete = false;
+    ASSERT_TRUE(
+        Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+    ASSERT_FALSE(Incomplete);
+    const size_t Work = 1000000 - Remaining;
+    Remaining = Work;
+    EXPECT_TRUE(
+        Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+    EXPECT_EQ(Remaining, 0u);
+    Remaining = Work - 1;
+    EXPECT_FALSE(
+        Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+    EXPECT_TRUE(Incomplete);
+    Incomplete = false;
+    if (Variant < 8 || Variant >= 19)
+      Access::mutateFiniteJointSource(B, Variant < 8 ? Variant : Variant - 11);
+    else if (Variant == 8)
+      ++Info.IndexUseSeq;
+    else if (Variant == 9)
+      Info.IndexValueDefinedAtUse = true;
+    else if (Variant == 10)
+      ++Info.TargetLoads.front().Seq;
+    else if (Variant == 11)
+      ++Info.LoadRoles.front().AddressIndex.Seq;
+    else if (Variant == 12)
+      ++Info.LoadRoles.front().AddressScale;
+    else if (Variant == 13)
+      ++Info.TableLoadSeq;
+    else if (Variant == 14)
+      ++Info.BaseAddr;
+    else if (Variant == 15)
+      Info.IndexValueAlternatives = {{Info.IndexValueAtUse, Info.IndexUseAddr,
+                                      Info.IndexUseSeq + 1, false}};
+    else if (Variant == 16)
+      Protected = {0x4004};
+    else if (Variant == 17)
+      Known = {0x900};
+    else
+      ++Info.PhysicalCapacity;
+    for (unsigned Repeat = 0; Repeat < 2; ++Repeat) {
+      Remaining = 1000000;
+      EXPECT_FALSE(
+          Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+      EXPECT_FALSE(Incomplete);
+    }
+  }
+}
+
+TEST(ResolverLoadRoles, RestrictedReplayDoesNotBorrowTheGroupHypothesis) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  CFGBuilder B;
+  const auto Fixture = Access::seedRoleReplay(B, Image);
+  const auto Hypothesis =
+      Access::replayRoles(B, Fixture.Info, Fixture.Hypothesis, false);
+  ASSERT_TRUE(Hypothesis.Complete);
+  EXPECT_EQ(Hypothesis.Values, (std::vector<bool>{false, false}));
+  const auto Restricted =
+      Access::replayRoles(B, Fixture.Info, Fixture.Restricted, false);
+  ASSERT_TRUE(Restricted.Complete);
+  EXPECT_EQ(Restricted.Values, (std::vector<bool>{true, true}));
+  EXPECT_EQ(Access::replayRoles(B, Fixture.Info, Fixture.Restricted, false),
+            Restricted);
+  // Ordinary group queries retain their preceding-phase H. A supplied map
+  // does not silently opt them out of the enclosing group's proof context.
+  const auto Group =
+      Access::replayRoles(B, Fixture.Info, Fixture.Restricted, true);
+  EXPECT_TRUE(Group.Complete);
+  EXPECT_EQ(Group.Values, Hypothesis.Values);
+  Access::clear(B);
+  EXPECT_EQ(Access::replayRoles(B, Fixture.Info, Fixture.Restricted, false),
+            Restricted);
+}
+
+TEST(ResolverFiniteControl, ProvisionalNonmemberCannotHideOutOfRangeStore) {
+  auto Image = image();
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::ELF;
+  CFGBuilder B;
+  const auto Fixture = Access::seedFiniteControl(B, Image);
+  const auto Apparent = Access::finiteSelectors(B, Fixture);
+  ASSERT_TRUE(Apparent.Complete);
+  EXPECT_EQ(Apparent.Values, (std::vector<bool>{true, true}));
+  EXPECT_EQ(Apparent.Masks, (std::vector<uint64_t>{3, 3}));
+  const auto Legacy = Access::finiteControl(B, Fixture, false);
+  ASSERT_TRUE(Legacy.Complete);
+  EXPECT_TRUE(Legacy.Closed);
+  EXPECT_FALSE(Legacy.Reachable.count(0x140));
+  const auto Strict = Access::finiteControl(B, Fixture);
+  EXPECT_TRUE(Strict.Complete);
+  EXPECT_FALSE(Strict.Closed);
+  EXPECT_EQ(Strict.Reachable, Legacy.Reachable);
+  EXPECT_EQ(Access::finiteControl(B, Fixture), Strict);
+  Access::clear(B);
+  EXPECT_EQ(Access::finiteControl(B, Fixture), Strict);
+  // A second real target reaches STORE 2. Merely listing some targets cannot
+  // provide completeness; exposing the omitted STORE also breaks the domain.
+  Access::exposeFiniteControlStore(B);
+  const auto Exposed = Access::finiteSelectors(B, Fixture);
+  ASSERT_TRUE(Exposed.Complete);
+  EXPECT_EQ(Exposed.Values, (std::vector<bool>{false, false}));
+  EXPECT_EQ(Exposed.Masks, (std::vector<uint64_t>{0, 0}));
+  const auto WithStore = Access::finiteControl(B, Fixture);
+  EXPECT_TRUE(WithStore.Complete);
+  EXPECT_FALSE(WithStore.Closed);
+  EXPECT_TRUE(WithStore.Reachable.count(0x140));
+  Access::clear(B);
+  EXPECT_EQ(Access::finiteSelectors(B, Fixture), Exposed);
+}
+
+TEST(ResolverFiniteControl, CompleteDirectControlPreservesMembersAndBudgets) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    auto Image = image();
+    Image.Arch = Arch::X86;
+    Image.Bits = Bitness::Bits32;
+    Image.Format = Format;
+    CFGBuilder B;
+    const auto Fixture = Access::seedFiniteControl(B, Image);
+    Access::makeFiniteControlDirect(B);
+    const auto Numeric = Access::finiteSelectors(B, Fixture);
+    ASSERT_TRUE(Numeric.Complete);
+    ASSERT_EQ(Numeric.Values, (std::vector<bool>{true, true}));
+    const auto Whole = Access::finiteControl(B, Fixture);
+    ASSERT_TRUE(Whole.Complete);
+    ASSERT_TRUE(Whole.Closed);
+    ASSERT_TRUE(Whole.Reachable.count(0x193)); // Indirect RET remains an exit.
+    ASSERT_FALSE(Whole.Reachable.count(0x140));
+    const size_t Work = 1000000 - Whole.Remaining;
+    ASSERT_GT(Work, 0u);
+    const auto Exact = Access::finiteControl(B, Fixture, true, Work);
+    EXPECT_TRUE(Exact.Complete);
+    EXPECT_TRUE(Exact.Closed);
+    EXPECT_EQ(Exact.Reachable, Whole.Reachable);
+    EXPECT_EQ(Exact.Remaining, 0u);
+    const auto Short = Access::finiteControl(B, Fixture, true, Work - 1);
+    EXPECT_FALSE(Short.Complete);
+    EXPECT_FALSE(Short.Closed);
+    EXPECT_TRUE(Short.Reachable.empty());
+    EXPECT_EQ(Short.Remaining, 0u);
+    EXPECT_EQ(Access::finiteControl(B, Fixture), Whole);
+    Access::clear(B);
+    EXPECT_EQ(Access::finiteControl(B, Fixture), Whole);
+  }
+}
+
+TEST(ResolverFiniteControl, EverySuppliedRootMustBeAnExactModeledEntry) {
+  auto Image = image();
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  for (unsigned Variant = 0; Variant < 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    CFGBuilder B;
+    auto Fixture = Access::seedFiniteControl(B, Image);
+    Access::makeFiniteControlDirect(B);
+    ASSERT_TRUE(Access::finiteControl(B, Fixture).Closed);
+    Access::malformedFiniteControlRoot(B, Fixture, Variant);
+    const auto Result = Access::finiteControl(B, Fixture);
+    EXPECT_TRUE(Result.Complete);
+    EXPECT_FALSE(Result.Closed);
+    EXPECT_EQ(Access::finiteControl(B, Fixture), Result);
+    Access::clear(B);
+    EXPECT_EQ(Access::finiteControl(B, Fixture), Result);
+    if (Variant == 2) {
+      Access::modelFiniteControlInteriorRoot(B);
+      const auto Modeled = Access::finiteControl(B, Fixture);
+      EXPECT_TRUE(Modeled.Complete);
+      EXPECT_TRUE(Modeled.Closed);
+    }
+  }
+}
+
+TEST(ResolverFiniteControl, MemberMapCannotHideAMalformedEarlierBranch) {
+  auto Image = image();
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  CFGBuilder B;
+  auto Fixture = Access::seedFiniteControl(B, Image);
+  Access::makeFiniteControlDirect(B);
+  ASSERT_TRUE(Access::finiteControl(B, Fixture).Closed);
+  Access::hideFiniteControlBranchBeforeLast(B, Fixture);
+  const auto Result = Access::finiteControl(B, Fixture);
+  EXPECT_TRUE(Result.Complete);
+  EXPECT_FALSE(Result.Closed);
+}
+
+TEST(ResolverFiniteControl, ConditionalRootsNeedTheirOwnAdmission) {
+  auto Image = image();
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  CFGBuilder B;
+  const auto Fixture = Access::seedFiniteControl(B, Image);
+  Access::makeFiniteControlDirect(B);
+  ASSERT_TRUE(Access::finiteControl(B, Fixture).Closed);
+  // The ordinary graph may skip a conditional code root with no modeled
+  // block. The narrow joint owner must not borrow that omission as closure.
+  Access::omitFiniteControlConditionalRoot(B);
+  const auto Legacy = Access::finiteControl(B, Fixture, false);
+  ASSERT_TRUE(Legacy.Complete);
+  EXPECT_TRUE(Legacy.Closed);
+  const auto Strict = Access::finiteControl(B, Fixture);
+  EXPECT_TRUE(Strict.Complete);
+  EXPECT_FALSE(Strict.Closed);
+  EXPECT_EQ(Strict.Reachable, Legacy.Reachable);
+  EXPECT_FALSE(Strict.Reachable.count(0x140));
+  Access::clear(B);
+  EXPECT_EQ(Access::finiteControl(B, Fixture), Strict);
 }
 
 } // namespace

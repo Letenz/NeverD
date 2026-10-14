@@ -240,9 +240,9 @@ std::set<va_t> CFGBuilder::jumpTableProofRoots(
 bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     CFGBuilder &Scratch, const InsnRecord &Current, const JumpTableInfo &Info,
     const std::vector<va_t> &PhysicalTargets,
-    std::map<va_t, std::vector<uint32_t>> &OutputDomains,
-    size_t *EvidenceBudget, bool *AnalysisIncomplete) const {
-  OutputDomains.clear();
+    FiniteJumpTableJointProof &OutputProof, size_t *EvidenceBudget,
+    bool *AnalysisIncomplete) const {
+  OutputProof = {};
   if (AnalysisIncomplete)
     *AnalysisIncomplete = false;
   auto Incomplete = [&] {
@@ -608,6 +608,8 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
   ProofScratch.CandidateFiniteProofModelEdges = HypotheticalEdges;
   std::map<va_t, std::vector<uint32_t>> FiniteDomains;
   std::map<va_t, JumpTableValueOccurrence> ExactIndices;
+  std::map<va_t, JumpTableInfo> MemberInfos;
+  std::map<va_t, JumpTableValueOccurrence> TargetUses;
   for (const auto &[Branch, FieldVA] : BranchFields) {
     (void)FieldVA;
     const va_t Base = BranchBases.at(Branch);
@@ -722,6 +724,24 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
       return Incomplete();
     if (!TargetRole || !AddressRole)
       return false;
+    // Retain the exact role model for restricted-edge replay. Every payload is
+    // bounded by this specialized four-byte, single-LOAD admission.
+    if (!Charge(1024 + JointStorage.size() * 16 +
+                SuppressibleSlots.size() * 16) ||
+        !Charge(Insns.at(Branch).Ops.size() * 16 + 64))
+      return false;
+    unsigned TargetCount = 0;
+    for (const LowOp &Op : Insns.at(Branch).Ops)
+      if (Op.Opcode == NdOp::INDIR_BR) {
+        if (Op.NumInputs != 1 || ++TargetCount != 1)
+          return false;
+        TargetUses.emplace(Branch, JumpTableValueOccurrence{
+                                       Op.Inputs[0], Op.Addr, Op.Seq, false});
+      }
+    if (TargetCount != 1)
+      return false;
+    MemberInfos.emplace(Branch, std::move(Probe));
+    const auto &MemberInfo = MemberInfos.at(Branch);
     JumpTableValueQuery Present;
     Present.Candidate = Indices.front().Value;
     Present.UseAddr = Indices.front().Addr;
@@ -751,8 +771,9 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     const std::set<va_t> Reachable =
         ProofScratch.candidateReachableInstructions(
             ProofScratch.Insns.at(Branch), Targets,
-            *ProofScratch.ActiveJumpTableProofRoots, Probe.StorageRanges,
-            EvidenceBudget, &ReachComplete, &HypotheticalEdges, &Closed);
+            *ProofScratch.ActiveJumpTableProofRoots, MemberInfo.StorageRanges,
+            EvidenceBudget, &ReachComplete, &HypotheticalEdges, &Closed,
+            /*UseGroupContext=*/false, /*RequireCompleteFiniteMembers=*/true);
     if (!ReachComplete)
       return Incomplete();
     if (!Closed || !Reachable.count(CurrentFuncEntry))
@@ -812,7 +833,7 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     const std::set<va_t> Reachable = candidateReachableInstructions(
         Insns.at(Branch), CertifiedEdges.at(Branch), OwnerRoots, JointStorage,
         EvidenceBudget, &ReachComplete, &CertifiedEdges, &Closed,
-        /*UseGroupContext=*/false);
+        /*UseGroupContext=*/false, /*RequireCompleteFiniteMembers=*/true);
     if (!ReachComplete)
       return Incomplete();
     if (!Closed || !Reachable.count(CurrentFuncEntry))
@@ -822,6 +843,21 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
       if (!Reachable.count(Sibling))
         return false;
     }
+    auto &MemberInfo = MemberInfos.at(Branch);
+    bool TargetComplete = false;
+    bool AddressComplete = false;
+    const bool TargetRole = branchTargetDependsOnTableLoad(
+        Insns.at(Branch), MemberInfo, EvidenceBudget, &TargetComplete,
+        /*UseDefinedAlternativesAsRoots=*/true, &CertifiedEdges,
+        /*UseGroupContext=*/false);
+    const bool AddressRole = tableLoadAddressesMatchRole(
+        MemberInfo, EvidenceBudget, &AddressComplete,
+        /*UseDefinedAlternativesAsRoots=*/true, &CertifiedEdges,
+        /*DomainInputsChanged=*/nullptr, /*UseGroupContext=*/false);
+    if (!TargetComplete || !AddressComplete)
+      return Incomplete();
+    if (!TargetRole || !AddressRole)
+      return false;
     const JumpTableValueOccurrence &Index = ExactIndices.at(Branch);
     JumpTableValueQuery Present;
     Present.Candidate = Index.Value;
@@ -852,12 +888,43 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     if (Masks[1] != ExpectedMask)
       return false;
   }
-  OutputDomains = std::move(FiniteDomains);
+  bool SourceIncomplete = false;
+  auto Source = freezeFiniteJumpTableSource(*EvidenceBudget, SourceIncomplete);
+  if (!Source) {
+    if (SourceIncomplete)
+      return Incomplete();
+    return false;
+  }
+  const auto &OwnerRoots =
+      AdjacentTables ? JointOwnerRoots : *ActiveJumpTableProofRoots;
+  size_t ResultWork = BranchFields.size() * 512 + TotalSlotCount * 16;
+  if (!detail::addLinearComparisonWork(ResultWork, OwnerRoots.size(), 8))
+    return Incomplete();
+  if (!Charge(ResultWork))
+    return false;
+  FiniteJumpTableJointProof Proof;
+  Proof.Domains = std::move(FiniteDomains);
+  Proof.PhysicalTargets = std::move(HypotheticalEdges);
+  Proof.HypothesisEdges = GuardedGroupProofContext
+                              ? GuardedGroupProofContext->Edges
+                              : Proof.PhysicalTargets;
+  Proof.RestrictedEdges = std::move(CertifiedEdges);
+  Proof.Roots = OwnerRoots;
+  Proof.Indices = std::move(ExactIndices);
+  Proof.TargetUses = std::move(TargetUses);
+  for (auto &[Branch, MemberInfo] : MemberInfos) {
+    if (MemberInfo.LoadRoles.size() != 1)
+      return false;
+    Proof.LoadRoles.emplace(Branch, std::move(MemberInfo.LoadRoles.front()));
+  }
+  Proof.Source = std::move(Source);
+  OutputProof = std::move(Proof);
   return true;
 }
 
 std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
-                                               const InsnRecord &Rec) {
+                                               const InsnRecord &Rec,
+                                               size_t *AggregateProofBudget) {
   // The stage-start candidate vector cannot contain indirect branches decoded
   // recursively while another candidate explores its provisional targets.
   // Register each such invocation before the resolver erases or publishes any
@@ -997,12 +1064,30 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       std::min<size_t>(limits::kMaxJumpTableCandidateEvidenceWork,
                        MaskFixedPointEvidenceBudgetForTesting.value_or(
                            limits::kMaxJumpTableCandidateEvidenceWork));
-  const size_t InitialCandidateEvidenceBudget =
+  const size_t StageCandidateEvidenceBudget =
       CandidateProposalStageActive
           ? std::min(CandidateEvidenceLimit,
                      CandidateProposalStageEvidenceRemaining)
           : CandidateEvidenceLimit;
+  const size_t InitialCandidateEvidenceBudget =
+      AggregateProofBudget
+          ? std::min(StageCandidateEvidenceBudget, *AggregateProofBudget)
+          : StageCandidateEvidenceBudget;
   size_t CandidateEvidenceBudget = InitialCandidateEvidenceBudget;
+  struct AggregateDebit {
+    size_t *Account;
+    const size_t Initial;
+    const size_t &Remaining;
+    ~AggregateDebit() {
+      if (!Account)
+        return;
+      if (Remaining > Initial || Initial - Remaining > *Account)
+        *Account = 0;
+      else
+        *Account -= Initial - Remaining;
+    }
+  } DebitAggregate{AggregateProofBudget, InitialCandidateEvidenceBudget,
+                   CandidateEvidenceBudget};
   JumpTableInfo Info;
   auto observeGroupProof = [&](const char *Stage) {
     if (!GuardedGroupProofContext)
@@ -1026,6 +1111,20 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool CandidateEvidenceAnalysisIncomplete = false;
   bool CandidateEvidenceChargeFailed = false;
   bool CandidateEvidenceExhaustedBeforeDedicatedRefund = false;
+  struct AggregateFailure {
+    size_t *Account;
+    const bool &ChargeFailed;
+    const bool &BeforeRefund;
+    const bool &I386Incomplete;
+    ~AggregateFailure() {
+      // A reserved nested allowance can refund unused work after the generic
+      // query exhausted. The caller must still revoke every earlier grant.
+      if (Account && (ChargeFailed || BeforeRefund || I386Incomplete))
+        *Account = 0;
+    }
+  } PublishAggregateFailure{AggregateProofBudget, CandidateEvidenceChargeFailed,
+                            CandidateEvidenceExhaustedBeforeDedicatedRefund,
+                            I386GOTOFFProposalEvidenceIncomplete};
   bool IncompleteBranchInsertPrepaid = false;
   bool IncompleteBranchAlreadyInserted = false;
   bool CandidateTargetMaterializationStarted = false;

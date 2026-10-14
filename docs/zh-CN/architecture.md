@@ -981,6 +981,10 @@ Mach-O 加载器保留段的“重定位后只读”保证，同时保留初始�
 
 跳转表恢复只生成到普通后继块的转移，不再通过另一条路径重建块内语句。每个块只由统一流程转换一次，包括共享分支、默认目标和循环入口。分支边上的 PHI 赋值在对应转移前执行，并保留并行赋值快照；不完整的边绑定仍明确失败。
 
+模块仲裁区分输入容量、保留证据和重复工作。LowIR 清单最多包含 400000 个操作；队列仍限制为 65536 次扣费，块传递共用 1048576 个操作额度，涵盖所有函数、固定点访问及最终使用记录。地址 occurrence 的筛选计入扫描额度；保留的锚、字段索引节点及每个来源引用计入证据额度。同一份不可变字段索引保留全部匹配上下文，包括不精确或冲突来源。PC-relative occurrence 缺失时保留加载器字段所在容器，不使用其数值近似授权。任一额度耗尽都会保留全部请求的重定位槽，并拒绝可写的分派归属。
+
+x86/x64 绝对分派可能编码前一个表的尾后地址，却只消费自己的表。`CFGBuilder::proveInstructionLocalTableSource` 对冻结的最终 LowIR（含 x87 规范化）重新执行完整表证明，把精确加载器字段绑定到全宽地址运算及唯一的指令内 LOAD。导入图必须保留所有根和普通边，直接跳转只能落在块首；地址临时值逃逸、重复指令上下文和异常图均拒绝查询。仅当新证明的完整物理包络与旧归属的所有包络不相交时，模块仲裁才可排除这个精确来源。同字段的独立上下文仍分别检查。所有导入和重放共用一份累计证明额度，耗尽会撤销之前的授权。其他架构及复杂表继续采用原有保守规则。
+
 循环结构化保留原生入口的精确归属。恒真循环的包装节点保留首条循环体指令的标签，不重复创建入口。有条件的回边退出到原有后续语句，包括没有原生地址的边复制。只有精确匹配后续入口的跳转才转换为 break；嵌套循环和 switch 内的跳转保留其控制作用域。
 
 死值消除在删除 PHI 边复制之前规范化原生入口的归属。共享的合并逻辑区分条件分支入口及其紧邻的合成边复制前缀；不连续的标签以及无关的嵌套标签仍判为存在歧义。
@@ -1676,3 +1680,13 @@ DarwinFiles retains one declaration admission, namespace publication owner and a
 The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the new exact Boolean only for FileSystem; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
 
 DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
+
+完整的普通结构展开记录不引入语言异常分派；跳转表来源查询复用共享分类器，并检查与最终代码相交的全部 image 记录、fragment、显式入口及范围畸形但仍可识别的 FDE 起点。连续的单槽清单必须完整分割重新证明的运行时区间。Itanium 和 Darwin 将 frame section 的解析不完整状态保留在各 FDE 函数的 Structural provenance 中，语言表刷新不能消除它；完整 section 不新增刷新权限。Darwin 保留被消费 CIE 的 personality/LSDA，拒绝缺失或冲突的 provider，并单独保留外来或超范围 FDE。动态槽绑定与例程命名共享规则，相同文件初值或名字不能等同不同绑定槽。这些规则不授予原生异常重建或帧内存权限。
+
+冻结的解析器图在保留标量操作前验证形状：已知整数/布尔操作必须具有完整输入个数、非零宽度及标量操作数；所有操作的输入个数均不得超出 LowOp 数组。畸形记录令图不完整，不能提供任意值或负依赖证明。验证使用同一共享图预算，缓存查询仍支付冷执行费用；此检查不为未支持的操作授予语义。
+
+栈帧内存的到达值在每个活动证明根都保留未知入口分支，包括带回边的根。后续循环迭代的 STORE 不能认证第一轮读取或其写入来源；读取之前的完整写入仍可证明值，未知加载上的独立标量掩码仍可证明数值范围。
+
+i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索引、LOAD 地址和目标角色之后，才返回一个持有输入的结果。物理候选边、前一阶段假设边和受限边分别保存，索引／LOAD／目标使用点及来源快照一并保留。轮内复用按值比较当前操作、来源清单、边界与借用保护集合；一个成员改变即撤销整组结果。两次图重放均要求每个给定根为真实指令块入口，每个可达普通间接跳转属于本轮完整成员边集合；非成员的非空原始目标列表不提供完整性权限。普通返回及已证明的直接分支仍可接受，缺失入口、块内畸形提前分支或预算不完整则拒绝整组结果。这些检查与数值重放共用图及预算。坐标成员关系不授予输入已知位或负依赖／来源权限；其他架构及格式保留现有证明入口。
+
+这条窄准入拒绝非空条件代码根输入，直至其精确本地归属和表存储排除具备独立准入；普通图查询保留原有条件根策略。
