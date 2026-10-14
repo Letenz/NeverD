@@ -2070,6 +2070,10 @@ TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
   for (
       const char *Bad :
       {R"({"advance_on_idle":1})",
+       R"({"nanoseconds_per_instruction":true})",
+       R"({"nanoseconds_per_instruction":-1})",
+       R"({"nanoseconds_per_instruction":"18446744073709551616"})",
+       R"({"nanoseconds_per_instruction":1,"clocks":[{"id":3,"seconds":0,"nanoseconds":0}]})",
        R"({"advance_on_idle":"true"})",
        R"({"advance_on_idle":null})",
        R"({"advance_on_idle":true,"clocks":[{"id":3,"seconds":0,"nanoseconds":0}]})",
@@ -2580,6 +2584,123 @@ TEST(ProcessReport, LinuxDeviceMappingsRequireCompleteDisjointBoundedPages) {
       M[0].Bytes.resize(16 * 1024 * 1024);
     if (Mode == 4)
       M[0].Offset = UINT64_MAX - 4095;
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+}
+
+TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
+  auto Input = [] {
+    return llvm::json::Object{
+        {"path", "/fixture/control"},
+        {"access_mode", 2},
+        {"open_errno", 0},
+        {"ioctls", llvm::json::Array{}},
+        {"kgsl_contexts",
+         llvm::json::Object{{"memstore_offset", 4096}, {"context_limit", 3}}},
+        {"read_only_mappings",
+         llvm::json::Array{llvm::json::Object{
+             {"offset", 4096},
+             {"bytes_hex", std::string(8192, 'a')},
+             {"updates", llvm::json::Array{
+                             llvm::json::Object{{"after_nanoseconds", "0"},
+                                                {"offset", 4095},
+                                                {"bytes_hex", "ab"}},
+                             llvm::json::Object{
+                                 {"after_nanoseconds", "18446744073709551615"},
+                                 {"offset", 40},
+                                 {"bytes_hex", "01000000"}}}}}}}};
+  };
+  auto Parse = [](llvm::json::Object D) {
+    llvm::json::Value V = llvm::json::Object{
+        {"linux_files",
+         llvm::json::Object{{"files", llvm::json::Array{}},
+                            {"devices", llvm::json::Array{std::move(D)}}}}};
+    return processOptionsFromJSON(llvm::formatv("{0}", V).str());
+  };
+  auto Good = Parse(Input());
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &D = Good->LinuxFiles->Devices.at("/fixture/control");
+  ASSERT_TRUE(D.KGSL);
+  EXPECT_EQ(D.KGSL->ContextLimit, 3u);
+  ASSERT_EQ(D.ReadOnlyMappings[0].Updates.size(), 2u);
+  EXPECT_EQ(D.ReadOnlyMappings[0].Updates[1].AfterNanoseconds, UINT64_MAX);
+  for (unsigned Mode = 0; Mode != 19; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto D = Input();
+    auto &K = *D.getObject("kgsl_contexts");
+    auto &M = *D.getArray("read_only_mappings")->front().getAsObject();
+    auto &U = *M.getArray("updates")->front().getAsObject();
+    if (Mode == 0)
+      K["context_limit"] = 0;
+    if (Mode == 1)
+      K["context_limit"] = 103; // last slot exceeds the mapping
+    if (Mode == 2)
+      K["context_limit"] = 1025;
+    if (Mode == 3)
+      K["memstore_offset"] = 8192;
+    if (Mode == 4)
+      K["extra"] = true;
+    if (Mode == 5)
+      D["kgsl_contexts"] = nullptr;
+    if (Mode == 6)
+      U["offset"] = 4096;
+    if (Mode == 7)
+      U["bytes_hex"] = "";
+    if (Mode == 8)
+      U["bytes_hex"] = std::string(8194, 'a');
+    if (Mode == 9)
+      U["after_nanoseconds"] = -1;
+    if (Mode == 10)
+      U["after_nanoseconds"] = true;
+    if (Mode == 11)
+      U["extra"] = 0;
+    if (Mode == 12)
+      U.erase("bytes_hex");
+    if (Mode == 13)
+      M["updates"] = nullptr;
+    if (Mode == 14) {
+      U["after_nanoseconds"] = 1;
+      M.getArray("updates")->back().getAsObject()->operator[](
+          "after_nanoseconds") = 0;
+    }
+    if (Mode == 15) {
+      D.getArray("ioctls")->push_back(
+          llvm::json::Object{{"request", "3221752083"},
+                             {"result", 0},
+                             {"memory", llvm::json::Array{}}});
+    }
+    if (Mode == 16)
+      U["offset"] = "18446744073709551615";
+    if (Mode == 17) {
+      llvm::json::Array Updates;
+      for (unsigned I = 0; I != 1025; ++I)
+        Updates.push_back(llvm::json::Object(U));
+      M["updates"] = std::move(Updates);
+    }
+    if (Mode == 18)
+      K["context_limit"] = true;
+    auto R = Parse(std::move(D));
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  // The C++ entry point uses the same validator as JSON.
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto O = *Good;
+    auto &D = O.LinuxFiles->Devices.at("/fixture/control");
+    if (Mode == 0)
+      D.KGSL->ContextLimit = 0;
+    if (Mode == 1)
+      D.ReadOnlyMappings[0].Updates[0].Bytes.clear();
+    if (Mode == 2)
+      D.ReadOnlyMappings[0].Updates[0].Offset = UINT64_MAX;
+    if (Mode == 3)
+      D.ReadOnlyMappings[0].Updates.resize(1025);
+    if (Mode == 4)
+      D.Ioctls.push_back({0xc00c0916, 0, {}, {}});
     auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
     ASSERT_FALSE(bool(R));
     EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),

@@ -32,7 +32,7 @@ LinuxFiles::readLink(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
     auto I = Descriptors.find(Directory);
     if (I == Descriptors.end())
       return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-    if (std::holds_alternative<OpenFile>(I->second))
+    if (std::holds_alternative<OpenFile>(*I->second))
       return std::optional<uint64_t>(uint64_t(0) - NoEntry);
     return unsupported(Result, FileLinkDescriptor);
   }

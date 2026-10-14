@@ -17,12 +17,18 @@ std::optional<uint64_t> LinuxFiles::outputError(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint64_t(0) - BadDescriptor;
-  if (std::holds_alternative<ProcessDescriptor>(I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second))
     return uint64_t(0) - InvalidArgument;
-  const auto *S = std::get_if<Stream>(&I->second);
+  const auto *S = std::get_if<Stream>(I->second.get());
   if (S && (*S == Stream::Output || *S == Stream::Error))
     return std::nullopt;
   return uint64_t(0) - BadDescriptor;
+}
+
+uint32_t LinuxFiles::outputTarget(uint32_t FD) const {
+  const auto &Description = *Descriptors.at(FD);
+  return std::get<Stream>(Description) == Stream::Output ? StandardOutput
+                                                         : StandardError;
 }
 
 llvm::Expected<std::optional<uint64_t>>
@@ -45,7 +51,11 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::OpenAt:
     return open(A1, A2, Result);
   case ServiceKind::Close:
-    return close(A0);
+    return close(A0, Result);
+  case ServiceKind::Dup:
+  case ServiceKind::Dup2:
+  case ServiceKind::Dup3:
+    return duplicate(Kind, A0, A1, A2, Result);
   case ServiceKind::Read:
     return readDescriptor(A0, A1, A2, Result);
   case ServiceKind::Ioctl:

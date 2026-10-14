@@ -253,6 +253,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       NeedSchedule = false;
       QuantumRemaining = Options.InstructionQuantum;
     }
+    if (auto E = Kernel.synchronizeDevices()) {
+      RuntimeFailure(std::move(E));
+      break;
+    }
     TraceThreadID = Threads.id();
     auto &Callbacks = Threads.callbacks();
     const uint64_t Before = Resources->instructions();
@@ -273,6 +277,11 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     Result.PC = (*PC)[0];
+    if ((Exit->Kind == SessionExitKind::Quantum ||
+         (Exit->Kind == SessionExitKind::CPU && Result.LastCPUExit &&
+          Result.LastCPUExit->Kind == ExecutionExitKind::ServiceRequest)) &&
+        !Kernel.clock().accountInstructions(Resources->instructions(), Result))
+      break;
     if (Exit->Kind == SessionExitKind::Quantum) {
       NeedSchedule = true;
       continue;

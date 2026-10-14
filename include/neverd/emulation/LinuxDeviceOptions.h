@@ -31,10 +31,29 @@ struct LinuxDeviceIoctl {
   std::vector<LinuxDeviceMemory> Memory;
 };
 
+struct LinuxDevicePageUpdate {
+  /// Elapsed virtual nanoseconds from workload start, never host time.
+  uint64_t AfterNanoseconds = 0;
+  /// Byte offset in this mapping; each update contains at most one page.
+  uint64_t Offset = 0;
+  std::vector<uint8_t> Bytes;
+};
+
 struct LinuxDeviceMapping {
   /// Page-aligned device offset and complete page bytes. No implicit padding.
   uint64_t Offset = 0;
   std::vector<uint8_t> Bytes;
+  /// Finite external producer input, in nondecreasing time order. Equal-time
+  /// writes retain their listed order. This does not infer a hardware workload.
+  std::vector<LinuxDevicePageUpdate> Updates;
+};
+
+struct LinuxKGSLContexts {
+  /// Select an explicit 40-byte-slot LP64 memstore mapping. The narrow model
+  /// supports idle PREAMBLE/NO_GMEM_ALLOC contexts and consumed/retired
+  /// queries; GPU command execution and queued timestamps remain unsupported.
+  uint64_t MemstoreOffset = 0;
+  uint32_t ContextLimit = 0;
 };
 
 struct LinuxDeviceOptions {
@@ -45,10 +64,11 @@ struct LinuxDeviceOptions {
   /// Ordered, single-use transactions for each independent open description.
   /// An absent/mismatched next transaction stops instead of inventing a reply.
   std::vector<LinuxDeviceIoctl> Ioctls;
-  /// Explicit immutable RAM snapshots for MAP_SHARED, PROT_READ or PROT_NONE.
+  /// Explicit initial RAM bytes for MAP_SHARED, PROT_READ or PROT_NONE.
   /// All opens of this catalogue entry share live backing pages. These inputs
-  /// supply neither MMIO side effects nor an asynchronous device producer.
+  /// supply no MMIO or inferred producer; updates must be explicitly provided.
   std::vector<LinuxDeviceMapping> ReadOnlyMappings;
+  std::optional<LinuxKGSLContexts> KGSL;
 };
 } // namespace neverd::emulation
 #endif

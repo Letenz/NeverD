@@ -3316,6 +3316,16 @@ This is a caller-supplied observation contract, not driver execution or an
 inference from ioctl request encoding. Other device operations remain
 unsupported; see [the device contract](linux-device-contracts.md).
 
+`LinuxDeviceState` retains each device open description across descriptor aliases
+and VMAs. `LinuxFiles` owns descriptor lookup/replacement, cursors and context
+ownership; `LinuxMemory` owns current device bytes, scheduled producer writes,
+alias retirement and final-mapping preflight. `LinuxKGSL` implements the explicitly
+selected context/timestamp subset over those owners, without a second page store
+or inferred command execution. `LinuxClock` alone accounts cumulative instruction
+time and idle deadlines. Linux and Android synchronize due producer writes while
+the CPU is stopped, before guest resumption; JSON transports the same bounded
+options. Application SDK dispatch and workload assumptions remain outside the OS model.
+
 | Component | Ownership |
 |-----------|-----------|
 | `NeverDEmulationCore` | Guest memory interface, register identities, fault vocabulary, shared checked execution loop and physical backing |

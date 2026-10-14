@@ -17,7 +17,13 @@ enum {
   Exit = 93,
   Protect = 226,
   Map = 222,
-  Unmap = 215
+  Unmap = 215,
+  Dup = 23,
+  Dup3 = 24,
+  Read = 63,
+  Write = 64,
+  WriteV = 66,
+  Sleep = 101
 };
 #else
 enum {
@@ -27,7 +33,14 @@ enum {
   Exit = 60,
   Protect = 10,
   Map = 9,
-  Unmap = 11
+  Unmap = 11,
+  Dup = 32,
+  Dup2 = 33,
+  Dup3 = 292,
+  Read = 0,
+  Write = 1,
+  WriteV = 20,
+  Sleep = 35
 };
 #endif
 
@@ -72,6 +85,9 @@ extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
 extern void *mmap(void *, U64, int, int, int, I64);
+extern int dup(int);
+extern int dup2(int, int);
+extern int dup3(int, int, int);
 #endif
 
 static const char Path[] = "/fixture/control";
@@ -236,7 +252,234 @@ U64 devices_mapping_fault(U64 Mode) {
     CHECK(raw(Unmap, A, 4096, 0), 0);
   return *(volatile unsigned char *)A;
 }
+
+static U64 duplicate(U64 Route, U64 FD, U64 Target, U64 Flags) {
 #ifdef __ANDROID__
+  if (Route == 1)
+    return Flags == (U64)-1 ? dup((int)FD) : dup3((int)FD, (int)Target, Flags);
+  if (Route == 2)
+    return Flags == (U64)-1 ? syscall(Dup, FD)
+                            : syscall(Dup3, FD, Target, Flags);
+  if (Route == 3) {
+    void *P = dlopen("libdevice.so", 2);
+    int (*One)(int) = dlsym(P, "dup");
+    int (*Three)(int, int, int) = dlsym(P, "dup3");
+    if (!P || !One || !Three)
+      return (U64)-99;
+    I64 R = Flags == (U64)-1 ? One(FD) : Three(FD, Target, Flags);
+    dlclose(P);
+    return R;
+  }
+#endif
+  return Flags == (U64)-1 ? raw(Dup, FD | 0x123400000000UL, 0, 0)
+                          : raw(Dup3, FD, Target | 0x123400000000UL, Flags);
+}
+
+U64 devices_duplicates(U64 Route) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  CHECK(duplicate(Route, 3, 0, (U64)-1), 4);
+  CHECK(duplicate(Route, 3, 6, 02000000), 6);
+  CHECK(duplicate(Route, 3, 3, 0), Route ? -1 : -22);
+  CHECK(duplicate(Route, 3, 5, 1), Route ? -1 : -22);
+  CHECK(duplicate(Route, 99, 5, 0), Route ? -1 : -9);
+  CHECK(duplicate(Route, 3, 256, 0), Route ? -1 : -9);
+  CHECK(exchange(Route, 4), 0);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(raw(Close, 4, 0, 0), 0);
+  CHECK(invoke(Route, 6, 0xa1000002, 0x8877665544332211UL), Route ? -1 : -13);
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  CHECK(exchange(Route, 3), 0);
+  CHECK(raw(Close, 6, 0, 0), 0);
+  CHECK(raw(Close, 3, 0, 0), 0);
+
+  unsigned char Byte = 0;
+  CHECK(raw(OpenAt, (U64)-100, (U64) "/fixture/bytes", 0), 3);
+  CHECK(raw(Read, 3, (U64)&Byte, 1), 1);
+  CHECK(Byte, 'a');
+  CHECK(duplicate(Route, 3, 0, (U64)-1), 4);
+  CHECK(raw(Read, 4, (U64)&Byte, 1), 1);
+  CHECK(Byte, 'b');
+  CHECK(raw(OpenAt, (U64)-100, (U64) "/fixture/bytes", 0), 5);
+  CHECK(raw(Read, 5, (U64)&Byte, 1), 1);
+  CHECK(Byte, 'a');
+#ifdef __ANDROID__
+  CHECK(dup2(4, 5), 5);
+  CHECK(dup2(5, 5), 5);
+  CHECK(dup2(99, 99), -1);
+#elif defined(__x86_64__)
+  CHECK(raw(Dup2, 4, 5, 0), 5);
+  CHECK(raw(Dup2, 5, 5, 0), 5);
+  CHECK(raw(Dup2, 99, 99, 0), -9);
+#else
+  CHECK(duplicate(Route, 4, 5, 0), 5);
+#endif
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(raw(Close, 4, 0, 0), 0);
+  CHECK(raw(Read, 5, (U64)&Byte, 1), 1);
+  CHECK(Byte, 'c');
+  CHECK(raw(Close, 5, 0, 0), 0);
+  CHECK(duplicate(Route, 1, 0, (U64)-1), 3);
+  CHECK(duplicate(Route, 2, 1, 0), 1);
+  CHECK(raw(Write, 3, (U64) "out", 3), 3);
+  U64 Vector[2] = {(U64) "err", 3};
+  CHECK(raw(WriteV, 1, (U64)Vector, 1), 3);
+  return 0;
+}
+
+static U64 sleep_ms(U64 Count) {
+  U64 Request[2] = {0, Count * 1000000};
+  return raw(Sleep, (U64)Request, 0, 0);
+}
+
+U64 devices_busy_poll(void) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U64 A = mapping(0, 3, 4096, 4096, 1);
+  while (*(volatile unsigned char *)A != 0x9a) {
+  }
+  return 0;
+}
+
+U64 devices_updates(void) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U64 A = mapping(0, 3, 3 * 4096, 4096, 1);
+  U64 B = mapping(0, 3, 2 * 4096, 2 * 4096, 0);
+  CHECK(*(volatile unsigned char *)A, 0x61); // due at time zero
+  CHECK(sleep_ms(1), 0);
+  CHECK(*(volatile unsigned char *)(A + 4095), 0xaa);
+  CHECK(raw(Protect, B, 2 * 4096, 1), 0);
+  CHECK(*(volatile unsigned char *)B, 0xee); // same-time last writer
+  CHECK(*(volatile unsigned char *)(B + 1), 0xcc);
+  CHECK(raw(Unmap, A + 4096, 4096, 0), 0);
+  CHECK(raw6(Map, A + 4096, 4096, 3, 0x22, (U64)-1, 0), A + 4096);
+  *(volatile unsigned char *)(A + 4096) = 0x77;
+  CHECK(sleep_ms(1), 0);
+  CHECK(*(volatile unsigned char *)(A + 4096), 0x77);
+  CHECK(*(volatile unsigned char *)B, 0xdd);
+  CHECK(*(volatile unsigned char *)(B + 1), 0xcc);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(raw(Unmap, A, 3 * 4096, 0), 0);
+  CHECK(raw(Unmap, B, 2 * 4096, 0), 0);
+  CHECK(sleep_ms(1), 0); // producer advances with no live mapping or FD
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U64 C = mapping(0, 3, 3 * 4096, 4096, 1);
+  CHECK(*(volatile unsigned char *)C, 0x61);
+  CHECK(*(volatile unsigned char *)(C + 4095), 0xaa);
+  CHECK(*(volatile unsigned char *)(C + 4096), 0xdd);
+  CHECK(*(volatile unsigned char *)(C + 8192), 0x88);
+  CHECK(*(volatile unsigned char *)(C + 8193), 0x33);
+  return 0;
+}
+
+enum {
+  CreateContext = 0xc0080913U,
+  DestroyContext = 0x40040914U,
+  ReadTimestamp = 0xc00c0916U
+};
+U64 devices_contexts(U64 Route) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 4);
+  U32 Create[2] = {0, 0xffffffffU};
+  CHECK(invoke(Route, 3, CreateContext, (U64)Create), Route ? -1 : -22);
+  Create[0] = 0x12;
+  CHECK(invoke(Route, 3, CreateContext, (U64)Create), 0);
+  CHECK(Create[1], 1);
+  CHECK(Create[0], 0x8052);
+  CHECK(invoke(Route, 3, CreateContext, (U64)Create), 0);
+  CHECK(Create[1], 2);
+  CHECK(invoke(Route, 4, CreateContext, (U64)Create), 0);
+  CHECK(Create[1], 3);
+  CHECK(invoke(Route, 4, CreateContext, (U64)Create), Route ? -1 : -28);
+  CHECK(Create[1], 3);
+  U32 Query[3] = {3, 2, 0xffffffffU};
+  CHECK(invoke(Route, 3, ReadTimestamp, (U64)Query), Route ? -1 : -22);
+  CHECK(Query[2], 0xffffffffU);
+  Query[0] = 1;
+  CHECK(invoke(Route, 3, ReadTimestamp, (U64)Query), 0);
+  CHECK(Query[2], 0);
+  U64 A = mapping(Route, 3, 4096, 4096, 1);
+  U64 B = mapping(Route, 4, 4096, 4096, 0);
+  CHECK(*(volatile U32 *)(A + 40), 0);
+  CHECK(*(volatile U32 *)(A + 44), 0xa5a5a5a5U);
+  CHECK(*(volatile U32 *)(A + 48), 0);
+  CHECK(duplicate(Route, 3, 0, (U64)-1), 5);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(invoke(Route, 3, ReadTimestamp, (U64)Query), Route ? -1 : -9);
+  CHECK(sleep_ms(1), 0);
+  CHECK(invoke(Route, 5, ReadTimestamp, (U64)Query), 0);
+  CHECK(Query[2], 5);
+  Query[1] = 1;
+  CHECK(invoke(Route, 5, ReadTimestamp, (U64)Query), 0);
+  CHECK(Query[2], 7);
+  CHECK(*(volatile U32 *)(A + 40), 7);
+  CHECK(raw(Protect, B, 4096, 1), 0);
+  CHECK(*(volatile U32 *)(B + 48), 5);
+  U32 ID = 2;
+  CHECK(invoke(Route, 5, DestroyContext, (U64)&ID), 0);
+  CHECK(invoke(Route, 5, DestroyContext, (U64)&ID), Route ? -1 : -22);
+  CHECK(invoke(Route, 4, CreateContext, (U64)Create), 0);
+  CHECK(Create[1], 2);
+  CHECK(sleep_ms(1), 0); // explicit producer retires the outstanding timestamp
+  CHECK(raw(Close, 5, 0, 0), 0); // VMA still retains context 1
+  CHECK(invoke(Route, 4, CreateContext, (U64)Create), Route ? -1 : -28);
+  CHECK(raw(Unmap, A, 4096, 0), 0); // last reference releases context 1
+  CHECK(invoke(Route, 4, CreateContext, (U64)Create), 0);
+  CHECK(Create[1], 1);
+  CHECK(*(volatile U32 *)(B + 40), 0); // recycled idle context
+  CHECK(*(volatile U32 *)(B + 48), 0);
+  Query[1] = 2;
+  CHECK(invoke(Route, 4, ReadTimestamp, (U64)Query), 0);
+  CHECK(Query[2], 0);
+  return 0;
+}
+
+U64 devices_context_unsupported(U64 Mode, U64 Buffer) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U32 *Packet = (U32 *)Buffer;
+  Packet[0] = Mode == 0 ? 0x20012 : 0x12;
+  Packet[1] = 0xffffffffU;
+  if (Mode == 1)
+    CHECK(raw(Protect, Buffer, 4096, 1), 0);
+  U64 R = invoke(0, 3, CreateContext, Buffer);
+  if (R)
+    return R;
+  if (Mode >= 3) {
+    U64 A = Mode == 6 ? mapping(0, 3, 4096, 4096, 1) : 0;
+    if (Mode == 6)
+      CHECK(raw(Close, 3, 0, 0), 0);
+    CHECK(sleep_ms(1), 0);
+    if (Mode == 3)
+      return invoke(0, 3, DestroyContext, Buffer + 4);
+    if (Mode == 4)
+      return raw(Close, 3, 0, 0);
+    if (Mode == 5)
+      return raw(Dup3, 1, 3, 0);
+    return raw(Unmap, A, 4096, 0);
+  }
+  Packet[0] = Packet[1];
+  Packet[1] = 3;
+  Packet[2] = 0xdeadbeefU;
+  return invoke(0, 3, ReadTimestamp, Buffer);
+}
+#ifdef __ANDROID__
+extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
+extern int pthread_join(U64, void **);
+static void *poll_page(void *Page) {
+  while (*(volatile unsigned char *)Page != 0x9a) {
+  }
+  return Page;
+}
+U64 devices_thread_updates(void) {
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U64 A = mapping(0, 3, 4096, 4096, 1), Thread = 0;
+  CHECK(pthread_create(&Thread, 0, poll_page, (void *)A), 0);
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(sleep_ms(1), 0); // worker remains runnable and advances the same clock
+  void *Returned = 0;
+  CHECK(pthread_join(Thread, &Returned), 0);
+  CHECK(Returned, A);
+  CHECK(*(volatile unsigned char *)A, 0x9a);
+  return 0;
+}
 U64 devices_open_error(void) {
   *__errno() = 22;
   CHECK(open(Path, 2), -1);
@@ -246,7 +489,17 @@ U64 devices_open_error(void) {
 }
 #else
 void process_main(U64 *Stack) {
-  (void)Stack;
+  if (Stack[0] > 1) {
+    char Mode = ((const char *)Stack[2])[0];
+    if (Mode == 'd' || Mode == 'u' || Mode == 'k' || Mode == 'b') {
+      U64 Status = Mode == 'd'   ? devices_duplicates(0)
+                   : Mode == 'u' ? devices_updates()
+                   : Mode == 'k' ? devices_contexts(0)
+                                 : devices_busy_poll();
+      raw(Exit, Status, 0, 0);
+      __builtin_trap();
+    }
+  }
   U64 Status = devices_sequence(0);
   if (!Status)
     Status = devices_mapping(0);

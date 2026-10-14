@@ -204,7 +204,13 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
       return unsupported(Result, DeviceOpenMode);
     if (Device.OpenErrno)
       return std::optional<uint64_t>(uint64_t(0) - Device.OpenErrno);
-    Descriptors.emplace(FD, OpenDevice{&Device});
+    std::erase_if(DeviceDescriptions,
+                  [](const auto &D) { return D.expired(); });
+    auto Description =
+        std::make_shared<LinuxDeviceState>(LinuxDeviceState{&Device});
+    DeviceDescriptions.push_back(Description);
+    Descriptors.emplace(FD,
+                        std::make_shared<Descriptor>(std::move(Description)));
     return std::optional<uint64_t>(FD);
   }
   case PathKind::File:
@@ -219,10 +225,10 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
     return unsupported(Result, FileOpenFlags);
   auto File = Options->Files.find(Path->Name);
   auto Metadata = Options->Metadata.find(Path->Name);
-  Descriptors.emplace(FD,
-                      OpenFile{File->second, Metadata == Options->Metadata.end()
-                                                 ? nullptr
-                                                 : &Metadata->second});
+  Descriptors.emplace(FD, std::make_shared<Descriptor>(OpenFile{
+                              File->second, Metadata == Options->Metadata.end()
+                                                ? nullptr
+                                                : &Metadata->second}));
   return std::optional<uint64_t>(FD);
 }
 

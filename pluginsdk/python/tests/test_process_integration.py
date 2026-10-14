@@ -80,6 +80,47 @@ class ProcessIntegrationTests(unittest.TestCase):
             self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
             self.assertEqual(result["return_value"], "0")
 
+        options["linux_files"]["files"] = [{"path": "/fixture/bytes", "bytes_hex": "616263"}]
+        options["android"].update(entry_symbol="devices_duplicates",
+                                   libraries={"libdevice.so": ["ioctl", "mmap", "dup", "dup3"]})
+        for route in range(4):
+            options["android"]["arguments"] = [route]
+            result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                             "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], "0")
+            self.assertEqual(result["stdout_hex"], b"out".hex())
+            self.assertEqual(result["stderr_hex"], b"err".hex())
+
+        device["ioctls"] = []
+        device["kgsl_contexts"] = {"memstore_offset": 4096, "context_limit": 3}
+        device["read_only_mappings"] = [{"offset": 4096, "bytes_hex": "a5" * 4096,
+                                         "updates": [
+                                             {"after_nanoseconds": 1000000, "offset": 40, "bytes_hex": "07000000"},
+                                             {"after_nanoseconds": 1000000, "offset": 48, "bytes_hex": "05000000"},
+                                             {"after_nanoseconds": 2000000, "offset": 48, "bytes_hex": "07000000"}]}]
+        options["linux_time"] = {"advance_on_idle": True}
+        options["android"]["entry_symbol"] = "devices_contexts"
+        for route in range(4):
+            options["android"]["arguments"] = [route]
+            result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                             "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], "0")
+
+        device["read_only_mappings"][0]["updates"] = [
+            {"after_nanoseconds": 1000000, "offset": 0, "bytes_hex": "9a"}]
+        options["instruction_quantum"] = 1024
+        options["linux_time"]["nanoseconds_per_instruction"] = "100"
+        options["android"].update(entry_symbol="devices_thread_updates", arguments=[],
+                                   thread_limit=2, drain_threads=True)
+        result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                         "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(result["return_value"], "0")
+        self.assertEqual(len(result["android"]["threads"]), 2)
+        self.assertTrue(all(t["finished"] for t in result["android"]["threads"]))
+
     def test_android_integer_scanning_preserves_provider_and_output(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

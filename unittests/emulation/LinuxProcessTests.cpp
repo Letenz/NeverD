@@ -270,6 +270,32 @@ TEST_P(LinuxProcess, ExplicitDeviceTransactionsShareDescriptorOwnership) {
     EXPECT_EQ(R->ExitStatus, 0u);
   }
 }
+TEST_P(LinuxProcess, StatefulDescriptorsPagesAndContextsShareOneKernelOwner) {
+  Options.LinuxFiles.emplace().Files["/fixture/bytes"] = {'a', 'b', 'c'};
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  for (const char *Optimization : {"O0", "O2"}) {
+    auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
+                                            Optimization + ".elf");
+    for (char Mode : {'d', 'u', 'k', 'b'}) {
+      SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
+      Options.Arguments = {"devices", std::string(1, Mode)};
+      Options.LinuxFiles->Devices["/fixture/control"] =
+          Mode == 'k' ? contextDeviceTestInput() : updatingDeviceTestInput();
+      Options.LinuxTime->NanosecondsPerInstruction = Mode == 'b' ? 100 : 0;
+      Options.InstructionQuantum = 1024;
+      if (Mode == 'b')
+        Options.LinuxFiles->Devices["/fixture/control"]
+            .ReadOnlyMappings[0]
+            .Updates = {{1000000, 0, {0x9a}}};
+      auto R = emulateProcess(DevicePath, ProcessProfile::LinuxELF64, Options);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 0u);
+      EXPECT_EQ(R->StandardOutput, Mode == 'd' ? "out" : "");
+      EXPECT_EQ(R->StandardError, Mode == 'd' ? "err" : "");
+    }
+  }
+}
 TEST_P(LinuxProcess, MemoryFileOpenFlagsRetainObservedPathErrors) {
   Options.LinuxFiles.emplace();
   Options.LinuxFiles->Files["/fixture/data"] = {0, 0xff, 0x41};

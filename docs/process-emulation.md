@@ -329,8 +329,8 @@ guest pointer or mapping request to the host OS.
 ## Explicit guest clocks
 
 The optional `linux_time` input supplies observations, fixed by default, shared by raw
-Linux services and Android Bionic. It never reads the host clock, advances time
-with instruction execution, or supplies a default epoch. For example:
+Linux services and Android Bionic. It never reads the host clock or supplies a
+default epoch. Instruction time is frozen unless explicitly configured. For example:
 
 ```json
 {"linux_time":{"clocks":[
@@ -364,8 +364,23 @@ Other clock inputs remain excluded from this policy.
 A sleeping Android thread retains its original pending service;
 other runnable threads execute first. When all threads are blocked, time advances
 to the earliest sleep deadline. A single-threaded workload advances directly.
-Instruction execution itself does not advance time, so a busy runnable thread
-can leave a sleeper pending until the workload budget expires.
+Without an instruction-time input, a busy runnable thread can leave a sleeper
+pending until the workload budget expires.
+
+`"nanoseconds_per_instruction":100` optionally assigns a deterministic virtual
+wall-time rate to admitted guest instructions. Zero (the default) disables it.
+The unsigned 64-bit rate may also be a decimal string. A workload-wide cumulative
+instruction count is accounted exactly once at successful service and quantum
+boundaries, across all Android threads. Realtime, monotonic and boottime share
+that elapsed time with idle advancement; supplied process CPU samples stay fixed.
+Unsupported clock kinds are rejected just as for idle advancement. Multiplication,
+elapsed-time and epoch overflow stop before changing any clock.
+
+This rate is a declared analysis input, not measured hardware timing or CPU-time
+accounting. It lets busy guest polling loops observe scheduled device-page changes
+and lets sleepers wake while another guest thread runs. Updates remain quantized
+by actual execution boundaries and `instruction_quantum`; reports should retain
+the rate, quantum and producer trace. No host clock or sample PC participates.
 
 The request is copied before checking nonnegative seconds and normalized
 nanoseconds. Bad input addresses return `EFAULT`; invalid values return `EINVAL`.

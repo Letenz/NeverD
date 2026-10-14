@@ -4970,6 +4970,20 @@ and C++ admission; the Python process integration test transports the same publi
 contract through the C ABI. Run the shared Linux process, Android native,
 execution-session and process-public suites when changing this memory boundary.
 
+`AndroidDevices` and the shared O0/O2 x64/ARM64 device fixture cover duplicated
+file cursors, ioctl positions and output sinks; context ownership and VMA-retained
+lifetimes; consumed/retired timestamps; equal-time, cross-page producer writes;
+PROT_NONE aliases, partial unmapping and address reuse. Context refusal cases
+check unchanged output bytes for unsupported flags, copy-out and busy retirement.
+A pure guest polling loop requires the explicit instruction-time input; a runnable
+child and sleeping/joining parent share that clock and the updated physical page.
+`LinuxClock.InstructionTime*` tests cumulative accounting, idle coexistence and
+atomic overflow. `ProcessReport.StatefulDevices*` checks strict JSON and C++
+admission. The Python device integration case exercises the same contracts through
+the C ABI. These are deterministic model checks, not vendor GPU or SDK equivalence.
+Run the Linux process, Android native and public process suites when changing these
+shared owners; report unavailable transports separately.
+
 `AndroidResidencyTests.cpp` compares raw SVC, variadic and named `mincore`
 calls using independent O0/O2 fixtures with ordinary, APS2 and RELR relocations.
 It checks ordered range/alignment errors, empty queries, unchanged output bytes,

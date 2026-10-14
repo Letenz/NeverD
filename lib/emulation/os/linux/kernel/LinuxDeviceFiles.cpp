@@ -8,6 +8,7 @@
 /// Linux descriptor table. No request encoding implies a driver ABI or reply.
 //===----------------------------------------------------------------------===//
 #include "LinuxFiles.h"
+#include "LinuxKGSL.h"
 
 #include "llvm/Support/FormatVariadic.h"
 
@@ -22,6 +23,14 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
   Transactions += Options.Ioctls.size();
   if (Options.ReadOnlyMappings.size() > DeviceMappingLimit)
     return failure(DeviceOptions);
+  if (Options.KGSL) {
+    const auto *Mapping = kgsl::memstore(Options);
+    if (!Mapping || !Options.KGSL->ContextLimit ||
+        Options.KGSL->ContextLimit > kgsl::MaximumContexts ||
+        (uint64_t(Options.KGSL->ContextLimit) + 1) * kgsl::SlotBytes >
+            Mapping->Bytes.size())
+      return failure(DeviceOptions);
+  }
   std::vector<std::pair<uint64_t, uint64_t>> Ranges;
   for (const auto &Mapping : Options.ReadOnlyMappings) {
     const uint64_t Size = Mapping.Bytes.size();
@@ -34,6 +43,20 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
     if (Size > FileByteLimit - Bytes)
       return failure(FileOptionsLimit);
     Bytes += Size;
+    if (Mapping.Updates.size() > DeviceIoctlLimit - Transactions)
+      return failure(DeviceOptions);
+    Transactions += Mapping.Updates.size();
+    uint64_t Previous = 0;
+    for (const auto &Update : Mapping.Updates) {
+      if (Update.AfterNanoseconds < Previous || Update.Bytes.empty() ||
+          Update.Bytes.size() > DeviceMappingPageSize || Update.Offset > Size ||
+          Update.Bytes.size() > Size - Update.Offset)
+        return failure(DeviceOptions);
+      if (Update.Bytes.size() > FileByteLimit - Bytes)
+        return failure(FileOptionsLimit);
+      Bytes += Update.Bytes.size();
+      Previous = Update.AfterNanoseconds;
+    }
     Ranges.emplace_back(Mapping.Offset, Mapping.Offset + Size);
   }
   std::sort(Ranges.begin(), Ranges.end());
@@ -41,6 +64,8 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
     if (Ranges[I].first < Ranges[I - 1].second)
       return failure(DeviceOptions);
   for (const auto &Call : Options.Ioctls) {
+    if (Options.KGSL && kgsl::isContextRequest(Call.Request))
+      return failure(DeviceOptions);
     if (Call.Result < -4095 || Call.Memory.size() > DeviceMemoryLimit)
       return failure(DeviceOptions);
     for (const auto &Memory : Call.Memory) {
@@ -62,17 +87,17 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
 bool LinuxFiles::isDevice(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   return I != Descriptors.end() &&
-         std::holds_alternative<OpenDevice>(I->second);
+         std::holds_alternative<OpenDevice>(*I->second);
 }
 
-std::variant<const LinuxDeviceOptions *, uint64_t>
+std::variant<std::shared_ptr<LinuxDeviceState>, uint64_t>
 LinuxFiles::mappingDevice(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint64_t(0) - BadDescriptor;
-  if (const auto *Device = std::get_if<OpenDevice>(&I->second))
-    return Device->Options;
-  return static_cast<const LinuxDeviceOptions *>(nullptr);
+  if (const auto *Device = std::get_if<OpenDevice>(I->second.get()))
+    return *Device;
+  return std::shared_ptr<LinuxDeviceState>();
 }
 
 llvm::Expected<std::optional<uint64_t>>
@@ -81,9 +106,12 @@ LinuxFiles::deviceIoctl(uint32_t FD, uint32_t Request, uint64_t Argument,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-  auto *Device = std::get_if<OpenDevice>(&I->second);
-  if (!Device)
+  auto *Description = std::get_if<OpenDevice>(I->second.get());
+  if (!Description)
     return unsupported(Result, DeviceIoctlMissing);
+  auto *Device = Description->get();
+  if (Device->Options->KGSL && kgsl::isContextRequest(Request))
+    return contextIoctl(*Device, Request, Argument, Result);
   const auto &Calls = Device->Options->Ioctls;
   const size_t Index = Device->NextIoctl;
   if (Index == Calls.size() || Calls[Index].Request != Request ||

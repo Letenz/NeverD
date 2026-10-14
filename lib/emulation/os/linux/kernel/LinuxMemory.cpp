@@ -347,6 +347,14 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
       return UnsupportedProtection();
     return Reply(protect(Event));
   case ServiceKind::Munmap:
+    if (auto Size = roundSize(Event.Arguments[1]);
+        Size && Event.Arguments[0] % PageSize == 0 &&
+        validRange(Event.Arguments[0], *Size) &&
+        !canRetireDevices(Event.Arguments[0], *Size)) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic = "GPU last mapping cannot retire a busy context";
+      return std::optional<uint64_t>();
+    }
     return Reply(unmap(Event));
   case ServiceKind::Madvise:
     if (auto Size = roundSize(Event.Arguments[1]);

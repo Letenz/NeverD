@@ -12,31 +12,118 @@ std::optional<uint64_t> LinuxMemory::firstDeviceByte(uint64_t Address,
                                                      uint64_t End) const {
   if (Address >= End)
     return std::nullopt;
-  for (const auto &[Begin, Limit] : ReadOnlyDeviceRanges)
-    if (Begin < End && Limit > Address)
-      return std::max(Address, Begin);
+  for (const auto &Alias : ReadOnlyDeviceRanges)
+    if (Alias.Begin < End && Alias.End > Address)
+      return std::max(Address, Alias.Begin);
   return std::nullopt;
 }
 
 void LinuxMemory::retireDeviceRanges(uint64_t Address, uint64_t Size) {
-  std::vector<std::pair<uint64_t, uint64_t>> Kept;
+  std::vector<DeviceAlias> Kept;
   const uint64_t End = Address + Size;
-  for (const auto &[Begin, Limit] : ReadOnlyDeviceRanges) {
-    if (Limit <= Address || Begin >= End) {
-      Kept.emplace_back(Begin, Limit);
+  for (const auto &Alias : ReadOnlyDeviceRanges) {
+    if (Alias.End <= Address || Alias.Begin >= End) {
+      Kept.push_back(Alias);
       continue;
     }
-    if (Begin < Address)
-      Kept.emplace_back(Begin, Address);
-    if (Limit > End)
-      Kept.emplace_back(End, Limit);
+    if (Alias.Begin < Address)
+      Kept.push_back(
+          {Alias.Begin, Address, Alias.Offset, Alias.Mapping, Alias.Owner});
+    if (Alias.End > End)
+      Kept.push_back({End, Alias.End, Alias.Offset + End - Alias.Begin,
+                      Alias.Mapping, Alias.Owner});
   }
   ReadOnlyDeviceRanges = std::move(Kept);
 }
 
-llvm::Expected<bool> LinuxMemory::mapDevicePages(
-    uint64_t Address, uint64_t Size, unsigned Permissions,
-    const LinuxDeviceMapping &Mapping, uint64_t Offset) {
+bool LinuxMemory::canRetireDevices(uint64_t Address, uint64_t Size) const {
+  using Reference = std::shared_ptr<LinuxDeviceState>;
+  std::map<const LinuxDeviceState *, std::pair<const Reference *, uint64_t>>
+      Dropped;
+  for (const auto &Alias : ReadOnlyDeviceRanges)
+    if (Alias.Owner && Address <= Alias.Begin && Alias.End <= Address + Size) {
+      auto &Entry = Dropped[Alias.Owner.get()];
+      Entry.first = &Alias.Owner;
+      ++Entry.second;
+    }
+  for (const auto &[Device, Entry] : Dropped)
+    if (uint64_t(Entry.first->use_count()) == Entry.second)
+      for (uint32_t ID : Device->Contexts)
+        if (!contextIdle(*Device, ID))
+          return false;
+  return true;
+}
+
+llvm::ArrayRef<uint8_t>
+LinuxMemory::deviceBytes(const LinuxDeviceMapping &Mapping) const {
+  const auto I = DeviceStates.find(&Mapping);
+  return I == DeviceStates.end() ? llvm::ArrayRef<uint8_t>(Mapping.Bytes)
+                                 : llvm::ArrayRef<uint8_t>(I->second.Bytes);
+}
+
+llvm::Error LinuxMemory::writeDeviceBytes(const LinuxDeviceMapping &Mapping,
+                                          uint64_t Offset,
+                                          llvm::ArrayRef<uint8_t> Bytes) {
+  if (Offset > Mapping.Bytes.size() ||
+      Bytes.size() > Mapping.Bytes.size() - Offset)
+    return failure(DeviceOptions);
+  auto [I, Fresh] = DeviceStates.try_emplace(&Mapping);
+  if (Fresh)
+    I->second.Bytes = Mapping.Bytes;
+  // One write per physical page is sufficient for every alias, including
+  // PROT_NONE aliases. Device writes use the stopped RAM owner, never guest
+  // permission changes, virtual address reuse or a saved host pointer.
+  for (uint64_t Done = 0; Done < Bytes.size();) {
+    const uint64_t Position = Offset + Done;
+    const uint64_t Count =
+        std::min<uint64_t>(Bytes.size() - Done, PageSize - Position % PageSize);
+    for (const auto &Alias : ReadOnlyDeviceRanges) {
+      if (Alias.Mapping != &Mapping || Position < Alias.Offset ||
+          Position - Alias.Offset >= Alias.End - Alias.Begin)
+        continue;
+      if (auto E = Space.writeBacking(Alias.Begin + Position - Alias.Offset,
+                                      Bytes.slice(Done, Count)))
+        return E;
+      break;
+    }
+    Done += Count;
+  }
+  std::copy(Bytes.begin(), Bytes.end(), I->second.Bytes.begin() + Offset);
+  return llvm::Error::success();
+}
+
+llvm::Error LinuxMemory::synchronizeDevices(
+    uint64_t Elapsed, const std::optional<LinuxFileOptions> &Options) {
+  if (!Options || LastDeviceTime == Elapsed)
+    return llvm::Error::success();
+  if (LastDeviceTime && Elapsed < *LastDeviceTime)
+    return failure(DeviceOptions);
+  for (const auto &[Path, Device] : Options->Devices) {
+    for (const auto &Mapping : Device.ReadOnlyMappings) {
+      if (Mapping.Updates.empty())
+        continue;
+      auto [I, Fresh] = DeviceStates.try_emplace(&Mapping);
+      if (Fresh)
+        I->second.Bytes = Mapping.Bytes;
+      auto &Next = I->second.NextUpdate;
+      while (Next < Mapping.Updates.size() &&
+             Mapping.Updates[Next].AfterNanoseconds <= Elapsed) {
+        const auto &Update = Mapping.Updates[Next];
+        if (auto E = writeDeviceBytes(Mapping, Update.Offset, Update.Bytes))
+          return E;
+        ++Next;
+      }
+    }
+  }
+  LastDeviceTime = Elapsed;
+  return llvm::Error::success();
+}
+
+llvm::Expected<bool>
+LinuxMemory::mapDevicePages(uint64_t Address, uint64_t Size,
+                            unsigned Permissions,
+                            const LinuxDeviceMapping &Mapping, uint64_t Offset,
+                            std::shared_ptr<LinuxDeviceState> Owner) {
   auto RAM = Space.physicalMemory();
   if (Space.mappedBytes() > Limit || Size > Limit - Space.mappedBytes())
     return false;
@@ -76,9 +163,9 @@ llvm::Expected<bool> LinuxMemory::mapDevicePages(
     if (!E) {
       Mapped += PageSize;
       if (Fresh[I])
-        E = Space.writeBacking(Address + I * PageSize,
-                               llvm::ArrayRef<uint8_t>(Mapping.Bytes)
-                                   .slice(Offset + I * PageSize, PageSize));
+        E = Space.writeBacking(
+            Address + I * PageSize,
+            deviceBytes(Mapping).slice(Offset + I * PageSize, PageSize));
     }
     if (E) {
       if (Mapped)
@@ -88,15 +175,19 @@ llvm::Expected<bool> LinuxMemory::mapDevicePages(
   }
   for (size_t I = 0; I < Pages.size(); ++I)
     Cached[Offset / PageSize + I] = Pages[I];
-  ReadOnlyDeviceRanges.emplace_back(Address, Address + Size);
-  std::sort(ReadOnlyDeviceRanges.begin(), ReadOnlyDeviceRanges.end());
+  ReadOnlyDeviceRanges.push_back(
+      {Address, Address + Size, Offset, &Mapping, std::move(Owner)});
+  std::sort(ReadOnlyDeviceRanges.begin(), ReadOnlyDeviceRanges.end(),
+            [](const DeviceAlias &A, const DeviceAlias &B) {
+              return A.Begin < B.Begin;
+            });
   return true;
 }
 
 llvm::Expected<std::optional<uint64_t>>
 LinuxMemory::mapDevice(const ProcessServiceEvent &Event,
-                       const LinuxDeviceOptions *Device,
-                       ProcessResult &Result) {
+                       const LinuxDeviceOptions *Device, ProcessResult &Result,
+                       std::shared_ptr<LinuxDeviceState> Owner) {
   auto Unsupported = [&]() -> std::optional<uint64_t> {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = DeviceMappingMissing;
@@ -128,9 +219,9 @@ LinuxMemory::mapDevice(const ProcessServiceEvent &Event,
     return Address.takeError();
   if (!*Address)
     return std::optional<uint64_t>(uint64_t(0) - NoMemory);
-  auto Mapped = mapDevicePages(**Address, *Size,
-                               UserAccessible | (Protection ? Read : 0u),
-                               *Backing, Offset - Backing->Offset);
+  auto Mapped = mapDevicePages(
+      **Address, *Size, UserAccessible | (Protection ? Read : 0u), *Backing,
+      Offset - Backing->Offset, std::move(Owner));
   if (!Mapped)
     return Mapped.takeError();
   return std::optional<uint64_t>(*Mapped ? **Address : uint64_t(0) - NoMemory);

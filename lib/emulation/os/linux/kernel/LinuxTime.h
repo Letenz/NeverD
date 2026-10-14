@@ -42,10 +42,14 @@ public:
                                    ProcessResult &Result) const;
   /// Validate all supplied clocks before committing any elapsed time.
   bool advanceTo(uint64_t Deadline, ProcessResult &Result);
+  /// A cumulative workload count, shared by every thread. Repeated counts
+  /// cannot bill an instruction twice; failed advancement commits no time.
+  bool accountInstructions(uint64_t Total, ProcessResult &Result);
 
 private:
   const std::optional<LinuxTimeOptions> &Options;
   uint64_t Elapsed = 0;
+  uint64_t AccountedInstructions = 0;
 };
 llvm::Expected<std::optional<uint64_t>>
 timeService(ExecutionBackend &CPU, ServiceKind Kind,

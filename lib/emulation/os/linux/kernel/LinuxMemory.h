@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_OS_LINUX_LINUXMEMORY_H
 #define NEVERD_EMULATION_OS_LINUX_LINUXMEMORY_H
 
+#include "LinuxDeviceState.h"
 #include "LinuxKernel.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -25,7 +26,15 @@ public:
   bool isMergeable(uint64_t Address) const;
   llvm::Expected<std::optional<uint64_t>>
   mapDevice(const ProcessServiceEvent &Event, const LinuxDeviceOptions *Device,
-            ProcessResult &Result);
+            ProcessResult &Result,
+            std::shared_ptr<LinuxDeviceState> Owner = {});
+  bool contextIdle(const LinuxDeviceState &Device, uint32_t ID) const;
+  llvm::Error
+  synchronizeDevices(uint64_t Elapsed,
+                     const std::optional<LinuxFileOptions> &Options);
+  llvm::ArrayRef<uint8_t> deviceBytes(const LinuxDeviceMapping &Mapping) const;
+  llvm::Error writeDeviceBytes(const LinuxDeviceMapping &Mapping,
+                               uint64_t Offset, llvm::ArrayRef<uint8_t> Bytes);
 
 private:
   AddressSpace &Space;
@@ -36,16 +45,29 @@ private:
   std::vector<std::pair<uint64_t, uint64_t>> MergeableRanges;
   // Maximum-protection policy only, not a second page table. AddressSpace
   // owns mappings/permissions; its references keep the shared RAM alive.
-  std::vector<std::pair<uint64_t, uint64_t>> ReadOnlyDeviceRanges;
+  struct DeviceAlias {
+    uint64_t Begin, End, Offset;
+    const LinuxDeviceMapping *Mapping;
+    std::shared_ptr<LinuxDeviceState> Owner;
+  };
+  std::vector<DeviceAlias> ReadOnlyDeviceRanges;
+  struct DeviceState {
+    std::vector<uint8_t> Bytes;
+    size_t NextUpdate = 0;
+  };
+  std::map<const LinuxDeviceMapping *, DeviceState> DeviceStates;
+  std::optional<uint64_t> LastDeviceTime;
   std::map<const LinuxDeviceMapping *, std::vector<std::weak_ptr<MemoryRegion>>>
       DevicePages;
 
   void retireDeviceRanges(uint64_t Address, uint64_t Size);
+  bool canRetireDevices(uint64_t Address, uint64_t Size) const;
   std::optional<uint64_t> firstDeviceByte(uint64_t Address, uint64_t End) const;
   llvm::Expected<bool> mapDevicePages(uint64_t Address, uint64_t Size,
                                       unsigned Permissions,
                                       const LinuxDeviceMapping &Mapping,
-                                      uint64_t Offset);
+                                      uint64_t Offset,
+                                      std::shared_ptr<LinuxDeviceState> Owner);
   void setMergeable(uint64_t Address, uint64_t Size, bool Mergeable);
   std::optional<uint64_t> roundSize(uint64_t Size) const;
   bool validRange(uint64_t Address, uint64_t Size) const;

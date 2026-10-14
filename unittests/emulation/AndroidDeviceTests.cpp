@@ -42,7 +42,8 @@ protected:
       GTEST_SKIP() << Probe->Reason;
     Options.Android.emplace();
     Options.Android->Initialize = false;
-    Options.Android->Libraries["libdevice.so"] = {"ioctl", "mmap"};
+    Options.Android->Libraries["libdevice.so"] = {"ioctl", "mmap", "dup",
+                                                  "dup3"};
     Options.LinuxFiles.emplace().Devices["/fixture/control"] =
         deviceTestInput();
     Options.Limits.Instructions = 200000;
@@ -55,6 +56,96 @@ protected:
         emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options));
   }
 };
+
+TEST_P(AndroidDevices, DuplicatesShareCursorsTransactionsAndOutputTargets) {
+  Options.LinuxFiles->Files["/fixture/bytes"] = {'a', 'b', 'c'};
+  for (uint64_t Route = 0; Route != 4; ++Route) {
+    SCOPED_TRACE(Route);
+    auto R = run("devices_duplicates", {Route});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    EXPECT_EQ(R.StandardOutput, "out");
+    EXPECT_EQ(R.StandardError, "err");
+  }
+}
+
+TEST_P(AndroidDevices, TimedDeviceWritesSurviveAliasesRetirementAndRemapping) {
+  Options.LinuxFiles->Devices.at("/fixture/control") =
+      updatingDeviceTestInput();
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  auto R = run("devices_updates");
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+
+TEST_P(AndroidDevices, ExplicitInstructionTimeAdvancesAPureGuestPollingLoop) {
+  auto &D = Options.LinuxFiles->Devices.at("/fixture/control");
+  D.ReadOnlyMappings[0].Updates = {{1000000, 0, {0x9a}}};
+  Options.LinuxTime.emplace().NanosecondsPerInstruction = 100;
+  Options.InstructionQuantum = 1024;
+  auto R = run("devices_busy_poll");
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  EXPECT_GE(R.Instructions, 10000u);
+  EXPECT_LT(R.Instructions, 13000u);
+  Options.LinuxTime->NanosecondsPerInstruction = 0;
+  Options.Limits.Instructions = 20000;
+  R = run("devices_busy_poll");
+  EXPECT_EQ(R.Stop, ProcessStopReason::InstructionLimit) << R.Diagnostic;
+}
+
+TEST_P(AndroidDevices, RunnableChildAndSleepingParentShareProducerTime) {
+  Options.LinuxFiles->Devices.at("/fixture/control")
+      .ReadOnlyMappings[0]
+      .Updates = {{1000000, 0, {0x9a}}};
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  Options.LinuxTime->NanosecondsPerInstruction = 100;
+  Options.InstructionQuantum = 1024;
+  Options.Android->ThreadLimit = 2;
+  Options.Android->DrainThreads = true;
+  auto R = run("devices_thread_updates");
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  EXPECT_GE(R.Instructions, 10000u);
+}
+
+TEST_P(AndroidDevices, ContextOwnershipAndTimestampQueriesShareMappedBytes) {
+  Options.LinuxFiles->Devices.at("/fixture/control") = contextDeviceTestInput();
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  for (uint64_t Route = 0; Route != 4; ++Route) {
+    SCOPED_TRACE(Route);
+    auto R = run("devices_contexts", {Route});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+  }
+}
+
+TEST_P(AndroidDevices, ContextRefusalsDoNotInventOutputs) {
+  Options.LinuxFiles->Devices.at("/fixture/control") = contextDeviceTestInput();
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  for (uint64_t Mode = 0; Mode != 7; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Memory = {
+        {Buffer, 4096, std::vector<uint8_t>(4096, 0xa5), false}};
+    Options.Android->ReadMemory = {{Buffer, 4096}};
+    auto R = run("devices_context_unsupported", {Mode, Buffer});
+    ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    auto Expected = std::vector<uint8_t>(4096, 0xa5);
+    llvm::support::endian::write32le(Expected.data(), Mode >= 3   ? 0x8052
+                                                      : Mode == 0 ? 0x20012
+                                                      : Mode == 1 ? 0x12
+                                                                  : 1);
+    llvm::support::endian::write32le(Expected.data() + 4, Mode >= 3 ? 1
+                                                          : Mode == 2
+                                                              ? 3
+                                                              : 0xffffffffU);
+    if (Mode == 2)
+      llvm::support::endian::write32le(Expected.data() + 8, 0xdeadbeefU);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
 
 TEST_P(AndroidDevices, RawNamedVariadicAndDynamicCallsShareTransactions) {
   for (uint64_t Route = 0; Route != 4; ++Route) {
@@ -201,6 +292,9 @@ TEST(AndroidDeviceMemory, RefusedTransactionsDoNotAdvanceTheOpenDescription) {
   };
   EXPECT_EQ(Open(), 3u);
   EXPECT_EQ(Open(), uint64_t(-24));
+  EXPECT_EQ(llvm::cantFail(Kernel.handle(linux_model::ServiceKind::Dup,
+                                         {0, 23, {3, 0, 0, 0, 0, 0}, {}})),
+            uint64_t(-24));
   EXPECT_FALSE(Ioctl(0x87654320, Buffer + 64));
   EXPECT_FALSE(Ioctl(0x87654321, Buffer + 65));
   EXPECT_FALSE(Ioctl(0x87654321, Buffer + 64));

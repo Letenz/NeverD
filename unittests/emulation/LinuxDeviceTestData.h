@@ -28,4 +28,25 @@ inline neverd::emulation::LinuxDeviceOptions deviceTestInput() {
     Mapping.Bytes[I] = 0x31 + I / 4096;
   return Result;
 }
+
+inline neverd::emulation::LinuxDeviceOptions updatingDeviceTestInput() {
+  auto Result = deviceTestInput();
+  Result.ReadOnlyMappings[0].Updates = {{0, 0, {0x61}},
+                                        {1000000, 4095, {0xaa, 0xbb, 0xcc}},
+                                        {1000000, 4096, {0xee}},
+                                        {2000000, 4096, {0xdd}},
+                                        {3000000, 8192, {0x88}}};
+  return Result;
+}
+
+inline neverd::emulation::LinuxDeviceOptions contextDeviceTestInput() {
+  neverd::emulation::LinuxDeviceOptions Result{2, 0, {}};
+  Result.ReadOnlyMappings = {{4096,
+                              std::vector<uint8_t>(4096, 0xa5),
+                              {{1000000, 40, {7, 0, 0, 0}},
+                               {1000000, 48, {5, 0, 0, 0}},
+                               {2000000, 48, {7, 0, 0, 0}}}}};
+  Result.KGSL = {4096, 3};
+  return Result;
+}
 #endif

@@ -72,7 +72,10 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
   const auto *Ioctls = Value.getArray(field::DeviceIoctls);
   const bool HasMappings = Value.get(field::DeviceReadOnlyMappings);
   const auto *Mappings = Value.getArray(field::DeviceReadOnlyMappings);
-  if (Value.size() != 4 + unsigned(HasMappings) ||
+  const bool HasKGSL = Value.get(field::DeviceKGSL);
+  const auto *KGSL = Value.getObject(field::DeviceKGSL);
+  if (Value.size() != 4 + unsigned(HasMappings) + unsigned(HasKGSL) ||
+      (HasKGSL && !KGSL) ||
       (HasMappings &&
        (!Mappings || Mappings->size() > linux_model::DeviceMappingLimit)) ||
       !Value.getString(field::Path) || !Mode || !Error || !Ioctls ||
@@ -118,7 +121,14 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
   if (Mappings)
     for (const auto &V : *Mappings) {
       const auto *Object = V.getAsObject();
-      if (!Object || Object->size() != 2)
+      if (!Object)
+        return invalid();
+      const bool HasUpdates = Object->get(field::DeviceUpdates);
+      const auto *Updates = Object->getArray(field::DeviceUpdates);
+      if (Object->size() != 2 + unsigned(HasUpdates) ||
+          (HasUpdates &&
+           (!Updates ||
+            Updates->size() > linux_model::DeviceIoctlLimit - Transactions)))
         return invalid();
       auto Offset = number<uint64_t>(*Object, field::DeviceOffset);
       if (!Offset)
@@ -127,7 +137,31 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
       if (!Data)
         return Data.takeError();
       Out.ReadOnlyMappings.push_back({*Offset, std::move(*Data)});
+      if (Updates) {
+        Transactions += Updates->size();
+        for (const auto &V : *Updates) {
+          const auto *Update = V.getAsObject();
+          if (!Update || Update->size() != 3)
+            return invalid();
+          auto Time = number<uint64_t>(*Update, field::DeviceUpdateTime);
+          auto Offset = number<uint64_t>(*Update, field::DeviceOffset);
+          if (!Time || !Offset)
+            return invalid();
+          auto Data = bytes(*Update, field::Bytes, PayloadBytes);
+          if (!Data)
+            return Data.takeError();
+          Out.ReadOnlyMappings.back().Updates.push_back(
+              {*Time, *Offset, std::move(*Data)});
+        }
+      }
     }
+  if (KGSL) {
+    auto Offset = number<uint64_t>(*KGSL, field::DeviceMemstoreOffset);
+    auto Limit = number<uint32_t>(*KGSL, field::DeviceContextLimit);
+    if (KGSL->size() != 2 || !Offset || !Limit)
+      return invalid();
+    Out.KGSL = LinuxKGSLContexts{*Offset, *Limit};
+  }
   return Out;
 }
 } // namespace neverd::emulation

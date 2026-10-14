@@ -16,7 +16,7 @@ LinuxFiles::statusDescriptor(uint32_t FD, uint64_t Address,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-  const auto *File = std::get_if<OpenFile>(&I->second);
+  const auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File || !File->Metadata)
     return unsupported(Result, FileStatusMissing);
   return status(*File->Metadata, Address, Result);
