@@ -118,8 +118,9 @@ bool downloadMissingPDB(const std::string &Input, const char *SymbolPath,
     }
     std::filesystem::rename(Partial, Destination, EC);
     if (EC) {
+      const std::string SaveError = EC.message();
       std::filesystem::remove(Partial, EC);
-      Report("cannot save " + pathToUTF8(Destination) + ": " + EC.message());
+      Report("cannot save " + pathToUTF8(Destination) + ": " + SaveError);
       continue;
     }
     // The engine names the copy that matches the PE; a file that is not it

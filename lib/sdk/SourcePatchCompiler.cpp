@@ -8,9 +8,12 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -114,6 +117,114 @@ llvm::Error appendUserArguments(std::vector<std::string> &Arguments,
   return llvm::Error::success();
 }
 
+std::string digest(llvm::StringRef Bytes) {
+  return llvm::toHex(
+      llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+          reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size())),
+      true);
+}
+
+llvm::Expected<std::filesystem::path>
+translateCpp(SourcePatchCompilation &Result, llvm::StringRef Program,
+             const std::filesystem::path &Input,
+             const std::filesystem::path &Directory, llvm::StringRef Target,
+             const neverd_source_patch_options_v1 &Options,
+             std::vector<std::string> &CodegenArgs, unsigned Timeout) {
+  const auto Output = Directory / "translated.nc";
+  const auto Out = Directory / "translate.stdout";
+  const auto Err = Directory / "translate.stderr";
+  auto &Args = Result.TranslationArguments;
+  Args = {Program.str(),  "translate", "--from",        "cpp",
+          Input.string(), "--profile", "cpp-core-v2",   "--target",
+          Target.str(),   "-o",        Output.string(), "--",
+          "-std=c++17"};
+  std::vector<std::string> User;
+  if (auto Error = appendUserArguments(User, Options))
+    return std::move(Error);
+  for (size_t I = 0; I < User.size(); ++I) {
+    const llvm::StringRef Arg(User[I]);
+    if (Arg == "-D" || Arg == "-U") {
+      Args.push_back(User[I]);
+      Args.push_back(User[++I]);
+    } else if (Arg.starts_with("-D") || Arg.starts_with("-U")) {
+      Args.push_back(User[I]);
+    } else if (Arg == "-std=c++17") {
+      continue;
+    } else if (Arg == "-fexceptions" || Arg == "-frtti") {
+      return compilerError("NeverC cpp-core-v2 does not admit C++ exceptions "
+                           "or RTTI; select the Clang C++ profile");
+    } else if (Arg.starts_with("-std=") || Arg.starts_with("-I") ||
+               Arg == "-isystem" || Arg == "-iquote" || Arg == "-include" ||
+               Arg == "-isysroot" || Arg.starts_with("--sysroot=")) {
+      return compilerError("NeverC cpp-core-v2 accepts C++17, macros and "
+                           "its embedded headers; unsupported option: " +
+                           Arg);
+    } else {
+      CodegenArgs.push_back(User[I]);
+    }
+  }
+  if (auto Error = execute(Args, Out, Err, Timeout))
+    return std::move(Error);
+  Result.Diagnostics += readText(Err);
+  Result.TranslationManifest = readText(Output.string() + ".manifest.json");
+  Result.TranslationMap = readText(Output.string() + ".map.json");
+  auto Parsed = llvm::json::parse(Result.TranslationManifest);
+  if (!Parsed)
+    return compilerError("invalid NeverC translation manifest: " +
+                         llvm::toString(Parsed.takeError()));
+  const auto *Manifest = Parsed->getAsObject();
+  const auto *ABI = Manifest ? Manifest->getObject("target") : nullptr;
+  const auto *Files =
+      Manifest ? Manifest->getArray("generated_files") : nullptr;
+  const auto *Dependencies =
+      Manifest ? Manifest->getArray("dependencies") : nullptr;
+  const auto *Exports = Manifest ? Manifest->getArray("exports") : nullptr;
+  if (!Manifest ||
+      Manifest->getString("schema") != "neverc.translate.manifest" ||
+      Manifest->getInteger("version") != 1 ||
+      Manifest->getInteger("protocol") != 1 ||
+      Manifest->getString("profile") != "cpp-core-v2" ||
+      Manifest->getInteger("profile_version") != 2 || !ABI ||
+      ABI->getString("triple") != Target ||
+      ABI->getInteger("pointer_bits") != 64 ||
+      ABI->getInteger("int_bits") != 32 ||
+      ABI->getBoolean("little_endian") != true || !Files || !Dependencies ||
+      !Exports)
+    return compilerError("NeverC translation manifest does not prove the "
+                         "requested C++ profile/target ABI");
+  auto Matches = [](const llvm::json::Array &Rows, llvm::StringRef Name,
+                    llvm::StringRef Hash) {
+    return llvm::count_if(Rows, [&](const auto &Value) {
+             const auto *Row = Value.getAsObject();
+             return Row && Row->getString("path") == Name &&
+                    Row->getString("sha256") == Hash;
+           }) == 1;
+  };
+  const std::string Generated = readText(Output);
+  if (Generated.empty() || Result.TranslationMap.empty() ||
+      !Matches(*Files, Output.filename().string(), digest(Generated)) ||
+      !Matches(*Files, Output.filename().string() + ".map.json",
+               digest(Result.TranslationMap)) ||
+      !Matches(*Dependencies, Input.filename().string(),
+               digest(readText(Input))))
+    return compilerError("NeverC translation artifacts/source do not match "
+                         "their manifest hashes");
+  for (size_t I = 0; I < Options.mapping_count; ++I) {
+    const llvm::StringRef Symbol =
+        Options.mappings[I].symbol ? Options.mappings[I].symbol : "";
+    if (!Symbol.empty() && llvm::count_if(*Exports, [&](const auto &Value) {
+                             const auto *Export = Value.getAsObject();
+                             return Export &&
+                                    Export->getString("name") == Symbol &&
+                                    Export->getBoolean("c_export") == true;
+                           }) != 1)
+      return compilerError("NeverC C++ patch entries require an exact "
+                           "extern \"C\" export: " +
+                           Symbol);
+  }
+  return Output;
+}
+
 } // namespace
 
 llvm::Expected<SourcePatchCompilation>
@@ -122,16 +233,20 @@ compileSourcePatch(llvm::StringRef Source,
                    const BinaryImage &Image) {
   const Arch Architecture = Image.Arch;
   const BinaryFormat Format = Image.Format;
-  if (Options.mode != NEVERD_SOURCE_PATCH_NORMAL)
-    return compilerError("dyncode requires a separate code-block adapter");
+  const bool DynCode = Options.mode == NEVERD_SOURCE_PATCH_DYNCODE;
+  const bool NeverC = Options.compiler == NEVERD_SOURCE_PATCH_NEVERC;
+  const bool NeverCCpp = NeverC && Options.language == NEVERD_SOURCE_PATCH_CXX;
   const bool Object = Options.artifact == NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   const bool GCC = Options.compiler == NEVERD_SOURCE_PATCH_GCC;
   if (GCC && !Object)
     return compilerError("GCC requires the native object artifact profile");
-  if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
-      Options.language != NEVERD_SOURCE_PATCH_C)
-    return compilerError(
-        "NeverC C++ source is not an admitted language profile");
+  if (NeverC && Architecture != Arch::X64 && Architecture != Arch::AArch64)
+    return compilerError("NeverC code generation requires x64 or ARM64");
+  if (DynCode && (!NeverC || !Object || Options.mapping_count != 1 ||
+                  !Options.mappings || !Options.mappings[0].symbol ||
+                  !*Options.mappings[0].symbol || Options.binding_count))
+    return compilerError("hosted dyncode requires NeverC, a native object, "
+                         "one explicit entry and no original bindings");
   if (!Object)
     if (auto Error = validateSourcePatchTarget(Architecture, Format))
       return std::move(Error);
@@ -157,7 +272,7 @@ compileSourcePatch(llvm::StringRef Source,
     std::error_code Ignored;
     std::filesystem::remove_all(TempDir, Ignored);
   });
-  const auto Input = TempDir / "source";
+  auto Input = TempDir / (NeverCCpp ? "source.cpp" : "source");
   const auto Output = TempDir / (Object ? "output.o" : "output.ll");
   const auto Stdout = TempDir / "stdout";
   const auto Stderr = TempDir / "stderr";
@@ -191,6 +306,8 @@ compileSourcePatch(llvm::StringRef Source,
 
   auto &Args = Result.Arguments;
   Args = {*Program, "-O2"};
+  if (NeverC)
+    Args.push_back("--no-default-config");
   Args.push_back("-funwind-tables");
   if (!GCC)
     Args.push_back("-fno-discard-value-names");
@@ -231,13 +348,21 @@ compileSourcePatch(llvm::StringRef Source,
     }
   }
 #endif
-  if (Options.source_name && *Options.source_name) {
+  if (!NeverCCpp && Options.source_name && *Options.source_name) {
     auto Parent = std::filesystem::absolute(Options.source_name).parent_path();
     Args.push_back("-iquote");
     Args.push_back(Parent.string());
   }
-  if (auto Error = appendUserArguments(Args, Options))
+  if (NeverCCpp) {
+    auto Translated = translateCpp(Result, *Program, Input, TempDir, *Target,
+                                   Options, Args, Timeout);
+    if (!Translated)
+      return Translated.takeError();
+    Input = *Translated;
+    Args.push_back("-std=c23");
+  } else if (auto Error = appendUserArguments(Args, Options)) {
     return std::move(Error);
+  }
   if (!GCC) {
     // Darwin's driver accepts an ARM CPU spelling and selects Thumb with
     // -mthumb. The resulting IR/backend triple still carries the Thumb state.
@@ -257,7 +382,13 @@ compileSourcePatch(llvm::StringRef Source,
     // instead of stripping linker contracts from a supplied COFF object.
     Args.push_back("-fno-autolink");
   }
-  if (Object) {
+  if (DynCode) {
+    Args.insert(Args.end(),
+                {"-fdyncode", "-fdyncode-hosted",
+                 "-fdyncode-entry=" + std::string(Options.mappings[0].symbol),
+                 "-fdyncode-keep-obj=" + Output.string(),
+                 "-fdyncode-report=" + (TempDir / "dyncode.json").string()});
+  } else if (Object) {
     if (Format != BinaryFormat::COFF)
       Args.push_back("-fPIC");
     if (Format == BinaryFormat::COFF)
@@ -274,16 +405,28 @@ compileSourcePatch(llvm::StringRef Source,
     Args.push_back("-emit-llvm");
     Args.push_back("-S");
   }
-  Args.insert(Args.end(),
-              {"-x", Options.language == NEVERD_SOURCE_PATCH_CXX ? "c++" : "c",
-               "-o", Output.string(), Input.string()});
+  Args.insert(
+      Args.end(),
+      {"-x",
+       !NeverCCpp && Options.language == NEVERD_SOURCE_PATCH_CXX ? "c++" : "c",
+       "-o", (DynCode ? TempDir / "payload.bin" : Output).string(),
+       Input.string()});
   if (auto Error = execute(Args, Stdout, Stderr, Timeout))
     return std::move(Error);
-  Result.Diagnostics = readText(Stderr);
+  Result.Diagnostics += readText(Stderr);
   auto Product = llvm::MemoryBuffer::getFile(Output.string());
   if (!Product)
     return compilerError("compiler did not produce the requested artifact");
   Result.Bytes = (*Product)->getBuffer().str();
+  if (DynCode) {
+    DynCodePatchEvidence Evidence;
+    Evidence.Payload = readText(TempDir / "payload.bin");
+    Evidence.Audit = readText(TempDir / "dyncode.json");
+    if (Evidence.Payload.empty() || Evidence.Audit.empty())
+      return compilerError(
+          "NeverC did not produce hosted DynCode payload/audit");
+    Result.DynCode = std::move(Evidence);
+  }
   return Result;
 }
 

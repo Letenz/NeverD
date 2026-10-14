@@ -410,6 +410,50 @@ TEST(MedCxxContinuationFrame, CatchResumeAndNormalPathAddressTheSameLocal) {
   EXPECT_EQ(Loads, 2u);
 }
 
+TEST(MedCxxContinuationFrame, ProtectedSourcesFollowCompactedBlockIdentities) {
+  for (bool Synchronous : {false, true}) {
+    SCOPED_TRACE(Synchronous);
+    auto Image = makeFixedSEHFrameImage();
+    auto &Code = Image.Segments.front().Data;
+    Code.resize(0x101, 0xcc);
+    Code[0x100] = 0xc3;
+    // RDI changes before the throwing call, through two removable jump blocks.
+    const uint8_t SetRDI[] = {0x48, 0xc7, 0xc7, 0x55, 0, 0, 0};
+    std::copy(std::begin(SetRDI), std::end(SetRDI), Code.begin() + 8);
+    Code[0xf] = 0x90;
+    const uint8_t Path[] = {0xeb, 2,    0xcc, 0xcc, 0xeb, 2,    0xcc, 0xcc,
+                            0xe8, 0xe3, 0,    0,    0,    0xeb, 0x11};
+    std::copy(std::begin(Path), std::end(Path), Code.begin() + 0x10);
+    // The resumed catch observes the nonvolatile value at the throwing call.
+    const uint8_t Handler[] = {0x48, 0x89, 0x7c, 0x24, 0x24, 0xeb, 9};
+    std::copy(std::begin(Handler), std::end(Handler), Code.begin() + 0x20);
+    Image.ExceptionMetadata.Functions.front().SEH->Scopes.front().GuardedRange =
+        {Image.Entry + 0x18, Image.Entry + 0x1d};
+    auto Low = makeFixedCxxContinuationFrame(Image);
+    auto &Cxx = *Low.ExceptionMetadata->Cxx;
+    Cxx.IsSynchronous = Synchronous;
+    Cxx.IPMap = {
+        {Low.Entry, -1}, {Low.Entry + 0x18, 0}, {Low.Entry + 0x1d, -1}};
+    if (Synchronous)
+      for (auto &Block : Low.Blocks)
+        for (auto &Edge : Block.ExceptionalSuccs)
+          Edge.SourceVA = Low.Entry + 0x18;
+    auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+    ASSERT_TRUE(verifyMedFunc(Med, "compacted-cxx-frame"));
+    EXPECT_LT(Med.Blocks.size(), Low.Blocks.size());
+    bool Observed = false;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::STORE && Op.Addr == Low.Entry + 0x20) {
+          Observed = true;
+          EXPECT_EQ(entrySPOffset(Med, Op.Inputs[0]), -100);
+          ASSERT_TRUE(Op.Inputs[1].isConst()) << Op.Inputs[1].display();
+          EXPECT_EQ(Op.Inputs[1].ConstVal, 0x55u);
+        }
+    EXPECT_TRUE(Observed);
+  }
+}
+
 TEST(MedCxxContinuationFrame, SynchronousFrameStillChecksTheThrowingPrefix) {
   for (unsigned Variant = 0; Variant < 3; ++Variant) {
     SCOPED_TRACE(Variant);

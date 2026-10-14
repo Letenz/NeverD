@@ -15,6 +15,12 @@ architettura interna.
 
 `sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive.
 
+`SourcePatchCompiler` combina NeverC `cpp-core-v2` e C23; `validateDynCodePatchImage` lega l’audit a hash, codice e ingresso reali. Gli installatori registrano unwind reale. ARM64 FH3 usa limiti xdata del loader e gruppi funclet/FuncInfo MC. Senza DWARF originale, record compact nativi devono coprire tutte le funzioni Mach-O.
+
+`CompiledImage` normalizza una sola volta gli specificatori ELF AArch64 con due punti per la risoluzione effettiva e i fixup registrati. Il resolver ELF e la pubblicazione delle rilocazioni condividono identità ABS/GOT esatte; TLS e forme sconosciute restano rifiutati. COFF può usare limiti nativi decodificati delle funzioni runtime; il codice hosted richiede copertura unwind completa del compilatore.
+
+Gli argomenti recuperati delle chiamate indirette mantengono gruppi separati di registri interi e in virgola mobile, seguiti dai restanti byte dello stack. `LLVMCallContract` usa lo stesso associatore durante l’emissione e dopo la risoluzione del destinatario LLVM: i registri in eccesso non spostano un altro gruppo e le scritture compattate a 32 bit vengono unite negli slot completi del destinatario. Una tabella di callback non sostituisce il primo argomento già recuperato con un presunto puntatore a oggetto. Le tabelle AArch64 inizializzate tramite copia autenticano BL nativo, identità dell’importazione, lunghezza MOVZ, sorgente ADRP/ADD e intero intervallo immutabile; pubblicazione e riesame delle prove verificano lo stesso testimone.
+
 ## Confine del sistema
 
 ```mermaid

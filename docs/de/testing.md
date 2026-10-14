@@ -10,6 +10,8 @@ Fixture und bewahrt generierter Code das Verhalten? Wählen Sie die kleinste
 Suite, die die Frage der Änderung beantwortet, und führen Sie vor einem
 risikoreichen Pull Request das breitere Aggregat aus.
 
+`PipelineOutcome.ResolvedCalls*` prüft Registergruppen, call/invoke-Identität, Zusammenfügen und Aufteilen von Stackbytes sowie die Ablehnung fehlender Bytes. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` deckt x64, ARM32 und AArch64 für ELF, PE und Mach-O ab. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` prüft alle drei Formate und verwirft überschriebene Längen, beschreibbare oder zu große Bereiche, gleichnamige lokale Funktionen, falsche Quellregister, alternative Einstiege und verschiebbare Objektdateien. C-Differenztests kompilieren die Referenz separat mit O0 und den erzeugten C-Code mit O2, damit ein fehlerhaft optimierter Rekurrenzwert des Hostcompilers die Referenz nicht verfälscht. Der AArch64-FMA-Test fordert `-mfma` nur auf x86-Hosts an.
+
 ## Test-Build konfigurieren
 
 Tests sind deaktiviert, sofern `BUILD_TESTING` nicht aktiv ist. Release ist die
@@ -1884,6 +1886,16 @@ Die geprüfte KVM-x64-Ausführung übergibt die vollständige Befehlsschleife mi
 Der Windows-Workflow für Quellpatches führt außerdem `scripts/check_source_patch_pe_runtime.py` aus: drei Originale und 27 Ersetzungen für x86/x64/ARM64, danach 30 Prozessbeobachtungen je Architektur. x86/x64 verwenden Windows x64, ARM64 verwendet `windows-11-arm`. Commit, PE-Architektur, Dateihashes und vollständiges Inventar müssen übereinstimmen. Dieses C-Profil prüft keine ARM64-C++-Exceptions. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` wählt den normalen NeverC-Modus. Die 66 Prüfungen mit 3389.1.5 decken x64/ARM64 mit ELF, PE und Mach-O ab; x86/ARM32 sind nicht unterstützt und es gibt keinen automatischen Compilerwechsel. Der PE-Adapter verwendet `-fno-autolink`; externe `.drectve`-Objekte bleiben abgelehnt.
 
 Die Matrix vergleicht auch die `target`-Belege kompilierter und bereitgestellter nativer Objekte mit einem unabhängigen ABI-Verzeichnis. Nach den fehlerhaften Eingaben müssen die Tests das unveränderte Objekt als gültige Kontrolle installieren und ausführen.
+
+`NeverCProfiles/*` ergänzt 30 Tests in sechs x64/ARM64-Profilen: C++ IR/Objekte/hosted DynCode, nicht-inline Helfer, Rekursion und Ablehnung unzulässigen C++. `NeverDSourcePatchDynCodeTests` lehnt gefälschte Hashes, Einstiege, Ziele, Zustände und Prüfungen ab. `SourcePatchException.NeverC*` testet echte Lebenszeiten und Exceptions durch zwei Frames. Windows verlangt neun Patch-Szenarien, Originalkontrollen, drei Wiederholungen sowie passende Maschine, Commit, Hashes und native x64/ARM64-Hosts.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+Die native Prüfung verwendet NeverC-Revision `182fd2c5dc`, unabhängig kompilierte Originale und den aktuellen NeverD-Installer. `check_source_patch_hosted_pe_runtime.py` verlangt pro Architektur 36 native Windows-Beobachtungen für C++-Lebensdauern über IR/Objekte/hosted und einen Ausnahme-Callback durch zwei hosted-Rahmen. `check_source_patch_elf_runtime.py` verlangt pro Architektur 66 native Linux-Beobachtungen für C++-IR/Objekte/hosted, hosted-Weitergabe und neun Clang-Ausnahmeszenarien. Belege, Artefakthashes und tatsächliche Hostarchitektur müssen übereinstimmen. Die Prüfungen installieren echte Compilerausgaben; sie behaupten keine Ausführung von NeverC auf dem CI-Host.
+
+Die native Prüfung [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) bestand alle 204 Beobachtungen: je 36 auf Windows x64/ARM64 und je 66 auf Linux x64/ARM64. Die öffentliche Quellcode-API erzeugte C++-IR, normale Objekte und C++ hosted DynCode sowie einen Ausnahme-Callback durch zwei NeverC-Rahmen. Die Wiederholung prüft aktuellen Quellcode-/Submodul-Digest, ursprüngliche und finale Bytes, Belege und tatsächlichen nativen Host. macOS ARM64 und Rosetta x64 bestanden dieselben drei C++-Pfade und die lokale Weitergabe. Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) bestand zusätzlich neun Ausnahmeszenarien mit Kontrollen, je 36 Beobachtungen auf Windows x64/ARM64.
 
 `InterpreterSpecialization.HighAddress*` und `BinaryLowIRRefinement.HighAddress*` prüfen hohe Adressen, überlappende Instruktionsbereiche, CALL-Rückkehrbytes, Stapelwiederherstellung, Daten mit Label-Werten, ungültigen oder fehlenden Code sowie genaue und zu knappe Budgets. Ein unabhängiger Byte-Interpreter und ein verändertes Rückkehrwort als Gegenprobe unterscheiden Laufzeitwerte von Labels.
 

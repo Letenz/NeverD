@@ -150,6 +150,9 @@ TransferResult fetchURL(const std::string &URL,
     if (Progress)
       Progress(Received, Total);
   }
+  Out.close();
+  if (!Out)
+    return {0, "cannot write " + pathToUTF8(File)};
   return {static_cast<long>(Status), {}};
 }
 

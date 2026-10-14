@@ -15,6 +15,12 @@ leur propre architecture interne.
 
 `sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles.
 
+`SourcePatchCompiler` compose NeverC `cpp-core-v2` et C23 ; `validateDynCodePatchImage` lie l’audit aux empreintes, octets et entrée réels. Les installateurs enregistrent les vrais records de déroulage. ARM64 FH3 utilise les limites xdata du chargeur et les groupes funclet/FuncInfo du MC. Sans DWARF original, tous les cadres Mach-O doivent avoir des records compacts natifs.
+
+`CompiledImage` normalise une seule fois les spécificateurs ELF AArch64 à deux-points pour la résolution réelle et les fixups capturés. Le résolveur ELF et la publication des relocations utilisent les mêmes identités ABS/GOT exactes ; TLS et formes inconnues restent refusés. COFF peut utiliser les limites des fonctions natives décodées, mais le code hosted exige une couverture complète des records de déroulage du compilateur.
+
+Les arguments des appels indirects conservent des groupes distincts de registres entiers et flottants, puis les octets de pile restants. `LLVMCallContract` utilise le même lieur à l’émission et après résolution de la cible LLVM : les registres superflus ne décalent pas un autre groupe et les écritures compactées de 32 bits sont assemblées dans les emplacements complets du destinataire. Une table de rappels ne remplace jamais un premier argument déjà récupéré par un pointeur d’objet supposé. Les tables AArch64 initialisées par copie authentifient le BL natif, l’import, la longueur MOVZ, la source ADRP/ADD et toute la plage immuable ; publication et rejeu des preuves vérifient le même témoin.
+
 ## Frontière du système
 
 ```mermaid

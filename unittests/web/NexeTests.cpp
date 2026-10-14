@@ -14,6 +14,7 @@
 #include "JsonReader.h"
 #include "NativeFixture.h"
 #include "NexeFixture.h"
+#include "ProducerCorpus.h"
 #include "gtest/gtest.h"
 
 #include "neverd/web/Error.h"
@@ -30,6 +31,7 @@ using namespace neverd::web::nexe_test;
 class WebNexe : public ::testing::Test {
 protected:
   void SetUp() override {
+    ASSERT_TRUE(test::producerPrerequisite(nexeAvailable(), "nexe namespace"));
     if (!nexeAvailable())
       GTEST_SKIP() << "Pinned portable namespace policy unavailable";
   }
@@ -251,7 +253,8 @@ TEST_F(WebNexe, BootstrapIndexMemberAndComparisonBudgetsRefuse) {
 }
 TEST_F(WebNexe, OptionalPinnedProducerImagesPreserveIndependentInputs) {
   const auto *Root = std::getenv("NEVERD_NEXE_4RC7_CORPUS");
-  if (!Root)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_NEXE_4RC7_CORPUS", Root));
+  if (!Root || !*Root)
     GTEST_SKIP()
         << "Set NEVERD_NEXE_4RC7_CORPUS to the pinned producer outputs";
   std::ifstream F(std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) /

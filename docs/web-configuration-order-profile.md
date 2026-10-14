@@ -88,6 +88,11 @@ objects, 3,702 terms and 32 fields with possible later overwrites. Named loading
 links remain zero. The two profiles keep separate source/analysis identities;
 these extra syntax candidates do not establish effective configuration policy.
 The supplemental receipt is `/tmp/neverd-large-source-full-client.xml`.
+The independent [configuration file navigation profile](web-configuration-file-profile.md)
+now retains actual file/layer literal sites and local lexical call relationships
+through minified names. Its 973 sites, 592 call candidates and 69 arrays do not
+change this profile's named-call grammar, object order or zero named-loader
+count, and do not establish file-layer precedence.
 
 Two preserved decoded files provide narrower selections. Module 1676 has
 SHA-256 `c377d5191165ae221a042d4ea22bd3333969097edb10eb0ef6791610378324da`,

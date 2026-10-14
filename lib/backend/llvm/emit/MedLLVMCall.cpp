@@ -36,6 +36,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <string>
@@ -44,6 +45,41 @@
 namespace neverd {
 
 namespace {
+constexpr llvm::StringLiteral ArgumentBanks = "neverd.argument-banks";
+
+std::optional<std::pair<unsigned, unsigned>>
+argumentBanks(const llvm::Function &Function) {
+  const auto Attribute = Function.getFnAttribute(ArgumentBanks);
+  if (!Attribute.isStringAttribute())
+    return std::nullopt;
+  auto Parts = Attribute.getValueAsString().split(',');
+  unsigned Integers, Floating;
+  if (Parts.first.getAsInteger(10, Integers) ||
+      Parts.second.getAsInteger(10, Floating) ||
+      Integers > Function.arg_size() ||
+      Floating > Function.arg_size() - Integers)
+    return std::nullopt;
+  return std::pair{Integers, Floating};
+}
+
+std::optional<std::pair<unsigned, unsigned>>
+argumentBanks(const llvm::CallBase &Call) {
+  const auto *Node = Call.getMetadata(ArgumentBanks);
+  if (!Node || Node->getNumOperands() != 2)
+    return std::nullopt;
+  const auto *Integers =
+      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(0));
+  const auto *Floating =
+      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(1));
+  if (!Integers || !Floating || Integers->getBitWidth() != 32 ||
+      Floating->getBitWidth() != 32 ||
+      Integers->getZExtValue() > Call.arg_size() ||
+      Floating->getZExtValue() > Call.arg_size() - Integers->getZExtValue())
+    return std::nullopt;
+  return std::pair{static_cast<unsigned>(Integers->getZExtValue()),
+                   static_cast<unsigned>(Floating->getZExtValue())};
+}
+
 llvm::GlobalValue *constantCallIdentity(llvm::Value *Value,
                                         const llvm::DataLayout &Layout,
                                         unsigned PointerBits) {
@@ -93,6 +129,126 @@ llvm::GlobalValue *constantCallIdentity(llvm::Value *Value,
 }
 } // namespace
 
+void setLLVMArgumentBanks(llvm::Function &Function, unsigned Integers,
+                          unsigned Floating) {
+  Function.addFnAttr(ArgumentBanks,
+                     std::to_string(Integers) + "," + std::to_string(Floating));
+}
+
+void setLLVMArgumentBanks(llvm::CallBase &Call, unsigned Integers,
+                          unsigned Floating) {
+  llvm::IRBuilder<> Builder(Call.getContext());
+  Call.setMetadata(
+      ArgumentBanks,
+      llvm::MDNode::get(
+          Call.getContext(),
+          {llvm::ConstantAsMetadata::get(Builder.getInt32(Integers)),
+           llvm::ConstantAsMetadata::get(Builder.getInt32(Floating))}));
+}
+
+std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
+    const llvm::Function &Target, llvm::ArrayRef<llvm::Value *> Values,
+    unsigned Integers, unsigned Floating, llvm::IRBuilderBase &Builder) {
+  const auto Banks = argumentBanks(Target);
+  const unsigned Count = Values.size();
+  const unsigned Fixed = Target.arg_size();
+  if (!Banks || Target.isVarArg() || Integers > Count ||
+      Floating > Count - Integers)
+    return std::nullopt;
+  const auto [WantedIntegers, WantedFloating] = *Banks;
+  if (WantedIntegers > Integers || WantedFloating > Floating)
+    return std::nullopt;
+  LLVMArgumentBinding Binding;
+  auto Append = [&](unsigned I) {
+    Binding.Values.push_back(Values[I]);
+    Binding.SourceIndices.push_back(I);
+  };
+  for (unsigned I = 0; I < WantedIntegers; ++I)
+    Append(I);
+  for (unsigned I = 0; I < WantedFloating; ++I)
+    Append(Integers + I);
+
+  // Stack recovery records a contiguous run of physical bytes. Its stores
+  // need not have the callee's load widths: Darwin packs two overflow floats
+  // into one eight-byte incoming slot. Bind bytes, not argument counts, and
+  // never fill an unproved missing byte with zero.
+  const auto &Layout = Target.getParent()->getDataLayout();
+  auto Bits = [&](llvm::Type *Type) -> unsigned {
+    if (!Type->isSingleValueType() || !Type->isSized())
+      return 0;
+    const auto Size = Layout.getTypeSizeInBits(Type);
+    return Size.isScalable() ? 0 : Size.getFixedValue();
+  };
+  struct Slice {
+    unsigned Index, Offset, Bits;
+  };
+  std::vector<std::vector<Slice>> Slots;
+  unsigned Index = Integers + Floating, Offset = 0;
+  for (unsigned I = WantedIntegers + WantedFloating; I < Fixed; ++I) {
+    unsigned Remaining = Bits(Target.getFunctionType()->getParamType(I));
+    if (!Remaining)
+      return std::nullopt;
+    std::vector<Slice> Slices;
+    while (Remaining) {
+      if (Index >= Count)
+        return std::nullopt;
+      const unsigned Available = Bits(Values[Index]->getType());
+      if (!Available || Offset >= Available)
+        return std::nullopt;
+      const unsigned Take = std::min(Remaining, Available - Offset);
+      Slices.push_back({Index, Offset, Take});
+      Remaining -= Take;
+      Offset += Take;
+      if (Offset == Available) {
+        ++Index;
+        Offset = 0;
+      }
+    }
+    Slots.push_back(std::move(Slices));
+  }
+  if (!Slots.empty() && !Layout.isLittleEndian())
+    return std::nullopt;
+  llvm::IRBuilder<> Pack(Builder.getContext());
+  Pack.restoreIP(Builder.saveIP());
+  for (const auto &Slices : Slots) {
+    auto *Wanted =
+        Target.getFunctionType()->getParamType(Binding.Values.size());
+    const bool Whole =
+        Slices.size() == 1 && Slices[0].Offset == 0 &&
+        Slices[0].Bits == Bits(Values[Slices[0].Index]->getType());
+    if (Whole && Values[Slices[0].Index]->getType() == Wanted) {
+      Append(Slices[0].Index);
+      continue;
+    }
+    auto *Integer = Pack.getIntNTy(Bits(Wanted));
+    llvm::Value *Packed = llvm::ConstantInt::get(Integer, 0);
+    unsigned Shift = 0;
+    for (const auto &Slice : Slices) {
+      auto *Value = Values[Slice.Index];
+      auto *SourceInteger = Pack.getIntNTy(Bits(Value->getType()));
+      if (Value->getType()->isPointerTy())
+        Value = Pack.CreatePtrToInt(Value, SourceInteger);
+      else if (!Value->getType()->isIntegerTy())
+        Value = Pack.CreateBitCast(Value, SourceInteger);
+      if (Slice.Offset)
+        Value = Pack.CreateLShr(Value, Slice.Offset);
+      Value = Pack.CreateZExtOrTrunc(Value, Pack.getIntNTy(Slice.Bits));
+      Value = Pack.CreateZExtOrTrunc(Value, Integer);
+      if (Shift)
+        Value = Pack.CreateShl(Value, Shift);
+      Packed = Pack.CreateOr(Packed, Value);
+      Shift += Slice.Bits;
+    }
+    if (Wanted->isPointerTy())
+      Packed = Pack.CreateIntToPtr(Packed, Wanted);
+    else if (Packed->getType() != Wanted)
+      Packed = Pack.CreateBitCast(Packed, Wanted);
+    Binding.Values.push_back(Packed);
+    Binding.SourceIndices.push_back(Whole ? int(Slices[0].Index) : -1);
+  }
+  return Binding;
+}
+
 bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
   const auto &Layout = Module.getDataLayout();
   const unsigned PointerBits = Layout.getPointerSizeInBits();
@@ -136,31 +292,50 @@ bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
     };
     auto *Type = Target->getFunctionType();
     const unsigned Fixed = Type->getNumParams();
-    if (Call->arg_size() < Fixed)
-      return Refuse("lacks recovered arguments");
     auto *Ordinary = llvm::dyn_cast<llvm::CallInst>(Call);
     auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Call);
     if ((!Ordinary && !Invoke) || Call->isMustTailCall() ||
         Call->getCallingConv() != Target->getCallingConv())
       return Refuse("has an incompatible calling convention or control flow");
+    llvm::IRBuilder<> Builder(Call);
+    std::vector<int> Indices;
+    std::vector<llvm::Value *> Values;
+    for (unsigned I = 0; I < Call->arg_size(); ++I) {
+      Indices.push_back(I);
+      Values.push_back(Call->getArgOperand(I));
+    }
+    const auto CallerBanks = argumentBanks(*Call);
+    const auto TargetBanks = argumentBanks(*Target);
+    if (CallerBanks && TargetBanks && !Target->isVarArg()) {
+      auto Bound = bindResolvedLLVMArguments(
+          *Target, Values, CallerBanks->first, CallerBanks->second, Builder);
+      if (!Bound)
+        return Refuse("lacks recovered argument bank or stack values");
+      Indices = std::move(Bound->SourceIndices);
+      Values = std::move(Bound->Values);
+    }
+    if (Values.size() < Fixed)
+      return Refuse("lacks recovered arguments");
     for (unsigned I = 0; I < Fixed; ++I)
-      if (!Compatible(Call->getArgOperand(I)->getType(), Type->getParamType(I)))
+      if (!Compatible(Values[I]->getType(), Type->getParamType(I)))
         return Refuse("has incompatible argument carriers");
     if (!Call->use_empty() &&
         (!Compatible(Type->getReturnType(), Call->getType()) ||
          (Invoke && Type->getReturnType() != Call->getType())))
       return Refuse("has an incompatible observed result");
 
-    llvm::IRBuilder<> Builder(Call);
     std::vector<llvm::Value *> Arguments;
     llvm::SmallVector<llvm::AttributeSet> ParameterAttrs;
     const unsigned Count = Type->isVarArg() ? Call->arg_size() : Fixed;
     for (unsigned I = 0; I < Count; ++I) {
-      auto *Value = Call->getArgOperand(I);
+      const int SourceIndex = Indices[I];
+      auto *Value = Values[I];
       auto *Wanted = I < Fixed ? Type->getParamType(I) : Value->getType();
-      ParameterAttrs.push_back(Value->getType() == Wanted
-                                   ? Call->getAttributes().getParamAttrs(I)
-                                   : llvm::AttributeSet{});
+      ParameterAttrs.push_back(
+          SourceIndex >= 0 && Value->getType() == Wanted &&
+                  Value == Call->getArgOperand(SourceIndex)
+              ? Call->getAttributes().getParamAttrs(SourceIndex)
+              : llvm::AttributeSet{});
       Arguments.push_back(Convert(Builder, Value, Wanted));
     }
     llvm::SmallVector<llvm::OperandBundleDef> Bundles;
@@ -184,6 +359,9 @@ bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
                                      : llvm::AttributeSet{},
                                  ParameterAttrs));
     Replacement->copyMetadata(*Call);
+    if (CallerBanks && TargetBanks && !Target->isVarArg())
+      setLLVMArgumentBanks(*Replacement, TargetBanks->first,
+                           TargetBanks->second);
     if (Replacement->getType() != Call->getType())
       for (unsigned Kind :
            {llvm::LLVMContext::MD_range, llvm::LLVMContext::MD_nonnull,
@@ -793,6 +971,27 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   if (!Callee && Target)
     Callee = llvm::dyn_cast_or_null<llvm::Function>(KnownTarget);
+  std::vector<int> ArgumentIndices;
+  for (unsigned I = 0; I < Args.size(); ++I)
+    ArgumentIndices.push_back(I);
+  bool BoundArgumentBanks = false;
+  if (Target && Callee && CI && CI->IntegerRegisterArgCount >= 0 &&
+      CI->FloatingRegisterArgCount >= 0 && argumentBanks(*Callee) &&
+      !Callee->isVarArg()) {
+    auto Bound =
+        bindResolvedLLVMArguments(*Callee, Args, CI->IntegerRegisterArgCount,
+                                  CI->FloatingRegisterArgCount, Builder);
+    if (!Bound) {
+      syncError() << "med_llvm_emitter: resolved indirect call to "
+                  << Callee->getName()
+                  << " lacks recovered argument bank or stack values\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+    ArgumentIndices = std::move(Bound->SourceIndices);
+    Args = std::move(Bound->Values);
+    BoundArgumentBanks = true;
+  }
   if (Target && Callee && Args.size() < Callee->arg_size()) {
     syncError() << "med_llvm_emitter: resolved indirect call to "
                 << Callee->getName() << " lacks recovered arguments\n";
@@ -832,13 +1031,15 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         // a structurally recovered signature valid. Runs before the
         // type-mismatch block so a same-width (i64==i64) pointer arg is
         // symbolized too.
+        const int SourceIndex = ArgumentIndices[AI];
         if (unsigned PtrSz = getTargetRegInfo(TargetArch).PointerSize;
             Want->isIntegerTy() && AV->getType()->isIntegerTy() && CI &&
-            AI < CI->Args.size() && PtrSz &&
+            SourceIndex >= 0 &&
+            static_cast<size_t>(SourceIndex) < CI->Args.size() && PtrSz &&
             FixedKind != libc::VarArgFixedParamKind::Integer &&
             Want->getIntegerBitWidth() == PtrSz * 8)
           if (llvm::Value *Sym = tryResolvePointerArg(
-                  CI->Args[AI], /*FailClosed=*/false, Builder))
+                  CI->Args[SourceIndex], /*FailClosed=*/false, Builder))
             AV = Builder.CreatePtrToInt(Sym, Want);
         if (AV->getType() != Want) {
           llvm::Type *AT = AV->getType();
@@ -852,8 +1053,9 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
             // dereferences the recompiled global rather than a stale absolute
             // table VA.
             llvm::Value *Sym = nullptr;
-            if (CI && AI < CI->Args.size())
-              Sym = tryResolvePointerArg(CI->Args[AI],
+            if (CI && SourceIndex >= 0 &&
+                static_cast<size_t>(SourceIndex) < CI->Args.size())
+              Sym = tryResolvePointerArg(CI->Args[SourceIndex],
                                          /*FailClosed=*/true, Builder);
             AV = Sym ? Sym : Builder.CreateIntToPtr(AV, Want);
           } else if (AT->isPointerTy() && Want->isIntegerTy()) {
@@ -1038,8 +1240,21 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       Op.Addr != InvalidVA && Op.OriginSeq >= 0)
     SourceMap->Observations.push_back(
         {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, Result});
-  if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallBase>(Result))
+  if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallBase>(Result)) {
     AttachSafetyCallsite(*Emitted);
+    if (BoundArgumentBanks) {
+      const auto Banks = argumentBanks(*Callee);
+      setLLVMArgumentBanks(*Emitted, Banks->first, Banks->second);
+    } else if (CI && CI->IntegerRegisterArgCount >= 0 &&
+               CI->FloatingRegisterArgCount >= 0 &&
+               static_cast<unsigned>(CI->IntegerRegisterArgCount) <=
+                   Emitted->arg_size() &&
+               static_cast<unsigned>(CI->FloatingRegisterArgCount) <=
+                   Emitted->arg_size() - CI->IntegerRegisterArgCount) {
+      setLLVMArgumentBanks(*Emitted, CI->IntegerRegisterArgCount,
+                           CI->FloatingRegisterArgCount);
+    }
+  }
   if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallInst>(Result)) {
     llvm::Metadata *Address = llvm::ConstantAsMetadata::get(
         llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Op.Addr));

@@ -276,7 +276,7 @@ Heartbeat retains its native fields and adds
 | `web_source_view_records` | Exact `revision`, `view_id`, optional page fields; metadata mapping original/projected regions, also available before commit |
 | `web_source_view_chunk` | Exact `revision`, committed `view_id`, canonical decimal-string `byte_offset`, optional integer `byte_limit:65536` (1–65536); UTF-8/CRLF-aligned inert text |
 | `web_source_navigation_analyze` | Exact `revision`, `source_id`; source containment index with explicit lexical/runtime uncertainty |
-| `web_source_navigation_records` | Exact `revision`, `source_id`, `record_kind: functions/calls/references`, optional page fields; source spans and identity links, no raw names |
+| `web_source_navigation_records` | Exact `revision`, `source_id`, `record_kind: functions/calls/references/features/desktop_bridges/config_merges/config_files`, optional page fields; source spans and identity links, no raw names |
 | `web_source_anchor` | Exact `revision`, `source_id`, canonical decimal-string `byte_offset` and `byte_length`, optional committed `view_id`; source/storage/display range metadata only |
 | `web_native_open` | Exact `revision`, `selection_id` for an admitted original, Bun asset or available ASAR member; opens one independent snapshot-backed native session and returns metadata only |
 | `web_native_metadata` / `web_native_analyze` | Exact `revision`, current `handoff_id`; query captured provenance/counts or explicitly run static native analysis; no target execution |

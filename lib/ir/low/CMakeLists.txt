@@ -9,6 +9,8 @@ add_neverd_component_library(NeverDIRLowValidation
   SEHRuntimeMemory.cpp
   SEHEstablisherFrame.cpp
   X86/SEHFrameCRTControl.cpp
+  X86/SEHFrameFormat.cpp
+  Windows/SEHScalarFormat.cpp
   X87PartialRemainder.cpp
 
   LINK_COMPONENTS

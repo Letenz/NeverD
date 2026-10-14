@@ -1126,6 +1126,65 @@ neverd_web_pkg_records_json(neverd_web_session_t Session,
 #endif
 }
 
+const char *neverd_web_datapack_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *Profile, size_t ProfileSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.extractDataPack(buffer(ExpectedRevision, RevisionSize, 20),
+                             buffer(ArtifactID, ArtifactIDSize, 64),
+                             buffer(Profile, ProfileSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_datapack_records_json(neverd_web_session_t Session,
+                                             const char *ExpectedRevision,
+                                             size_t RevisionSize,
+                                             const char *ExtractionID,
+                                             size_t ExtractionIDSize,
+                                             uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.dataPackRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                             buffer(ExtractionID, ExtractionIDSize, 64), Offset,
+                             Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_datapack_decode_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ResourceID, size_t ResourceIDSize,
+    const char *Codec, size_t CodecSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.decodeDataPackResource(buffer(ExpectedRevision, RevisionSize, 20),
+                                    buffer(ResourceID, ResourceIDSize, 64),
+                                    buffer(Codec, CodecSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_datapack_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ExtractionID, size_t ExtractionIDSize,
+    const char *OutputDirectory, size_t DirectorySize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.exportDataPack(buffer(ExpectedRevision, RevisionSize, 20),
+                            buffer(ExtractionID, ExtractionIDSize, 64),
+                            buffer(OutputDirectory, DirectorySize, 32768));
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_tauri_extract_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,

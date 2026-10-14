@@ -12,6 +12,7 @@
 #include "SessionInternal.h"
 #include "desktop/bridge/Publication.h"
 #include "features/Publication.h"
+#include "features/configuration/FilesPublication.h"
 #include "features/configuration/Publication.h"
 
 namespace neverd::web {
@@ -19,6 +20,7 @@ namespace {
 llvm::json::Object summary(const SourceNavigation &A, const SourceFeatures &F,
                            const DesktopBridgeSource &Bridges,
                            const ConfigurationSourceOrder &Configuration,
+                           const ConfigurationFileNavigation &Files,
                            uint64_t Revision) {
   llvm::json::Array Diagnostics;
   for (const auto &D : A.Diagnostics)
@@ -39,6 +41,7 @@ llvm::json::Object summary(const SourceNavigation &A, const SourceFeatures &F,
       {"client_features", client_features::summary(F)},
       {"desktop_bridges", desktop_bridge::summary(Bridges)},
       {"configuration_order", configuration_order::summary(Configuration)},
+      {"configuration_files", configuration_files::summary(Files)},
       {"syntax_inventory_complete", A.Status == "ok" || A.Status == "partial"},
       {"reference_inventory_available",
        (A.Status == "ok" || A.Status == "partial") &&
@@ -65,7 +68,8 @@ std::string Session::analyzeSourceNavigation(std::string_view Revision,
   if (Existing != State->Navigation.end())
     return json(summary(Existing->second.Evidence, Existing->second.Features,
                         Existing->second.Bridges,
-                        Existing->second.Configuration, State->Revision));
+                        Existing->second.Configuration,
+                        Existing->second.ConfigurationFiles, State->Revision));
   auto Bindings = State->Bindings.find(Source->first);
   if (Bindings == State->Bindings.end())
     Bindings =
@@ -80,12 +84,15 @@ std::string Session::analyzeSourceNavigation(std::string_view Revision,
                                                  Bindings->second, Navigation);
   auto Configuration = web::analyzeConfigurationSourceOrder(
       Source->second, Bindings->second, Navigation, Features);
-  auto Reply = json(
-      summary(Navigation, Features, Bridges, Configuration, State->Revision));
+  auto Files = web::analyzeConfigurationFiles(Source->second, Bindings->second,
+                                              Navigation);
+  auto Reply = json(summary(Navigation, Features, Bridges, Configuration, Files,
+                            State->Revision));
   State->Navigation.emplace(
       Source->first,
       Impl::NavigationResults{std::move(Navigation), std::move(Features),
-                              std::move(Bridges), std::move(Configuration)});
+                              std::move(Bridges), std::move(Configuration),
+                              std::move(Files)});
   return Reply;
 #endif
 }
@@ -111,6 +118,7 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
   const auto &Features = Existing->second.Features;
   const auto &Bridges = Existing->second.Bridges;
   const auto &Configuration = Existing->second.Configuration;
+  const auto &Files = Existing->second.ConfigurationFiles;
   const auto &B = State->Bindings.at(Source->first);
   auto NodeID = [&](uint32_t I) -> llvm::json::Value {
     return I == NoSourceIndex ? llvm::json::Value(nullptr)
@@ -137,6 +145,8 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
     Count = Bridges.Calls.size();
   else if (Kind == "config_merges")
     Count = Configuration.Objects.size();
+  else if (Kind == "config_files")
+    Count = Files.Sites.size() + Files.Calls.size() + Files.Sequences.size();
   else
     throw Error("unsupported_navigation_record_kind");
   if (!Limit || Limit > 512 || Offset > Count)
@@ -187,6 +197,9 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
           {"syntactic_function_id", FunctionID(C.SyntacticFunction)},
           {"runtime_target", "not_proven"},
           {"optional", S.Nodes[Node].flag("optional")}};
+    } else if (Kind == "config_files") {
+      Items.emplace_back(configuration_files::record(Files, S, A, I));
+      continue;
     } else if (Kind == "config_merges") {
       const auto &O = Configuration.Objects[I];
       Node = O.Node;
@@ -217,7 +230,8 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
     Item["byte_length"] = std::to_string(N.End - N.Start);
     Items.emplace_back(std::move(Item));
   }
-  auto Reply = summary(A, Features, Bridges, Configuration, State->Revision);
+  auto Reply =
+      summary(A, Features, Bridges, Configuration, Files, State->Revision);
   Reply["record_kind"] = std::string(Kind);
   Reply["items"] = std::move(Items);
   Reply["offset"] = Offset;

@@ -225,6 +225,18 @@ public:
                          uint64_t Limit) const;
   std::string extractPkg(std::string_view ExpectedRevision,
                          std::string_view ArtifactID, std::string_view Profile);
+  std::string extractDataPack(std::string_view ExpectedRevision,
+                              std::string_view ArtifactID,
+                              std::string_view Profile);
+  std::string dataPackRecords(std::string_view ExpectedRevision,
+                              std::string_view ExtractionID, uint64_t Offset,
+                              uint64_t Limit) const;
+  std::string decodeDataPackResource(std::string_view ExpectedRevision,
+                                     std::string_view ResourceID,
+                                     std::string_view Codec);
+  std::string exportDataPack(std::string_view ExpectedRevision,
+                             std::string_view ExtractionID,
+                             std::string_view OutputDirectory);
   std::string pkgRecords(std::string_view ExpectedRevision,
                          std::string_view ExtractionID,
                          std::string_view RecordKind, uint64_t Offset,

@@ -13,6 +13,8 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
+#include <vector>
+
 namespace {
 using namespace neverd;
 
@@ -339,6 +341,77 @@ TEST(LLVMCFrameMemory, ExportedFrameAddressKeepsStoredBytes) {
   EXPECT_EQ(State.DeadFrameStores.count(Store), 0u);
   EXPECT_EQ(State.DeadFrameStores.count(Escape), 0u);
   EXPECT_EQ(State.DeadFrameAllocas.count(F.Frame), 0u);
+}
+
+/// Whether an escape of \p State passes on the address of \p Location.
+bool escapes(const LLVMCAnalysisState &State,
+             std::pair<const llvm::AllocaInst *, int64_t> Location) {
+  for (const auto &Escape : State.FrameEscapes)
+    if (Escape.Locations.count(Location))
+      return true;
+  return false;
+}
+
+bool escapesUnresolved(const LLVMCAnalysisState &State,
+                       const llvm::AllocaInst *Frame) {
+  for (const auto &Escape : State.FrameEscapes)
+    if (Escape.UnresolvedFrames.count(Frame))
+      return true;
+  return false;
+}
+
+/// `init(&s); return s.buf;`: a call fills a record the function hands it.
+llvm::Function *declareInit(FrameFixture &F) {
+  return llvm::Function::Create(
+      llvm::FunctionType::get(F.B.getVoidTy(), {F.B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "init", F.Module);
+}
+
+TEST(LLVMCFrameMemory, AFrameAddressPassedToACallEscapes) {
+  FrameFixture F;
+  F.B.CreateCall(declareInit(F), {F.address(F.Base, -16)});
+  F.B.CreateRet(F.B.CreateLoad(F.B.getInt32Ty(), F.address(F.Base, -8)));
+  LLVMCAnalysisState State;
+  analyzeDeadFrameStores(State, *F.Fn);
+  EXPECT_TRUE(escapes(State, {F.Frame, 56}));
+  EXPECT_FALSE(escapesUnresolved(State, F.Frame));
+}
+
+TEST(LLVMCFrameMemory, ACallMayReadEveryWordOfItsRecord) {
+  // The callee's record extends past any width this function shows.
+  FrameFixture F;
+  std::vector<llvm::StoreInst *> Stores;
+  for (int64_t Word = 0; Word < 4; ++Word)
+    Stores.push_back(F.B.CreateStore(F.B.getInt64(Word + 1),
+                                     F.address(F.Base, -40 + 8 * Word)));
+  F.B.CreateCall(declareInit(F), {F.address(F.Base, -40)});
+  F.B.CreateRet(F.B.getInt32(0));
+  LLVMCAnalysisState State;
+  analyzeDeadFrameStores(State, *F.Fn);
+  analyzeStoreForwarding(State, *F.Fn);
+  for (const llvm::StoreInst *Store : Stores)
+    EXPECT_EQ(State.DeadFrameStores.count(Store), 0u);
+}
+
+TEST(LLVMCFrameMemory, AnIndexedFrameAddressEscapesUnbounded) {
+  FrameFixture F;
+  auto *Index = F.B.CreateZExt(F.Fn->getArg(0), F.B.getInt64Ty());
+  auto *Element = F.B.CreateAdd(F.Base, F.B.CreateShl(Index, 3));
+  F.B.CreateCall(declareInit(F), {F.address(Element, -16)});
+  F.B.CreateRet(F.B.getInt32(0));
+  LLVMCAnalysisState State;
+  analyzeDeadFrameStores(State, *F.Fn);
+  EXPECT_TRUE(escapesUnresolved(State, F.Frame));
+}
+
+TEST(LLVMCFrameMemory, AFrameValuePassedToACallIsNoEscape) {
+  FrameFixture F;
+  auto *Value = F.B.CreateLoad(F.B.getInt64Ty(), F.address(F.Base, -16));
+  F.B.CreateCall(declareInit(F), {F.B.CreateIntToPtr(Value, F.B.getPtrTy())});
+  F.B.CreateRet(F.B.getInt32(0));
+  LLVMCAnalysisState State;
+  analyzeDeadFrameStores(State, *F.Fn);
+  EXPECT_TRUE(State.FrameEscapes.empty());
 }
 
 TEST(LLVMCFrameMemory, DeadResultKeepsObservableMemoryOperation) {

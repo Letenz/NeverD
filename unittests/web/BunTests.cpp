@@ -11,6 +11,7 @@
 
 #include "BunFixture.h"
 #include "Internal.h"
+#include "ProducerCorpus.h"
 #include "gtest/gtest.h"
 
 #include "neverd/web/Bun.h"
@@ -363,7 +364,8 @@ TEST_F(WebBun, PreservedCompilerGraphsMatchIndependentGoldenMemberRanges) {
 
 TEST_F(WebBun, FullCompilerContainersMatchRecordedGoldenHashesWhenSupplied) {
   const auto *Directory = std::getenv("NEVERD_BUN_142_CORPUS");
-  if (!Directory)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_BUN_142_CORPUS", Directory));
+  if (!Directory || !*Directory)
     GTEST_SKIP() << "Full pinned compiler corpus not supplied; preserved graph "
                     "checks remain independent";
   for (const auto Name :
@@ -422,7 +424,8 @@ TEST_F(WebBun, CrossPlatformCompilerGraphsMatchIndependentGoldenMemberRanges) {
 
 TEST_F(WebBun, CrossPlatformFullCompilerContainersWhenSupplied) {
   const auto *Directory = std::getenv("NEVERD_BUN_142_CROSS_CORPUS");
-  if (!Directory)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_BUN_142_CROSS_CORPUS", Directory));
+  if (!Directory || !*Directory)
     GTEST_SKIP() << "Full cross-platform Bun compiler corpus not supplied";
   for (const auto &T : CrossTargets)
     for (const char *Variant : {"plain", "utf16", "asset-map", "cache-map"}) {

@@ -8,6 +8,8 @@ NeverD 的测试回答三个不同问题：表示形状是否符合预期、完�
 处理二进制 fixture，以及生成的代码是否保持行为。先选择能回答本次变更问题的
 最小套件；对于高风险拉取请求，再运行更广的聚合测试。
 
+`PipelineOutcome.ResolvedCalls*` 检查寄存器分组、call／invoke 身份、栈字节打包与拆分，以及缺失字节的拒绝。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 覆盖 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 覆盖三种格式，拒绝长度被改写、可写或越界范围、同名本地函数、错误源寄存器、替代入口和可重定位镜像。主机 C 差分测试将原始 C 独立按 O0 编译，生成的 C 仍按 O2 编译，避免主机优化器把循环递推算错后污染对照。AArch64 FMA 检查仅在 x86 主机上请求 `-mfma`。
+
 ## 配置测试构建
 
 除非启用 `BUILD_TESTING`，否则测试不会构建。完整套件通常使用 Release；Debug
@@ -1676,6 +1678,16 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 源码 patch 的 Windows 工作流还会运行 `scripts/check_source_patch_pe_runtime.py`：先生成 x86/x64/ARM64 的三份原程序和 27 份替换产物，再为每种架构执行 30 次进程观测。x86/x64 在 Windows x64 上执行，ARM64 在 `windows-11-arm` 上执行；提交、PE 架构、文件哈希和用例清单必须匹配。此 C 进程配置不验证 ARM64 C++ 异常。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 选择普通 NeverC 生产器。3389.1.5 的 66 项配置覆盖 x64/ARM64 × ELF、PE、Mach-O；它不支持 x86/ARM32，不能静默切换编译器。PE 适配器使用 `-fno-autolink`，外部 `.drectve` 对象仍被拒绝。
 
 矩阵还会按独立的 ABI 清单核对编译对象和外部原生对象的 `target` 回执。错误对象测试随后必须安装并执行未修改的对象，作为有效输入对照。
+
+可选 `NeverCProfiles/*` 为六个 x64/ARM64 配置增加 30 项测试，覆盖 C++ IR、对象、hosted DynCode、非内联辅助函数/递归和不支持 C++ 的拒绝。`NeverDSourcePatchDynCodeTests` 拒绝伪造摘要、入口、目标、状态和最终验证。`SourcePatchException.NeverC*` 在真实进程检查生命周期及穿过两个 hosted 帧的异常回调。Windows C++ 检查器要求九种补丁场景、原始对照、三次执行以及匹配的机器、提交、摘要和原生 x64/ARM64 主机。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+原生生产器验证固定 NeverC 提交 `182fd2c5dc`，使用独立编译的原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 要求每种架构完成 36 次原生 Windows 观测，覆盖 C++ IR/对象/hosted 生命周期，以及异常穿过两个 hosted 帧的回调。`check_source_patch_elf_runtime.py` 要求每种架构完成 66 次原生 Linux 观测，覆盖 C++ IR/对象/hosted、hosted 异常传播及九种 Clang 异常场景。回执、制品哈希和实际主机架构必须匹配。这些检查安装真实编译器产物，不表示在 CI 主机上运行过 NeverC 编译器。
+
+原生验证 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次进程观测全部通过：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公共源码接口生成 C++ IR、普通对象和 C++ hosted DynCode，并验证异常穿过两层 NeverC 栈帧。重放核对当前引擎源码与子模块摘要、原件和最终字节、安装回执及实际原生主机。macOS ARM64 与 Rosetta x64 在本地通过相同的三条 C++ 路径和两层异常传播。Clang FH3 原生验证 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通过九种异常场景及对照，共各 36 次观测。
 
 `InterpreterSpecialization.HighAddress*` 与 `BinaryLowIRRefinement.HighAddress*` 覆盖高地址入口和转移、重叠指令范围、原始返回字节、栈恢复、与标签数值相同的数据、无效或缺失代码及精确／不足预算。独立字节执行器与修改返回字的反例区分运行时数值和 CFG 标签。
 

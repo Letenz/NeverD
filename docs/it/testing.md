@@ -10,6 +10,8 @@ codice generato conserva il comportamento? Scegli la suite minima che risponde
 alla domanda della modifica, poi esegui l’aggregato più ampio prima di una pull
 request ad alto rischio.
 
+`PipelineOutcome.ResolvedCalls*` verifica gruppi di registri, identità call/invoke, unione e divisione dei byte dello stack e rifiuto di byte mancanti. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` copre x64, ARM32 e AArch64 in ELF, PE e Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` copre i tre formati e rifiuta lunghezze sovrascritte, intervalli scrivibili o eccessivi, funzioni locali omonime, registri sorgente errati, ingressi alternativi e immagini rilocabili. I test differenziali C compilano il riferimento separatamente a O0 e il C generato a O2, evitando che un errore dell’ottimizzatore host su una ricorrenza alteri il riferimento. Il controllo FMA AArch64 richiede `-mfma` soltanto sugli host x86.
+
 ## Configurare una build di test
 
 I test sono disabilitati se non si abilita `BUILD_TESTING`. Release è la scelta
@@ -1864,6 +1866,16 @@ L’esecuzione KVM x64 verificata delega l’intero ciclo di istruzioni al threa
 Il workflow Windows per patch sorgente esegue anche `scripts/check_source_patch_pe_runtime.py`: tre originali e 27 sostituzioni x86/x64/ARM64, poi 30 osservazioni di processo per architettura. x86/x64 usano Windows x64, ARM64 usa `windows-11-arm`. Commit, architettura PE, hash e tutti i casi devono corrispondere. Questo profilo C non verifica le eccezioni C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` seleziona NeverC ordinario. I 66 controlli di 3389.1.5 coprono x64/ARM64 con ELF, PE e Mach-O; x86/ARM32 non sono disponibili e il compilatore non viene sostituito automaticamente. L’adattatore PE usa `-fno-autolink`; gli oggetti esterni `.drectve` restano rifiutati.
 
 La matrice confronta anche le ricevute `target` degli oggetti nativi compilati e forniti con un inventario ABI indipendente. Dopo gli input malformati, i test devono installare ed eseguire l’oggetto non modificato come controllo valido.
+
+`NeverCProfiles/*` aggiunge 30 test su sei profili x64/ARM64: C++ IR/oggetti/hosted DynCode, helper non inline, ricorsione e rifiuto C++ non supportato. `NeverDSourcePatchDynCodeTests` rifiuta hash, ingressi, target, stato e verifiche falsificati. `SourcePatchException.NeverC*` verifica processi reali e eccezioni attraverso due frame. Windows richiede nove scenari modificati, controlli originali, tre ripetizioni e macchina, commit, hash e host nativi x64/ARM64 corrispondenti.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+La verifica nativa fissa NeverC alla revisione `182fd2c5dc`, usa originali compilati indipendentemente e l’installatore NeverD attuale. `check_source_patch_hosted_pe_runtime.py` richiede 36 osservazioni Windows native per architettura per i cicli di vita C++ IR/oggetti/hosted e un’eccezione che attraversa due frame hosted. `check_source_patch_elf_runtime.py` richiede 66 osservazioni Linux native per architettura per C++ IR/oggetti/hosted, propagazione hosted e nove scenari di eccezioni Clang. Ricevute, hash e architettura effettiva dell’host devono corrispondere. Le verifiche installano output reali del compilatore senza affermare che NeverC sia stato eseguito sull’host CI.
+
+La verifica nativa [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) ha superato tutte le 204 osservazioni: 36 per architettura Windows x64/ARM64 e 66 per architettura Linux x64/ARM64. L’API pubblica ha prodotto C++ IR, oggetti normali e C++ hosted DynCode, oltre a un’eccezione attraverso due frame NeverC. Il replay verifica digest del codice e dei sottomoduli correnti, byte originali e finali, ricevute e host nativo effettivo. macOS ARM64 e Rosetta x64 hanno superato gli stessi tre percorsi C++ e la propagazione locale. Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) ha superato separatamente nove scenari e controlli, 36 osservazioni per architettura Windows x64/ARM64.
 
 `InterpreterSpecialization.HighAddress*` e `BinaryLowIRRefinement.HighAddress*` verificano indirizzi alti, intervalli sovrapposti, byte di ritorno di CALL, ripristino dello stack, dati uguali alle etichette, codice non valido o mancante e budget esatti o insufficienti. Un esecutore di byte indipendente e un ritorno alterato come controllo negativo distinguono valori ed etichette.
 

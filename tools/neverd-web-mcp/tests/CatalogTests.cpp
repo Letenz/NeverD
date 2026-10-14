@@ -42,7 +42,7 @@ void capabilitySubset() {
   auto Caps = capabilities(
       {"import_preview", "source_map_analyze", "source_analyze",
        "native_analyze", "bun_export", "wails_export", "source_readable_export",
-       "source_rewrite_export", "unknown_future_operation"});
+       "source_rewrite_export", "datapack_export", "unknown_future_operation"});
   Catalog C(Caps, 0);
   require(C.names() == Json::array({"neverd_web_capabilities",
                                     "neverd_web_source_analyze",
@@ -88,9 +88,29 @@ void closedArguments() {
                           "wails_extract",
                           "wails_records",
                           "tauri_extract",
-                          "tauri_records"}),
+                          "tauri_records",
+                          "datapack_extract",
+                          "datapack_records",
+                          "datapack_decode"}),
             0);
   const auto &Wails = C.find("neverd_web_wails_extract");
+  const auto &Pack = C.find("neverd_web_datapack_extract");
+  Json PackArgs{{"revision", "1"}, {"artifact_id", "a"}, {"profile", "p"}};
+  Pack.payload(PackArgs);
+  PackArgs["output_directory"] = "CANARY";
+  refuses([&] { Pack.payload(PackArgs); });
+  const auto &PackPage = C.find("neverd_web_datapack_records");
+  PackPage.payload({{"revision", "1"}, {"extraction_id", "e"}, {"limit", 512}});
+  refuses([&] {
+    PackPage.payload(
+        {{"revision", "1"}, {"extraction_id", "e"}, {"limit", 513}});
+  });
+  const auto &Decode = C.find("neverd_web_datapack_decode");
+  Json DecodeArgs{
+      {"revision", "1"}, {"resource_id", "a"}, {"codec", "gzip-rfc1952-v1"}};
+  Decode.payload(DecodeArgs);
+  DecodeArgs["execute"] = true;
+  refuses([&] { Decode.payload(DecodeArgs); });
   Json WailsArgs{{"revision", "1"}, {"artifact_id", "a"}, {"profile", "p"}};
   Wails.payload(WailsArgs);
   WailsArgs["execute"] = true;

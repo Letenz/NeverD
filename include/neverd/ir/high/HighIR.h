@@ -786,9 +786,18 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
             if (Stmt.EHClauseBodies[I].empty()) {
               const HighEHClause &Clause = Stmt.EHClauses[I];
               va_t Target = 0;
+              // An FH4 object action is the object's destructor itself, whose
+              // `this` the runtime computes: its body is no funclet of this
+              // frame, and attachCxxObjectActionCalls writes the call.
+              const bool ObjectAction =
+                  Clause.UnwindActionKind ==
+                      CxxUnwindAction::ActionKind::DestructorWithObject ||
+                  Clause.UnwindActionKind ==
+                      CxxUnwindAction::ActionKind::DestructorWithObjectPointer;
               if (Clause.Kind == HighEHClauseKind::CxxCatch)
                 Target = Clause.HandlerVA;
-              else if (Clause.Kind == HighEHClauseKind::CxxCleanup)
+              else if (Clause.Kind == HighEHClauseKind::CxxCleanup &&
+                       !ObjectAction)
                 Target = Clause.FilterOrActionVA;
               if (Target && Target != Func.Entry && !Active.count(Target)) {
                 auto It = ByEntry.find(Target);

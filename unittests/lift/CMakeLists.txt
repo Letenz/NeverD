@@ -13,6 +13,42 @@ if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
     NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
 endif()
 
+add_neverd_unittest(NeverDRegistrationCalleeStackTests
+  eh/RegistrationCallTests.cpp
+  eh/RegistrationCalleeRecursionTests.cpp
+  LINK_COMPONENTS Pipeline)
+
+add_neverd_unittest(NeverDHighCParamUsageTests
+  core/HighCParamUsageTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDFPParameterMaskTests
+  core/FPParameterMaskTests.cpp
+  core/MedCallingConvTests.cpp
+  LINK_COMPONENTS Pipeline BackendLLVM BackendC)
+
+add_neverd_unittest(NeverDARM32ObjectImmediateTests
+  arm32/ARM32_ObjectImmediateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDARM32ObjectImmediateTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDARM32ObjectImmediateTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+
+add_neverd_unittest(NeverDX87CallGraphTests
+  x86_32/X86_32_X87FPUTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87CallGraphTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87CallGraphTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader
@@ -213,6 +249,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCCategoryTests.cpp
   core/ObjCStorageTests.cpp
   core/HighCSourceCallTests.cpp
+  core/HighCParamUsageTests.cpp
   core/NativeSourceHintsTests.cpp
   core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
@@ -278,6 +315,7 @@ add_neverd_unittest(NeverDLiftTests
   format/NativePointerRelocationBoundaryTests.cpp
   format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
+  core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
@@ -1417,6 +1455,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
+  eh/RegistrationCalleeRecursionTests.cpp
   eh/RegistrationCleanupABITests.cpp
   eh/RegistrationRealignedCleanupABITests.cpp
   eh/RegistrationEntryABITests.cpp
@@ -1795,6 +1834,10 @@ add_neverd_unittest(NeverDMBASourceTests
 target_include_directories(NeverDMBASourceTests PRIVATE ${LLVM_INCLUDE_DIRS})
 add_neverd_unittest(NeverDMedStackAlignmentTests
   core/MedStackAlignmentTests.cpp
+  LINK_COMPONENTS IRMed
+)
+add_neverd_unittest(NeverDMedPrologueSavesTests
+  core/MedPrologueSavesTests.cpp
   LINK_COMPONENTS IRMed
 )
 target_compile_definitions(NeverDMBASourceTests PRIVATE

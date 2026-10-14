@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <utility>
 
 using namespace neverd;
@@ -34,12 +35,28 @@ void word(std::vector<uint8_t> &Bytes, uint64_t Value, unsigned Size) {
     Bytes.push_back(Value >> (I * 8));
 }
 
+enum class FrameFormatControl {
+  Live,
+  Released,
+  Home,
+  ReturnPC,
+  Scratch,
+  WordStore,
+  MatchingDiamond,
+  ConflictingDiamond,
+  FilledByCallee,
+  ChangedByCallee,
+};
+
 struct Fixture {
   BinaryImage Image;
   va_t UnwindCall = InvalidVA;
+  std::vector<va_t> FormatStores;
   Fixture(bool Print, bool Overwrite, uint8_t SavedSlot = 40,
           bool OpaqueBeforeSave = false, bool RebindIAT = false,
-          bool EscapeFrameBits = false) {
+          bool EscapeFrameBits = false,
+          std::optional<llvm::StringRef> FrameFormat = std::nullopt,
+          FrameFormatControl Control = FrameFormatControl::Live) {
     Image.Arch = Arch::X64;
     Image.Bits = Bitness::Bits64;
     Image.Format = BinaryFormat::COFF;
@@ -52,7 +69,8 @@ struct Fixture {
     Text.FileSz = Text.Size;
     Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
     Text.Data.assign(Text.Size, 0xcc);
-    std::vector<uint8_t> Code{0x48, 0x83, 0xec, 0x38}; // sub rsp,56
+    const uint8_t FrameBytes = FrameFormat ? 120 : 56;
+    std::vector<uint8_t> Code{0x48, 0x83, 0xec, FrameBytes};
     const auto DirectCall = [&](va_t Target) {
       Code.push_back(0xe8);
       word(Code, Target - (Entry + Code.size() + 4), 4);
@@ -65,13 +83,56 @@ struct Fixture {
       DirectCall(Unwind);
     Code.insert(Code.end(), {0x48, 0x89, 0x64, 0x24, SavedSlot, 0xb9, 1, 0, 0,
                              0}); // save frame; ecx=1
+    const int8_t FormatOffset = Control == FrameFormatControl::Home       ? 16
+                                : Control == FrameFormatControl::ReturnPC ? 120
+                                : Control == FrameFormatControl::Scratch  ? -8
+                                                                          : 64;
+    const bool Helper = Control == FrameFormatControl::FilledByCallee ||
+                        Control == FrameFormatControl::ChangedByCallee;
+    if (FrameFormat) {
+      if (Control == FrameFormatControl::WordStore) {
+        Code.insert(Code.end(), {0xc7, 0x44, 0x24, uint8_t(FormatOffset)});
+        word(Code, 0x6425, 4); // One DWORD writes "%d" and two zero bytes.
+      } else
+        for (size_t I = 0; I <= FrameFormat->size(); ++I) {
+          if (Helper && I == 1)
+            continue; // Only the inspected helper supplies this byte.
+          FormatStores.push_back(Entry + Code.size());
+          Code.insert(Code.end(),
+                      {0xc6, 0x44, 0x24, uint8_t(FormatOffset + I),
+                       I == FrameFormat->size() ? uint8_t{0}
+                                                : uint8_t((*FrameFormat)[I])});
+        }
+      if (Control == FrameFormatControl::Released) {
+        Code.insert(Code.end(), {0x48, 0x83, 0xc4, 96, 0x48, 0x83, 0xec, 96,
+                                 0x48, 0x89, 0x64, 0x24, SavedSlot});
+      } else if (Control == FrameFormatControl::MatchingDiamond ||
+                 Control == FrameFormatControl::ConflictingDiamond) {
+        Code.insert(
+            Code.end(),
+            {0x85, 0xff, 0x74, 7, 0xc6, 0x44, 0x24, uint8_t(FormatOffset + 1),
+             uint8_t(Control == FrameFormatControl::MatchingDiamond ? 'd'
+                                                                    : 'n'),
+             0xeb, 5, 0xc6, 0x44, 0x24, uint8_t(FormatOffset + 1), 'd'});
+      } else if (Helper) {
+        Code.insert(Code.end(),
+                    {0x48, 0x8d, 0x54, 0x24, uint8_t(FormatOffset)});
+        DirectCall(Leaf);
+        Code.insert(Code.end(), {0xb9, 1, 0, 0, 0});
+      }
+    }
     if (Overwrite)
       Code.insert(Code.end(), {0x48, 0x8d, 0x54, 0x24, SavedSlot});
     if (Print) {
       ImportCall(StreamIAT);
-      Code.insert(Code.end(), {0x48, 0x89, 0xc2,   // FILE
-                               0x4c, 0x8d, 0x05}); // RIP-relative format
-      word(Code, Format - (Entry + Code.size() + 4), 4);
+      Code.insert(Code.end(), {0x48, 0x89, 0xc2}); // FILE
+      if (FrameFormat)
+        Code.insert(Code.end(),
+                    {0x4c, 0x8d, 0x44, 0x24, uint8_t(FormatOffset)});
+      else {
+        Code.insert(Code.end(), {0x4c, 0x8d, 0x05}); // RIP-relative format
+        word(Code, Format - (Entry + Code.size() + 4), 4);
+      }
       Code.insert(Code.end(),
                   {0x45, 0x31, 0xc9, // locale=0
                    0x48, 0x8d, 0x44, 0x24, 0x30, 0x48, 0x89, 0x44, 0x24, 0x20});
@@ -81,9 +142,14 @@ struct Fixture {
     Code.insert(Code.end(), {0x48, 0x8b, 0x4c, 0x24, SavedSlot});
     UnwindCall = Entry + Code.size();
     DirectCall(Unwind);
-    Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x38, 0xc3});
+    Code.insert(Code.end(), {0x48, 0x83, 0xc4, FrameBytes, 0xc3});
     std::copy(Code.begin(), Code.end(), Text.Data.begin());
     std::vector<uint8_t> Body;
+    if (Helper)
+      Body.insert(
+          Body.end(),
+          {0xc6, 0x42, 1,
+           uint8_t(Control == FrameFormatControl::FilledByCallee ? 'd' : 'n')});
     if (RebindIAT) {
       Body.insert(Body.end(), {0x48, 0xb8});
       word(Body, StreamIAT, 8);
@@ -310,6 +376,102 @@ TEST(SEHRuntimeMemory, WindowsFormatsDoNotBorrowForeignDialectContracts) {
       EXPECT_EQ(Proof.Calls.begin()->second, -56);
     } else
       EXPECT_TRUE(Proof.Calls.empty());
+  }
+}
+
+TEST(SEHRuntimeMemory, SourceFrameFormatBytesOwnTheRuntimeContract) {
+  const std::pair<llvm::StringRef, bool> Cases[] = {
+      {"result=%d\n", true}, {"%lld", true},         {"%08x", true},
+      {"%.3f", true},        {"%%", true},           {"", true},
+      {"%1$d", false},       {"%'d", false},         {"%qd", false},
+      {"%*d", false},        {"%n", false},          {"%s", false},
+      {"%", false},          {"\xc3\xa9=%d", false},
+  };
+  for (const auto &[Format, Accepted] : Cases) {
+    SCOPED_TRACE(Format.str());
+    Fixture F(true, false, 40, false, false, false, Format);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    CFGBuilder Builder;
+    const auto Caller = Builder.build(F.Image, Dec, Entry, "caller");
+    ASSERT_TRUE(Caller.hasCompleteLiftCoverage());
+    const auto Memory = collectLowSEHRuntimeMemory(F.Image, {Caller});
+    size_t Work = 100000;
+    const auto Proof = proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64),
+                                         Work, nullptr, &Memory);
+    if (Accepted) {
+      ASSERT_EQ(Proof.Calls.size(), 1u);
+      EXPECT_EQ(Proof.Calls.begin()->first.first, F.UnwindCall);
+      EXPECT_EQ(Proof.Calls.begin()->second, -120);
+      EXPECT_TRUE(Proof.UsesRuntimeMemory);
+    } else
+      EXPECT_TRUE(Proof.Calls.empty());
+  }
+}
+
+TEST(SEHRuntimeMemory, MissingOrChangedFrameBytesWithdrawFormatAuthority) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Fixture F(true, false, 40, false, false, false, "%d");
+    auto &Code = F.Image.Segments.front().Data;
+    if (Mutation == 1)
+      std::fill_n(Code.begin() + F.FormatStores.back() - Entry, 5, 0x90);
+    if (Mutation == 2)
+      Code[F.FormatStores[1] - Entry + 4] = 'n';
+    if (Mutation == 3) {
+      const size_t At = F.FormatStores[1] - Entry;
+      Code[At] = 0x88; // The current unknown AL overwrites the conversion byte.
+      Code[At + 4] = 0x90;
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    CFGBuilder Builder;
+    const auto Caller = Builder.build(F.Image, Dec, Entry, "caller");
+    ASSERT_TRUE(Caller.hasCompleteLiftCoverage());
+    const auto Memory = collectLowSEHRuntimeMemory(F.Image, {Caller});
+    size_t Work = 100000;
+    const auto Proof = proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64),
+                                         Work, nullptr, &Memory);
+    EXPECT_EQ(Proof.Calls.empty(), Mutation != 0);
+  }
+}
+
+TEST(SEHRuntimeMemory, FrameFormatsRequireLiveStorageAndEveryReachingByte) {
+  for (auto Control :
+       {FrameFormatControl::Live, FrameFormatControl::Released,
+        FrameFormatControl::Home, FrameFormatControl::ReturnPC,
+        FrameFormatControl::Scratch, FrameFormatControl::WordStore,
+        FrameFormatControl::MatchingDiamond,
+        FrameFormatControl::ConflictingDiamond,
+        FrameFormatControl::FilledByCallee,
+        FrameFormatControl::ChangedByCallee}) {
+    SCOPED_TRACE(unsigned(Control));
+    Fixture F(true, false, 40, false, false, false, "%d", Control);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    CFGBuilder Builder;
+    std::vector<LowFunc> Bodies;
+    Bodies.push_back(Builder.build(F.Image, Dec, Entry, "caller"));
+    Bodies.push_back(Builder.build(F.Image, Dec, Leaf, "leaf"));
+    ASSERT_TRUE(Bodies[0].hasCompleteLiftCoverage());
+    ASSERT_TRUE(Bodies[1].hasCompleteLiftCoverage());
+    const std::map<va_t, const LowFunc *> Callees{{Leaf, &Bodies[1]}};
+    const auto Memory = collectLowSEHRuntimeMemory(F.Image, Bodies);
+    size_t Work = 100000;
+    const auto Proof = proveLowSEHFrames(Bodies[0], getTargetRegInfo(Arch::X64),
+                                         Work, &Callees, &Memory);
+    const bool Accepted = Control == FrameFormatControl::Live ||
+                          Control == FrameFormatControl::WordStore ||
+                          Control == FrameFormatControl::MatchingDiamond ||
+                          Control == FrameFormatControl::FilledByCallee;
+    EXPECT_EQ(Proof.Calls.empty(), !Accepted);
+    if (Accepted) {
+      ASSERT_EQ(Proof.Calls.size(), 1u);
+      EXPECT_EQ(Proof.Calls.begin()->first.first, F.UnwindCall);
+      EXPECT_EQ(Proof.Calls.begin()->second, -120);
+      if (Control == FrameFormatControl::FilledByCallee)
+        EXPECT_EQ(Proof.CalleeDependencies, std::vector<va_t>{Leaf});
+    }
   }
 }
 

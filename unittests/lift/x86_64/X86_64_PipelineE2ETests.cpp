@@ -317,9 +317,11 @@ TEST_F(X86_64_PipelineE2E, PatchMachO_Switch) {
   if (cr.exitCode != 0)
     GTEST_SKIP() << "Cannot compile x64 Mach-O";
   verifyPatchProducesOutput(exe);
-  auto LLVM = liftToLLVMIR(exe);
+  // Check recovery before LLVM can fold affine switch cases into arithmetic.
+  auto LLVM = liftToLLVMIRUnopt(exe);
   ASSERT_EQ(LLVM.exitCode, 0) << "LLVM IR lift failed: " << LLVM.err;
-  EXPECT_NE(LLVM.out.find("switch i32"), std::string::npos)
+  // Recovery may retain a 64-bit table key before optimization narrows it.
+  EXPECT_NE(LLVM.out.find("  switch "), std::string::npos)
       << "Expected the recovered classify switch:\n"
       << LLVM.out;
   // A proof-complete set of cases may still use an explicit trap for an

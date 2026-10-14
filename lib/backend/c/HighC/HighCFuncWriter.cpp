@@ -20,6 +20,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -430,6 +431,18 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
           GotoTargets.insert(Pad);
     }
   });
+  // Every landing pad the call-site table names is entered by the unwinder,
+  // including one that only runs cleanups and resumes: no clause names it,
+  // and without a label its code would read as dead after a return.
+  LandingPadLabels.clear();
+  if (Func.ExceptionMetadata && Func.ExceptionMetadata->Itanium &&
+      Func.ExceptionMetadata->Itanium->IsCallSiteAddressForm)
+    for (const ItaniumCallSite &Site :
+         Func.ExceptionMetadata->Itanium->CallSites)
+      if (Site.LandingPadVA &&
+          Func.ExceptionMetadata->ownsCode(Site.LandingPadVA) &&
+          GotoTargets.insert(Site.LandingPadVA).second)
+        LandingPadLabels.insert(Site.LandingPadVA);
   FallthroughTryExits.clear();
   {
     std::set<std::pair<va_t, va_t>> Kept;
@@ -4737,6 +4750,7 @@ size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
 
 std::vector<size_t>
 HighCWriter::emittedParamIndices(const HighFunc &Func) const {
+  const auto Key = std::make_pair(&Func, Func.Entry);
   std::vector<size_t> All;
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
   const size_t N = Func.Params.size();
@@ -4745,19 +4759,24 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
-  const auto Key = std::make_pair(&Func, Func.Entry);
   if (auto It = EmittedParamIndices.find(Key);
       It != EmittedParamIndices.end() && It->second.size() <= N)
     return It->second;
   std::set<int> Used;
+  // Expressions can share children, and several call edges can query the same
+  // definition. Visit each expression once and retain every completed answer.
+  HighExprSet Visited;
   ParamIndicesInProgress.insert(&Func);
   const auto Done =
       llvm::make_scope_exit([&] { ParamIndicesInProgress.erase(&Func); });
   // An indirect call's target is a use too.  A call's operand that its
   // callee's definition does not declare is none: the call does not pass it.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
+    if (!Visited.insert(&E).second)
+      return;
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
         E.Var.Kind == MedVar::Param)
       Used.insert(E.Var.Id);
@@ -4806,6 +4825,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
   size_t Unused = 0;
@@ -4816,6 +4836,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
   std::vector<int> Order(Used.begin(), Used.end());
@@ -4828,6 +4849,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
   }
+  EmittedParamIndices[Key] = All;
   return All;
 }
 
@@ -5371,9 +5393,31 @@ void HighCWriter::nameCxxCatchObjects(const HighFunc &Func) {
       return Rebased;
     return Direct;
   };
+  // An Itanium handler that reads what it caught takes a parameter.
+  auto BindsCaught = [](const std::vector<HighStmt> &Body) {
+    bool Binds = false;
+    std::function<void(const HighExpr *)> Visit = [&](const HighExpr *E) {
+      if (!E || Binds)
+        return;
+      Binds =
+          E->Operands.empty() && isItaniumRuntimeCall(*E, "__cxa_begin_catch");
+      E->forEachChildExpr([&](const ExprPtr &C) { Visit(C.get()); });
+    };
+    walkStmts(Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) { Visit(E.get()); });
+    });
+    return Binds;
+  };
   std::function<void(const std::vector<HighStmt> &)> Walk =
       [&](const std::vector<HighStmt> &Stmts) {
         for (const HighStmt &S : Stmts) {
+          if (hasItaniumHandlerBodies(S))
+            for (size_t I = 0; I < S.EHClauses.size(); ++I) {
+              const HighEHClause &Clause = S.EHClauses[I];
+              if (!Clause.TypeName.empty() && !CxxCatchNames.count(&Clause) &&
+                  BindsCaught(S.EHClauseBodies[I]))
+                CxxCatchNames[&Clause] = allocateName();
+            }
           if (S.Kind == StmtKind::CxxTry) {
             for (size_t I = 0; I < S.EHClauses.size(); ++I) {
               const HighEHClause &Clause = S.EHClauses[I];

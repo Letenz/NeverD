@@ -2356,7 +2356,7 @@ jobs:
             --gtest_filter=RegistrationRethrowHighC.*:RegistrationThrowHighC.*:RegistrationObject.RequiresOneTrivialIdentityCopy \
             --gtest_output=xml:build-windows-eh/evidence/rethrow-source.xml
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
-            --gtest_filter=RegistrationPHICopy.*:SafeSEHReference.* \
+            --gtest_filter=RegistrationPHICopy.*:SafeSEHReference.*:RegistrationCallABI.FloatingAndRegistrationProofsSharePendingCallees \
             --gtest_output=xml:build-windows-eh/evidence/callback-copy.xml
       - name: Verify source LLVM against native MSVC finally inputs
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
@@ -2383,10 +2383,10 @@ jobs:
       - name: Verify x86 recovery and ARM32 cross-target PE reconstruction
         run: |
           build-windows-eh/bin/NeverDLiftTests \
-            --gtest_filter='COFFException*:*ARM32*:PatchCOFF_ARM32.*:MedSSAMultiRoot.*:MedTempIdentity.*:MedSEHEstablisherFrame.*:MedSEHHandlerEntry.*:Win64Forwarder.*' \
+            --gtest_filter='COFFException*:*ARM32*:PatchCOFF_ARM32.*:FPParameterMask.*:MedCallingConvValueFlow.*:MedABIPass.Win64VTableIndirectRecoversThisAndSret:MedSSAMultiRoot.*:MedTempIdentity.*:MedSEHEstablisherFrame.*:MedSEHHandlerEntry.*:MedCxxContinuationFrame.*:HighCParamUsage.*:X87CallStack.*:X87CallGraphCache.*:Win64Forwarder.*' \
             --gtest_output=xml:build-windows-eh/evidence/ir-pe.xml
           build-windows-eh/bin/NeverDWindowsEHCorpusTests \
-            --gtest_filter='WindowsEHCorpus.RecoversX86RegistrationChains:WindowsEHCorpus.MasksThumbBitInARM32LanguageTables:WindowsEHCorpus.DecodesARMUnwindOperations:WindowsEHCorpus.ParsesDeclaredExceptionMetadata' \
+            --gtest_filter='WindowsEHCorpus.RecoversX86RegistrationChains:WindowsEHCorpus.MasksThumbBitInARM32LanguageTables:WindowsEHCorpus.DecodesARMUnwindOperations:WindowsEHCorpus.ParsesDeclaredExceptionMetadata:WindowsEHModesCorpus.DecompilesOptimizedFH3ProtectedSourceProjection:WindowsEHModesCorpus.DecompilesRegistrationCalleeProofCycles' \
             --gtest_output=xml:build-windows-eh/evidence/corpus.xml
       - name: Reconstruct and execute realigned value and reference catches
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}

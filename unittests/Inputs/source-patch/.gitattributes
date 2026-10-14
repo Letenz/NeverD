@@ -1,0 +1,2 @@
+# Authenticate the compiler's carrier bytes, including its trailing blank line.
+**/translated.nc whitespace=-blank-at-eof

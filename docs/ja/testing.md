@@ -9,6 +9,8 @@ NeverD のテストは、表現が期待した形か、バイナリ fixture の�
 問いに答える最小のスイートを選び、リスクの高いプルリクエストではより広い集約を
 実行してください。
 
+`PipelineOutcome.ResolvedCalls*` はレジスタ群、call/invoke の同一性、スタックバイトの結合と分割、バイト不足の拒否を検証します。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` は x64、ARM32、AArch64 の ELF、PE、Mach-O を対象とします。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` は 3 形式で、長さの破壊、書き込み可能・範囲外のソース、同名のローカル関数、誤ったソースレジスタ、別の入口、再配置可能なイメージを拒否します。ホスト C 差分テストでは参照 C を別の翻訳単位で O0、生成 C を O2 でコンパイルし、ホスト最適化器の漸化式の誤コンパイルが参照値を汚さないようにします。AArch64 FMA テストが `-mfma` を要求するのは x86 ホストのみです。
+
 ## テストビルドの構成
 
 `BUILD_TESTING` を有効にしない限りテストは無効です。全スイートには通常 Release
@@ -1768,6 +1770,16 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ソース patch の Windows ワークフローは `scripts/check_source_patch_pe_runtime.py` も実行します。x86/x64/ARM64 の元プログラム 3 個と置換結果 27 個を生成し、アーキテクチャごとにプロセス実行を 30 回観測します。x86/x64 は Windows x64、ARM64 は `windows-11-arm` で実行し、コミット、PE の種類、ファイルハッシュ、全ケースの一致を要求します。この C プロファイルは ARM64 C++ 例外を検証しません。`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` は通常モードの NeverC を選択します。3389.1.5 の 66 チェックは x64/ARM64 と ELF、PE、Mach-O を対象とし、x86/ARM32 は非対応です。コンパイラーは自動で切り替わりません。PE アダプターは `-fno-autolink` を使用し、外部の `.drectve` オブジェクトは引き続き拒否します。
 
 行列は、コンパイル済みおよび外部のネイティブオブジェクトについて、独立した ABI 一覧と `target` 証跡を照合します。不正なオブジェクトのテストでは、未変更の有効なオブジェクトもインストールして実行する必要があります。
+
+任意の `NeverCProfiles/*` は六つの x64/ARM64 構成で 30 件を追加し、C++ IR/オブジェクト/hosted DynCode、非インライン補助関数・再帰、未対応 C++ の拒否を扱います。`NeverDSourcePatchDynCodeTests` はハッシュ、入口、対象、状態、検証の偽造を拒否します。`SourcePatchException.NeverC*` は実プロセスで寿命と二つのフレームを通る例外を検証します。Windows 検査は九つの置換シナリオと元の対照を三回実行し、マシン・コミット・ハッシュと native x64/ARM64 ホストを要求します。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+ネイティブ検証は NeverC リビジョン `182fd2c5dc`、独立してコンパイルした元プログラム、現在の NeverD インストーラを使用します。`check_source_patch_hosted_pe_runtime.py` は各アーキテクチャで 36 回のネイティブ Windows 観測を要求し、C++ IR/オブジェクト/hosted のライフタイムと二つの hosted フレームを通る例外コールバックを確認します。`check_source_patch_elf_runtime.py` は各アーキテクチャで 66 回のネイティブ Linux 観測を要求し、C++ IR/オブジェクト/hosted、hosted の例外伝播、九つの Clang 例外シナリオを確認します。レシート、成果物ハッシュ、実際のホストアーキテクチャは一致しなければなりません。実際のコンパイラ出力をインストールする検証であり、CI ホスト上で NeverC 実行ファイルを動かしたとは主張しません。
+
+ネイティブ検証 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) は全 204 回の観測に成功しました。Windows x64/ARM64 は各 36 回、Linux x64/ARM64 は各 66 回です。公開ソース API で C++ IR、通常オブジェクト、C++ hosted DynCode を生成し、二つの NeverC フレームを通る例外も確認しました。再生時に現在のソースとサブモジュールのダイジェスト、元と最終のバイト、発行レシート、実際のネイティブホストを確認します。macOS ARM64 と Rosetta x64 でも三つの C++ 経路と二フレームの伝播が成功しました。Clang FH3 の検証 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) は Windows x64/ARM64 の九つの例外シナリオと対照、各 36 回にも成功しました。
 
 `InterpreterSpecialization.HighAddress*` と `BinaryLowIRRefinement.HighAddress*` は高位アドレス、重複命令範囲、CALL の戻りバイト、スタック復元、ラベルと同じ値のデータ、不正・欠落コード、正確・不足予算を検証します。独立したバイト実行器と戻り値を改変する負例により、実行時の値と CFG ラベルを区別します。
 

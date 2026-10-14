@@ -20,11 +20,14 @@
 #include "neverd/support/ISAEncoding.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/ARMAttributeParser.h"
 #include "llvm/Support/ARMBuildAttributes.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SHA256.h"
 
 #include <algorithm>
 #include <map>
@@ -906,18 +909,109 @@ validateObjectUnwind(const ObjectImage &Object) {
 
 } // namespace
 
+llvm::Error
+validateDynCodePatchImage(const DynCodePatchEvidence &Evidence,
+                          llvm::StringRef Object, const BinaryImage &Original,
+                          const CompiledImage &Compiled,
+                          llvm::ArrayRef<SourcePatchMapping> Mappings,
+                          llvm::ArrayRef<SourcePatchBinding> Bindings) {
+  if ((Original.Arch != Arch::X64 && Original.Arch != Arch::AArch64) ||
+      Compiled.TargetArch != Original.Arch ||
+      Compiled.Format != Original.Format ||
+      Compiled.InputKind != RewriteInputKind::ReplacementObject ||
+      Mappings.size() != 1 || Mappings.front().Symbol.empty() ||
+      !Bindings.empty() || Evidence.Payload.empty() ||
+      Evidence.Payload.size() > MaxImageSize)
+    return fail("hosted DynCode requires one explicit x64/ARM64 entry, "
+                "a bounded payload and no original bindings");
+  auto Parsed = llvm::json::parse(Evidence.Audit);
+  if (!Parsed)
+    return fail("malformed DynCode audit: " +
+                llvm::toString(Parsed.takeError()));
+  const auto *Audit = Parsed->getAsObject();
+  if (!Audit || Audit->getString("execution_profile") != "hosted-v1" ||
+      Audit->getBoolean("keep_unwind") != true ||
+      Audit->getInteger("selected_section_count") != 1 ||
+      Audit->getInteger("remaining_external_count") != 0 ||
+      Audit->getInteger("runtime_contract_count") != 0 ||
+      Audit->getInteger("padding_size") != 0 ||
+      Audit->getInteger("bad_byte_hit_count") != 0 ||
+      Audit->getInteger("alignment") != 1 ||
+      Audit->getInteger("entry_offset") != 0 ||
+      Audit->getInteger("image_size") !=
+          static_cast<int64_t>(Evidence.Payload.size()))
+    return fail(
+        "DynCode audit does not prove the hosted single-section profile");
+  auto Target = sourcePatchTargetTriple(Original);
+  if (!Target)
+    return Target.takeError();
+  const auto Entry = Original.Format == BinaryFormat::MachO
+                         ? "_" + Mappings.front().Symbol
+                         : Mappings.front().Symbol;
+  auto Hash = [](llvm::StringRef Bytes) {
+    return llvm::toHex(
+        llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+            reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size())),
+        true);
+  };
+  if (Audit->getString("target_triple") != *Target ||
+      Audit->getString("entry_symbol") != Entry ||
+      Audit->getString("output_digest") != Hash(Evidence.Payload) ||
+      Audit->getString("input_digest") != Hash(Object))
+    return fail(
+        "DynCode target, entry or artifact digest disagrees with its audit");
+  const auto *Journal = Audit->getArray("journal");
+  for (llvm::StringRef Key : {"binary", "plan", "relocations"}) {
+    if (!Journal || llvm::count_if(*Journal, [&](const auto &Value) {
+                      const auto *Record = Value.getAsObject();
+                      return Record && Record->getString("key") == Key &&
+                             Record->getString("provider") ==
+                                 "builtin.final_verifier" &&
+                             Record->getString("value") == "ok";
+                    }) != 1)
+      return fail("DynCode sealed final verification is incomplete");
+  }
+  const CompiledSection *Code = nullptr;
+  for (const auto &Section : Compiled.Sections) {
+    if (!Section.IsAllocated || !Section.IsInImage || !Section.Size)
+      continue;
+    if (Section.Kind == SectionKind::Code) {
+      if (Code)
+        return fail("DynCode code requires one unchanged native section");
+      Code = &Section;
+      continue;
+    }
+    const llvm::StringRef Name(Section.Name);
+    const bool Metadata = Name == ".eh_frame" || Name == ".xdata" ||
+                          Name == ".pdata" || Name == ".note.gnu.property" ||
+                          Name == "__eh_frame" || Name == "__compact_unwind";
+    if (Section.Kind != SectionKind::ReadOnlyData || !Metadata)
+      return fail("hosted DynCode has unexpected native data storage: " + Name);
+  }
+  const auto Symbol = Compiled.SymbolAddrs.find(Mappings.front().Symbol);
+  if (!Code || Code->Size != Evidence.Payload.size() ||
+      !rangeInBounds(Code->Offset, Code->Size, Compiled.Bytes.size()) ||
+      Symbol == Compiled.SymbolAddrs.end() || Symbol->second != Code->VA ||
+      std::memcmp(Compiled.Bytes.data() + Code->Offset, Evidence.Payload.data(),
+                  Evidence.Payload.size()))
+    return fail("linked native code/entry layout differs from the audited "
+                "DynCode payload");
+  return llvm::Error::success();
+}
+
 llvm::Expected<PatchResult> installObjectPatch(
     llvm::StringRef Bytes, const BinaryImage &Original,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt) {
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
+    const DynCodePatchEvidence *DynCode) {
   if (Original.Format == BinaryFormat::COFF)
     return installCOFFObjectPatch(Bytes, Original, Mappings, RequestedBindings,
-                                  Output, PrepareReceipt);
+                                  Output, PrepareReceipt, DynCode);
   if (Original.Format == BinaryFormat::MachO)
     return installMachOObjectPatch(Bytes, Original, Mappings, RequestedBindings,
-                                   Output, PrepareReceipt);
+                                   Output, PrepareReceipt, DynCode);
   if (Original.Format != BinaryFormat::ELF)
     return fail("native object format is unsupported");
   if (Mappings.empty())
@@ -983,6 +1077,11 @@ llvm::Expected<PatchResult> installObjectPatch(
     return std::move(Error);
   if (auto Error = relocateObject(*Object, References, Bindings))
     return std::move(Error);
+  if (DynCode)
+    if (auto Error = validateDynCodePatchImage(*DynCode, Bytes, Original,
+                                               Object->Storage, Mappings,
+                                               RequestedBindings))
+      return std::move(Error);
   auto Functions = validateObjectUnwind(*Object);
   if (!Functions)
     return Functions.takeError();

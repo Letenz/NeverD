@@ -679,6 +679,32 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   auto *FuncTy = llvm::FunctionType::get(RetType, ParamTypes, Func.IsVariadic);
   auto *LLVMFunc = llvm::Function::Create(
       FuncTy, llvm::GlobalValue::ExternalLinkage, EmittedName, Mod);
+  // Recovered parameters are ordered by independent ABI register banks, then
+  // incoming stack slots. A resolved indirect call can have surplus registers
+  // in either bank; retaining these boundaries prevents positional coercion
+  // from feeding an integer scratch value to an FP-only function.
+  if (!(TargetArch == Arch::X64 && TargetFormat == BinaryFormat::COFF)) {
+    const auto IntegerRegisters = TRI.integerParamRegs(TargetFormat);
+    unsigned Integers = 0, Floating = 0;
+    unsigned LastBank = 0;
+    bool Canonical = ParamTypes.size() == Func.Params.size();
+    for (const auto &P : Func.Params) {
+      unsigned Bank = 2;
+      if (P.RegOff != kNoParamReg)
+        Bank = TRI.isFPArgReg(P.RegOff, TargetFormat) ? 1 : 0;
+      Canonical &= Bank >= LastBank;
+      // Dedicated result/context registers use a separate reconstructed ABI;
+      // they are not another ordinary integer argument-bank slot.
+      if (Bank == 0)
+        Canonical &= std::find(IntegerRegisters.begin(), IntegerRegisters.end(),
+                               P.RegOff) != IntegerRegisters.end();
+      LastBank = Bank;
+      Integers += Bank == 0;
+      Floating += Bank == 1;
+    }
+    if (Canonical)
+      setLLVMArgumentBanks(*LLVMFunc, Integers, Floating);
+  }
   // A lifted function is defined in this same module, so its address is fixed
   // at link time — mark it dso_local so a `ptrtoint @func` reference (a
   // function pointer) under the PIC relocation model is materialized by direct
