@@ -444,12 +444,13 @@ void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   // The Win32 adapter rejects a non-null RootDirectory on the qualified host.
   // The native operation admits that retained directory without resolving a
   // process-relative pathname. FileRenameInformation is WDK information class
-  // 10; the user-mode SDK declares only a subset of FILE_INFORMATION_CLASS.
+  // 10. The SDK's placeholder enum cannot represent it; use the native ABI's
+  // 32-bit information-class argument without an out-of-range C++ enum cast.
   using SetInformation = NTSTATUS(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID,
-                                            ULONG, FILE_INFORMATION_CLASS);
+                                            ULONG, ULONG);
   static const auto Function = reinterpret_cast<SetInformation>(
       GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
-  constexpr auto RenameInformation = static_cast<FILE_INFORMATION_CLASS>(10);
+  constexpr ULONG RenameInformation = 10;
   IO_STATUS_BLOCK Status{};
   if (!Function || Function(File, &Status, Info, ULONG(Buffer.size()),
                              RenameInformation) < 0)
