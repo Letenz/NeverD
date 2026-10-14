@@ -3495,6 +3495,24 @@ void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  // Check the complete supplied IR before source-only hiding or preparation
+  // can discard an unreachable or malformed environment requirement.
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> CheckRequirement =
+      [&](const ExprPtr &Expr) {
+        if (!Expr || !Seen.insert(Expr.get()).second)
+          return;
+        if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
+          throw std::invalid_argument(
+              "raw environment requirement has no C runtime contract");
+        Expr->forEachChildExpr(CheckRequirement);
+      };
+  for (const auto &Func : Funcs)
+    walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+      forEachExpr(Stmt, CheckRequirement);
+      for (const auto &Clause : Stmt.EHClauses)
+        CheckRequirement(Clause.FilterValue);
+    });
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
         (hasIndirectSourceParameters(*Func.SourceTypeHint) ||

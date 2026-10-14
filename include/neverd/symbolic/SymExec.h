@@ -96,7 +96,9 @@ class SymExec {
 public:
   SymExec(SymContext &Ctx, SymState &State) : Ctx(Ctx), State(State) {}
 
-  /// Execute one operation against the state.
+  /// Execute one operation against the state. A retained raw-environment
+  /// requirement throws std::invalid_argument before changing state: this
+  /// engine does not own its receipt and cannot approximate the precondition.
   StepResult step(const LowOp &Op);
 
   /// Execute one operation, applying \p CallEffect when \p Op is a call.  The
@@ -115,6 +117,13 @@ public:
   /// by \c step.  This may materialise an untouched symbolic input in \c State.
   /// Concrete shadow execution uses it instead of duplicating NdVar semantics.
   SymRef operandValue(const NdVar &V);
+
+  /// Effective linear address of a complete memory operation, or an invalid
+  /// reference when unsupported. Explicit x64 FS/GS bindings add the base to
+  /// the zero-extended offset modulo 2^64. They share default byte memory;
+  /// this supplies no separation or successful-access proof. Consumers must
+  /// use this address, not the raw offset, for memory/provenance decisions.
+  SymRef memoryAddressValue(const LowOp &Op);
 
   /// Execute operations in order, stopping when one changes control flow.
   /// An unmodelled operation has already written a named unknown and therefore

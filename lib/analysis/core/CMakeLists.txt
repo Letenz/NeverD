@@ -2,6 +2,7 @@
 # determined by the source contract, never by the architecture of the build host.
 add_neverd_component_library(NeverDInterpreterSpecialization
   InterpreterSpecialization.cpp
+  RawEnvironment.cpp
   ../arch/x86_64/NativeStackControl.cpp
   ../arch/x86_64/X64Recovery.cpp
   ../arch/x86_64/InterpreterMachineState.cpp
@@ -22,4 +23,5 @@ add_neverd_component_library(NeverDInterpreterSpecialization
   IR
   Symbolic
   Solver
+  Decode
 )

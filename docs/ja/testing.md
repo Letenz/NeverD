@@ -1768,3 +1768,14 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ソース patch の Windows ワークフローは `scripts/check_source_patch_pe_runtime.py` も実行します。x86/x64/ARM64 の元プログラム 3 個と置換結果 27 個を生成し、アーキテクチャごとにプロセス実行を 30 回観測します。x86/x64 は Windows x64、ARM64 は `windows-11-arm` で実行し、コミット、PE の種類、ファイルハッシュ、全ケースの一致を要求します。この C プロファイルは ARM64 C++ 例外を検証しません。`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` は通常モードの NeverC を選択します。3389.1.5 の 66 チェックは x64/ARM64 と ELF、PE、Mach-O を対象とし、x86/ARM32 は非対応です。コンパイラーは自動で切り替わりません。PE アダプターは `-fno-autolink` を使用し、外部の `.drectve` オブジェクトは引き続き拒否します。
 
 行列は、コンパイル済みおよび外部のネイティブオブジェクトについて、独立した ABI 一覧と `target` 証跡を照合します。不正なオブジェクトのテストでは、未変更の有効なオブジェクトもインストールして実行する必要があります。
+
+`InterpreterSpecialization.HighAddress*` と `BinaryLowIRRefinement.HighAddress*` は高位アドレス、重複命令範囲、CALL の戻りバイト、スタック復元、ラベルと同じ値のデータ、不正・欠落コード、正確・不足予算を検証します。独立したバイト実行器と戻り値を改変する負例により、実行時の値と CFG ラベルを区別します。
+
+
+`NeverDRawEnvironmentRequirementTests` は LowIR のコピー、正しい形状と不正形状、厳密／非厳密エミュレーション、シンボリックな step/run、Low-to-Med 変換、直接の C/LLVM 出力、マシン状態ラッパー、再特殊化を検査します。通常入力の成功対照と到達不能マーカーの拒否例で、静的独立性、精緻化の両側、元バイナリから候補への精緻化を確認し、拒否時に証明書を公開しないことを検証します。
+
+`PEFixedImageTest.RawCode*` は両アドレス領域の外部関数、戻り先、全レジスタとバイトメモリ、未知の可変データ、完全なスロット読み取り、欠落コード、イメージ除外、不正・未使用宣言、精度改善、明示的エイリアス契約、記録変更を検証します。予算の境界テストには多数のマッピング、複数のバインドと終端出口を含みます。`PipelineRefusesUnusedRawEnvironmentDomains` は復元前のソース拒否を確認します。
+
+`RawCodeNativeReturn*` は 2 つの物理的な戻り先、別名になり得る隙間、破棄される未証明セル、狭いアドレスの拒否、全レジスタ・メモリ効果、正確な証明予算を検査します。`SymStorePreservation.Additional*` と `SymStorePreservation.AbsentAdditional*` は両バイト順序の範囲和集合、書き込み後のメモリ世代、欠落バイト、不正範囲、予算不足時の状態不変性を検査します。
+
+`FrameOffsets.*Normalization*` は正確な恒等式、追加入力、ルートの同一性、証人をキャッシュしない到達不能述語、既定動作、構造准入と測定の課金、呼び出し後のノード超過拒否を検査します。`FrameNormalizationPreservesStoresAndNativeReturns` と `RawCodeFrameNormalization*` は独立したバイト評価器で元のメモリ効果と実際の戻り先を検査し、適用可能な両バイト順序、過不足のない予算と不足予算、レシート改変を扱います。`FrameNormalizationStrategyBindsIndependentProof` は両方のバイナリ証明の識別を検査します。

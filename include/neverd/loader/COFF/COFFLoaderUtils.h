@@ -29,6 +29,18 @@ namespace coff_loader {
 
 namespace detail {
 
+/// PE32/PE32+ named import thunks reserve every bit above the low 31.
+/// Ordinal-flag handling belongs to the caller; this never masks bad bits.
+constexpr bool validImportNameBits(uint64_t Value) {
+  return Value <= 0x7fffffff;
+}
+
+/// A bound IAT cannot stand in for an absent independent lookup table.
+constexpr bool validImportLookupSource(uint32_t LookupRVA, uint32_t Timestamp,
+                                       bool HasBoundImports) {
+  return LookupRVA || (!Timestamp && !HasBoundImports);
+}
+
 /// One PE section's two address spaces.  A trusted RVA mapping must be owned
 /// by exactly one such section and fit completely in both its virtual and raw
 /// extents; PointerToRawData alone is not an RVA proof.

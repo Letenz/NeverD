@@ -1676,3 +1676,14 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 源码 patch 的 Windows 工作流还会运行 `scripts/check_source_patch_pe_runtime.py`：先生成 x86/x64/ARM64 的三份原程序和 27 份替换产物，再为每种架构执行 30 次进程观测。x86/x64 在 Windows x64 上执行，ARM64 在 `windows-11-arm` 上执行；提交、PE 架构、文件哈希和用例清单必须匹配。此 C 进程配置不验证 ARM64 C++ 异常。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 选择普通 NeverC 生产器。3389.1.5 的 66 项配置覆盖 x64/ARM64 × ELF、PE、Mach-O；它不支持 x86/ARM32，不能静默切换编译器。PE 适配器使用 `-fno-autolink`，外部 `.drectve` 对象仍被拒绝。
 
 矩阵还会按独立的 ABI 清单核对编译对象和外部原生对象的 `target` 回执。错误对象测试随后必须安装并执行未修改的对象，作为有效输入对照。
+
+`InterpreterSpecialization.HighAddress*` 与 `BinaryLowIRRefinement.HighAddress*` 覆盖高地址入口和转移、重叠指令范围、原始返回字节、栈恢复、与标签数值相同的数据、无效或缺失代码及精确／不足预算。独立字节执行器与修改返回字的反例区分运行时数值和 CFG 标签。
+
+
+`NeverDRawEnvironmentRequirementTests` 检查 LowIR 复制、完整及畸形标记、严格与非严格模拟、符号单步及序列执行、Low-to-Med 转换、直接 C/LLVM 生成、机器状态包装及再次特化。普通成功对照和不可达标记负例覆盖静态独立性、精化关系两侧及原始二进制到候选的精化；拒绝时不得发布证书。
+
+`PEFixedImageTest.RawCode*` 覆盖高低地址的外部返回函数、原始返回地址、完整寄存器和字节内存、未知可写全局数据、完整槽读取、缺失代码、完整映像排除、畸形及未使用声明、精度细化、显式别名契约和回执变更。恰好及少一个单位的准备、结果和操作预算测试包含多映射、多绑定和混合终止退出。`PipelineRefusesUnusedRawEnvironmentDomains` 验证恢复前拒绝源代码输出。
+
+`RawCodeNativeReturn*` 检查两个实际保存的返回地址、可别名的间隙、被丢弃的未证明单元、窄地址拒绝、完整寄存器和内存效果，以及精确证明预算。`SymStorePreservation.Additional*` 与 `SymStorePreservation.AbsentAdditional*` 检查两种字节序下的范围并集、写入后的内存版本、缺失字节、无效范围，以及预算不足时不修改状态。
+
+`FrameOffsets.*Normalization*` 覆盖精确恒等式、额外输入、根身份、无缓存见证的不可达谓词、默认行为、结构准入与测量计费，以及调用后的节点超限拒绝。`FrameNormalizationPreservesStoresAndNativeReturns` 和 `RawCodeFrameNormalization*` 使用独立字节检查器验证原始内存效果与实际返回地址，并覆盖适用的两种字节序、精确及不足的操作预算和回执篡改。`FrameNormalizationStrategyBindsIndependentProof` 检查两种二进制证明身份。

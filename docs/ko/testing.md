@@ -1758,3 +1758,14 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 소스 patch Windows 워크플로는 `scripts/check_source_patch_pe_runtime.py`도 실행합니다. x86/x64/ARM64 원본 3개와 교체 결과 27개를 생성하고 아키텍처마다 프로세스 실행 30회를 관측합니다. x86/x64는 Windows x64, ARM64는 `windows-11-arm`에서 실행하며 커밋, PE 아키텍처, 파일 해시, 전체 사례가 일치해야 합니다. 이 C 프로파일은 ARM64 C++ 예외를 검증하지 않습니다. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc`는 일반 NeverC를 선택합니다. 3389.1.5의 66개 검사는 x64/ARM64와 ELF, PE, Mach-O를 다루며 x86/ARM32는 지원하지 않습니다. 컴파일러를 자동으로 바꾸지 않습니다. PE 어댑터는 `-fno-autolink`를 사용하며 외부 `.drectve` 객체는 계속 거부합니다.
 
 행렬은 컴파일된 객체와 외부 네이티브 객체의 `target` 기록을 독립적인 ABI 목록과 비교합니다. 잘못된 객체를 검사한 뒤에는 수정하지 않은 객체를 설치하고 실행하여 유효한 입력의 대조 결과도 확인해야 합니다.
+
+`InterpreterSpecialization.HighAddress*` 및 `BinaryLowIRRefinement.HighAddress*`는 상위 주소, 겹치는 명령 범위, CALL 반환 바이트, 스택 복원, 레이블과 같은 값의 데이터, 잘못되거나 누락된 코드, 정확하거나 부족한 예산을 검사합니다. 독립 바이트 실행기와 반환 워드를 바꾼 음성 대조로 실행 값과 CFG 레이블을 구별합니다.
+
+
+`NeverDRawEnvironmentRequirementTests`는 LowIR 복사, 정상 및 잘못된 형식, 엄격/비엄격 에뮬레이션, 기호 step/run, Low-to-Med 변환, 직접 C/LLVM 출력, 머신 상태 래퍼 및 재특수화를 검사합니다. 일반 성공 대조와 도달 불가능한 마커의 거부 사례로 정적 독립성, 정제 관계 양쪽, 원본 바이너리에서 후보로의 정제를 검증하며 거부 시 인증서를 발행하지 않아야 합니다.
+
+`PEFixedImageTest.RawCode*`는 두 주소 영역의 외부 반환 함수, 실제 반환 주소, 전체 레지스터와 바이트 메모리, 미지의 가변 데이터, 전체 슬롯 읽기, 누락 코드, 이미지 배제, 잘못되거나 미사용인 선언, 정밀화, 명시적 별칭 계약 및 증거 변조를 검사합니다. 정확한 한도와 한 단위 부족 테스트에는 다수 매핑, 여러 바인딩과 종단 출구가 포함됩니다. `PipelineRefusesUnusedRawEnvironmentDomains`는 복원 전 소스 거부를 검사합니다.
+
+`RawCodeNativeReturn*`은 두 물리적 반환 주소, 별칭이 가능한 틈, 버려지는 미증명 셀, 좁은 주소 거부, 전체 레지스터·메모리 효과 및 정확한 증명 예산을 검사합니다. `SymStorePreservation.Additional*`과 `SymStorePreservation.AbsentAdditional*`은 두 바이트 순서의 범위 합집합, 쓰기 후 메모리 세대, 없는 바이트, 잘못된 범위 및 예산 부족 시 상태 불변을 검사합니다.
+
+`FrameOffsets.*Normalization*`은 정확한 항등식, 추가 입력, 루트 식별, 증인을 캐시하지 않는 도달 불가능 조건, 기본 동작, 구조 및 측정 비용, 호출 후 노드 한도 거부를 검사합니다. `FrameNormalizationPreservesStoresAndNativeReturns`와 `RawCodeFrameNormalization*`은 독립 바이트 판정기로 원래 메모리 효과와 실제 반환 주소, 해당되는 양쪽 바이트 순서, 정확하거나 부족한 연산 예산 및 영수증 변조를 확인합니다. `FrameNormalizationStrategyBindsIndependentProof`는 두 바이너리 증명 식별을 검사합니다.

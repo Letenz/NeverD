@@ -13,6 +13,15 @@
 
 namespace neverd::analysis {
 
+/// Single owner for the raw terminal-import environment domain and its bounds.
+llvm::Error validateX64TerminalImportDomain(const SpecializationOptions &Options);
+
+/// Authenticate the canonical RIP-relative import-call bytes and their entire
+/// lifted target evaluation. Does not prove the caller's terminal domain or
+/// supply a runtime target value.
+llvm::Error
+validateX64TerminalImportCall(const SpecializationInstruction &Instruction);
+
 enum class NativeReturnExpansion : uint8_t {
   InternalTransfer,
   /// Keep the RETURN observation before the architectural pop. The caller

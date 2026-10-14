@@ -11,6 +11,33 @@ static std::string constantResult() {
 }
 
 TEST(InterpreterLLVMRefinement,
+     TaskPriorityContractRequiresAuthenticatedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64CR8State = true;
+  P.Options.X64FlagsProfile =
+      InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  const auto Proof = P.check(R.Residual, constantResult());
+  rejected(Proof, Stage::Native);
+  EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+  EXPECT_NE(Proof.Diagnostic.find("task-priority state"), std::string::npos);
+  EXPECT_FALSE(Proof.Native.Certificate);
+}
+
+TEST(InterpreterLLVMRefinement, SegmentedContractRequiresAuthenticatedBases) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64SegmentedReads = true;
+  const auto Proof = P.check(R.Residual, constantResult());
+  rejected(Proof, Stage::Native);
+  EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+  EXPECT_NE(Proof.Diagnostic.find("FS/GS base inputs"), std::string::npos);
+  EXPECT_FALSE(Proof.Native.Certificate);
+}
+
+TEST(InterpreterLLVMRefinement,
      ExplicitFrameBoundsMatchAndBindTheNativeContract) {
   Program P({0xb8, 7, 0, 0, 0, 0xeb, 0, 0xc3});
   P.Options.MaxChainedTransfers = 3;
