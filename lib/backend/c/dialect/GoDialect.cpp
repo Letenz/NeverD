@@ -1214,6 +1214,8 @@ private:
   }
 
   void local(const Decl *D) {
+    // A record the declaration defines (a frame's layout) prints first.
+    record(D->Ty);
     std::string Text = "var " + escapeIdentifier(D->Name) + " " + type(D->Ty);
     if (D->Init) {
       const Expr *Inner = skipParens(D->Init);
@@ -1409,7 +1411,8 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !Ty->Record->Complete)
+    if (!Ty->isRecord() || !Ty->Record->Complete ||
+        !PrintedRecords.insert(Ty).second)
       return;
     openBlock("type " + type(Ty) + " struct");
     for (const RecordField &Field : Ty->Record->Fields)
@@ -1424,6 +1427,7 @@ private:
   }
 
   llvm::DenseSet<const Decl *> FileScope;
+  llvm::DenseSet<const CType *> PrintedRecords;
   llvm::StringSet<> Defined, DefinedObjects;
   const CType *ReturnType = nullptr;
 };
