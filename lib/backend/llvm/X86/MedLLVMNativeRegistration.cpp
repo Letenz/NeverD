@@ -316,8 +316,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   for (const auto &[Call, Source] : JumpPlan->Calls)
     if (Source.Resume && Source.Resume->EntryVA) {
       const auto Callback =
-          CallbackIndices.find({Source.Resume->EntryVA, true});
+          CallbackIndices.lower_bound({Source.Resume->EntryVA, false});
       if (Callback == CallbackIndices.end() ||
+          Callback->first.first != Source.Resume->EntryVA ||
           !llvm::is_contained(Requests[Callback->second].Blocks,
                               Call->getParent()))
         return false;
@@ -617,8 +618,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
 
   std::map<va_t, llvm::Function *> JumpCallbacks;
   for (const auto &[Identity, Index] : CallbackIndices)
-    if (Identity.second)
-      JumpCallbacks.emplace(Identity.first, (*Outlined)[Index]);
+    JumpCallbacks.emplace(Identity.first, (*Outlined)[Index]);
   auto JumpCalls = x86_registration::emitSEHJumps(
       *JumpPlan, Parent, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
       JumpCallbacks);

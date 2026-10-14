@@ -52,11 +52,14 @@ emitSEHJumpCallbackBindings(const SEHJumpPlan &Plan, llvm::Function &Parent,
     assert(Stack && "outlined callback must retain its checked private stack");
     auto &Buffer = Recovered[{Callback, Source.Capture->Address}];
     if (!Buffer) {
+      const auto *Frame =
+          getX86RegistrationSEHJumpParentFrame(*Callback, Parent);
+      assert(Frame && "outlining must establish the exact parent frame");
       llvm::IRBuilder<> B(Callback->getEntryBlock().getTerminator());
       Buffer =
           B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
                            Parent.getParent(), llvm::Intrinsic::localrecover),
-                       {&Parent, Callback->getArg(1),
+                       {&Parent, const_cast<llvm::Value *>(Frame),
                         B.getInt32(Indices.at(Source.Capture->Address))},
                        "registration.jump.recovered");
     }

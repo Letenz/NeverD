@@ -112,7 +112,8 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
           State->second->Unknown || !State->second->CallbackOnly ||
           !Blocks.count(Resume.EntryVA) ||
           !llvm::any_of(Scopes, [&](const auto &Scope) {
-            return Scope.IsFinally && Scope.HandlerVA == Resume.EntryVA;
+            return (Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA) ==
+                   Resume.EntryVA;
           }))
         return std::nullopt;
       if (Resume.OrdinaryCall) {

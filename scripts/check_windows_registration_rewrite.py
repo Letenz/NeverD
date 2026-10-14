@@ -46,7 +46,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-filter": (11, 3), "longjmp-parameter": (12, 23),
               "longjmp-callback": (13, 23),
               "longjmp-unwind-callback": (14, 23),
-              "longjmp-callback-zero": (15, 23)})
+              "longjmp-callback-zero": (15, 23),
+              "longjmp-search-filter": (16, 23),
+              "longjmp-search-filter-zero": (17, 23)})
 
 
 class PE32:

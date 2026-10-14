@@ -7,6 +7,7 @@
 #include "RegistrationCxxContinuationTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
+#include "RegistrationSEHNullAccessTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -1879,6 +1880,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                                               *Low.RegistrationStates);
   if (!Low.RegistrationStates->SEHJumpCaptures.empty())
     registration_test::checkSEHJumpEdits(*Parent, EH, Image);
+  registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
                             llvm::StringRef Diagnostic) {
     SCOPED_TRACE(Label.str());
@@ -2509,10 +2511,22 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           Setup.CreateStore(Frame32, Spill);
           auto *Loop =
               llvm::BasicBlock::Create(Context, "mutated.loop", &Helper);
-          for (auto &Block : Helper)
-            if (auto *Return =
-                    llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator())) {
-              auto *Done = Block.splitBasicBlock(Return, "mutated.done");
+          for (auto &Block : Helper) {
+            llvm::Instruction *Exit = nullptr;
+            for (auto &I : Block) {
+              const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+              const auto *Callee = Call ? Call->getCalledFunction() : nullptr;
+              if (llvm::isa<llvm::ReturnInst>(I)) {
+                Exit = &I;
+                break;
+              }
+              if (Callee && Callee->getName() == "_longjmpex") {
+                Exit = llvm::cast<llvm::Instruction>(Call->getArgOperand(1));
+                break;
+              }
+            }
+            if (Exit) {
+              auto *Done = Block.splitBasicBlock(Exit, "mutated.done");
               llvm::cast<llvm::UncondBrInst>(Block.getTerminator())
                   ->setSuccessor(0, Loop);
               llvm::IRBuilder<> B(Loop);
@@ -2525,6 +2539,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
               B.CreateCondBr(B.CreateLoad(B.getInt1Ty(), Again), Loop, Done);
               return true;
             }
+          }
         }
         return false;
       },

@@ -1,4 +1,7 @@
 // Native EH3 capture, nonlocal finally unwind, then another exception.
+#if REGISTRATION_CASE == 16 || REGISTRATION_CASE == 17
+#define FILTER_JUMP 1
+#endif
 .intel_syntax noprefix
 .text
 .globl _registration_entry
@@ -18,8 +21,13 @@ _registration_entry:
   mov [ebp-104],ebx
   mov ebx,6
   mov dword ptr [ebp-100],0
+#if FILTER_JUMP
+  mov dword ptr [ebp-4],-1
+  push -1
+#else
   mov dword ptr [ebp-4],0
   push 0
+#endif
   .byte 0x68
   .long __seh_longjmp_unwind
   push 2
@@ -29,6 +37,13 @@ _registration_entry:
   add esp,16
   test eax,eax
   jnz .Lresumed
+#if FILTER_JUMP
+  mov dword ptr [ebp-4],0
+  mov ebx,9
+.Lfault:
+  mov eax,dword ptr [0]
+  jmp .Lfault
+#else
   mov dword ptr [ebp-4],1
   mov ebx,9
 #if REGISTRATION_CASE == 13 || REGISTRATION_CASE == 15
@@ -46,27 +61,50 @@ _registration_entry:
   call __longjmpex
   ud2
 #endif
+#endif
 .Lresumed:
 #if REGISTRATION_CASE == 12
   cmp dword ptr [ebp+8],7
   jne .Lbad
 #endif
+#if FILTER_JUMP
+  cmp dword ptr [ebp-4],-1
+#else
   cmp dword ptr [ebp-4],0
+#endif
   jne .Lbad
   cmp ebx,6
   jne .Lbad
-#if REGISTRATION_CASE == 10 || REGISTRATION_CASE == 15
+#if REGISTRATION_CASE == 10 || REGISTRATION_CASE == 15 || REGISTRATION_CASE == 17
   cmp eax,1
 #else
   cmp eax,42
 #endif
   jne .Lbad
+#if FILTER_JUMP
+  call _registration_no_raise
+  mov eax,7
+  jmp .Lfinish
+#else
   call _registration_raise
+#endif
 .Lbad:
   mov dword ptr [ebp-4],-1
   mov eax,91
   jmp .Lfinish
 .Lfilter:
+#if FILTER_JUMP
+  mov dword ptr [_registration_trace],23
+#if REGISTRATION_CASE == 17
+  push 0
+#else
+  push 42
+#endif
+  lea eax,[ebp-96]
+  push eax
+  call __longjmpex
+  ud2
+#else
   mov eax,[ebp-100]
   imul eax,eax,10
 #if REGISTRATION_CASE == 12
@@ -78,6 +116,7 @@ _registration_entry:
   mov [_registration_trace],eax
   mov eax,1
   ret
+#endif
 .Lfinally:
   mov eax,[ebp-100]
   imul eax,eax,10
@@ -110,10 +149,12 @@ _registration_entry:
 .p2align 2
 .Lscope_table:
   .long -1,.Lfilter,.Lhandler
+#if !FILTER_JUMP
 #if REGISTRATION_CASE == 11
   .long 0,.Lfilter,.Lbad
 #else
   .long 0,0,.Lfinally
+#endif
 #endif
   .long 0,0,0
 .globl __load_config_used
