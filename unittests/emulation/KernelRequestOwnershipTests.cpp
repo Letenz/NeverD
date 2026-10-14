@@ -974,6 +974,7 @@ TEST_F(KernelRequestOwnership,
   const uint64_t Process = call("IoGetRequestorProcess", {IRP});
   ASSERT_NE(Process, 0u);
   EXPECT_EQ(call("IoGetCurrentProcess", {}), Process);
+  EXPECT_EQ(call("PsGetCurrentProcess", {}), Process);
   EXPECT_EQ(call("PsGetProcessId", {Process}), Input.RequestorProcessID);
   rejected(Model->validateGuestAccess(Process, 1, false));
   call("IoMarkIrpPending", {IRP});
@@ -1009,6 +1010,9 @@ TEST_F(KernelRequestOwnership,
   Model->enterExecution(profile::CallbackStackBase);
   EXPECT_EQ(call("PsGetCurrentProcessId", {}), 4u);
   EXPECT_EQ(call("PsGetProcessId", {call("IoGetCurrentProcess", {})}), 4u);
+  const uint64_t Thread = call("PsGetCurrentThread", {});
+  ASSERT_NE(Thread, 0u);
+  EXPECT_EQ(call("KeGetCurrentThread", {}), Thread);
   rejected(Model->validateGuestAccess(UserInput, 1, false));
   rejected(Model->call("KeUnstackDetachProcess", {ApcState}));
   rejected(Model->call("KeStackAttachProcess", {Process + 1, ApcState}));
@@ -1016,6 +1020,9 @@ TEST_F(KernelRequestOwnership,
   call("KeStackAttachProcess", {Process, ApcState});
   rejected(Model->validateGuestAccess(ApcState, 1, false));
   EXPECT_EQ(call("IoGetCurrentProcess", {}), Process);
+  // Attachment changes the APC-state process, never the thread identity.
+  EXPECT_EQ(call("PsGetCurrentProcess", {}), Process);
+  EXPECT_EQ(call("PsGetCurrentThread", {}), Thread);
   EXPECT_EQ(call("PsGetProcessId", {call("IoGetCurrentProcess", {})}),
             Input.RequestorProcessID);
   EXPECT_EQ(call("PsGetCurrentProcessId", {}), 4u);
@@ -1026,6 +1033,7 @@ TEST_F(KernelRequestOwnership,
   EXPECT_FALSE(*CanReadOther);
   call("KeStackAttachProcess", {OtherProcess, OtherApcState});
   EXPECT_EQ(call("IoGetCurrentProcess", {}), OtherProcess);
+  EXPECT_EQ(call("PsGetCurrentProcess", {}), OtherProcess);
   auto CanReadFirst = Memory->canAccess(UserInput, 1, Read);
   ASSERT_TRUE(bool(CanReadFirst));
   EXPECT_FALSE(*CanReadFirst);

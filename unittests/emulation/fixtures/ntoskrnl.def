@@ -90,3 +90,8 @@ EXPORTS
   RtlPrefixUnicodeString
   RtlIntegerToUnicodeString
   RtlUnicodeStringToInteger
+  PsGetCurrentProcessId
+  PsGetProcessId
+  PsGetCurrentProcess
+  PsGetCurrentThread
+  KeGetCurrentThread
