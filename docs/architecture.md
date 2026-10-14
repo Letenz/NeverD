@@ -5512,8 +5512,8 @@ future bindings, and unknown exported bits retain possible frame escape.
 Import veneers require their immutable indirect-jump bytes and exact IAT
 displacement; an address cache supplies no callable authority.
 Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
-rechecks the same dependencies. Writable formats and opaque calls retain their
-refusal, so this contract does not yet close the x64 xcpt4 case.
+rechecks the same dependencies. Unproved writable formats and opaque calls
+retain their refusal, so this contract does not yet close the x64 xcpt4 case.
 
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
@@ -5529,8 +5529,12 @@ intersects these byte facts across every predecessor and inspected callee
 return. Partial or unknown writes, released storage and opaque calls withdraw
 them. Runtime home/scratch areas and active return PCs cannot supply format
 storage. No initial stack contents or writable image bytes receive authority
-from their file values. These byte facts do not restore memory at a language
-handler entry or complete the x64 xcpt4 exception-activation proof.
+from their file values. `low/Windows/SEHImageFormat` checks live writable-image
+formats supplied by decoded stores into complete, unique image extents. Every
+reaching path must supply the same bytes through NUL, including inspected callee
+writes. Unknown or overlapping writes and opaque calls withdraw these facts.
+These byte facts do not restore memory at a language handler entry or prove
+xcpt4's initial writable literals and exception activations.
 
 Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
 UCRT import binding, an unescaped frame and a constant exception-mask subset
@@ -5693,4 +5697,4 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
-`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per existing context node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation.
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per existing context node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization and does not cache its result.

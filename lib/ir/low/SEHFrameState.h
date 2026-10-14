@@ -39,6 +39,9 @@ struct State {
   /// Exact bytes written by decoded scalar stores in this invocation. Missing
   /// bytes are unknown, including initial frame storage and encoded pointers.
   std::map<int64_t, uint8_t> FrameBytes;
+  /// Live writable-image bytes supplied by decoded stores, never by initial
+  /// file contents. The image owner checks each destination's complete extent.
+  std::map<va_t, uint8_t> ImageBytes;
   /// A concrete write withdraws the loader's binding for future slot loads
   /// and veneers. Restoring arbitrary bits does not authenticate a provider.
   std::set<va_t> InvalidatedImportSlots;
@@ -92,6 +95,8 @@ struct State {
                   [&](const auto &V) { return Missing(Other.Spills, V); });
     std::erase_if(FrameBytes,
                   [&](const auto &V) { return Missing(Other.FrameBytes, V); });
+    std::erase_if(ImageBytes,
+                  [&](const auto &V) { return Missing(Other.ImageBytes, V); });
   }
 
   void invalidateMemory(int64_t Start, int64_t End) {
@@ -108,6 +113,7 @@ struct State {
   void clearMemory() {
     Spills.clear();
     FrameBytes.clear();
+    ImageBytes.clear();
   }
 };
 

@@ -3203,7 +3203,12 @@ TEST(InterpreterSpecialization,
 
 TEST(InterpreterSpecialization,
      FrameNormalizationPreservesStoresAndNativeReturns) {
-  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+  for (auto [Order, Aligned] : {std::pair{llvm::endianness::little, false},
+                                std::pair{llvm::endianness::little, true},
+                                std::pair{llvm::endianness::big, false},
+                                std::pair{llvm::endianness::big, true}}) {
+    SCOPED_TRACE(Aligned);
+    const uint64_t Displacement = Aligned ? 37 : 40;
     Provider P;
     P.add(0x100, {op(NdOp::CALL, reg(0), {constant(0x200)})});
     P.Code.at(0x100).NativeStackControl =
@@ -3211,19 +3216,26 @@ TEST(InterpreterSpecialization,
     P.add(0x101, {ret()});
     P.Code.at(0x101).NativeStackControl =
         SpecializationNativeStackControl::Return;
-    P.add(0x200,
-          {op(NdOp::INT_XOR, reg(0), {reg(32), reg(8)}),
-           op(NdOp::INT_AND, reg(16), {reg(32), reg(8)}),
-           op(NdOp::INT_MULT, reg(16), {reg(16), constant(2)}),
-           op(NdOp::INT_ADD, reg(0), {reg(0), reg(16)}),
-           op(NdOp::INT_SUB, reg(0), {reg(0), reg(8)}),
-           op(NdOp::INT_ADD, reg(0), {reg(0), constant(uint64_t{0} - 40)}),
-           op(NdOp::STORE, {}, {reg(0), reg(8)}),
-           op(NdOp::INT_ADD, reg(16), {reg(0), constant(3)}),
-           op(NdOp::STORE, {}, {reg(16), constant(0xa13c, 2)}),
-           op(NdOp::INT_ADD, reg(16), {reg(32), constant(uint64_t{0} - 40)}),
-           op(NdOp::LOAD, reg(0), {reg(16)}),
-           op(NdOp::LOAD, reg(64), {reg(32)})});
+    std::vector<LowOp> Body{
+        op(NdOp::INT_XOR, reg(0), {reg(32), reg(8)}),
+        op(NdOp::INT_AND, reg(16), {reg(32), reg(8)}),
+        op(NdOp::INT_MULT, reg(16), {reg(16), constant(2)}),
+        op(NdOp::INT_ADD, reg(0), {reg(0), reg(16)}),
+        op(NdOp::INT_SUB, reg(0), {reg(0), reg(8)}),
+        op(NdOp::INT_ADD, reg(0), {reg(0), constant(uint64_t{0} - 40)})};
+    if (Aligned) {
+      Body.push_back(op(NdOp::INT_AND, reg(0), {reg(0), constant(-16)}));
+      Body.push_back(op(NdOp::INT_ADD, reg(0), {reg(0), constant(11)}));
+    }
+    Body.insert(Body.end(),
+                {op(NdOp::STORE, {}, {reg(0), reg(8)}),
+                 op(NdOp::INT_ADD, reg(16), {reg(0), constant(3)}),
+                 op(NdOp::STORE, {}, {reg(16), constant(0xa13c, 2)}),
+                 op(NdOp::INT_ADD, reg(16),
+                    {reg(32), constant(uint64_t{0} - Displacement)}),
+                 op(NdOp::LOAD, reg(0), {reg(16)}),
+                 op(NdOp::LOAD, reg(64), {reg(32)})});
+    P.add(0x200, std::move(Body));
     P.add(0x201, {ret()});
     P.Code.at(0x201).NativeStackControl =
         SpecializationNativeStackControl::Return;
@@ -3233,6 +3245,11 @@ TEST(InterpreterSpecialization,
     O.ByteOrder = Order;
     O.MaxChainedTransfers = 8;
     O.MaxSolverConflicts = 1;
+    if (Aligned) {
+      O.ExplicitMachineState = true;
+      O.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+      O.MaxSolverGates = 1024;
+    }
     const auto Disabled = specializeInterpreter(P, {0x100}, O);
     EXPECT_EQ(Disabled.Status, SpecializationStatus::BudgetExceeded);
     EXPECT_TRUE(Disabled.Residual.Blocks.empty());
@@ -3260,14 +3277,14 @@ TEST(InterpreterSpecialization,
                 (8 * (Order == llvm::endianness::little ? I : Bytes - I - 1)));
         };
         WriteMemory(Stack - 8, 0x101, 8);
-        WriteMemory(Stack - 48, Input, 8);
-        WriteMemory(Stack - 45, 0xa13c, 2);
+        WriteMemory(Stack - 8 - Displacement, Input, 8);
+        WriteMemory(Stack - 5 - Displacement, 0xa13c, 2);
         uint64_t Result = 0;
         for (unsigned I = 0; I != 8; ++I)
-          Result |= uint64_t(Expected.Memory.at(Stack - 48 + I))
+          Result |= uint64_t(Expected.Memory.at(Stack - 8 - Displacement + I))
                     << (8 * (Order == llvm::endianness::little ? I : 7 - I));
         Expected.word(reg(0), Result);
-        Expected.word(reg(16), Stack - 48);
+        Expected.word(reg(16), Stack - 8 - Displacement);
         Expected.word(reg(64), 0x101);
         ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
         std::erase_if(Actual.Registers, [](const auto &V) {

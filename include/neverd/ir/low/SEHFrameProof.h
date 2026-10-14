@@ -63,7 +63,8 @@ struct LowSEHFrameProof {
 /// invalidate saved memory. Decoded callees and authenticated runtime calls
 /// prove concrete effects under one bounded invocation stack; every active
 /// return PC is protected. Runtime facts include immutable scalar formats and
-/// retain no privacy after an opaque frame escape.
+/// live format bytes from decoded frame/image stores. Writable file contents
+/// grant no byte facts. An opaque frame escape cannot restore privacy.
 /// No callee memory contract is inferred from an ABI.
 /// Exhausted budgets and incomplete inputs return no proof.
 LowSEHFrameProof

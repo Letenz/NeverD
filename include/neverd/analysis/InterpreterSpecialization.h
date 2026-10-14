@@ -335,6 +335,8 @@ struct SpecializationOptions {
   /// this ceiling. Internal traversals, rebuilding and sample defect guards
   /// are not separately metered; this is not a wall-time or peak-memory bound.
   /// MaxSymbolicNodes is checked again before publishing any offset theorem.
+  /// A changed exact expression may retry the ordinary frame proof once under
+  /// the original predicate and cumulative solver-query limit.
   uint64_t MaxFrameOffsetNormalizationWorkPerProof = 0;
 
   bool hasRawEnvironment() const {
