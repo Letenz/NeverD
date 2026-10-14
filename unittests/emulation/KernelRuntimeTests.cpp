@@ -118,6 +118,25 @@ protected:
     check(Memory->write(Address, Bytes));
   }
 
+  // A counted 8-bit record whose spare capacity holds '!'.
+  void ansi(uint64_t Record, uint64_t Buffer, std::string_view Text,
+            uint16_t Maximum) {
+    std::vector<uint8_t> Bytes(Maximum, '!');
+    std::copy(Text.begin(), Text.end(), Bytes.begin());
+    if (!Bytes.empty())
+      check(Memory->write(Buffer, Bytes));
+    check(Memory->writeInteger(Record, Text.size(), 2));
+    check(Memory->writeInteger(Record + 2, Maximum, 2));
+    check(Memory->writeInteger(Record + 8, Buffer, 8));
+  }
+
+  std::string bytesText(uint64_t Address, size_t Count) {
+    std::string Text;
+    for (size_t I = 0; I < Count; ++I)
+      Text.push_back(static_cast<char>(integer(Address + I, 1)));
+    return Text;
+  }
+
   std::u16string units(uint64_t Address, size_t Count) {
     std::u16string Text;
     for (size_t I = 0; I < Count; ++I)
@@ -815,6 +834,150 @@ TEST_F(KernelRuntime, ThreadClientIDsSkipModeledProcessIDs) {
   check(Model->setUserRequestContext(false));
 }
 
+TEST_F(KernelRuntime, AnsiToUnicodeConversionAllocatesTaggedPagedPool) {
+  // RtlAnsiStringToUnicodeString (RVA 0x6f6840) allocates through
+  // ExpAllocateStringRoutine; RtlFreeUnicodeString and RtlFreeAnsiString share
+  // RVA 0x602cb0.
+  const uint64_t Source = Scratch;
+  const uint64_t Destination = Scratch + 0x40;
+  ansi(Source, Scratch + 0x100, "Ab\\9", 8);
+  check(Memory->write(Destination, std::vector<uint8_t>(16, 0xff)));
+  EXPECT_EQ(invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 1}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 8u);
+  EXPECT_EQ(integer(Destination + 2, 2), 10u);
+  const uint64_t Buffer = integer(Destination + 8);
+  ASSERT_NE(Buffer, 0u);
+  EXPECT_EQ(units(Buffer, 5), std::u16string(u"Ab\\9\0", 5));
+  // The buffer is paged pool tagged 'Strg'.
+  EXPECT_NE(failure("ExFreePoolWithTag", {Buffer, Tag}).find("tag"),
+            std::string::npos);
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("ExFreePool", {Buffer}).find("APC_LEVEL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {Previous});
+  invoke("RtlFreeUnicodeString", {Destination});
+  EXPECT_EQ(integer(Destination), 0u);
+  EXPECT_EQ(integer(Destination + 8), 0u);
+  auto Freed = Model->validateGuestAccess(Buffer, 1, false);
+  ASSERT_TRUE(bool(Freed));
+  EXPECT_NE(llvm::toString(std::move(Freed)).find("freed"), std::string::npos);
+  // The exact tag frees a second conversion.
+  invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 1});
+  invoke("ExFreePoolWithTag", {integer(Destination + 8), 0x67727453});
+  // A null buffer leaves the record untouched under both names.
+  check(Memory->writeInteger(Destination, 0x12345678, 4));
+  check(Memory->writeInteger(Destination + 8, 0, 8));
+  invoke("RtlFreeAnsiString", {Destination});
+  invoke("RtlFreeUnicodeString", {Destination});
+  EXPECT_EQ(integer(Destination, 4), 0x12345678u);
+}
+
+TEST_F(KernelRuntime, AnsiToUnicodeConversionNeedsRoomForTheTerminator) {
+  const uint64_t Source = Scratch;
+  const uint64_t Destination = Scratch + 0x40;
+  const uint64_t Buffer = Scratch + 0x200;
+  ansi(Source, Scratch + 0x100, "abc", 4);
+  counted(Destination, Buffer, u"", 8);
+  // BOOLEAN arguments use only their low byte.
+  EXPECT_EQ(
+      invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 0x100}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 6u);
+  EXPECT_EQ(integer(Destination + 8), Buffer);
+  EXPECT_EQ(units(Buffer, 4), std::u16string(u"abc\0", 4));
+  // Length is stored before the capacity check fails.
+  counted(Destination, Buffer, u"", 6);
+  EXPECT_EQ(invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 6u);
+  EXPECT_EQ(units(Buffer, 3), u"!!!");
+  // A source longer than a counted UTF-16 string fails before any effect.
+  check(Memory->map(Scratch + 0x10000, 0x10000, Read | Write));
+  ansi(Source, Scratch + 0x10000, std::string(0x7fff, 'x'), 0x7fff);
+  counted(Destination, Buffer, u"", 8);
+  EXPECT_EQ(invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 1}),
+            0xc00000f0u);
+  EXPECT_EQ(integer(Destination, 2), 0u);
+  EXPECT_EQ(integer(Destination + 8), Buffer);
+  ansi(Source, Scratch + 0x100, "\xe9", 1);
+  EXPECT_NE(failure("RtlAnsiStringToUnicodeString", {Destination, Source, 0})
+                .find("code page"),
+            std::string::npos);
+  EXPECT_EQ(integer(Destination, 2), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeToAnsiConversionTruncatesIntoShortBuffers) {
+  // RtlUnicodeStringToAnsiString (RVA 0x5edb00) converts what fits.
+  const uint64_t Source = Scratch;
+  const uint64_t Destination = Scratch + 0x100;
+  const uint64_t Buffer = Scratch + 0x200;
+  unicode(Source, u"Hello");
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 1}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(integer(Destination + 2, 2), 6u);
+  const uint64_t Allocated = integer(Destination + 8);
+  ASSERT_NE(Allocated, 0u);
+  EXPECT_EQ(bytesText(Allocated, 6), std::string("Hello\0", 6));
+  invoke("RtlFreeAnsiString", {Destination});
+  EXPECT_EQ(integer(Destination), 0u);
+  EXPECT_EQ(integer(Destination + 8), 0u);
+
+  ansi(Destination, Buffer, "", 6);
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(bytesText(Buffer, 6), std::string("Hello\0", 6));
+  ansi(Destination, Buffer, "", 8);
+  check(Memory->writeInteger(Destination + 2, 4, 2));
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 3u);
+  EXPECT_EQ(bytesText(Buffer, 5), std::string("Hel\0!", 5));
+  // A zero-capacity record stores the full length and writes nothing.
+  ansi(Destination, Buffer, "", 0);
+  check(Memory->write(Buffer, std::vector<uint8_t>{'?'}));
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(integer(Buffer, 1), '?');
+  // A trailing odd byte is not a UTF-16 unit.
+  check(Memory->writeInteger(Source, 11, 2));
+  check(Memory->writeInteger(Source + 2, 12, 2));
+  ansi(Destination, Buffer, "", 8);
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  unicode(Source, u"é");
+  EXPECT_NE(failure("RtlUnicodeStringToAnsiString", {Destination, Source, 0})
+                .find("code page"),
+            std::string::npos);
+}
+
+TEST_F(KernelRuntime, StringConversionAndReleaseFollowTheirIRQLContracts) {
+  unicode(Scratch, u"a");
+  ansi(Scratch + 0x100, Scratch + 0x200, "", 4);
+  check(Memory->write(Scratch + 0x300, std::vector<uint8_t>(16, 0)));
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {1});
+  EXPECT_NE(
+      failure("RtlUnicodeStringToAnsiString", {Scratch + 0x100, Scratch, 0})
+          .find("PASSIVE_LEVEL"),
+      std::string::npos);
+  EXPECT_NE(failure("RtlAnsiStringToUnicodeString",
+                    {Scratch + 0x300, Scratch + 0x100, 0})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  // Releasing a string is permitted at APC_LEVEL.
+  invoke("RtlFreeUnicodeString", {Scratch + 0x300});
+  invoke("KeLowerIrql", {Previous});
+  const auto Dispatch = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("RtlFreeAnsiString", {Scratch + 0x300}).find("IRQL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {Dispatch});
+}
+
 TEST_F(KernelRuntime, DebugIntegersUseWindowsWidthsAndFormattingRules) {
   EXPECT_EQ(
       formatted(
@@ -959,10 +1122,12 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
   ASSERT_TRUE(Result->NTStatus.has_value());
   EXPECT_EQ(*Result->NTStatus, 0u);
-  ASSERT_EQ(Result->Messages.size(), 2u);
+  ASSERT_EQ(Result->Messages.size(), 3u);
   EXPECT_EQ(Result->Messages[0], "strings \\Device\\Sample42 42 -42 driver 32");
   // The overflow still stores the formatted length in the short record.
   EXPECT_EQ(Result->Messages[1], "status c0000023 80000005 10");
+  // A short ANSI conversion keeps the terminated prefix that fits.
+  EXPECT_EQ(Result->Messages[2], "convert 80000005 3 \\De");
   std::map<std::string, unsigned> Calls;
   for (const auto &Call : Result->Calls)
     ++Calls[Call.Name];
@@ -973,6 +1138,10 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   EXPECT_EQ(Calls["RtlPrefixUnicodeString"], 2u);
   EXPECT_EQ(Calls["RtlIntegerToUnicodeString"], 2u);
   EXPECT_EQ(Calls["RtlUnicodeStringToInteger"], 2u);
+  EXPECT_EQ(Calls["RtlUnicodeStringToAnsiString"], 2u);
+  EXPECT_EQ(Calls["RtlAnsiStringToUnicodeString"], 1u);
+  EXPECT_EQ(Calls["RtlFreeAnsiString"], 1u);
+  EXPECT_EQ(Calls["RtlFreeUnicodeString"], 1u);
 }
 
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
