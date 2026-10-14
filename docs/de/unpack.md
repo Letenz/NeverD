@@ -14,7 +14,7 @@ Der Container bestimmt, wie eine Datei validiert und neu aufgebaut wird, der Bef
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | Laufzeitbeobachtung |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | Laufzeitbeobachtung |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 PE32+-DLLs werden anhand von `IMAGE_FILE_DLL` erkannt. Eine modellierte Gast-EXE ruft `LoadLibraryA` und anschließend `FreeLibrary` über den normalen Lebenszyklus von Abhängigkeiten, TLS und `DllMain` auf. Der akzeptierte DLL-Eintritt ist ihr Prozess-Anfügeaufruf; Argumente beliebiger Exporte werden nicht erfunden. Namen, Ordinale, Aliase, Daten und Weiterleitungen bleiben erhalten. Zeiger auf eigene Exporte bleiben intern und erzeugen keine Selbstimporte. Das gilt auch für von Hilfsroutinen zurückgegebene Adressen: Ein internes Ergebnis widerruft frühere Import-Reparaturnachweise für diese Stelle.
 
@@ -149,3 +149,5 @@ Checked-x64-Ausführung prüft beim Rücksprung aus DriverEntry den aktuellen Lo
 Übergaben an Ausführungs-Watchpoints eines Treibers verwenden frühere Code-Snapshots nur dann erneut, wenn die zuvor installierten RAM-Schreibwatches unberührt blieben. Übernommene Schreibzugriffe heben diese Garantie auch bei identischen Werten auf. Kerneldienste, Scheduling-Grenzen und neue Aufrufe erfordern eine Aktualisierung; neu überwachte Bereiche benötigen weiterhin einen ersten Snapshot.
 
 Aktive Kernel-Pools behalten ihre typisierte Allokationsabhängigkeit, ohne zusätzlich als unbekannte Arena-Objekte eingestuft zu werden, wenn Adresse und exakte Größe mit dem Pool-Eigentümer übereinstimmen. Andere Objekte bleiben Abhängigkeiten, auch neben aktiven Pools oder nach deren Freigabe. Diese Einordnung beweist keine Zeigerherkunft und ermöglicht keine native Laufzeitwiederherstellung.
+
+Das feste Treiberprofil deaktiviert CET-Schattenstapel. Kanonische `RDSSPD`- und `RDSSPQ`-Kodierungen erhalten alle Registerbits, Flags und Speicherinhalte, einschließlich der oberen Hälfte eines 32-Bit-Ziels. Jeder Lesevorgang zählt als eine Instruktion und behält eine Umgebungsabhängigkeit für UNPACK bei. CPUID-Deklarationen aktivieren CET nicht; andere Schattenstapelinstruktionen und Versuche zur Aktivierung bleiben nicht unterstützt.

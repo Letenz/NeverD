@@ -1106,6 +1106,19 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
       }
     }
+    if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      if (auto Member =
+              frameRecordMember(*Stmt.StoreAddr, Stmt.StoreVal->Type)) {
+        emitIndent(Indent);
+        OS << *Member << " = "
+           << (isUnknownCallOperand(Stmt.StoreVal.get())
+                   ? "0"
+                   : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                                     Stmt.MemoryOrdering))
+           << ";\n";
+        break;
+      }
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
@@ -2984,6 +2997,8 @@ std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
     return *Member + Op + Imm;
   if (auto Slot = namedFrameSlot(Addr))
     return *Slot + Op + Imm;
+  if (auto Member = frameRecordMember(Addr, Ty))
+    return *Member + Op + Imm;
   if (!Ty)
     return {};
   return "*(" + memoryTypeName(Ty) + " *)(" + addrStr(Addr) + ")" + Op + Imm;

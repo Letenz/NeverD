@@ -9,17 +9,22 @@
 #include "../arch/x86_64/NativeStackControl.h"
 #include "../arch/x86_64/StringTransfer.h"
 #include "../arch/x86_64/X64Recovery.h"
+#include "../arch/x86_64/X64TaskPriority.h"
 #include "ControlDiscovery.h"
 #include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
+#include "RawEnvironment.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SHA256.h"
 
 #include <algorithm>
 #include <deque>
@@ -128,7 +133,79 @@ struct NativeSlice {
   size_t FirstOp = 0;
   size_t OpCount = 0;
   bool Synthetic = false;
+  std::optional<SpecializationExternalExit> ExternalExit;
 };
+
+std::string externalExitDigest(const SpecializationExternalExit &Exit) {
+  llvm::SHA256 Hash;
+  Hash.update("neverd-specialization-external-exit-v1");
+  const auto Number = [&](uint64_t Value) {
+    uint8_t Bytes[8];
+    llvm::support::endian::write64le(Bytes, Value);
+    Hash.update(llvm::ArrayRef<uint8_t>(Bytes));
+  };
+  const auto Text = [&](llvm::StringRef Value) {
+    Number(Value.size());
+    Hash.update(Value);
+  };
+  const auto Variable = [&](const NdVar &V) {
+    Number(static_cast<unsigned>(V.Space));
+    Number(V.Offset);
+    Number(V.Size);
+    Number(static_cast<unsigned>(V.Provenance));
+    Number(V.AddressOwnerVA);
+  };
+  Number(Exit.Version);
+  Number(Exit.ResidualAddress);
+  Variable(Exit.ExpansionScratch);
+  Text(Exit.OriginalOperationDigest);
+  Text(Exit.ExpandedOperationDigest);
+  Text(Exit.ResidualOperationDigest);
+  const auto &I = Exit.Original;
+  const auto &B = I.Origin;
+  Number(B.Address);
+  Number(B.Size);
+  Number(B.FirstOp);
+  Number(B.OpCount);
+  Number(static_cast<unsigned>(B.Mode));
+  Number(static_cast<unsigned>(B.TargetMode));
+  Number(static_cast<unsigned>(B.Control));
+  Number(static_cast<unsigned>(B.ControlFlags));
+  Number(B.Immediate.has_value());
+  Number(B.Immediate.value_or(0));
+  Number(I.Fallthrough.Address);
+  Number(static_cast<unsigned>(I.Fallthrough.Mode));
+  Number(I.IsNativeCall);
+  Number(static_cast<unsigned>(I.NativeStackControl));
+  Number(static_cast<unsigned>(I.ProfileProjection));
+  Number(I.NativeBytes.size());
+  Hash.update(I.NativeBytes);
+  Text(lowUndefinedOperationDigest(I.Ops));
+  Text(lowPreservedStateDigest(I.PreservedState));
+  Number(static_cast<unsigned>(I.UndefinedEffects.Coverage));
+  Number(I.UndefinedEffects.OpCount);
+  Text(I.UndefinedEffects.OperationDigest);
+  Number(I.UndefinedEffects.Effects.size());
+  for (const auto &Effect : I.UndefinedEffects.Effects) {
+    Number(Effect.AfterOp);
+    Variable(Effect.Output);
+    Number(Effect.BitOffset);
+    Number(Effect.BitCount);
+    Number(Effect.When.has_value());
+    if (Effect.When)
+      Variable(*Effect.When);
+  }
+  Number(I.TerminalImport.has_value());
+  if (I.TerminalImport) {
+    const auto &E = *I.TerminalImport;
+    Number(E.Binding.Version);
+    Number(E.Binding.Slot);
+    Text(E.Binding.Module);
+    Text(E.Binding.Symbol);
+    Text(E.FixedImageDigest);
+  }
+  return llvm::toHex(Hash.final());
+}
 
 struct Node {
   ContextKey Key;
@@ -145,6 +222,14 @@ struct Node {
 std::optional<uint64_t> affineDisplacement(SymContext &Ctx, SymRef Value,
                                            SymRef Root) {
   return detail::frameRelativeOffset(Ctx, Value, Root);
+}
+
+/// Complete modular byte footprints, including partial/straddling overlap.
+SymRef memoryExtentsOverlap(SymContext &Ctx, SymRef Left, uint16_t LeftBytes,
+                            SymRef Right, uint16_t RightBytes) {
+  return Ctx.mkOr(
+      Ctx.mkUlt(Ctx.mkSub(Left, Right), Ctx.mkConst(64, RightBytes)),
+      Ctx.mkUlt(Ctx.mkSub(Right, Left), Ctx.mkConst(64, LeftBytes)));
 }
 
 Projection project(SymState &State, SymRef Root,
@@ -399,12 +484,79 @@ bool validValue(const NdVar &Value) {
          (Value.isConst() || Value.Offset <= InvalidVA - (Value.Size - 1));
 }
 
+// Keep whole-width values separate from scalar addresses, controls and counts.
+// SymExec owns their semantics; this path never splits a guest memory access
+// or supplies a wide input to a scalar source/proof interface.
+bool supportedWideOperation(const LowOp &Op,
+                            const SpecializationOptions &Options) {
+  if (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Op.MemoryOrdering != NdMemoryOrdering::None)
+    return false;
+  const auto Wide = [](const NdVar &V) {
+    return V.Size == 16 && (scalarLocation(V) || V.isConst()) &&
+           (V.isConst() || V.Offset <= InvalidVA - 15);
+  };
+  const bool Output = scalarLocation(Op.Output) && Wide(Op.Output);
+  switch (Op.Opcode) {
+  case NdOp::COPY:
+  case NdOp::INT_NOT:
+    return Output && Op.NumInputs == 1 && Wide(Op.Inputs[0]);
+  case NdOp::INT_ZEXT:
+  case NdOp::INT_SEXT:
+    return Output && Op.NumInputs == 1 && validValue(Op.Inputs[0]);
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+  case NdOp::INT_MULT:
+    return Output && Op.NumInputs == 2 && Wide(Op.Inputs[0]) &&
+           Wide(Op.Inputs[1]);
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+    return scalarLocation(Op.Output) && Op.Output.Size == 1 &&
+           validValue(Op.Output) && Op.NumInputs == 2 && Wide(Op.Inputs[0]) &&
+           Wide(Op.Inputs[1]);
+  case NdOp::SUBBYTES:
+    return scalarLocation(Op.Output) && validValue(Op.Output) &&
+           Op.NumInputs == 2 && Wide(Op.Inputs[0]) && Op.Inputs[1].isConst() &&
+           validValue(Op.Inputs[1]) &&
+           Op.Inputs[1].Offset <= 16U - Op.Output.Size;
+  case NdOp::LOAD:
+  case NdOp::STORE: {
+    const bool Load = Op.Opcode == NdOp::LOAD;
+    const unsigned Arity = Load ? 1 : 2;
+    if (Op.NumInputs != Arity && Op.NumInputs != Arity + 1)
+      return false;
+    if (Op.NumInputs == Arity + 1 &&
+        (!Op.Inputs[0].isConst() || !validValue(Op.Inputs[0])))
+      return false;
+    const auto Memory = lowMemoryOperands(Op);
+    return Memory.Complete && Memory.AccessSize == 16 &&
+           validValue(*Memory.Address) &&
+           (Load ? Output
+                 : Op.Output.Size == 0 && Memory.StoredValue &&
+                       Wide(*Memory.StoredValue));
+  }
+  default:
+    return false;
+  }
+}
+
 /// The allowlist is intentionally narrower than SymExec. In particular its BV
 /// division model does not certify architectural division faults, and naming an
 /// opaque result is not permission to publish a replacement of its instruction.
-bool supported(const LowOp &Op) {
-  if (Op.NumInputs > 6 || Op.MemoryOrdering != NdMemoryOrdering::None ||
-      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+bool supported(const LowOp &Op, const SpecializationOptions &Options) {
+  if (Op.NumInputs > 6 || Op.MemoryOrdering != NdMemoryOrdering::None)
+    return false;
+  if (Op.Output.Size > 8 ||
+      std::any_of(Op.Inputs, Op.Inputs + Op.NumInputs,
+                  [](const NdVar &V) { return V.Size > 8; }))
+    return supportedWideOperation(Op, Options);
+  if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+      (!Options.X64SegmentedReads || Op.Opcode != NdOp::LOAD ||
+       (Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS &&
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::X86GS) ||
+       (Op.NumInputs == 2 && !Op.Inputs[0].isConst())))
     return false;
   for (unsigned I = 0; I < Op.NumInputs; ++I)
     if (!validValue(Op.Inputs[I]))
@@ -469,7 +621,8 @@ bool supported(const LowOp &Op) {
   case NdOp::NOP:
     return NoOutput && Op.NumInputs == 0;
   case NdOp::INTRINSIC:
-    return x64::runtimeFlagsIntrinsic(Op) || detail::stringTransferShape(Op);
+    return x64::runtimeFlagsIntrinsic(Op) || detail::stringTransferShape(Op) ||
+           (Options.X64CR8State && detail::taskPriorityOperation(Op));
   default:
     return false;
   }
@@ -677,10 +830,12 @@ public:
   Specializer(SpecializationProvider &Provider, SpecializationCursor Entry,
               const SpecializationOptions &Options, size_t ManualRegisters,
               size_t ManualSlots, ControlRefinement &Refinement,
-              SpecializationResult Previous)
+              SpecializationResult Previous,
+              std::shared_ptr<const SpecializationRawEnvironment> RawDomain)
       : Provider(Provider), Entry(Entry), Options(Options),
-        ManualRegisters(ManualRegisters), ManualSlots(ManualSlots),
-        Refinement(Refinement), Result(std::move(Previous)) {
+        RawDomain(std::move(RawDomain)), ManualRegisters(ManualRegisters),
+        ManualSlots(ManualSlots), Refinement(Refinement),
+        Result(std::move(Previous)) {
     Result.Diagnostic.clear();
   }
 
@@ -747,6 +902,7 @@ private:
   SpecializationProvider &Provider;
   SpecializationCursor Entry;
   const SpecializationOptions &Options;
+  const std::shared_ptr<const SpecializationRawEnvironment> RawDomain;
   const size_t ManualRegisters;
   const size_t ManualSlots;
   ControlRefinement &Refinement;
@@ -836,9 +992,16 @@ std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
   // offset also queries without an alignment-shaped nomination.
   if (Proof == FrameOffsetProof::Optional && !CandidateMask)
     return std::nullopt;
-  const auto Offset =
-      detail::proveFrameOffset(Ctx, Predicate, Value, Root, Options,
-                               Result.SolverQueries, &Refinement.Proofs);
+  detail::FrameOffsetNormalization Normalization;
+  Normalization.MaxWork =
+      std::min(Options.MaxFrameOffsetNormalizationWorkPerProof,
+               Result.EvaluatedOperations < Options.MaxOperations
+                   ? Options.MaxOperations - Result.EvaluatedOperations
+                   : uint64_t{0});
+  const auto Offset = detail::proveFrameOffset(
+      Ctx, Predicate, Value, Root, Options, Result.SolverQueries,
+      &Refinement.Proofs, &Normalization);
+  Result.EvaluatedOperations += Normalization.WorkUsed;
   switch (Offset.Status) {
   case detail::FrameOffsetStatus::Exact:
     return Offset.Offset;
@@ -1585,9 +1748,9 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
 }
 
 bool Specializer::admitDestination(SpecializationCursor Cursor) {
-  if (Cursor.Address >= (uint64_t{1} << 63))
+  if (Cursor.Address == InvalidVA)
     return fail(SpecializationStatus::UnresolvedControl,
-                "control destination overlaps reserved residual labels");
+                "control destination is the invalid address sentinel");
   return true;
 }
 
@@ -2046,6 +2209,18 @@ bool Specializer::evaluate(int Id) {
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
   seed(Ctx, State, FrameRoot, Draft.Incoming);
+  if (Options.X64SegmentedReads) {
+    // Projection forgets base correlations across nodes, enlarging the input
+    // domain. Distinct variables do not assert distinct linear addresses.
+    State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS,
+                                       Ctx.mkFreshVar(64, "fs_base"));
+    State.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS,
+                                       Ctx.mkFreshVar(64, "gs_base"));
+  }
+  // Rebuilt nodes forget correlations, including prior writes, but retain the
+  // full architectural domain. Runtime intrinsics are never removed.
+  SymRef TaskPriority =
+      Options.X64CR8State ? Ctx.mkZExt(Ctx.mkFreshVar(4, "cr8"), 64) : SymRef();
   FrameOrigins Origins = Draft.Incoming.Origins;
   FrameFacts Frame = Draft.Incoming.Frame;
   SymExec Exec(Ctx, State);
@@ -2158,6 +2333,20 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::InvalidInput,
                     "native temporary overlaps the reserved dispatch range");
     std::vector<LowOp> Operations = Instruction.Ops;
+    std::optional<SpecializationExternalExit> ExternalExit;
+    if (Instruction.TerminalImport) {
+      if (std::find(Options.X64TerminalImports.begin(),
+                    Options.X64TerminalImports.end(),
+                    Instruction.TerminalImport->Binding) ==
+          Options.X64TerminalImports.end())
+        return fail(SpecializationStatus::InvalidInput,
+                    "provider terminal import has no declared domain");
+      if (auto Error = validateX64TerminalImportCall(Instruction))
+        return fail(SpecializationStatus::InvalidInput,
+                    llvm::toString(std::move(Error)));
+      ExternalExit.emplace();
+      ExternalExit->Original = Instruction;
+    }
     bool ExpandedReturn = false;
     bool ExpandedIndirectCall = false;
     size_t NativeCallPrefixSize = 0;
@@ -2199,6 +2388,13 @@ bool Specializer::evaluate(int Id) {
       if (!Expanded)
         return fail(SpecializationStatus::InvalidInput,
                     llvm::toString(Expanded.takeError()));
+      if (ExternalExit) {
+        ExternalExit->ExpansionScratch = Scratch;
+        ExternalExit->OriginalOperationDigest =
+            Expanded->Receipt.OriginalOperationDigest;
+        ExternalExit->ExpandedOperationDigest =
+            Expanded->Receipt.ExpandedOperationDigest;
+      }
       Operations = std::move(Expanded->Ops);
       ExpandedReturn = Expanded->ExpandedReturn;
       ExpandedIndirectCall = Expanded->ExpandedIndirectCall;
@@ -2262,7 +2458,7 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::BudgetExceeded,
                     "specialization symbolic-node budget exhausted");
       LowOp Original = Operations[I];
-      if (!supported(Original))
+      if (!supported(Original, Options))
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
                         ndOpName(Original.Opcode));
@@ -2389,12 +2585,22 @@ bool Specializer::evaluate(int Id) {
       }
       LowOp Residual = Original;
       LowOp Evaluated = Original;
-      bool OutputUnsafe = false;
+      const bool SegmentedRead =
+          Original.Opcode == NdOp::LOAD &&
+          Original.MemoryAddressSpace != NdMemoryAddressSpace::Default;
+      const auto PriorityOperation = detail::taskPriorityOperation(Original);
+      const bool EnvironmentRead =
+          SegmentedRead ||
+          PriorityOperation == detail::X64TaskPriorityOperation::Read;
+      // An offset's provenance says nothing about the value read through an
+      // arbitrary base. Keep that value unsafe through copies and frame spills.
+      bool OutputUnsafe = EnvironmentRead;
       bool ExactFrameAddress = false;
       std::optional<SymStorePreservation> StorePreservation;
+      llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
-      if (FrameRoot &&
+      if (FrameRoot && !SegmentedRead &&
           (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE)) {
         const auto Memory = lowMemoryOperands(Original);
         const auto Displacement = frameOffset(
@@ -2416,14 +2622,72 @@ bool Specializer::evaluate(int Id) {
             StorePreservation =
                 SymStorePreservation{FrameRoot, Bounds.Begin, Bounds.End};
           }
+          if (!Displacement && !StorePreservation &&
+              Options.ProveStoreReturnSlotSeparation &&
+              Options.RequireRestoredFrameAtReturn &&
+              Options.FrameBaseRegister->Offset == x64::StackPointer &&
+              !Frame.NativeReturnSlots.empty()) {
+            const auto Address = Exec.memoryAddressValue(Original);
+            // The preservation owner requires the executed address itself to
+            // have this width. Narrow stores keep ordinary havoc; extending
+            // only the proof expression would not change that owner contract.
+            if (Ctx.width(Address) == 64) {
+              for (uint64_t Slot : Frame.NativeReturnSlots) {
+                if (Result.EvaluatedOperations >= Options.MaxOperations)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "native return-cell traversal budget exhausted");
+                ++Result.EvaluatedOperations;
+                const int64_t Begin = static_cast<int64_t>(Slot);
+                if (!Slot || Begin > std::numeric_limits<int64_t>::max() - 8)
+                  continue;
+                const auto Cell = Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, Slot));
+                const auto Overlap = memoryExtentsOverlap(
+                    Ctx, Address, Memory.AccessSize, Cell, 8);
+                if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                  return fail(
+                      SpecializationStatus::BudgetExceeded,
+                      "native return-cell separation node budget exhausted");
+                const auto Domain =
+                    enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+                if (Failed)
+                  return false;
+                if (Domain.Status == FiniteValueStatus::Unknown)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "native return-cell separation proof exceeded "
+                              "its budget");
+                if (Domain.Status != FiniteValueStatus::Complete ||
+                    Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+                  continue;
+                if (!StorePreservation)
+                  StorePreservation =
+                      SymStorePreservation{FrameRoot, Begin, Begin + 8};
+                else
+                  ProvedStoreRanges.push_back({Begin, Begin + 8});
+              }
+              if (StorePreservation)
+                StorePreservation->AdditionalRanges = ProvedStoreRanges;
+            }
+          }
+          const auto PreservationMetadataWork = [&]() {
+            const uint64_t Work = 1 + ProvedStoreRanges.size();
+            if (Work > Options.MaxOperations - Result.EvaluatedOperations)
+              return false;
+            Result.EvaluatedOperations += Work;
+            return true;
+          };
           const auto InPreservedFrame = [&](uint64_t Offset, unsigned Bytes) {
             if (!StorePreservation)
               return false;
-            const uint64_t Begin =
-                static_cast<uint64_t>(StorePreservation->Begin);
-            const uint64_t Size =
-                static_cast<uint64_t>(StorePreservation->End) - Begin;
-            return Bytes <= Size && Offset - Begin <= Size - Bytes;
+            const auto Contains = [&](int64_t First, int64_t End) {
+              const uint64_t Begin = static_cast<uint64_t>(First);
+              const uint64_t Size = static_cast<uint64_t>(End) - Begin;
+              return Bytes <= Size && Offset - Begin <= Size - Bytes;
+            };
+            if (Contains(StorePreservation->Begin, StorePreservation->End))
+              return true;
+            return llvm::any_of(ProvedStoreRanges, [&](const auto &Range) {
+              return Contains(Range.Begin, Range.End);
+            });
           };
           if (Displacement) {
             for (auto It = Frame.AffineValues.begin();
@@ -2454,7 +2718,7 @@ bool Specializer::evaluate(int Id) {
           } else {
             for (auto It = Frame.AffineValues.begin();
                  It != Frame.AffineValues.end();) {
-              if (++Result.EvaluatedOperations > Options.MaxOperations)
+              if (!PreservationMetadataWork())
                 return fail(SpecializationStatus::BudgetExceeded,
                             "frame preservation metadata budget exhausted");
               if (!InPreservedFrame(It->first, 8))
@@ -2470,12 +2734,43 @@ bool Specializer::evaluate(int Id) {
                   return fail(SpecializationStatus::Unsupported,
                               "STORE overlaps the entry return control slot");
             } else if (unsafeOrigin(*Memory.Address, Origins)) {
-              discover(State, Exec.operandValue(*Memory.Address), FrameRoot,
-                       ControlDemand::Memory);
-              Refinement.PrecisionFailure = true;
-              return fail(SpecializationStatus::Unsupported,
-                          "STORE has unresolved frame-derived or unknown "
-                          "address origin");
+              bool Separated = false;
+              if (Options.ProveStoreReturnSlotSeparation) {
+                // Unknown provenance alone cannot prove separation. The current
+                // path may nevertheless prove that the complete STORE misses
+                // the entry return slot, for example through disjoint alignment
+                // residues. Both modular distances are needed for straddling.
+                auto Address = Exec.memoryAddressValue(Original);
+                if (Ctx.width(Address) < 64)
+                  Address = Ctx.mkZExt(Address, 64);
+                const auto Overlap = memoryExtentsOverlap(
+                    Ctx, Address, Memory.AccessSize, FrameRoot, 8);
+                if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                  return fail(
+                      SpecializationStatus::BudgetExceeded,
+                      "entry control-slot separation node budget exhausted");
+                const auto Domain =
+                    enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+                if (Failed)
+                  return false;
+                if (Domain.Status == FiniteValueStatus::Unknown)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "entry control-slot separation proof exceeded "
+                              "its budget");
+                Separated =
+                    Domain.Status == FiniteValueStatus::Complete &&
+                    Domain.Tuples == std::vector<std::vector<uint64_t>>{{0}};
+              }
+              if (!Separated) {
+                discover(State, Exec.operandValue(*Memory.Address), FrameRoot,
+                         ControlDemand::Memory);
+                Refinement.PrecisionFailure = true;
+                return fail(SpecializationStatus::Unsupported,
+                            "STORE has unresolved frame-derived or unknown "
+                            "address origin");
+              }
+              // Entry separation grants no external provenance. Only the
+              // independently proved native cells above may survive havoc.
             } else if (!Options.ExternalStoresPreserveEntryReturnSlot) {
               return fail(SpecializationStatus::Unsupported,
                           "external STORE requires an entry control-slot "
@@ -2496,7 +2791,7 @@ bool Specializer::evaluate(int Id) {
           } else if (ValueUnsafe) {
             for (auto It = Origins.ExternalFrameBytes.begin();
                  It != Origins.ExternalFrameBytes.end();) {
-              if (++Result.EvaluatedOperations > Options.MaxOperations)
+              if (!PreservationMetadataWork())
                 return fail(SpecializationStatus::BudgetExceeded,
                             "frame preservation provenance budget exhausted");
               if (!InPreservedFrame(*It, 1))
@@ -2541,7 +2836,10 @@ bool Specializer::evaluate(int Id) {
       bool FoldedImmutableRead = false;
       std::vector<LowOp> ImmutableOps;
       SymRef FiniteReadValue;
-      if (Original.Opcode == NdOp::LOAD) {
+      // The immutable-read materializer represents values as uint64_t. Retain
+      // wider reads in full, without querying or truncating a certificate.
+      if (Original.Opcode == NdOp::LOAD && !SegmentedRead && !ExternalExit &&
+          Original.Output.Size <= 8) {
         const auto Memory = lowMemoryOperands(Original);
         const SymRef Address = Exec.operandValue(*Memory.Address);
         // Exact root-relative translation preserves domain cardinality, even
@@ -2635,7 +2933,48 @@ bool Specializer::evaluate(int Id) {
       // Do not seed certified reads by pretending a guest STORE happened:
       // that would clobber retained frame facts under the correct alias rules.
       StepResult Flow = StepResult::Continue;
-      if (Original.Opcode == NdOp::INTRINSIC) {
+      if (PriorityOperation) {
+        // Scratch is live only for this transition. Keeping the resulting
+        // SymRef locally avoids collision with later string/frame scratch.
+        const auto PrioritySlot = NdVar::tmp(FrameValueTemp, 8);
+        State.write(SymSpace::Temporary, PrioritySlot.Offset, TaskPriority);
+        uint64_t Scratch = DispatchTargetTemp + 8;
+        const auto Transition = detail::lowerX64TaskPriority(
+            Original, PrioritySlot, [&](uint16_t Bytes) {
+              auto Value = NdVar::tmp(Scratch, Bytes);
+              Scratch += Bytes;
+              return Value;
+            });
+        if (!Transition)
+          return fail(SpecializationStatus::InvalidInput,
+                      "invalid task-priority transition");
+        for (const auto &Scalar : Transition->Ops) {
+          if (++Result.EvaluatedOperations > Options.MaxOperations)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "task-priority transition operation budget exhausted");
+          if (Exec.step(Scalar) != StepResult::Continue)
+            return fail(SpecializationStatus::Unsupported,
+                        "symbolic task-priority transition was not exact");
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "task-priority symbolic-node budget exhausted");
+        }
+        if (Transition->Rejected) {
+          const auto Bad =
+              enumerate(Ctx, Exec.pathPredicate(),
+                        {Exec.operandValue(*Transition->Rejected)}, 1);
+          if (Failed)
+            return false;
+          if (Bad.Status == FiniteValueStatus::Unknown)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "task-priority reserved-bit proof exceeded its budget");
+          if (Bad.Status != FiniteValueStatus::Complete ||
+              Bad.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+            return fail(SpecializationStatus::Unsupported,
+                        "CR8 write may set reserved bits");
+        }
+        TaskPriority = Exec.operandValue(PrioritySlot);
+      } else if (Original.Opcode == NdOp::INTRINSIC) {
         // The allowlist above admits only the two exact x64 flag shapes. Keep
         // the original runtime operation in the residual while using a fresh
         // symbolic input for each machine snapshot. Its origin is unknown,
@@ -2678,7 +3017,8 @@ bool Specializer::evaluate(int Id) {
         OutputUnsafe = false;
       }
       if (scalarLocation(Original.Output)) {
-        if (FrameRoot && Original.Output.Size == 8 && OutputUnsafe) {
+        if (FrameRoot && Original.Output.Size == 8 && OutputUnsafe &&
+            !EnvironmentRead) {
           if (const auto Offset =
                   frameOffset(Ctx, Exec.pathPredicate(),
                               Exec.operandValue(Original.Output), FrameRoot))
@@ -2689,7 +3029,7 @@ bool Specializer::evaluate(int Id) {
           if (Failed)
             return false;
         }
-        if (Ctx.asConst(Exec.operandValue(Original.Output)))
+        if (!EnvironmentRead && Ctx.asConst(Exec.operandValue(Original.Output)))
           OutputUnsafe = false;
         setUnsafeOrigin(Original.Output, OutputUnsafe, Origins);
         if (Original.Output.isTemp())
@@ -2725,6 +3065,10 @@ bool Specializer::evaluate(int Id) {
         StringTransferEnd.reset();
       }
       if (Flow == StepResult::Continue) {
+        // Keep the certified physical call span byte-for-byte in LowIR. Its
+        // target remains a runtime LOAD even if a provider offers a snapshot.
+        if (ExternalExit)
+          Residual = Original;
         if (ImmutableOps.empty())
           Draft.Block.Ops.push_back(std::move(Residual));
         else
@@ -2736,6 +3080,14 @@ bool Specializer::evaluate(int Id) {
       if (I + 1 != Operations.size())
         return fail(SpecializationStatus::Unsupported,
                     "control transfer before the end of a lifted instruction");
+      if (ExternalExit) {
+        if (!ExpandedIndirectCall || Original.Opcode != NdOp::INDIR_BR)
+          return fail(SpecializationStatus::InvalidInput,
+                      "terminal import lacks its physical external transfer");
+        Draft.Block.Ops.push_back(Original);
+        Finished = true;
+        continue;
+      }
       if (Flow != StepResult::Return) {
         if (ReplayingDemands &&
             Draft.Slices.size() + 1 < Nodes[Id].Slices.size()) {
@@ -2782,6 +3134,7 @@ bool Specializer::evaluate(int Id) {
       Finished = true;
     }
     Slice.OpCount = Draft.Block.Ops.size() - Slice.FirstOp;
+    Slice.ExternalExit = std::move(ExternalExit);
     Draft.Slices.push_back(std::move(Slice));
     if (Instruction.Ops.empty() &&
         ++Result.EvaluatedOperations > Options.MaxOperations)
@@ -3143,10 +3496,60 @@ bool Specializer::publish() {
   }
   std::map<int, int> Remap;
   std::map<int, va_t> Labels;
-  // Labels are control identities, never runtime addresses. Keep the first
-  // label equal to the real entry for existing ABI/root consumers; all clones
-  // live in a disjoint synthetic label range, with native origins in a sidecar.
-  va_t NextLabel = uint64_t{1} << 63;
+  // Labels are control identities, never runtime addresses. There is no
+  // reserved half of the guest address space: native code may occupy either
+  // half. Keep the public entry anchor, and find one checked contiguous range
+  // disjoint from every explored native extent (including stale nodes).
+  uint64_t LabelCount = 0;
+  for (int Id : Order) {
+    const auto Count = Nodes[Id].Slices.size();
+    if (!Count || Count > InvalidVA - LabelCount)
+      return fail(SpecializationStatus::InvalidInput,
+                  "invalid residual instruction span");
+    LabelCount += Count;
+  }
+  std::vector<std::pair<va_t, va_t>> NativeRanges{
+      {Entry.Address, Entry.Address + 1}};
+  for (const Node &N : Nodes)
+    for (const NativeSlice &Slice : N.Slices) {
+      if (Slice.Synthetic)
+        continue;
+      const auto &Origin = Slice.Origin;
+      if (!Origin.Size || Origin.Address == InvalidVA ||
+          Origin.Size > InvalidVA - Origin.Address)
+        return fail(SpecializationStatus::InvalidInput,
+                    "invalid native origin extent for residual labels");
+      NativeRanges.emplace_back(Origin.Address, Origin.Address + Origin.Size);
+    }
+  std::sort(NativeRanges.begin(), NativeRanges.end());
+  size_t RangeCount = 0;
+  for (const auto Range : NativeRanges) {
+    if (RangeCount && Range.first <= NativeRanges[RangeCount - 1].second)
+      NativeRanges[RangeCount - 1].second =
+          std::max(NativeRanges[RangeCount - 1].second, Range.second);
+    else
+      NativeRanges[RangeCount++] = Range;
+  }
+  NativeRanges.resize(RangeCount);
+  const auto FindLabels = [&](va_t Candidate) -> std::optional<va_t> {
+    for (const auto &[Begin, End] : NativeRanges) {
+      if (End <= Candidate)
+        continue;
+      if (Candidate < Begin && LabelCount <= Begin - Candidate)
+        return Candidate;
+      Candidate = End;
+    }
+    if (LabelCount <= InvalidVA - Candidate)
+      return Candidate;
+    return std::nullopt;
+  };
+  auto LabelBase = FindLabels(uint64_t{1} << 63);
+  if (!LabelBase)
+    LabelBase = FindLabels(0);
+  if (!LabelBase)
+    return fail(SpecializationStatus::InvalidInput,
+                "no disjoint residual instruction label range");
+  va_t NextLabel = *LabelBase;
   for (int Id : Order) {
     Remap[Id] = static_cast<int>(Remap.size()) + 1;
     Labels[Id] = NextLabel;
@@ -3165,12 +3568,20 @@ bool Specializer::publish() {
   LowOp AnchorBranch = branchTo(0);
   AnchorBranch.Inputs[0] = NdVar::cst(Labels.at(EntryNode), 8);
   AnchorBranch.Addr = Entry.Address;
-  AnchorBranch.Seq = 0;
+  if (RawDomain) {
+    if (Result.EvaluatedOperations >= Options.MaxOperations)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "raw environment requirement operation budget exhausted");
+    ++Result.EvaluatedOperations;
+    Anchor.Ops.push_back(makeLowRawEnvironmentRequirement(
+        rawEnvironmentDigestWords(*RawDomain), Entry.Address));
+  }
+  AnchorBranch.Seq = Anchor.Ops.size();
   Anchor.Ops.push_back(AnchorBranch);
   LowInstructionBoundary AnchorBoundary;
   AnchorBoundary.Address = Entry.Address;
   AnchorBoundary.Size = 1;
-  AnchorBoundary.OpCount = 1;
+  AnchorBoundary.OpCount = Anchor.Ops.size();
   AnchorBoundary.Control = LowInstructionControl::Branch;
   AnchorBoundary.ControlFlags = LowInstructionControlFlag::Branch;
   AnchorBoundary.Immediate = Labels.at(EntryNode);
@@ -3213,6 +3624,10 @@ bool Specializer::publish() {
           Boundary.Immediate = Op.Inputs[0].Offset;
           if (Op.Opcode == NdOp::COND_BR)
             Boundary.ControlFlags |= LowInstructionControlFlag::Conditional;
+        } else if (Op.Opcode == NdOp::INDIR_BR) {
+          Boundary.Control = LowInstructionControl::Branch;
+          Boundary.ControlFlags = LowInstructionControlFlag::Branch |
+                                  LowInstructionControlFlag::Indirect;
         } else if (Op.Opcode == NdOp::RETURN) {
           Boundary.Control = LowInstructionControl::Return;
           Boundary.ControlFlags = LowInstructionControlFlag::Return;
@@ -3220,6 +3635,14 @@ bool Specializer::publish() {
         }
       }
       Block.InstructionBoundaries.push_back(Boundary);
+      if (Slice.ExternalExit) {
+        auto Exit = *Slice.ExternalExit;
+        Exit.ResidualAddress = Address;
+        Exit.ResidualOperationDigest = lowUndefinedOperationDigest(
+            llvm::ArrayRef<LowOp>(Block.Ops).slice(Slice.FirstOp, Slice.OpCount));
+        Exit.IdentityDigest = externalExitDigest(Exit);
+        Result.ExternalExits.push_back(std::move(Exit));
+      }
       if (!Slice.Synthetic)
         Result.Origins.push_back({Address, Slice.Origin});
       ++Function.DecodedInstructionCount;
@@ -3242,6 +3665,12 @@ bool Specializer::publish() {
     return fail(SpecializationStatus::InvalidInput,
                 llvm::toString(std::move(Error)));
   Result.Residual = std::move(Function);
+  // Raw results validate all exits once after publication, under their
+  // independently bounded complete-result integrity interface.
+  if (!RawDomain)
+    if (auto Error = validateSpecializationExternalExits(Result, Options))
+      return fail(SpecializationStatus::InvalidInput,
+                  llvm::toString(std::move(Error)));
   Result.Status = SpecializationStatus::Complete;
   return true;
 }
@@ -3313,7 +3742,7 @@ void Specializer::refineFailureGuards() {
 }
 
 SpecializationResult Specializer::run() {
-  if (Entry.Address == InvalidVA || Entry.Address >= (uint64_t{1} << 63) ||
+  if (Entry.Address == InvalidVA ||
       (Options.ByteOrder != llvm::endianness::little &&
        Options.ByteOrder != llvm::endianness::big) ||
       !Options.MaxNodes || !Options.MaxContextsPerAddress ||
@@ -3335,6 +3764,41 @@ SpecializationResult Specializer::run() {
          "machine execution preconditions require an explicit machine-state "
          "interface");
     return std::move(Result);
+  }
+  if (Options.X64SegmentedReads &&
+      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)) {
+    fail(SpecializationStatus::InvalidInput,
+         "segmented reads require explicit nonfaulting machine state");
+    return std::move(Result);
+  }
+  if (Options.X64CR8State &&
+      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution ||
+       Options.X64FlagsProfile !=
+           InterpreterMachineStateProfile::KernelX64NoFaultV1)) {
+    fail(SpecializationStatus::InvalidInput,
+         "CR8 state requires an explicit nonfaulting kernel machine profile");
+    return std::move(Result);
+  }
+  if (!Options.X64TerminalImports.empty() &&
+      (!Options.FrameBaseRegister || Options.FrameBaseRegister->Offset != x64::StackPointer ||
+       Options.FrameBaseRegister->Bytes != 8 || !Options.RequireRestoredFrameAtReturn)) {
+    fail(SpecializationStatus::InvalidInput, "terminal imports require the verified entry RSP root");
+    return std::move(Result);
+  }
+  // A prepared raw domain already validated the unchanged terminal list.
+  // Refinement only adds precision hints; do not rescan names on each attempt.
+  if (!RawDomain) {
+    if (auto Error = validateX64TerminalImportDomain(Options)) {
+      llvm::handleAllErrors(
+          std::move(Error), [&](const llvm::ErrorInfoBase &E) {
+            fail(E.convertToErrorCode() ==
+                         std::make_error_code(std::errc::value_too_large)
+                     ? SpecializationStatus::BudgetExceeded
+                     : SpecializationStatus::InvalidInput,
+                 E.message());
+          });
+      return std::move(Result);
+    }
   }
   if (Options.ControlRegisters.size() + Options.ControlFrameSlots.size() >
       Options.MaxControlFields) {
@@ -3492,16 +3956,113 @@ SpecializationResult Specializer::run() {
     Result.Residual = {};
     Result.Origins.clear();
     Result.Reads.clear();
+    Result.ExternalExits.clear();
+    Result.RawEnvironment.reset();
   }
   return std::move(Result);
 }
 
 } // namespace
 
+llvm::Error validateSpecializationExternalExits(
+    const SpecializationResult &Result, const SpecializationOptions &Options) {
+  const auto Invalid = [](const char *Message) {
+    return llvm::createStringError(llvm::errc::invalid_argument, "%s", Message);
+  };
+  if (auto Error = validateLowInstructionBoundaries(
+          Result.Residual, LowInstructionBoundaryRequirement::Required))
+    return Error;
+  if (auto Error = validateX64TerminalImportDomain(Options))
+    return Error;
+  std::map<va_t, const LowInstructionBoundary *> Origins;
+  for (const auto &Origin : Result.Origins)
+    if (!Origins.emplace(Origin.ResidualAddress, &Origin.NativeInstruction).second)
+      return Invalid("duplicate residual origin");
+  std::map<va_t, const SpecializationExternalExit *> Exits;
+  for (const auto &Exit : Result.ExternalExits)
+    if (Exit.Version != 1 || Exit.IdentityDigest != externalExitDigest(Exit) ||
+        !Exits.emplace(Exit.ResidualAddress, &Exit).second)
+      return Invalid("duplicate or unsupported external-exit receipt");
+  for (const auto &Block : Result.Residual.Blocks) {
+    for (const auto &Boundary : Block.InstructionBoundaries) {
+      if (Boundary.FirstOp > Block.Ops.size() ||
+          Boundary.OpCount > Block.Ops.size() - Boundary.FirstOp)
+        return Invalid("external exit has an invalid residual span");
+      const auto Span = llvm::ArrayRef<LowOp>(Block.Ops).slice(
+          Boundary.FirstOp, Boundary.OpCount);
+      const auto Found = Exits.find(Boundary.Address);
+      const bool Indirect = llvm::any_of(Span, [](const LowOp &Op) {
+        return Op.Opcode == NdOp::INDIR_BR;
+      });
+      if (Found == Exits.end()) {
+        if (Indirect)
+          return Invalid("residual indirect transfer lacks an external-exit receipt");
+        continue;
+      }
+      const auto &Exit = *Found->second;
+      if (Span.empty() || Span.back().Opcode != NdOp::INDIR_BR ||
+          Boundary.FirstOp + Boundary.OpCount != Block.Ops.size() ||
+          !Block.Succs.empty() || Boundary.Control != LowInstructionControl::Branch ||
+          Boundary.ControlFlags != (LowInstructionControlFlag::Branch |
+                                    LowInstructionControlFlag::Indirect) ||
+          Boundary.Immediate ||
+          lowUndefinedOperationDigest(Span) != Exit.ResidualOperationDigest)
+        return Invalid("external exit differs from its terminal residual span");
+      if (auto Error = validateX64TerminalImportCall(Exit.Original))
+        return Error;
+      const auto Origin = Origins.find(Exit.ResidualAddress);
+      const auto BoundaryKey = [](const LowInstructionBoundary &B) {
+        return std::tie(B.Address, B.Size, B.FirstOp, B.OpCount, B.Mode,
+                        B.Control, B.ControlFlags, B.TargetMode, B.Immediate);
+      };
+      if (Origin == Origins.end() ||
+          BoundaryKey(*Origin->second) != BoundaryKey(Exit.Original.Origin))
+        return Invalid("external exit differs from its native origin");
+      const auto &Binding = Exit.Original.TerminalImport->Binding;
+      if (std::count(Options.X64TerminalImports.begin(),
+                     Options.X64TerminalImports.end(), Binding) != 1)
+        return Invalid("external exit has no unique declared terminal domain");
+      auto Expanded = expandNativeStackControl(
+          Exit.Original, NdVar::reg(x64::StackPointer, 8), Exit.ExpansionScratch,
+          NativeReturnExpansion::InternalTransfer);
+      if (!Expanded)
+        return Expanded.takeError();
+      if (Expanded->Receipt.OriginalOperationDigest != Exit.OriginalOperationDigest ||
+          Expanded->Receipt.ExpandedOperationDigest != Exit.ExpandedOperationDigest)
+        return Invalid("external exit has stale physical expansion evidence");
+      std::vector<LowOp> NativeSpan(Span.begin(), Span.end());
+      for (size_t I = 0; I < NativeSpan.size(); ++I) {
+        NativeSpan[I].Addr = Exit.Original.Origin.Address;
+        NativeSpan[I].Seq = static_cast<int>(I);
+      }
+      if (lowUndefinedOperationDigest(NativeSpan) != Exit.ExpandedOperationDigest)
+        return Invalid("external exit does not retain its exact physical call");
+      Exits.erase(Found);
+    }
+  }
+  if (!Exits.empty())
+    return Invalid("external-exit receipt has no residual occurrence");
+  return llvm::Error::success();
+}
+
 SpecializationResult
 specializeInterpreter(SpecializationProvider &Provider,
                       SpecializationCursor Entry,
                       const SpecializationOptions &Options) {
+  // Bind the original caller domain once, before any instruction fetch or
+  // precision refinement. Learned control hints never alter this declaration.
+  const auto RawDomain = Provider.rawEnvironment();
+  if (auto Error = validatePreparedRawEnvironment(RawDomain, Options)) {
+    SpecializationResult Invalid;
+    llvm::handleAllErrors(std::move(Error), [&](const llvm::ErrorInfoBase &E) {
+      Invalid.Status = E.convertToErrorCode() ==
+                               std::make_error_code(std::errc::value_too_large)
+                           ? SpecializationStatus::BudgetExceeded
+                           : SpecializationStatus::InvalidInput;
+      Invalid.Diagnostic = E.message();
+    });
+    return Invalid;
+  }
   SpecializationOptions Effective = Options;
   ControlRefinement Refinement(Options.MaxSymbolicNodes);
   if (Options.EntryFrameAlignment && Options.EntryFrameAlignment->valid())
@@ -3510,11 +4071,31 @@ specializeInterpreter(SpecializationProvider &Provider,
   for (;;) {
     Refinement.DeferredProducerDemands.clear();
     Refinement.DeferredGuardDemands.clear();
-    Specializer Attempt(
-        Provider, Entry, Effective, Options.ControlRegisters.size(),
-        Options.ControlFrameSlots.size(), Refinement, std::move(Result));
+    Specializer Attempt(Provider, Entry, Effective,
+                        Options.ControlRegisters.size(),
+                        Options.ControlFrameSlots.size(), Refinement,
+                        std::move(Result), RawDomain);
     Result = Attempt.run();
     Result.DiscoveryVisits = Refinement.Visits;
+    if (Result.complete() && RawDomain) {
+      if (auto Error = sealRawEnvironment(Result, RawDomain, Options)) {
+        llvm::handleAllErrors(
+            std::move(Error), [&](const llvm::ErrorInfoBase &E) {
+              Result.Status =
+                  E.convertToErrorCode() ==
+                          std::make_error_code(std::errc::value_too_large)
+                      ? SpecializationStatus::BudgetExceeded
+                      : SpecializationStatus::InvalidInput;
+              Result.Diagnostic = E.message();
+            });
+        Result.Residual = {};
+        Result.Origins.clear();
+        Result.Reads.clear();
+        Result.ExternalExits.clear();
+        Result.RawEnvironment.reset();
+      }
+      return Result;
+    }
     const auto TryFiniteGuards = [&]() {
       if (!Options.DiscoverControlState || Refinement.DiscoverFiniteGuards ||
           Refinement.BudgetExceeded || !Attempt.sawFiniteDispatch() ||

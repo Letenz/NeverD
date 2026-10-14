@@ -40,7 +40,8 @@ public:
       ReadCurrentThread,
       ReadCPUID,
       ReadTimestamp,
-      ReadTimestampAndProcessor
+      ReadTimestampAndProcessor,
+      ReadDisabledShadowStack
     };
     Kind Source;
     std::optional<X64Register> Destination;
@@ -49,6 +50,7 @@ public:
   /// Environment reads require an exact model action. CR8 names its full-width
   /// destination; current-thread reads require the modeled processor field.
   /// Timestamp reads use the scheduler clock and implicit EDX:EAX/ECX outputs.
+  /// Shadow-stack reads preserve all state in this fixed CET-disabled profile.
   /// Ordinary admitted instructions return nullopt and execute in the backend.
   llvm::Expected<std::optional<Action>> inspect(llvm::ArrayRef<uint8_t> Bytes,
                                                 uint64_t PC);

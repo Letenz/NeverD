@@ -7,10 +7,12 @@ on:
         description: 'HTTPS URL of the immutable full producer corpus archive'
         required: true
         type: string
+        default: 'https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13.tar.gz'
       corpus_sha256:
         description: 'Exact lowercase SHA-256 of the corpus archive'
         required: true
         type: string
+        default: '7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3'
       snapshot_witness:
         description: 'Fixed opaque Node snapshot witness in the supplied corpus'
         required: true
@@ -20,11 +22,13 @@ on:
   workflow_call:
     inputs:
       corpus_url:
-        required: true
+        required: false
         type: string
+        default: 'https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13.tar.gz'
       corpus_sha256:
-        required: true
+        required: false
         type: string
+        default: '7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3'
       snapshot_witness:
         required: false
         type: string

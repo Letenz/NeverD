@@ -14,7 +14,7 @@ El contenedor determina cómo se valida y reconstruye un archivo, el conjunto de
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | observación en ejecución |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | observación en ejecución |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 Las DLL PE32+ se identifican por `IMAGE_FILE_DLL`. Un EXE invitado modelado llama a `LoadLibraryA` y después a `FreeLibrary` mediante el ciclo ordinario de dependencias, TLS y `DllMain`. La entrada DLL aceptada es su llamada de asociación al proceso; no se inventan argumentos para exportaciones arbitrarias. Se conservan nombres, ordinales, alias, datos y reenvíos. Los punteros a exportaciones propias permanecen internos, sin autoimportaciones. La misma regla cubre las direcciones devueltas por helpers: un resultado interno retira las pruebas anteriores de reparación de importaciones para ese sitio.
 
@@ -149,3 +149,5 @@ La ejecución checked x64 valida al volver de DriverEntry la llamada actual del 
 Las paradas por vigilancia de ejecución del controlador reutilizan las instantáneas de código solo si no se tocaron las vigilancias de escritura RAM instaladas anteriormente. Las escrituras confirmadas invalidan esta garantía incluso si escriben el mismo valor. Los servicios del núcleo, los límites de planificación y las nuevas invocaciones requieren una actualización; los nuevos rangos vigilados aún necesitan una instantánea inicial.
 
 Los pools activos del núcleo conservan su dependencia de asignación tipada sin clasificarse también como objetos de arena desconocidos cuando la dirección y la extensión exacta coinciden con su propietario. Los demás objetos siguen siendo dependencias cuando coexisten con pools o estos se liberan. Esta clasificación no demuestra la procedencia de punteros ni habilita la restauración nativa del estado de ejecución.
+
+El perfil fijo del controlador desactiva las pilas de sombra CET. Las codificaciones canónicas de `RDSSPD` y `RDSSPQ` conservan todos los bits de registros, indicadores y memoria, incluida la mitad superior de un destino de 32 bits. Cada lectura cuenta como una instrucción y conserva una dependencia del entorno para UNPACK. Las declaraciones CPUID no activan CET; las demás instrucciones de pila de sombra y los intentos de activación siguen sin admitirse.

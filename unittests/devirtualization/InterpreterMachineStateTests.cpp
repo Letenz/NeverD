@@ -16,6 +16,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -532,6 +533,149 @@ int main(void) {
 }
 )C",
             {}, nullptr, InterpreterEntryAlignment{16, 3});
+}
+
+TEST(InterpreterMachineStateTest, V1RefusesRetainedSegmentedReads) {
+  for (auto Space :
+       {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
+    auto Load = operation(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8),
+                          {NdVar::scalar(16, 8)});
+    Load.MemoryAddressSpace = Space;
+    const auto F = function({{Load}, {operation(NdOp::RETURN, {}, {})}});
+    auto Wrapped = wrapInterpreterMachineStateX64(F);
+    ASSERT_FALSE(static_cast<bool>(Wrapped));
+    EXPECT_NE(llvm::toString(Wrapped.takeError()).find("special memory"),
+              std::string::npos);
+  }
+}
+
+TEST(InterpreterMachineStateTest, V1RefusesTaskPriorityIntrinsics) {
+  for (auto Op :
+       {operation(
+            NdOp::INTRINSIC, NdVar::reg(x86reg::RAX, 8),
+            {NdVar::scalar(static_cast<uint64_t>(Intrinsic::ReadCr8), 2)}),
+        operation(NdOp::INTRINSIC, {},
+                  {NdVar::scalar(static_cast<uint64_t>(Intrinsic::WriteCr8), 2),
+                   NdVar::scalar(0, 8)})}) {
+    auto Wrapped = wrapInterpreterMachineStateX64(
+        function({{Op}, {operation(NdOp::RETURN, {}, {})}}));
+    ASSERT_FALSE(static_cast<bool>(Wrapped));
+    llvm::consumeError(Wrapped.takeError());
+  }
+}
+
+TEST(InterpreterMachineStateTest, V1RefusesWideTransport) {
+  for (bool Temporary : {false, true}) {
+    const auto Output =
+        Temporary ? NdVar::tmp(64, 16) : NdVar::reg(x86reg::XMM0, 16);
+    const auto F =
+        function({{operation(NdOp::COPY, Output, {NdVar::scalar(0, 16)})},
+                  {operation(NdOp::RETURN, {}, {})}});
+    for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                        InterpreterMachineStateLayout::SharedGPRExit}) {
+      auto Wrapped = wrapInterpreterMachineStateX64(
+          F, BinaryFormat::ELF,
+          InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt,
+          Layout);
+      ASSERT_FALSE(static_cast<bool>(Wrapped));
+      EXPECT_NE(llvm::toString(Wrapped.takeError())
+                    .find(Temporary ? "invalid temporary range"
+                                    : "unsupported register"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(InterpreterMachineStateTest, PipelineRefusesUnmappedSegmentEnvironment) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.ExceptionMetadata.ParseStatus = ExceptionParseStatus::Complete;
+  Segment Code;
+  Code.VA = 0x1000;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data = {0xb8, 7, 0, 0, 0, 0xc3};
+  Code.Size = Code.FileSz = Code.Data.size();
+  Image.Segments.push_back(std::move(Code));
+  PipelineOptions Options;
+  Options.OnlyFunctionEntries.insert(0x1000);
+  Options.InterpreterSpecialization.emplace();
+  Options.InterpreterSpecialization->ExplicitMachineState = true;
+  Options.InterpreterSpecialization->NormalNonfaultingExecution = true;
+  llvm::LLVMContext Context;
+  for (bool Segmented : {false, true}) {
+    SCOPED_TRACE(Segmented);
+    Options.InterpreterSpecialization->X64SegmentedReads = Segmented;
+    Options.InterpreterSpecialization->X64CR8State = !Segmented;
+    Options.InterpreterSpecialization->X64FlagsProfile =
+        InterpreterMachineStateProfile::KernelX64NoFaultV1;
+    Pipeline P;
+    const auto Result = P.run(Image, Context, Options);
+    EXPECT_FALSE(Result.Success);
+    EXPECT_NE(Result.Error.find(Segmented ? "FS/GS base source interface"
+                                          : "task-priority source interface"),
+              std::string::npos);
+    EXPECT_FALSE(Result.LlvmModule);
+  }
+}
+
+TEST(InterpreterMachineStateTest, PipelineRefusesUnusedTerminalImportDomain) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.ExceptionMetadata.ParseStatus = ExceptionParseStatus::Complete;
+  Segment Code;
+  Code.VA = 0x1000;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data = {0xb8, 7, 0, 0, 0, 0xc3};
+  Code.Size = Code.FileSz = Code.Data.size();
+  Image.Segments.push_back(std::move(Code));
+  PipelineOptions Options;
+  Options.OnlyFunctionEntries.insert(0x1000);
+  Options.InterpreterSpecialization.emplace();
+  Options.InterpreterSpecialization->ExplicitMachineState = true;
+  Options.InterpreterSpecialization->NormalNonfaultingExecution = true;
+  llvm::LLVMContext Context;
+  Options.InterpreterSpecialization->X64TerminalImports = {
+      {1, 0x3000, "fixture.dll", "StopFixture"}};
+  Pipeline P;
+  const auto Result = P.run(Image, Context, Options);
+  EXPECT_FALSE(Result.Success);
+  EXPECT_NE(Result.Error.find("terminal import domains"), std::string::npos);
+  EXPECT_FALSE(Result.LlvmModule);
+}
+
+TEST(InterpreterMachineStateTest, PipelineRefusesUnusedRawEnvironmentDomains) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.ExceptionMetadata.ParseStatus = ExceptionParseStatus::Complete;
+  Segment Code;
+  Code.VA = 0x1000;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data = {0xb8, 7, 0, 0, 0, 0xc3};
+  Code.Size = Code.FileSz = Code.Data.size();
+  Image.Segments.push_back(std::move(Code));
+  for (bool Binding : {false, true}) {
+    PipelineOptions Options;
+    Options.OnlyFunctionEntries.insert(0x1000);
+    Options.InterpreterSpecialization.emplace();
+    if (Binding)
+      Options.InterpreterSpecialization->X64ImportBindings.push_back(
+          {1, 0x3000, "fixture.dll", "ReturnFixture", 0x4000, "test binding"});
+    else
+      Options.InterpreterSpecialization->X64CodeRegions.push_back(
+          {1, 0x4000, {0xc3}, "test code"});
+    llvm::LLVMContext Context;
+    const auto R = Pipeline().run(Image, Context, Options);
+    EXPECT_FALSE(R.Success);
+    EXPECT_NE(R.Error.find("raw environment domains"), std::string::npos);
+    EXPECT_FALSE(R.LlvmModule);
+    EXPECT_FALSE(R.InterpreterRecovery);
+  }
 }
 
 TEST(InterpreterMachineStateTest, RejectsUnsupportedEntryFlagsAndProfiles) {

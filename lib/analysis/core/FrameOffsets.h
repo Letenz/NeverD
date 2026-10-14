@@ -26,6 +26,16 @@ struct FrameOffset {
   uint64_t Offset = 0;
 };
 
+/// Optional per-call strategy accounting, reset on entry. Charges input-prefix
+/// admission (nodes, operand edges and constant limbs) plus existing MBA
+/// measurement units; not every internal traversal, sample or CPU operation.
+/// A changed exact expression may retry the ordinary proof once, retaining
+/// cumulative solver limits. Neither fallback enters the finite-domain cache.
+struct FrameOffsetNormalization {
+  uint64_t MaxWork = 0;
+  uint64_t WorkUsed = 0;
+};
+
 /// Prove Value == Root + Offset under Predicate, preserving Root's identity.
 /// Exact does not establish reachability: predicate-independent identities
 /// need no satisfiability query. Infeasible is an explicit empty-domain proof.
@@ -40,14 +50,16 @@ FrameOffset proveFrameOffset(symbolic::SymContext &Ctx,
                              solver::SolverOptions Settings,
                              uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
                              uint64_t &Queries,
-                             FiniteQueryCache *Cache = nullptr);
+                             FiniteQueryCache *Cache = nullptr,
+                             FrameOffsetNormalization *Normalization = nullptr);
 
 FrameOffset proveFrameOffset(symbolic::SymContext &Ctx,
                              symbolic::SymRef Predicate, symbolic::SymRef Value,
                              symbolic::SymRef Root,
                              const SpecializationOptions &Options,
                              uint64_t &Queries,
-                             FiniteQueryCache *Cache = nullptr);
+                             FiniteQueryCache *Cache = nullptr,
+                             FrameOffsetNormalization *Normalization = nullptr);
 
 /// Uses the encoding owner's fixed context and settings. Every cold finite
 /// proof still runs independent search and charges all of its query requests.
@@ -55,7 +67,8 @@ FrameOffset proveFrameOffset(FiniteDomainEncoding &Encoding,
                              symbolic::SymRef Predicate, symbolic::SymRef Value,
                              symbolic::SymRef Root, uint64_t MaxQueries,
                              uint64_t MaxSymbolicNodes, uint64_t &Queries,
-                             FiniteQueryCache *Cache = nullptr);
+                             FiniteQueryCache *Cache = nullptr,
+                             FrameOffsetNormalization *Normalization = nullptr);
 
 } // namespace neverd::analysis::detail
 

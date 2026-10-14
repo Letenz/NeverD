@@ -14,7 +14,7 @@ Le conteneur détermine comment un fichier est validé et reconstruit, le jeu d'
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | observation à l’exécution |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | observation à l’exécution |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 Les DLL PE32+ sont reconnues par `IMAGE_FILE_DLL`. Un EXE invité modélisé appelle `LoadLibraryA`, puis `FreeLibrary`, avec le cycle ordinaire des dépendances, de TLS et de `DllMain`. L’entrée DLL acceptée est son invocation d’attachement au processus ; aucun argument d’export arbitraire n’est inventé. Les noms, ordinaux, alias, données et exports redirigés sont conservés. Les pointeurs vers ses propres exports restent internes, sans auto-importation. Cette règle couvre aussi les adresses renvoyées par les helpers : un résultat interne retire les preuves antérieures de réparation des imports pour ce site.
 
@@ -149,3 +149,5 @@ L’exécution checked x64 vérifie au retour de DriverEntry l’appel courant d
 Les arrêts sur surveillance d’exécution du pilote réutilisent les instantanés de code uniquement si les surveillances d’écriture RAM précédemment installées n’ont pas été déclenchées. Une écriture validée annule cette garantie même si la valeur reste identique. Les services du noyau, les limites d’ordonnancement et les nouvelles invocations exigent une actualisation ; les nouvelles plages surveillées nécessitent toujours un instantané initial.
 
 Les pools actifs du noyau conservent leur dépendance d’allocation typée sans être également classés comme objets d’arène inconnus lorsque l’adresse et l’étendue exacte correspondent au propriétaire du pool. Les autres objets restent des dépendances, même en présence de pools ou après leur libération. Cette classification ne prouve pas la provenance des pointeurs et n’active pas la restauration native de l’état d’exécution.
+
+Le profil fixe du pilote désactive les piles fantômes CET. Les encodages canoniques de `RDSSPD` et `RDSSPQ` préservent tous les bits des registres, les indicateurs et la mémoire, y compris la moitié haute d’une destination de 32 bits. Chaque lecture compte comme une instruction et conserve une dépendance à l’environnement pour UNPACK. Les déclarations CPUID n’activent pas CET ; les autres instructions de pile fantôme et les tentatives d’activation restent non prises en charge.

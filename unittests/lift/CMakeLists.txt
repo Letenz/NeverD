@@ -69,6 +69,11 @@ if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
     NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
 endif()
 
+add_neverd_unittest(NeverDLiftTemporaryTests
+  core/LiftTemporaryTests.cpp
+  LINK_COMPONENTS Decode Lift Symbolic
+)
+
 add_neverd_unittest(NeverDLiftTests
   core/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp

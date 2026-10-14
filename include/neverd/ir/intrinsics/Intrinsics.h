@@ -337,6 +337,10 @@ enum class Intrinsic : uint16_t {
 
   Syscall,
 
+  /// A retained raw-analysis environment precondition, never a runtime call.
+  /// Its exact LowIR contract is owned by LowRawEnvironment.h.
+  RawEnvironmentRequirementV1 = 2,
+
 #include "neverd/ir/intrinsics/intrinsics_aarch64.inc"
 #include "neverd/ir/intrinsics/intrinsics_arm.inc"
 #include "neverd/ir/intrinsics/intrinsics_x86.inc"
@@ -1073,6 +1077,13 @@ constexpr bool intrinsicDefaultRegisterShapeIsValid(Intrinsic Id,
   default:
     return false;
   }
+}
+
+/// Recognize the reserved encoding, including malformed wide aliases which
+/// must not become ordinary intrinsics after a consumer narrows the ID.
+constexpr bool isRawEnvironmentRequirementId(uint64_t Id) {
+  return (Id & UINT16_MAX) ==
+         static_cast<uint64_t>(Intrinsic::RawEnvironmentRequirementV1);
 }
 
 const char *intrinsicName(Intrinsic Id);

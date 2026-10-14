@@ -1362,6 +1362,21 @@ the return address the call pushed. HighC prints it as
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
 
+When HighC must keep a frame whole, it declares the frame bytes as
+`stack_storage` with `frame_base` pointing into them. The storage prints as one
+record laid out exactly like those bytes, as the LLVM C route prints `frame0`.
+A displacement becomes a member when every access the writer can place there
+is a plain integer read or write of one width and signedness, at an aligned
+offset inside the storage, clear of every other access. The member keeps the
+slot's name from before the storage replaced it, else `var_mXX`, and prints as
+`stack_storage.var_m10`. Gaps are named `gapXX` by offset. A debug object of
+another type (a record, an array, a pointer or an enumeration) keeps its bytes
+raw, and a debug integer must have the access width. Every other access stays
+a raw access through `frame_base` to the same object, so a member and the bytes
+around it always alias. The record's tag is `frame_<entry>`: the C++, Go and
+Rust views parse the HighC text into one namespace of record tags, and the Go
+and Rust views print the record's type where the frame is declared.
+
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
 use this graph. Bounded partitions track repeated equality tests between scalar
@@ -2572,9 +2587,43 @@ budgeted and publication requires a fresh complete proof.
 
 Context refinement may additionally nominate a tracked eight-byte address carrier when a later memory demand uses only its byte slice. The original narrow producer coordinates remain authoritative; only enqueue forms keys from proved constants or frame offsets.
 
+`LiftStateBase` allocates instruction-local temporary byte ranges for all three
+machine lifters. Each allocation reserves its complete size rounded up to the
+eight-byte granule, so live wide intermediates cannot overwrite one another in
+`SymState`. Scalar spacing and empty accumulator placeholders retain one slot;
+checked cursor exhaustion fails before wrapping. Register aliases and explicit
+temporary subranges keep their ordinary byte semantics.
+
+Raw specialization admits exact 16-byte transport and bitwise operations under
+explicit, normal-nonfaulting machine state. Its closed integer extension adds
+scalar-to-128-bit sign/zero extension, same-width multiplication, equality into a
+one-byte Boolean and constant in-bounds byte slices back to scalars. `SymExec`
+owns the arithmetic. Scalar address, control and constant-materialization limits
+remain separate; whole memory accesses and existing alias checks are retained.
+Raw completeness grants neither an undefined-output audit nor a wider source or
+native-proof contract.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
+
+Raw recovery's explicit `X64TerminalImports` domain describes stable named PE
+bindings whose callees neither return nor reenter the residual graph, including
+through unwind or callbacks. `PEFixedImageView::importIdentity` authenticates raw
+ordinary named imports in read-only slots. Ordinary loading and the fixed view
+share the 31-bit name-RVA rule and refuse a bound IAT without an independent
+lookup table, including binding indicated only by a descriptor timestamp.
+The identity query does not certify IAT pointer
+values. The x64 `NativeStackControl` owner strictly relifts canonical RIP-relative
+memory CALL bytes before reusing its physical target capture, stack decrement,
+and original return-address store. The final `INDIR_BR` remains an opaque
+external exit. `SpecializationResult::ExternalExits` binds each synthetic
+occurrence to its original instruction, image identity, declaration and exact
+expanded operations. Publication and raw consumers validate these receipts;
+`Residual` alone is not an ordinary complete call-free function. Native/LLVM
+proofs and source publication reject this domain, even when unused. The shared
+specializer links Decode for this architecture-owned validation, without parsing
+PE metadata or assuming callee effects.
 
 `LowFunc::FunctionTemporaries` declares sorted, disjoint byte ranges that start unbound. Recovery captures a temporary indirect target once into a reserved function-local slot before finite dispatch crosses instruction boundaries. The shared relation checker retains only bytes actually defined on the current path; ordinary native temporaries still expire at each instruction. Range metadata and snapshot construction remain budgeted, and certificate semantic schema 17 binds these lifetimes. The raw-state model preserves byte semantics; source lowering requires exact whole-slot operands and refuses byte aliases. Inductive loop checking preserves the exact defined-byte set from a checked entry prefix. Explicit `FunctionTemporary` inputs and assignments can represent changing values only in declared, prefix-defined bytes on their own LowIR side. Every parameter must project from its constructed state, and every arrival must match all values and definedness. Inference groups only actually defined bytes, including partial and unaligned ranges; paired plans keep side namespaces separate. Native proposals bind these slots only on the candidate side. Coverage, observations, ranks and budgets remain mandatory under proof schema 17; declarations never initialize storage or establish an ordinary native ABI.
 
@@ -5654,3 +5703,14 @@ Driver execution watches publish the same stopped-memory guarantee as process ex
 Kernel recovery classifies an arena allocation as a typed live pool only when the pool owner records the same allocation address and exact extent. Its pool dependency remains; unrelated retained objects keep their separate untyped dependency even while pools coexist or are later freed. Allocation identity does not prove pointer fields or supply a kernel materializer.
 
 Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
+
+Interpreter specialization retains full-width guest addresses. At publication, its checked label allocator merges all explored native instruction ranges and the entry anchor, then selects a disjoint contiguous range for residual CFG labels. InvalidVA remains a sentinel. Only control identities change; physical CALL return words and ordinary data or memory addresses retain their original 64 bits.
+
+
+`RawEnvironmentRequirementV1` retains an explicit raw-analysis environment dependency as a side-effecting LowIR operation. Its common shape owns the full ID and four 64-bit scalar digest words. Ordinary execution, source lowering and static proof consumers refuse it, including malformed retained encodings and unreachable or masked occurrences. Generic symbolic execution throws before changing state instead of treating the requirement as an unknown value. This carrier alone supplies no environment receipt or source/native certificate.
+
+`X64CodeRegions` and `X64ImportBindings` add an explicit raw environment to binary specialization. The complete fixed PE owns its full image extent; supplemental immutable code must be disjoint and uses the existing strict decoder, symbolic executor and solver with physical CALL/RET semantics. Writable external data remains unknown. The caller supplies all machine, stack and stable-binding preconditions. An owned receipt binds the original options, image identity, exact graph and evidence to the entry requirement, including unused declarations. Preparation shares one allowance with the primary image; result validation uses independent expected limits. Integrity does not prove a live environment or grant source/native certification.
+
+`ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
+
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per existing context node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization and does not cache its result.

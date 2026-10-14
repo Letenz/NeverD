@@ -6,9 +6,13 @@
 
 #include "NativeStackControl.h"
 
+#include "neverd/decode/Decoder.h"
+
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"
 
 #include <limits>
+#include <set>
 
 namespace neverd::analysis {
 namespace {
@@ -95,6 +99,81 @@ llvm::Error validateBoundary(const SpecializationInstruction &Instruction) {
 }
 
 } // namespace
+
+llvm::Error
+validateX64TerminalImportDomain(const SpecializationOptions &Options) {
+  if (Options.X64TerminalImports.empty())
+    return llvm::Error::success();
+  if (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution ||
+      !Options.X64CetDisabled || Options.ByteOrder != llvm::endianness::little)
+    return invalid(
+        "terminal imports require explicit nonfaulting CET-disabled x64 state");
+  const auto Exhausted = [] {
+    return llvm::createStringError(
+        std::make_error_code(std::errc::value_too_large),
+        "terminal import declaration budget exhausted");
+  };
+  if (Options.X64TerminalImports.size() > Options.MaxImagePreparationRecords)
+    return Exhausted();
+  std::set<va_t> Slots;
+  uint64_t Bytes = 0;
+  for (const auto &Binding : Options.X64TerminalImports) {
+    for (size_t Size : {Binding.Module.size(), Binding.Symbol.size()}) {
+      if (Size > Options.MaxImagePreparationBytes - Bytes)
+        return Exhausted();
+      Bytes += Size;
+    }
+    if (Binding.Version != 1 || !Binding.Slot || Binding.Slot > InvalidVA - 8 ||
+        Binding.Module.empty() || Binding.Symbol.empty() ||
+        Binding.Module.find('\0') != std::string::npos ||
+        Binding.Symbol.find('\0') != std::string::npos ||
+        !Slots.insert(Binding.Slot).second)
+      return invalid("invalid terminal import domain");
+  }
+  return llvm::Error::success();
+}
+
+llvm::Error
+validateX64TerminalImportCall(const SpecializationInstruction &Instruction) {
+  if (!Instruction.TerminalImport ||
+      Instruction.TerminalImport->Binding.Version != 1 ||
+      (Instruction.TerminalImport->FixedImageDigest.size() != 64 ||
+       !llvm::all_of(Instruction.TerminalImport->FixedImageDigest,
+                     [](char C) {
+                       return (C >= '0' && C <= '9') || (C >= 'A' && C <= 'F');
+                     })) ||
+      !Instruction.IsNativeCall ||
+      Instruction.NativeStackControl !=
+          SpecializationNativeStackControl::Call ||
+      Instruction.ProfileProjection != InterpreterProfileProjection::None ||
+      Instruction.NativeBytes.size() != 6 || Instruction.Origin.Size != 6 ||
+      Instruction.NativeBytes[0] != 0xff || Instruction.NativeBytes[1] != 0x15)
+    return invalid(
+        "terminal import requires an authenticated canonical memory call");
+  if (auto Error = validateBoundary(Instruction))
+    return Error;
+  const auto Displacement = static_cast<int32_t>(
+      llvm::support::endian::read32le(Instruction.NativeBytes.data() + 2));
+  const auto Slot = Instruction.Fallthrough.Address +
+                    static_cast<uint64_t>(static_cast<int64_t>(Displacement));
+  if (Slot != Instruction.TerminalImport->Binding.Slot)
+    return invalid("terminal import slot differs from the encoded target");
+  Decoder Decode;
+  Decode.init(Arch::X64);
+  Decode.setStrict(true);
+  DecodedInsn Insn{};
+  if (!Decode.decodeOneForLift(Instruction.NativeBytes.data(), 6,
+                               Instruction.Origin.Address, Insn) ||
+      Insn.Size != 6)
+    return invalid("terminal import call could not be strictly decoded");
+  std::vector<LowOp> Expected;
+  if (!Decode.liftX64MemoryCallToLow(Insn, Expected) ||
+      lowUndefinedOperationDigest(Expected) !=
+          lowUndefinedOperationDigest(Instruction.Ops))
+    return invalid(
+        "terminal import call bytes differ from the lifted operations");
+  return llvm::Error::success();
+}
 
 llvm::Expected<NativeStackExpansion>
 expandNativeStackControl(const SpecializationInstruction &Instruction,

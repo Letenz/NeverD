@@ -397,9 +397,9 @@ TEST(HighSwiftEmitter, CompilerPreamblesUseEveryMembersStorageNamespace) {
 
 namespace {
 void executeGeneratedSSESource(bool TrapsOnly) {
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !(defined(__linux__) && defined(__x86_64__))
   GTEST_SKIP()
-      << "This execution control requires macOS and an x86 Swift target";
+      << "This execution control requires macOS or native Linux x86-64 Swift";
 #else
 #if !defined(__x86_64__)
   if (TrapsOnly)
@@ -435,27 +435,50 @@ void executeGeneratedSSESource(bool TrapsOnly) {
   Body += Read.MemberSource;
   ASSERT_EQ(Preambles.size(), 1U);
   std::string Source = *Preambles.begin() + Body + R"swift(
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("SSE execution controls require POSIX signals")
+#endif
 func nativeMarker(_ text: Swift.StaticString) {
-    _ = Darwin.write(2, text.utf8Start, text.utf8CodeUnitCount)
+    _ = write(2, text.utf8Start, text.utf8CodeUnitCount)
 }
 nativeMarker("native-start\n")
-var trappedState: Swift.UInt32 = 0x76543210
-var trappedResult: Swift.UInt64 = 0x0123456789abcdef
+// Signal observers must not reenter a Swift inout access during the operation.
+let trappedState = Swift.UnsafeMutablePointer<Swift.UInt32>.allocate(capacity: 1)
+let trappedResult = Swift.UnsafeMutablePointer<Swift.UInt64>.allocate(capacity: 1)
+trappedState.initialize(to: 0x76543210)
+trappedResult.initialize(to: 0x0123456789abcdef)
+defer {
+    trappedState.deinitialize(count: 1)
+    trappedState.deallocate()
+    trappedResult.deinitialize(count: 1)
+    trappedResult.deallocate()
+}
 if Swift.CommandLine.arguments.count == 2 {
     let mode = Swift.CommandLine.arguments[1]
-    Darwin.signal(SIGFPE) { _ in
-        Darwin._exit(trappedState == 0x76543210 &&
-                     trappedResult == 0x0123456789abcdef ? 0 : 43)
+    signal(SIGFPE) { _ in
+        _exit(trappedState.pointee == 0x76543210 &&
+                     trappedResult.pointee == 0x0123456789abcdef ? 0 : 43)
     }
-    if mode == "trap32" {
-        trappedResult = sse_div32(0x3f800000,0,0x1d80,&trappedState)
+    if mode == "observe" {
+        _ = raise(SIGFPE)
+    } else if mode == "stateWritten" {
+        trappedState.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "resultWritten" {
+        trappedResult.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "trap32" {
+        trappedResult.pointee = sse_div32(0x3f800000,0,0x1d80,trappedState)
     } else if mode == "trap64" {
-        trappedResult = sse_div64(0x3ff0000000000000,0,0x1d80,&trappedState)
+        trappedResult.pointee = sse_div64(0x3ff0000000000000,0,0x1d80,trappedState)
     } else {
-        Darwin._exit(44)
+        _exit(44)
     }
-    Darwin._exit(42)
+    _exit(42)
 }
 func check(_ fn: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
                   Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
@@ -529,16 +552,19 @@ nativeMarker("native-end\n")
     const std::optional<llvm::StringRef> Redirects[] = {
         std::nullopt, std::nullopt, CompilerLog};
     std::string Error;
+    llvm::SmallVector<llvm::StringRef, 12> CompilerArguments{*Compiler};
+#if defined(__APPLE__)
+    CompilerArguments.append({"-target", "x86_64-apple-macosx13.0"});
+#endif
+    CompilerArguments.append(
+        {Optimization, "-module-cache-path", Cache, Path, "-o", Executable});
     const int Status = llvm::sys::ExecuteAndWait(
-        *Compiler,
-        {*Compiler, "-target", "x86_64-apple-macosx13.0", Optimization,
-         "-module-cache-path", Cache, Path, "-o", Executable},
-        std::nullopt, Redirects, 120, 0, &Error);
+        *Compiler, CompilerArguments, std::nullopt, Redirects, 120, 0, &Error);
     std::ifstream Log(CompilerLog);
     const std::string Diagnostics((std::istreambuf_iterator<char>(Log)),
                                   std::istreambuf_iterator<char>());
     ASSERT_EQ(Status, 0) << Error << "\n" << Diagnostics << "\n" << Source;
-    auto Run = [&](llvm::StringRef Mode) {
+    auto Run = [&](llvm::StringRef Mode, int ExpectedStatus = 0) {
       const std::string Prefix = Executable + "-" + Mode.str();
       const std::string StandardOutput = Prefix + ".stdout";
       const std::string StandardError = Prefix + ".stderr";
@@ -559,7 +585,7 @@ nativeMarker("native-end\n")
       const std::string NativeDiagnostics(
           (std::istreambuf_iterator<char>(NativeLog)),
           std::istreambuf_iterator<char>());
-      EXPECT_EQ(NativeStatus, 0)
+      EXPECT_EQ(NativeStatus, ExpectedStatus)
           << Optimization.str() << " " << Mode.str() << ": " << Error << "\n"
           << "Native execution elapsed " << Milliseconds << " ms\n"
           << NativeDiagnostics;
@@ -568,6 +594,11 @@ nativeMarker("native-end\n")
                      << Mode << " status=" << NativeStatus
                      << " elapsed_ms=" << Milliseconds << "\n";
     };
+    // Prove the signal observer accepts untouched storage and rejects either
+    // premature write independently, before testing the hardware exception.
+    Run("observe");
+    Run("stateWritten", 43);
+    Run("resultWritten", 43);
     if (!TrapsOnly) {
       Run({});
       continue;

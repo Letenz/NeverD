@@ -94,6 +94,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 시나리오에서 유효한 재배치 주소를 지정하지 않으면 이미지는 선호 베이스를 사용하며, native 서브시스템의 PE32+ x64 실행 파일이어야 합니다. import 제공자는 `ntoskrnl.exe`, `ntkrnlmp.exe`, `HAL.dll` 또는 `WDFLDR.SYS`일 수 있습니다. 실행 로더는 검증된 x64 `DIR64` 베이스 재배치와 제한적인 security-cookie 로드 구성을 지원합니다. security cookie는 진입 래퍼 실행 전에 결정적인 게스트 값으로 초기화됩니다. 기타 모델링되지 않은 로드 구성 필드, TLS, 지연/바인딩 import, ordinal import, managed 이미지는 거부됩니다. 이미지에는 엄격한 범위 및 정렬 검사도 적용됩니다.
 
+추가된 `FLTMGR.SYS`, `NDIS.SYS`, `NETIO.SYS` 제공자는 모듈별 지연 import 식별자를 갖습니다. 해당 루틴은 모델링되지 않습니다. 사용하지 않는 import는 로드할 수 있지만 실제 호출은 정규화된 `module!symbol` 진단과 함께 중단됩니다. `MmGetSystemRoutineAddress` 조회 대상은 계속 커널과 HAL로 제한됩니다.
+
 활성 Control Flow Guard(CFG)는 PE 플래그, 포인터 슬롯과 정렬된 실행 가능 대상 테이블을 검증합니다. check/dispatch 도우미는 선언된 이미지 진입점 또는 등록된 API 썽크만 허용하며 Win64 호출 상태를 보존하고 미선언 대상을 거부합니다. CFG가 활성화되지 않은 계측은 원래 게스트 대체 포인터를 유지합니다. 활성 XFG, 내보내기 억제 및 다른 미지원 보호 정책은 거부되며 실행 가능 메모리에 있다는 이유만으로 유효한 대상이 되지는 않습니다.
 
 WDM 스택에는 같은 게스트 드라이버가 소유한 여러 장치를 둘 수 있습니다. `IoAttachDeviceToDeviceStack`은 독립 소스 장치를 대상의 현재 최상단에 연결하고 이전 최상단을 반환합니다. `StackSize`와 `AlignmentRequirement`를 설정하지만 `NextDevice` 목록이나 버퍼 플래그는 변경하지 않습니다. `IoDetachDevice`는 저장한 하위 장치를 받으며 `PASSIVE_LEVEL`이 필요합니다. 연결은 `DISPATCH_LEVEL` 이하에서 가능합니다. 이름 있는 하위 장치를 열면 현재 최상단으로 디스패치하지만 `FILE_OBJECT.DeviceObject`와 보고서는 이름 있는 장치 신원을 유지합니다. READ/WRITE 버퍼링은 선택한 최상단의 플래그를 사용합니다. 요청이 보존한 경로는 분리·삭제 후에도 디스패치 반환까지 각 장치를 유지하며, 내부 참조는 열린 핸들 수인 `ReferenceCount`에 더해지지 않습니다.
@@ -469,7 +471,7 @@ MinGW-w64 include 디렉터리가 기본 위치가 아니면 `--headers`를 사�
 
 ## 보고서 및 SDK
 
-JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 중단 PC, 명령어 수를 구분합니다. 장치 객체와 드라이버 콜백 주소를 포함하여 중단 전에 수집한 API 호출 및 관찰 가능한 상태를 보존합니다. JSON 소비자가 64비트 정밀도를 잃지 않도록 게스트 주소는 16진 문자열로 표현합니다. `configuration` 객체는 실행 한도, 서비스 이름과 `kernel_exports` 재정의를 기록합니다. 프로필은 `wdm-x64-scheduled-v101`입니다. `nt_status`는 계속 DriverEntry 결과를 나타내고, `scenario_success`는 초기화와 완료된 요청을 함께 나타냅니다. `phase`, `requests`, `unload_completed`는 요청한 수명 주기의 어느 부분이 실행되었는지 식별합니다. 각 API 호출과 CPU 쓰기에도 단계(`driver_entry`, `add_device:<ID>`, `request:N`, `callback:N`, `unload`)가 기록됩니다. 각 요청은 디스패치 및 I/O 상태, 완료 여부, 정보 길이와 반환된 `output_hex` 바이트를 보고합니다. `preferred_image_base`는 원래 PE 베이스를 나타냅니다. `security_cookie`는 초기화된 cookie의 게스트 주소이며, 필요하지 않았다면 `"0x0"`입니다. 요청 필드는 `kind`, `device`, `device_id`, `pnp`, `file`, `requestor_process_id`, `byte_offset`, `code`, `irp`, `completed`, `cancel_requested_at_100ns`, `dispatch_status`, `io_status`, `information`、`information_hex`, `output_hex`입니다. `configuration.registry`는 원래 레지스트리 구성을 보존합니다. `information_hex`는 원래 64비트 `IoStatus.Information`을 16진수 문자열로 정확히 보존합니다. 기존 숫자 필드 `information`도 유지합니다.
+JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 중단 PC, 명령어 수를 구분합니다. 장치 객체와 드라이버 콜백 주소를 포함하여 중단 전에 수집한 API 호출 및 관찰 가능한 상태를 보존합니다. JSON 소비자가 64비트 정밀도를 잃지 않도록 게스트 주소는 16진 문자열로 표현합니다. `configuration` 객체는 실행 한도, 서비스 이름과 `kernel_exports` 재정의를 기록합니다. 프로필은 `wdm-x64-scheduled-v103`입니다. `nt_status`는 계속 DriverEntry 결과를 나타내고, `scenario_success`는 초기화와 완료된 요청을 함께 나타냅니다. `phase`, `requests`, `unload_completed`는 요청한 수명 주기의 어느 부분이 실행되었는지 식별합니다. 각 API 호출과 CPU 쓰기에도 단계(`driver_entry`, `add_device:<ID>`, `request:N`, `callback:N`, `unload`)가 기록됩니다. 각 요청은 디스패치 및 I/O 상태, 완료 여부, 정보 길이와 반환된 `output_hex` 바이트를 보고합니다. `preferred_image_base`는 원래 PE 베이스를 나타냅니다. `security_cookie`는 초기화된 cookie의 게스트 주소이며, 필요하지 않았다면 `"0x0"`입니다. 요청 필드는 `kind`, `device`, `device_id`, `pnp`, `file`, `requestor_process_id`, `byte_offset`, `code`, `irp`, `completed`, `cancel_requested_at_100ns`, `dispatch_status`, `io_status`, `information`、`information_hex`, `output_hex`입니다. `configuration.registry`는 원래 레지스트리 구성을 보존합니다. `information_hex`는 원래 64비트 `IoStatus.Information`을 16진수 문자열로 정확히 보존합니다. 기존 숫자 필드 `information`도 유지합니다.
 
 작업 항목 관찰에는 `callback:N` 단계가 기록됩니다. 보류 요청의 `dispatch_status`는 `STATUS_PENDING`을 유지하며 최종 완료 상태는 별도의 `io_status`에 기록되어 `scenario_success` 판정에 사용됩니다.
 
@@ -595,3 +597,5 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 `KeQueryPerformanceCounter`, `RDTSC`, `RDTSCP`를 통한 시계 읽기는 명시적인 드라이버 복구 의존성을 유지합니다. 캡처한 카운터와 주파수 값을 새 커널 환경에 다시 연결하는 계약은 아직 없습니다. 기본 복구는 `unsupported_state`를 반환하며 `snapshot_only`는 진단을 유지합니다.
 
 `KernelModuleImages`는 `KernelExportRegistry`에서 읽을 수 있는 PE 헤더와 내보내기 테이블을 생성하며, 정적 가져오기·동적 조회·모듈 열거가 같은 주소를 공유합니다. 제공자 코드는 불투명하게 유지되고 목록은 호스트 커널이 아닌 모델 환경을 설명합니다. 두 출력은 쓰기 전에 풀 수명과 겹침까지 검사합니다. Nt 조회에는 알려진 커널 previous-mode가 필요하며 Zw 조회는 커널 계약을 사용합니다. 완전한 조회는 버퍼가 해제된 뒤에도 명시적인 복원 의존성을 유지하고 제공자 이미지 포인터도 빌린 상태로 추적합니다. `KernelExportTests.cpp`는 PE 파싱, 권한, ABI 필드, 쓰기 거부, 복원 의존성을 검사하며 자체 작성한 컴파일 런타임 픽스처는 CPU 백엔드에서 내보내기 테이블을 순회합니다.
+
+고정 드라이버 프로필은 CET 섀도 스택을 비활성화합니다. 정규 인코딩의 `RDSSPD`와 `RDSSPQ`는 32비트 대상의 상위 절반을 포함한 모든 레지스터 비트, 플래그 및 메모리를 보존합니다. 각 읽기는 명령 하나로 계산하며 UNPACK 환경 의존성을 남깁니다. CPUID 선언은 CET를 활성화하지 않습니다. 다른 섀도 스택 명령과 CET 활성화 작업은 여전히 지원하지 않습니다.

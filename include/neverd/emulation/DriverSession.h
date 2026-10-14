@@ -108,6 +108,8 @@ struct DriverCPUID {
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
 /// RDTSC/RDTSCP share the scheduler's 10 MHz clock; RDTSCP reports CPU0.
+/// CET shadow stacks are disabled. Canonical RDSSPD/RDSSPQ preserve all state;
+/// other shadow-stack operations and attempts to enable CET remain unsupported.
 /// All pointers describe guest addresses, never native pointers. No host OS
 /// services are forwarded. Unsupported APIs and CPU environment effects stop.
 struct DriverOptions {

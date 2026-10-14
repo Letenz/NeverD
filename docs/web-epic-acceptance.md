@@ -143,8 +143,12 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   A separate fixed snapshot witness retains its opaque meaning. The
   [combined remote receipt](https://github.com/NeverSight/NeverD/actions/runs/38502323427)
   now passes at `8c1f4ac03`: eleven producer and fifteen CEF/resource cases have
-  zero skips, and both called jobs plus the final gate succeed. Future calls
-  require a reachable pinned archive. Windows input formats are supported on
+  zero skips, and both called jobs plus the final gate succeed. The fixed corpus
+  is now hosted with corresponding source/notices and the retained receipts in
+  the [NeverD corpus Release](https://github.com/NeverSight/NeverD/releases/tag/web-producer-corpus-2026-10-13).
+  The combined lane defaults to its exact archive URL/SHA-256, and the required
+  automatic caller selects the same pin for affected `dev`/PR changes without
+  credentials. Windows input formats are supported on
   the qualified macOS host; a Windows analysis-host reader/export writer remains
   unavailable, as the matrix states.
 

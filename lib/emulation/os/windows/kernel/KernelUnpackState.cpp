@@ -9,7 +9,8 @@
 
 namespace neverd::emulation {
 void KernelModel::recordUnpackEnvironmentRead() {
-  // Observed CPU identity and time cannot be rebound to a fresh kernel.
+  // Observed CPU identity, time and environment-specific instruction behavior
+  // cannot be rebound to an arbitrary fresh kernel.
   // API and instruction reads share this dependency independently of storage.
   UnpackOpaqueEffects = true;
 }

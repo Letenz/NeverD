@@ -110,7 +110,8 @@ public:
     if (!Module)
       return Module.takeError();
     const uint32_t IATRVA = read32le(Data + 16);
-    if (!read32le(Data) && (read32le(Data + 4) || BoundImports))
+    if (!detail::validImportLookupSource(read32le(Data), read32le(Data + 4),
+                                        BoundImports))
       return invalid("bound IAT has no independent import lookup table");
     const uint32_t LookupRVA = read32le(Data) ? read32le(Data) : IATRVA;
     auto Lookup = tail(LookupRVA);
@@ -150,8 +151,8 @@ public:
         Imp.Ordinal = Value & 0xffff;
         Imp.Name = (kOrdinalPrefix + llvm::Twine(Imp.Ordinal)).str();
       } else {
-        if (Value > UINT32_MAX)
-          return invalid("import name RVA exceeds 32 bits");
+        if (!detail::validImportNameBits(Value))
+          return invalid("import name thunk contains reserved bits");
         auto Name = string(Value, sizeof(uint16_t));
         if (!Name)
           return Name.takeError();

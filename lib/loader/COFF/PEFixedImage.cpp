@@ -106,8 +106,7 @@ llvm::Error preflightFixedHeader(llvm::ArrayRef<uint8_t> Bytes) {
   if (Sections * sizeof(coff_section) > Bytes.size() - Optional - OptionalSize)
     return invalid("truncated PE section table");
   constexpr unsigned ExcludedDirectories[] = {
-      TLS_TABLE,          LOAD_CONFIG_TABLE,
-      BOUND_IMPORT,       DELAY_IMPORT_DESCRIPTOR,
+      TLS_TABLE,          BOUND_IMPORT, DELAY_IMPORT_DESCRIPTOR,
       CLR_RUNTIME_HEADER, ARCHITECTURE,
       GLOBAL_PTR,         ReservedDirectory};
   for (unsigned Index : ExcludedDirectories) {
@@ -263,7 +262,8 @@ public:
     return Range{RVA, RVA + Size};
   }
 
-  llvm::Expected<Range> string(uint64_t RVA, uint64_t Prefix = 0) {
+  llvm::Expected<Range> string(uint64_t RVA, uint64_t Prefix = 0,
+                              std::string *Text = nullptr) {
     const auto *S = owner(RVA, Prefix + 1);
     if (!S)
       return invalid("import name is not file-backed");
@@ -272,11 +272,14 @@ public:
     for (uint64_t I = Prefix; I < Available; ++I) {
       if (auto Error = account(1, 0))
         return std::move(Error);
-      if (!Bytes[S->Offset + RVA - S->RVA + I]) {
+      const auto Byte = Bytes[S->Offset + RVA - S->RVA + I];
+      if (!Byte) {
         if (I == Prefix)
           return invalid("empty import name");
         return Range{RVA, RVA + I + 1};
       }
+      if (Text)
+        Text->push_back(static_cast<char>(Byte));
     }
     return invalid("unterminated import name");
   }
@@ -376,11 +379,12 @@ struct ProtectedRead {
 
 struct ImportInventory {
   std::vector<Range> Writes;
+  std::vector<ProtectedRead> Reads;
   Range IAT;
+  std::vector<PEFixedImportIdentity> Names;
 };
 
-llvm::Expected<ImportInventory> imports(RawImage &Raw,
-                                        Range RelocationDirectory) {
+llvm::Expected<ImportInventory> imports(RawImage &Raw) {
   ImportInventory Result;
   auto IATRange = Raw.directory(IAT);
   if (!IATRange)
@@ -394,9 +398,7 @@ llvm::Expected<ImportInventory> imports(RawImage &Raw,
       return unsupported("IAT directory without a complete import table");
     return Result;
   }
-  std::vector<ProtectedRead> Reads{{{0, Raw.HeaderSize}, std::nullopt}};
-  if (RelocationDirectory.End)
-    Reads.push_back({RelocationDirectory, std::nullopt});
+  auto &Reads = Result.Reads;
   bool Terminated = false;
   constexpr size_t DescriptorSize = sizeof(coff_import_directory_table_entry);
   for (uint64_t At = Directory->Begin; Directory->End - At >= DescriptorSize;
@@ -410,11 +412,17 @@ llvm::Expected<ImportInventory> imports(RawImage &Raw,
       break;
     }
     const uint32_t Original = read32le(Descriptor->data());
+    // The fixed-header preflight already excludes the BOUND_IMPORT directory;
+    // a descriptor timestamp can independently mark an older bound image.
+    if (!coff_loader::detail::validImportLookupSource(
+            Original, read32le(Descriptor->data() + 4), false))
+      return invalid("bound IAT has no independent import lookup table");
     const uint32_t Name = read32le(Descriptor->data() + 12);
     const uint32_t First = read32le(Descriptor->data() + 16);
     if (!Name || !First)
       return invalid("import descriptor lacks its name or IAT");
-    auto Module = Raw.string(Name);
+    std::string ModuleName;
+    auto Module = Raw.string(Name, 0, &ModuleName);
     if (!Module)
       return Module.takeError();
     Reads.push_back({*Module, std::nullopt});
@@ -442,30 +450,140 @@ llvm::Expected<ImportInventory> imports(RawImage &Raw,
         if (Value & ~(uint64_t{1} << 63 | uint64_t{0xffff}))
           return invalid("invalid ordinal import encoding");
       } else {
-        if (Value > UINT32_MAX)
-          return invalid("import name RVA overflows");
-        auto Symbol = Raw.string(Value, sizeof(uint16_t));
+        if (!coff_loader::detail::validImportNameBits(Value))
+          return invalid("import name thunk contains reserved bits");
+        std::string SymbolName;
+        auto Symbol = Raw.string(Value, sizeof(uint16_t), &SymbolName);
         if (!Symbol)
           return Symbol.takeError();
         Reads.push_back({*Symbol, std::nullopt});
+        if (auto Error = Raw.account(ModuleName.size(), 0))
+          return std::move(Error);
+        Result.Names.push_back(
+            {Raw.Base + Destination, ModuleName, std::move(SymbolName)});
       }
     }
   }
   if (!Terminated)
     return invalid("import directory lacks its terminating descriptor");
-  llvm::sort(Result.Writes, [](Range A, Range B) { return A.Begin < B.Begin; });
-  if (!disjoint(Result.Writes))
-    return invalid("overlapping import destination slots");
-  for (const auto &Read : Reads) {
-    auto It = std::lower_bound(
-        Result.Writes.begin(), Result.Writes.end(), Read.Bytes.Begin,
-        [](Range Write, uint64_t Begin) { return Write.End <= Begin; });
-    for (; It != Result.Writes.end() && It->Begin < Read.Bytes.End; ++It)
-      if (!Read.InPlaceWriter || *Read.InPlaceWriter != It->Begin ||
-          Read.Bytes.Begin != It->Begin || Read.Bytes.End != It->End)
-        return invalid("import writes overlap loader metadata");
+  return Result;
+}
+
+enum class LoadConfigPolicy {
+  Scalar,
+  Zero,
+  Cookie,
+  GuardCFCheck,
+  GuardCFDispatch,
+  GuardFlags
+};
+
+struct LoadConfigInventory {
+  Range Directory;
+  std::vector<Range> Writes;
+  std::vector<RuntimeCallablePointerSlot> CallableSlots;
+};
+
+llvm::Expected<LoadConfigInventory> loadConfiguration(RawImage &Raw) {
+  LoadConfigInventory Result;
+  auto Directory = Raw.directory(LOAD_CONFIG_TABLE);
+  if (!Directory)
+    return Directory.takeError();
+  if (!Directory->End)
+    return Result;
+  auto Header = Raw.read(Directory->Begin, sizeof(uint32_t));
+  if (!Header)
+    return Header.takeError();
+  const uint32_t Size = read32le(Header->data());
+  using Config = coff_load_configuration64;
+  if (Size < sizeof(uint32_t))
+    return invalid("load configuration lacks its size field");
+  if (Size > sizeof(Config))
+    return unsupported("unknown load-configuration extension");
+  // The structure's Size is authoritative, including when the directory
+  // retains an older linker's shorter extent. Authenticate both extents.
+  auto Bytes = Raw.read(Directory->Begin, Size);
+  if (!Bytes)
+    return Bytes.takeError();
+  Result.Directory = {Directory->Begin,
+                      std::max(Directory->End, Directory->Begin + Size)};
+  struct Field {
+    size_t Offset;
+    size_t Width;
+    LoadConfigPolicy Policy;
+  };
+  static constexpr Field Fields[] = {
+#define NEVERD_PE_FIXED_LOAD_CONFIG_FIELD(Name, Policy)                         \
+  {offsetof(Config, Name), sizeof(Config::Name), LoadConfigPolicy::Policy},
+#include "PEFixedLoadConfigFields.def"
+  };
+  for (const auto &Field : Fields) {
+    if (Field.Offset >= Size)
+      break;
+    if (Field.Width > Size - Field.Offset)
+      return invalid("truncated load-configuration field");
+    if (auto Error = Raw.account(0))
+      return std::move(Error);
+    const auto Value = Bytes->slice(Field.Offset, Field.Width);
+    if (Field.Policy == LoadConfigPolicy::Scalar)
+      continue;
+    if (Field.Policy == LoadConfigPolicy::Zero) {
+      if (llvm::any_of(Value, [](uint8_t B) { return B != 0; }))
+        return unsupported("unmodeled load-configuration field");
+      continue;
+    }
+    if (Field.Policy == LoadConfigPolicy::GuardFlags) {
+      constexpr uint32_t Allowed =
+          uint32_t(GuardFlags::CF_INSTRUMENTED) |
+          uint32_t(GuardFlags::SECURITY_COOKIE_UNUSED);
+      if (read32le(Value.data()) & ~Allowed)
+        return unsupported("unmodeled load-configuration guard flags");
+      continue;
+    }
+    const uint64_t Address = read64le(Value.data());
+    if (!Address)
+      continue;
+    if (Address < Raw.Base)
+      return invalid("load-configuration write precedes the image");
+    const uint64_t RVA = Address - Raw.Base;
+    const auto *Owner = Raw.owner(RVA, sizeof(uint64_t));
+    if (!Owner || !(Owner->Characteristics & IMAGE_SCN_MEM_READ))
+      return invalid("load-configuration write has no complete mapped owner");
+    Result.Writes.push_back({RVA, RVA + sizeof(uint64_t)});
+    if (Field.Policy != LoadConfigPolicy::Cookie)
+      Result.CallableSlots.push_back(
+          {Address, Field.Policy == LoadConfigPolicy::GuardCFCheck
+                        ? RuntimeCallablePointerSlotKind::GuardCFCheck
+                        : RuntimeCallablePointerSlotKind::GuardCFDispatch});
   }
   return Result;
+}
+
+llvm::Error validateLoaderWrites(RawImage &Raw, ImportInventory &Imports,
+                                 const LoadConfigInventory &Config,
+                                 Range RelocationDirectory) {
+  Imports.Writes.insert(Imports.Writes.end(), Config.Writes.begin(),
+                        Config.Writes.end());
+  llvm::sort(Imports.Writes, [](Range A, Range B) { return A.Begin < B.Begin; });
+  if (!disjoint(Imports.Writes))
+    return invalid("overlapping loader destination slots");
+  Imports.Reads.push_back({{0, Raw.HeaderSize}, std::nullopt});
+  if (RelocationDirectory.End)
+    Imports.Reads.push_back({RelocationDirectory, std::nullopt});
+  if (Config.Directory.End)
+    Imports.Reads.push_back({Config.Directory, std::nullopt});
+  for (const auto &Read : Imports.Reads) {
+    if (auto Error = Raw.account(0))
+      return Error;
+    auto It = std::lower_bound(
+        Imports.Writes.begin(), Imports.Writes.end(), Read.Bytes.Begin,
+        [](Range Write, uint64_t Begin) { return Write.End <= Begin; });
+    for (; It != Imports.Writes.end() && It->Begin < Read.Bytes.End; ++It)
+      if (!Read.InPlaceWriter || *Read.InPlaceWriter != It->Begin ||
+          Read.Bytes.Begin != It->Begin || Read.Bytes.End != It->End)
+        return invalid("loader writes overlap loader metadata");
+  }
+  return llvm::Error::success();
 }
 
 } // namespace
@@ -521,7 +639,9 @@ struct PEFixedImageView::Storage {
   std::vector<size_t> Mappings;
   std::vector<Range> Writes;
   Range IAT;
+  std::vector<PEFixedImportIdentity> Names;
   std::string Digest;
+  std::pair<va_t, va_t> ImageExtent;
 };
 
 PEFixedImageView::PEFixedImageView(std::shared_ptr<const Storage> Data)
@@ -552,10 +672,19 @@ PEFixedImageView::create(const BinaryImage &Image,
   RawImage Raw(Parsed, Image.Raw, Limits);
   if (auto Error = Raw.initialize(true))
     return std::move(Error);
+  const uint64_t ImageSize = Header->SizeOfImage;
+  if (!ImageSize || ImageSize > InvalidVA - Image.Base ||
+      Raw.HeaderSize > ImageSize)
+    return invalid("invalid complete image extent");
+  if (auto Error = Raw.account(0, Raw.Sections.size()))
+    return std::move(Error);
+  for (const auto &Section : Raw.Sections)
+    if (Section.RVA > ImageSize ||
+        Section.ContentSize > ImageSize - Section.RVA)
+      return invalid("section exceeds the complete image extent");
   if (auto Error = Raw.account(Image.Raw.size(), 0))
     return std::move(Error);
-  if (!Image.Relocations.empty() || !Image.DyldBindSlots.empty() ||
-      !Image.RuntimeCallablePointerSlots.empty())
+  if (!Image.Relocations.empty() || !Image.DyldBindSlots.empty())
     return unsupported("additional relocation or runtime writer metadata");
   if (Raw.Sections.size() != Image.Segments.size() ||
       Raw.Sections.size() != Image.Sections.size())
@@ -601,9 +730,16 @@ PEFixedImageView::create(const BinaryImage &Image,
     if (Image.BaseRelocations[I].Address != Relocations->Entries[I].Address ||
         Image.BaseRelocations[I].Type != Relocations->Entries[I].Type)
       return invalid("base relocation entry changed");
-  auto Imports = imports(Raw, Relocations->Directory);
+  auto Imports = imports(Raw);
   if (!Imports)
     return Imports.takeError();
+  auto Config = loadConfiguration(Raw);
+  if (!Config)
+    return Config.takeError();
+  if (auto Error = Raw.account(0, Image.RuntimeCallablePointerSlots.size()))
+    return std::move(Error);
+  if (Config->CallableSlots != Image.RuntimeCallablePointerSlots)
+    return invalid("runtime callable slots differ from the load configuration");
   for (size_t Count : {Image.Imports.size(), Image.ImportStorageSlots.size(),
                        Image.ImportPtrSlots.size()})
     if (auto Error = Raw.account(0, Count))
@@ -611,6 +747,9 @@ PEFixedImageView::create(const BinaryImage &Image,
   std::set<va_t> ImportSlots;
   for (Range Write : Imports->Writes)
     ImportSlots.insert(Image.Base + Write.Begin);
+  if (auto Error = validateLoaderWrites(Raw, *Imports, *Config,
+                                        Relocations->Directory))
+    return std::move(Error);
   const auto CheckSlot = [&](va_t Address) {
     return ImportSlots.contains(Address);
   };
@@ -693,14 +832,34 @@ PEFixedImageView::create(const BinaryImage &Image,
 
   auto Data = std::make_shared<Storage>();
   Data->Image = &Image;
+  Data->ImageExtent = {Image.Base, Image.Base + ImageSize};
   Data->Mappings = Raw.ByRVA;
   Data->Writes = std::move(Imports->Writes);
   Data->IAT = Imports->IAT;
+  if (auto Error = Raw.account(0, Imports->Names.size() + Relocations->Fields.size()))
+    return std::move(Error);
+  auto Fields = Relocations->Fields;
+  llvm::sort(Fields, [](Range A, Range B) { return A.Begin < B.Begin; });
+  for (auto &Name : Imports->Names) {
+    // Relocations may update an IAT before binding, but that additional writer
+    // is outside the stable ordinary-import identity contract of this query.
+    const Range Slot{Name.Slot - Image.Base,
+                     Name.Slot - Image.Base + sizeof(uint64_t)};
+    const auto Field = std::lower_bound(
+        Fields.begin(), Fields.end(), Slot.Begin,
+        [](Range R, uint64_t Begin) { return R.End <= Begin; });
+    const bool Relocated = Field != Fields.end() && overlaps(*Field, Slot);
+    if (!Relocated)
+      Data->Names.push_back(std::move(Name));
+  }
+  llvm::sort(Data->Names, [](const auto &A, const auto &B) {
+    return A.Slot < B.Slot;
+  });
   // Raw binds all headers, directory declarations, thunk/relocation records,
   // complete fixup values and file bytes. Mapping validation above proves its
   // identity with the current image. The bounded parser owns derived ranges.
   llvm::SHA256 Hash;
-  Hash.update("neverd-pe-preferred-base-snapshot-v1");
+  Hash.update("neverd-pe-preferred-base-snapshot-v4");
   Hash.update(Image.Raw);
   uint8_t Budget[16];
   llvm::support::endian::write64le(Budget, Limits.MaxBytes);
@@ -738,6 +897,35 @@ PEFixedImageView::read(va_t Address, uint32_t Bytes, bool Executable) const {
   return llvm::ArrayRef<uint8_t>(S.Data).slice(Offset, Bytes);
 }
 
+std::pair<va_t, va_t> PEFixedImageView::imageExtent() const {
+  return Data->ImageExtent;
+}
+
 const std::string &PEFixedImageView::digest() const { return Data->Digest; }
+
+std::optional<PEFixedImportIdentity>
+PEFixedImageView::importIdentity(va_t Slot) const {
+  const auto It = std::lower_bound(
+      Data->Names.begin(), Data->Names.end(), Slot,
+      [](const auto &Name, va_t Address) { return Name.Slot < Address; });
+  if (It == Data->Names.end() || It->Slot != Slot)
+    return std::nullopt;
+  // Mappings are the loader-authenticated, disjoint RVA index. There is
+  // exactly one possible owner, even when the primary image has many holes.
+  const auto At =
+      std::upper_bound(Data->Mappings.begin(), Data->Mappings.end(), Slot,
+                       [&](va_t Address, size_t I) {
+                         return Address < Data->Image->Segments[I].VA;
+                       });
+  if (At == Data->Mappings.begin())
+    return std::nullopt;
+  const auto &S = Data->Image->Segments[*std::prev(At)];
+  const auto Offset = Slot - S.VA;
+  if (S.isReadable() && !S.isWritable() && S.Size >= 8 &&
+      Offset <= S.Size - 8 && S.FileSz >= 8 && Offset <= S.FileSz - 8 &&
+      S.Data.size() >= 8 && Offset <= S.Data.size() - 8)
+    return *It;
+  return std::nullopt;
+}
 
 } // namespace neverd

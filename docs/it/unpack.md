@@ -14,7 +14,7 @@ Il contenitore determina come un file viene validato e ricostruito, il set di is
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | osservazione durante l’esecuzione |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | osservazione durante l’esecuzione |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 Gli input DLL PE32+ sono identificati da `IMAGE_FILE_DLL`. Un EXE guest modellato chiama `LoadLibraryA` e poi `FreeLibrary`, usando il normale ciclo di dipendenze, TLS e `DllMain`. L’ingresso DLL accettato è la chiamata di collegamento al processo; non si inventano argomenti per export arbitrari. Nomi, ordinali, alias, dati e inoltri sono conservati. I puntatori agli export propri rimangono interni, senza autoimportazioni. La stessa regola vale per gli indirizzi restituiti dagli helper: un risultato interno revoca le prove precedenti di riparazione degli import per quel sito.
 
@@ -149,3 +149,5 @@ L’esecuzione checked x64 verifica al ritorno da DriverEntry la chiamata corren
 Le sospensioni sui punti di controllo dell’esecuzione del driver riutilizzano le istantanee del codice solo se i controlli delle scritture RAM installati in precedenza sono rimasti intatti. Le scritture completate invalidano questa garanzia anche quando scrivono lo stesso valore. I servizi del kernel, i confini di pianificazione e le nuove invocazioni richiedono un aggiornamento; i nuovi intervalli controllati necessitano comunque di un’istantanea iniziale.
 
 I pool attivi del kernel mantengono la dipendenza di allocazione tipizzata senza essere classificati anche come oggetti sconosciuti dell’arena quando indirizzo ed estensione esatta corrispondono al proprietario del pool. Gli altri oggetti restano dipendenze anche in presenza di pool o dopo il loro rilascio. Questa classificazione non dimostra la provenienza dei puntatori e non abilita il ripristino nativo dello stato di esecuzione.
+
+Il profilo fisso del driver disabilita gli shadow stack CET. Le codifiche canoniche di `RDSSPD` e `RDSSPQ` preservano tutti i bit dei registri, i flag e la memoria, inclusa la metà superiore di una destinazione a 32 bit. Ogni lettura conta come un’istruzione e mantiene una dipendenza dall’ambiente per UNPACK. Le dichiarazioni CPUID non abilitano CET; le altre istruzioni shadow stack e i tentativi di abilitazione restano non supportati.
