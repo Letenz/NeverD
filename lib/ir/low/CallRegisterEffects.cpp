@@ -23,6 +23,7 @@
 #include <array>
 #include <deque>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -347,9 +348,9 @@ void findMaskedMerges(const LowBlock &Block, std::map<size_t, uint8_t> &Writes,
 /// LinuxSyscallArguments.def verifies, reads only its own arguments (`exit`
 /// reads RDI), as the emitters pass them.  Maps each op of such an
 /// instruction to the registers it names but does not read.
-std::map<size_t, llvm::ArrayRef<uint64_t>>
+std::map<size_t, std::span<const uint64_t>>
 unreadSyscallArguments(const BinaryImage &Img, const LowBlock &Block) {
-  std::map<size_t, llvm::ArrayRef<uint64_t>> Unread;
+  std::map<size_t, std::span<const uint64_t>> Unread;
   if (Img.Arch != Arch::X64 || !runsUnderLinux(Img))
     return Unread;
   for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
@@ -372,8 +373,9 @@ unreadSyscallArguments(const BinaryImage &Img, const LowBlock &Block) {
         Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;
     if (!Count || *Count >= std::size(kLinuxX64SyscallArgumentRegisters))
       continue;
-    const llvm::ArrayRef<uint64_t> Rest =
-        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);
+    const std::span<const uint64_t> Rest =
+        std::span<const uint64_t>(kLinuxX64SyscallArgumentRegisters)
+            .subspan(*Count);
     for (size_t I = First; I < End; ++I)
       Unread[I] = Rest;
   }
@@ -903,7 +905,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     std::set<size_t> MergeReads;
     findMaskedMerges(Block, MergeWrites, MergeReads);
     findLaneMerges(Img.Arch, Block, MergeWrites, MergeReads);
-    const std::map<size_t, llvm::ArrayRef<uint64_t>> UnreadArguments =
+    const std::map<size_t, std::span<const uint64_t>> UnreadArguments =
         unreadSyscallArguments(Img, Block);
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)

@@ -10,7 +10,23 @@ import re
 import subprocess
 
 
+def baseline_source(text, newline):
+    mapped = "std::map<size_t, llvm::ArrayRef<uint64_t>>"
+    span_mapped = "std::map<size_t, std::span<const uint64_t>>"
+    if text.count(mapped) == 0 and text.count(span_mapped) == 3:
+        text = text.replace(span_mapped, mapped).replace("#include <span>" + newline, "")
+        rest = ("const llvm::ArrayRef<uint64_t> Rest =\n"
+                "        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);").replace("\n", newline)
+        text, count = re.subn(
+            r"const std::span<const uint64_t> Rest =\s*std::span<const uint64_t>\(kLinuxX64SyscallArgumentRegisters\)\s*\.subspan\(\*Count\);",
+            lambda _: rest, text)
+        if count != 1:
+            raise ValueError("Expected the exact standard-span register slice")
+    return text
+
+
 def variants(text, newline):
+    text = baseline_source(text, newline)
     mapped = "std::map<size_t, llvm::ArrayRef<uint64_t>>"
     marker = mapped + newline + "unreadSyscallArguments"
     begin = text.index(marker)
