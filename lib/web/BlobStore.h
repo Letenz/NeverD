@@ -27,7 +27,11 @@ public:
     Blob Content;
     std::string Hash;
   };
+#ifdef _WIN32
+  Captured capture(void *Handle, uint64_t ExpectedSize);
+#else
   Captured capture(int Descriptor, uint64_t ExpectedSize);
+#endif
   /// Append in-process derived bytes; no member name ever becomes a host path.
   /// Views remain unreadable until the complete store is sealed.
   void append(std::string_view Bytes);

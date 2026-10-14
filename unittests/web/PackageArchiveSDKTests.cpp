@@ -56,9 +56,6 @@ protected:
   std::string Path, Revision, Artifact;
   bool Gzip = false;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture required";
-#endif
     const auto Caps = take(neverd_web_capabilities_json());
     bool Available = false;
     for (const auto &A : *Caps.getAsObject()->getArray("analysis"))

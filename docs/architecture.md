@@ -953,6 +953,14 @@ sources return containing frames instead of fabricated per-character offsets.
 `SessionBunExport` owns explicitly requested local disclosure of an immutable
 Bun extraction. `ExportDirectory` owns private-directory, exclusive no-follow
 writes, bounded output, read-back hashes and completion-manifest publication.
+On Windows, `platform/WindowsFile` owns local fixed-NTFS handle-relative
+traversal, reparse/stream/hard-link refusal, enumerated file identities and
+protected current-user creation. `InputRoot` consumes those handles without
+changing capture identity; `BlobStore` unlinks its empty spool before copying
+input, then closes writable access when sealing and serializes range reads.
+Both export owners share this platform layer; publication never replaces an
+existing manifest and rewrite rollback removes only its owned objects.
+See the [Windows product contract](web-windows-product.md).
 Virtual target names are data, never output paths. `SourceRecovery` owns
 whitespace-only readable copies and reparse/tree comparison through the same
 embedded parser, with a separate sequential budget profile. It does not enter

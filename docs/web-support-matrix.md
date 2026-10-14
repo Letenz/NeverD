@@ -13,8 +13,8 @@ Other hosts require separate evidence.
 
 | Surface | Implemented profile | Qualification / outstanding work |
 |---|---|---|
-| Artifact import | `posix-descriptor-v1` | Immutable file/directory capture, revision checks, links/special files, aggregate limits and basic name collisions tested; Windows reader unavailable |
-| Original-byte storage | `posix-unlinked-spool-v1` | One private unlinked spool per snapshot, bounded range reads, immutable slices, descriptor lifetime and write-failure checks; 512 MiB input qualified locally without whole-file materialization |
+| Artifact import | `posix-descriptor-v1` / `windows-ntfs-handle-v1` | Immutable capture and revision checks; the Windows implementation admits local fixed NTFS and refuses reparses, alternate streams and hard links. Native Windows qualification is pending in the [product lane](web-windows-product.md) |
+| Original-byte storage | `posix-unlinked-spool-v1` / `windows-private-unlinked-spool-v1` | Private unlinked spools, bounded immutable range reads and owned lifetime; POSIX 512 MiB input qualified locally. Windows adds protected ACLs and closes writable access at seal; native qualification pending |
 | JavaScript syntax | `hermes-602befee-js-v3` | Script/module/CommonJS, byte spans, async-rest location/comma regressions, `using`/`await using`, module await, selected modern syntax and malformed/deep input tested; [resource profile](web-resource-management-profile.md), complete syntax/semantic coverage not claimed |
 | Explicit large-source syntax/navigation | `hermes-602befee-large-source-js-v1` | Same grammar with separate 8 MiB/1.5M-node admission, one large source per revision, profile-bound identities, original anchors and existing paginated consumers; independent analysis budgets can still refuse. See the [selection contract](web-passive-report-profile.md#explicit-large-source-selections). |
 | Source maps | `source-map-v3-offline-v1` | Basic and inline indexed maps, UTF-16/bytes, malformed offsets/VLQ, budgets and private embedded content tested; no automatic association or URL retrieval |

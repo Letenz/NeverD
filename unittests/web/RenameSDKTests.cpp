@@ -67,9 +67,6 @@ protected:
   std::string Revision, Source;
 
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture profile required";
-#endif
     if (!NEVERD_TEST_WEB_JAVASCRIPT)
       GTEST_SKIP() << "JavaScript parser omitted";
     llvm::SmallString<128> Path;

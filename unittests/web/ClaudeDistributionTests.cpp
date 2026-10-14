@@ -76,9 +76,6 @@ constexpr Distribution Cases[] = {
 class WebClaudeDistribution : public ::testing::TestWithParam<Distribution> {};
 
 TEST_P(WebClaudeDistribution, CapturedArchiveGraphAndSourcesWhenSupplied) {
-#ifdef _WIN32
-  GTEST_SKIP() << "POSIX capture host qualification required";
-#endif
   const char *Directory = std::getenv("NEVERD_CLAUDE_CODE_21296_CROSS_DIR");
   if (!Directory)
     GTEST_SKIP() << "Optional captured fixed-version platform packages absent";

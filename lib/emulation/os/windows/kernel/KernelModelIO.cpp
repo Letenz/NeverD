@@ -1188,6 +1188,8 @@ llvm::Expected<KernelModel::Invocation> KernelModel::beginUnload() {
 llvm::Error KernelModel::finishUnload() {
   if (!Unloading)
     return ioError("no active unload invocation");
+  if (hasLiveBugCheckCallbacks())
+    return ioError("unload returned with live bug-check callbacks");
   if (auto E = snapshot())
     return E;
   if (Registry.hasOpenHandles())

@@ -247,7 +247,7 @@ protected:
   }
 };
 
-#if NEVERD_TEST_WEB_JAVASCRIPT && !defined(_WIN32)
+#if NEVERD_TEST_WEB_JAVASCRIPT
 TEST_F(WebSDK, LargeSourceHasIndependentCacheAnchorsAndRevisionOwnership) {
   const std::string Text = "/*" +
                            std::string(neverd::web::MaxJavaScriptBytes, ' ') +
@@ -368,7 +368,6 @@ TEST_F(WebSDK, OwnershipAndBorrowedBufferAdmission) {
   neverd_free_string(nullptr);
 }
 
-#ifndef _WIN32
 TEST_F(WebSDK, BunSerializedMapsRetainPrivateSourcesAndUnverifiedAssociation) {
   using namespace neverd::web::test;
   write(BunFixture(true, simpleBunMap()).Bytes);
@@ -2148,6 +2147,5 @@ TEST_F(WebSDK, DisabledParserHasNoImplicitExternalFallback) {
             "capability_unavailable");
   EXPECT_EQ(errorCode(anchor("1", "source", 0, 0)), "capability_unavailable");
 }
-#endif
 #endif
 } // namespace

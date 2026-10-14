@@ -759,6 +759,16 @@ The same target compares static scalar, pointer, array and packed-record alignme
 
 ## Offline web analysis
 
+`WebWindowsHost.*` qualifies native Windows x64 local NTFS capture, junction
+and alternate-stream refusal, replacement, Unicode identity, private unlinked
+spools, concurrent range reads and export/rollback ownership. The required
+`web-windows-qualification.yml` lane compares selected CTest discovery with
+JUnit and forbids missing or skipped required tests. Its independent installed
+C++ consumer exercises the extracted DLL/ICU, immutable export, CLI, worker
+and MCP with development paths removed. The product release additionally
+requires full producer/CEF qualification at the same commit, then publishes
+those exact verified bytes. See [build and release details](web-windows-product.md).
+
 `WebDataPack.*` checks both resource-ID widths, complete partitions, aliases,
 sorted uniqueness, malformed/truncated indexes, identity and count overflow.
 `WebDataPackGzip.*` checks one validated stream, corrupt CRC/size, truncation,

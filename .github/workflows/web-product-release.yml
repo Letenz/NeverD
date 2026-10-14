@@ -1,0 +1,101 @@
+name: Publish qualified Windows Web product
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'New web-product-windows-x64-YYYY-MM-DD tag (optional -rN suffix)'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-product-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  inputs:
+    name: Require a new product tag on dev
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate the publication target
+        env:
+          PRODUCT_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/dev
+          [[ "$PRODUCT_TAG" =~ ^web-product-windows-x64-[0-9]{4}-[0-9]{2}-[0-9]{2}(-r[1-9][0-9]*)?$ ]]
+          # The creation endpoint also refuses an existing release. Do not
+          # provide an update/clobber path for already distributed bytes.
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' > releases.txt
+          if grep -Fxq "$PRODUCT_TAG" releases.txt; then
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$PRODUCT_TAG" --jq '.[].ref' > tags.txt
+          if grep -Fxq "refs/tags/$PRODUCT_TAG" tags.txt; then
+            exit 1
+          fi
+  windows:
+    needs: inputs
+    uses: ./.github/workflows/web-windows-qualification.yml
+  web:
+    needs: inputs
+    uses: ./.github/workflows/web-release-qualification.yml
+  gate:
+    name: Require native product and complete producer/resource qualification
+    needs: [inputs, windows, web]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Refuse failed, skipped or cancelled prerequisites
+        env:
+          INPUT_RESULT: ${{ needs.inputs.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+        run: |
+          set -euo pipefail
+          test "$INPUT_RESULT" = success
+          test "$WINDOWS_RESULT" = success
+          test "$WEB_RESULT" = success
+  publish:
+    name: Publish the exact qualified product bytes
+    needs: gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-windows-product
+          path: qualified
+      - name: Verify receipt and prepare the public source material
+        run: |
+          set -euo pipefail
+          python scripts/web_product_release.py --directory qualified --output release-assets
+          short="${GITHUB_SHA:0:12}"
+          git archive --format=tar.gz --prefix="neverd-web-source-$short/" --output="release-assets/neverd-web-source-$short.tar.gz" HEAD
+          cp docs/web-windows-product.md release-assets/REBUILD.md
+          (cd release-assets && sha256sum ./* > SHA256SUMS.pending && mv SHA256SUMS.pending SHA256SUMS)
+      - name: Create the product Release
+        env:
+          PRODUCT_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          Windows x64 offline Web analysis product: NeverD CLI, public C ABI DLL
+          and headers, worker and MCP server, with ICU 77.1 and app-local runtime
+          dependencies. Extract the entire archive and keep bin together.
+
+          Native NTFS contracts and the relocated archive consumer passed;
+          complete producer-container and CEF/resource qualification passed at
+          the same source commit. Receipts, SHA-256 values and source/rebuild
+          materials are attached. See REBUILD.md for commands and support limits.
+          NOTES
+          printf '\nSource: `%s`\n\n[Qualification run](%s/%s/actions/runs/%s)\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$PRODUCT_TAG" -f "sha=$GITHUB_SHA"
+          gh release create "$PRODUCT_TAG" release-assets/* --verify-tag --title "NeverD Windows Web product ($PRODUCT_TAG)" --notes-file release-notes.md --latest=false

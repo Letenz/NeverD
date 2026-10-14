@@ -138,6 +138,11 @@ TEST(DriverKernelAPIIRQL,
     expectLimit(Name, 15);
 }
 
+TEST(DriverKernelAPIIRQL, BugCheckRegistrationPreservesAnyValidLevel) {
+  expectLimit("KeRegisterBugCheckReasonCallback", 15);
+  expectLimit("KeDeregisterBugCheckReasonCallback", 15);
+}
+
 TEST(DriverKernelAPIIRQL, DispatcherKeepsItsOwnNarrowerChecks) {
 #define NEVERD_KERNEL_DISPATCHER_API(Name, Arity) expectLimit(#Name, 15);
 #include "os/windows/kernel/KernelDispatcherAPIs.def"

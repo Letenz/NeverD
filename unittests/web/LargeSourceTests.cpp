@@ -114,9 +114,6 @@ TEST(WebLargeSource, MalformedEncodingSizeAndNodeBudgetsKeepRefusalExplicit) {
 }
 
 TEST(WebLargeSource, CapturedClaudePreviouslyRefusedUnitsWhenSupplied) {
-#ifdef _WIN32
-  GTEST_SKIP() << "POSIX capture host qualification required";
-#endif
   const auto *Base = std::getenv("NEVERD_CLAUDE_CODE_21296_CROSS_DIR");
   if (!Base)
     GTEST_SKIP() << "Optional pinned NeverD-recovered sources absent";

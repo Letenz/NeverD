@@ -35,9 +35,6 @@ void inspectCapturedClientUnits(SourceAnalysisMode Mode) {
                                  const std::string &Value) {
     ::testing::Test::RecordProperty(Key, Value);
   };
-#ifdef _WIN32
-  GTEST_SKIP() << "POSIX capture host qualification required";
-#endif
   const auto *Directory = std::getenv("NEVERD_CLAUDE_CODE_21296_CROSS_DIR");
   if (!Directory)
     GTEST_SKIP() << "Optional captured fixed-version platform package absent";

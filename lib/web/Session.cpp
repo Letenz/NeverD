@@ -74,9 +74,7 @@ std::string Session::capabilities() {
                          {"resolves_external_references", false}}};
   Operations.emplace_back("electron_manifest_analyze");
   Operations.emplace_back("desktop_manifest_analyze");
-#ifndef _WIN32
   Operations.emplace_back("desktop_resources_export");
-#endif
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "desktop_manifest"},
       {"profiles", llvm::json::Array{std::string(NWManifestProfile),
@@ -95,9 +93,7 @@ std::string Session::capabilities() {
   Operations.emplace_back("datapack_records");
   if (compression::gzipAvailable())
     Operations.emplace_back("datapack_decode");
-#ifndef _WIN32
   Operations.emplace_back("datapack_export");
-#endif
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "datapack_extraction"},
       {"profiles", llvm::json::Array{std::string(DataPackProfile),
@@ -664,9 +660,7 @@ std::string Session::capabilities() {
                          {"reachability_verified", false},
                          {"executes_input", false}});
   Operations.emplace_back("source_rewrite_records");
-#ifndef _WIN32
   Operations.emplace_back("source_rewrite_export");
-#endif
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "javascript_primitive_rewrite"},
       {"profile", std::string(SourceRewriteProfile)},
@@ -876,8 +870,8 @@ std::string Session::capabilities() {
       {"identity_profile", "web-identity-v1"},
       {"redaction_policy", "metadata-only-v1"},
 #ifdef _WIN32
-      {"input_reader", "unavailable"},
-      {"artifact_storage", "unavailable"},
+      {"input_reader", "windows-ntfs-handle-v1"},
+      {"artifact_storage", "windows-private-unlinked-spool-v1"},
 #else
       {"input_reader", "posix-descriptor-v1"},
       {"artifact_storage", "posix-unlinked-spool-v1"},

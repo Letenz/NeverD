@@ -303,6 +303,11 @@ llvm::Error KernelModel::probeAndLockPages(uint64_t MDL, uint32_t Mode,
   const auto ImageOwner =
       imageOwnerForRange(State.OriginalAddress, State.ByteCount);
   const bool ImageRange = ImageOwner.has_value();
+  // Image aliases expose whole backing pages, including bytes outside the
+  // MDL's ByteCount. Retained opaque records exclude every intersecting page.
+  if (auto E =
+          validateBugCheckPageBorrow(State.OriginalAddress, State.ByteCount))
+    return E;
   const bool UserRange =
       State.OriginalAddress < profile::UserProbeLimit && !ImageRange;
   auto Range = [&]() -> llvm::Expected<UserMemoryRange> {

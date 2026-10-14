@@ -173,6 +173,7 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
     ImageRanges.emplace(Region.Address, Size);
   }
   ImageRAM = std::move(ImageRanges);
+  Contract = Options.Contract;
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
                               Options.Scheduling.has_value());
@@ -657,6 +658,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return llvm::Error::success();
   if (Size > UINT64_MAX - Address)
     return modelError("overflowing guest access in Windows model");
+  if (auto E = validateBugCheckAccess(Address, Size, IsWrite))
+    return E;
   const uint64_t End = Address + Size;
   if (Address < profile::ProcessorEnvironmentBase + profile::PageSize &&
       profile::ProcessorEnvironmentBase < End)

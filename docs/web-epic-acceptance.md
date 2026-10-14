@@ -152,8 +152,9 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   at `e669ac89e` passes all eleven producer and fifteen CEF/resource cases
   with zero failures/skips. Explicit invalid HTTP selection still fails
   preflight and the final gate. Windows input formats are supported on
-  the qualified macOS host; a Windows analysis-host reader/export writer remains
-  unavailable, as the matrix states.
+  the qualified macOS host. The Windows analysis-host reader, private spool,
+  export owners and product release gate are implemented; native and extracted
+  package qualification remain pending in the [Windows product lane](web-windows-product.md).
 
 Erased TypeScript information, general JSC/V8 bytecode decompilation, universal
 framework support and fabricated live traffic are not missing acceptance work.
