@@ -133,6 +133,57 @@ TEST(MedCallABI, CallbackTableAddressDoesNotReplaceTheActualFirstArgument) {
       }
 }
 
+TEST(MedCallABI, AnIndirectCallRecordsTheSlotOfEachNarrowStackValue) {
+  // `sub rsp, 18h`, then -O0 code stores two int stack arguments into the low
+  // halves of their eight-byte System V slots, `mov [rsp], r11d` and
+  // `mov [rsp+8], r10d`, before `call rax`. The values are four bytes wide
+  // but eight bytes apart.
+  const Arch A = Arch::X64;
+  const auto &TRI = getTargetRegInfo(A);
+  BinaryImage Image;
+  Image.Arch = A;
+  Image.Format = BinaryFormat::ELF;
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Blocks.resize(1);
+  auto &B = F.Blocks[0];
+  B.Id = 0;
+  const auto EntrySp = reg(1, 0, 8, TRI.StackPointer, A);
+  const auto Sp = reg(1, 1, 8, TRI.StackPointer, A);
+  B.Ops.push_back(
+      binary(NdOp::INT_SUB, Sp, EntrySp, MedVar::makeConst(0x18, 8)));
+  const auto G = temp(2, 0, 4, A), H = temp(3, 0, 4, A);
+  B.Ops.push_back(unary(NdOp::COPY, G, MedVar::makeConst(7, 4)));
+  B.Ops.push_back(unary(NdOp::COPY, H, MedVar::makeConst(9, 4)));
+  auto Store = [&](const MedVar &Address, const MedVar &Value) {
+    MedOp Op;
+    Op.Opcode = NdOp::STORE;
+    Op.addInput(Address);
+    Op.addInput(Value);
+    B.Ops.push_back(Op);
+  };
+  Store(Sp, G);
+  const auto Second = temp(4, 0, 8, A);
+  B.Ops.push_back(binary(NdOp::INT_ADD, Second, Sp, MedVar::makeConst(8, 8)));
+  Store(Second, H);
+  auto Call = unary(NdOp::INDIR_CALL, reg(5, 1, 8, TRI.IntReturnReg, A),
+                    temp(6, 0, 8, A));
+  Call.Addr = F.Entry + 16;
+  B.Ops.push_back(Call);
+  recoverCallAbi(F, A, {}, &Image);
+  ASSERT_EQ(F.CallInfos.size(), 1u);
+  const auto &CI = F.CallInfos[0];
+  ASSERT_GE(CI.IntegerRegisterArgCount, 0);
+  ASSERT_GE(CI.FloatingRegisterArgCount, 0);
+  const size_t First = static_cast<size_t>(CI.IntegerRegisterArgCount +
+                                           CI.FloatingRegisterArgCount);
+  ASSERT_EQ(CI.Args.size(), First + 2);
+  EXPECT_EQ(CI.Args[First].Id, G.Id) << CI.Args[First].display();
+  EXPECT_EQ(CI.Args[First + 1].Id, H.Id) << CI.Args[First + 1].display();
+  EXPECT_EQ(CI.StackArgumentOffsets, (std::vector<int64_t>{0, 8}));
+  EXPECT_EQ(CI.StackArgumentSlotBytes, 8);
+}
+
 TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
   enum class Case {
     Siblings,

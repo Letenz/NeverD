@@ -68,15 +68,77 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DNEVERD_LLVM_PREBUILT=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=ON \
             -DNEVERD_BUILD_GUI=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
-            -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF
+            -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=ON
       - name: Build the production CLI and complete Lift test owner
-        run: cmake --build build-lift-qualification --target neverd NeverDLiftTests NeverDLLVMCValueTests NeverDSourcePatchTests --parallel 4
+        run: cmake --build build-lift-qualification --target neverd NeverDLiftTests NeverDLLVMCValueTests NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDHighSwiftEmitterTests NeverDSessionCAPITests --parallel 4
       - name: Require all 108 previous failures and skips to pass
         run: |
           python scripts/run_lift_qualification.py \
             --binary build-lift-qualification/bin/NeverDLiftTests \
             --neverd build-lift-qualification/bin/neverd \
             --output build-lift-qualification/evidence
+      - name: Execute complete native Swift scalar state coverage
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          binary = 'build-lift-qualification/bin/NeverDHighSwiftEmitterTests'
+          listed = subprocess.check_output([binary, '--gtest_list_tests'], text=True)
+          names, suite = [], ''
+          for line in listed.splitlines():
+              if line and not line.startswith(' ') and line.endswith('.'):
+                  suite = line
+              elif line.startswith('  ') and suite == 'HighSwiftEmitter.':
+                  names.append(suite + line.strip().split()[0])
+          assert len(names) >= 40 and len(set(names)) == len(names)
+          output = Path('build-lift-qualification/evidence')
+          xml = output / 'swift-completion.xml'
+          with (output / 'swift-completion.log').open('w') as log:
+              result = subprocess.run([
+                  binary, '--gtest_filter=HighSwiftEmitter.*',
+                  '--gtest_output=xml:' + str(xml)],
+                  env=dict(os.environ, NEVERD_SIGNATURE_CACHE='off'),
+                  stdout=log, stderr=subprocess.STDOUT, timeout=1200)
+          report = audit(ET.parse(xml).getroot(), names, result.returncode)
+          (output / 'swift-completion.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(f'Native Swift scalar state: {len(names)} passed, zero failed, zero skipped')
+          PYTHON
+      - name: Execute all target profiles and native session contracts
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          output = Path('build-lift-qualification/evidence')
+          for owner, pattern, minimum, label in (
+              ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 143, 'source-targets'),
+              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 116, 'native-session'),
+          ):
+              binary = 'build-lift-qualification/bin/' + owner
+              listed = subprocess.check_output([
+                  binary, '--gtest_filter=' + pattern, '--gtest_list_tests'], text=True)
+              names, suite = [], ''
+              for line in listed.splitlines():
+                  if (line and not line.startswith(' ')
+                          and line.split(' #', 1)[0].strip().endswith('.')):
+                      suite = line.split(' #', 1)[0].strip()
+                  elif line.startswith('  '):
+                      names.append(suite + line.strip().split()[0])
+              assert len(names) >= minimum and len(set(names)) == len(names)
+              xml = output / (label + '.xml')
+              with (output / (label + '.log')).open('w') as log:
+                  result = subprocess.run([
+                      binary, '--gtest_filter=' + pattern,
+                      '--gtest_output=xml:' + str(xml)],
+                      env=dict(os.environ, NEVERD_SIGNATURE_CACHE='off'),
+                      stdout=log, stderr=subprocess.STDOUT, timeout=1200)
+              report = audit(ET.parse(xml).getroot(), names, result.returncode)
+              (output / (label + '.json')).write_text(json.dumps(report, indent=2) + '\n')
+              print(f'{label}: {len(names)} passed, zero failed, zero skipped')
+          PYTHON
       - name: Execute LLVM-C wide values and native i386 table storage
         run: |
           python - <<'PY'

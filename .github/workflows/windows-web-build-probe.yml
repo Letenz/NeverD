@@ -1,0 +1,39 @@
+name: Isolate Windows Web compiler failure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+      - name: Select the pinned Capstone source and LLVM headers
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          git submodule update --init --depth 1 third_party/capstone
+          cmake -S . -B build-compiler-probe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF -DNEVERD_ENABLE_Z3=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF -DNEVERD_ENABLE_WEB_ANALYSIS=OFF -DNEVERD_BUILD_GUI=OFF -DNEVERD_BUILD_WORKER=OFF -DNEVERD_BUILD_WEB_MCP=OFF
+      - name: Compare isolated compiler inputs without rebuilding the engine
+        run: python scripts/probe_windows_call_register_compiler.py --build build-compiler-probe --compiler-compatibility
+      - name: Retain exact compiler results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-call-register-compiler-probe
+          path: |
+            build-compiler-probe/*.log
+            build-compiler-probe/compiler-probe.json
+            build-compiler-probe/compile_commands.json
+            build-compiler-probe/CMakeCache.txt
+          if-no-files-found: error

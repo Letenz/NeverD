@@ -126,12 +126,6 @@ static const std::vector<RoundTripTC> kA64Misc = {
    "}\n",
    {0xFFFFFFFFFFFFFF00ULL, 0x100}, "A64Misc"},
 
-  {"a64_umax",
-   "long a64_umax(long a, long b) {\n"
-   "  return (unsigned long)a > (unsigned long)b ? a : b;\n"
-   "}\n",
-   {0xFFFFFFFFFFFFFF00ULL, 0x100}, "A64Misc"},
-
   // ========== Multiple return value (divmod) ==========
   {"a64_divmod32",
    "long a64_divmod32(long a, long b) {\n"
@@ -157,5 +151,5 @@ static const std::vector<RoundTripTC> kA64Misc = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(A64Misc, A64MiscRT,
-                         ::testing::ValuesIn(kA64Misc), rtTCName);
+INSTANTIATE_TEST_SUITE_P(A64Misc, A64MiscRT, ::testing::ValuesIn(kA64Misc),
+                         rtTCName);

@@ -532,7 +532,12 @@ The initial API model deliberately has a finite contract:
 | APIs | Modeled behavior and restrictions |
 |------|-----------------------------------|
 | `RtlInitUnicodeString` | Builds a guest `UNICODE_STRING` for a bounded NUL-terminated source |
+| `RtlGetVersion` | Explicit checked-x64 base version query; no host version defaults. Requires `version_query`; base size 276 requires a zeroed CSD array. Optional zero-size compatibility has a real 20-byte buffer. Extended sizes and undeclared queries stop; environment dependencies remain. |
 | `RtlCopyUnicodeString`, `RtlCompareUnicodeString`, `RtlEqualUnicodeString` | Counted UTF-16 copy and case-sensitive comparison; case-insensitive comparison requires a Windows case table and stops |
+| `RtlInitAnsiString`, `RtlInitString` | Builds a guest `STRING` from a NUL-terminated byte source; the counted length is capped at `0xFFFE`, `MaximumLength` includes the terminator and the record padding is cleared |
+| `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | Appends to a counted UTF-16 destination; `STATUS_BUFFER_TOO_SMALL` leaves it unchanged, a terminator is written only when two spare bytes remain, and a NUL-terminated source longer than `0x7FFE` units also returns `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | Counted UTF-16 prefix test; a case-insensitive request stops only when unequal units would need the Windows case table |
+| `RtlIntegerToUnicodeString`, `RtlUnicodeStringToInteger` | Unsigned radix 2, 8, 10 and 16 conversion with the kernel's whitespace, sign, `0x`/`0o`/`0b` prefix and 32-bit wraparound rules; formatting needs room for the terminator and returns `STATUS_BUFFER_OVERFLOW` after storing the length |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | Raise a guest exception for supported C `__except` handlers and filters, with unwind `__finally`; no normal API return |
 | `ProbeForRead`, `ProbeForWrite`, `ExGetPreviousMode` | User-mode request context with numerical read probing, page-touching write probing and explicit access/misalignment exceptions |
 | `ExAllocatePool2` | Paged/nonpaged NX allocations, zeroed by default; uninitialized and cache-aligned flags modeled; invalid required flags return NULL, quota/executable pools and raised allocation exceptions stop |
@@ -678,7 +683,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
@@ -1219,6 +1224,12 @@ The fixed driver profile disables CET shadow stacks. Canonical `RDSSPD` and `RDS
 ## Declared loader view
 
 Optional `loader_view` declares a concrete diagnostic environment, for example `{"version":1,"flags":0,"evidence":"fixture declaration"}`. All three fields are required; `flags` is an unsigned 32-bit integer, including explicit zero, and `evidence` is a caller label of 1–256 printable ASCII bytes, not authenticated evidence. Version 1 names the simulated layout, not a Windows release. Unknown fields or invalid declarations fail before model allocation. Omitting the option leaves `DriverSection` opaque and adds no report field; supplied declarations are retained in `configuration.loader_view`.
+
+Optional `version_query` selects a concrete diagnostic algorithm: `{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`. `version`, `build_number` (0–65535, including explicit zero), and `evidence` (1–256 printable ASCII bytes) are required. `allow_zero_size` is optional and defaults to false. Version 1 writes major 10, minor 0, the declared build and platform 2 into bytes [4,20), preserving every other byte. It identifies this algorithm, not an authenticated Windows implementation. No value is inferred from the host.
+
+`RtlGetVersion` requires `checked-x64` and PASSIVE_LEVEL. The supported base record has size 276 and its entire CSD array already zero. The separately enabled zero-size shape accesses only 20 bytes; it is nonportable compatibility behavior, not the documented size contract. Size 284/292, other sizes, nonzero CSD, invalid RAM or permissions fail before output writes. Shared object guards also apply. Even an unused declaration retains an unreconstructed environment dependency; it supplies no symbolic assumption, pointer layout or native recovery proof. The report retains `configuration.version_query`. See the [API contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion) and [base record initialization](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow).
+
+The query buffer must lie in the profile’s kernel address range. Every accessed RAM byte must have exactly one virtual mapping in the current address space during this stopped API operation. User buffers and any second mapping, including read-only or no-access aliases, are rejected before output. This conservative admission rule does not infer ownership from a high address; shared object guards still apply.
 
 The borrowed 160-byte record exposes only `DllBase` (offset 48, 8 bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4), and `Flags` (104, 4). The first three values come from the loaded image, including rebasing; flags have no inferred bit meanings. Partial reads within those spans are allowed. Unsupported bytes, straddling accesses and every write are rejected, including through copy services or attempted MDL aliases. `DriverObject.Flags` remains opaque. The view lasts through the modeled lifecycle and retains an unreconstructed environment dependency even when unused. It grants neither symbolic constants nor native runtime restoration authority.
 

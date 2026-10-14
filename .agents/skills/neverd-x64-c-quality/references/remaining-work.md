@@ -35,12 +35,13 @@ conditional memory, invocation lifetime and both C routes remain open.
   format through NUL must remain live outside runtime home/scratch areas and
   return PCs. Image and frame formats share one Windows grammar. Initial
   mutable-image bytes and language handler entries still supply no memory
-  authority; #858 remains open.
+  authority. #858 source analysis is covered by #969; native reconstruction
+  still needs those memory contracts.
 - Windows SEH runtime-memory proofs use their own bounded scalar printf
   grammar instead of Darwin/Objective-C argument typing. Positional and
   foreign dialects, dynamic widths, decimal overflow and multibyte formats
-  retain refusal. This fixes false frame preservation; #858 still needs
-  writable-format and exception-activation memory contracts.
+  retain refusal. Native reconstruction still needs writable-format and
+  exception-activation memory contracts beyond the #858 source projection.
 - Object borrows, local-finally writes and catch-object construction share the
   source solver’s administration-boundary check. SEH SavedESP and exception
   pointers, discontiguous EH4 cookies and realigned saved-entry anchors cannot

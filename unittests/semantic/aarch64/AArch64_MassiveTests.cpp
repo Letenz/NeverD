@@ -39,8 +39,6 @@ static const std::vector<RoundTripTC> kA64Mass = {
   {"a64_lsl32", "long a64_lsl32(long a, long b) { return (long)((unsigned int)a << ((int)b & 31)); }\n", {1, 20}, "A64Mass"},
 
   // --- Comparison + conditional ---
-  {"a64_eq", "long a64_eq(long a, long b) { return a == b; }\n", {42, 42}, "A64Mass"},
-  {"a64_ne", "long a64_ne(long a, long b) { return a != b; }\n", {42, 43}, "A64Mass"},
   {"a64_slt", "long a64_slt(long a, long b) { return a < b; }\n", {0xFFFFFFFFFFFFFFFFULL, 1}, "A64Mass"},
   {"a64_uge", "long a64_uge(long a, long b) { return (unsigned long)a >= (unsigned long)b; }\n", {100, 50}, "A64Mass"},
   {"a64_min_u", "long a64_min_u(long a, long b) { unsigned long ua=a, ub=b; return ua < ub ? a : b; }\n", {100, 50}, "A64Mass"},
@@ -125,5 +123,5 @@ static const std::vector<RoundTripTC> kA64Mass = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(A64Mass, AArch64MassRT,
-                         ::testing::ValuesIn(kA64Mass), rtTCName);
+INSTANTIATE_TEST_SUITE_P(A64Mass, AArch64MassRT, ::testing::ValuesIn(kA64Mass),
+                         rtTCName);

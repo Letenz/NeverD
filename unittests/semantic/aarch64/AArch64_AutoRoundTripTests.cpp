@@ -1,5 +1,4 @@
-//===- AArch64_AutoRoundTripTests.cpp - Auto-generated roundtrip tests --*- C++ -*-===//
-//
+//===- AArch64_AutoRoundTripTests.cpp - Auto-generated roundtrip tests ----===//
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
@@ -11,9 +10,10 @@
 
 #include "SemanticRoundTripFixture.h"
 
-TEST_P(AArch64RoundTrip, AutoLiftVerify) {
-  roundTripAArch64(GetParam());
-}
+// These cases run under AArch64RoundTrip.LiftVerify
+// (AArch64_RoundTripSemanticTests.cpp): gtest runs every TEST_P of a fixture on
+// each of its instantiations, so another TEST_P here would run all of them
+// again.
 
 // clang-format off
 

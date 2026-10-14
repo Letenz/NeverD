@@ -58,8 +58,8 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all43 other file routes closed before preflight")
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "61 current native-common cases")
+                           "all57 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "current live FD lower bound")
@@ -945,7 +945,7 @@ NEVERD_EMULATION_DOC_PATH(InstructionFetch, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(InstructionFetch, "NeverDInstructionFetchTests")
 NEVERD_EMULATION_DOC_TOKEN(InstructionFetch, "InstructionFetchCases.def")
 NEVERD_EMULATION_DOC_TOKEN(InstructionFetch,
-                          "RepeatedOperandsSurviveCodeWorkingSetEviction")
+                           "RepeatedOperandsSurviveCodeWorkingSetEviction")
 
 NEVERD_EMULATION_DOC_PATH(KvmHandoff, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(KvmHandoff, "docs/testing.md")
@@ -1889,6 +1889,628 @@ NEVERD_EMULATION_DOC_PATH(KvmExecutionOwner, "docs/{locale}/testing.md")
 #endif
 #ifdef NEVERD_EMULATION_DOC_TOKEN
 NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "withExecutionOwner")
-NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
-NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
+NEVERD_EMULATION_DOC_TOKEN(
+    KvmExecutionOwner, "ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
+NEVERD_EMULATION_DOC_TOKEN(
+    KvmExecutionOwner, "OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
 #endif
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "chmod15 / fchmod124 / fchmodat467")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "mode_mutations / objects / path / time")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "same current permissions: no WRITE_SECURITY")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "object provider grant still required for every success")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "invalidated records never restored")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "79 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free54 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "nonowner authorization is source/model evidence")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "chown16 / fchown123 / fchownat468")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "ownership_mutations / objects / path / time")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "TAKE_OWNERSHIP == CHANGE_OWNER")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "both IDs inactive: provider still required")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "any active ID: fixed virtual ctime")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "AT_SYMLINK_NOFOLLOW0x20 only")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free77 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "79 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "720 owner observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "flock131 / Int ABI")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "advisory_locks / objects")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "UN8 > EX2 > SH1")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "failed upgrade keeps SH")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "VM mapping Contents leases do not retain description locks")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free77 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "13 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "79 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "720 literal native lock observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fsync95 / fsync_nocancel408")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "synchronization / objects")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "explicit immediate successful file integrity completion")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "no deferred provider work or requested cancellation")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "no host storage flush")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "no physical durability claim")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "normal XNU entry tests cancellation")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all57 other logical file routes")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free68 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "20 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return40")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "504 original native literal observations")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryFileSynchronizationKeepsProviderAndCommittedState")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "F_FULLFSYNC51 F_BARRIERFSYNC85")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "fdatasync187 / distinct Fdatasync Int purpose")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "data_synchronization / objects")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "explicit immediate successful data integrity completion")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DataSynchronization and Synchronization grants never supply")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "XNU tests cancellation and requests MNT_DWAIT")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free41 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "11 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return41")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "83 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "252 original native literal observations")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryDataSynchronizationKeepsProviderAndCommittedState")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularObjects / created_regular_objects / defaultfalse")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "true requires complete CreationPolicy")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial grants and creation grants never supply each other")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free147 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "33 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return42")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "83 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "702 original native literal observations")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "native and model post-write F_GETFL65538 / existing FileWasWritten0x10000")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularSynchronizationKeepsIndependentProvidersAndState")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "advisory_locks={\"objects\":[],\"created_regular_objects\":true}")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "single set-provider parser and admission")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "successful flock sets FileWasLocked FWASLOCKED0x4000")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "F_SETFL accepts observed history for roundtrip but "
+                           "cannot manufacture or clear it")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "written created F_GETFL65538 becomes81922")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free131 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "12 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return43")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "68 current native-common cases")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "83 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "486 original native flock observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "72 fcntl history controls")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "symbolic recognized history returns ENOTTY25")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "162 additional native symbolic and pipe status controls")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "mode_mutations={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "ownership_mutations={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "two independent timed creation providers / "
+                                   "defaultfalse / mandatory objects array")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created ModeTime and OwnershipTime use "
+            "CreationPolicy.Mutation.Time as explicit virtual ctime")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "initial fixed times remain independent / existing "
+                           "O_CREAT grants nothing / fresh replacement only")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "both UINT32_MAX IDs require provider execution and "
+                           "preserve every byte including ctime")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "explicit effective groups20/31 / real GID31 alone "
+                           "does not prove effective membership")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "attribute grants cannot restore invalidated metadata or supply "
+            "write namespace lock completion xattr authority")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "SDK-free235 service records / 137 guarded full stat observations "
+            "/ separate main return44 / stdout A")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "virtual-only nine service records / separate main "
+                           "return45 / 320 independent literal guarded bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularAttributesKeepIndependentProvidersAndObjectState")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "69 current native-common cases / 84 mandatory workloads per "
+            "platform / ARM64 matching native mandatory252")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "450 original native mode observations / "
+                                   "720 original native ownership observations")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native trace not captured / virtual literal bytes "
+                           "not a native timestamp oracle")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native Intel and physical iOS unverified / "
+                           "complete macOS iOS frameworks remain incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "full_synchronization={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "barrier_synchronization={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "F_FULLFSYNC51 / F_BARRIERFSYNC85 / existing raw "
+                           "fcntl92 and406 / low32 FD and command")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "two independent initial and new-regular providers / strict "
+            "objects array / defaultfalse / complete CreationPolicy")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "full and barrier grants never borrow file data or "
+                           "each other / reused names transfer no authority")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "direct barrier support / no mount promotion or "
+                           "fallback / no host flush or physical durability")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "bad FD before opaque kind query scope regular "
+                           "target environment and exact object grant")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "unused argument ignored without reading memory / "
+                           "complete model observations unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "directory link and failed creation publish no regular grant / VM "
+            "mappings never revive closed FDs")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "FullAndBarrierSynchronizationKeepIndependentObjectState")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "51 private test identities / pages4096 and16384 / commands51 and85")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "SDK-free148 authored service records / 38 guarded full stat "
+            "observations / separate main46 / stdout F")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-only ten services / separate main47 / 320 independent "
+            "literal guarded bytes / not native metadata")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "70 current native-common cases / 85 mandatory workloads per "
+            "platform / ARM64 matching native mandatory255")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "216 original native raw calls / 648 guarded176-byte stat "
+            "comparisons / native pipe EBADF9")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native observed completion does not distinguish "
+                           "direct barrier from mount promotion")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "native Intel and physical iOS unverified / "
+                                   "full Apple frameworks remain incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DarwinFileTimestampMutationOptions / timestamp_mutations / "
+            "objects / created_regular_objects defaultfalse")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "utimes138 and futimes139 / LP64 two timeval records32 bytes / "
+            "signed64 seconds signed32 microseconds ignored padding")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual request-storage rule / signed wide nanoseconds saturated "
+            "to int64 / floor-normalized seconds nanoseconds")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "birth reduction only for earlier nonnegative resulting mtime "
+            "including zero / negative mtime preserves birth")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "fixed virtual ctime is separate from request conversion and "
+            "current-time sample / no host filesystem identity inferred")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "NULL uses only explicit TimeOfDay / zero sample valid / missing "
+            "sample stays unknown / no timezone or Mach prerequisite")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "utimes pathname before input / futimes input before low32 FD / "
+            "fully unmapped EFAULT14 / partial input unsupported")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "explicit effective ownership even equal times EPERM1 / current-time owner "
+    "or proved ordinary POSIX write / group knowledge preserved")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "all57 other file routes closed before preflight / both static "
+            "queries reject even empty timestamp declaration")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "ordinary regular Contents grants retain actual dup link rename "
+            "held-zero-name lifetime / replacement names inherit none")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "opaque kind unsupported / native pipe EINVAL22 does not identify "
+            "model kind / directories and symbolic vnodes outside provider")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "62 private identities / pages4096 and16384 / full160-byte stat "
+            "guards / independent dirty bytes locks xattrs and real VM")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "TimestampMutationsKeepExplicitClockAndObjectAuthority / 124 "
+            "authored common services / main48 stdout T")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-timestamp-creation / ten authored services / main49 / "
+            "literal320 guarded bytes / explicit plus NULL request")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "351 accepted original ARM64 O0 O1 O2 observations / signed micros "
+            "saturation and birth limits belong to captured host")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native-common71 / mandatory86 per platform / "
+                           "matching ARM64 native required258 identities")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "native Intel and physical iOS unverified / original five-second native "
+    "and guest bounds unchanged / full Apple frameworks incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "DarwinFileSystemSnapshot / DarwinFileSystemOptions "
+                           "/ FileSystemObservations / filesystem_observations")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "statfs64 BSD345 and fstatfs64 BSD346 / LP64 "
+                           "record2168 bytes / legacy157158 unsupported")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "block_size uint32 io_size int32 / five uint64 "
+                           "counters / filesystem_id two int32 words")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "owner type flags subtype uint32 / type_name16 mount_point1024 "
+            "mounted_from1024 / extended_flags uint32")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "reserved seven uint32 words zero / bounded UTF8 NUL-free names / "
+            "all sixteen JSON members required / zero and empty valid")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "explicit exact immediate mount-stat provider / no "
+                           "host query mount identity quota live refresh MAC "
+                           "refusal wait or process mountpoint rewrite")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "initial regular directory and symbolic bindings / actual Contents "
+    "DirectoryNode LinkNode / no target filestat prerequisite or recovery")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "created_regular_objects defaultfalse / true requires complete "
+    "CreationPolicy / successful new regular uses actual bound parent snapshot")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "initial children unbound parents default-created directories and links "
+    "receive none / no fsid device inode or pathname prefix inference")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "effective ordinary ancestor search uses shared authorizer and group "
+    "knowledge / FD query borrows no target DAC credentials or access flags")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "pathname and low32 FD kind before output / ENOENT2 EBADF9 "
+            "EFAULT14 / individually partial output unsupported before effects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "both immutable query domains reject even empty filesystem declaration / "
+    "all57 other logical file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "67 private identities / both4096 and16384 pages bothroutes / "
+            "full2200 guarded literal / shared16MiB budget")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "dup independent opens hardlinks rename directory moves CWD held-unlink "
+    "reuse / dirty bytes locks xattrs and real VM independent")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime / "
+            "49 authored common services / main50 stdout W")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-filesystem-creation / nine authored services / main51 / "
+            "independent4400 guarded literal bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "114 original ARM64 O0 O1 O2 observations / readonly writeonly "
+            "directory and held-zero-name FD controls / native pipe EINVAL22 "
+            "opaque kind unsupported")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "native-common72 / mandatory87 per platform / matching ARM64 "
+            "required261 identities / no captured native service trace")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "constant guest validation loops unrolled with every assertion "
+            "retained / native5s guest5000000us quantum1024 public10s original "
+            "owner bounds unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "native Intel physical iOS full dyld Mach IPC ObjC Swift "
+            "Foundation UIKit unqualified / full Apple environment incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DarwinFileSystemEnumerationOptions / DarwinMountObservation / "
+            "FileSystemEnumeration / filesystem_enumeration")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "getfsstat64 BSD347 Int / shared LP64 record2168 / "
+                           "independent ordered live accessible mounts")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "mounts required array / cached complete16 fields "
+                           "required / refreshed complete16 fields optional")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "empty table known empty / missing table unsupported / duplicate "
+            "entries retain order / no inferred mount identity")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "NULL output returns full count without refresh / "
+                           "short buffer capacity zero without memory access")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "low32 signed byte size promoted to LP64 unsigned before division "
+            "and narrowed int32 / negative size large capacity")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "NOWAIT2 uses current cache unless WAIT1 or DWAIT4 / other bits "
+            "follow same test / low32 flag carriers")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "process cache starts Cached / refresh selects Refreshed before "
+            "complete EFAULT14 / new process resets cache")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "copy complete records sequentially / later fault retains prior output and "
+    "refresh / partial current record unsupported before its effects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "missing refresh stops before current effects / earlier records "
+            "stay committed / path and FD snapshots independent")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "one catalogue entry per mount / each snapshot2168 bytes / "
+            "shared256 entries16MiB / public JSON64KiB unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "both static query domains reject empty enumeration / all57 other "
+            "logical file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "MountEnumerationKeepsOrderedSnapshotsAndRefreshCach"
+                           "e / common16 authored services main52 stdout M")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-mount-enumeration / 19 authored services main53 / "
+            "independent19609 full guarded output bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "270 ARM64 O0 O1 O2 native observations / count stability and "
+            "literal guard checks / no universal host counters")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "native-common73 / mandatory88 per platform "
+                                   "/ matching ARM64 required264 identities")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native5s guest5000000us quantum1024 public30s "
+                           "existing method and owner bounds unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "no dead unmount MAC refusal failed refresh asynchronous wait host "
+            "query or complete Apple framework claim")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "directory mode: chmod15 fchmod124 fchmodat467 / "
+                           "ordinary initial regular or directory objects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedDirectoryObjects=false / created_directory_objects exact "
+            "Boolean / separate CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory mode requires complete CreationPolicy.Namespace "
+            "/ resulting ctime uses Mutation.Time")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DirectoryNode ModeTime separate from MutationTime / "
+            "CurrentMetadata never supplies namespace authority")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "directory nlink greater than1 valid / equal known Device-Inode "
+            "aliases rejected / ownership and timestamps require separate "
+            "providers")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "mode changes only permissions and ctime / independent namespace time "
+    "preserves mode / missing namespace time permanently invalidates stat")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "dup independent opens chdir fchdir direct rename exchange held "
+            "rmdir and reused names / no child grant inference")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "directory-mode-mutations59 services / created-directory-mode60 "
+            "services / 33 full guarded stat144 records / main53 stdout Q")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "five software profiles C CLI Python / three matching ARM64 HVF "
+            "required / native common75 mandatory90 ARM64270")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "60 native directory observations plus3 separate unexpanded-symlink "
+    "controls / ARM64 O0 O1 O2 / native5s guest5000000us quantum1024 public30s")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "directory timestamps: utimes138 futimes139 / "
+                           "ordinary initial regular or directory objects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "TimestampMutations CreatedDirectoryObjects=false / "
+    "created_directory_objects strict Boolean / separate CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory timestamp provider requires complete "
+            "CreationPolicy.Namespace / fixed ctime Mutation.Time")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DirectoryNode TimestampTime independent of ModeTime MutationTime "
+            "DirectoryEntrySize / unknown metadata never restored")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "explicit timestamps require owner even when equal / NULL uses "
+            "declared TimeOfDay and shared WRITE_ATTRIBUTES authorization")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "LP64 timeval32 signed64 seconds signed32 microseconds ignored "
+            "padding / int64 nanosecond saturation floor normalization / "
+            "earlier nonnegative mtime reduces birthtime")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "directory-timestamp-mutations46 services / created-directory-timestamps47 "
+    "services / 24 complete guarded stat144 records / main54 stdout T")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "five software profiles C CLI Python / three matching ARM64 HVF "
+            "required / native common75 mandatory90 ARM64270")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "141 owned native directory timestamp observations / ARM64 O0 O1 "
+            "O2 / native5s compiler120s build1200s parallel2 guest5000000us "
+            "quantum1024 public30s")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "directory ownership: chown16 fchown123 fchownat468 "
+                           "/ ordinary initial regular or directory objects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "OwnershipMutations CreatedDirectoryObjects=false / "
+    "created_directory_objects strict Boolean / separate CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory ownership provider requires complete "
+            "CreationPolicy.Namespace / fixed ctime Mutation.Time")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DirectoryNode OwnershipTime independent of ModeTime TimestampTime "
+            "MutationTime DirectoryEntrySize / unknown metadata never restored")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "active low32 UID GID including equal values set fixed ctime / both "
+    "UINT32_MAX inactive require provider and preserve all observations")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "actual DirectoryIdentity.GID and CurrentMetadata.GID commit "
+            "together / newly created regular directory symbolic objects "
+            "inherit current actual parent group")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "directory-ownership-mutations61 services / created-directory-ownership62 "
+    "services / 29 complete guarded stat144 records / main55 stdout O")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "five software profiles C CLI Python / three matching ARM64 HVF "
+            "required / native common76 mandatory91 ARM64273")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "219 owned native directory ownership observations / ARM64 O0 O1 "
+            "O2 / native5s compiler120s build1200s parallel2 guest5000000us "
+            "quantum1024 public30s")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "FileSystemObservations CreatedDirectoryObjects=false / "
+            "filesystem_observations.created_directory_objects strict Boolean "
+            "/ independent CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory filesystem binding requires complete "
+            "CreationPolicy.Namespace / successful mkdir binds actual parent "
+            "DirectoryNode.FileSystem before publication")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "unbound parent snapshot remains unknown / creation succeeds "
+            "without manufacturing a snapshot / zero snapshot explicitly known")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "actual snapshots survive moves exchanges dup held rmdir and metadata "
+    "invalidation / replacement objects bind their own actual parent")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "filesystem owner and directory stat UID GID independent / no "
+            "attribute namespace mount identity or global fsid inference")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created-directory-filesystem33 authored services / "
+            "virtual-created-directory-filesystem35 services / main56 stdout D "
+            "/ independent4400 guarded payload bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "102 owned ARM64 native filesystem observations O0 O1 O2 / native "
+            "common77 mandatory92 per platform ARM64276")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "125 initial private and strict JSON checks / five software C CLI "
+            "Python profiles / three matching ARM64 HVF profiles required")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "symbolic filesystem: fstatfs64 BSD346 O_SYMLINK own "
+            "LinkNode.FileSystem / statfs64 BSD345 follows target snapshot")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "CreatedSymbolicLinkObjects=false / FileSystemCreatedSymbolicLinkObjects "
+    "created_symbolic_link_objects strict Boolean / filesystem purpose only")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created symbolic snapshot requires complete "
+            "CreationPolicy.Namespace / actual parent binding before "
+            "successful publication / independent regular directory flags")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial symbolic snapshots need no target stat metadata or valid "
+            "target / unbound unknown and explicit zero distinct / "
+            "shared2168-byte plus path reference budget")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "link object snapshots survive dup parent moves exchanges rename "
+            "held unlink and name reuse / invalidated stat never restored")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "symbolic-filesystem-observations32 created-symbolic-filesystem33 "
+            "virtual-symbolic-filesystem35 authored services / main57 stdout Y "
+            "/ independent6600 guarded bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "114 owned ARM64 O0 O1 O2 native filesystem observations / common "
+            "native79 mandatory93 per platform ARM64279")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "166 initial private strict JSON checks / five software C CLI Python and "
+    "three matching ARM64 HVF profiles / public30s guest5000000us quantum1024")

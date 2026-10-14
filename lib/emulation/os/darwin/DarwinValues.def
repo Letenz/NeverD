@@ -23,6 +23,11 @@ NEVERD_DARWIN_VALUE(ParentID, 1)
 NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
+NEVERD_DARWIN_VALUE(LockWouldBlock, 35)
+NEVERD_DARWIN_VALUE(LockShared, 1)
+NEVERD_DARWIN_VALUE(LockExclusive, 2)
+NEVERD_DARWIN_VALUE(LockNonblocking, 4)
+NEVERD_DARWIN_VALUE(LockUnlock, 8)
 NEVERD_DARWIN_VALUE(NoEntry, 2)
 NEVERD_DARWIN_VALUE(NoProcess, 3)
 NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
@@ -64,6 +69,7 @@ NEVERD_DARWIN_VALUE(OpenCreate, 0x200)
 NEVERD_DARWIN_VALUE(OpenExclusive, 0x800)
 NEVERD_DARWIN_VALUE(FileTooLarge, 27)
 NEVERD_DARWIN_VALUE(FileWasWritten, 0x10000)
+NEVERD_DARWIN_VALUE(FileWasLocked, 0x4000)
 NEVERD_DARWIN_VALUE(FileRestrictedFlags, 0x60006)
 NEVERD_DARWIN_VALUE(AtCurrentDirectory, 0xfffffffe)
 NEVERD_DARWIN_VALUE(AtEffectiveAccess, 0x10)
@@ -81,6 +87,8 @@ NEVERD_DARWIN_VALUE(RenameSwap, 2)
 NEVERD_DARWIN_VALUE(RenameExclusive, 4)
 NEVERD_DARWIN_VALUE(RenameNoFollowAny, 0x10)
 NEVERD_DARWIN_VALUE(GetPath, 50)
+NEVERD_DARWIN_VALUE(FullSynchronizationCommand, 51)
+NEVERD_DARWIN_VALUE(BarrierSynchronizationCommand, 85)
 NEVERD_DARWIN_VALUE(DuplicateFD, 0)
 NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
 NEVERD_DARWIN_VALUE(SetDescriptorFlags, 2)
@@ -196,6 +204,12 @@ NEVERD_DARWIN_SERVICE(GetEUID, 25, UInt)
 NEVERD_DARWIN_SERVICE(GetPPID, 39, Int)
 NEVERD_DARWIN_SERVICE(Access, 33, Int)
 NEVERD_DARWIN_SERVICE(FaccessAt, 466, Int)
+NEVERD_DARWIN_SERVICE(Chown, 16, Int)
+NEVERD_DARWIN_SERVICE(Fchown, 123, Int)
+NEVERD_DARWIN_SERVICE(FchownAt, 468, Int)
+NEVERD_DARWIN_SERVICE(Chmod, 15, Int)
+NEVERD_DARWIN_SERVICE(Fchmod, 124, Int)
+NEVERD_DARWIN_SERVICE(FchmodAt, 467, Int)
 NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
@@ -210,6 +224,14 @@ NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
 NEVERD_DARWIN_SERVICE(GetPriority, 100, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
+NEVERD_DARWIN_SERVICE(Flock, 131, Int)
+NEVERD_DARWIN_SERVICE(Fsync, 95, Int)
+NEVERD_DARWIN_SERVICE(Fdatasync, 187, Int)
+NEVERD_DARWIN_SERVICE(Utimes, 138, Int)
+NEVERD_DARWIN_SERVICE(Futimes, 139, Int)
+NEVERD_DARWIN_SERVICE(Statfs64, 345, Int)
+NEVERD_DARWIN_SERVICE(Fstatfs64, 346, Int)
+NEVERD_DARWIN_SERVICE(Getfsstat64, 347, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
@@ -268,6 +290,7 @@ NEVERD_DARWIN_SERVICE_ALIAS(Write, 397)
 NEVERD_DARWIN_SERVICE_ALIAS(Open, 398)
 NEVERD_DARWIN_SERVICE_ALIAS(Close, 399)
 NEVERD_DARWIN_SERVICE_ALIAS(Fcntl, 406)
+NEVERD_DARWIN_SERVICE_ALIAS(Fsync, 408)
 NEVERD_DARWIN_SERVICE_ALIAS(Readv, 411)
 NEVERD_DARWIN_SERVICE_ALIAS(Writev, 412)
 NEVERD_DARWIN_SERVICE_ALIAS(Preadv, 542)
@@ -473,6 +496,161 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FileOrdinaryAuthorizationGroups,
     "Darwin ordinary authorization requires known group membership")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeOption,
+    "Darwin mode grants require unique initial ordinary object metadata and "
+    "a valid fixed ctime")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeEnvironment,
+    "Darwin ordinary mode mutation environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeSecurityAttributes,
+    "Darwin mode authorization requires current ordinary security attributes")
+NEVERD_DARWIN_DIAGNOSTIC(FileModePermissions,
+                         "Darwin special mode mutation is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeTarget,
+    "Darwin mode mutation requires an ordinary regular or directory vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileModeProvider,
+                         "Darwin object mode provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileOwnershipOption,
+                         "Darwin ownership grants require complete ordinary "
+                         "initial regular or directory objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipEnvironment,
+    "Darwin ordinary ownership environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipSecurityAttributes,
+    "Darwin ordinary ownership security attributes are unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipRequest,
+    "Darwin ownership authorization request is inconsistent")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipTarget,
+    "Darwin ownership mutation requires an ordinary regular or directory vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileOwnershipProvider,
+                         "Darwin object ownership provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampOption,
+                         "Darwin timestamp grants require complete ordinary "
+                         "initial regular or directory objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampEnvironment,
+    "Darwin ordinary timestamp environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampSecurityAttributes,
+                         "Darwin timestamp authorization requires current "
+                         "ordinary security attributes")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampTarget,
+    "Darwin timestamp mutation requires an ordinary regular or directory vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampKind, "Darwin timestamp mutation requires a known vnode kind")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampProvider,
+                         "Darwin object timestamp provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemOption,
+    "Darwin filesystem snapshots require known initial "
+    "regular, directory or symbolic objects and bounded names")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemEnvironment,
+    "Darwin filesystem observation environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemSecurityAttributes,
+                         "Darwin filesystem lookup requires current ordinary "
+                         "ancestor security attributes")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemKind,
+                         "Darwin filesystem observation requires a known "
+                         "regular, directory or symbolic vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemProvider,
+                         "Darwin object filesystem snapshot is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemEnumerationOption,
+    "Darwin mount table requires complete bounded snapshots")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemEnumerationEnvironment,
+    "Darwin mount enumeration environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemRefresh,
+                         "Darwin mount refresh provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemPartialOutput,
+                         "Darwin partial filesystem output is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampInput,
+                         "Darwin partial timestamp input is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(FileAdvisoryLockOption,
+                         "Darwin advisory lock grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockEnvironment,
+    "Darwin whole-file advisory lock environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockKind,
+    "Darwin advisory lock descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockTarget,
+    "Darwin advisory lock requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockProvider,
+    "Darwin regular-object advisory lock provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockWait,
+    "Darwin contended blocking advisory lock wait is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(FileSynchronizationOption,
+                         "Darwin file synchronization grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSynchronizationEnvironment,
+    "Darwin file synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSynchronizationKind,
+    "Darwin file synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSynchronizationTarget,
+    "Darwin file synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileSynchronizationProvider,
+                         "Darwin regular-object file integrity completion "
+                         "provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileDataSynchronizationOption,
+                         "Darwin data synchronization grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileDataSynchronizationEnvironment,
+    "Darwin data synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileDataSynchronizationKind,
+    "Darwin data synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileDataSynchronizationTarget,
+    "Darwin data synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileDataSynchronizationProvider,
+                         "Darwin regular-object data integrity completion "
+                         "provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileFullSynchronizationOption,
+                         "Darwin full synchronization grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationEnvironment,
+    "Darwin full synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationKind,
+    "Darwin full synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationTarget,
+    "Darwin full synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationProvider,
+    "Darwin regular-object full synchronization provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileBarrierSynchronizationOption,
+                         "Darwin barrier synchronization grants require "
+                         "complete ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationEnvironment,
+    "Darwin barrier synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationKind,
+    "Darwin barrier synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationTarget,
+    "Darwin barrier synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationProvider,
+    "Darwin regular-object barrier synchronization provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")
 NEVERD_DARWIN_DIAGNOSTIC(

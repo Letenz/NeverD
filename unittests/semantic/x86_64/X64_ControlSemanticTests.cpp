@@ -1,5 +1,4 @@
-//===- X64_ControlSemanticTests.cpp - x64 control/string/rep tests -*- C++ -*-===//
-//
+//===- X64_ControlSemanticTests.cpp - x64 control/string/rep tests --------===//
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
@@ -11,7 +10,9 @@
 
 #include "UnicornSemanticFixture.h"
 
-TEST_P(X64Semantic, ControlVerify) { runX64(GetParam()); }
+// These cases run under X64Semantic.Verify (X64_FPSemanticTests.cpp): gtest
+// runs every TEST_P of a fixture on each of its instantiations, so another
+// TEST_P here would run all of them again.
 
 // clang-format off
 
@@ -64,6 +65,9 @@ static const std::vector<SemTC> kX64Fence = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(StringRep, X64Semantic, ::testing::ValuesIn(kX64StringRep), semTCName);
-INSTANTIATE_TEST_SUITE_P(FlagMisc, X64Semantic, ::testing::ValuesIn(kX64FlagMisc), semTCName);
-INSTANTIATE_TEST_SUITE_P(Fence, X64Semantic, ::testing::ValuesIn(kX64Fence), semTCName);
+INSTANTIATE_TEST_SUITE_P(StringRep, X64Semantic,
+                         ::testing::ValuesIn(kX64StringRep), semTCName);
+INSTANTIATE_TEST_SUITE_P(FlagMisc, X64Semantic,
+                         ::testing::ValuesIn(kX64FlagMisc), semTCName);
+INSTANTIATE_TEST_SUITE_P(Fence, X64Semantic, ::testing::ValuesIn(kX64Fence),
+                         semTCName);

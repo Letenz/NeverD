@@ -609,10 +609,13 @@ class Writer {
                expression(E->Operands[3], Depth + 1) + ")";
       }
       if (isX86FPScalarConvertStateIntrinsic(E->IntrinsicId)) {
-        FPStateConversions.insert({E->IntrinsicId, Shape.Control});
+        // VEX changes vector upper lanes, which the lifter owns, but not this
+        // scalar numerical/state helper. Keep one definition per contract.
+        const unsigned Control = Shape.Control & ~8u;
+        FPStateConversions.insert({E->IntrinsicId, Control});
         UsesWide |= Shape.OutputSize == 12;
         return FPStateType + "." +
-               fpConversionName(E->IntrinsicId, Shape.Control) + "(" +
+               fpConversionName(E->IntrinsicId, Control) + "(" +
                expression(E->Operands[0], Depth + 1) + ", " +
                expression(E->Operands[2], Depth + 1) + ")";
       }

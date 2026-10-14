@@ -13,7 +13,10 @@
 
 #include "SemanticRoundTripFixture.h"
 
-TEST_P(X64RoundTrip, SubregStress) { roundTripX64(GetParam()); }
+// These cases run under X64RoundTrip.LiftVerify
+// (X64_RoundTripSemanticTests.cpp): gtest runs every TEST_P of a fixture on
+// each of its instantiations, so another TEST_P here would run all of them
+// again.
 
 // clang-format off
 

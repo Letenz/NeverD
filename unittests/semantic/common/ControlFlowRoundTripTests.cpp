@@ -12,9 +12,12 @@
 
 #include "SemanticRoundTripFixture.h"
 
-TEST_P(X64RoundTrip, ControlFlowVerify) { roundTripX64(GetParam()); }
-TEST_P(AArch64RoundTrip, ControlFlowVerify) { roundTripAArch64(GetParam()); }
-TEST_P(ARM32RoundTrip, ControlFlowVerify) { roundTripARM32(GetParam()); }
+// These cases run under the one TEST_P of each fixture, X64RoundTrip.LiftVerify
+// (X64_RoundTripSemanticTests.cpp), AArch64RoundTrip.LiftVerify
+// (AArch64_RoundTripSemanticTests.cpp), ARM32RoundTrip.LiftVerify
+// (ARM32_RoundTripSemanticTests.cpp). gtest runs every TEST_P of a fixture on
+// each of its instantiations, so another TEST_P here would run all of them
+// again.
 
 // clang-format off
 
