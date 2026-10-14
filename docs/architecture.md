@@ -1346,6 +1346,22 @@ ABI's guaranteed alignment prove every discarded bit. Binary lift and patch
 keep the original operation. The LLVM-to-C route explicitly requests this
 source projection even though it otherwise uses the direct LLVM pipeline.
 
+The same source projection marks prologue saves: a store of a callee-saved
+register's entry value (`push rbx`, an AArch64 `stp`, MSVC's `mov [rsp+8],
+rbx` into a Win64 home slot) whose bytes nothing reads but that register's
+unused restore, and no other store writes. Both source routes leave a marked
+store out, as a C function leaves its caller's registers alone, so the
+prologue neither prints the caller's register as a stale value nor keeps a
+frame in byte storage. The MedIR text view shows the mark. Operations keep
+their positions, because call records index them. A save read for anything
+else stays a store, and binary lift and patch never mark one. On x86 the
+projection also marks a pointer-width load of the slot at the entry stack
+pointer, in a called function whose stores never write that slot: it reads
+the return address the call pushed. HighC prints it as
+`__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
+Neither view gives the frame a slot holding that address, so the read would
+otherwise print as an unassigned local or a zero.
+
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
 use this graph. Bounded partitions track repeated equality tests between scalar
@@ -5422,12 +5438,22 @@ Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
 rechecks the same dependencies. Writable formats and opaque calls retain their
 refusal, so this contract does not yet close the x64 xcpt4 case.
 
-`pipeline/Windows/SEHRuntimeFormat` owns a scalar subset of the
+`low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
 for this memory proof. Positional syntax, foreign length/flag extensions, dynamic
 widths, overflowing numeric fields and multibyte formats supply no authority.
 This bounded ASCII subset is independent of Darwin/Objective-C source type
 hints; immutable bytes and current runtime arguments are still required.
+
+`pipeline/Windows/SEHRuntimeFormat` authenticates image storage;
+`low/X86/SEHFrameFormat` additionally accepts live frame formats whose complete
+bytes through NUL come from decoded scalar stores. The common frame state
+intersects these byte facts across every predecessor and inspected callee
+return. Partial or unknown writes, released storage and opaque calls withdraw
+them. Runtime home/scratch areas and active return PCs cannot supply format
+storage. No initial stack contents or writable image bytes receive authority
+from their file values. These byte facts do not restore memory at a language
+handler entry or complete the x64 xcpt4 exception-activation proof.
 
 Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
 UCRT import binding, an unescaped frame and a constant exception-mask subset

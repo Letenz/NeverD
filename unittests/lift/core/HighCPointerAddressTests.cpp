@@ -35102,12 +35102,14 @@ std::string dumpMedBlockRanges(const std::vector<MedFunc> &Funcs) {
 }
 
 std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true,
-                              DebugContext *Dbg = nullptr) {
+                              DebugContext *Dbg = nullptr,
+                              bool SourceProjection = false) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.NoOpt = NoOpt;
   Opts.LiftMode = true;
+  Opts.SourceProjection = SourceProjection;
   Opts.OnlyFunctionEntries.insert(Entry);
   auto Result = Pipeline().run(Img, Ctx, Opts, Dbg);
   if (!Result.Success || !Result.LlvmModule)
@@ -35502,6 +35504,31 @@ TEST(HighCPointerAddresses, CorpusCalleeSavesAreNotStoresOfLaterArguments) {
   EXPECT_EQ(Source.find("(frame_base - 8) ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(frame_base + 24) ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= arg3;"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, CorpusCalleeSavesStayOutOfTheFrame) {
+  // `mov [rsp+10h], rbx` and `push rdi` save the caller's registers.  The
+  // LLVM-C view, like HighC, leaves those saves out of its frame.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/clang-cl/x86_64/fh3/gs/o0/abi-probe/"
+                    "cxx_eh_probe-clang-cl-x86_64-fh3-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+  constexpr va_t Entry = 0x140001A30;
+  BinaryLoadOptions Opts;
+  Opts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, Opts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source =
+      llvmcOnlyFunction(std::move(*Img), Entry, /*NoOpt=*/false,
+                        /*Dbg=*/nullptr, /*SourceProjection=*/true);
+  ASSERT_NE(Source.find("RtlCaptureContext("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(char*)&frame0 + 120) = 0;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("(char*)&frame0 + 80) = 0;"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
@@ -37930,7 +37957,7 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
       std::regex(
           R"(uint32_t (\w+) = 11;\s*__builtin_memcpy\(\(void \*\)\(uintptr_t\)\(\(\(char\*\)&frame0 \+ 32\)\), &\1, 4\))")))
       << Source;
-  EXPECT_NE(Source.find("sink_wide(used3)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("sink_wide(used"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
@@ -38006,10 +38033,14 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("types_ = 43"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("values_"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("&var_m28"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 32) = 43;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= ((char*)&frame0 + 16);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("((char*)&frame0 + 40))"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
@@ -38156,16 +38187,17 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), ((char*)&frame0 + 24))"),
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("pAuxData._Ptr = 0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m28 = *((ArgList *)&pAuxData)"), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("var_m28 = pAuxData"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
@@ -38311,7 +38343,16 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
   OS.flush();
   const std::string Body =
       sourceFunctionDefinition(Source, "leftover_eax_copy");
-  EXPECT_NE(Body.find("var_m18.types_"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Body.find("var_m"), std::string::npos) << Source;
+  // The call result's narrow store reaches the wide copy of the same bytes.
+  EXPECT_NE(Body.find("*(uint32_t *)((char*)&frame0 + 8) = period_use"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Body.find("(((char*)&frame0 + 8)), 16);"), std::string::npos)
+      << Source;
   EXPECT_NE(Body.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Body.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Body.find("pAuxData.types_"), std::string::npos) << Source;
@@ -38617,7 +38658,13 @@ TEST(LLVMCPointerAddresses,
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), ((char*)&frame0 + 24))"),
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
@@ -44384,6 +44431,65 @@ TEST(HighCPointerAddresses, AHomeSlotSaveReadForAnythingElseStays) {
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
   EXPECT_NE(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
+}
+
+TEST(LLVMCPointerAddresses, AFrameRecordPassedToACallStaysOneObject) {
+  // `s = {1, 2, 3, arg1}; init(&s); return s.b;` on Win64.  The callee may
+  // read all four words and write any of them: a separate C local for the
+  // record's first word dropped the last store and read `s.b` from bytes the
+  // callee never saw.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Thunk = 0x140001040;
+  constexpr va_t IAT = 0x140003000;
+  std::vector<uint8_t> Text = {
+      0x48, 0x83, 0xec, 0x48,                      // sub rsp, 48h
+      0x48, 0xc7, 0x44, 0x24, 0x20, 0x01, 0, 0, 0, // [rsp+20h] = 1
+      0x48, 0xc7, 0x44, 0x24, 0x28, 0x02, 0, 0, 0, // [rsp+28h] = 2
+      0x48, 0xc7, 0x44, 0x24, 0x30, 0x03, 0, 0, 0, // [rsp+30h] = 3
+      0x48, 0x89, 0x54, 0x24, 0x38,                // [rsp+38h] = rdx
+      0x48, 0x8d, 0x4c, 0x24, 0x20,                // lea rcx, [rsp+20h]
+      0xe8, 0x12, 0,    0,    0,                   // call Thunk
+      0x48, 0x8b, 0x44, 0x24, 0x28,                // mov rax, [rsp+28h]
+      0x48, 0x83, 0xc4, 0x48,                      // add rsp, 48h
+      0xc3};                                       // ret
+  const size_t Size = Text.size();
+  Text.resize(Thunk - Entry, 0xcc);
+  const int32_t ThunkDisp = static_cast<int32_t>(IAT - (Thunk + 6));
+  Text.insert(Text.end(), {0xff, 0x25});
+  Text.resize(Text.size() + 4);
+  std::memcpy(Text.data() + Text.size() - 4, &ThunkDisp, sizeof(ThunkDisp));
+  BinaryImage Img = makeCodeFixture(Entry, Text);
+  Img.KnownCodeRanges.emplace_back(Entry, Entry + Size);
+  Import Imp;
+  Imp.Name = "init_record";
+  Imp.IATAddr = IAT;
+  Img.Imports.push_back(std::move(Imp));
+  const std::string LLVMC =
+      llvmcOnlyFunction(Img, Entry, /*NoOpt=*/false, /*Dbg=*/nullptr,
+                        /*SourceProjection=*/true);
+  ASSERT_NE(LLVMC.find("init_record("), std::string::npos) << LLVMC;
+  EXPECT_EQ(LLVMC.find("&var_"), std::string::npos) << LLVMC;
+  // All four words reach the callee.
+  for (const char *Word : {"= 1;", "= 2;", "= 3;", "= arg1;"})
+    EXPECT_NE(LLVMC.find(Word), std::string::npos) << Word << "\n" << LLVMC;
+}
+
+TEST(LLVMCPointerAddresses, TheEntrySlotReadsAsTheReturnAddress) {
+  // `mov rax, [rsp]; ret` returns the address its call pushed.  Neither view
+  // has a frame slot holding it: HighC read an unassigned local and LLVM-C a
+  // zero.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0x04, 0x24, // mov rax, [rsp]
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__builtin_return_address(0)"), std::string::npos)
+      << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry, /*NoOpt=*/false,
+                        /*Dbg=*/nullptr, /*SourceProjection=*/true);
+  EXPECT_NE(LLVMC.find("__builtin_return_address(0)"), std::string::npos)
+      << LLVMC;
 }
 
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {

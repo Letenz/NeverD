@@ -4111,7 +4111,9 @@ tested function first, where emulation starts. A case whose C calls a routine
 the freestanding image cannot link (a rounding instruction printed as
 `nearbyint`), or does not define the tested function, is skipped with that
 reason. Every round-trip test runs this way, so compare the failing names of
-two such runs to judge a HighC or HighIR change.
+two such runs to judge a HighC or HighIR change. `NEVERD_SEMANTIC_LLVMC=1`
+does the same with the LLVM-C route's C, the check for an LLVM-C printer
+change.
 The patch-full fixture uses `Codegen::compileForRewrite`, the same rewrite
 backend as patch operations, then compares baseline and transformed code across
 the full 4 x 3 ISA/format grid.
@@ -5579,6 +5581,16 @@ preserve the saved cell; positional/grouping/q dialects, unproved dynamic
 widths, overflowing decimal fields, pointer conversions and multibyte formats
 must not. Both segment and section extents cover each fixture's actual bytes,
 so rejection tests syntax rather than an accidentally truncated mapping.
+
+`SourceFrameFormatBytesOwnTheRuntimeContract`,
+`MissingOrChangedFrameBytesWithdrawFormatAuthority` and
+`FrameFormatsRequireLiveStorageAndEveryReachingByte` in the same target decode
+source stores and calls. Byte/DWORD initialization, matching branch stores and
+an inspected helper filling a missing byte preserve saved-frame evidence.
+Changed or unknown bytes, missing NUL, conflicting branches, released storage,
+runtime home/scratch areas and active return PCs refuse. The same Windows
+grammar applies to image and frame formats. These tests do not establish
+mutable-image formats, handler-memory restoration or native execution.
 
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC

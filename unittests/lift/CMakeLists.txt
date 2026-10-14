@@ -1792,6 +1792,10 @@ add_neverd_unittest(NeverDMedStackAlignmentTests
   core/MedStackAlignmentTests.cpp
   LINK_COMPONENTS IRMed
 )
+add_neverd_unittest(NeverDMedPrologueSavesTests
+  core/MedPrologueSavesTests.cpp
+  LINK_COMPONENTS IRMed
+)
 target_compile_definitions(NeverDMBASourceTests PRIVATE
   NEVERD_BINARY="$<TARGET_FILE:neverd>"
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"

@@ -30,6 +30,12 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## CRT and catch-continuation repairs
 
+- Source-written Win64 frame formats now retain exact reaching scalar bytes.
+  Every predecessor and inspected callee return must agree, and the complete
+  format through NUL must remain live outside runtime home/scratch areas and
+  return PCs. Image and frame formats share one Windows grammar. Initial
+  mutable-image bytes and language handler entries still supply no memory
+  authority; #858 remains open.
 - Windows SEH runtime-memory proofs use their own bounded scalar printf
   grammar instead of Darwin/Objective-C argument typing. Positional and
   foreign dialects, dynamic widths, decimal overflow and multibyte formats

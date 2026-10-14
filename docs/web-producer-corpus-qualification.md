@@ -61,6 +61,15 @@ gh workflow run web-release-qualification.yml --ref dev \
 
 Each directory keeps the existing recipe's relative filenames. The pkg tree
 includes `outputs-canonical/` and `outputs-stripped/`.
+Private archive endpoints can require a bearer token. Explicit dispatches read
+the repository Secret `NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION`; reusable calls
+can pass the optional Secret of the same name. The combined gate forwards
+that Secret only to the producer reader. The token is supplied in an HTTP
+authorization header, never as a URL or workflow input, and does not replace
+archive or per-artifact hash checks. Without a token, public pinned archives
+retain the existing download behavior. Remove temporary access tokens and stop
+temporary serving endpoints after the qualification completes.
+
 The optional explicit `snapshot_witness` input selects `original` by default
 or the independently recorded `2026-10-13` witness. The latter requires
 `sea-cases/snapshot-2026-10-13.blob` and its separate fixed manifest; repeat

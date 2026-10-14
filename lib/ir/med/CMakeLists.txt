@@ -54,6 +54,7 @@ add_neverd_component_library(NeverDIRMed
   pass/MedMutableSource.cpp
   pass/MedNoReturn.cpp
   pass/MedPropagation.cpp
+  pass/MedPrologueSaves.cpp
   pass/MedPredicatedEffects.cpp
   pass/MedSSA.cpp
   pass/MedSourceParameterUses.cpp
