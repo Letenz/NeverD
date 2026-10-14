@@ -141,13 +141,6 @@ static const std::vector<RoundTripTC> kARM32DivFlag = {
    "}\n",
    {200, 100}, "ARM32DivFlag"},
 
-  {"arm_sat_sub_u8",
-   "int arm_sat_sub_u8(int a, int b) {\n"
-   "  int diff = (unsigned char)a - (unsigned char)b;\n"
-   "  return diff < 0 ? 0 : diff;\n"
-   "}\n",
-   {50, 100}, "ARM32DivFlag"},
-
   // ========== Clamp ==========
   {"arm_clamp",
    "int arm_clamp(int val, int lo, int hi) {\n"

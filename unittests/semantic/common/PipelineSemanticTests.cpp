@@ -1,5 +1,4 @@
-//===- PipelineSemanticTests.cpp - Pipeline verifier tests -------*- C++ -*-===//
-//
+//===- PipelineSemanticTests.cpp - Pipeline verifier tests ------*- C++ -*-===//
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
@@ -11,9 +10,11 @@
 
 #include "UnicornSemanticFixture.h"
 
-TEST_P(X64Semantic, PipelineVerify) { runX64(GetParam()); }
-TEST_P(AArch64Semantic, PipelineVerify) { runAArch64(GetParam()); }
-TEST_P(ARM32Semantic, PipelineVerify) { runARM32(GetParam()); }
+// These cases run under the one TEST_P of each fixture, X64Semantic.Verify
+// (X64_FPSemanticTests.cpp), AArch64Semantic.Verify
+// (AArch64_SemanticTests.cpp), ARM32Semantic.Verify (ARM32_SemanticTests.cpp).
+// gtest runs every TEST_P of a fixture on each of its instantiations, so
+// another TEST_P here would run all of them again.
 
 // clang-format off
 
@@ -69,6 +70,9 @@ static const std::vector<SemTC> kARM32Pipeline = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(X64Pipeline, X64Semantic, ::testing::ValuesIn(kX64Pipeline), semTCName);
-INSTANTIATE_TEST_SUITE_P(A64Pipeline, AArch64Semantic, ::testing::ValuesIn(kA64Pipeline), semTCName);
-INSTANTIATE_TEST_SUITE_P(ARM32Pipeline, ARM32Semantic, ::testing::ValuesIn(kARM32Pipeline), semTCName);
+INSTANTIATE_TEST_SUITE_P(X64Pipeline, X64Semantic,
+                         ::testing::ValuesIn(kX64Pipeline), semTCName);
+INSTANTIATE_TEST_SUITE_P(A64Pipeline, AArch64Semantic,
+                         ::testing::ValuesIn(kA64Pipeline), semTCName);
+INSTANTIATE_TEST_SUITE_P(ARM32Pipeline, ARM32Semantic,
+                         ::testing::ValuesIn(kARM32Pipeline), semTCName);

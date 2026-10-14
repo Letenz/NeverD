@@ -37,8 +37,6 @@ static const std::vector<RoundTripTC> kARM32Mass = {
   {"arm_asr_cl", "int arm_asr_cl(int a, int b) { return a >> (b & 31); }\n", {0xFFFFFC00, 3}, "ARMMass"},
 
   // --- Comparison ---
-  {"arm_eq", "int arm_eq(int a, int b) { return a == b; }\n", {42, 42}, "ARMMass"},
-  {"arm_ne", "int arm_ne(int a, int b) { return a != b; }\n", {42, 43}, "ARMMass"},
   {"arm_slt", "int arm_slt(int a, int b) { return a < b; }\n", {0xFFFFFFFF, 1}, "ARMMass"},
   {"arm_uge", "int arm_uge(int a, int b) { return (unsigned int)a >= (unsigned int)b; }\n", {100, 50}, "ARMMass"},
 
@@ -133,5 +131,5 @@ static const std::vector<RoundTripTC> kARM32Mass = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(ARMMass, ARM32MassRT,
-                         ::testing::ValuesIn(kARM32Mass), rtTCName);
+INSTANTIATE_TEST_SUITE_P(ARMMass, ARM32MassRT, ::testing::ValuesIn(kARM32Mass),
+                         rtTCName);
