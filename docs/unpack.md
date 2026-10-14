@@ -12,7 +12,7 @@ The container selects how a file is validated and rebuilt, the instruction set s
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | runtime observation |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | runtime observation |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL inputs are selected by `IMAGE_FILE_DLL`. A modeled guest EXE calls `LoadLibraryA`, then `FreeLibrary`, using the ordinary dependency, TLS and `DllMain` lifecycle. The accepted DLL entry is its process-attach invocation; arbitrary exports are not called with invented arguments. Export names, ordinals, aliases, data and forwarders remain in the rebuilt DLL. Pointers to its own exports remain internal pointers rather than self-imports. This also covers helper-returned addresses: an internal result withdraws earlier import-repair evidence for that site.
 
@@ -147,3 +147,5 @@ Checked x64 execution validates the concrete loader caller again when DriverEntr
 Driver execution-watch handoffs reuse earlier code snapshots only when the previously installed RAM write watches remained untouched. Committed stores invalidate this guarantee even when they write the same value. Kernel services, scheduling boundaries and new invocations require refresh; newly watched ranges still need their initial snapshot.
 
 Live kernel pools retain their typed allocation dependency without also being classified as unknown arena objects when address and exact extent match the pool owner. Other objects remain dependencies when pools coexist or are freed. This classification does not establish pointer provenance or enable native runtime restoration.
+
+The fixed driver profile disables CET shadow stacks. Canonical `RDSSPD` and `RDSSPQ` preserve every register bit, flags and memory, including the upper half of a 32-bit destination. Both reads consume one instruction and retain an environment dependency for UNPACK. CPUID declarations do not enable CET; other shadow-stack instructions and attempts to enable it remain unsupported.

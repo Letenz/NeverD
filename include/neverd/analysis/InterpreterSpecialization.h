@@ -17,6 +17,7 @@
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -42,6 +43,48 @@ struct SpecializationCursor {
 /// legacy constant-slot INDIR_CALL is not a loaded target certificate.
 enum class SpecializationNativeStackControl : uint8_t { None, Call, Return };
 
+struct SpecializationTerminalImport {
+  uint32_t Version = 1;
+  va_t Slot = 0;
+  std::string Module;
+  std::string Symbol;
+  bool operator==(const SpecializationTerminalImport &) const = default;
+};
+
+/// Caller-owned original x64 code at a runtime address. The complete range is
+/// executable, readable, nonfaulting and immutable across every possible writer
+/// for the whole supported execution. This is an explicit environment domain,
+/// not a claim that endpoint snapshots establish temporal immutability.
+struct SpecializationX64CodeRegion {
+  uint32_t Version = 1;
+  va_t Address = 0;
+  std::vector<uint8_t> Bytes;
+  std::string Evidence;
+  bool operator==(const SpecializationX64CodeRegion &) const = default;
+};
+
+/// Exact ordinary named primary-PE IAT binding, stable throughout execution.
+/// The loader authenticates the static slot/name; the caller supplies the live
+/// target contract. Only the complete eight-byte pointer read is certified.
+struct SpecializationX64ImportBinding {
+  uint32_t Version = 1;
+  va_t Slot = 0;
+  std::string Module;
+  std::string Symbol;
+  va_t Target = 0;
+  std::string Evidence;
+  bool operator==(const SpecializationX64ImportBinding &) const = default;
+};
+
+struct SpecializationRawEnvironment;
+
+/// Authenticated static identity only, never a runtime IAT value. The provider
+/// binds the complete PE snapshot and the caller's explicit terminal domain.
+struct SpecializationTerminalImportEvidence {
+  SpecializationTerminalImport Binding;
+  std::string FixedImageDigest;
+};
+
 /// A complete, strictly lifted guest instruction. The provider owns decoding,
 /// mapping, relocation, and instruction-level exception checks. A missing or
 /// unsupported instruction must return an Error, never an empty approximation.
@@ -64,6 +107,7 @@ struct SpecializationInstruction {
       InterpreterProfileProjection::None;
   /// Optional separate architectural bank preservation evidence.
   LowInstructionPreservedState PreservedState;
+  std::optional<SpecializationTerminalImportEvidence> TerminalImport;
 };
 
 /// An exact non-faulting ordinary read whose bytes remain immutable throughout
@@ -78,6 +122,12 @@ struct SpecializationImmutableRead {
 class SpecializationProvider {
 public:
   virtual ~SpecializationProvider() = default;
+  /// Nonempty raw declarations require a complete owned prepared domain.
+  /// Default absence prevents existing providers from silently ignoring them.
+  virtual std::shared_ptr<const SpecializationRawEnvironment>
+  rawEnvironment() const {
+    return {};
+  }
   virtual llvm::Expected<SpecializationInstruction>
   instruction(SpecializationCursor Cursor) = 0;
   virtual std::optional<SpecializationImmutableRead>
@@ -109,12 +159,52 @@ struct SpecializationEntryFrameBounds {
 struct SpecializationOptions {
   /// Preserve incoming machine flags as symbolic machine-state inputs rather
   /// than claiming they are supplied by an ordinary source-language ABI.
+  /// With NormalNonfaultingExecution, the raw residual also admits exact
+  /// 16-byte COPY, bitwise operations, multiplication and ordinary LOAD/STORE,
+  /// scalar-to-16-byte integer extensions, one-byte equality results and
+  /// constant byte slices back to scalars. These retain their full width;
+  /// scalar native-proof and source interfaces keep their own value contracts.
   bool ExplicitMachineState = false;
   /// Optional execution-profile certificates; neither is valid without the
   /// explicit machine-state interface. The binary provider owns their use.
   bool NormalNonfaultingExecution = false;
   bool X64CetDisabled = false;
-  /// Optional native-proof flag environment. None of the three booleans above
+  /// Retain scalar FS/GS reads with arbitrary 64-bit long-mode bases, fixed
+  /// throughout supported execution. Requires ExplicitMachineState and
+  /// NormalNonfaultingExecution. Bases may alias each other, the frame or any
+  /// other address; this grants no operating-system layout or nonalias facts.
+  /// Only the raw residual API supports this environment contract. V1 source
+  /// wrapping and native proof APIs do not have authenticated base inputs.
+  bool X64SegmentedReads = false;
+  /// Retain CR8 reads/writes with a symbolic four-bit task-priority state.
+  /// Requires explicit nonfaulting machine state and KernelX64NoFaultV1.
+  /// Every retained memory access must be ordinary memory without device side
+  /// effects or APIC/TPR aliases; only modeled MOV-to-CR8 writes may change the
+  /// priority. These are caller preconditions, never inferred from addresses.
+  /// This raw-residual contract supplies no scheduling, native proof or source
+  /// ABI. Possible reserved-bit writes are refused rather than truncated.
+  bool X64CR8State = false;
+  /// Raw-only environment domain: these exact ordinary named PE imports have
+  /// stable loader bindings, and their callees neither return nor reenter this
+  /// residual graph via unwind, callbacks, context restoration or other means.
+  /// No return value, side effect or pointer value is assumed. Requires explicit
+  /// nonfaulting CET-disabled x64 state. Only canonical RIP-relative memory
+  /// calls are admitted. Static import names alone do not prove this contract.
+  /// Consumers must retain and validate ExternalExits with the raw residual;
+  /// native proof and source interfaces reject even unused declarations.
+  std::vector<SpecializationTerminalImport> X64TerminalImports;
+  /// Raw-only supplemental code domain. Requires explicit nonfaulting,
+  /// CET-disabled x64 state and a restored eight-byte entry RSP root. The
+  /// binary adapter requires a complete fixed primary PE and disjoint ranges,
+  /// including its unmapped holes. It uses exactly the supplied preconditions,
+  /// without inserting the ordinary adapter's implicit external-store domain.
+  /// Writable external data remains unknown. Stable code/imports cover the
+  /// entire execution under the existing sequential, no-concurrent-mutation
+  /// contract. Consumers must retain and validate RawEnvironment, including
+  /// unused declarations; source and native proof interfaces refuse this API.
+  std::vector<SpecializationX64CodeRegion> X64CodeRegions;
+  std::vector<SpecializationX64ImportBinding> X64ImportBindings;
+  /// Optional native-proof flag environment. None of the booleans above
   /// implies this CPL/IOPL/flags contract. The binary proof requires the same
   /// value in its observation contract; ordinary recovery remains conservative.
   std::optional<InterpreterMachineStateProfile> X64FlagsProfile;
@@ -152,6 +242,15 @@ struct SpecializationOptions {
   /// the stack, including certified internal imm16 cleanup. Outer cleanup
   /// and uncertified return dispatch remain unsupported.
   bool RequireRestoredFrameAtReturn = false;
+  /// Opt in to additional solver queries proving that an unknown-origin
+  /// STORE's complete extent misses the entry return slot. Also preserve live
+  /// native return cells across non-frame, 64-bit-address stores only when
+  /// each complete cell is proved disjoint under the current path. This is a
+  /// precision strategy, not a nonalias assumption. Requires an active
+  /// restored-frame check. Unsafe provenance and all unproved memory alias
+  /// invalidation remain; proofs and preservation share global budgets.
+  /// Disabled by default so existing strategies keep their costs.
+  bool ProveStoreReturnSlotSeparation = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry
   /// control slot. Frame-derived or unknown-origin addresses are never
@@ -173,6 +272,11 @@ struct SpecializationOptions {
   /// semantics; callers may increase these explicitly and retry.
   uint64_t MaxImagePreparationBytes = 64 * 1024 * 1024;
   uint64_t MaxImagePreparationRecords = 65536;
+  /// Independent raw-result integrity work limits, supplied by the expected
+  /// caller options, never enlarged by a stored receipt. V1 reserves eight
+  /// validation/serialization passes before walking graph/evidence payloads.
+  uint64_t MaxRawEnvironmentResultBytes = 64 * 1024 * 1024;
+  uint64_t MaxRawEnvironmentResultRecords = 1048576;
   uint32_t MaxNodes = 4096;
   uint32_t MaxContextsPerAddress = 64;
   uint64_t MaxOperations = 262144;
@@ -225,12 +329,43 @@ struct SpecializationOptions {
   /// Dependency replay follows committed occurrences without applying the cap.
   uint32_t MaxChainedVisitsPerDestination = 0;
 
+  /// Optional exact MBA fallback for incomplete frame-offset proofs. Zero
+  /// disables it. Each attempt charges input-prefix nodes, operand edges and
+  /// constant limbs plus MBA measurement units to MaxOperations as well as
+  /// this ceiling. Internal traversals, rebuilding and sample defect guards
+  /// are not separately metered; this is not a wall-time or peak-memory bound.
+  /// MaxSymbolicNodes is checked again before publishing any offset theorem.
+  uint64_t MaxFrameOffsetNormalizationWorkPerProof = 0;
+
+  bool hasRawEnvironment() const {
+    return !X64CodeRegions.empty() || !X64ImportBindings.empty();
+  }
+
   uint32_t chainedVisitLimit() const {
     if (!MaxChainedTransfers)
       return 0;
     return StopChainingAtRepeatedDestination ? 1
                                              : MaxChainedVisitsPerDestination;
   }
+};
+
+/// Provider-owned declaration snapshot. Its hash establishes integrity against
+/// independently expected Options, not authenticity of a live environment.
+struct SpecializationRawEnvironment {
+  uint32_t Version = 1;
+  SpecializationOptions Declaration;
+  va_t PrimaryImageBegin = 0;
+  va_t PrimaryImageEnd = 0;
+  std::string PrimaryImageDigest;
+  std::string DomainDigest;
+};
+
+struct SpecializationRawEnvironmentReceipt {
+  uint32_t Version = 1;
+  std::shared_ptr<const SpecializationRawEnvironment> Domain;
+  std::string GraphDigest;
+  std::string EvidenceDigest;
+  std::string IdentityDigest;
 };
 
 enum class SpecializationStatus : uint8_t {
@@ -254,15 +389,35 @@ struct SpecializationReadWitness {
   std::string Evidence;
 };
 
+/// A physical CALL expanded to target evaluation, capture, stack decrement,
+/// original return-address STORE, and an opaque external INDIR_BR. No ordinary
+/// successor or callee state summary is implied. Original is retained because
+/// synthetic residual labels cannot supply the physical return address.
+struct SpecializationExternalExit {
+  uint32_t Version = 1;
+  va_t ResidualAddress = 0;
+  SpecializationInstruction Original;
+  NdVar ExpansionScratch;
+  std::string OriginalOperationDigest;
+  std::string ExpandedOperationDigest;
+  std::string ResidualOperationDigest;
+  /// Integrity binding for identity, domain, original evidence and occurrence.
+  /// This does not authenticate a changed image or the live loader binding.
+  std::string IdentityDigest;
+};
+
 struct SpecializationResult {
   SpecializationStatus Status = SpecializationStatus::InvalidInput;
   /// Populated only on Complete. Incomplete exploration is never a replacement.
   LowFunc Residual;
   std::vector<SpecializationOrigin> Origins;
   std::vector<SpecializationReadWitness> Reads;
+  std::vector<SpecializationExternalExit> ExternalExits;
+  std::optional<SpecializationRawEnvironmentReceipt> RawEnvironment;
   std::string Diagnostic;
   /// Includes the additional pure operations generated for certified reads
-  /// and finite dispatch; fixed-point reevaluations are charged again.
+  /// and finite dispatch, plus optional frame-normalization strategy units;
+  /// fixed-point reevaluations and normalization retries are charged again.
   uint64_t EvaluatedOperations = 0;
   uint32_t NodeEvaluations = 0;
   uint32_t Contexts = 0;
@@ -275,6 +430,23 @@ struct SpecializationResult {
 
   bool complete() const { return Status == SpecializationStatus::Complete; }
 };
+
+/// Validate every remaining indirect transfer against its complete exit
+/// receipt and the explicit domain. Stripping or altering a receipt invalidates
+/// this interface; the LowFunc alone is not an ordinary call-free function.
+/// As with the provider itself, the fixed-image evidence is trusted input here;
+/// this does not reopen the image or authenticate its current runtime binding.
+llvm::Error
+validateSpecializationExternalExits(const SpecializationResult &Result,
+                                    const SpecializationOptions &Options);
+
+/// Validate the complete raw result against independently expected caller
+/// declarations. Requires Complete for a raw domain; authenticates its marker,
+/// full graph, origins, reads and external exits. Any mutation requires a new
+/// recovery. This is not native equivalence or proof of live binding stability.
+llvm::Error
+validateSpecializationRawEnvironment(const SpecializationResult &Result,
+                                     const SpecializationOptions &Options);
 
 /// Provider-neutral partial evaluation of strictly lifted integer/control
 /// LowIR. Uncertified ordinary memory effects remain in the residual CFG.
@@ -290,9 +462,12 @@ struct SpecializationResult {
 /// Flag snapshots are treated as unknown values for proof and may not certify
 /// an external pointer or finite target on their own. A PUSHFQ snapshot needs
 /// prior definitions for every modelled flag unless ExplicitMachineState
-/// supplies their incoming values. Synthetic labels
-/// identify clones; NativeInstruction
-/// preserves provenance without copying stale address-occurrence certificates.
+/// supplies their incoming values. Guest cursors retain all 64 address bits;
+/// InvalidVA remains a sentinel. Synthetic labels identify clones in a checked
+/// range disjoint from explored native instruction extents and the entry anchor.
+/// Only CFG identities are renamed, never runtime data or native return words.
+/// NativeInstruction preserves provenance without copying stale address-
+/// occurrence certificates.
 SpecializationResult
 specializeInterpreter(SpecializationProvider &Provider,
                       SpecializationCursor Entry,

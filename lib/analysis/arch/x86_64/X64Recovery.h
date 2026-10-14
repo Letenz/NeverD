@@ -16,6 +16,16 @@ inline constexpr uint64_t ModelledFlags[] = {x86reg::CF, x86reg::PF, x86reg::AF,
                                              x86reg::ZF, x86reg::SF, x86reg::DF,
                                              x86reg::OF};
 
+struct RawEnvironmentPreparation {
+  uint64_t Bytes = 0;
+  uint64_t Records = 0;
+};
+
+/// Versioned conservative preparation reservation, validated before payload
+/// inspection/copy/hash. Includes all options and mixed terminal declarations.
+llvm::Expected<RawEnvironmentPreparation>
+validateRawEnvironmentDeclarations(const SpecializationOptions &Options);
+
 bool runtimeFlagsIntrinsic(const LowOp &Op);
 bool isRetainedNativeTrap(const SpecializationInstruction &Insn);
 bool isCetDisabledProjection(const SpecializationInstruction &Insn);

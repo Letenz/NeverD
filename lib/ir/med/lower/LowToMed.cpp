@@ -22,6 +22,7 @@
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
@@ -432,6 +433,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   TargetFormat = Fmt;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops) {
+      if (isLowRawEnvironmentRequirement(Op))
+        throw LowToMedConversionError(
+            "raw environment requirement has no ordinary source contract");
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");

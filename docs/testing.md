@@ -2073,6 +2073,16 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `FreshChoiceProjection.*` belongs to `NeverDInterpreterSpecializationTests`. Independent symbolic contexts check exact node order against ordinary substitution; byte-input oracles check projected values and retained choices. Regressions cover context and leaf admission, zero and exact capacities, fallback, and total traversal work on shared incremental chains. Timing thresholds are not used.
 
+`NeverDLiftTemporaryTests` checks complete temporary byte allocation, unchanged
+scalar/placeholder spacing and exhaustion. Strictly decoded x64 multiplication,
+AArch64 high multiplication and ARM vector accumulation run through `SymExec`
+against independent limb arithmetic and lane results. CF/OF and high product
+bits remain observable. `InterpreterSpecialization.WideInteger*` uses an
+independent byte-vector executor for signed/unsigned products, both byte orders,
+unknown high bits controlling both branches, numeric byte slices, malformed
+shapes and exact/short budgets. `BinaryLowIRRefinement.WideInteger*` checks raw
+binary completion while retaining native-proof and both source-layout refusals.
+
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 
 Physical-return regressions cover direct and indirect calls that skip invalid inline bytes, feasible bad continuations, complete target enumeration and exact/short budgets. Full-state refinement rejects altered results. Independently compiled C at O1/O2 must also preserve the complete frame write; matching return values cannot hide a changed return-slot byte.
@@ -2103,6 +2113,19 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `*Deferred*` cases exercise dead taken edges, dead fallthrough, missing or malformed code, symbolic contradictory guards, arbitrary control, selected witnesses and full-state mutations. Synthetic providers verify that dead successors are never fetched and reached malformed metadata still refuses. Exact/short instruction, operation, visit and query limits, feasible bad alternatives and nonterminating cycles cannot certify prefixes. Policy changes alter certificate digests, and static/loop APIs reject the option.
 
 `NeverDPEFixedImageTests` uses independently constructed PE files to check relocated instructions and immutable data, import write footprints, malformed headers/tables, aliases and changed provenance. Native-to-LowIR and exact LLVM proofs accept matching candidates and reject changed results, status or native bytes. Preparation exhaustion remains distinct and permits an explicit retry with larger limits; ordinary loading also accepts a valid 40000-record relocation table beyond the default analysis budget.
+
+`TerminalImportSpecialization.*` checks physical external-call target ordering,
+one stack push and the original return address with an independent scalar
+oracle, including an aliasing state used solely to test expansion semantics.
+Normal siblings and exact/short budgets remain required. Changed bytes, complete
+lifted operands, domains, receipts and synthetic return-address substitutions
+refuse. `PEFixedImageTest.TerminalImport*` checks authenticated named identity,
+mutable display metadata, writable/ordinal/relocated/partial/overlapping slots,
+bound IATs without a lookup table, both sides of the 31-bit name-RVA boundary,
+ordinary sibling paths and proof/source refusal, including unused declarations.
+`InterpreterMachineStateTest.PipelineRefusesUnusedTerminalImportDomain` checks
+the source gate. Run their full owner executables and the loader contract suite
+when changing this shared import identity boundary.
 
 `FrameOffsets.*`, `NativeStackSpecialization.*` and `OriginalBinaryUndefinedIndependence.*` check all residues for alignments 2/4/8/16/32, free high bits, spills across calls, countdown loops, alias corruption, wrong dispatch, irrelevant wide masks, necessary partition upgrades and exact/one-short budgets. Separate native controls check guarded alignment, internal unsigned return cleanup, incorrect cleanup and prefixed returns. These tests do not establish automatic native-to-LLVM proof coverage for partitioned loops.
 
@@ -5768,3 +5791,29 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.
 
 Native qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) passed all 204 process observations: 36 each on Windows x64/ARM64 and 66 each on Linux x64/ARM64. The public source API produced C++ IR, ordinary objects and C++ hosted DynCode, plus a throwing callback through two NeverC frames. Replay verified the current engine source/submodule digest, original and final bytes, publication receipts and actual native host. macOS ARM64 and Rosetta x64 passed the same three C++ routes and two-frame propagation locally. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) separately passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64.
+
+`InterpreterSpecialization.HighAddress*` and `BinaryLowIRRefinement.HighAddress*` cover upper-half entries and transfers, overlapping native extents, original CALL return bytes, stack restoration, data equal to label values, malformed or missing code, and exact/short budgets. The independent byte oracle and a changed-return-word negative control distinguish runtime values from CFG labels.
+
+
+`NeverDRawEnvironmentRequirementTests` checks copied LowIR, exact and malformed marker shapes, strict/non-strict emulation, symbolic step/run, Low-to-Med conversion, direct C/LLVM emission, machine wrappers and re-specialization. Positive ordinary controls and unreachable-marker negatives cover static independence, both sides of refinement and original-binary candidate refinement; rejected proofs publish no certificate.
+
+`PEFixedImageTest.RawCode*` covers returning supplemental code in both address halves, original return words, full registers and byte memory, unknown writable globals, full-slot import reads, missing code, full image exclusion, malformed/unused declarations, refinement, explicit alias contracts and receipt mutations. Exact/short preparation, result and operation budgets include many mappings, multiple bindings and mixed terminal exits. `PipelineRefusesUnusedRawEnvironmentDomains` verifies source refusal before recovery.
+
+`RawCodeNativeReturn*` checks two physical saved return words, an aliasing gap, a discarded unproved cell, narrow-address refusal, complete register/memory effects and exact proof budgets. `SymStorePreservation.Additional*` and `SymStorePreservation.AbsentAdditional*` check range unions in both byte orders, post-store epochs, absent bytes, malformed ranges and failure without mutation at insufficient work limits.
+
+`FrameOffsets.*Normalization*` covers exact identities, extra inputs, root identity, infeasible predicates without cached witnesses, default behavior, prefix/measurement charges and post-call node refusal. `FrameNormalizationPreservesStoresAndNativeReturns` and `RawCodeFrameNormalization*` exercise original memory effects and physical return words with independent byte oracles, both byte orders where applicable, exact/short operation budgets and receipt mutation. `FrameNormalizationStrategyBindsIndependentProof` checks both binary proof identities.
+
+## Native Lift qualification
+
+The `Lift native qualification` workflow owns the 108 previously unqualified cases (62 failures and 46 skips). It installs Clang 23 or newer, GNU GCC and the i386 development libraries on a native Linux x86-64 runner, and initializes the pinned binary corpus. `unittests/Inputs/lift-qualification.json` retains every original test identity. `scripts/run_lift_qualification.py` rejects missing, duplicate, disabled, skipped or failed cases and a nonzero process exit; `qualification.json` records individual passes, source/corpus revisions, compiler versions and binary hashes.
+
+The profile executes native i386/x86-64 controls, x87 extended precision, and generated Swift SSE result, state and unmasked-trap checks at both optimization levels. The AArch64 parity controls decode the actual `.text` of a pinned Rust runtime. Cross-target decoding does not establish native execution on that target; use the separate source-patch native process jobs for Windows/Linux x64/ARM64 and the local macOS checks.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+The native profile also requires the LLVM-C wide-integer constant/store checks and native i386 synthesized-table execution. Swift signal observers use independent raw storage, with positive controls and separate negative controls for premature state and result writes at both optimization levels. Observing an active Swift `inout` variable from the signal handler would instead trigger an exclusivity failure and invalidate the exception observation.

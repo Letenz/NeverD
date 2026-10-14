@@ -95,6 +95,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 シナリオで有効な再配置先アドレスを選ばない限り、イメージは優先ベースアドレスを使用します。イメージは native サブシステムを持つ PE32+ x64 実行ファイルでなければなりません。インポート元には `ntoskrnl.exe`、`ntkrnlmp.exe`、`HAL.dll` または `WDFLDR.SYS` を使用できます。
 
+追加の `FLTMGR.SYS`、`NDIS.SYS`、`NETIO.SYS` にはモジュール別の遅延インポート識別子があります。関数の実行モデルはありません。未使用のインポートはロードできますが、呼び出すと正規化された `module!symbol` の診断で停止します。`MmGetSystemRoutineAddress` の検索対象は引き続きカーネルと HAL のみです。
+
 実行ローダーは、検証済みの x64 `DIR64` ベース再配置と、限定されたセキュリティ Cookie のロード構成に対応します。エントリーラッパーの実行前に、決定的なゲスト Cookie を初期化します。その他の未モデル化ロード構成フィールド、TLS、遅延／バインド済みインポート、序数によるインポート、マネージドイメージは拒否します。イメージは厳格な範囲とアラインメントの検査にも合格する必要があります。
 
 有効な Control Flow Guard（CFG）は PE フラグ、ポインタスロット、ソート済み実行可能ターゲット表を検証します。check/dispatch ヘルパーは宣言済みイメージ入口または登録済み API サンクだけを許可し、Win64 呼び出し状態を保持して未宣言ターゲットを拒否します。CFG を有効にしない計装では元のゲストのフォールバックポインタを維持します。有効な XFG、エクスポート抑制、その他の未モデル化ポリシーは拒否し、実行可能メモリ内という理由だけでターゲットを許可しません。
@@ -474,7 +476,7 @@ MinGW-w64 の include ディレクトリがデフォルトと異なる場合は 
 
 JSON レポートは `stop_reason`、null を取り得る `nt_status` と `nt_success`、停止時の PC、命令数を区別します。デバイスオブジェクトやドライバーのコールバックアドレスなど、停止前に収集した API 呼び出しと観測可能な状態を保持します。ゲストアドレスは 16 進文字列として表現するため、JSON の利用側で 64 ビットの精度が失われません。
 
-`configuration` オブジェクトには、実行の上限、サービス名、`kernel_exports` の上書き設定を記録します。プロファイルは `wdm-x64-scheduled-v101` です。`nt_status` は引き続き DriverEntry の結果を示し、`scenario_success` は初期化と完了済みリクエストを合わせた結果を示します。`phase`、`requests`、`unload_completed` は、要求されたライフサイクルのどの部分が実行されたかを示します。API 呼び出しと CPU 書き込みにも、そのフェーズ（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N`、`unload`）を記録します。各リクエストはディスパッチと I/O のステータス、完了の有無、information 長、返された `output_hex` バイト列を報告します。`preferred_image_base` は元の PE ベースアドレスを示します。`security_cookie` は初期化した Cookie のゲストアドレスで、不要だった場合は `"0x0"` です。リクエストのレポートフィールドは `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex`、`output_hex` です。 `configuration.registry` は元のレジストリ設定を保持します。 `information_hex` は元の 64 ビット `IoStatus.Information` を 16 進文字列で正確に保持します。従来の数値フィールド `information` も保持します。
+`configuration` オブジェクトには、実行の上限、サービス名、`kernel_exports` の上書き設定を記録します。プロファイルは `wdm-x64-scheduled-v103` です。`nt_status` は引き続き DriverEntry の結果を示し、`scenario_success` は初期化と完了済みリクエストを合わせた結果を示します。`phase`、`requests`、`unload_completed` は、要求されたライフサイクルのどの部分が実行されたかを示します。API 呼び出しと CPU 書き込みにも、そのフェーズ（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N`、`unload`）を記録します。各リクエストはディスパッチと I/O のステータス、完了の有無、information 長、返された `output_hex` バイト列を報告します。`preferred_image_base` は元の PE ベースアドレスを示します。`security_cookie` は初期化した Cookie のゲストアドレスで、不要だった場合は `"0x0"` です。リクエストのレポートフィールドは `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex`、`output_hex` です。 `configuration.registry` は元のレジストリ設定を保持します。 `information_hex` は元の 64 ビット `IoStatus.Information` を 16 進文字列で正確に保持します。従来の数値フィールド `information` も保持します。
 
 ワーク項目の観測フェーズは `callback:N` です。保留リクエストの `dispatch_status` は `STATUS_PENDING` を保持し、最終完了状態は別の `io_status` に記録され、`scenario_success` の判定に使われます。
 
@@ -600,3 +602,5 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 `KeQueryPerformanceCounter`、`RDTSC`、`RDTSCP` によるクロック読み取りは、ドライバー復元の明示的な依存関係を保持します。取得したカウンター値と周波数を新しいカーネル環境に再対応付けする契約はありません。既定の復元は `unsupported_state` を返し、`snapshot_only` は診断を保持します。
 
 `KernelModuleImages` は `KernelExportRegistry` から読み取り可能な PE ヘッダーとエクスポート表を生成し、静的インポート、動的検索、モジュール列挙で同じアドレスを使用します。提供元のコードは不透明で、一覧はホストカーネルではなくモデル環境を記述します。両出力について、プールの寿命と重複を含め、書き込み前に検査します。Nt 照会には既知のカーネル previous-mode が必要で、Zw 照会はカーネル契約を使用します。完全な照会はバッファー解放後も明示的な復元依存関係を保持し、提供元イメージへのポインターも借用状態として追跡します。`KernelExportTests.cpp` は PE 解析、権限、ABI フィールド、書き込み拒否、復元依存関係を検査し、独自のコンパイル済みランタイムフィクスチャは CPU バックエンド上でエクスポート表を走査します。
+
+固定のドライバープロファイルでは CET シャドウスタックを無効にします。正規エンコーディングの `RDSSPD` と `RDSSPQ` は、32 ビット宛先の上位半分を含む全レジスタビット、フラグ、メモリを保持します。各読み取りは 1 命令として計上され、UNPACK の環境依存性を残します。CPUID 宣言は CET を有効にしません。その他のシャドウスタック命令と CET の有効化は引き続き未対応です。

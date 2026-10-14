@@ -13,6 +13,7 @@
 
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 
+#include <stdexcept>
 #include <string>
 
 namespace neverd {
@@ -22,6 +23,9 @@ std::string MultiOutputRender::operator()(
     const std::vector<ExprPtr> &Operands,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive) const {
+  if (IID == Intrinsic::RawEnvironmentRequirementV1)
+    throw std::invalid_argument(
+        "raw environment requirement has no C runtime contract");
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64)
     return renderARMMultiOutput(IID, Outputs, Operands, ExprFn, VarFn, IsAlive);
   return renderX86MultiOutput(IID, Outputs, Operands, ExprFn, VarFn, IsAlive);
@@ -32,6 +36,9 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 uint16_t ResultBytes, bool &HasCIntrinsics,
                                 bool GnuToolchain,
                                 llvm::ArrayRef<uint16_t> OperandBytes) {
+  if (Id == Intrinsic::RawEnvironmentRequirementV1)
+    throw std::invalid_argument(
+        "raw environment requirement has no C runtime contract");
   std::string Result;
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64) {
     if (TheArch == Arch::AArch64 && GnuToolchain)

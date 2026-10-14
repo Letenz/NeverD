@@ -136,6 +136,8 @@ importazioni ritardate/bound, importazioni per ordinale e immagini gestite
 vengono rifiutati. Le immagini devono anche superare controlli rigorosi su
 intervalli e allineamento.
 
+I provider aggiuntivi `FLTMGR.SYS`, `NDIS.SYS` e `NETIO.SYS` hanno identità di importazione differita qualificate per modulo. Le loro routine non sono modellate: le importazioni inutilizzate possono essere caricate, ma una chiamata arresta l’esecuzione con la diagnosi canonica `module!symbol`. Non partecipano alla ricerca di `MmGetSystemRoutineAddress`, che resta limitata al kernel e a HAL.
+
 Control Flow Guard (CFG) attivo valida flag PE, slot dei puntatori e destinazioni eseguibili ordinate. Gli helper check/dispatch ammettono solo ingressi dichiarati dell’immagine o thunk API registrati, preservano lo stato Win64 e rifiutano le altre destinazioni. La strumentazione senza CFG attivo mantiene i puntatori di fallback guest originali. XFG attivo, soppressione degli export e altre politiche non modellate restano rifiutati; una memoria eseguibile non rende da sola valido un indirizzo.
 
 Uno stack WDM può contenere più dispositivi dello stesso driver guest. `IoAttachDeviceToDeviceStack` collega una sorgente isolata sopra l’attuale cima della destinazione e restituisce la cima precedente. Imposta `StackSize` e `AlignmentRequirement` senza modificare l’elenco `NextDevice` né copiare i flag dei buffer. `IoDetachDevice` riceve il dispositivo inferiore salvato e richiede `PASSIVE_LEVEL`; il collegamento ammette IRQL fino a `DISPATCH_LEVEL`. L’apertura del dispositivo inferiore con nome invia il dispatch alla cima corrente, mentre `FILE_OBJECT.DeviceObject` e il report conservano l’identità nominata. READ/WRITE usa i flag della cima selezionata. Il percorso conservato mantiene tutti i dispositivi fino al ritorno del dispatch, anche dopo scollegamento/eliminazione; i riferimenti interni non aumentano `ReferenceCount`, che conta gli handle aperti.
@@ -676,7 +678,7 @@ dispositivo e gli indirizzi dei callback del driver. Gli indirizzi guest sono
 stringhe esadecimali, così i consumatori JSON non perdono la precisione a 64 bit.
 L’oggetto `configuration` registra i limiti, il nome del servizio e le
 sostituzioni `kernel_exports` e l’input `registry` dell’esecuzione.
-Il profilo è `wdm-x64-scheduled-v101`. `nt_status` rimane il risultato di DriverEntry,
+Il profilo è `wdm-x64-scheduled-v103`. `nt_status` rimane il risultato di DriverEntry,
 mentre `scenario_success` descrive insieme l’inizializzazione e le richieste
 completate. `phase`, `requests` e `unload_completed` identificano le parti
 eseguite del ciclo di vita richiesto. Ogni chiamata API e scrittura CPU registra
@@ -854,3 +856,5 @@ L’opzione `cpuid` dichiara fino a 64 risultati di interrogazioni CPU. Ogni rec
 Le letture del clock tramite `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` mantengono una dipendenza esplicita per il ripristino del driver. I valori acquisiti del contatore e della frequenza non hanno un contratto di riassociazione a un nuovo ambiente kernel. Il ripristino predefinito restituisce `unsupported_state`; `snapshot_only` conserva la diagnosi.
 
 `KernelModuleImages` genera intestazioni PE leggibili e tabelle di esportazione da `KernelExportRegistry`; importazioni statiche, ricerca dinamica ed enumerazione condividono gli stessi indirizzi. Il codice dei fornitori resta opaco e l’inventario descrive l’ambiente modellato, non il kernel host. Entrambe le uscite sono verificate prima delle scritture, inclusi durata del pool e sovrapposizioni. Nt richiede un previous-mode kernel noto; Zw usa il contratto kernel. Una richiesta completa conserva una dipendenza esplicita di ripristino anche dopo la liberazione del buffer; i puntatori alle immagini dei fornitori restano stato preso in prestito. `KernelExportTests.cpp` verifica PE, permessi, campi ABI, scritture rifiutate e dipendenze; la fixture compilata originale percorre le esportazioni sui backend CPU.
+
+Il profilo fisso del driver disabilita gli shadow stack CET. Le codifiche canoniche di `RDSSPD` e `RDSSPQ` preservano tutti i bit dei registri, i flag e la memoria, inclusa la metà superiore di una destinazione a 32 bit. Ogni lettura conta come un’istruzione e mantiene una dipendenza dall’ambiente per UNPACK. Le dichiarazioni CPUID non abilitano CET; le altre istruzioni shadow stack e i tentativi di abilitazione restano non supportati.

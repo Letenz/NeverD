@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | 运行时观察 |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | 运行时观察 |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL 输入由 `IMAGE_FILE_DLL` 标识。建模的来宾 EXE 调用 `LoadLibraryA`、`FreeLibrary`，复用普通依赖、TLS 与 `DllMain` 生命周期。DLL 默认入口是其进程附加调用；不会为任意导出猜测参数。重建保留导出名称、序号、别名、数据及转发器；指向自身导出的指针保持为内部指针，不生成自身导入。辅助例程返回的地址也遵循此规则：内部结果会撤销该位置先前的导入修复证据。
 
@@ -149,3 +149,5 @@ checked x64 执行在 DriverEntry 返回时重新验证本次加载器调用：R
 驱动执行断点交接仅在前一次安装的 RAM 写监视未被触及时复用已有代码快照。已提交写入即使写回相同值，也会使此保证失效。内核服务、调度边界和新调用要求刷新；新增监视范围仍须先建立初始快照。
 
 存活内核池在地址和精确范围与池所有者一致时，保留有类型的分配依赖，不再重复归类为未知 arena 对象。池与其他对象共存或被释放时，其他对象仍是依赖。此分类不建立指针来源，也不启用原生运行时恢复。
+
+驱动配置固定关闭 CET 影子栈。规范编码的 `RDSSPD` 和 `RDSSPQ` 保留全部寄存器位、标志和内存，包括 32 位目的寄存器的高半部分。两种读取都计为一条指令，并为 UNPACK 保留环境依赖。CPUID 声明不会启用 CET；其他影子栈指令及启用 CET 的操作仍不受支持。

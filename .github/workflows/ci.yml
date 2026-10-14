@@ -229,6 +229,7 @@ jobs:
             scripts.tests.test_ci_configuration \
             scripts.tests.test_audit_ci_test_inventory \
             scripts.tests.test_audit_ci_test_results \
+            scripts.tests.test_run_lift_qualification \
             scripts.tests.test_prepare_source_dialect_corpus \
             scripts.tests.test_run_native_cpu_ci \
             scripts.tests.test_probe_native_host \

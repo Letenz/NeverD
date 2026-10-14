@@ -6,7 +6,10 @@
 
 #include "neverd/analysis/arch/x86_64/BinaryInterpreterSpecialization.h"
 
+#include "../../../lift/X86/X86CetEncoding.h"
 #include "../../core/NativeUndefinedIndependence.h"
+#include "../../core/RawEnvironment.h"
+#include "NativeStackControl.h"
 #include "X64Recovery.h"
 
 #include "neverd/decode/Decoder.h"
@@ -14,6 +17,7 @@
 #include "neverd/loader/COFF/PEFixedImage.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/SHA256.h"
 
@@ -59,6 +63,25 @@ class ImageProvider final : public SpecializationProvider {
   std::string FixedPEDiagnostic;
   bool FixedPEBudgetExceeded = false;
   const bool PreserveOpaqueState;
+  std::map<va_t, SpecializationTerminalImport> TerminalImports;
+  std::shared_ptr<const SpecializationRawEnvironment> RawDomain;
+
+  llvm::ArrayRef<uint8_t> supplementalBytes(va_t Address) const {
+    if (RawDomain)
+      for (const auto &R : RawDomain->Declaration.X64CodeRegions)
+        if (Address >= R.Address && Address - R.Address < R.Bytes.size())
+          return llvm::ArrayRef<uint8_t>(R.Bytes).drop_front(Address -
+                                                             R.Address);
+    return {};
+  }
+
+  void preparationError(llvm::Error Error) {
+    llvm::handleAllErrors(std::move(Error), [&](const llvm::ErrorInfoBase &E) {
+      FixedPEDiagnostic = E.message();
+      FixedPEBudgetExceeded = E.convertToErrorCode() ==
+                              std::make_error_code(std::errc::value_too_large);
+    });
+  }
 
   // Without authenticated fixed-image evidence, refuse loader-fixed bytes.
   // Width information is not normalized for every relocation kind, so inspect
@@ -104,10 +127,28 @@ public:
         PreserveOpaqueState(PreserveOpaqueState) {
     Decode.init(Arch::X64);
     Decode.setStrict(true);
+    auto RawCost = x64::validateRawEnvironmentDeclarations(Options);
+    if (!RawCost) {
+      preparationError(RawCost.takeError());
+      return;
+    }
+    if (!Options.hasRawEnvironment()) {
+      if (auto Error = validateX64TerminalImportDomain(Options)) {
+        llvm::handleAllErrors(
+            std::move(Error), [&](const llvm::ErrorInfoBase &E) {
+              FixedPEDiagnostic = E.message();
+              FixedPEBudgetExceeded =
+                  E.convertToErrorCode() ==
+                  std::make_error_code(std::errc::value_too_large);
+            });
+        return;
+      }
+    }
     if (Image.Format == BinaryFormat::COFF && !Image.Raw.empty()) {
       auto View = PEFixedImageView::create(
-          Image, {.MaxBytes = Options.MaxImagePreparationBytes,
-                  .MaxRecords = Options.MaxImagePreparationRecords});
+          Image, {.MaxBytes = Options.MaxImagePreparationBytes - RawCost->Bytes,
+                  .MaxRecords =
+                      Options.MaxImagePreparationRecords - RawCost->Records});
       if (View)
         FixedPE = std::move(*View);
       else
@@ -119,6 +160,54 @@ public:
                   std::make_error_code(std::errc::value_too_large);
             });
     }
+    if (!Options.X64TerminalImports.empty() && FixedPEDiagnostic.empty()) {
+      if (!FixedPE) {
+        FixedPEDiagnostic = "terminal imports require a complete fixed PE view";
+        return;
+      }
+      if (Options.X64TerminalImports.size() > Options.MaxImagePreparationRecords) {
+        FixedPEDiagnostic = "terminal import declaration budget exhausted";
+        FixedPEBudgetExceeded = true;
+        return;
+      }
+      for (const auto &Binding : Options.X64TerminalImports) {
+        const auto Identity = FixedPE->importIdentity(Binding.Slot);
+        if (!Identity || Identity->Module != Binding.Module ||
+            Identity->Symbol != Binding.Symbol) {
+          FixedPEDiagnostic = "terminal import differs from the authenticated named slot";
+          return;
+        }
+        TerminalImports.emplace(Binding.Slot, Binding);
+      }
+    }
+    if (Options.hasRawEnvironment() && FixedPEDiagnostic.empty()) {
+      if (!FixedPE) {
+        FixedPEDiagnostic = "raw environment requires a complete fixed PE view";
+        return;
+      }
+      for (const auto &Binding : Options.X64ImportBindings) {
+        const auto Identity = FixedPE->importIdentity(Binding.Slot);
+        if (!Identity || Identity->Module != Binding.Module ||
+            Identity->Symbol != Binding.Symbol) {
+          FixedPEDiagnostic =
+              "stable import differs from the authenticated named slot";
+          return;
+        }
+      }
+      const auto [Begin, End] = FixedPE->imageExtent();
+      auto Prepared =
+          prepareRawEnvironment(Options, Begin, End, FixedPE->digest());
+      if (!Prepared) {
+        preparationError(Prepared.takeError());
+        return;
+      }
+      RawDomain = std::move(*Prepared);
+    }
+  }
+
+  std::shared_ptr<const SpecializationRawEnvironment>
+  rawEnvironment() const override {
+    return RawDomain;
   }
 
   template <typename ResultT> bool preparationFailed(ResultT &Result) const {
@@ -143,17 +232,23 @@ public:
     if (Cursor.Mode != InstructionMode::Default)
       return llvm::createStringError(llvm::errc::not_supported,
                                      "unsupported instruction mode");
-    const auto *S = immutableMapping(Cursor.Address, 1, true);
-    if (!S)
-      return llvm::createStringError(
-          llvm::errc::not_supported,
-          "instruction is not immutable mapped code");
-    const size_t Offset = Cursor.Address - S->VA;
-    const size_t Size = std::min<size_t>(15, S->Data.size() - Offset);
+    const auto Supplemental = supplementalBytes(Cursor.Address);
+    llvm::ArrayRef<uint8_t> Window = Supplemental;
+    if (Window.empty()) {
+      const auto *S = immutableMapping(Cursor.Address, 1, true);
+      if (!S)
+        return llvm::createStringError(
+            llvm::errc::not_supported,
+            "instruction is not immutable mapped code");
+      Window =
+          llvm::ArrayRef<uint8_t>(S->Data).drop_front(Cursor.Address - S->VA);
+    }
+    const size_t Size = std::min<size_t>(15, Window.size());
     DecodedInsn Insn{};
-    if (!Decode.decodeOneForLift(S->Data.data() + Offset, Size, Cursor.Address,
-                                 Insn) ||
-        !immutableMapping(Cursor.Address, Insn.Size, true))
+    if (!Decode.decodeOneForLift(Window.data(), Size, Cursor.Address, Insn) ||
+        !Insn.Size || Insn.Size > Window.size() ||
+        (Supplemental.empty() &&
+         !immutableMapping(Cursor.Address, Insn.Size, true)))
       return llvm::createStringError(llvm::errc::invalid_argument,
                                      "instruction decode or mapping failed");
     // Check the entire instruction against every record: an overlapping
@@ -176,8 +271,19 @@ public:
     Decode.resetX86FpuState();
     SpecializationInstruction Result;
     Result.IsNativeCall = Insn.Id == X86_INS_CALL;
-    Result.NativeBytes.assign(S->Data.begin() + Offset,
-                              S->Data.begin() + Offset + Insn.Size);
+    Result.NativeBytes.assign(Window.begin(), Window.begin() + Insn.Size);
+    if (Options.X64CetDisabled &&
+        (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ ||
+         Insn.Id == X86_INS_INCSSPD || Insn.Id == X86_INS_INCSSPQ)) {
+      const auto Kind =
+          Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ
+              ? x86cet::Operation::Read
+              : x86cet::Operation::Increment;
+      if (!x86cet::canonicalEncoding(Result.NativeBytes, Kind))
+        return llvm::createStringError(
+            llvm::errc::not_supported,
+            "unsupported disabled-CET instruction encoding");
+    }
     bool LoadedMemoryCall = false;
     try {
       // With shadow stacks explicitly disabled, RDSSP leaves its destination
@@ -313,6 +419,19 @@ public:
         B.ControlFlags |= LowInstructionControlFlag::Resumable;
     }
     Result.Fallthrough = {Cursor.Address + Insn.Size, Cursor.Mode};
+    if (LoadedMemoryCall && Result.NativeBytes.size() == 6 &&
+        Result.NativeBytes[0] == 0xff && Result.NativeBytes[1] == 0x15) {
+      const auto Displacement = static_cast<int32_t>(
+          llvm::support::endian::read32le(Result.NativeBytes.data() + 2));
+      const va_t Slot = Result.Fallthrough.Address +
+                       static_cast<uint64_t>(static_cast<int64_t>(Displacement));
+      if (const auto At = TerminalImports.find(Slot); At != TerminalImports.end()) {
+        Result.TerminalImport = SpecializationTerminalImportEvidence{
+            At->second, FixedPE->digest()};
+        if (auto Error = validateX64TerminalImportCall(Result))
+          return std::move(Error);
+      }
+    }
     if (PreserveOpaqueState &&
         Result.ProfileProjection ==
             InterpreterProfileProjection::CetDisabledReadShadowStackV1)
@@ -322,8 +441,31 @@ public:
 
   std::optional<SpecializationImmutableRead>
   immutableRead(va_t Address, uint16_t Bytes) override {
-    if (!FixedPEDiagnostic.empty())
+    if (!FixedPEDiagnostic.empty() || !Bytes || Address > InvalidVA - Bytes)
       return std::nullopt;
+    if (RawDomain) {
+      // Any overlap with a declared slot is excluded from ordinary reads.
+      // Only its exact ordinary full-width pointer value has this contract.
+      for (const auto &B : RawDomain->Declaration.X64ImportBindings)
+        if (Address < B.Slot + 8 && B.Slot < Address + Bytes) {
+          if (Address != B.Slot || Bytes != 8)
+            return std::nullopt;
+          std::vector<uint8_t> Value(8);
+          llvm::support::endian::write64le(Value.data(), B.Target);
+          return SpecializationImmutableRead{std::move(Value),
+                                             "stable named import; " +
+                                                 RawDomain->DomainDigest};
+        }
+      const auto Supplemental = supplementalBytes(Address);
+      if (!Supplemental.empty()) {
+        if (Bytes > Supplemental.size())
+          return std::nullopt;
+        return SpecializationImmutableRead{
+            std::vector<uint8_t>(Supplemental.begin(),
+                                 Supplemental.begin() + Bytes),
+            "stable supplemental code; " + RawDomain->DomainDigest};
+      }
+    }
     const auto *S = immutableMapping(Address, Bytes, false);
     if (!S)
       return std::nullopt;
@@ -352,6 +494,13 @@ validateBinaryImage(const BinaryImage &Image,
     SpecializationResult Result;
     Result.Diagnostic =
         "machine execution profile requires explicit machine-state recovery";
+    return Result;
+  }
+  if (Options.X64SegmentedReads &&
+      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)) {
+    SpecializationResult Result;
+    Result.Diagnostic =
+        "segmented reads require explicit nonfaulting machine state";
     return Result;
   }
   if (!hasUsableExceptionCoverage(Image)) {
@@ -407,13 +556,15 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
   if (Provider.preparationFailed(Preparation))
     return Preparation;
   SpecializationOptions Effective = Options;
-  if (!Effective.FrameBaseRegister)
-    Effective.FrameBaseRegister =
-        symbolic::SymRegisterRange{getTargetRegInfo(Arch::X64).StackPointer, 8};
-  Effective.RequireRestoredFrameAtReturn = true;
-  Effective.ExternalStoresPreserveEntryReturnSlot = true;
+  if (!Options.hasRawEnvironment()) {
+    if (!Effective.FrameBaseRegister)
+      Effective.FrameBaseRegister = symbolic::SymRegisterRange{
+          getTargetRegInfo(Arch::X64).StackPointer, 8};
+    Effective.RequireRestoredFrameAtReturn = true;
+    Effective.ExternalStoresPreserveEntryReturnSlot = true;
+  }
   auto Result = specializeInterpreter(Provider, {Entry, Image.Mode}, Effective);
-  if (Result.complete())
+  if (Result.complete() && !Options.hasRawEnvironment())
     Result.Residual.Name = Image.getFunctionNameAt(Entry);
   return Result;
 }
@@ -462,6 +613,19 @@ binaryExecutionDigest(const BinaryImage &Image,
   Number(Options.ExplicitMachineState);
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
+  Number(Options.X64SegmentedReads);
+  Number(Options.X64CR8State);
+  Number(Options.X64TerminalImports.size());
+  for (const auto &Binding : Options.X64TerminalImports) {
+    Number(Binding.Version);
+    Number(Binding.Slot);
+    Number(Binding.Module.size());
+    Hash.update(Binding.Module);
+    Number(Binding.Symbol.size());
+    Hash.update(Binding.Symbol);
+  }
+  Number(Options.ProveStoreReturnSlotSeparation);
+  Number(Options.MaxFrameOffsetNormalizationWorkPerProof);
   Number(Options.ExternalStoresDisjointEntryFrame);
   Number(Options.EntryFrameAlignment.has_value());
   if (Options.EntryFrameAlignment) {
@@ -518,6 +682,18 @@ binaryExecutionDigest(const BinaryImage &Image,
     Number(static_cast<unsigned>(Instruction.NativeStackControl));
     Number(Instruction.IsNativeCall);
     Number(static_cast<unsigned>(Instruction.ProfileProjection));
+    Number(Instruction.TerminalImport.has_value());
+    if (Instruction.TerminalImport) {
+      const auto &E = *Instruction.TerminalImport;
+      Number(E.Binding.Version);
+      Number(E.Binding.Slot);
+      Number(E.Binding.Module.size());
+      Hash.update(E.Binding.Module);
+      Number(E.Binding.Symbol.size());
+      Hash.update(E.Binding.Symbol);
+      Number(E.FixedImageDigest.size());
+      Hash.update(E.FixedImageDigest);
+    }
     // The provider has already checked uniqueness, permissions, full file
     // coverage and either absent fixups or the authenticated preferred-base
     // snapshot contract for this exact native instruction.
@@ -549,6 +725,18 @@ prepareBinaryRelation(const BinaryImage &Image,
     Result.Diagnostic = std::move(Diagnostic);
     return std::move(Result);
   };
+  if (Options.hasRawEnvironment())
+    return Fail(Status::Unsupported,
+                "native proof does not support raw environment domains");
+  if (!Options.X64TerminalImports.empty())
+    return Fail(Status::Unsupported,
+                "native proof does not support terminal import domains");
+  if (Options.X64SegmentedReads)
+    return Fail(Status::Unsupported,
+                "native proof requires authenticated FS/GS base inputs");
+  if (Options.X64CR8State)
+    return Fail(Status::Unsupported,
+                "native proof requires authenticated task-priority state");
   if (Image.Segments.size() > Limits.MaxInstructions ||
       Image.Relocations.size() > Limits.MaxInstructions ||
       Image.BaseRelocations.size() > Limits.MaxInstructions ||
@@ -667,7 +855,7 @@ checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
   if (Result.Proof.proved()) {
     BinaryUndefinedIndependenceCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-control-independence-v10",
+        Image, Options, "neverd-original-native-control-independence-v13",
         Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,
@@ -726,7 +914,7 @@ static BinaryLowIRRefinementResult checkBinaryLowIRRefinementImpl(
   if (Result.Proof.proved()) {
     BinaryLowIRRefinementCertificate Certificate;
     Certificate.InputDigest = binaryExecutionDigest(
-        Image, Options, "neverd-original-native-lowir-refinement-v5",
+        Image, Options, "neverd-original-native-lowir-refinement-v8",
         Provider.fixedImageDigest(),
         static_cast<unsigned>(Result.Proof.Certificate->Scope),
         Result.Proof.Certificate->InputDigest, Checked.Instructions,

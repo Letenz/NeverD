@@ -32,6 +32,29 @@
 
 namespace neverd::symbolic {
 
+bool SymState::setX64MemoryAddressSpaceBase(NdMemoryAddressSpace Space,
+                                            SymRef Base) {
+  if ((Space != NdMemoryAddressSpace::X86FS &&
+       Space != NdMemoryAddressSpace::X86GS) ||
+      !Base || Base.index() >= Ctx->numNodes() || Ctx->width(Base) != 64)
+    return false;
+  X64MemoryAddressSpaceBases[Space == NdMemoryAddressSpace::X86FS ? 0 : 1] =
+      Base;
+  return true;
+}
+
+SymRef SymState::x64MemoryAddressSpaceBase(NdMemoryAddressSpace Space) const {
+  if (Space == NdMemoryAddressSpace::X86FS)
+    return X64MemoryAddressSpaceBases[0];
+  if (Space == NdMemoryAddressSpace::X86GS)
+    return X64MemoryAddressSpaceBases[1];
+  return {};
+}
+
+void SymState::clearX64MemoryAddressSpaceBases() {
+  X64MemoryAddressSpaceBases = {};
+}
+
 llvm::SmallVector<SymConstantByte, 32> SymState::constantScalarBytes() const {
   llvm::SmallVector<SymConstantByte, 32> Result;
   const auto Collect = [&](SymSpace Space, const Bank &Storage) {
@@ -465,6 +488,13 @@ bool SymState::store(SymRef Addr, SymRef Value,
     Preservation.WorkUsed += Count;
     return true;
   };
+  // Bound the complete descriptor walk before dereferencing any extra range.
+  // The old single-range path pays no new work.
+  if (!Charge(Preservation.AdditionalRanges.size()))
+    return false;
+  for (const auto &Range : Preservation.AdditionalRanges)
+    if (Range.Begin >= Range.End)
+      return false;
   llvm::SmallVector<std::pair<uint64_t, ByteView>, 32> Saved;
   auto Found = Regions.find(Preservation.Base.index());
   if (Found != Regions.end()) {
@@ -473,7 +503,19 @@ bool SymState::store(SymRef Addr, SymRef Value,
     for (const auto &[Offset, Byte] : Found->second.Bytes) {
       if (!Charge(1))
         return false;
-      if (Offset - Begin < Size) {
+      bool Protected = Offset - Begin < Size;
+      if (!Protected)
+        for (const auto &Range : Preservation.AdditionalRanges) {
+          if (!Charge(1))
+            return false;
+          if (Offset - static_cast<uint64_t>(Range.Begin) <
+              static_cast<uint64_t>(Range.End) -
+                  static_cast<uint64_t>(Range.Begin)) {
+            Protected = true;
+            break;
+          }
+        }
+      if (Protected) {
         if (!Charge(2))
           return false;
         Saved.emplace_back(Offset, Byte);
@@ -517,6 +559,7 @@ bool SymState::holdsSameBytes(const Bank &A, const Bank &B) const {
 
 bool SymState::mergeIdentical(const SymState &Other) {
   if (Ctx != Other.Ctx || Order != Other.Order ||
+      X64MemoryAddressSpaceBases != Other.X64MemoryAddressSpaceBases ||
       MemoryClobbered != Other.MemoryClobbered ||
       UnseenRegions != Other.UnseenRegions)
     return false;

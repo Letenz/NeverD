@@ -308,6 +308,30 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   if (Opts.InterpreterSpecialization) {
     Trace.start(NativePipelineTrace::Stage::LowIR);
+    if (Opts.InterpreterSpecialization->hasRawEnvironment()) {
+      Result.Error =
+          "machine-state source does not support raw environment domains";
+      Trace.finish(false);
+      return Result;
+    }
+    if (!Opts.InterpreterSpecialization->X64TerminalImports.empty()) {
+      Result.Error = "machine-state source does not support terminal import domains";
+      Trace.finish(false);
+      return Result;
+    }
+    if (Opts.InterpreterSpecialization->X64CR8State) {
+      Result.Error =
+          "machine-state recovery requires a versioned task-priority "
+          "source interface";
+      Trace.finish(false);
+      return Result;
+    }
+    if (Opts.InterpreterSpecialization->X64SegmentedReads) {
+      Result.Error = "machine-state recovery requires a versioned FS/GS "
+                     "base source interface";
+      Trace.finish(false);
+      return Result;
+    }
     const va_t Entry = *Opts.OnlyFunctionEntries.begin();
     Result.InterpreterRecovery = analysis::specializeBinaryInterpreter(
         Img, Entry, *Opts.InterpreterSpecialization);

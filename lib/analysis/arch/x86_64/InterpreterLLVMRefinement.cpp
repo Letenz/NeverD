@@ -56,6 +56,35 @@ InterpreterLLVMRefinementResult checkBinaryLLVMRefinement(
     const InterpreterLLVMRefinementPreservation &Preservation,
     const InterpreterLLVMNativeCollection &Collection) {
   InterpreterLLVMRefinementResult Result;
+  if (Options.hasRawEnvironment()) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic = "native proof does not support raw environment domains";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
+  if (!Options.X64TerminalImports.empty()) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic = "native proof does not support terminal import domains";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
+  if (Options.X64CR8State) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic =
+        "native proof requires authenticated task-priority state";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
+  if (Options.X64SegmentedReads) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic = "native proof requires authenticated FS/GS base inputs";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
   if (Options.ExternalStoresDisjointEntryFrame) {
     Result.Stage = InterpreterLLVMRefinementStage::Native;
     Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;

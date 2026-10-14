@@ -11,6 +11,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86Regs.h"
 
 #include "llvm/Support/Errc.h"
@@ -384,6 +385,9 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                    InterpreterMachineStateProfile Profile, bool StateRegisters,
                    std::optional<InterpreterEntryAlignment> EntryAlignment,
                    InterpreterMachineStateLayout Layout) {
+  if (hasLowRawEnvironmentRequirement(Residual))
+    return invalid(
+        "raw environment requirement has no machine-source contract");
   if (Layout != InterpreterMachineStateLayout::InlineReturns &&
       Layout != InterpreterMachineStateLayout::SharedGPRExit)
     return invalid("unsupported interpreter machine-state layout");

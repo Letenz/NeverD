@@ -95,6 +95,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 映像預設使用慣用基底位址，除非情境選擇了有效的重新定位位址。映像必須為使用 native 子系統的 PE32+ x64 可執行檔。匯入可來自 `ntoskrnl.exe`、`ntkrnlmp.exe`、`HAL.dll` 或 `WDFLDR.SYS`。
 
+新增的 `FLTMGR.SYS`、`NDIS.SYS` 和 `NETIO.SYS` 提供依模組區分的延遲匯入識別，其函式尚未建模：未呼叫的匯入可完成載入，實際呼叫時會回報標準化的 `module!symbol` 並停止。它們不參與 `MmGetSystemRoutineAddress` 查詢，該查詢仍僅限核心和 HAL。
+
 執行載入器支援經驗證的 x64 `DIR64` 基底重新定位，以及有限的安全性 cookie 載入組態；它會在進入點包裝函式執行前設定具確定性的客體 cookie。其他未建模的載入組態欄位、TLS、延遲／繫結匯入、依序號匯入及受控映像皆會遭拒絕。映像還必須通過嚴格的範圍與對齊檢查。
 
 啟用的控制流程防護（CFG）會驗證 PE 旗標、指標槽與已排序的可執行目標表。檢查與分派輔助函式僅允許已宣告的映像進入點或已登記的 API 跳板，保留 Win64 呼叫狀態，並拒絕未宣告的目標。只有插樁而未啟用 CFG 時，保留原始客體後援指標。啟用的 XFG、匯出抑制和其他未建模的防護策略仍遭拒絕；位址位於可執行記憶體不代表它是合法目標。
@@ -474,7 +476,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令計數。它保留停止前收集的 API 呼叫及可觀察狀態，包括裝置物件與驅動程式回呼位址。客體位址以十六進位字串表示，避免 JSON 使用端遺失 64 位元精確度。
 
-`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v101`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
+`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v103`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
 
 工作項目觀察記錄使用 `callback:N` 階段。待處理請求的 `dispatch_status` 保留 `STATUS_PENDING`，最終完成狀態分別記錄於 `io_status`，並據此計算該請求對 `scenario_success` 的影響。
 
@@ -600,3 +602,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 透過 `KeQueryPerformanceCounter`、`RDTSC` 或 `RDTSCP` 讀取時鐘會保留明確的驅動程式恢復相依性。擷取的計數器與頻率值尚無面向新核心環境的重新繫結契約。預設恢復傳回 `unsupported_state`；`snapshot_only` 保留此診斷。
 
 `KernelModuleImages` 根據 `KernelExportRegistry` 產生可讀的 PE 標頭和匯出表；靜態匯入、動態查找和模組列舉共用相同位址。提供者程式碼保持不透明，清單描述的是模擬環境，而非主機核心。兩個輸出皆在寫入前檢查，包括集區記憶體生命週期與重疊。Nt 查詢要求已知的核心 previous-mode；Zw 查詢採用核心呼叫契約。完整模組查詢會保留明確的復原相依性，即使其緩衝區已釋放；提供者映像指標也以借用狀態追蹤。`KernelExportTests.cpp` 檢查 PE 解析、權限、ABI 欄位、寫入拒絕和復原相依性；原創編譯執行階段測試程式在 CPU 後端走訪這些匯出表。
+
+驅動設定固定關閉 CET 影子堆疊。標準編碼的 `RDSSPD` 和 `RDSSPQ` 保留全部暫存器位元、旗標和記憶體，包括 32 位元目的暫存器的高半部分。兩種讀取都計為一條指令，並為 UNPACK 保留環境相依性。CPUID 宣告不會啟用 CET；其他影子堆疊指令及啟用 CET 的操作仍不受支援。
