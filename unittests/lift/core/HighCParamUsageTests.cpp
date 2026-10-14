@@ -1,0 +1,95 @@
+//===- HighCParamUsageTests.cpp - Shared parameter-use queries -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Preserve parameter uses while bounding shared expressions and call graphs.
+
+#include "../../../lib/backend/c/HighC/HighCWriter.h"
+#include "gtest/gtest.h"
+
+using namespace neverd;
+
+namespace {
+ExprPtr makeParam(int Id) {
+  MedVar P;
+  P.Kind = MedVar::Param;
+  P.Id = Id;
+  P.Size = 8;
+  P.TheArch = Arch::X64;
+  return HighExpr::makeVar(P, NdType::makeInt(8));
+}
+
+HighFunc makeFunction(size_t Index) {
+  HighFunc F;
+  F.Name = "fan_" + std::to_string(Index);
+  F.Entry = 0x401000 + Index * 0x100;
+  F.ReturnType = NdType::makeInt(8);
+  for (int I = 0; I != 6; ++I)
+    F.Params.push_back({"arg" + std::to_string(I), NdType::makeInt(8)});
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeConst(0, 8);
+  F.Body.push_back(Ret);
+  return F;
+}
+
+void addCall(HighFunc &F, const HighFunc &Callee, bool ReadParameters) {
+  std::vector<ExprPtr> Arguments;
+  for (size_t I = 0; I != F.Params.size(); ++I)
+    Arguments.push_back(ReadParameters ? makeParam(static_cast<int>(I))
+                                       : HighExpr::makeConst(7, 8));
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.CallExpr = HighExpr::makeCall(Callee.Name, Callee.Entry, Arguments);
+  F.Body.insert(F.Body.begin(), std::move(Call));
+}
+} // namespace
+
+TEST(HighCParamUsage, SharedExpressionVisitsRetainTheActuallyReadParameter) {
+  auto F = makeFunction(0);
+  ExprPtr Value = makeParam(0);
+  for (unsigned I = 0; I != 28; ++I)
+    Value = HighExpr::makeBinop(NdOp::INT_ADD, Value, Value);
+  F.Body.front().RetVal = Value;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  CEmitterOptions Options;
+  HighCWriter Writer(OS, Options, nullptr);
+  EXPECT_EQ(Writer.emittedParamIndices(F), std::vector<size_t>({0}));
+}
+
+TEST(HighCParamUsage, RepeatedCallsReuseCompleteDefaultParameterQueries) {
+  std::vector<HighFunc> Functions;
+  for (size_t I = 0; I != 28; ++I)
+    Functions.push_back(makeFunction(I));
+  for (size_t I = 0; I + 1 != Functions.size(); ++I) {
+    addCall(Functions[I], Functions[I + 1], false);
+    addCall(Functions[I], Functions[I + 1], false);
+  }
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  CEmitterOptions Options;
+  HighCWriter Writer(OS, Options, nullptr);
+  Writer.writeAll(Functions);
+  for (const auto &F : Functions) {
+    EXPECT_EQ(Writer.emittedParamIndices(F),
+              std::vector<size_t>({0, 1, 2, 3, 4, 5}));
+    EXPECT_NE(Text.find(F.Name + "("), std::string::npos);
+  }
+}
+
+TEST(HighCParamUsage, RecursiveCallsKeepEveryReadOperand) {
+  std::vector<HighFunc> Functions{makeFunction(0), makeFunction(1)};
+  addCall(Functions[0], Functions[1], true);
+  addCall(Functions[1], Functions[0], true);
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  CEmitterOptions Options;
+  HighCWriter Writer(OS, Options, nullptr);
+  Writer.writeAll(Functions);
+  for (const auto &F : Functions)
+    EXPECT_EQ(Writer.emittedParamIndices(F),
+              std::vector<size_t>({0, 1, 2, 3, 4, 5}));
+}

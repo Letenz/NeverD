@@ -18,6 +18,10 @@ add_neverd_unittest(NeverDRegistrationCalleeStackTests
   eh/RegistrationCalleeRecursionTests.cpp
   LINK_COMPONENTS Pipeline)
 
+add_neverd_unittest(NeverDHighCParamUsageTests
+  core/HighCParamUsageTests.cpp
+  LINK_COMPONENTS BackendC)
+
 add_neverd_unittest(NeverDX87CallGraphTests
   x86_32/X86_32_X87FPUTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -224,6 +228,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCCategoryTests.cpp
   core/ObjCStorageTests.cpp
   core/HighCSourceCallTests.cpp
+  core/HighCParamUsageTests.cpp
   core/NativeSourceHintsTests.cpp
   core/SwiftFunctionSymbolTests.cpp
   core/SourceRegisterCopyTests.cpp
@@ -1428,6 +1433,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
+  eh/RegistrationCalleeRecursionTests.cpp
   eh/RegistrationCleanupABITests.cpp
   eh/RegistrationRealignedCleanupABITests.cpp
   eh/RegistrationEntryABITests.cpp

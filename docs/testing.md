@@ -5576,6 +5576,13 @@ catches must retain the parent's local slot and the nonvolatile value written
 before the throwing call. The original FH3/FH4 GS/no-GS O0/O2 ABI-probe CLIs
 remain the corpus-level check for this projection.
 
+`HighCParamUsage` checks shared expression DAGs, repeated callee queries and
+recursive argument uses. Its default and compacted parameter lists must agree
+with the operands that C prints. The two `WindowsEHModesCorpus.Decompiles*`
+regressions run the original FH3 O2 GS/no-GS probes and the five PE32 xcpt4 and
+xframe inputs through the full source CLI, including output generation. These
+checks also run in the Windows EH CI lane.
+
 `NeverDSEHRuntimeMemoryTests` checks nested authenticated UCRT calls, actual
 home-area writes, immutable formats and receipt freshness. Wrong providers,
 delay imports, incomplete or conflicting PE32/PE64 storage, `%n` variants,
