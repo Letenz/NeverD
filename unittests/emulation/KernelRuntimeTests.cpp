@@ -783,6 +783,38 @@ TEST_F(KernelRuntime, CurrentThreadAndProcessQueriesMatchTheirKernelAliases) {
   EXPECT_EQ(invoke("PsGetCurrentThread", {}), Thread);
 }
 
+TEST_F(KernelRuntime, ThreadClientIDsBelongToTheirThreadObjects) {
+  EXPECT_NE(failure("PsGetCurrentThreadId", {}).find("active execution"),
+            std::string::npos);
+  Model->enterExecution(profile::StackBase, 0x42);
+  const uint64_t Thread = invoke("PsGetCurrentThread", {});
+  // IDs are assigned on first observation from the profile base in steps of 4.
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2000u);
+  EXPECT_EQ(invoke("PsGetThreadId", {Thread}), 0x2000u);
+  Model->enterExecution(profile::StackBase, 0x43);
+  const uint64_t Other = invoke("PsGetCurrentThread", {});
+  EXPECT_EQ(invoke("PsGetThreadId", {Other}), 0x2004u);
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2004u);
+  EXPECT_EQ(invoke("PsGetThreadId", {Thread}), 0x2000u);
+  EXPECT_NE(failure("PsGetThreadId", {Scratch}).find("known thread object"),
+            std::string::npos);
+  // The current ID is available at any IRQL, a lookup only to DISPATCH_LEVEL.
+  const auto Previous = invoke("KfRaiseIrql", {3});
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2004u);
+  EXPECT_NE(failure("PsGetThreadId", {Thread}).find("IRQL"), std::string::npos);
+  invoke("KeLowerIrql", {Previous});
+}
+
+TEST_F(KernelRuntime, ThreadClientIDsSkipModeledProcessIDs) {
+  // Thread and process IDs share one namespace, so the requesting process's
+  // ID is never issued to a thread.
+  Model->enterExecution(profile::StackBase);
+  check(Model->setUserRequestContext(true, 0x2000));
+  EXPECT_EQ(invoke("PsGetCurrentProcessId", {}), 0x2000u);
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2004u);
+  check(Model->setUserRequestContext(false));
+}
+
 TEST_F(KernelRuntime, DebugIntegersUseWindowsWidthsAndFormattingRules) {
   EXPECT_EQ(
       formatted(
@@ -951,12 +983,14 @@ TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
   ASSERT_TRUE(Result->NTStatus.has_value());
   EXPECT_EQ(*Result->NTStatus, 0u);
   ASSERT_EQ(Result->Messages.size(), 1u);
-  EXPECT_EQ(Result->Messages[0], "identity 4");
+  // The first thread ID comes from the profile base, 0x2000.
+  EXPECT_EQ(Result->Messages[0], "identity 4 8192");
   std::map<std::string, unsigned> Calls;
   for (const auto &Call : Result->Calls)
     ++Calls[Call.Name];
-  for (const char *Name : {"PsGetCurrentProcess", "IoGetCurrentProcess",
-                           "PsGetCurrentThread", "KeGetCurrentThread"})
+  for (const char *Name :
+       {"PsGetCurrentProcess", "IoGetCurrentProcess", "PsGetCurrentThread",
+        "KeGetCurrentThread", "PsGetCurrentThreadId", "PsGetThreadId"})
     EXPECT_EQ(Calls[Name], 1u) << Name;
 }
 } // namespace

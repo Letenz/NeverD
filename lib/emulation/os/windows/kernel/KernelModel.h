@@ -742,6 +742,13 @@ private:
   std::map<uint64_t, uint64_t> ThreadHandles;
   uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
+  /// Client IDs of live thread objects, assigned on first observation. Issued
+  /// IDs are never reused, and requestor process IDs may not collide with them.
+  std::map<uint64_t, uint32_t> ThreadClientIDs;
+  std::set<uint32_t> IssuedThreadClientIDs;
+  std::set<uint32_t> RequestorProcessIDs;
+  uint64_t NextThreadClientID = profile::ThreadIDBase;
+  llvm::Expected<uint64_t> threadClientID(uint64_t Object);
   llvm::Expected<uint64_t>
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> terminateSystemThread(uint32_t Status);

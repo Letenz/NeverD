@@ -330,6 +330,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `RtlPrefixUnicodeString` | 長さを持つ UTF-16 の接頭辞判定。大文字小文字を区別しない要求は、異なる単位の比較に Windows の大小文字テーブルが必要な場合だけ停止する |
 | `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 基数 2、8、10、16 の符号なし変換。先頭の空白、符号、`0x`/`0o`/`0b` 接頭辞、32 ビットのラップアラウンドはカーネルの規則に従う。書式化には終端文字の領域が必要で、長さを格納した後に `STATUS_BUFFER_OVERFLOW` を返す |
 | `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` とインラインの `GS:[0x188]` 読み取りのエクスポート別名で、任意の IRQL で使える。現在の APC 状態のプロセスはアタッチ先に従うが、現在の論理スレッドの借用された不透明な識別子は変わらない |
+| `PsGetCurrentThreadId`、`PsGetThreadId` | 生存中のスレッドオブジェクトのクライアント ID。最初に観測された時点で `0x2000` から 4 刻みで割り当て、モデル化済みのプロセス ID を飛ばし、再利用しない。発行済みスレッド ID と同じ要求元 ID を持つ要求は拒否する。`PsCreateSystemThread` も `ClientId` でシステムプロセス ID とスレッド ID を返す。フォアグラウンドのディスパッチは 1 つの論理スレッドで動くため、要求元プロセスが異なってもその ID は変わらないが、`PsGetCurrentProcessId` は要求元に従う。`PsGetThreadId` は IRQL ≤ `DISPATCH_LEVEL` が必要 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | ゲスト例外を発生し通常の API 復帰なし。実際の C フィルター／ハンドラーと unwind finally、ユーザー CPU メモリー例外の限定的な再開は後述 |
 | `ExAllocatePool2` | ページプール／非ページ NX プールの割り当て。デフォルトでゼロ初期化し、未初期化とキャッシュ整列のフラグをモデル化する。無効な必須フラグは NULL を返し、クォータ／実行可能プールおよび割り当て例外の送出では停止する |
 | `MmGetSystemRoutineAddress` | 長さを持つゲストの名前を、共通のエクスポート一覧で解決する |

@@ -957,6 +957,26 @@ TEST_F(KernelRequestOwnership,
   close();
 }
 
+TEST_F(KernelRequestOwnership, RequestorProcessIDsCannotTakeIssuedThreadIDs) {
+  // Process and thread IDs share one namespace, so an issued thread ID keeps
+  // its owner and a request claiming it as a process ID fails at submission.
+  ASSERT_NE(open(), 0u);
+  Model->enterExecution(profile::StackBase);
+  const uint64_t ThreadID = call("PsGetCurrentThreadId", {});
+  auto Input = ioRequest();
+  Input.RequestorProcessID = uint32_t(ThreadID);
+  auto Refused = Model->beginRequest(Input);
+  ASSERT_FALSE(bool(Refused));
+  EXPECT_NE(llvm::toString(Refused.takeError()).find("thread client ID"),
+            std::string::npos);
+  Input.RequestorProcessID = uint32_t(ThreadID) + 4;
+  const uint64_t IRP = begin(Input);
+  ASSERT_NE(IRP, 0u);
+  complete(IRP);
+  success(Model->recordDispatchReturn(IRP, 0));
+  success(Model->finalizeRequest(IRP));
+}
+
 TEST_F(KernelRequestOwnership,
        WorkItemAttachmentRestoresUserAddressSpaceAndRequiresExactDetach) {
   ASSERT_NE(open(), 0u);
@@ -1013,6 +1033,8 @@ TEST_F(KernelRequestOwnership,
   const uint64_t Thread = call("PsGetCurrentThread", {});
   ASSERT_NE(Thread, 0u);
   EXPECT_EQ(call("KeGetCurrentThread", {}), Thread);
+  const uint64_t ThreadID = call("PsGetCurrentThreadId", {});
+  EXPECT_EQ(call("PsGetThreadId", {Thread}), ThreadID);
   rejected(Model->validateGuestAccess(UserInput, 1, false));
   rejected(Model->call("KeUnstackDetachProcess", {ApcState}));
   rejected(Model->call("KeStackAttachProcess", {Process + 1, ApcState}));
@@ -1023,6 +1045,7 @@ TEST_F(KernelRequestOwnership,
   // Attachment changes the APC-state process, never the thread identity.
   EXPECT_EQ(call("PsGetCurrentProcess", {}), Process);
   EXPECT_EQ(call("PsGetCurrentThread", {}), Thread);
+  EXPECT_EQ(call("PsGetCurrentThreadId", {}), ThreadID);
   EXPECT_EQ(call("PsGetProcessId", {call("IoGetCurrentProcess", {})}),
             Input.RequestorProcessID);
   EXPECT_EQ(call("PsGetCurrentProcessId", {}), 4u);

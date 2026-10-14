@@ -22,6 +22,8 @@ __declspec(dllimport) void *PsGetCurrentThread(void);
 __declspec(dllimport) void *KeGetCurrentThread(void);
 __declspec(dllimport) void *PsGetCurrentProcessId(void);
 __declspec(dllimport) void *PsGetProcessId(void *);
+__declspec(dllimport) void *PsGetCurrentThreadId(void);
+__declspec(dllimport) void *PsGetThreadId(void *);
 
 NTSTATUS DriverEntry(void *Driver, void *RegistryPath) {
   (void)Driver;
@@ -31,10 +33,13 @@ NTSTATUS DriverEntry(void *Driver, void *RegistryPath) {
   __asm__ volatile("movq %%gs:0x188, %0" : "=r"(Inline));
   void *Process = PsGetCurrentProcess();
   void *Thread = PsGetCurrentThread();
+  void *ThreadId = PsGetCurrentThreadId();
   if (!Process || Process != IoGetCurrentProcess() || !Thread ||
       Thread != KeGetCurrentThread() || (U64)Thread != Inline ||
-      PsGetProcessId(Process) != PsGetCurrentProcessId())
+      PsGetProcessId(Process) != PsGetCurrentProcessId() || !ThreadId ||
+      ((U64)ThreadId & 3) || PsGetThreadId(Thread) != ThreadId)
     return (NTSTATUS)0xc000000dU;
-  DbgPrint("identity %u", (U32)(U64)PsGetProcessId(Process));
+  DbgPrint("identity %u %u", (U32)(U64)PsGetProcessId(Process),
+           (U32)(U64)ThreadId);
   return 0;
 }
