@@ -1154,9 +1154,9 @@ TEST_P(DarwinMountEnumerationTest, CountsAndShortBuffersNeedNoRefreshOrAccess) {
   for (auto &M : Options->FileSystemEnumeration->Mounts)
     M.Refreshed.reset();
   reset();
-  for (uint64_t Size :
-       {0ULL, 1ULL, 2167ULL, 2168ULL, 0x80000000ULL, 0xffffffffULL, UINT64_MAX})
-    for (uint64_t Flags : {0ULL, 1ULL, 2ULL, 4ULL, UINT64_MAX})
+  for (uint64_t Size : std::array<uint64_t, 7>{0, 1, 2167, 2168, 0x80000000,
+                                               0xffffffff, UINT64_MAX})
+    for (uint64_t Flags : std::array<uint64_t, 5>{0, 1, 2, 4, UINT64_MAX})
       EXPECT_EQ(ok(K, {0, Size, Flags}), 3u);
   for (uint64_t Size : {0ULL, 1ULL, 2167ULL, 0x1234567800000000ULL})
     EXPECT_EQ(ok(K, {UINT64_MAX, Size, 0}), 0u);
