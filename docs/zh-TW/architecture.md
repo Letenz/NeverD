@@ -13,7 +13,7 @@ NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部
 
 `sourcePatchTargetTriple` 從映像確定 ARM 指令模式、ELF 浮點 ABI 與 Mach-O CPU 子類型。`COFFPatchObject` 和 `MachOPatchObject` 依物件自身符號、輔助／區段定義及展開記錄驗證範圍，不虛構 MC 識別碼；格式安裝器負責註冊實際展開表。
 
-`SourcePatchCompiler` 組合 NeverC `cpp-core-v2` 翻譯與 C23 產生；`validateDynCodePatchImage` 將 hosted 審計繫結至實際物件/載荷摘要、最終程式碼和入口布局。格式安裝器註冊真實展開記錄。ARM64 FH3 使用載入器 xdata 範圍及 MC funclet/FuncInfo 歸屬。無 DWARF 節的 Mach-O 須由原生 compact 記錄覆蓋全部函式。
+`SourcePatchCompiler` 在啟動前限制 NeverC 為純 C；C++ 由 Clang 或相符的 ELF GCC 驅動負責。`validateDynCodePatchImage` 將 hosted C 稽核綁定至真實物件、載荷摘要及精確程式碼與入口配置。格式安裝器註冊真實展開記錄；ARM64 Clang FH3 保留載入器的 xdata 範圍及 MC 的 funclet/FuncInfo 群組，Mach-O 可使用完整原生 compact 記錄。
 
 `CompiledImage` 在同一入口正規化 AArch64 ELF 冒號重定位標記，供即時解析與記錄後的 fixup 共用。ELF 解析器與載入器重定位發布共用精確 ABS/GOT 身分，TLS 與未知形式仍明確拒絕。COFF 原生函式範圍可採用解碼後的執行階段記錄；hosted 程式碼須具備完整的編譯器展開覆蓋。
 
@@ -1499,3 +1499,5 @@ LLVM 發射器只在目前不可變的 MedFunc 內重用已完成、採用預設
 `MaxFrameOffsetNormalizationWorkPerProof` 預設為零。啟用後，未完成的首次堆疊偏移查詢可使用既有 MBA 精確推導，相對於同一個根證明 64 位元偏移，並保留原始操作。這不提供可達性或記憶體歸屬事實，也不填入有限值域快取。每次嘗試依目前內容節點、運算元邊及常數的每個 64 位元區塊各計一單位，再加上 MBA 回報的測量工作，同時計入此限制與 `MaxOperations`；失敗嘗試仍計費。內部走訪、重建及取樣缺陷檢查不另行計量；最後的 `MaxSymbolicNodes` 檢查限制結果發布，而非配置峰值。 若精確化簡改變了運算式，但未直接顯露結構性偏移，一般堆疊偏移證明器會用新的編碼重試一次，保留相同路徑述詞、根及求解器設定，並沿用累計查詢額度及節點上限。重試停用再次化簡，也不快取結果。
 
 `MedCallingConvFP` 統一負責浮點／向量輸入的位元組需求。AND/OR 常數遮罩僅在唯一、有界的 SSA 常數證明下排除完全清零或取代的位元組，包括首寫版本為零的串接遮罩；缺失、歧義、載入或呼叫產生的遮罩保留輸入。浮點回傳暫存器的中間寫入仍是值傳遞；回傳讀取依據目前 CFG 中到達各 RETURN 的定義，未知路徑保守保留需求。恢復明確 ABI 運算元前，透過浮點回傳暫存器轉送的值也是 CALL 的可能讀取。ARM32 暫存器定義涵蓋完整 D0-D31，與 D0-D7 參數組獨立。
+
+ELF 物件解析、原生重定位寫入與載入器來源證明共用欄位寬度表。AArch64 `PREL64` 使用八位元組，保留有號 `S + A - P` 與完整寬度的 REL 隱含加數。越界、寫入重疊及有號溢位會在發布前失敗。

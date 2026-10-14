@@ -14,6 +14,7 @@ on:
       - 'scripts/tests/test_check_source_patch_elf_runtime.py'
       - 'unittests/Inputs/source-patch/neverc-hosted/**'
       - 'unittests/Inputs/source-patch/neverc-linux/**'
+      - 'unittests/Inputs/source-patch/cpp-linux-objects/**'
       - 'unittests/lift/eh/ELFSource*Tests.cpp'
       - 'unittests/lift/eh/ReplacementIRTests.cpp'
       - 'scripts/tests/test_check_source_patch_cpp_runtime.py'
@@ -50,6 +51,7 @@ on:
       - 'scripts/tests/test_check_source_patch_elf_runtime.py'
       - 'unittests/Inputs/source-patch/neverc-hosted/**'
       - 'unittests/Inputs/source-patch/neverc-linux/**'
+      - 'unittests/Inputs/source-patch/cpp-linux-objects/**'
       - 'unittests/lift/eh/ELFSource*Tests.cpp'
       - 'unittests/lift/eh/ReplacementIRTests.cpp'
       - 'scripts/tests/test_check_source_patch_cpp_runtime.py'
@@ -192,7 +194,7 @@ jobs:
           python scripts/check_source_patch_elf_runtime.py prepare `
             --neverd build-source-windows/bin/neverd.exe --clang $env:NEVERD_SOURCE_CLANG `
             --fixtures unittests/Inputs/source-patch/neverc-linux --output build-source-windows/elf-runtime
-          if ($LASTEXITCODE -ne 0) { throw 'ELF C++/hosted fixture preparation failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'ELF C/hosted/Clang C++ fixture preparation failed' }
 
       - name: Prepare x64 and ARM64 source C++ exceptions and execute x64
         shell: pwsh
@@ -342,7 +344,7 @@ jobs:
           name: source-patch-elf-processes-${{ github.sha }}
           path: build-source-windows/elf-runtime
 
-      - name: Execute C++ lifetimes and hosted exception propagation
+      - name: Execute C and Clang C++ exception propagation
         run: python3 scripts/check_source_patch_elf_runtime.py run --root build-source-windows/elf-runtime --arch '${{ matrix.arch }}'
 
       - name: Preserve native Linux process evidence
