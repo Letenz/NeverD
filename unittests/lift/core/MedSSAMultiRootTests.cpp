@@ -476,6 +476,27 @@ TEST(MedSEHEstablisherFrame, SourceIndependentEntriesKeepUnknownStackValues) {
     EXPECT_NE(Source.find("unresolved runtime stack"), std::string::npos)
         << Source;
     EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+    if (SharedHandler) {
+      // The handler's entry copies stay on the runtime's entry into it.
+      const std::string Handler = llvm::utohexstr(Img.Entry + 0x20);
+      const size_t EntryAt =
+          Source.find("Native exception entry to the handler @ 0x" + Handler);
+      ASSERT_NE(EntryAt, std::string::npos) << Source;
+      EXPECT_NE(Source.find("goto L_" + Handler + ";", EntryAt),
+                std::string::npos)
+          << Source;
+      // Any other clause code would leave its native position: refuse it.
+      auto Moved = High;
+      for (auto &Stmt : Moved.Body)
+        if (Stmt.Kind == StmtKind::SEHTry)
+          for (auto &Body : Stmt.EHClauseBodies)
+            if (!Body.empty())
+              Body.pop_back();
+      std::string Refused;
+      llvm::raw_string_ostream RefusedStream(Refused);
+      EXPECT_THROW(HighCEmitter().emit({Moved}, RefusedStream, Options),
+                   std::invalid_argument);
+    }
     llvm::LLVMContext Context;
     EXPECT_THROW((void)MedLLVMEmitter().emit({Med}, Context),
                  std::runtime_error);

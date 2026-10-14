@@ -251,6 +251,11 @@ public:
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
   void writeUnstructuredSEHRegion(const HighStmt &Stmt, int Indent);
+  /// The blocks the exception runtime enters for except clauses \p Entries of
+  /// an unstructured region: each runs its handler's entry copies, then jumps
+  /// to the handler's label.  Ordinary flow skips them.
+  void writeSEHHandlerEntries(const HighStmt &Stmt,
+                              llvm::ArrayRef<size_t> Entries, int Indent);
   /// A C++ `try` around the body \p WriteBody prints at the indent it is
   /// given, then its handlers.  A cleanup clause is an object's unwind
   /// action, which standard C++ spells as `catch (...)` that runs it and

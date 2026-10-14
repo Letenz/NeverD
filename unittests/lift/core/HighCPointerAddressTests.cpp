@@ -41074,15 +41074,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
   bool ReadsTheLocal = false;
   for (llvm::StringRef Line : llvm::split(Source, '\n'))
-    ReadsTheLocal |= Line.contains("except: filter @ 0x401683") &&
-                     Line.contains("filter_value=*(") &&
-                     Line.ends_with(" *)(frame_base - 32)");
+    ReadsTheLocal |= Line.contains("__except (*(") &&
+                     Line.ends_with(" *)(frame_base - 32)) {");
   EXPECT_TRUE(ReadsTheLocal) << Source;
-  // This 110-scope function exhausts state propagation. Its complete native
-  // table still proves the filter's EBP, but cannot prove lexical protection.
-  EXPECT_NE(Source.find("unstructured SEH region"), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("__except ("), std::string::npos) << Source;
   // 0x4029BD is `mov eax, 1; ret`, 0x401683 the frame read.
   EXPECT_EQ(Source.find("sub_4029BD"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("sub_401683"), std::string::npos) << Source;
