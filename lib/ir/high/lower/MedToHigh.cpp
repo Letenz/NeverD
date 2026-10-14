@@ -1045,9 +1045,8 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
 
 void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
                                                      const MedFunc &Med) {
-  // A handler block ordinary flow also enters merges RAX in PHIs. Their
-  // ordinary edges carry copies already; on the dispatcher's entry the arm
-  // assigns the exception code before it jumps to the handler.
+  // Shared handlers merge their runtime inputs with ordinary predecessors.
+  // Source-only unknown SP inputs stay unknown instead of becoming variables.
   std::map<va_t, std::vector<HighStmt>> Copies;
   for (const MedBlock &Block : Med.Blocks)
     for (const PhiNode &Phi : Block.Phis) {
@@ -1056,7 +1055,7 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
       HighStmt Copy;
       Copy.Kind = StmtKind::Assign;
       Copy.Dst = HighExpr::makeVar(Phi.Output);
-      ExprPtr Code = HighExpr::makeVar(*Phi.ExceptionalEntry);
+      ExprPtr Code = medvarToExpr(*Phi.ExceptionalEntry);
       if (Phi.Output.Size > Phi.ExceptionalEntry->Size) {
         Code = HighExpr::makeUnary(NdOp::INT_ZEXT, Code);
         Code->Type = NdType::makeInt(Phi.Output.Size, false);
@@ -1235,6 +1234,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.IsVariadic = Med.IsVariadic;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
+  Func.HasUnresolvedSEHFrame = Med.HasUnresolvedSEHFrame;
   for (const auto &Entry : Med.CxxContinuationEntries)
     Func.CxxContinuationTargets.insert(Entry.Target);
   // Catch returns enter the parent through edges absent from its ordinary

@@ -327,6 +327,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | ゲスト例外を発生し通常の API 復帰なし。実際の C フィルター／ハンドラーと unwind finally、ユーザー CPU メモリー例外の限定的な再開は後述 |
 | `ExAllocatePool2` | ページプール／非ページ NX プールの割り当て。デフォルトでゼロ初期化し、未初期化とキャッシュ整列のフラグをモデル化する。無効な必須フラグは NULL を返し、クォータ／実行可能プールおよび割り当て例外の送出では停止する |
 | `MmGetSystemRoutineAddress` | 長さを持つゲストの名前を、共通のエクスポート一覧で解決する |
+| `MmIsAddressValid` | IRQL ≤ 2 の限定的な具体クエリ。ゼロページが未マップの場合のみ NULL は偽となり、生存するモデルオブジェクトまたは非ページプールの正確なバイトに読み書き可能な RAM がある場合のみ真となります。ページプール、解放済み・所有者不明のメモリ、割り当てパディング、プール以外の物理バッファ、保護された領域は明示的に停止します。フィールドアクセス、所有権、将来の寿命は保証せず、復元時の環境依存を保持します。 |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | PASSIVE_LEVEL でクラス `11`（`SystemModuleInformation`）をサポートします。長さゼロのサイズ照会と、モデル化した提供元および入力ドライバーの完全な Win64 モジュール記録を返します。部分バッファーと未知の情報クラスでは明示的に停止します。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 宣言済み変換後部分区間、非キャッシュ RO／RW、共有別名、正確な unmap。任意物理メモリは未対応 |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 厳密に割り当てられた排他的／共有 latched または level_sensitive ライン。PASSIVE_LEVEL の従来 ABI と Ex 1／2／4、厳密な接続世代とロック所有権 |
@@ -412,7 +413,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 省略可能なルートフィールド `"load_address": "0x190000000"` はベースアドレスの変更を要求します。省略または `"0x0"` なら優先アドレスを使用します。イメージは再配置の要件を満たす必要があります。元の初期化コマンドや C API が暗黙にシナリオを実行することはありません。
 
-ルートで受け付けるフィールドは `load_address`、`requests`、`unload`、`kernel_exports`、`registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
+ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
 
 READ／WRITE／IOCTL 要求だけが省略可能な `cancel_after_100ns` を受け付けます。値は 0 から `INT64_MAX`（9223372036854775807）までの JSON 整数です。要求の提出時点を基準に、実時間ではなく仮想時間の 100 ns 単位でキャンセルを予約します。KMDF ではゼロをフレームワークのルーティング後、ゲスト I/O コールバックの前に適用します。ルーティングが既に要求を完了していれば、完了が優先されます。WDM ではディスパッチの復帰後にゼロを適用します。正の遅延では、実行可能なコールバックやフレームがないときだけ、タイマー、待機、キャンセルの期限へ時間を進めます。保留中の WDM IRP は、登録されたキャンセルルーチンをキャンセルスピンロック保持下の `DISPATCH_LEVEL` で呼び出します。完了前に `Irp->CancelIrql` を使ってロックを解放する必要があります。一般のキューや PnP のキャンセルは未対応です。各要求レポートの `cancel_requested_at_100ns` は、キャンセルが実際に発生した絶対仮想時刻、または発生しなかった場合の null です。先に完了した場合も null のままです。キャンセル要求だけでは IRP は完了せず、最終ステータスも決まりません。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock`、`IoCancelIrp` は同じ IRP 状態とキャンセルスピンロックを使います。`IoCancelIrp` は登録済みルーチンを同期的に呼び出し、呼び出したかどうかを返します。
@@ -604,3 +605,11 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 `KernelModuleImages` は `KernelExportRegistry` から読み取り可能な PE ヘッダーとエクスポート表を生成し、静的インポート、動的検索、モジュール列挙で同じアドレスを使用します。提供元のコードは不透明で、一覧はホストカーネルではなくモデル環境を記述します。両出力について、プールの寿命と重複を含め、書き込み前に検査します。Nt 照会には既知のカーネル previous-mode が必要で、Zw 照会はカーネル契約を使用します。完全な照会はバッファー解放後も明示的な復元依存関係を保持し、提供元イメージへのポインターも借用状態として追跡します。`KernelExportTests.cpp` は PE 解析、権限、ABI フィールド、書き込み拒否、復元依存関係を検査し、独自のコンパイル済みランタイムフィクスチャは CPU バックエンド上でエクスポート表を走査します。
 
 固定のドライバープロファイルでは CET シャドウスタックを無効にします。正規エンコーディングの `RDSSPD` と `RDSSPQ` は、32 ビット宛先の上位半分を含む全レジスタビット、フラグ、メモリを保持します。各読み取りは 1 命令として計上され、UNPACK の環境依存性を残します。CPUID 宣言は CET を有効にしません。その他のシャドウスタック命令と CET の有効化は引き続き未対応です。
+
+## 宣言されたローダービュー
+
+任意の `loader_view` は具体的な診断環境を宣言します。例は `{"version":1,"flags":0,"evidence":"fixture declaration"}` です。全フィールドが必須で、`flags` はゼロも明示する符号なし 32 ビット整数、`evidence` は呼び出し側が指定する 1–256 バイトの表示可能な ASCII ラベルです。ラベルは認証済みの証拠ではありません。バージョン 1 は模擬レイアウトを表し、Windows のリリース番号ではありません。不明なフィールドや無効な宣言はモデルの割り当て前に拒否されます。省略時は `DriverSection` が不透明なままで、報告にフィールドは追加されません。指定時は `configuration.loader_view` に宣言全体を保持します。
+
+借用する 160 バイトのレコードで読めるのは `DllBase`（オフセット 48、8 バイト）、`EntryPoint`（56、8）、`SizeOfImage`（64、4）、`Flags`（104、4）のみです。最初の三つは再配置を含む実際のロード済みイメージから取得し、フラグの意味は推測しません。許可範囲内の部分読み取りは可能ですが、不明なバイトにまたがるアクセスと全書き込みは、コピーサービスや MDL 別名経由でも拒否されます。`DriverObject.Flags` は不透明です。ビューは模擬ライフサイクル全体で有効で、未使用でも未再構築の環境依存を残します。記号定数やネイティブ実行状態の復元権限は与えません。
+
+実行には `DriverOptions.Contract` または契約を選択できる入口で `checked-x64` を指定する必要があります。元の C v1 シナリオ入口は Legacy を使うため、このビューを有効化できません。UNPACK は既定で checked を選択します。ソフトウェアの書き込みフックはストアの確定後に停止する場合があるため、Legacy はイメージ読み込みや観測の開始前に拒否されます。

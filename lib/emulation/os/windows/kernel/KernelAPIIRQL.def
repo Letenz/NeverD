@@ -89,6 +89,8 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
 NEVERD_KERNEL_IRQL_API(RtlCompareUnicodeString, Passive)
 NEVERD_KERNEL_IRQL_API(RtlEqualUnicodeString, Passive)
 NEVERD_KERNEL_IRQL_API(MmGetSystemRoutineAddress, Passive)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmisaddressvalid
+NEVERD_KERNEL_IRQL_API(MmIsAddressValid, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmapiospace
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmapiospaceex
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmunmapiospace

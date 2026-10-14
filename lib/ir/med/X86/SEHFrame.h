@@ -29,7 +29,8 @@ std::optional<uint64_t> proveSEHEstablisherFrame(
     const TargetRegInfo &TRI, bool OrdinaryEntry,
     llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false,
     std::vector<int> *ProtectedSources = nullptr,
-    std::map<int, std::set<va_t>> *ProtectedCalls = nullptr);
+    std::map<int, std::set<va_t>> *ProtectedCalls = nullptr,
+    bool SourceProjection = false, bool *IndependentEntries = nullptr);
 } // namespace x86_seh
 } // namespace neverd
 

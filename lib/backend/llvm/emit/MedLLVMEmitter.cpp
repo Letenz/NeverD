@@ -751,6 +751,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // bodies. Validate mutable storage and metadata before any such traversal,
   // then reuse the same plan during emission.
   for (const auto &Func : Funcs) {
+    if (Func.HasUnresolvedSEHFrame)
+      throw std::runtime_error(
+          "Windows SEH source projection has an unresolved runtime stack in " +
+          Func.Name);
     for (const auto &Block : Func.Blocks)
       for (const auto &Op : Block.Ops) {
         if (isMedRawEnvironmentRequirement(Op))

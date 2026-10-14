@@ -11,8 +11,10 @@
 
 #include "DriverScenario.h"
 
+#include "../kernel/KernelLoaderView.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverLoaderViewJSON.h"
 #include "DriverSchedulingJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
@@ -2068,6 +2070,9 @@ llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
 }
 
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
+  if (Options.LoaderView)
+    if (auto E = kernel_loader_view::validate(*Options.LoaderView))
+      return E;
   if (auto E = driver_cpuid::validate(Options.CPUID))
     return E;
   if (Options.Scheduling)
@@ -2478,6 +2483,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!Parsed)
       return Parsed.takeError();
     Base.CPUID = std::move(*Parsed);
+  }
+  if (const auto *View = Object->get(LoaderViewField)) {
+    auto Parsed = driver_loader_view::parse(*View);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.LoaderView = std::move(*Parsed);
   }
   if (const auto *Unload = Object->get(UnloadField)) {
     auto Boolean = Unload->getAsBoolean();

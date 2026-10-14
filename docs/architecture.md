@@ -5521,7 +5521,24 @@ Import veneers require their immutable indirect-jump bytes and exact IAT
 displacement; an address cache supplies no callable authority.
 Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
 rechecks the same dependencies. Unproved writable formats and opaque calls
-retain their refusal, so this contract does not yet close the x64 xcpt4 case.
+retain their refusal for invocation identity and native reconstruction.
+
+Source analysis has a separate `LowSEHFrameUse::SourceProjection` request.
+It checks the decoded unwind/prologue and SP stability throughout each
+protected range, but can retain an unknown runtime SP when independent entries
+prevent an entry-relative identity. Live register values at those entries are
+explicitly unknown, including on an ordinary path reaching the same block.
+Disconnected protected paths without a published ordinary entry still refuse.
+Shared ordinary/exceptional handlers merge their SP inputs separately. No
+saved memory or local-unwind receipt is created by this projection.
+`med/X86/SEHSourceRoots` owns these abstract entry definitions. MedIR and HighIR
+retain `HasUnresolvedSEHFrame`; HighC prints the limitation and unknown values,
+and LLVM emission rejects this source-only function. Patch/lift conversion
+keeps the strict invocation proof. This restores the x64 xcpt4 source body
+without asserting a native frame-preservation contract across its CRT calls.
+Source frame checks also follow resolved switches only when every published
+target agrees with the CFG; absent, duplicate and unsafe dispatch records
+refuse. The saved-memory interpreter retains its independent stricter domain.
 
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)

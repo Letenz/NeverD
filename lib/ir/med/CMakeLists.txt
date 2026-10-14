@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationRoots.cpp
   X86/RegistrationReachability.cpp
   X86/SEHFrame.cpp
+  X86/SEHSourceRoots.cpp
   abi/MedABIPass.cpp
   abi/MedABIPassI386.cpp
   abi/MedABIPassSupport.cpp
