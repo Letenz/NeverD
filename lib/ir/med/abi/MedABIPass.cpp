@@ -1960,6 +1960,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // int+FP overflow) leaves the run empty, falling back to the 8-byte-slot
       // model below.  The covered slots are cleared so that model does not also
       // emit them.
+      // The stack offset of each value the overflow run appends to FoundFP.
+      std::vector<int64_t> FPOverflowOffsets;
       if (CI.IsIndirect && !FPStackByOff.empty() && !FPParamRegs.empty() &&
           static_cast<int>(FoundFP.size()) ==
               static_cast<int>(FPParamRegs.size())) {
@@ -1970,6 +1972,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (Entry.first != Next)
             break; // gap ends the contiguous overflow run
           FoundFP.push_back(Entry.second);
+          FPOverflowOffsets.push_back(Entry.first - CallLayout.CallStackBase);
           if (SlotSize > 0) {
             int Slot =
                 NumRegArgSlots + static_cast<int>(Entry.first / SlotSize);
@@ -2084,6 +2087,13 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         }
       }
       std::vector<MedVar> IntPart, StackPart;
+      // Each stack argument's offset from the first stack argument: the
+      // slot the stack scan found it in.
+      const int StackArgBase = StackAfterUsedRegisters ? FirstStackSlot
+                               : DarwinVarArgBase >= 0
+                                   ? DarwinVarArgBase
+                                   : static_cast<int>(IntParamRegs.size());
+      std::vector<int64_t> StackPartOffsets;
       for (int K = 0; K < AssembleEnd; ++K) {
         const bool Gap = !FoundMask[K];
         if (Gap && !FillGaps) {
@@ -2123,6 +2133,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             IntPart.push_back(A);
         } else {
           StackPart.push_back(A);
+          StackPartOffsets.push_back(static_cast<int64_t>(K - StackArgBase) *
+                                     IntegerLayout.SlotBytes);
         }
         // A wide stack argument (an 8-byte double passed whole) covers several
         // pointer slots.  For an INDIRECT call the callee arity is unknown, so
@@ -2160,6 +2172,25 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         CI.IntegerRegisterArgCount = static_cast<int>(IntPart.size());
         CI.FloatingRegisterArgCount =
             static_cast<int>(std::min(FoundFP.size(), FPParamRegs.size()));
+        // The stack values follow in Args: the FP overflow run, then the slot
+        // model's arguments. A truncated FoundFP loses its last overflow
+        // values.
+        const size_t Overflow =
+            FoundFP.size() - static_cast<size_t>(CI.FloatingRegisterArgCount);
+        CI.StackArgumentOffsets.clear();
+        CI.StackArgumentSlotBytes = 0;
+        if (Overflow <= FPOverflowOffsets.size() &&
+            IntegerLayout.SlotBytes > 0) {
+          CI.StackArgumentOffsets.assign(FPOverflowOffsets.begin(),
+                                         FPOverflowOffsets.begin() + Overflow);
+          llvm::append_range(CI.StackArgumentOffsets, StackPartOffsets);
+          if (llvm::all_of(CI.StackArgumentOffsets,
+                           [](int64_t Offset) { return Offset >= 0; }))
+            CI.StackArgumentSlotBytes =
+                static_cast<uint16_t>(IntegerLayout.SlotBytes);
+          else
+            CI.StackArgumentOffsets.clear();
+        }
       }
       for (auto &A : IntPart)
         CI.Args.push_back(A);
