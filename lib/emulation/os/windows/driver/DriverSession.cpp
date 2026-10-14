@@ -1079,6 +1079,15 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       }
       if (PendingEnvironmentRead) {
         const auto &Action = PendingEnvironmentRead->Request;
+        if (Action.Source == WindowsX64ExecutionPolicy::Action::Kind::
+                                 ReadDisabledShadowStack) {
+          // CR4.CET is disabled by this profile. RDSSPD also preserves the
+          // upper destination bits; no register write or transport helper is
+          // involved. The instruction has already consumed its normal budget.
+          Kernel.recordUnpackEnvironmentRead();
+          NextPC = PendingEnvironmentRead->NextPC;
+          continue;
+        }
         if (Action.Source ==
             WindowsX64ExecutionPolicy::Action::Kind::ReadCPUID) {
           auto Leaf = CPU.reg(X64Register::AX);

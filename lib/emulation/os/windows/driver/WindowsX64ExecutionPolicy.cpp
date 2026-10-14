@@ -12,7 +12,9 @@
 
 #include "WindowsX64ExecutionPolicy.h"
 
+#include "../../../../lift/X86/X86CetEncoding.h"
 #include "../../../arch/x86_64/X64Decoder.h"
+#include "../../../arch/x86_64/X64Machine.h"
 #include "../kernel/WindowsKernelLayout.h"
 
 #include "llvm/Support/Error.h"
@@ -89,6 +91,18 @@ WindowsX64ExecutionPolicy::inspectUncached(llvm::ArrayRef<uint8_t> Bytes,
     return failure(std::string(policy::Rejected) + Insn->mnemonic);
   };
   const cs_x86 &X86 = Insn->detail->x86;
+  if (Insn->id == X86_INS_RDSSPD || Insn->id == X86_INS_RDSSPQ) {
+    // The driver profile never enables CET or admits control/MSR writes that
+    // could enable it. Legacy Unicorn also resets with CR4.CET clear. CPUID
+    // declarations supply query results, not a different execution profile.
+    static_assert(!(x64::CR4 & (uint64_t{1} << 23)));
+    if (!x86cet::canonicalEncoding(Bytes, x86cet::Operation::Read) ||
+        X86.op_count != 1 || X86.operands[0].type != X86_OP_REG ||
+        X86.operands[0].size != (Insn->id == X86_INS_RDSSPQ ? 8 : 4))
+      return Rejected();
+    return std::optional<Action>{
+        {Action::Kind::ReadDisabledShadowStack, std::nullopt}};
+  }
   if (Insn->id == X86_INS_CPUID) {
     if (X86.prefix[0] == X86_PREFIX_LOCK || X86.op_count)
       return Rejected();

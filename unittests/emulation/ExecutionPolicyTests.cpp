@@ -79,6 +79,55 @@ TEST_F(DriverExecutionPolicy, CPUIDRequiresAnEnvironmentAction) {
   }
 }
 
+TEST_F(DriverExecutionPolicy, DisabledShadowStackReadsUseExactRegisterForms) {
+  for (bool Wide : {false, true})
+    for (unsigned Register = 0; Register != 16; ++Register) {
+      SCOPED_TRACE(Wide);
+      SCOPED_TRACE(Register);
+      std::vector<uint8_t> Bytes{0xf3};
+      if (Wide || Register >= 8)
+        Bytes.push_back(uint8_t(0x40 | (Wide ? 8 : 0) |
+                                (Register >= 8 ? 1 : 0)));
+      Bytes.insert(Bytes.end(), {0x0f, 0x1e, uint8_t(0xc8 | (Register & 7))});
+      for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+        auto Action = Policy.inspect(Bytes, 0x1000);
+        ASSERT_TRUE(bool(Action)) << llvm::toString(Action.takeError());
+        ASSERT_TRUE(*Action);
+        EXPECT_EQ((**Action).Source,
+                  WindowsX64ExecutionPolicy::Action::Kind::
+                      ReadDisabledShadowStack);
+        EXPECT_FALSE((**Action).Destination);
+      }
+    }
+}
+
+TEST_F(DriverExecutionPolicy, ShadowStackReadDoesNotAdmitOtherCETEncodings) {
+  for (const std::vector<uint8_t> &Bytes : {
+           std::vector<uint8_t>{0xf0, 0xf3, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0xf0, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0xf3, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0x66, 0xf3, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0x44, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0x0f, 0x1e, 0xc8, 0x90},
+           std::vector<uint8_t>{0xf3, 0x48, 0x0f, 0x1e},
+           std::vector<uint8_t>{0xf3, 0x0f, 0xae, 0xe8},
+           std::vector<uint8_t>{0xf3, 0x48, 0x0f, 0xae, 0xe8},
+           std::vector<uint8_t>{0xf3, 0x0f, 0x01, 0xea}}) {
+    auto Action = Policy.inspect(Bytes, 0x1000);
+    ASSERT_FALSE(bool(Action));
+    llvm::consumeError(Action.takeError());
+  }
+  rejectsEnvironment({0x0f, 0x22, 0xe0}, "mov"); // mov cr4,rax.
+  rejectsEnvironment({0x0f, 0x30}, "wrmsr");
+  rejectsEnvironment({0xf3, 0x0f, 0x01, 0x28}, "rstorssp");
+  rejectsEnvironment({0x0f, 0x38, 0xf6, 0x08}, "wrssd");
+  rejectsEnvironment({0x48, 0x0f, 0x38, 0xf6, 0x08}, "wrssq");
+  rejectsEnvironment({0x66, 0x0f, 0x38, 0xf5, 0x08}, "wrussd");
+  rejectsEnvironment({0x66, 0x48, 0x0f, 0x38, 0xf5, 0x08}, "wrussq");
+  rejectsEnvironment({0xf3, 0x0f, 0x01, 0xe8}, "setssbsy");
+  rejectsEnvironment({0xf3, 0x0f, 0xae, 0x30}, "clrssbsy");
+}
+
 TEST_F(DriverExecutionPolicy, RepeatedInspectionUsesCompleteLiveBytes) {
   for (unsigned Repeat = 0; Repeat < 3; ++Repeat) {
     accepts({0x90});
