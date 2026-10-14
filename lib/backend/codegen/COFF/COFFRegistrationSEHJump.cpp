@@ -25,7 +25,8 @@ bool RegistrationSEHJumpContract::readsSourceBuffer(int64_t Offset,
 
 llvm::Expected<RegistrationSEHJumpContract>
 bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
-             const RegistrationFrame &Frame) {
+             const RegistrationFrame &Frame,
+             const std::set<const llvm::Instruction *> &IncomingSetup) {
   using x86_registration::SEHJumpRole;
   const auto Expected = getX86RegistrationSEHJumpCalls(Source);
   if (!Expected)
@@ -95,7 +96,7 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
             return rejectIR("native register snapshot has an unknown role");
         }
       } else if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
-                 Slot && Slot != Frame.Slot)
+                 Slot && Slot != Frame.Slot && !IncomingSetup.count(Slot))
         Registers.insert(Slot);
       const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
       const auto *Operation =

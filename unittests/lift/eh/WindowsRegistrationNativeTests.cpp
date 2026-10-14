@@ -2110,12 +2110,14 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           },
           Mutation == 0 ? "no recovered callback" : "normal parent-frame ABI");
   bool HasIncomingFrame = false;
+  unsigned IncomingLoadCount = 0;
   for (const auto &F : *Module)
     for (const auto &Block : F)
       for (const auto &I : Block)
-        HasIncomingFrame |=
-            I.getMetadata(windows_eh_md::RegistrationIncomingFrameAttachment) !=
-            nullptr;
+        if (I.getMetadata(windows_eh_md::RegistrationIncomingFrameAttachment)) {
+          HasIncomingFrame = true;
+          IncomingLoadCount += llvm::isa<llvm::LoadInst>(I);
+        }
   if (HasIncomingFrame)
     for (unsigned Mutation = 0; Mutation != 5; ++Mutation)
       RejectMutation(
@@ -2166,7 +2168,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           : Mutation == 3 ? "source memory"
           : Mutation == 4 ? "execution segment"
                           : "physical stack projection");
-  if (HasIncomingFrame)
+  if (IncomingLoadCount >= 2)
     RejectMutation(
         "swapped incoming recipes keep their original execution events",
         [](llvm::Function &F) {

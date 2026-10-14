@@ -271,14 +271,15 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       ReplayMed, *Frame, *CallbackMap, ExceptionBridges, NativeFunctions);
   if (!ExceptionFields)
     return ExceptionFields.takeError();
-  auto Jumps = coff_registration::bindSEHJumps(ReplayMed, Function, *Frame);
-  if (!Jumps)
-    return Jumps.takeError();
   std::set<const llvm::Instruction *> IncomingAccesses, IncomingSetup;
   if (llvm::Error Error =
           validateIncomingCallerFrame(Function, ReplayMed, NativeFunctions,
                                       IncomingAccesses, IncomingSetup))
     return Error;
+  auto Jumps = coff_registration::bindSEHJumps(ReplayMed, Function, *Frame,
+                                               IncomingSetup);
+  if (!Jumps)
+    return Jumps.takeError();
   const auto &States = *Replay.RegistrationStates;
   const auto &Scopes = Source.Registration->Scopes;
   struct Dispatch {

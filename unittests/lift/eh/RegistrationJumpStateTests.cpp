@@ -174,7 +174,9 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
       EXPECT_EQ(Resume.CaptureCall, 0x1100u);
       EXPECT_EQ(Resume.TargetVA, 0x1105u);
       EXPECT_EQ(Resume.StackOffset, -192);
-      EXPECT_EQ(Resume.ValueOffset, -196);
+      // Capture reserves 16 bytes; its successor releases those arguments,
+      // then longjmp reserves eight bytes and writes its value at ESP + 4.
+      EXPECT_EQ(Resume.ValueOffset, -192 + 16 - 8 + 4);
     } else {
       EXPECT_FALSE(Result.SEHJumpCapturesComplete);
       EXPECT_TRUE(Result.SEHJumpCaptures.empty());

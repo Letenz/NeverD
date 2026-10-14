@@ -3778,12 +3778,15 @@ for registration_case in filter nested-finally continue-search continue-executio
 done
 ```
 
-The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero` and
-`longjmp-filter`. These fixtures check a resumed nonvolatile register and try
-level, the requested jump value (including zero becoming one), finally's
+The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
+`longjmp-filter` and `longjmp-parameter`. These fixtures check a resumed
+nonvolatile register and try level, the requested jump value (including zero
+becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
 successive invocations. Original and generated caller PCs are distinguished,
 and each generated image is executed at preferred and forced-rebased addresses.
+The parameter case reads the real caller argument in both the resumed parent
+and its filter, including the caller-frame slot introduced during outlining.
 CLI coverage includes both patch modes from emitted IR and directly from the
 original EXE, with default optimization and `--no-opt`. Both pipeline paths
 must preserve `optnone` runtime callback roots and register snapshots.

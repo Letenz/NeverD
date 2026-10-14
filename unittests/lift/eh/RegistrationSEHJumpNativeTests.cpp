@@ -25,15 +25,23 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
                        const BinaryImage &Image) {
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
   using x86_registration::SEHJumpRole;
-  for (unsigned Mutation = 0; Mutation != 26; ++Mutation) {
+  bool HasCallerFrame = false;
+  for (const auto &I : Parent.getEntryBlock())
+    HasCallerFrame |=
+        I.getMetadata(windows_eh_md::RegistrationCallerFrameAttachment) !=
+        nullptr;
+  for (unsigned Mutation = 0; Mutation != (HasCallerFrame ? 29 : 26);
+       ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Module = llvm::CloneModule(*Parent.getParent());
     auto *Function = Module->getFunction(Parent.getName());
     llvm::CallBase *Capture = nullptr, *Resume = nullptr;
-    llvm::AllocaInst *Snapshot = nullptr;
+    llvm::AllocaInst *Snapshot = nullptr, *CallerFrame = nullptr;
     llvm::StoreInst *State = nullptr;
     for (auto &Block : *Function)
       for (auto &I : Block) {
+        if (I.getMetadata(windows_eh_md::RegistrationCallerFrameAttachment))
+          CallerFrame = llvm::dyn_cast<llvm::AllocaInst>(&I);
         if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
           if (const auto *Callee = Call->getCalledFunction()) {
             if (Callee->getName() == "_setjmp3")
@@ -116,7 +124,7 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
       else
         rewrite_source::setOriginalVA(*Unwind, 0x401000);
     }
-    if (Mutation >= 19) {
+    if (Mutation >= 19 && Mutation <= 25) {
       auto *Unwind = Module->getFunction(x86_registration::SEHJumpUnwindName);
       auto *Runtime =
           Module->getFunction(x86_registration::SEHSourceJumpUnwindName);
@@ -145,6 +153,26 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
       }
       if (Mutation == 23)
         rewrite_source::setOriginalVA(*Runtime, 0x401000);
+    }
+    if (Mutation >= 26) {
+      ASSERT_TRUE(CallerFrame);
+      if (Mutation == 26) {
+        // Even a same-value restore would violate the immutable binding.
+        auto *Saved = B.CreateLoad(B.getPtrTy(), CallerFrame);
+        B.CreateStore(Saved, CallerFrame);
+      } else if (Mutation == 27) {
+        // Metadata alone cannot exempt a mutable register from snapshots.
+        auto *Register =
+            llvm::cast<llvm::AllocaInst>(Restore->getPointerOperand());
+        Register->setMetadata(
+            windows_eh_md::RegistrationCallerFrameAttachment,
+            CallerFrame->getMetadata(
+                windows_eh_md::RegistrationCallerFrameAttachment));
+      } else {
+        for (auto *User : CallerFrame->users())
+          if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(User))
+            Store->setOperand(0, llvm::ConstantPointerNull::get(B.getPtrTy()));
+      }
     }
     ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
     auto Error = validateCOFFRegistrationIR(*Function, Source, Image);

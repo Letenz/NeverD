@@ -41,6 +41,10 @@ _registration_entry:
   call __longjmpex
   ud2
 .Lresumed:
+#if REGISTRATION_CASE == 12
+  cmp dword ptr [ebp+8],7
+  jne .Lbad
+#endif
   cmp dword ptr [ebp-4],0
   jne .Lbad
   cmp ebx,6
@@ -59,7 +63,12 @@ _registration_entry:
 .Lfilter:
   mov eax,[ebp-100]
   imul eax,eax,10
+#if REGISTRATION_CASE == 12
+  add eax,[ebp+8]
+  sub eax,4
+#else
   add eax,3
+#endif
   mov [_registration_trace],eax
   mov eax,1
   ret

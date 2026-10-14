@@ -9,7 +9,7 @@ void *_ReturnAddress(void);
 unsigned long __readfsdword(unsigned long);
 #pragma intrinsic(_ReturnAddress)
 #pragma intrinsic(__readfsdword)
-#if REGISTRATION_CASE == 5 || REGISTRATION_CASE == 6
+#if REGISTRATION_CASE == 5 || REGISTRATION_CASE == 6 || REGISTRATION_CASE == 12
 extern int registration_entry(int);
 #else
 extern int registration_entry(void);
@@ -32,7 +32,8 @@ unsigned registration_trace;
 #define EXPECTED_TRACE 177
 #elif REGISTRATION_CASE == 7 || REGISTRATION_CASE == 8
 #define EXPECTED_TRACE 7u
-#elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10
+#elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10 ||                     \
+    REGISTRATION_CASE == 12
 #define EXPECTED_TRACE 23u
 #elif REGISTRATION_CASE == 11
 #define EXPECTED_TRACE 3u
@@ -63,7 +64,7 @@ void mainCRTStartup(void) {
     registration_parameter_after = 0;
     value = registration_call_entry();
     registration_trace += registration_parameter_after * 10;
-#elif REGISTRATION_CASE == 5
+#elif REGISTRATION_CASE == 5 || REGISTRATION_CASE == 12
     value = registration_entry(7);
 #else
     value = registration_entry();

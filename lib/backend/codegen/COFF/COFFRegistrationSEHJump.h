@@ -19,9 +19,12 @@ struct RegistrationSEHJumpContract {
 
 /// Rebind source calls, private buffers, register snapshots and state restores
 /// from actual post-edit IR. The returned calls alone may borrow these buffers.
+/// IncomingSetup must come from successful validateIncomingCallerFrame replay;
+/// its immutable runtime frame binding is not part of the logical registers.
 llvm::Expected<RegistrationSEHJumpContract>
 bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
-             const RegistrationFrame &Frame);
+             const RegistrationFrame &Frame,
+             const std::set<const llvm::Instruction *> &IncomingSetup);
 
 llvm::Error validateSEHJumpUnwindBridge(const llvm::Function &Parent,
                                         va_t SourceUnwind);
