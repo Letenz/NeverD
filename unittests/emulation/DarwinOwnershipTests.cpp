@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinDirectoryOwnershipTestData.h"
+#include "DarwinSymbolicOwnershipTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
@@ -35,8 +36,10 @@ protected:
     reset();
   }
   void reset(uint32_t ObservedUID = 777) {
-    if (Options)
-      ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    if (Options) {
+      auto Error = validateFileOptions(*Options);
+      ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    }
     Files = std::make_unique<DarwinFiles>(
         *Space, Options, process_defaults::Output, ObservedUID, Credentials);
   }
@@ -437,13 +440,14 @@ TEST_P(DarwinOwnershipTest,
           diagnostic::DirectoryMutated);
   refused(ServiceKind::Fchown, {FD, 501, 20}, diagnostic::FileMutatedMetadata);
 }
-TEST_P(DarwinOwnershipTest, LinksFollowActualSearchAndFinalKindsStayUnknown) {
+TEST_P(DarwinOwnershipTest,
+       LinksFollowSearchAndUnknownSymbolicMetadataStaysUnknown) {
   Options->SymbolicLinks["/alias"] = {'d', 'a', 't', 'a'};
   Options->SymbolicLinks["/via"] = {'/'};
   reset();
   EXPECT_EQ(ok(ServiceKind::Chown, {path("/alias"), 501, 20}), 0u);
   refused(ServiceKind::FchownAt, {UINT64_MAX, path("/alias"), 501, 20, 0x20},
-          diagnostic::FileOwnershipTarget);
+          diagnostic::FileMetadata);
   EXPECT_EQ(
       ok(ServiceKind::FchownAt, {UINT64_MAX, path("/via/data"), 501, 20, 0x20}),
       0u);
@@ -758,7 +762,7 @@ TEST_P(DarwinOwnershipTest,
       EXPECT_EQ(status(Child), Before);
     }
     refused(ServiceKind::Fchown, {Link, UINT32_MAX, UINT32_MAX},
-            diagnostic::FileOwnershipTarget);
+            diagnostic::FileOwnershipProvider);
     auto Parent = changed(darwin_test::directoryOwnershipRecord());
     llvm::support::endian::write16le(Parent.data() + 14, 5);
     llvm::support::endian::write64le(Parent.data() + 104, 80);
@@ -1025,7 +1029,7 @@ TEST_P(DarwinOwnershipTest, CreatedDirectoryGroupChangesGovernEveryChildKind) {
             diagnostic::FileOwnershipProvider);
     EXPECT_EQ(status(F), File);
     refused(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX},
-            diagnostic::FileOwnershipTarget);
+            diagnostic::FileOwnershipProvider);
     EXPECT_EQ(status(L), Link);
   }
 }
@@ -1073,6 +1077,354 @@ TEST_P(DarwinOwnershipTest,
   std::array<uint8_t, 32> After;
   llvm::cantFail(Space->read(Base + 256, After));
   EXPECT_EQ(After, Input);
+}
+
+TEST(DarwinSymbolicOwnershipOptions,
+     CompleteUniqueOrdinaryGrantsStayPurposeSpecific) {
+  const auto Good = darwin_test::symbolicOwnershipOptions();
+  auto E = validateFileOptions(Good);
+  ASSERT_FALSE(bool(E)) << llvm::toString(std::move(E));
+  for (unsigned I = 0; I != 8; ++I) {
+    auto O = Good;
+    switch (I) {
+    case 0:
+      O.Metadata.erase("/dir/link");
+      break;
+    case 1:
+      O.Metadata["/dir/link"].Flags = 1;
+      break;
+    case 2:
+      O.Metadata["/dir/link"].Mode |= 04000;
+      break;
+    case 3:
+      O.Metadata["/dir/link"].LinkCount = 2;
+      break;
+    case 4:
+      O.Metadata["/dir/link"].Inode = O.Metadata["/dir/other"].Inode;
+      break;
+    case 5:
+      O.OwnershipMutations->Objects["/dir/link"].Nanoseconds = -1;
+      break;
+    case 6:
+      O.OwnershipMutations->Objects["/dir/link"].Nanoseconds = 1000000000;
+      break;
+    case 7:
+      O.OwnershipMutations->Objects["/missing"] = {1, 2};
+      break;
+    }
+    auto Error = validateFileOptions(O);
+    ASSERT_TRUE(bool(Error)) << I;
+    EXPECT_EQ(llvm::toString(std::move(Error)), diagnostic::FileOwnershipOption)
+        << I;
+  }
+  for (bool Timestamp : {false, true}) {
+    auto O = Good;
+    if (Timestamp)
+      O.TimestampMutations.emplace().Objects["/dir/link"] = {1, 2};
+    else
+      O.ModeMutations.emplace().Objects["/dir/link"] = {1, 2};
+    auto Error = validateFileOptions(O);
+    ASSERT_TRUE(bool(Error));
+    EXPECT_EQ(llvm::toString(std::move(Error)),
+              Timestamp ? diagnostic::FileTimestampOption
+                        : diagnostic::FileModeOption);
+  }
+  for (bool Enabled : {false, true}) {
+    auto O = Good;
+    O.OwnershipMutations->CreatedSymbolicLinkObjects = Enabled;
+    EXPECT_FALSE(O.OwnershipMutations->CreatedRegularObjects);
+    EXPECT_FALSE(O.OwnershipMutations->CreatedDirectoryObjects);
+    O.CreationPolicy->Namespace.reset();
+    auto Error = validateFileOptions(O);
+    EXPECT_EQ(bool(Error), Enabled);
+    llvm::consumeError(std::move(Error));
+    O.CreationPolicy.reset();
+    Error = validateFileOptions(O);
+    EXPECT_EQ(bool(Error), Enabled);
+    llvm::consumeError(std::move(Error));
+  }
+}
+TEST_P(DarwinOwnershipTest, SymbolicWholeRecordsSelectVnodeOrFollowedTarget) {
+  for (uint64_t High : {0ULL, 0xffffffff00000000ULL, 0x13579bdf00000000ULL}) {
+    Options = darwin_test::symbolicOwnershipOptions();
+    Credentials = darwin_test::symbolicOwnershipCredentials();
+    reset(501);
+    const auto L = open("/dir/link", 0x200000), F = open("/data"),
+               D = open("/dir");
+    const auto Link = darwin_test::symbolicOwnershipRecord(),
+               Target = status(F), Parent = status(D);
+    EXPECT_EQ(status(L), Link);
+    EXPECT_EQ(ok(ServiceKind::Fchown,
+                 {High | L, High | UINT32_MAX, High | UINT32_MAX}),
+              0u);
+    EXPECT_EQ(status(L), Link);
+    EXPECT_EQ(ok(ServiceKind::Fchown, {High | L, High | 501, High | 20}), 0u);
+    EXPECT_EQ(status(L), changed(Link, 501, 20, 181, 182));
+    EXPECT_EQ(status(F), Target);
+    EXPECT_EQ(status(D), Parent);
+    EXPECT_EQ(ok(ServiceKind::FchownAt, {High | uint32_t(-2), path("/dir/link"),
+                                         High | 501, High | 31, High | 0x20}),
+              0u);
+    EXPECT_EQ(status(L), changed(Link, 501, 31, 181, 182));
+    EXPECT_EQ(ok(ServiceKind::Chown,
+                 {path("/dir/link"), High | UINT32_MAX, High | 20}),
+              0u);
+    EXPECT_EQ(status(F), changed(Target));
+    EXPECT_EQ(status(L), changed(Link, 501, 31, 181, 182));
+    EXPECT_EQ(ok(ServiceKind::FchownAt,
+                 {High | D, path("link"), High | 501, High | 31, High}),
+              0u);
+    EXPECT_EQ(status(F), changed(Target, 501, 31));
+    EXPECT_EQ(status(D), Parent);
+    error(ServiceKind::Fchown, {High | UINT32_MAX, High | 501, High | 31}, 9);
+    error(ServiceKind::FchownAt,
+          {High | UINT32_MAX, UINT64_MAX, High | 501, High | 31, High | 8}, 22);
+    error(ServiceKind::FchownAt,
+          {High | UINT32_MAX, UINT64_MAX, High | 501, High | 31, High | 0x20},
+          14);
+    EXPECT_EQ(status(L), changed(Link, 501, 31, 181, 182));
+  }
+}
+TEST_P(DarwinOwnershipTest,
+       SymbolicDanglingAndCyclicTargetsDoNotAffectRetainedRoutes) {
+  Options = darwin_test::symbolicOwnershipOptions();
+  Credentials = darwin_test::symbolicOwnershipCredentials();
+  reset(501);
+  for (unsigned I : {1u, 2u}) {
+    const auto L = open(darwin_test::SymbolicOwnershipNames[I], 0x200000);
+    const auto Before = darwin_test::symbolicOwnershipRecord(I);
+    EXPECT_EQ(status(L), Before);
+    EXPECT_EQ(ok(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX}), 0u);
+    EXPECT_EQ(status(L), Before);
+    EXPECT_EQ(ok(ServiceKind::FchownAt,
+                 {UINT64_MAX, path(darwin_test::SymbolicOwnershipNames[I]), 501,
+                  20, 0x20}),
+              0u);
+    const auto After = changed(Before, 501, 20, 181 + 2 * I, 182 + 2 * I);
+    EXPECT_EQ(status(L), After);
+    error(ServiceKind::Chown,
+          {path(darwin_test::SymbolicOwnershipNames[I]), 501, 20},
+          I == 1 ? 2 : 62);
+    error(
+        ServiceKind::FchownAt,
+        {UINT64_MAX, path(darwin_test::SymbolicOwnershipNames[I]), 501, 20, 0},
+        I == 1 ? 2 : 62);
+    EXPECT_EQ(status(L), After);
+  }
+}
+TEST_P(DarwinOwnershipTest,
+       SymbolicAuthorityAndRouteSpecificMetadataOrderingStaySeparate) {
+  for (unsigned State = 0; State != 4; ++State) {
+    SCOPED_TRACE(State);
+    Options = darwin_test::symbolicOwnershipOptions();
+    Credentials = darwin_test::symbolicOwnershipCredentials();
+    Options->MutableDirectories.clear();
+    Options->DirectoryMutationPolicies.clear();
+    Options->MovableDirectories.clear();
+    Options->SwapRenameDirectories.clear();
+    Options->MutableSymbolicLinks.clear();
+    Options->SymbolicLinkMutationPolicies.clear();
+    Options->CreationPolicy.reset();
+    Options->OwnershipMutations->Objects.erase("/dir/link");
+    if (State & 1)
+      Options->Metadata.erase("/dir/link");
+    if (State & 2)
+      Options->OwnershipMutations.reset();
+    reset(501);
+    const auto L = open("/dir/link", 0x200000);
+    refused(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX},
+            State & 1   ? diagnostic::FileMetadata
+            : State & 2 ? diagnostic::FileOwnershipEnvironment
+                        : diagnostic::FileOwnershipProvider);
+    refused(ServiceKind::FchownAt,
+            {UINT64_MAX, path("/dir/link"), UINT32_MAX, UINT32_MAX, 0x20},
+            State & 2   ? diagnostic::FileOwnershipEnvironment
+            : State & 1 ? diagnostic::FileMetadata
+                        : diagnostic::FileOwnershipProvider);
+  }
+  Options = darwin_test::symbolicOwnershipOptions();
+  Credentials = darwin_test::symbolicOwnershipCredentials();
+  reset(501);
+  const auto L = open("/dir/link", 0x200000);
+  const auto Before = status(L);
+  error(ServiceKind::Fchown, {L, 1, UINT32_MAX}, 1);
+  error(ServiceKind::Fchown, {L, UINT32_MAX, 99}, 1);
+  EXPECT_EQ(status(L), Before);
+  Credentials->GroupMembershipUID.reset();
+  reset(501);
+  const auto Unknown = open("/dir/link", 0x200000);
+  refused(ServiceKind::Fchown, {Unknown, UINT32_MAX, 99},
+          diagnostic::FileOrdinaryAuthorizationGroups);
+  EXPECT_EQ(status(Unknown), Before);
+  Credentials.reset();
+  reset(501);
+  refused(ServiceKind::Fchown,
+          {open("/dir/link", 0x200000), UINT32_MAX, UINT32_MAX},
+          diagnostic::FileOrdinaryAuthorizationCredentials);
+}
+TEST_P(DarwinOwnershipTest,
+       SymbolicAliasMovesExchangeAndHeldReuseKeepObjectGrant) {
+  Options = darwin_test::symbolicOwnershipOptions();
+  Credentials = darwin_test::symbolicOwnershipCredentials();
+  reset(501);
+  const auto L = open("/dir/link", 0x200000), Dup = ok(ServiceKind::Dup, {L}),
+             Independent = open("/dir/link", 0x200000), F = open("/data");
+  const auto Target = status(F);
+  auto Expected = darwin_test::symbolicOwnershipRecord();
+  EXPECT_EQ(
+      ok(ServiceKind::LinkAt, {uint32_t(-2), path("/dir/link"), uint32_t(-2),
+                               path("/outside", Base + 128), 0}),
+      0u);
+  llvm::support::endian::write16le(Expected.data() + 14, 2);
+  Expected = changed(Expected, 501, 31, 101, 102);
+  EXPECT_EQ(status(L), Expected);
+  const auto Alias = open("/outside", 0x200000);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {Alias, 501, 20}), 0u);
+  Expected = changed(Expected, 501, 20, 181, 182);
+  for (auto FD : {L, Dup, Independent, Alias})
+    EXPECT_EQ(status(FD), Expected);
+  EXPECT_EQ(status(F), Target);
+  EXPECT_EQ(ok(ServiceKind::Rename,
+               {path("/dir/link"), path("/dir/moved", Base + 128)}),
+            0u);
+  Expected = changed(Expected, 501, 20, 101, 102);
+  EXPECT_EQ(status(L), Expected);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX}), 0u);
+  EXPECT_EQ(status(L), Expected);
+  EXPECT_EQ(ok(ServiceKind::Rename, {path("/dir"), path("/moved", Base + 128)}),
+            0u);
+  EXPECT_EQ(status(L), Expected);
+  EXPECT_EQ(status(Alias), Expected);
+  const auto Other = open("/moved/other", 0x200000);
+  EXPECT_EQ(ok(ServiceKind::RenameAtX,
+               {uint32_t(-2), path("/moved/moved"), uint32_t(-2),
+                path("/moved/other", Base + 128), 2}),
+            0u);
+  EXPECT_EQ(ok(ServiceKind::FchownAt,
+               {UINT64_MAX, path("/moved/moved"), 501, 20, 0x20}),
+            0u);
+  EXPECT_EQ(status(Other), changed(darwin_test::symbolicOwnershipRecord(3), 501,
+                                   20, 187, 188));
+  EXPECT_EQ(status(L), Expected);
+  EXPECT_EQ(ok(ServiceKind::FchownAt,
+               {UINT64_MAX, path("/moved/other"), 501, 31, 0x20}),
+            0u);
+  Expected = changed(Expected, 501, 31, 181, 182);
+  EXPECT_EQ(status(Alias), Expected);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {path("/moved/other")}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {path("/outside")}), 0u);
+  llvm::support::endian::write16le(Expected.data() + 14, 0);
+  Expected = changed(Expected, 501, 31, 101, 102);
+  EXPECT_EQ(status(L), Expected);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {Dup, 501, 20}), 0u);
+  Expected = changed(Expected, 501, 20, 181, 182);
+  EXPECT_EQ(status(L), Expected);
+  EXPECT_EQ(ok(ServiceKind::Symlink,
+               {path("../data"), path("/moved/other", Base + 128)}),
+            0u);
+  const auto Reused = open("/moved/other", 0x200000);
+  const auto New = darwin_test::symbolicOwnershipRecord(0, true);
+  EXPECT_EQ(status(Reused), New);
+  refused(ServiceKind::Fchown, {Reused, UINT32_MAX, UINT32_MAX},
+          diagnostic::FileOwnershipProvider);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {Independent, 501, 31}), 0u);
+  EXPECT_EQ(status(Reused), New);
+  EXPECT_EQ(status(F), Target);
+}
+TEST_P(DarwinOwnershipTest,
+       CreatedSymbolicAuthorityNeedsItsOwnFlagAndKeepsParentGroup) {
+  for (bool Enabled : {false, true}) {
+    Options = darwin_test::symbolicOwnershipOptions(Enabled);
+    Credentials = darwin_test::symbolicOwnershipCredentials();
+    Options->OwnershipMutations->CreatedRegularObjects = true;
+    Options->OwnershipMutations->CreatedDirectoryObjects = true;
+    Options->OwnershipMutations->Objects["/dir"] = {11, 12};
+    reset(501);
+    const auto D = open("/dir"), F = open("/data");
+    const auto Parent = status(D), Target = status(F);
+    EXPECT_EQ(ok(ServiceKind::Symlink,
+                 {path("../data"), path("/dir/new", Base + 128)}),
+              0u);
+    const auto L = open("/dir/new", 0x200000);
+    const auto Before = darwin_test::symbolicOwnershipRecord(0, true);
+    EXPECT_EQ(status(L), Before);
+    const auto ParentAfterCreation = status(D);
+    if (!Enabled) {
+      refused(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX},
+              diagnostic::FileOwnershipProvider);
+      EXPECT_EQ(status(L), Before);
+    } else {
+      EXPECT_EQ(ok(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX}), 0u);
+      EXPECT_EQ(status(L), Before);
+      EXPECT_EQ(ok(ServiceKind::FchownAt,
+                   {UINT64_MAX, path("/dir/new"), 501, 31, 0x20}),
+                0u);
+      EXPECT_EQ(status(L), changed(Before, 501, 31, 101, 102));
+      EXPECT_EQ(status(D), ParentAfterCreation);
+      EXPECT_EQ(ok(ServiceKind::Fchown, {D, UINT32_MAX, UINT32_MAX}), 0u);
+      EXPECT_EQ(status(D), ParentAfterCreation);
+    }
+    EXPECT_EQ(status(F), Target);
+    EXPECT_EQ(llvm::support::endian::read32le(status(D).data() + 28), 20u);
+    EXPECT_NE(status(D), Parent);
+  }
+}
+
+TEST_P(DarwinOwnershipTest,
+       SymbolicMetadataInvalidationIsPermanentAcrossOwnership) {
+  for (bool Attribute : {false, true}) {
+    Options = darwin_test::symbolicOwnershipOptions();
+    Credentials = darwin_test::symbolicOwnershipCredentials();
+    if (Attribute) {
+      Options->ExtendedAttributes["/dir/link"] = {{"user.owner", {1}}};
+      Options->MutableExtendedAttributes.insert("/dir/link");
+    } else
+      Options->SymbolicLinkMutationPolicies.erase("/dir/link");
+    reset(501);
+    const auto L = open("/dir/link", 0x200000), F = open("/data");
+    const auto Target = status(F);
+    EXPECT_EQ(ok(ServiceKind::Fchown, {L, 501, 20}), 0u);
+    EXPECT_EQ(status(L), changed(darwin_test::symbolicOwnershipRecord(), 501,
+                                 20, 181, 182));
+    if (Attribute) {
+      llvm::cantFail(Space->writeInteger(Base + Page * 2, 2, 1));
+      EXPECT_EQ(ok(ServiceKind::FsetXattr, {L, path("user.owner", Base + 128),
+                                            Base + Page * 2, 1, 0, 0}),
+                0u);
+    } else
+      EXPECT_EQ(ok(ServiceKind::Rename,
+                   {path("/dir/link"), path("/dir/moved", Base + 128)}),
+                0u);
+    refused(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX},
+            diagnostic::SymbolicLinkMutatedMetadata);
+    refused(ServiceKind::Fchown, {L, 501, 31},
+            diagnostic::SymbolicLinkMutatedMetadata);
+    EXPECT_EQ(status(F), Target);
+  }
+}
+TEST_P(DarwinOwnershipTest,
+       SymbolicNonownerNoRightsStillNeedsItsIndependentProvider) {
+  for (bool Provider : {false, true}) {
+    Options = darwin_test::symbolicOwnershipOptions();
+    Credentials = darwin_test::symbolicOwnershipCredentials();
+    Options->Metadata["/dir/link"].UID = 700;
+    if (!Provider)
+      Options->OwnershipMutations->Objects.erase("/dir/link");
+    reset(501);
+    const auto L = open("/dir/link", 0x200000);
+    auto Before = darwin_test::symbolicOwnershipRecord();
+    llvm::support::endian::write32le(Before.data() + 24, 700);
+    EXPECT_EQ(status(L), Before);
+    if (Provider) {
+      EXPECT_EQ(ok(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX}), 0u);
+      EXPECT_EQ(status(L), Before);
+      EXPECT_EQ(ok(ServiceKind::Fchown, {L, 700, 31}), 0u);
+      EXPECT_EQ(status(L), changed(Before, 700, 31, 181, 182));
+    } else
+      refused(ServiceKind::Fchown, {L, 700, 31},
+              diagnostic::FileOwnershipProvider);
+    error(ServiceKind::Fchown, {L, 501, 31}, 1);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinOwnershipTest,

@@ -9,6 +9,7 @@
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinSymbolicLinkFileSystemTestData.h"
+#include "DarwinSymbolicOwnershipTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
 #include "DarwinTimestampMutationTestData.h"
@@ -803,7 +804,7 @@ TEST(ProcessReport, DarwinCreatedDirectoryFileSystemNeedsItsOwnCompletePolicy) {
     }
 }
 
-TEST(ProcessReport, DarwinSymbolicFilesystemFlagIsStrictAndPurposeSpecific) {
+TEST(ProcessReport, DarwinSymbolicCreationFlagsAreStrictAndPurposeSpecific) {
   for (const char *Purpose :
        {"filesystem_observations", "mode_mutations", "ownership_mutations",
         "timestamp_mutations", "synchronization"})
@@ -816,12 +817,18 @@ TEST(ProcessReport, DarwinSymbolicFilesystemFlagIsStrictAndPurposeSpecific) {
           llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
                                    {"darwin_files", std::move(V)}}))
               .str());
-      const bool Good = llvm::StringRef(Purpose) == "filesystem_observations" &&
-                        llvm::StringRef(Flag) == "false";
+      const bool Filesystem =
+          llvm::StringRef(Purpose) == "filesystem_observations";
+      const bool Ownership = llvm::StringRef(Purpose) == "ownership_mutations";
+      const bool Good =
+          (Filesystem || Ownership) && llvm::StringRef(Flag) == "false";
       EXPECT_EQ(bool(P), Good);
-      if (P)
+      if (P && Filesystem)
         EXPECT_FALSE(
             P->DarwinFiles->FileSystemObservations->CreatedSymbolicLinkObjects);
+      else if (P && Ownership)
+        EXPECT_FALSE(
+            P->DarwinFiles->OwnershipMutations->CreatedSymbolicLinkObjects);
       else
         llvm::consumeError(P.takeError());
     }
@@ -841,6 +848,129 @@ TEST(ProcessReport, DarwinSymbolicFilesystemFlagIsStrictAndPurposeSpecific) {
       llvm::consumeError(P.takeError());
   }
 }
+TEST(ProcessReport,
+     DarwinSymbolicOwnershipCreationRequiresIndependentCompletePolicy) {
+  for (bool Symbolic : {false, true})
+    for (bool Directory : {false, true})
+      for (bool Regular : {false, true}) {
+        auto V = darwin_test::symbolicOwnershipFilesJSON(Symbolic);
+        auto &F = *V.getAsObject(), &Env = *F.getObject("ownership_mutations");
+        Env["created_directory_objects"] = Directory;
+        Env["created_regular_objects"] = Regular;
+        const auto Parse = [&] {
+          return processOptionsFromJSON(
+              llvm::formatv("{0}", llvm::json::Value(
+                                       llvm::json::Object{{"darwin_files", V}}))
+                  .str());
+        };
+        auto P = Parse();
+        ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+        const auto &O = *P->DarwinFiles->OwnershipMutations;
+        EXPECT_EQ(O.CreatedSymbolicLinkObjects, Symbolic);
+        EXPECT_EQ(O.CreatedDirectoryObjects, Directory);
+        EXPECT_EQ(O.CreatedRegularObjects, Regular);
+        EXPECT_EQ(O.Objects.at("/dir/link").Seconds, 181);
+        EXPECT_EQ(P->DarwinFiles->SymbolicLinks.at("/dir/link"),
+                  (std::vector<uint8_t>{'.', '.', '/', 'd', 'a', 't', 'a'}));
+        EXPECT_FALSE(P->DarwinFiles->ModeMutations);
+        EXPECT_FALSE(P->DarwinFiles->TimestampMutations);
+        EXPECT_FALSE(P->DarwinFiles->FileSystemObservations);
+        F.getObject("creation_policy")->erase("namespace_policy");
+        P = Parse();
+        EXPECT_EQ(bool(P), !Symbolic && !Directory);
+        if (!P)
+          llvm::consumeError(P.takeError());
+        F.erase("creation_policy");
+        P = Parse();
+        EXPECT_EQ(bool(P), !Symbolic && !Directory && !Regular);
+        if (!P)
+          llvm::consumeError(P.takeError());
+      }
+}
+TEST(ProcessReport,
+     DarwinInitialSymbolicOwnershipNeedsExactCompleteGrantAndLosslessTime) {
+  auto V = darwin_test::symbolicOwnershipFilesJSON();
+  auto &F = *V.getAsObject();
+  F.erase("creation_policy");
+  const auto Parse = [&] {
+    return processOptionsFromJSON(
+        llvm::formatv(
+            "{0}", llvm::json::Value(llvm::json::Object{{"darwin_files", V}}))
+            .str());
+  };
+  auto &Objects = *F.getObject("ownership_mutations")->getArray("objects");
+  auto &Time = *Objects[1].getAsObject()->getObject("time");
+  Time["seconds"] = "-9223372036854775808";
+  Time["nanoseconds"] = 999999999;
+  auto P = Parse();
+  ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+  EXPECT_EQ(P->DarwinFiles->OwnershipMutations->Objects.at("/dir/link").Seconds,
+            INT64_MIN);
+  EXPECT_EQ(
+      P->DarwinFiles->OwnershipMutations->Objects.at("/dir/link").Nanoseconds,
+      999999999);
+  EXPECT_FALSE(P->DarwinFiles->OwnershipMutations->CreatedSymbolicLinkObjects);
+  auto Saved =
+      *(*F.getArray("symbolic_links"))[0].getAsObject()->get("metadata");
+  for (const char *Field :
+       {"metadata", "flags", "mode", "link_count", "inode"}) {
+    auto &Link = *(*F.getArray("symbolic_links"))[0].getAsObject();
+    Link["metadata"] = Saved;
+    if (llvm::StringRef(Field) == "metadata")
+      Link.erase("metadata");
+    else
+      (*Link.getObject("metadata"))[Field] =
+          llvm::StringRef(Field) == "mode"         ? 0100755
+          : llvm::StringRef(Field) == "inode"      ? 7
+          : llvm::StringRef(Field) == "link_count" ? 2
+                                                   : 1;
+    P = Parse();
+    EXPECT_FALSE(bool(P)) << Field;
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+}
+TEST(ProcessReport,
+     DarwinSymbolicOwnershipRejectsMalformedTimesAndForeignPurposeGrants) {
+  for (const char *Purpose : {"mode_mutations", "timestamp_mutations"}) {
+    auto V = darwin_test::symbolicOwnershipFilesJSON();
+    auto &F = *V.getAsObject();
+    F[Purpose] = llvm::json::Object{
+        {"objects", llvm::json::Array{llvm::json::Object{
+                        {"path", "/dir/link"},
+                        {"time", llvm::json::Object{{"seconds", 1},
+                                                    {"nanoseconds", 2}}}}}}};
+    auto P = processOptionsFromJSON(
+        llvm::formatv(
+            "{0}", llvm::json::Value(llvm::json::Object{{"darwin_files", V}}))
+            .str());
+    EXPECT_FALSE(bool(P));
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+  for (const char *Bad :
+       {R"({"seconds":1,"nanoseconds":-1})",
+        R"({"seconds":1,"nanoseconds":1000000000})",
+        R"({"seconds":1.5,"nanoseconds":2})",
+        R"({"seconds":9007199254740992,"nanoseconds":2})",
+        R"({"seconds":-9223372036854775808,"nanoseconds":2})",
+        R"({"seconds":"-9223372036854775809","nanoseconds":2})",
+        R"({"seconds":true,"nanoseconds":2})",
+        R"({"seconds":1,"nanoseconds":2,"extra":0})"}) {
+    auto V = darwin_test::symbolicOwnershipFilesJSON();
+    auto &F = *V.getAsObject();
+    (*(*F.getObject("ownership_mutations")->getArray("objects"))[1]
+          .getAsObject())["time"] = llvm::cantFail(llvm::json::parse(Bad));
+    auto P = processOptionsFromJSON(
+        llvm::formatv(
+            "{0}", llvm::json::Value(llvm::json::Object{{"darwin_files", V}}))
+            .str());
+    EXPECT_FALSE(bool(P));
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+}
+
 TEST(ProcessReport, DarwinInitialSymbolicFilesystemDoesNotConsultTargetOrStat) {
   auto V = darwin_test::symbolicLinkFileSystemFilesJSON();
   auto &F = *V.getAsObject();

@@ -359,11 +359,14 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   };
   const auto AdmitOrdinaryObject =
       [&](const std::string &Path, const char *Reason,
-          bool AllowDirectories = false) -> llvm::Error {
+          bool AllowDirectories = false,
+          bool AllowSymbolicLinks = false) -> llvm::Error {
     const bool Directory =
         AllowDirectories && pathKind(Options, Path) == PathKind::Directory;
+    const bool SymbolicLink =
+        AllowSymbolicLinks && pathKind(Options, Path) == PathKind::SymbolicLink;
     const auto M = Options.Metadata.find(Path);
-    if ((!Directory && !Options.Files.contains(Path)) ||
+    if ((!Directory && !SymbolicLink && !Options.Files.contains(Path)) ||
         M == Options.Metadata.end() || M->second.Flags ||
         (M->second.Mode & 07000) || (!Directory && M->second.LinkCount != 1) ||
         HasAlias(Path))
@@ -388,7 +391,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   };
   const auto AdmitOrdinaryGrants =
       [&](const auto &Environment, const char *Reason,
-          bool AllowDirectories = false) -> llvm::Error {
+          bool AllowDirectories = false,
+          bool AllowSymbolicLinks = false) -> llvm::Error {
     if (auto E = AdmitCreatedObjectProviders(Environment))
       return E;
     if (!Environment)
@@ -396,7 +400,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     for (const auto &[Path, Time] : Environment->Objects) {
       if (!validTime(Time))
         return failure(Reason);
-      if (auto E = AdmitOrdinaryObject(Path, Reason, AllowDirectories))
+      if (auto E = AdmitOrdinaryObject(Path, Reason, AllowDirectories,
+                                       AllowSymbolicLinks))
         return E;
     }
     return llvm::Error::success();
@@ -405,7 +410,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
                                    diagnostic::FileModeOption, true))
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations,
-                                   diagnostic::FileOwnershipOption, true))
+                                   diagnostic::FileOwnershipOption, true, true))
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.TimestampMutations,
                                    diagnostic::FileTimestampOption, true))
@@ -802,6 +807,11 @@ void DarwinFiles::initializeNamespace() {
     const auto Policy = Options->SymbolicLinkMutationPolicies.find(Path);
     if (Policy != Options->SymbolicLinkMutationPolicies.end())
       Node->MutationTime = &Policy->second.Time;
+    if (Options->OwnershipMutations) {
+      const auto Time = Options->OwnershipMutations->Objects.find(Path);
+      if (Time != Options->OwnershipMutations->Objects.end())
+        Node->OwnershipTime = &Time->second;
+    }
     if (Options->FileSystemObservations) {
       const auto I = Options->FileSystemObservations->Objects.find(Path);
       if (I != Options->FileSystemObservations->Objects.end())
@@ -1813,6 +1823,9 @@ DarwinFiles::makeSymbolicLink(uint64_t Target, uint64_t Path,
         *Parent->Identity, FileSymbolicLinkMode | (0777 & ~CurrentUmask), 1,
         Bytes.size(), ((Bytes.size() + Unit - 1) / Unit) * (Unit / 512));
     Node->MutationTime = &Policy->Mutation.Time;
+    if (Options->OwnershipMutations &&
+        Options->OwnershipMutations->CreatedSymbolicLinkObjects)
+      Node->OwnershipTime = &Policy->Mutation.Time;
     if (Options->FileSystemObservations &&
         Options->FileSystemObservations->CreatedSymbolicLinkObjects)
       Node->FileSystem = Parent->FileSystem;

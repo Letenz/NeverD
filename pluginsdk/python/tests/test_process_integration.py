@@ -644,6 +644,185 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_symbolic_ownership_keeps_vnode_and_target_authority(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        import struct
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+
+        def metadata(mode, inode, size=0, gid=20):
+            return {"device": 7, "inode": inode, "mode": mode,
+                    "link_count": 2 if mode == 0o40700 else 1,
+                    "uid": 501, "gid": gid, "size": size,
+                    "blocks": 1 if size else 0, "block_size": 512,
+                    "flags": 0, "generation": 9,
+                    "access_time": {"seconds": 1, "nanoseconds": 2},
+                    "modification_time": {"seconds": 3, "nanoseconds": 4},
+                    "change_time": {"seconds": 5, "nanoseconds": 6},
+                    "birth_time": {"seconds": 7, "nanoseconds": 8}}
+
+        def files():
+            result = {"files": [{"path": "/data", "bytes_hex": "616200ff6566",
+                                 "metadata": metadata(0o100600, 2, 6, 31)}],
+                      "directories": [], "symbolic_links": [], "working_directory": "/", "umask": 0o22,
+                      "creation_policy": {"first_inode": 100, "block_size": 512, "generation": 9,
+                                          "creation_time": {"seconds": 41, "nanoseconds": 42},
+                                          "mutation_policy": {"allocation_unit": 512, "mutation_time": {"seconds": 101, "nanoseconds": 102}},
+                                          "namespace_policy": {"symbolic_link_allocation_unit": 512, "directory_entry_size": 32, "directory_blocks": 7}},
+                      "ownership_mutations": {"objects": [{"path": "/data", "time": {"seconds": 81, "nanoseconds": 82}}],
+                                              "created_regular_objects": False, "created_directory_objects": False,
+                                              "created_symbolic_link_objects": True}}
+            for inode, path in enumerate(("/", "/dir"), 1):
+                m = metadata(0o40700, 1 if path == "/" else 3, 0 if path == "/" else 32)
+                m["blocks"] = 0 if path == "/" else 7
+                entry = {"path": path, "metadata": m, "mutable": True,
+                         "mutation_policy": {"directory_entry_size": 16,
+                                             "mutation_time": {"seconds": 91 if path == "/" else 93, "nanoseconds": 92 if path == "/" else 94}}}
+                if path == "/dir":
+                    entry.update(movable=True, swap_rename=True)
+                result["directories"].append(entry)
+            for index, (name, target) in enumerate((("link", "../data"), ("dangling", "missing"), ("cycle", "cycle"), ("other", "../data"))):
+                path = "/dir/" + name
+                result["symbolic_links"].append({"path": path, "target_hex": target.encode().hex(),
+                                                 "metadata": metadata(0o120755, 4 + index, len(target), 31),
+                                                 "mutable": True, "mutation_policy": {"mutation_time": {"seconds": 101, "nanoseconds": 102}}})
+                result["ownership_mutations"]["objects"].append({"path": path, "time": {"seconds": 181 + 2 * index, "nanoseconds": 182 + 2 * index}})
+            return result
+
+        def output(kind):
+            if not kind & 1:
+                return b"W"
+            # Independent literal stat144 records and both eight-byte guards.
+            link = [0xa5a5a5a5a5a5a5a5, 7 | (0o120755 << 32) | (1 << 48),
+                    100 if kind >= 2 else 4, 501 | (20 << 32), 0,
+                    41 if kind >= 2 else 1, 42 if kind >= 2 else 2,
+                    41 if kind >= 2 else 3, 42 if kind >= 2 else 4,
+                    101 if kind >= 2 else 181, 102 if kind >= 2 else 182,
+                    41 if kind >= 2 else 7, 42 if kind >= 2 else 8,
+                    7, 1, 512, 9, 0, 0, 0xa5a5a5a5a5a5a5a5]
+            target = [0xa5a5a5a5a5a5a5a5, 7 | (0o100600 << 32) | (1 << 48),
+                      2, 501 | (31 << 32), 0, 1, 2, 3, 4, 5, 6, 7, 8, 6, 1, 512, 9, 0, 0, 0xa5a5a5a5a5a5a5a5]
+            pack = lambda words: struct.pack("<20Q", *words)
+            result = pack(link) + pack(target)
+            target[3], target[9], target[10] = 501 | (20 << 32), 81, 82
+            result += pack(target)
+            link[1] = 7 | (0o120755 << 32) | (2 << 48)
+            result += pack(link) * 2
+            link[1] = 7 | (0o120755 << 32)
+            result += pack(link)
+            replacement = [0xa5a5a5a5a5a5a5a5, 7 | (0o120755 << 32) | (1 << 48),
+                           101 if kind >= 2 else 100, 501 | (20 << 32), 0,
+                           41, 42, 41, 42, 101, 102, 41, 42, 7, 1, 512, 9, 0, 0, 0xa5a5a5a5a5a5a5a5]
+            return result + pack(replacement) + pack(link) + b"W"
+
+        def trace(kind):
+            result = []
+            uid, gid = 501, 20 if kind else 31
+            high, none, bad = 0x13579bdf00000000, 0xffffffff, 0xffffffffffffffff
+            def add(number, value=0, error=False, **args):
+                result.append((number, value, error, {int(k[1:]): v for k, v in args.items()}))
+            def opened(fd, flags=0x200000):
+                add(5, fd, a1=flags, a2=0)
+            def stat(fd):
+                add(339, a0=fd)
+            def own(fd, u=uid, g=gid):
+                add(123, a0=fd, a1=u, a2=g)
+            def emit():
+                if kind & 1:
+                    add(4, 160, a0=1, a2=160)
+            if kind >= 2:
+                add(57)
+            opened(3); add(41, 4, a0=3); opened(5); opened(6, 0)
+            stat(3); stat(6); own(3, none, none); stat(3); own(4); stat(5); stat(6); emit(); emit()
+            add(high | 468, a0=high | 0xfffffffe, a2=high | uid, a3=high | gid, a4=high | 0x20)
+            stat(3); add(16, a1=none, a2=gid); stat(6); emit()
+            add(471, a0=0xfffffffe, a2=0xfffffffe, a4=0); opened(7)
+            add(high | 123, a0=high | 7, a1=high | uid, a2=high | gid); stat(3); emit(); add(128)
+            add(468, 2, True, a0=bad, a2=uid, a3=gid, a4=0x20)
+            add(468, a0=bad, a2=uid, a3=gid, a4=0x20); stat(7); emit()
+            add(10); add(10); own(3); stat(4); emit()
+            add(57); opened(8); stat(8); own(8); stat(8); emit(); own(5); stat(8); stat(3); emit()
+            add(57); opened(9); own(9); add(16, 2, True, a1=uid, a2=gid)
+            add(468, a0=bad, a2=none, a3=none, a4=0x20); add(57)
+            add(16, 62, True, a1=uid, a2=gid); opened(10); own(10, none, none)
+            add(123, 9, True, a0=bad, a1=uid, a2=gid)
+            add(468, 22, True, a0=bad, a1=1, a2=uid, a3=gid, a4=8)
+            add(6, a0=3); add(123, 9, True, a0=3, a1=uid, a2=gid)
+            for fd in range(4, 11):
+                add(6, a0=fd)
+            add(10); add(10); add(10); add(4, 1, a0=1, a2=1)
+            return result
+
+        modes = ("symbolic-ownership-mutations", "virtual-symbolic-ownership", "created-symbolic-ownership", "virtual-created-symbolic-ownership")
+        profiles = (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"),
+                    ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"),
+                    ("ios-simulator-x86_64", "ios-simulator-macho64-v1"))
+        for file, profile in profiles:
+            cls = 0x2000000 if file.endswith("x86_64") else 0
+            for variant in range(7):
+                kind = variant if variant < 4 else 2 if variant == 5 else 1
+                missing, late = variant >= 4, variant == 6
+                f = files()
+                if variant == 4:
+                    f["ownership_mutations"]["objects"] = f["ownership_mutations"]["objects"][:1]
+                elif missing:
+                    f["ownership_mutations"]["created_symbolic_link_objects"] = False
+                request = {"backend": "unicorn", "instruction_quantum": 1024, "timeout_microseconds": 5000000,
+                           "arguments": ["guest", modes[kind], "/dir/new" if kind >= 2 else "/dir/link"],
+                           "darwin_files": f, "darwin_system": {"credentials": {"real_uid": 700, "effective_uid": 501,
+                                                                             "real_gid": 31, "effective_gid": 20,
+                                                                             "groups": [20, 31], "group_membership_uid": 4294967195}}}
+                wanted, expected = trace(kind), output(kind)
+                last = next((i for i, c in enumerate(wanted) if c[0] == 123 and c[3].get(0) == (8 if late else 3)), None) if missing else len(wanted)
+                self.assertIsNotNone(last)
+                if missing:
+                    expected = expected[:960] if late else b""
+                original = json.dumps(request, sort_keys=True)
+                for repeat in range(1 if missing else 2):
+                    with self.subTest(file=file, variant=variant, repeat=repeat):
+                        report = session.emulate_process(str(Path(fixtures) / file), profile, original)
+                        self.assertEqual(report["stop_reason"], "unsupported_service" if missing else "exited", report["diagnostic"])
+                        self.assertEqual(report["stdout_hex"], expected.hex())
+                        self.assertEqual(report["stderr_hex"], "")
+                        self.assertEqual(report["backend"], "unicorn")
+                        self.assertEqual(len(report["services"]), last + 1 if missing else len(wanted))
+                        if missing:
+                            self.assertEqual(report["diagnostic"], "Darwin object ownership provider is not configured")
+                        else:
+                            self.assertEqual(report["exit_status"], 58)
+                        for i, event in enumerate(report["services"]):
+                            number, value, error, args = wanted[i]
+                            self.assertEqual(event["number"], format(cls | number, "x"))
+                            self.assertEqual(len(event["arguments"]), 6)
+                            for j, value_arg in args.items():
+                                self.assertEqual(event["arguments"][j], format(value_arg, "x"))
+                            if missing and i == last:
+                                self.assertIsNone(event["result"])
+                                self.assertNotIn("error", event)
+                            else:
+                                self.assertEqual(event["result"], format(value, "x"))
+                                self.assertEqual(event["error"], error)
+                        self.assertEqual(json.dumps(request, sort_keys=True), original)
+                        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                for bad_flag in (1, None, "true"):
+                    request["darwin_files"]["ownership_mutations"]["created_symbolic_link_objects"] = bad_flag
+                    with self.assertRaises(NeverDError):
+                        session.emulate_process(str(Path(fixtures) / file), profile, json.dumps(request))
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_directory_ownership_preserves_independent_authority(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
