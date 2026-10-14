@@ -16,6 +16,7 @@
 #include "os/windows/kernel/KernelModel.h"
 
 #include <initializer_list>
+#include <map>
 #include <string_view>
 
 namespace neverd::emulation {
@@ -884,6 +885,29 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
   EXPECT_EQ(LegacyCalls, 3u);
   EXPECT_EQ(ModuleQueries, 3u);
   EXPECT_EQ(CounterCalls, 3u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_strings.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 2u);
+  EXPECT_EQ(Result->Messages[0], "strings \\Device\\Sample42 42 -42 driver 32");
+  // The overflow still stores the formatted length in the short record.
+  EXPECT_EQ(Result->Messages[1], "status c0000023 80000005 10");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["RtlInitAnsiString"], 1u);
+  EXPECT_EQ(Calls["RtlInitString"], 1u);
+  EXPECT_EQ(Calls["RtlAppendUnicodeToString"], 2u);
+  EXPECT_EQ(Calls["RtlAppendUnicodeStringToString"], 2u);
+  EXPECT_EQ(Calls["RtlPrefixUnicodeString"], 2u);
+  EXPECT_EQ(Calls["RtlIntegerToUnicodeString"], 2u);
+  EXPECT_EQ(Calls["RtlUnicodeStringToInteger"], 2u);
 }
 } // namespace
 } // namespace neverd::emulation
