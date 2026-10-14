@@ -1887,3 +1887,20 @@ La verifica nativa [21ac20341](https://github.com/NeverSight/NeverD/actions/runs
 `RawCodeNativeReturn*` verifica due ritorni fisici, una lacuna con alias, una cella non dimostrata scartata, indirizzi stretti, tutti gli effetti e budget esatti. `SymStorePreservation.Additional*` e `SymStorePreservation.AbsentAdditional*` verificano unioni nei due ordini dei byte, epoche dopo la scrittura, byte assenti, intervalli non validi e stato invariato con budget insufficiente.
 
 `FrameOffsets.*Normalization*` copre identità esatte, ingressi aggiuntivi, identità della radice, predicati impossibili senza testimoni memorizzati, comportamento predefinito, costi strutturali e di misura e rifiuto al superamento dei nodi. `FrameNormalizationPreservesStoresAndNativeReturns` e `RawCodeFrameNormalization*` verificano effetti di memoria originali e ritorni fisici con oracoli indipendenti a byte, entrambi gli ordini di byte applicabili, budget esatti o insufficienti e ricevute alterate. `FrameNormalizationStrategyBindsIndependentProof` verifica entrambe le identità di prova binaria.
+
+## Qualificazione nativa di Lift
+
+Il workflow `Lift native qualification` copre i 108 casi prima non verificati (62 errori e 46 casi saltati). Installa Clang 23 o successivo, GNU GCC e le librerie di sviluppo i386 su un runner Linux x86-64 nativo e inizializza il corpus binario fissato. `unittests/Inputs/lift-qualification.json` conserva ogni identità originale. `scripts/run_lift_qualification.py` rifiuta casi mancanti, duplicati, disabilitati, saltati o falliti e qualsiasi uscita di processo diversa da zero. `qualification.json` registra ogni successo, le revisioni del codice e del corpus, le versioni dei compilatori e gli hash binari.
+
+Il profilo esegue controlli nativi i386/x86-64, precisione estesa x87 e verifiche del codice Swift SSE generato su risultati, stato ed eccezioni non mascherate a entrambi i livelli di ottimizzazione. La parità AArch64 decodifica il vero `.text` di un runtime Rust fissato. La decodifica per un altro target non ne prova l’esecuzione nativa; usare i job separati dei processi nativi per patch sorgente Windows/Linux x64/ARM64 e le verifiche locali macOS.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+Il profilo nativo richiede anche le verifiche LLVM-C delle costanti e scritture di interi estesi e l’esecuzione nativa delle tabelle sintetizzate i386. Gli osservatori dei segnali Swift usano memoria grezza indipendente, con controlli positivi e negativi separati per le scritture premature dello stato e del risultato a entrambi i livelli di ottimizzazione. Leggere una variabile Swift `inout` attiva nel gestore causerebbe una violazione di esclusività e invaliderebbe l’osservazione dell’eccezione.
+
+`NeverDFPParameterMaskTests` esegue ABI condivisa e `FPParameterMask.*`, conserva byte attivi, scritture precedenti, definizioni ambigue e ritorni non mascherati ed elimina solo byte interamente azzerati o sostituiti. Copre trasferimenti D0, temporanei D16-D31 ed entrambi i percorsi di ritorno FP. `NeverDARM32ObjectImmediateTests` esegue cinque differenziali C ARM32 separatamente; Windows EH CI usa Clang 18, incluse forme NEON zip/mask diverse da Clang 23. I CALL diretti/indiretti senza operandi ABI recuperati conservano registri FP preparati esplicitamente.

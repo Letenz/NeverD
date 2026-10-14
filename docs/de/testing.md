@@ -1907,3 +1907,20 @@ Die native Prüfung [21ac20341](https://github.com/NeverSight/NeverD/actions/run
 `RawCodeNativeReturn*` prüft zwei physische Rücksprungwörter, eine mögliche Alias-Lücke, eine verworfene unbewiesene Zelle, schmale Adressen, sämtliche Zustandsänderungen und genaue Beweisbudgets. `SymStorePreservation.Additional*` und `SymStorePreservation.AbsentAdditional*` prüfen Bereichsvereinigungen in beiden Byte-Reihenfolgen, neue Speicherepochen, fehlende Bytes, ungültige Bereiche und unveränderten Zustand bei Budgetmangel.
 
 `FrameOffsets.*Normalization*` prüft exakte Identitäten, zusätzliche Eingaben, Wurzelidentität, unerfüllbare Prädikate ohne gespeicherten Zeugen, Standardverhalten, Struktur- und Messkosten sowie Ablehnung nach Überschreiten des Knotenlimits. `FrameNormalizationPreservesStoresAndNativeReturns` und `RawCodeFrameNormalization*` prüfen ursprüngliche Speichereffekte und physische Rücksprungwörter mit unabhängigen Byte-Orakeln, beide anwendbaren Byte-Reihenfolgen, exakte oder zu kleine Operationsbudgets und veränderte Belege. `FrameNormalizationStrategyBindsIndependentProof` prüft beide binären Beweisidentitäten.
+
+## Native Lift-Qualifikation
+
+Der Workflow `Lift native qualification` prüft die zuvor nicht qualifizierten 108 Fälle (62 Fehler und 46 übersprungene Tests). Er installiert Clang 23 oder neuer, GNU GCC und die i386-Entwicklungsbibliotheken auf einem nativen Linux-x86-64-Runner und initialisiert den festgelegten Binärkorpus. `unittests/Inputs/lift-qualification.json` erhält jede ursprüngliche Testidentität. `scripts/run_lift_qualification.py` weist fehlende, doppelte, deaktivierte, übersprungene oder fehlgeschlagene Fälle sowie einen Prozessrückgabewert ungleich null zurück. `qualification.json` protokolliert einzelne Erfolge, Quellcode- und Korpusrevisionen, Compilerversionen und Binärhashes.
+
+Das Profil führt native i386/x86-64-Kontrollen, erweiterte x87-Präzision sowie generierte Swift-SSE-Prüfungen für Ergebnis, Zustand und unmaskierte Ausnahmen bei beiden Optimierungsstufen aus. Die AArch64-Paritätsprüfung dekodiert den echten `.text` einer festgelegten Rust-Laufzeit. Zielübergreifendes Dekodieren belegt keine native Ausführung auf diesem Ziel; dafür dienen die getrennten nativen Prozessjobs für Windows/Linux x64/ARM64 und die lokalen macOS-Prüfungen.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+Das native Profil verlangt außerdem die LLVM-C-Prüfungen breiter Ganzzahlkonstanten und ihrer Speicherzugriffe sowie die native Ausführung synthetisierter i386-Tabellen. Swift-Signalbeobachter verwenden unabhängigen Rohspeicher und prüfen bei beiden Optimierungsstufen positive Kontrollen sowie getrennte negative Kontrollen für vorzeitige Zustands- und Ergebnisschreibzugriffe. Das Lesen einer aktiven Swift-`inout`-Variablen im Signalhandler würde eine Exklusivitätsverletzung auslösen und die Ausnahmebeobachtung ungültig machen.
+
+`NeverDFPParameterMaskTests` führt die gemeinsame ABI-Suite und `FPParameterMask.*` aus, erhält verwendete Bytes, frühere Stores, mehrdeutige Definitionen und unmaskierte Rückgaben und verwirft nur vollständig gelöschte oder ersetzte Bytes. Es prüft D0-Transport, D16-D31-Arbeitsregister und beide FP-Rückgabepfade. `NeverDARM32ObjectImmediateTests` führt fünf ARM32-Host-C-Differentialtests separat aus; Windows-EH-CI nutzt Clang 18 einschließlich von Clang 23 abweichender NEON-zip/mask-Formen. Direkte/indirekte CALLs ohne rekonstruierte ABI-Operanden erhalten explizit vorbereitete FP-Register.
