@@ -4,6 +4,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -229,6 +230,46 @@ bool hasX87CallDefinition(const LowFunc &Function) {
   return false;
 }
 
+// Whether \p Image's calling convention owns the x87 stack as one context.
+bool ownsX87(const BinaryImage &Image) {
+  return x87ContextOwnsStack(Image.Arch, Image.abiFormat(),
+                             Image.X87ContextOverride);
+}
+
+void expectOwnedCallTransport(const LowFunc &Function) {
+  unsigned Calls = 0, Refreshed = 0, Imports = 0, Exports = 0, Captures = 0;
+  for (const auto &B : Function.Blocks)
+    for (size_t I = 0; I < B.Ops.size(); ++I) {
+      const auto &Op = B.Ops[I];
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+        ++Calls;
+        // A call whose RETURN follows directly hands the callee's state
+        // straight back; any other call refreshes the context after it.
+        if (I + 1 == B.Ops.size() || B.Ops[I + 1].Opcode != NdOp::RETURN)
+          ++Refreshed;
+        EXPECT_FALSE(Op.Output.isReg() && Op.Output.Size == 10);
+        ASSERT_GT(I, 0u);
+        const auto &Before = B.Ops[I - 1];
+        EXPECT_EQ(Before.Opcode, NdOp::INTRINSIC);
+        ASSERT_EQ(Before.NumInputs, 2u);
+        EXPECT_EQ(Before.Inputs[0].Offset,
+                  unsigned(Intrinsic::X87ContextExport));
+      }
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst()) {
+        const auto Id = Intrinsic(Op.Inputs[0].Offset);
+        Captures += Id == Intrinsic::X87ContextBegin;
+        Imports += Id == Intrinsic::X87ContextRefresh;
+        Exports += Id == Intrinsic::X87ContextExport;
+        if (isX87ContextIntrinsic(Id))
+          EXPECT_TRUE(x87ContextLowShapeIsValid(Op, Arch::X64));
+      }
+    }
+  EXPECT_GT(Captures, 0u);
+  EXPECT_GE(Imports, Refreshed);
+  EXPECT_GE(Exports, Calls);
+}
+
 BinaryImage x87ExamineImage(Arch A, BinaryFormat Format,
                             const std::vector<uint8_t> &Bytes) {
   BinaryImage Image;
@@ -279,7 +320,9 @@ TEST(X87Examine, TagProofSurvivesBranchesPopsAndExplicitInvalidation) {
         ASSERT_TRUE(Dec.init(Image));
         CFGBuilder Builder;
         auto Low = Builder.build(Image, Dec, Image.Entry, "examine_value");
-        const bool Supported = I != 1 && I != 5 && I != 6 && I != 8 && I != 9;
+        const bool Owned = ownsX87(Image);
+        const bool Supported =
+            Owned || (I != 1 && I != 5 && I != 6 && I != 8 && I != 9);
         EXPECT_EQ(Low.hasCompleteInstructionLift(), Supported);
         unsigned Pending = 0;
         for (const auto &B : Low.Blocks)
@@ -290,6 +333,16 @@ TEST(X87Examine, TagProofSurvivesBranchesPopsAndExplicitInvalidation) {
                     static_cast<uint64_t>(Intrinsic::X87Fxam))
               ++Pending;
         EXPECT_EQ(Pending == 0, Supported);
+        if (Owned) {
+          unsigned Examine = 0;
+          for (const auto &B : Low.Blocks)
+            for (const auto &Op : B.Ops)
+              Examine +=
+                  Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 6 &&
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextStep) &&
+                  Op.Inputs[2].Offset == 0xe5d9;
+          EXPECT_EQ(Examine, 1u);
+        }
       }
 }
 
@@ -475,6 +528,31 @@ TEST(X87CallStack, ProvesCrossBlockResultsBeforeExpandingLoopStates) {
         Builder.setKnownFuncEntries(&Entries);
         LowFunc Low = Builder.build(Image, Dec, 0x1000, "x87_call_loop");
         ASSERT_TRUE(Low.hasCompleteInstructionLift());
+        if (ownsX87(Image)) {
+          expectOwnedCallTransport(Low);
+          EXPECT_FALSE(hasX87CallDefinition(Low));
+          if (Mutation == 0 || Mutation == 13) {
+            const auto Wrapper =
+                Builder.build(Image, Dec, 0x1100, "x87_forwarder");
+            expectOwnedCallTransport(Wrapper);
+            if (Mutation == 0) {
+              Image.Segments[0].Data[0x201] = 0xee;
+              expectOwnedCallTransport(
+                  Builder.build(Image, Dec, 0x1100, "changed_constant"));
+              Image.Segments[0].Data[0x200] = 0x90;
+              Image.Segments[0].Data[0x201] = 0x90;
+              const auto Empty =
+                  Builder.build(Image, Dec, 0x1100, "changed_body");
+              EXPECT_FALSE(hasX87CallDefinition(Empty));
+              for (const auto &B : Empty.Blocks)
+                for (const auto &Op : B.Ops)
+                  EXPECT_FALSE(Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                               Op.Inputs[0].Offset ==
+                                   unsigned(Intrinsic::X87ContextBegin));
+            }
+          }
+          continue;
+        }
         const bool Proven = Mutation == 0 || Mutation == 13;
         EXPECT_EQ(hasX87CallDefinition(Low), Proven);
         if (!Proven)
@@ -530,9 +608,13 @@ TEST(X87CallStack, IncompleteCallClosureCannotAcquireAnEffect) {
 }
 
 TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
-  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+  for (auto [Architecture, Format] :
+       {std::pair{Arch::X86, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::COFF}}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
-    BinaryImage Image = x87CallLoopImage(Architecture, BinaryFormat::ELF);
+    SCOPED_TRACE(static_cast<int>(Format));
+    BinaryImage Image = x87CallLoopImage(Architecture, Format);
     const std::set<va_t> Entries{0x1000, 0x1100, 0x1200};
     auto Cache = createX87CallGraphCache();
     std::array<CFGBuilder, 3> Builders;
@@ -547,7 +629,15 @@ TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
         Builder.setX87CallGraphCache(Cache);
       const LowFunc Low = Builder.build(Image, Dec, 0x1000, "x87_call_loop");
       ASSERT_TRUE(Low.hasCompleteInstructionLift());
-      EXPECT_TRUE(hasX87CallDefinition(Low));
+      if (ownsX87(Image)) {
+        expectOwnedCallTransport(Low);
+        EXPECT_FALSE(hasX87CallDefinition(Low));
+        EXPECT_EQ(detail::X87CallGraphCacheTestAccess::query(Builder, Image,
+                                                             Image.Entry)
+                      .first,
+                  std::nullopt);
+      } else
+        EXPECT_TRUE(hasX87CallDefinition(Low));
       llvm::raw_string_ostream OS(Dumps[I]);
       Pipeline::dumpLowIR({Low}, OS);
       if (I == 1) {
@@ -576,6 +666,7 @@ TEST(X87CallGraphCache,
       auto Image =
           x87ExamineImage(Architecture, Format,
                           {0xd9, 0xe8, 0xeb, 0, 0xd9, 0xe5, 0xdf, 0xe0, 0xc3});
+      const bool Owned = ownsX87(Image);
       const std::set<va_t> Entries{Image.Entry};
       const libc::NoReturnTargetIndex Names(Image);
       const InternalNoReturnIndex NoReturn(Image, &Entries, &Names, nullptr,
@@ -594,7 +685,7 @@ TEST(X87CallGraphCache,
           Warm.build(Image, Dec, Image.Entry).hasCompleteInstructionLift());
       constexpr size_t Budget = limits::kMaxX87CallProofWork;
       const auto Original = Access::query(Warm, Image, Image.Entry, Budget);
-      ASSERT_EQ(Original.first, std::optional<int>(-1));
+      ASSERT_EQ(Original.first, Owned ? std::nullopt : std::optional<int>(-1));
       const size_t Work = Budget - Original.second;
       ASSERT_LT(Work, 1000u);
       const size_t Hits = Access::stats(Warm)[0];
@@ -606,9 +697,9 @@ TEST(X87CallGraphCache,
 
       const auto WarmLow = Warm.build(Image, Dec, Image.Entry);
       const auto ColdLow = Cold.build(Image, Dec, Image.Entry);
-      EXPECT_FALSE(WarmLow.hasCompleteInstructionLift());
+      EXPECT_EQ(WarmLow.hasCompleteInstructionLift(), Owned);
       EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
-                std::vector<va_t>{0x1004});
+                Owned ? std::vector<va_t>{} : std::vector<va_t>{0x1004});
       EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
                 ColdLow.UnsupportedInstructionAddresses);
       std::string WarmDump, ColdDump;
@@ -1092,18 +1183,25 @@ TEST(CallRegisterBodyCache,
     EXPECT_FALSE(cachedRegisterBody(Cache, Image));
     EXPECT_FALSE(cachedFunction(Cache, Image));
   }
-  auto Image = registerBodyImage(BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xc3},
-                                 {0xd9, 0xe8, 0xc3});
-  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
-  CFGBuilder Seed;
-  Seed.setX87CallGraphCache(Cache);
-  EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
-            std::optional<int>(-1));
-  EXPECT_FALSE(cachedRegisterBody(Cache, Image));
-  EXPECT_FALSE(cachedFunction(Cache, Image));
-  Decoder Dec;
-  ASSERT_TRUE(Dec.init(Image));
-  EXPECT_TRUE(hasX87CallDefinition(Seed.build(Image, Dec, Image.Entry)));
+  for (BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::COFF}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    auto Image = registerBodyImage(Format, {0xe8, 0xfb, 0, 0, 0, 0xc3},
+                                   {0xd9, 0xe8, 0xc3});
+    const bool Owned = ownsX87(Image);
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed;
+    Seed.setX87CallGraphCache(Cache);
+    EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
+              Owned ? std::nullopt : std::optional<int>(-1));
+    EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    const auto Cold = Seed.build(Image, Dec, Image.Entry);
+    EXPECT_EQ(hasX87CallDefinition(Cold), !Owned);
+    if (Owned)
+      expectOwnedCallTransport(Cold);
+  }
 }
 
 TEST(CallRegisterBodyCache, NoReturnDecisionsMustAgreeAtOrdinaryDepth) {

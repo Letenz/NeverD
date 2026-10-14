@@ -15,6 +15,10 @@ architettura interna.
 
 `sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive.
 
+`SourcePatchCompiler` combina NeverC `cpp-core-v2` e C23; `validateDynCodePatchImage` lega l’audit a hash, codice e ingresso reali. Gli installatori registrano unwind reale. ARM64 FH3 usa limiti xdata del loader e gruppi funclet/FuncInfo MC. Senza DWARF originale, record compact nativi devono coprire tutte le funzioni Mach-O.
+
+`CompiledImage` normalizza una sola volta gli specificatori ELF AArch64 con due punti per la risoluzione effettiva e i fixup registrati. Il resolver ELF e la pubblicazione delle rilocazioni condividono identità ABS/GOT esatte; TLS e forme sconosciute restano rifiutati. COFF può usare limiti nativi decodificati delle funzioni runtime; il codice hosted richiede copertura unwind completa del compilatore.
+
 ## Confine del sistema
 
 ```mermaid
@@ -68,6 +72,10 @@ Se manca la gerarchia esterna, si richiede l’accordo globale dei selettori sen
 Gli ivar con tipo oggetto esplicito estendono la prova del ricevitore attraverso al massimo otto caricamenti a larghezza completa. Ogni passo registra lo slot dell’offset a runtime, la larghezza e l’eventuale offset letterale usato dall’istruzione. Il letterale deve corrispondere alla disposizione corrente; il riferimento a runtime può seguire un campo spostato. Il loader controlla la discendenza registrata e la dichiarazione del campo. Accessi parziali, id senza classe, blocchi, soli protocolli, memoria ambigua e puntatori base ignoti non forniscono classi. La validazione del sorgente ricontrolla l’intero percorso nell’immagine corrente. Questi fatti non provano identità degli oggetti né autorizzano la rimozione di operazioni di memoria.
 
 Il loader valida grafi limitati e aciclici di stringhe costanti, oggetti interi, array e dizionari ordinati Darwin. Ogni campo e arco richiede memoria mappata immutabile e prove non ambigue di importazione o rilocazione; codifiche non supportate, cicli e grafi incompleti falliscono esplicitamente. I binding sorgente verificano nuovamente il grafo e lo slot del puntatore in ingresso. Le funzioni generate preservano i bit interi, l’ordine dei figli e gli indirizzi condivisi, riutilizzando le identità delle stringhe. Gli slot vengono inizializzati una sola volta con pubblicazione acquire/release, chiamando soltanto figli validati. Ogni funzione contiene le loro dichiarazioni per condividere una definizione tra metodi recuperati indipendentemente. I test portabili coprono input malformati e budget di prova; le fixture native confrontano contenuti, alias, identità delle copie e inizializzazione concorrente con i metodi originali.
+
+## Contesto x87 posseduto dalle funzioni x64
+
+Per le immagini x64 Win64, la cui ABI C non passa mai un valore x87, `ir/X87Context.h` definisce le codifiche ammesse e `CFGBuilderX86Fpu` gestisce un contesto mutabile per funzione: CW, SW, TOP dinamico, tag abbreviati e otto valori binary80 grezzi. Gli ingressi indipendenti acquisiscono lo stato; gli archi ordinari lo pubblicano prima della nuova acquisizione. Chiamate e salvataggi/ripristini estesi esportano e aggiornano il contesto, anche nei wrapper privi di istruzioni x87 locali. I cicli mantengono il contesto. LLVM, HighC e LLVMC condividono il contratto; HighC usa helper nominati e memoria allineata fissa. MMX collega gli alias fisici; EMMS svuota i tag. L’esecuzione concreta richiede stato e memoria autenticati, rifiuta effetti sconosciuti e consente risultati dipendenti dall’implementazione solo in modalità esplicita di riferimento nativo. Le prove statiche TOP/tag descritte restano la proiezione per x86-32 e per x64 System V, i cui parametri long double e risultati st0 restano valori tipizzati; `x87ContextOwnsStack` sceglie il modello per ogni immagine e `BinaryImage::X87ContextOverride` impone l’uno o l’altro. Non sono certificate tutte le CPU, istruzioni, priorità dei guasti o ABI di ritorno floating point.
 
 ## Rappresentazioni IR e percorsi
 
@@ -301,6 +309,12 @@ Le costanti conservano, da LowIR a MedIR e HighIR, la provenienza scalare o di i
 Mantieni la logica specifica di una rappresentazione nella relativa libreria IR
 o backend; il pipeline deve orchestrare i componenti, non assorbirne gli
 algoritmi.
+
+## Memoria degli oggetti in LLVM C
+
+`LLVMCStackAllocation` gestisce allocazioni con conteggio o fuori dall’ingresso nel clone C privato. Conserva passo DataLayout, conteggio senza segno, allineamento e posizione. Una chiamata privata con effetti emette `__builtin_alloca` in quella posizione, verifica overflow e allinea nei byte aggiuntivi; la durata arriva al ritorno con Clang/GCC. Un oggetto all’ingresso mantiene la dichiarazione locale. Conteggi troppo larghi, memoria scalabile, altri spazi, inalloca/swifterror, stack save/restore espliciti e marcatori privati nell’ingresso sono rifiutati prima della normalizzazione. L’IR originale resta intatto.
+
+`LLVMCStorage` condivide il sovra-allineamento esplicito degli oggetti locali e globali e delle loro dichiarazioni. Le stringhe conservano l’intera dimensione dell’array LLVM, inclusi i byte zero finali. I valori globali LLVM indicano indirizzi nelle espressioni e negli inizializzatori; solo dichiarazioni e caricamenti/scritture diretti usano il semplice nome C. I dati importati mantengono la rappresentazione dell’indirizzo esistente.
 
 ## Contratto di traduzione tra architetture
 

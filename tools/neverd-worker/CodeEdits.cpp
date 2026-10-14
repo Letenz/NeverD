@@ -300,6 +300,51 @@ void CodeEdits::validateChange(const Json &view, const Json &request) {
   }
 }
 
+void CodeEdits::spellIdentifierSymbols(Json &view) {
+  const auto listed = view.find("identifier_symbols");
+  if (listed == view.end() || !listed->is_array() || listed->empty() ||
+      !view.contains("text") || !view["text"].is_string())
+    return;
+  std::unordered_map<std::string, const Json *> named;
+  for (const auto &name : *listed)
+    if (name.is_object() && name.contains("identifier") &&
+        name["identifier"].is_string() && name.contains("symbol") &&
+        name["symbol"].is_string() && name.contains("address") &&
+        name["address"].is_string() &&
+        identifier(name["identifier"].get<std::string>()))
+      named.emplace(name["identifier"].get<std::string>(), &name);
+  if (named.empty())
+    return;
+  if (!view.contains("source_names") || !view["source_names"].is_array())
+    view["source_names"] = Json::array();
+  auto &names = view["source_names"];
+  // A dialect's own names keep their spans.
+  std::vector<std::pair<std::size_t, std::size_t>> spelled;
+  for (const auto &name : names)
+    spelled.emplace_back(name.value("begin_byte", std::size_t{0}),
+                         name.value("end_byte", std::size_t{0}));
+  const auto &text = view["text"].get_ref<const std::string &>();
+  for (const auto &token : tokens(text)) {
+    const auto found = named.find(token.text);
+    if (found == named.end() ||
+        std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
+          return token.begin < span.second && token.end > span.first;
+        }))
+      continue;
+    const Json &name = *found->second;
+    names.push_back({{"begin_byte", token.begin},
+                     {"end_byte", token.end},
+                     {"identifier", token.text},
+                     {"symbol", name["symbol"]},
+                     {"address", hexAddress(parseAddress(
+                                     name["address"].get<std::string>()))}});
+  }
+  std::sort(names.begin(), names.end(), [](const Json &a, const Json &b) {
+    return a.value("begin_byte", std::size_t{0}) <
+           b.value("begin_byte", std::size_t{0});
+  });
+}
+
 void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
                          const std::string &representation, const Json &renames,
                          const Json &annotations,
@@ -385,11 +430,13 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       // resolved image name or an explicit SDK name span identifies this body.
       const auto at = imageAddress(ts[i].text);
       const auto sourceNames = view.value("source_names", Json::array());
+      // The engine spells addresses in upper case.
       const bool explicitName = std::any_of(
           sourceNames.begin(), sourceNames.end(), [&](const Json &name) {
             return name.value("begin_byte", original.size()) <= ts[i].begin &&
                    name.value("end_byte", std::size_t{0}) >= ts[i].end &&
-                   name.value("address", std::string()) == hexAddress(function);
+                   name.contains("address") && name["address"].is_string() &&
+                   parseAddress(name["address"].get<std::string>()) == function;
           });
       if (at == function || explicitName) {
         definition = i;

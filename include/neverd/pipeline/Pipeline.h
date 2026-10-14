@@ -26,6 +26,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
+#include "neverd/pipeline/SourceViewOptions.h"
 #include "neverd/sbf/SBFIR.h"
 #include "neverd/solver/SymSynthVerifier.h"
 
@@ -91,6 +92,8 @@ struct PipelineOptions {
   bool DumpLlvm = false;
   bool EmitDumpOutput = true;
   bool NoOpt = false;
+  /// Optional HighIR expression rewriting; machine/ABI recovery is unaffected.
+  bool SymbolicHighC = false;
   bool PatchMode = false;
   bool LiftMode = false;
   /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
@@ -305,6 +308,12 @@ public:
                      const PipelineOptions &Opts = {},
                      DebugContext *Dbg = nullptr);
 
+  /// Re-render already prepared MedIR. Does not repeat machine or ABI analysis.
+  /// Inputs are the completed HighIR route's LowFuncs, MedFuncs and library
+  /// recognitions; callers may copy those into a private result for a variant.
+  void rebuildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
+                     PipelineResult &Result, DebugContext *Dbg = nullptr);
+
   /// Run the HelloWorldPass on a module.  Wraps PassBuilder/AnalysisManager
   /// setup so callers avoid instantiating LLVM PassManager templates (which
   /// would create duplicate weak_def symbols when the caller lives in a
@@ -457,6 +466,8 @@ public:
     /// This is the default because interprocedural and global optimization can
     /// remove redundancy that no function-only pass order can observe.
     Deep,
+    /// One bounded, source-oriented scalar pass sequence.
+    Source,
   };
 
   /// Controls one transactional module-optimization request.  Deep mode uses
@@ -469,6 +480,11 @@ public:
     OptStrength Strength = OptStrength::Deep;
     llvm::OptimizationLevel LLVMLevel = llvm::OptimizationLevel::O2;
     SymSimplifyOptions Semantic;
+    bool EnableSemantic = true;
+    /// Dispatcher recovery is independent of optional expression rewriting.
+    /// Conservative patch requests run neither transformation.
+    bool EnableControlFlowRecovery = true;
+    uint32_t SourcePasses = SourceViewOptions::BasicPasses;
     /// Per SemanticFixedPointPass invocation.  Deep has independent early and
     /// late invocations, so each receives this complete budget.  Zero means
     /// unlimited and still stops on a stable state or exact cycle.
@@ -511,7 +527,8 @@ public:
   /// temporary allocas. Invalid LLVM IR and a failed fallback remain
   /// unchanged. Both C routes use this policy.
   static OptimizationResult
-  optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources = nullptr);
+  optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources = nullptr,
+                          const SourceViewOptions &View = {});
 
   /// Promote the emitter's temporary allocas to SSA registers. This
   /// canonicalization runs under NoOpt without value-changing passes. Native

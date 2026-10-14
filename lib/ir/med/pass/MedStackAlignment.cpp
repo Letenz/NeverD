@@ -266,6 +266,21 @@ std::optional<int64_t> entryStackOffset(const MedFunc &Func,
       .offset(Value);
 }
 
+std::vector<std::optional<int64_t>>
+entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+                  Arch Architecture, BinaryFormat Format,
+                  StackEntryKind Entry) {
+  std::vector<std::optional<int64_t>> Offsets(Values.size());
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
+    return Offsets;
+  StackOffsetProof Proof(Func, Architecture, Format, Entry,
+                         /*FollowJoins=*/true);
+  for (size_t I = 0; I < Values.size(); ++I)
+    Offsets[I] = Proof.offset(Values[I]);
+  return Offsets;
+}
+
 void simplifyProvenStackAlignment(MedFunc &Func, Arch Architecture,
                                   BinaryFormat Format, StackEntryKind Entry) {
   const auto &TRI = getTargetRegInfo(Architecture);

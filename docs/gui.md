@@ -91,7 +91,12 @@ Analysis uses the shared C++ backend and never launches the input. See the
 [workflow and limits](web-package-review-journal.md).
 
 A start without a file shows the quick start alone, as IDA does: the workbench
-appears once you choose how to start, and closing the quick start quits. Drag
+appears once you choose how to start, and closing the quick start quits. The
+questions asked before a file loads, **Load a new file** and **Load PDB file**,
+greet alone too while the workbench has not shown yet, after the quick start or
+for a file named on the command line; the workbench appears as the file starts
+to load, or when you cancel the load. A run that captures or measures asks
+nothing and loads the PDB that discovery finds. Drag
 its window edges or lower-right grip to resize it; the next opening remembers
 that size. The action pane stays the same width while the recent files use the
 available space. Its side pane holds the ways to start: **New** (N) asks for a
@@ -175,6 +180,25 @@ back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
 
+Native HighC keeps ordinary cleanup but skips optional symbolic expression
+simplification by default. Use the source window's **Optimization** menu or
+right-click **Symbolically simplify this function** to enable it. C through LLVM
+defaults to control-flow recovery and O2, with basic scalar cleanup, O0, O1, O3,
+and a custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE available
+in the same menu. Symbolic simplification is a separate choice for every LLVM
+profile. **Recover LLVM control flow** has its own checked-by-default item;
+disabling symbolic
+expression simplification does not disable recovery or its targeted proofs.
+The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
+`--symbolic-simplify`. LLVM-specific overrides require `--func --llvm`;
+HighC symbolic simplification requires `--func`. These choices apply to the
+current function; navigating to another function restores the defaults.
+An enhancement runs in the analysis worker while the previous source remains
+visible. **Cancel transformation** stops that request, and **Restore default
+source** returns to the ordinary view. Failed enhancements retain the preceding
+source. Required machine control-flow, ABI and exception recovery still run.
+These display defaults do not change the conservative binary patch pipeline.
+
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
 the requested function. F5 or Tab pressed while a jump is loading decompiles the
@@ -241,6 +265,12 @@ a routine returns keeps the integer the machine reads,
 converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
 void *, const void *))compare)`.
 
+Functions that share a symbol name, such as the static `helper` of two
+files, are numbered as IDA numbers them: the one at the lowest address keeps
+the name, and the others read `helper_0`, `helper_1` and so on in the
+listing, the Functions window, Jump and the pseudocode, skipping a number
+another symbol already holds.
+
 Mangled names read as their language spells them: the listing keeps the
 linkage name an instruction uses and adds the readable form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
@@ -271,10 +301,15 @@ numbered (`QDomNodeList_ctor_2`), except MSVC C++ stems, which the MSVC rules
 share between overloads. An imported function whose identifier is not its
 symbol keeps the symbol in an `__asm__` label so that the code still links.
 Other names keep every byte of their symbol (`__libc_start_main`), apart from
-the underscore Mach-O and 32-bit Windows add to C names and the start-up
-functions the C runtime defines itself (`_start` reads `start`). A name an
-image spells with control characters, and that no scheme reads, is never
-copied into a comment.
+the underscore Mach-O and 32-bit Windows add to C names, the start-up
+functions the C runtime defines itself (`_start` reads `start`) and the
+leading underscores of globals (`__dso_handle` reads `dso_handle`). Wherever
+an identifier is not its symbol, the comment above the definition or on the
+global's `neverd.image` line names the symbol as the listing does
+(`/* _fini */` above `fini`, or above `fini_2` in a program that defines a
+`fini` of its own); hovering a renamed function shows its symbol, and
+double-clicking it goes to the function. A name an image spells with control
+characters, and that no scheme reads, is never copied into a comment.
 
 **Pseudocode** reads in the language the function was written in: a Rust
 function as Rust, a Go function as Go and any other as C. The choice is made
@@ -459,7 +494,16 @@ macOS, to do what the system setting for title bar double clicks asks). The
 title bar dims while the window is inactive, and full screen hides its icon
 and window buttons. Dialogs draw a title bar of their own: the dialog's title
 in the middle, Close, and Maximize for a dialog that offers it, such as the
-quick start.
+quick start. A dialog, a message box included, is wide enough to show its whole
+title.
+
+The controls are the workbench's own too. A combo box's list, such as the
+pseudocode view's representations, drops below it and reads as a menu: a
+4-pixel inset, highlights with rounded corners, the menu's colors. Submenus,
+tree branches, sorted columns and the arrows that scroll a tab bar take the
+workbench's chevrons, message boxes its icons, and Qt's file dialog, which the
+workbench uses on GNOME, its icons for folders, files, drives and its tool
+buttons.
 
 How the rest of the frame is drawn depends on the system:
 
@@ -583,24 +627,38 @@ linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
-When debug-information loading is enabled and a PE has no loaded PDB, the
-workbench offers **Download debug symbols** if its CodeView record supplies a
-unique valid PDB name and build identity. **Download** tries the Microsoft public
-symbol server; **Not now** continues without a network request. The request sends
-only the PDB basename and identity, not the binary. A valid PE is not necessarily
-a Microsoft product, and Microsoft may have no symbols for its build.
+Opening a PE that names a PDB in its CodeView record asks **Load PDB file**, as
+IDA does, before the file loads and whether or not the PDB is on this computer.
+The dialog shows the path the linker recorded and where a copy with the same
+build identity is: at that path, beside the input, or in a directory or symbol
+store of the search path. **Yes** loads that copy; **No** opens the file without
+the PDB, which the project keeps, so reopening it does not load the PDB either.
+Projects, and files opened with **Load debug information** cleared, are not
+asked. With no matching copy, **Yes** downloads the PDB from the first symbol
+server of the search path that has it, sending only the PDB's name and build
+identity, with a progress bar and **Cancel**. The download goes into that
+server's store, where every later load, the command line's included, finds it;
+the engine checks its identity before the file loads. When no server has it, or
+the transfer fails, the dialog offers to try again or to browse for the file on
+disk. A copy beside the input that belongs to another build is named as such.
 
-Downloads run in the background with a cancel button. The engine verifies the
-PDB against the current image before applying it; failed downloads or mismatches
-leave analysis intact and report the reason in Output. Closing or switching
-files, or starting a manual PDB selection, cancels the pending download. Verified
-files are cached under the application's cache directory in
-`symbols/microsoft/<pdb-name>/<build-key>/` and verified again before reuse.
-Direct HTTPS PDB downloads are supported on every desktop platform; Windows
-also tries the compressed `.pd_` variant. Symbol-store `file.ptr` indirection is
-not followed. Transfers have a 2 GiB limit, a 30-second inactivity timeout and a
-10-minute overall deadline. See Microsoft's
-[public symbol server documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+The search path is `_NT_ALT_SYMBOL_PATH` and `_NT_SYMBOL_PATH`, in the syntax
+Microsoft's debuggers read (`srv*<store>*<server>;<directory>`). Without either,
+NeverD searches the store `neverd/symbols` in the user's cache directory
+(`XDG_CACHE_HOME` or `~/.cache`, `~/Library/Caches`, `%LOCALAPPDATA%`) and fills it
+from [Microsoft's public symbol server](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+A PE is not necessarily a Microsoft product, and a server may have no symbols
+for its build. Transfers have a 2 GiB limit, a 30-second inactivity timeout and
+a 10-minute overall deadline; a broken connection or a server error is tried
+twice more before the dialog reports it. Windows also tries a server's
+compressed `.pd_` variant. Symbol-store `file.ptr` indirection is not followed.
+The command line searches the same stores, takes the search path as
+`--symbol-path`, and with `--download-symbols` downloads a missing PDB the same
+way before it loads the file, through the system's libcurl or WinHTTP.
+
+A project whose PDB no longer loads, and a file opened before anyone was asked,
+offer the same dialog once the file is open; a copy that has reached a store
+since then loads without asking.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and
@@ -677,6 +735,24 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Functions → Edit function** (Alt+P, and Ctrl+E on a row of the
+Functions window, as in IDA) opens IDA's Edit function dialog on the current
+function: its name, its start and end, its color, the frame sizes IDA lists
+and its flags. A new name is a rename. **Does not return** states that the
+function never returns, which ends every call to it, over its name and what
+analysis proves of its body, in either direction. **Library func**, **Static
+func** and the color are notes the dialog and the command line keep;
+analysis does not read them, and the listing does not paint the color yet.
+The bounds come from analysis and cannot be changed here. Of the frame sizes
+NeverD shows the bytes x86's `ret imm` purges; the other sizes and the flags
+**Far function**, **BP based frame**, **BP equals to SP**, **Fuzzy SP** and
+**Outlined code** describe IDA's frame model, which NeverD does not keep,
+and show disabled. The statements are kept in the function edits sidecar and
+go with a deleted function. A rename and a change of the flags are two steps
+of the history. The command line shows and states the same
+(`neverd function-edits <input> --show <address>`, `--edit <address> --set
+noreturn=true`, `--set color=#RRGGBB`, `--set library=default`).
 
 **Edit → Rename** (N) names any address, as the listing and the pseudocode
 show it: a name under the cursor renames what it denotes, otherwise the item

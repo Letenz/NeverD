@@ -65,6 +65,11 @@ protected:
   bool CompareOutput = false;
   bool PositiveInput = false;
   unsigned ProbeNumber = 0;
+  std::set<va_t> AdditionalFunctionEntries;
+  std::set<va_t> AdditionalCodeRoots;
+  /// The image's x87 model (BinaryImage::X87ContextOverride); unset follows
+  /// the host format's calling convention.
+  std::optional<bool> X87ContextOverride;
 
   void SetUp() override {
     auto Clang = llvm::sys::findProgramByName("clang");
@@ -168,6 +173,8 @@ protected:
     Image.Bits = Bitness::Bits64;
     Image.Format = Format;
     Image.Base = Image.Entry = Entry;
+    Image.CodeRefTargets = AdditionalCodeRoots;
+    Image.X87ContextOverride = X87ContextOverride;
     Segment Text;
     Text.Name = ".text";
     Text.VA = Entry;
@@ -185,6 +192,11 @@ protected:
     auto FunctionSymbol = Symbol::makeFunc(Entry, Bytes.size());
     FunctionSymbol.Name = "isa_probe";
     Image.Symbols.push_back(std::move(FunctionSymbol));
+    for (va_t Address : AdditionalFunctionEntries) {
+      auto Callee = Symbol::makeFunc(Address, Bytes.size() - (Address - Entry));
+      Callee.Name = "x87_callee_" + std::to_string(Address - Entry);
+      Image.Symbols.push_back(std::move(Callee));
+    }
     return Image;
   }
 
@@ -378,6 +390,8 @@ int main(void) {
       Options.NoOpt = NoOpt;
       Options.EmitDumpOutput = false;
       Options.OnlyFunctionEntries = {Entry};
+      Options.OnlyFunctionEntries.insert(AdditionalFunctionEntries.begin(),
+                                         AdditionalFunctionEntries.end());
       auto Result = Pipeline().run(Image, Context, Options);
       ASSERT_TRUE(Result.Success) << Result.Error;
       ASSERT_NE(Result.LlvmModule, nullptr);
@@ -415,6 +429,8 @@ int main(void) {
       Options.NoOpt = SourceNoOpt;
       Options.EmitDumpOutput = false;
       Options.OnlyFunctionEntries = {Entry};
+      Options.OnlyFunctionEntries.insert(AdditionalFunctionEntries.begin(),
+                                         AdditionalFunctionEntries.end());
       auto Result = Pipeline().run(Image, Context, Options);
       ASSERT_TRUE(Result.Success) << Result.Error;
       CEmitterOptions EmitterOptions;
@@ -430,6 +446,10 @@ int main(void) {
         ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, SourceOut,
                                         EmitterOptions, nullptr, &Image));
       } else {
+        std::string Dump;
+        llvm::raw_string_ostream DumpOut(Dump);
+        Pipeline::dumpHighIR(Result.HighFuncs, DumpOut);
+        retain(SourceNoOpt ? "high-noopt-ir.txt" : "high-ir.txt", Dump);
         ASSERT_TRUE(
             HighCEmitter().emit(Result.HighFuncs, SourceOut, EmitterOptions));
       }
@@ -450,10 +470,12 @@ int main(void) {
         ASSERT_EQ(Function->arg_size(), 1U);
         PointerProbe = Function->getArg(0)->getType()->isPointerTy();
       } else {
-        ASSERT_EQ(Result.HighFuncs.size(), 1U);
-        ASSERT_EQ(Result.HighFuncs[0].Params.size(), 1U);
-        PointerProbe =
-            Result.HighFuncs[0].Params[0].Type->Kind == NdTypeKind::Ptr;
+        const auto Probe =
+            std::find_if(Result.HighFuncs.begin(), Result.HighFuncs.end(),
+                         [](const auto &F) { return F.Entry == Entry; });
+        ASSERT_NE(Probe, Result.HighFuncs.end());
+        ASSERT_EQ(Probe->Params.size(), 1U);
+        PointerProbe = Probe->Params[0].Type->Kind == NdTypeKind::Ptr;
       }
       if (PointerProbe) {
         const auto Position = CDriver.find("isa_probe((uintptr_t)actual)");

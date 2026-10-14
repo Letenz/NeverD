@@ -40,7 +40,7 @@ SourceNavigation analyzeSourceNavigation(const SourceAnalysis &S,
                   {S.ID, JavaScriptNavigationProfile, B.ID, B.Status});
   try {
     auto Charge = [&](uint64_t Steps = 1) {
-      if (Steps > MaxJavaScriptNavigationSteps - A.Steps)
+      if (Steps > sourceWorkLimit(S, MaxJavaScriptNavigationSteps) - A.Steps)
         throw Error("source_navigation_budget_exceeded");
       A.Steps += Steps;
     };
@@ -53,8 +53,8 @@ SourceNavigation analyzeSourceNavigation(const SourceAnalysis &S,
         Enclosing(Size, NoSourceIndex), Functions(Size, NoSourceIndex),
         DeclBindings(Size, NoSourceIndex), Refs(Size, NoSourceIndex);
     if (Available) {
-      if (B.Declarations.size() > 2 * MaxJavaScriptNodes ||
-          B.References.size() > MaxJavaScriptNodes)
+      if (B.Declarations.size() > 2 * sourceLimits(S).Nodes ||
+          B.References.size() > sourceLimits(S).Nodes)
         throw Error("source_navigation_budget_exceeded");
       auto DeclarationIndex = indexSourceDeclarations(S, B);
       Charge(DeclarationIndex.Steps);

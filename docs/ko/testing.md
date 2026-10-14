@@ -282,11 +282,21 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends`는 정의되지 않은 동작 트랩을 활성화하여 O0/O2에서 두 복원 C 경로를 실행하며 모든 바이트 값과 원시 시프트 횟수를 다룹니다.
 `NeverDLLVMCIntrinsicSemanticTests`는 i1/8/16/32/64/128 부호 있는/없는 정수 min/max도 O0/O2에서 실행하여 대입 및 인라인 결과, 피연산자 생성 순서와 단일 평가를 검사합니다. 지원하지 않는 스칼라 너비와 잘못된 피연산자는 명시적으로 실패해야 합니다.
 
+## x64 x87 컨텍스트 소유권
+
+`NeverDX86X87ConvertStateTests`는 원래 바이트와 LLVM, HighC, LLVMC의 실행을 default/NoOpt 및 C O0/O2에서 비교합니다. 이 픽스처는 `BinaryImage::X87ContextOverride`로 모든 호스트에서 소유 컨텍스트를 고정하며, 정수 로드, 부호, x87 FPU 스위트는 System V의 타입 있는 투영도 검사합니다. 변환, 여덟 산술 형식, 플래그, MMX/EMMS, 가득 찬/빈 스택, 호출, 래퍼, 진입 루프와 독립 진입점을 검사합니다. 네 FLDENV/FRSTOR 형식은 대기 예외, 태그와 보존 값을 다루며 해당되는 경우 네 RC, 세 유효 PC와 64 예외 마스크를 검사합니다. Low/Med/High 계약은 잘못된 형식, 위조 핸들과 잘린 선택자를 거부합니다. 좁은 반환은 호출 효과를 유지하며 실제 필요한 미지 비트를 거부합니다. 네이티브 대조에는 x64와 Clang이 필요하며 모든 명령, 플랫폼, CPU, 오류 우선순위 또는 형식화된 부동소수점 가져오기 ABI의 검증을 주장하지 않습니다.
+
 ## 구조화된 C 제어 흐름 및 호출 검사
 
 `HighControlFlowSemantics.*`는 루프의 종료 지점이나 뒷부분을 이동할 때 다른 점프가 참조하는 레이블을 보존하는지 검사합니다. 루프 앞뒤 종료 지점으로 직접 진입하는 경우와 break 교체를 다루며, 생성된 C를 O0/O2로 실행해 독립적인 반환값 기준과 비교합니다.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead`는 추론된 필수 레지스터 인수의 끝에 있는 알 수 없는 슬롯이 유지되는지 검사합니다. 알 수 없는 필수 인수나 조건을 평가하면 명시적으로 트랩해야 하며, 생략된 피연산자, null 피연산자 및 중첩 피연산자를 조용히 0으로 바꾸면 안 됩니다. 알려진 값과 읽히지 않음이 입증된 추가 피연산자는 계속 실행할 수 있습니다. 트랩은 진단 경계이며 복원된 동작의 동등성을 증명하지 않습니다.
+
+## LLVM C 객체 저장 공간
+
+`NeverDLLVMCAllocaTests`는 원래 LLVM과 생성 C를 O0/O2 및 정의되지 않은 동작 트랩으로 실행합니다. 전체 동적 범위, 패딩을 포함한 요소 간격, 16/32/64바이트 정렬, 동시·반복 할당의 독립성과 개수 생성 호출의 한 번 평가를 검증합니다. 일반 및 형식 보존 C 경로를 확인하며 지원하지 않거나 오버플로되는 할당과 명시적 stack save/restore는 DCE 전에 거부합니다. 원래 스택 주소나 예외 프레임의 동일성을 보증하지 않습니다.
+
+같은 대상은 정적 스칼라, 포인터, 배열, 압축 레코드의 최대 128바이트 정렬, 전역 정렬, 0으로 채운 문자열의 전체 저장 공간과 초기화·반환·호출·선택·포인터 정수 변환의 전역 주소 동일성도 비교한다. 적용 가능한 일반/타입 보존 및 전체/선택 함수 출력을 검증한다.
 
 ## CPU 실행 테스트
 
@@ -1744,3 +1754,17 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
+
+소스 patch Windows 워크플로는 `scripts/check_source_patch_pe_runtime.py`도 실행합니다. x86/x64/ARM64 원본 3개와 교체 결과 27개를 생성하고 아키텍처마다 프로세스 실행 30회를 관측합니다. x86/x64는 Windows x64, ARM64는 `windows-11-arm`에서 실행하며 커밋, PE 아키텍처, 파일 해시, 전체 사례가 일치해야 합니다. 이 C 프로파일은 ARM64 C++ 예외를 검증하지 않습니다. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc`는 일반 NeverC를 선택합니다. 3389.1.5의 66개 검사는 x64/ARM64와 ELF, PE, Mach-O를 다루며 x86/ARM32는 지원하지 않습니다. 컴파일러를 자동으로 바꾸지 않습니다. PE 어댑터는 `-fno-autolink`를 사용하며 외부 `.drectve` 객체는 계속 거부합니다.
+
+행렬은 컴파일된 객체와 외부 네이티브 객체의 `target` 기록을 독립적인 ABI 목록과 비교합니다. 잘못된 객체를 검사한 뒤에는 수정하지 않은 객체를 설치하고 실행하여 유효한 입력의 대조 결과도 확인해야 합니다.
+
+선택적 `NeverCProfiles/*`는 여섯 x64/ARM64 구성에서 C++ IR/객체/hosted DynCode, 비인라인 도우미·재귀 및 미지원 C++ 거부의 30개 검사를 추가합니다. `NeverDSourcePatchDynCodeTests`는 해시·진입점·대상·상태·검증 위조를 거부합니다. `SourcePatchException.NeverC*`는 실제 프로세스에서 수명과 두 프레임을 통과하는 예외를 검사합니다. Windows 검사기는 아홉 패치 시나리오와 원본 대조를 세 번 실행하고 일치하는 머신·커밋·해시 및 네이티브 x64/ARM64 호스트를 요구합니다.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+네이티브 검증은 NeverC 리비전 `182fd2c5dc`, 독립적으로 컴파일한 원본과 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 아키텍처마다 Windows 네이티브 관측 36회를 요구하며 C++ IR/객체/hosted 수명과 두 hosted 프레임을 통과하는 예외 콜백을 확인합니다. `check_source_patch_elf_runtime.py`는 아키텍처마다 Linux 네이티브 관측 66회를 요구하며 C++ IR/객체/hosted, hosted 예외 전파, Clang 예외 시나리오 9개를 확인합니다. 영수증, 산출물 해시와 실제 호스트 아키텍처가 일치해야 합니다. 실제 컴파일러 산출물을 설치하는 검사이며 CI 호스트에서 NeverC 실행 파일을 실행했다고 주장하지 않습니다.
+
+네이티브 검증 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780)의 관측 204회가 모두 통과했습니다. Windows x64/ARM64는 각각 36회, Linux x64/ARM64는 각각 66회입니다. 공개 소스 API로 C++ IR, 일반 객체, C++ hosted DynCode를 생성하고 두 NeverC 프레임을 통과하는 예외도 확인했습니다. 재생 시 현재 소스와 하위 모듈 다이제스트, 원본과 최종 바이트, 설치 영수증 및 실제 네이티브 호스트를 확인합니다. macOS ARM64와 Rosetta x64에서도 세 C++ 경로와 두 프레임 전파가 통과했습니다. Clang FH3 검증 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780)도 Windows x64/ARM64의 예외 시나리오 9개와 대조군, 각각 36회를 통과했습니다.

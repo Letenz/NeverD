@@ -81,6 +81,19 @@ terms and 19 observed fields with unknown later terms. Named configuration
 loading links are zero. These are spelling/shape candidates; source bytes and
 larger readable recovery remain separately preserved for every original unit.
 
+Explicit `hermes-602befee-large-source-js-v1` admission now parses and inspects
+all 2,364 units, including the ten interactive refusals. Configuration order
+completes for every large-profile feature inventory and retains 418 candidate
+objects, 3,702 terms and 32 fields with possible later overwrites. Named loading
+links remain zero. The two profiles keep separate source/analysis identities;
+these extra syntax candidates do not establish effective configuration policy.
+The supplemental receipt is `/tmp/neverd-large-source-full-client.xml`.
+The independent [configuration file navigation profile](web-configuration-file-profile.md)
+now retains actual file/layer literal sites and local lexical call relationships
+through minified names. Its 973 sites, 592 call candidates and 69 arrays do not
+change this profile's named-call grammar, object order or zero named-loader
+count, and do not establish file-layer precedence.
+
 Two preserved decoded files provide narrower selections. Module 1676 has
 SHA-256 `c377d5191165ae221a042d4ea22bd3333969097edb10eb0ef6791610378324da`,
 one candidate object and four terms. The first corpus unit with an unknown

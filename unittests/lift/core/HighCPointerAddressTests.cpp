@@ -1808,6 +1808,41 @@ TEST(LLVMCPointerAddresses, DataOnlyAddressedIsDeclared) {
       << Source;
 }
 
+/// Expect \p Source to be C a compiler accepts.
+void expectCSyntax(const std::string &Source) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror", "c",
+                                                  SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror",
+                                                  "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream File(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    File << Source;
+  }
+  llvm::SmallVector<llvm::StringRef, 4> Arguments{Compiler, "-std=c11",
+                                                  "-fsyntax-only", SourcePath};
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  std::string Error;
+  const int CompileStatus = llvm::sys::ExecuteAndWait(
+      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
+  EXPECT_EQ(CompileStatus, 0)
+      << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
+      << Source;
+}
+
 TEST(LLVMCPointerAddresses, OneFunctionDeclaresTheImagesPointerStorage) {
   // ntoskrnl's .data holds relocated pointers, so LLVM emission mirrors the
   // whole run as one global, its pointers relocated to what they reach.  A
@@ -1855,37 +1890,75 @@ TEST(LLVMCPointerAddresses, OneFunctionDeclaresTheImagesPointerStorage) {
   EXPECT_EQ(Source.find("_nd_codeptr_140C00000 ="), std::string::npos)
       << Source;
 
-#ifdef NEVERD_TEST_CLANG
-  const std::string Compiler = NEVERD_TEST_CLANG;
-#else
-  auto FoundCompiler = llvm::sys::findProgramByName("clang");
-  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
-  const std::string Compiler = *FoundCompiler;
-#endif
-  llvm::SmallString<128> SourcePath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror", "c",
-                                                  SourcePath));
-  llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror",
-                                                  "err", ErrorPath));
-  llvm::FileRemover RemoveError(ErrorPath);
-  {
-    std::error_code EC;
-    llvm::raw_fd_ostream File(SourcePath, EC);
-    ASSERT_FALSE(EC) << EC.message();
-    File << Source;
-  }
-  llvm::SmallVector<llvm::StringRef, 4> Arguments{Compiler, "-std=c11",
-                                                  "-fsyntax-only", SourcePath};
-  const std::optional<llvm::StringRef> Redirects[] = {
-      std::nullopt, std::nullopt, ErrorPath.str()};
-  std::string Error;
-  const int CompileStatus = llvm::sys::ExecuteAndWait(
-      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
-  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
-  EXPECT_EQ(CompileStatus, 0)
-      << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
+  expectCSyntax(Source);
+}
+
+TEST(LLVMCPointerAddresses, AModuleNamesTheDataOfAMirrorItsEnvironmentHolds) {
+  // An i386 GOT run holds slots the loader fills, so LLVM emission declares
+  // the whole run rather than define it from the file's bytes, the data
+  // after the GOT included, and code reaches that data from the GOT base by
+  // offset: `&mirror + 8` as integer arithmetic, or as an element of it.
+  // The module's C names the data as the listing does and declares it, as
+  // one function's C does.  An anchor before the run (i386
+  // `table@GOTOFF - 1`) addresses no data, so it keeps the mirror, which C
+  // then declares.
+  BinaryImage Img =
+      makeImageObjectFixture(0x140C00000, std::vector<uint8_t>(16, 0), true);
+  Symbol Completed;
+  Completed.Name = "completed.0";
+  Completed.Addr = 0x140C00008;
+  Completed.Size = 1;
+  Img.Symbols.push_back(Completed);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-environment-mirror", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  auto *StorageTy = llvm::StructType::get(Context, {I64, I64}, true);
+  auto *Storage = new llvm::GlobalVariable(
+      Module, StorageTy, /*isConstant=*/false,
+      llvm::GlobalValue::ExternalLinkage, nullptr, "__nd_codeptr_140C00000");
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "read_flag", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Constant *Offset = llvm::ConstantExpr::getIntToPtr(
+      llvm::ConstantExpr::getAdd(llvm::ConstantExpr::getPtrToInt(Storage, I64),
+                                 llvm::ConstantInt::get(I64, 8)),
+      llvm::PointerType::getUnqual(Context));
+  auto *Flag = Builder.CreateLoad(I8, Offset);
+  Flag->setVolatile(true);
+  Builder
+      .CreateStore(llvm::ConstantInt::get(I8, 1),
+                   llvm::ConstantExpr::getGetElementPtr(
+                       I8, Storage, llvm::ConstantInt::get(I64, 8)))
+      ->setVolatile(true);
+  Builder.CreateRet(Builder.CreateZExt(Flag, I64));
+  llvm::Function *Anchor = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "anchor", Module);
+  llvm::IRBuilder<> AnchorBuilder(
+      llvm::BasicBlock::Create(Context, "entry", Anchor));
+  AnchorBuilder.CreateRet(
+      llvm::ConstantExpr::getSub(llvm::ConstantExpr::getPtrToInt(Storage, I64),
+                                 llvm::ConstantInt::get(I64, 1)));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img));
+  OS.flush();
+  EXPECT_NE(Source.find("/* completed.0 */\nextern uint8_t completed_0;"),
+            std::string::npos)
       << Source;
+  EXPECT_NE(Source.find("completed_0 = 1;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" __nd_codeptr_140C00000;\n"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("140BFFFFF"), std::string::npos) << Source;
+  expectCSyntax(Source);
 }
 
 TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
@@ -21430,8 +21503,10 @@ TEST(HighCPointerAddresses, CleanupCallResultIsNotDeclared) {
   const std::string Source = emitFunctions({Parent});
   EXPECT_NE(Source.find("CStringT_dtor("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v3_0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, CleanupScalarCopyForwardsIntoDtor) {
@@ -22737,7 +22812,7 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewBeforeCxxTryComposes) {
   EXPECT_EQ(FormatArgs.find("(int64_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t99_25"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t117"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AtlFormatIntegerViewIgnoresDtorClobber) {
@@ -24212,7 +24287,7 @@ TEST(HighCPointerAddresses, CleanupFuncletAssignDoesNotExposePrologueHome) {
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("v0 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m10 ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
   EXPECT_NE(Source.find("use("), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor("), std::string::npos) << Source;
 }
@@ -35027,12 +35102,14 @@ std::string dumpMedBlockRanges(const std::vector<MedFunc> &Funcs) {
 }
 
 std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true,
-                              DebugContext *Dbg = nullptr) {
+                              DebugContext *Dbg = nullptr,
+                              bool SourceProjection = false) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.NoOpt = NoOpt;
   Opts.LiftMode = true;
+  Opts.SourceProjection = SourceProjection;
   Opts.OnlyFunctionEntries.insert(Entry);
   auto Result = Pipeline().run(Img, Ctx, Opts, Dbg);
   if (!Result.Success || !Result.LlvmModule)
@@ -35406,6 +35483,54 @@ TEST(HighCPointerAddresses, CorpusFuncLoadGsHandlerCheckReturnsOne) {
   EXPECT_EQ(Source.find("void sub_"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, CorpusCalleeSavesAreNotStoresOfLaterArguments) {
+  // `mov [rsp+18h], rsi` and `push rdi` save the caller's registers before
+  // `mov rsi, r8` and `mov rdi, r9` make them hold arg2 and arg3.  Those
+  // saves are prologue storage, not stores of the arguments.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/clang-cl/x86_64/fh3/gs/o0/abi-probe/"
+                    "cxx_eh_probe-clang-cl-x86_64-fh3-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+  constexpr va_t Entry = 0x1400020CC;
+  BinaryLoadOptions Opts;
+  Opts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, Opts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source = highcOnlyFunction(*Img, Entry);
+  ASSERT_NE(Source.find("sub_140002C00()"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(frame_base - 8) ="), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(frame_base + 24) ="), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("= arg3;"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, CorpusCalleeSavesStayOutOfTheFrame) {
+  // `mov [rsp+10h], rbx` and `push rdi` save the caller's registers.  The
+  // LLVM-C view, like HighC, leaves those saves out of its frame.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/clang-cl/x86_64/fh3/gs/o0/abi-probe/"
+                    "cxx_eh_probe-clang-cl-x86_64-fh3-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+  constexpr va_t Entry = 0x140001A30;
+  BinaryLoadOptions Opts;
+  Opts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, Opts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source =
+      llvmcOnlyFunction(std::move(*Img), Entry, /*NoOpt=*/false,
+                        /*Dbg=*/nullptr, /*SourceProjection=*/true);
+  ASSERT_NE(Source.find("RtlCaptureContext("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(char*)&frame0 + 120) = 0;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("(char*)&frame0 + 80) = 0;"), std::string::npos)
+      << Source;
+}
+
 TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
@@ -35421,6 +35546,22 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
   ASSERT_TRUE(static_cast<bool>(DiscoverImg))
       << llvm::toString(DiscoverImg.takeError());
 
+  // A typed handler whose body rethrows, not the rethrow that ends a cleanup
+  // scope's catch-all.
+  auto RethrowsInHandler = [](const std::string &Text) {
+    for (size_t At = Text.find("throw;"); At != std::string::npos;
+         At = Text.find("throw;", At + 1)) {
+      const size_t Catch = Text.rfind("catch (", At);
+      if (Catch == std::string::npos ||
+          Text.compare(Catch, 11, "catch (...)") == 0)
+        continue;
+      const size_t Open = Text.find('{', Catch);
+      if (Open != std::string::npos &&
+          Text.find_first_not_of(" \n", Open + 1) == At)
+        return true;
+    }
+    return false;
+  };
   va_t Entry = 0;
   std::string Source;
   for (const auto &Rec : DiscoverImg->COFFPDataRecords) {
@@ -35431,8 +35572,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
     if (!Img)
       continue;
     std::string Text = highcOnlyFunction(*Img, Begin);
-    if (Text.find("throw;") == std::string::npos ||
-        Text.find("catch") == std::string::npos)
+    if (!RethrowsInHandler(Text))
       continue;
     Entry = Begin;
     Source = std::move(Text);
@@ -37817,7 +37957,7 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
       std::regex(
           R"(uint32_t (\w+) = 11;\s*__builtin_memcpy\(\(void \*\)\(uintptr_t\)\(\(\(char\*\)&frame0 \+ 32\)\), &\1, 4\))")))
       << Source;
-  EXPECT_NE(Source.find("sink_wide(used3)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("sink_wide(used"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
@@ -37893,10 +38033,14 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("types_ = 43"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("values_"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("&var_m28"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 32) = 43;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= ((char*)&frame0 + 16);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("((char*)&frame0 + 40))"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
@@ -38043,16 +38187,17 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), ((char*)&frame0 + 24))"),
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("pAuxData._Ptr = 0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m28 = *((ArgList *)&pAuxData)"), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("var_m28 = pAuxData"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
@@ -38198,7 +38343,16 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
   OS.flush();
   const std::string Body =
       sourceFunctionDefinition(Source, "leftover_eax_copy");
-  EXPECT_NE(Body.find("var_m18.types_"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Body.find("var_m"), std::string::npos) << Source;
+  // The call result's narrow store reaches the wide copy of the same bytes.
+  EXPECT_NE(Body.find("*(uint32_t *)((char*)&frame0 + 8) = period_use"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Body.find("(((char*)&frame0 + 8)), 16);"), std::string::npos)
+      << Source;
   EXPECT_NE(Body.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Body.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Body.find("pAuxData.types_"), std::string::npos) << Source;
@@ -38504,7 +38658,13 @@ TEST(LLVMCPointerAddresses,
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
+  // `values_` hands the callee the address of the values, whose count only
+  // `types_` encodes: no type bounds what the callee reads there, so the
+  // record and the values stay one frame object.
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), ((char*)&frame0 + 24))"),
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
@@ -44225,6 +44385,113 @@ TEST(HighCPointerAddresses, HomeSpillNothingReadsBackIsNoArgument) {
   EXPECT_NE(HighC.find("sub_140001030()"), std::string::npos) << HighC;
 }
 
+// The callee of the three tests below clears the local it is handed, so each
+// caller's frame escapes and stays byte storage.
+std::vector<uint8_t> withFrameClearingCallee(std::vector<uint8_t> Code) {
+  Code.resize(0x40, 0xcc);
+  Code.insert(Code.end(),
+              {0x48, 0xc7, 0x01, 0x00, 0x00, 0x00, 0x00, // mov [rcx], 0
+               0xc3});
+  return Code;
+}
+
+TEST(HighCPointerAddresses, CalleeSaveInAHomeSlotIsPrologueStorage) {
+  // MSVC saves nonvolatile registers in its own home slots: `mov [rsp+8],
+  // rbx` is the same save as a push, restored by `mov rbx, [rsp+38h]`.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = withFrameClearingCallee(
+      {0x48, 0x89, 0x5c, 0x24, 0x08, // mov [rsp+8], rbx
+       0x48, 0x83, 0xec, 0x30,       // sub rsp, 30h
+       0x48, 0x8b, 0xd9,             // mov rbx, rcx
+       0x48, 0x8d, 0x4c, 0x24, 0x20, // lea rcx, [rsp+20h]
+       0xe8, 0x2a, 0x00, 0x00, 0x00, // call callee
+       0x48, 0x8b, 0xc3,             // mov rax, rbx
+       0x48, 0x8b, 0x5c, 0x24, 0x38, // mov rbx, [rsp+38h]
+       0x48, 0x83, 0xc4, 0x30,       // add rsp, 30h
+       0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("sub_140001040("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("return arg0"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, AHomeSlotSaveReadForAnythingElseStays) {
+  // The function returns the rbx it saved: that home slot is read as a value,
+  // not restored, so its store stays.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = withFrameClearingCallee(
+      {0x48, 0x89, 0x5c, 0x24, 0x08, // mov [rsp+8], rbx
+       0x48, 0x83, 0xec, 0x30,       // sub rsp, 30h
+       0x48, 0x8d, 0x4c, 0x24, 0x20, // lea rcx, [rsp+20h]
+       0xe8, 0x2d, 0x00, 0x00, 0x00, // call callee
+       0x48, 0x8b, 0x44, 0x24, 0x38, // mov rax, [rsp+38h]
+       0x48, 0x83, 0xc4, 0x30,       // add rsp, 30h
+       0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
+}
+
+TEST(LLVMCPointerAddresses, AFrameRecordPassedToACallStaysOneObject) {
+  // `s = {1, 2, 3, arg1}; init(&s); return s.b;` on Win64.  The callee may
+  // read all four words and write any of them: a separate C local for the
+  // record's first word dropped the last store and read `s.b` from bytes the
+  // callee never saw.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Thunk = 0x140001040;
+  constexpr va_t IAT = 0x140003000;
+  std::vector<uint8_t> Text = {
+      0x48, 0x83, 0xec, 0x48,                      // sub rsp, 48h
+      0x48, 0xc7, 0x44, 0x24, 0x20, 0x01, 0, 0, 0, // [rsp+20h] = 1
+      0x48, 0xc7, 0x44, 0x24, 0x28, 0x02, 0, 0, 0, // [rsp+28h] = 2
+      0x48, 0xc7, 0x44, 0x24, 0x30, 0x03, 0, 0, 0, // [rsp+30h] = 3
+      0x48, 0x89, 0x54, 0x24, 0x38,                // [rsp+38h] = rdx
+      0x48, 0x8d, 0x4c, 0x24, 0x20,                // lea rcx, [rsp+20h]
+      0xe8, 0x12, 0,    0,    0,                   // call Thunk
+      0x48, 0x8b, 0x44, 0x24, 0x28,                // mov rax, [rsp+28h]
+      0x48, 0x83, 0xc4, 0x48,                      // add rsp, 48h
+      0xc3};                                       // ret
+  const size_t Size = Text.size();
+  Text.resize(Thunk - Entry, 0xcc);
+  const int32_t ThunkDisp = static_cast<int32_t>(IAT - (Thunk + 6));
+  Text.insert(Text.end(), {0xff, 0x25});
+  Text.resize(Text.size() + 4);
+  std::memcpy(Text.data() + Text.size() - 4, &ThunkDisp, sizeof(ThunkDisp));
+  BinaryImage Img = makeCodeFixture(Entry, Text);
+  Img.KnownCodeRanges.emplace_back(Entry, Entry + Size);
+  Import Imp;
+  Imp.Name = "init_record";
+  Imp.IATAddr = IAT;
+  Img.Imports.push_back(std::move(Imp));
+  const std::string LLVMC =
+      llvmcOnlyFunction(Img, Entry, /*NoOpt=*/false, /*Dbg=*/nullptr,
+                        /*SourceProjection=*/true);
+  ASSERT_NE(LLVMC.find("init_record("), std::string::npos) << LLVMC;
+  EXPECT_EQ(LLVMC.find("&var_"), std::string::npos) << LLVMC;
+  // All four words reach the callee.
+  for (const char *Word : {"= 1;", "= 2;", "= 3;", "= arg1;"})
+    EXPECT_NE(LLVMC.find(Word), std::string::npos) << Word << "\n" << LLVMC;
+}
+
+TEST(LLVMCPointerAddresses, TheEntrySlotReadsAsTheReturnAddress) {
+  // `mov rax, [rsp]; ret` returns the address its call pushed.  Neither view
+  // has a frame slot holding it: HighC read an unassigned local and LLVM-C a
+  // zero.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0x04, 0x24, // mov rax, [rsp]
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__builtin_return_address(0)"), std::string::npos)
+      << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry, /*NoOpt=*/false,
+                        /*Dbg=*/nullptr, /*SourceProjection=*/true);
+  EXPECT_NE(LLVMC.find("__builtin_return_address(0)"), std::string::npos)
+      << LLVMC;
+}
+
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
   // A value stored in the outgoing argument area is not an argument of a
   // call whose WDK prototype takes one parameter (ExAcquireFastMutexUnsafe).
@@ -44656,19 +44923,26 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
                      llvm::StringRef Storage = {}) {
   constexpr va_t Entry = 0x140001000;
-  const std::string HighC =
-      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  // Raw binary80 constants may stay in integer storage until arithmetic
-  // needs a floating value. Executing the result checks both representations.
-  if (!Storage.empty())
-    EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
-  // The unit is written without includes; its ten-byte accesses copy
-  // through memcpy.
-  compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
-                            HighC +
-                            "\nint main(void) { return (uint64_t)"
-                            "sub_140001000() != " +
-                            std::to_string(Expected) + "ull; }\n");
+  // Typed binary80 values and the owned x87 context (the convention of this
+  // PE image) must compute the same result.
+  for (bool Owned : {false, true}) {
+    SCOPED_TRACE(Owned);
+    BinaryImage Image = makeCodeFixture(Entry, Code);
+    Image.X87ContextOverride = Owned;
+    const std::string HighC = highcOnlyFunction(std::move(Image), Entry);
+    // Raw binary80 constants may stay in integer storage until arithmetic
+    // needs a floating value. Executing the result checks both
+    // representations.
+    if (!Storage.empty() && !Owned)
+      EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
+    // The unit is written without includes; its ten-byte accesses copy
+    // through memcpy.
+    compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
+                              HighC +
+                              "\nint main(void) { return (uint64_t)"
+                              "sub_140001000() != " +
+                              std::to_string(Expected) + "ull; }\n");
+  }
 }
 
 TEST(HighCPointerAddresses, AnX87ValueRoundsToTheDoubleItIsStoredAs) {

@@ -52,6 +52,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar/DCE.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
@@ -453,7 +454,7 @@ runOptimizationPipeline(llvm::Module &Mod,
   llvm::ModuleAnalysisManager MAM;
   llvm::PassBuilder PB;
 
-  if (!Options.Conservative &&
+  if (!Options.Conservative && Options.EnableSemantic &&
       Options.Strength == Pipeline::OptStrength::Deep) {
     PB.registerPipelineEarlySimplificationEPCallback(
         [MaxRounds = Options.MaxRounds, Semantic = Options.Semantic,
@@ -477,7 +478,7 @@ runOptimizationPipeline(llvm::Module &Mod,
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   llvm::FunctionPassManager Prefix;
-  if (!Options.Conservative) {
+  if (!Options.Conservative && Options.EnableControlFlowRecovery) {
     // Before promotion, because that is where a dispatcher's state lives: both
     // a lifted function and a flattened one keep everything in stack slots, the
     // second because no block dominates another once every one of them is
@@ -524,10 +525,30 @@ runOptimizationPipeline(llvm::Module &Mod,
   Result->Changed |= !FramePA.areAllPreserved();
 
   if (!Options.Conservative) {
-    if (Options.Strength == Pipeline::OptStrength::Thin) {
+    if (Options.Strength == Pipeline::OptStrength::Source) {
+      llvm::FunctionPassManager Source;
+      if (Options.SourcePasses & SourceViewOptions::InstCombine)
+        Source.addPass(llvm::InstCombinePass());
+      if (Options.SourcePasses & SourceViewOptions::EarlyCSE)
+        Source.addPass(llvm::EarlyCSEPass(/*UseMemorySSA=*/true));
+      if (Options.EnableSemantic)
+        Source.addPass(SemanticFixedPointPass(Options.MaxRounds,
+                                              Options.Semantic, Result));
+      if (Options.SourcePasses & SourceViewOptions::SimplifyCFG)
+        Source.addPass(llvm::SimplifyCFGPass());
+      if (Options.SourcePasses & SourceViewOptions::DCE)
+        Source.addPass(llvm::DCEPass());
+      llvm::ModulePassManager SourcePipeline;
+      SourcePipeline.addPass(
+          llvm::createModuleToFunctionPassAdaptor(std::move(Source)));
+      Result->Changed |= !SourcePipeline.run(Mod, MAM).areAllPreserved();
+    } else if (Options.Strength == Pipeline::OptStrength::Thin) {
       llvm::FunctionPassManager Thin;
-      Thin.addPass(
-          SemanticFixedPointPass(Options.MaxRounds, Options.Semantic, Result));
+      if (Options.EnableSemantic)
+        Thin.addPass(SemanticFixedPointPass(Options.MaxRounds, Options.Semantic,
+                                            Result));
+      else
+        Thin.addPass(llvm::InstCombinePass());
       Thin.addPass(llvm::SimplifyCFGPass());
       llvm::ModulePassManager ThinPipeline;
       ThinPipeline.addPass(
@@ -573,7 +594,8 @@ Pipeline::optimizeModule(llvm::Module &Mod,
                          const OptimizationOptions &Options) {
   OptimizationResult Result;
   if (!Options.Conservative && Options.Strength != OptStrength::Thin &&
-      Options.Strength != OptStrength::Deep) {
+      Options.Strength != OptStrength::Deep &&
+      Options.Strength != OptStrength::Source) {
     Result.Stop = OptimizationStopReason::InputInvalid;
     return Result;
   }
@@ -642,10 +664,35 @@ Pipeline::optimizeModule(llvm::Module &Mod,
   return Result;
 }
 
-OptimizationResult Pipeline::optimizeOrPromoteModule(llvm::Module &Mod,
-                                                     LLVMSourceMap *Sources) {
+OptimizationResult
+Pipeline::optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources,
+                                  const SourceViewOptions &View) {
   OptimizationOptions Options;
   Options.SourceMap = Sources;
+  Options.EnableSemantic = View.Symbolic;
+  Options.EnableControlFlowRecovery = View.RecoverControlFlow;
+  switch (View.LLVM) {
+  case SourceViewOptions::LLVMOptimization::Basic:
+  case SourceViewOptions::LLVMOptimization::Custom:
+    Options.Strength = OptStrength::Source;
+    Options.SourcePasses =
+        View.LLVM == SourceViewOptions::LLVMOptimization::Basic
+            ? SourceViewOptions::BasicPasses
+            : View.Passes;
+    break;
+  case SourceViewOptions::LLVMOptimization::O0:
+    Options.LLVMLevel = llvm::OptimizationLevel::O0;
+    break;
+  case SourceViewOptions::LLVMOptimization::O1:
+    Options.LLVMLevel = llvm::OptimizationLevel::O1;
+    break;
+  case SourceViewOptions::LLVMOptimization::O2:
+    Options.LLVMLevel = llvm::OptimizationLevel::O2;
+    break;
+  case SourceViewOptions::LLVMOptimization::O3:
+    Options.LLVMLevel = llvm::OptimizationLevel::O3;
+    break;
+  }
   OptimizationResult Result = optimizeModule(Mod, Options);
   if (Result.Stop != OptimizationStopReason::InputInvalid ||
       llvm::verifyModule(Mod))

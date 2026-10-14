@@ -28,6 +28,7 @@
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DIBuilder.h"
@@ -46,6 +47,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -1801,6 +1803,104 @@ TEST(SymSimplifyGuard, ConvergenceAggregatesTwoFunctionsExactly) {
 //===----------------------------------------------------------------------===//
 // Transactional module optimization and LLVM default pipelines
 //===----------------------------------------------------------------------===//
+
+TEST(SymSimplifyGuard,
+     SourceProfilesKeepSymbolicWorkExplicitAndPreserveValues) {
+  using Level = SourceViewOptions::LLVMOptimization;
+  for (const auto Profile : {Level::Basic, Level::O0, Level::O1, Level::O2,
+                             Level::O3, Level::Custom}) {
+    for (bool Symbolic : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Profile));
+      SCOPED_TRACE(Symbolic);
+      llvm::LLVMContext C;
+      llvm::Module M("source_options", C);
+      buildCarrySaveAdd(M);
+      SourceViewOptions Options;
+      Options.LLVM = Profile;
+      Options.Symbolic = Symbolic;
+      Options.Passes = 0;
+      const auto Result =
+          Pipeline::optimizeOrPromoteModule(M, nullptr, Options);
+      EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+      EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      if (Symbolic) {
+        EXPECT_GT(Result.Rounds, 0u);
+        EXPECT_GT(Result.SemanticRewrites, 0u);
+      } else {
+        EXPECT_EQ(Result.Rounds, 0u);
+        EXPECT_EQ(Result.SemanticRewrites, 0u);
+        EXPECT_EQ(Result.SearchWork, 0u);
+        EXPECT_EQ(Result.ProofWork.Queries, 0u);
+      }
+      auto *F = M.getFunction("f");
+      ASSERT_NE(F, nullptr);
+      // Evaluate the resulting IR with LLVM's independent constant evaluator,
+      // including unsigned wrap and the sign boundary. Neither display shape
+      // nor the optimizer's claimed equivalence is the oracle.
+      for (uint32_t X :
+           {0u, 1u, 7u, 0x7fffffffu, 0x80000000u, 0xfffffffeu, 0xffffffffu})
+        for (uint32_t Y :
+             {0u, 1u, 7u, 0x7fffffffu, 0x80000000u, 0xfffffffeu, 0xffffffffu}) {
+          std::map<const llvm::Value *, llvm::Constant *> Values;
+          Values[F->getArg(0)] =
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), X);
+          Values[F->getArg(1)] =
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), Y);
+          for (const auto &I : llvm::instructions(F)) {
+            llvm::SmallVector<llvm::Constant *> Operands;
+            for (const auto &Use : I.operands()) {
+              auto *Value = llvm::dyn_cast<llvm::Constant>(Use.get());
+              if (!Value)
+                Value = Values[Use.get()];
+              ASSERT_NE(Value, nullptr);
+              Operands.push_back(Value);
+            }
+            if (llvm::isa<llvm::ReturnInst>(I)) {
+              ASSERT_EQ(Operands.size(), 1u);
+              auto *Result = llvm::dyn_cast<llvm::ConstantInt>(Operands[0]);
+              ASSERT_NE(Result, nullptr);
+              EXPECT_EQ(Result->getZExtValue(), static_cast<uint32_t>(X + Y));
+            } else {
+              Values[&I] = llvm::ConstantFoldInstOperands(&I, Operands,
+                                                          M.getDataLayout());
+              ASSERT_NE(Values[&I], nullptr) << printFunction(*F);
+            }
+          }
+        }
+    }
+  }
+}
+
+TEST(SymSimplifyGuard, SourceDefaultRunsO2WithoutSymbolicWork) {
+  llvm::LLVMContext C;
+  llvm::Module M("source_default", C);
+  buildCarrySaveAdd(M);
+  auto *Helper = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(C), false),
+      llvm::Function::InternalLinkage, "unused_helper", &M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Helper));
+  B.CreateRetVoid();
+  SourceViewOptions Basic;
+  Basic.LLVM = SourceViewOptions::LLVMOptimization::Basic;
+  const auto Cleanup = Pipeline::optimizeOrPromoteModule(M, nullptr, Basic);
+  ASSERT_NE(Cleanup.Stop, OptimizationStopReason::InputInvalid);
+  ASSERT_NE(Cleanup.Stop, OptimizationStopReason::VerificationFailed);
+  ASSERT_NE(M.getFunction("unused_helper"), nullptr);
+
+  // The default must run the module pipeline, not only scalar cleanup. Its
+  // global DCE removes the unused helper without opting into symbolic work.
+  const auto Result = Pipeline::optimizeOrPromoteModule(M);
+  EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+  EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+  EXPECT_EQ(M.getFunction("unused_helper"), nullptr);
+  EXPECT_NE(M.getFunction("f"), nullptr);
+  EXPECT_EQ(Result.Rounds, 0u);
+  EXPECT_EQ(Result.SemanticRewrites, 0u);
+  EXPECT_EQ(Result.SearchWork, 0u);
+  EXPECT_EQ(Result.ProofWork.Queries, 0u);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
 
 TEST(SymSimplifyGuard, DeepDefaultO2InlinesAndEliminatesInternalHelper) {
   llvm::LLVMContext C;

@@ -46,12 +46,38 @@ prebuilt-LLVM guidance.
 
 ## GUI function lists and navigation
 
+`SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
+restoration of ordinary output, reuse of prepared IR, navigation invalidation
+and strict option validation. `SourceLLVMProfiles*` checks separate source and
+module cache identities. `HighSymSimplify.OrdinaryConversion*` keeps optional
+rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
+enable it through the production converter. `SymSimplifyGuard.SourceProfiles*`
+checks that the optional expression pass stays off when disabled and evaluates
+all LLVM profiles against independent integer results, including wraparound.
+`ControlFlowRecovery.SourceRecovery*` and `DefaultSource*` check independent
+recovery, default O2 recovery and the conservative patch boundary. Dispatcher
+regressions preserve effects, externally used values, subsequent state reads
+and atomic accesses. GUI source-transformation
+tests cover menu/keyboard activation, cancellation with retained source,
+concurrent listing/function reads and reset on navigation. Worker source-cache
+tests count engine calls separately for each option set. `HighExprSimplify.*`
+checks exact masked status bits, signed extensions, shared expressions and
+effect preservation without the symbolic bridge. The x87 classification test
+executes ordinary HighC against native extended-precision encodings; ARM mode
+tests execute both ordinary and explicitly enhanced source.
+
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
-to check download consent, local/disabled/absent-identity gating, strict PDB
-application, cache reuse, 404/mismatch failure and cancellation on file changes.
-It never contacts a real symbol server. `DebugInfoDiscovery.SymbolStoreKey*` and
-`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order, hexadecimal
-age, NB10 keys and refusal of unusable identities or unsafe path components.
+to check the Load PDB file dialog (a matching local copy, declining, downloads
+into the store the worker names, 404 and another build's file leaving the store
+again) and the offer for an open file (local/disabled/absent-identity gating,
+strict PDB application, the next load finding the stored copy, cancellation on
+file changes). It never contacts a real symbol server. `SymbolStore.*` covers
+`_NT_SYMBOL_PATH` parsing, store and server paths and candidate order;
+`DebugInfoDiscovery.SymbolStoreKey*` and
+`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order,
+hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
+components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
+that PDB before opening it.
 
 `SessionCAPITest.PrepareFunction*` checks analysis without source emission,
 restricted and whole-image scope, repeated and switched entries, address zero,
@@ -677,6 +703,10 @@ ctest --test-dir build-release \
   --output-on-failure
 ```
 
+## Owned x64 x87 context
+
+`NeverDX86X87ConvertStateTests` compares original bytes with native LLVM, HighC and LLVMC at default/NoOpt and C O0/O2. Its fixtures pin the owned context on every host through `BinaryImage::X87ContextOverride`; the integer-load, sign and x87 FPU suites also exercise the typed System V projection. It checks conversions, eight arithmetic forms, flags, MMX/EMMS, full/empty stacks, calls, wrappers, entry loops and independent roots. Four FLDENV/FRSTOR formats cover pending exceptions, tags and retained payloads. All four RC values, three defined PC values and 64 exception masks are exercised where applicable. Direct Low/Med/High contracts reject malformed shapes, forged handles and truncated selectors. Narrow returns retain call effects and reject demanded unknown bits. The host oracle requires x64 and Clang; tests do not establish every instruction, native platform, CPU model, fault priority or typed floating import ABI.
+
 ## Inline C memory accesses
 
 `NeverDCMemoryCopyTests` executes HighC and LLVMC output at `-O0` and `-O2`
@@ -722,7 +752,65 @@ ctest --test-dir build-release \
   --output-on-failure
 ```
 
+## LLVM C object storage
+
+`NeverDLLVMCAllocaTests` compiles original LLVM and generated C at O0/O2 with undefined-behavior traps. Native observations check complete dynamic extents, padded element stride, 16/32/64-byte alignment, independent simultaneous/loop allocations and one evaluation of a count-producing call. Both ordinary and preserved-type C routes retain storage. Unsupported/overflowing allocation shapes and explicit stack save/restore refuse before dead-code removal. These tests validate C allocation behavior, not exact source stack addresses or exception-frame identity.
+
+The same target compares static scalar, pointer, array and packed-record alignment through 128 bytes, global alignment, complete padded-string storage and scalar-global address identity in initializers, returns, calls, selects and pointer-to-integer conversions. Ordinary/preserved-type and whole/selected-function routes are covered where applicable.
+
 ## Offline web analysis
+
+`WebDataPack.*` checks both resource-ID widths, complete partitions, aliases,
+sorted uniqueness, malformed/truncated indexes, identity and count overflow.
+`WebDataPackGzip.*` checks one validated stream, corrupt CRC/size, truncation,
+concatenation/trailing bytes and output refusal; the separate no-decoder target
+qualifies honest native omission. `WebDataPackSDK.*` checks private canaries,
+one-row pages, source anchors, stored/deflate ZIP composition, explicit gzip,
+failed-publication atomicity, cache limits, revocation and exclusive export.
+CLI cases use an unusable external-tool PATH; worker/MCP compare the shared API
+and reject raw-export/execution options. See [resource profiles](web-datapack-profile.md).
+
+Select the fixed real inputs without running the applications:
+
+```sh
+NEVERD_CEF_REDIST_12027_X64=/path/cef.redist.x64.120.2.7.nupkg \
+NEVERD_TEAMS_WV2_154_PAK=/path/to/the/pinned/resources.pak \
+ctest --test-dir build-release/unittests/web --output-on-failure \
+  -R '^WebDataPackReal\.'
+```
+
+`NEVERD_REQUIRE_CEF_RESOURCE_CORPUS=1` forbids an absent CEF input. The fixed
+download and original SHA are in `web-resource-qualification.yml`; its actual
+ZIP/resource/JS/HTML case requires native ZIP decoding, ICU 77.1 and the embedded
+parser. Local Teams bytes are not redistributed. Shared changes require the
+owning Web suite, worker/MCP/availability and parser/backend omission, then
+enabled restoration. [Full producer qualification](web-producer-corpus-qualification.md)
+separately requires all eleven fixed-image cases with
+`NEVERD_REQUIRE_WEB_PRODUCER_CORPUS=1`; missing files or consumers fail instead
+of skipping. Ordinary optional-corpus behavior remains explicit.
+
+`WebLargeSource.*` checks explicit profile identities, unchanged interactive
+refusal, complete lexical scope beyond 100,000 nodes, late source anchors,
+invalid encoding/syntax, dense over-budget input and rejection of recovery
+models by semantic consumers. Its optional pinned Claude check uses
+`NEVERD_CLAUDE_CODE_21296_CROSS_DIR` and the original NeverD exports of macOS
+ARM64 modules 141, 299, 415 and 1452; missing samples are explicit skips.
+`WebSDK.LargeSourceHasIndependentCacheAnchorsAndRevisionOwnership` checks the
+additive C API, one-source cache, interactive isolation, ordinary pages and
+revision revocation. Worker/MCP cover the same operation, capability filtering,
+private canaries and source/report/anchor parity. Run the owning Web directory,
+availability and transport suites plus both omission configurations after
+changing this shared source-profile boundary. See the
+[large-source contract](web-passive-report-profile.md#explicit-large-source-selections).
+Run CTest invocations sequentially within the same build directory, especially
+after changing build flags. GoogleTest discovery writes shared generated lists;
+concurrent owning-directory and root runs can duplicate registrations. Check
+the unique names in one generated inventory before reporting case totals.
+`WebSourceFeatures.CapturedClaudeLargeClientUnitsWhenSupplied` additionally
+checks every shipped JS unit in the retained macOS ARM64 package sequentially
+through explicit large parsing, lexical navigation, features and configuration
+order. It asserts all 2,364 units parse and records independent analysis counts.
+The existing interactive corpus case retains its narrower admission.
 
 `WebPackageSemVer.*`, `WebPackageEvidenceTime.*`, `WebPackageEvidence.*` and
 `WebPackageAdvisories.*` cover strict arbitrary-width precedence, source/time
@@ -1023,6 +1111,14 @@ pinned macOS ARM64 archive sequentially and records parser/feature coverage,
 including exact refusal reasons. See the
 [actual client qualification](web-client-feature-qualification.md); it does not
 claim complete feature attribution or run a target runtime.
+`WebConfigurationFiles.*` checks minified lexical source candidates, exact
+file/layer literal and switch-case anchors, unknown array elements, ambiguous
+bindings, foreign evidence and atomic record/term exhaustion. The SDK, worker
+and MCP checks compare `config_files` paging and private-value canaries through
+the existing navigation operation. Both captured-client cases also record this
+independent profile's sites, calls and layer sequences for every admitted unit;
+all admitted units must complete the inventory. See the
+[file navigation profile](web-configuration-file-profile.md).
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
 `WebReadableExportSDK.*` checks immutable input deletion, exact original and
@@ -4151,7 +4247,9 @@ tested function first, where emulation starts. A case whose C calls a routine
 the freestanding image cannot link (a rounding instruction printed as
 `nearbyint`), or does not define the tested function, is skipped with that
 reason. Every round-trip test runs this way, so compare the failing names of
-two such runs to judge a HighC or HighIR change.
+two such runs to judge a HighC or HighIR change. `NEVERD_SEMANTIC_LLVMC=1`
+does the same with the LLVM-C route's C, the check for an LLVM-C printer
+change.
 The patch-full fixture uses `Codegen::compileForRewrite`, the same rewrite
 backend as patch operations, then compares baseline and transformed code across
 the full 4 x 3 ISA/format grid.
@@ -5641,6 +5739,16 @@ widths, overflowing decimal fields, pointer conversions and multibyte formats
 must not. Both segment and section extents cover each fixture's actual bytes,
 so rejection tests syntax rather than an accidentally truncated mapping.
 
+`SourceFrameFormatBytesOwnTheRuntimeContract`,
+`MissingOrChangedFrameBytesWithdrawFormatAuthority` and
+`FrameFormatsRequireLiveStorageAndEveryReachingByte` in the same target decode
+source stores and calls. Byte/DWORD initialization, matching branch stores and
+an inspected helper filling a missing byte preserve saved-frame evidence.
+Changed or unknown bytes, missing NUL, conflicting branches, released storage,
+runtime home/scratch areas and active return PCs refuse. The same Windows
+grammar applies to image and frame formats. These tests do not establish
+mutable-image formats, handler-memory restoration or native execution.
+
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC
 controls. Wrong providers, delay imports, missing or conflicting import storage,
@@ -5686,12 +5794,37 @@ The exact reference regressions cover both x64 ELF PLT branches and Mach-O GOT
 data words. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires both corrected producers.
 See the [source patch matrix](source-patching.md).
 
+`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` selects the optional ordinary NeverC
+producer while originals remain compiled by Clang as independent ABI oracles.
+For NeverC 3389.1.5 use
+`--gtest_filter=AllTargets/*.*/*_X64:AllTargets/*.*/*_ARM64`: its 66 checks cover six supported
+profiles. This compiler does not implement x86/ARM32; an unfiltered run must
+fail those source cases rather than silently use Clang. The adapter disables
+NeverC's automatic PE default libraries with `-fno-autolink`. The same matrix
+still rejects externally supplied `.drectve` contracts without publication.
+
+The matrix also checks `target` receipts against an independent ABI inventory for compiled and supplied native objects. Malformed-object tests must then install and execute the unmodified object as a positive control.
+
 The dedicated `source-patch-windows.yml` workflow uses Clang 22.1.6, the native
 MSVC CRT and the Windows SDK. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing
 runtime inputs fail; the workflow also rejects skipped PE/object/matrix cases.
 It retains XML evidence and does not cancel an active qualification when an
 unrelated dev push arrives. Check the actual run result before claiming native
 Windows qualification.
+
+`scripts/check_source_patch_pe_runtime.py prepare` builds three freestanding
+PE originals and 27 replacements: x86/x64/ARM64, three C scenarios, and source
+IR/compiled-object/supplied-object routes. The scenarios exercise original
+nonleaf calls, mutable pointers and floating-point/stack argument bindings.
+`run` requires 30 process observations per architecture, exact commit/file
+identity and a complete inventory; failures retire any previous success report.
+The Windows x64 job executes x86 and x64, then `windows-11-arm` downloads the
+same hashed images and executes ARM64. All originals and replacements run three
+times. The jobs retain images, publication receipts and runtime JSON. A runner
+override records external execution and cannot claim native Windows coverage.
+These C process checks do not qualify ARM64 C++ EH or an ARM64 engine build.
+The verifier's evidence regressions run with
+`python -m unittest scripts.tests.test_check_source_patch_pe_runtime -v`.
 
 `NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,
 atomic publication, original data bindings, native state and C++ exceptions.
@@ -5767,3 +5900,13 @@ Driver write-watch controls independently encode changed-value and repeated same
 `KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.
 
 Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
+
+The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C++ IR, C++ objects, C++ hosted DynCode, noninline helpers/recursion and unsupported C++ rejection. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` runs actual lifetimes and a throwing callback through two hosted frames. The Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.
+
+Native qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) passed all 204 process observations: 36 each on Windows x64/ARM64 and 66 each on Linux x64/ARM64. The public source API produced C++ IR, ordinary objects and C++ hosted DynCode, plus a throwing callback through two NeverC frames. Replay verified the current engine source/submodule digest, original and final bytes, publication receipts and actual native host. macOS ARM64 and Rosetta x64 passed the same three C++ routes and two-frame propagation locally. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) separately passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64.

@@ -280,11 +280,21 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下启用未定义行为陷阱，执行两条恢复 C 路径，覆盖全部字节值和原始计数。
 `NeverDLLVMCIntrinsicSemanticTests` 还在 O0/O2 下执行 i1/8/16/32/64/128 的有符号和无符号整数 min/max，检查赋值和内联结果、操作数生成顺序及单次求值。不支持的标量位宽和畸形操作数必须明确失败。
 
+## x64 x87 上下文所有权
+
+`NeverDX86X87ConvertStateTests` 在默认/NoOpt 及 C O0/O2 路线，对照原始指令与原生 LLVM、HighC、LLVMC 输出，检查转换、八种算术形式、标志、MMX/EMMS、满/空栈、调用、包装函数、入口循环和独立入口。其夹具通过 `BinaryImage::X87ContextOverride` 在所有主机上固定使用自有上下文；整数加载、符号与 x87 FPU 测试集还覆盖 System V 的有类型投影。四种 FLDENV/FRSTOR 格式覆盖挂起异常、标签和保留载荷；适用场景覆盖四种 RC、三种有效 PC 和 64 种异常掩码。Low/Med/High 契约拒绝非法形状、伪造句柄和截断选择器。窄返回保留调用副作用，并拒绝实际需要的未知位。原生对照需要 x64 和 Clang；不宣称覆盖全部指令、平台、CPU、故障优先级或有类型的浮点导入 ABI。
+
 ## 结构化 C 控制流与调用检查
 
 `HighControlFlowSemantics.*` 检查移动循环出口或尾部时是否保留其他跳转仍引用的标签。测试覆盖直接进入循环头部、尾部出口及替换后的 break，并以独立返回值预期执行 O0/O2 编译的生成 C。
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` 检查推断出的必需寄存器参数是否保留末尾未知槽位。读取未知的必需参数或条件必须明确触发陷阱；省略、空指针和嵌套操作数不能被悄悄替换为零。已知值和已证明不被读取的多余操作数仍可执行。陷阱是诊断边界，不是恢复行为等价的证明。
+
+## LLVM C 对象存储
+
+`NeverDLLVMCAllocaTests` 将原 LLVM 和输出 C 在 O0/O2 下编译执行并启用未定义行为陷阱，观察完整动态范围、带填充的元素步长、16/32/64 字节对齐、同时及循环分配的独立性，以及数量生成调用只求值一次。普通及保留类型的 C 路径都保留存储；未支持或溢出的分配形状与显式栈保存/恢复在死代码删除前拒绝。这些测试验证 C 分配行为，不证明原栈地址或异常帧身份。
+
+同一测试目标还比较静态标量、指针、数组和紧凑记录最高 128 字节的对齐、全局对齐、带零填充字符串的完整存储，以及初始化器、返回、调用、选择和指针转整数中的标量全局地址身份；按适用范围覆盖普通/保留类型及整模块/单函数输出。
 
 ## CPU 执行测试
 
@@ -1662,3 +1672,17 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。
+
+源码 patch 的 Windows 工作流还会运行 `scripts/check_source_patch_pe_runtime.py`：先生成 x86/x64/ARM64 的三份原程序和 27 份替换产物，再为每种架构执行 30 次进程观测。x86/x64 在 Windows x64 上执行，ARM64 在 `windows-11-arm` 上执行；提交、PE 架构、文件哈希和用例清单必须匹配。此 C 进程配置不验证 ARM64 C++ 异常。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 选择普通 NeverC 生产器。3389.1.5 的 66 项配置覆盖 x64/ARM64 × ELF、PE、Mach-O；它不支持 x86/ARM32，不能静默切换编译器。PE 适配器使用 `-fno-autolink`，外部 `.drectve` 对象仍被拒绝。
+
+矩阵还会按独立的 ABI 清单核对编译对象和外部原生对象的 `target` 回执。错误对象测试随后必须安装并执行未修改的对象，作为有效输入对照。
+
+可选 `NeverCProfiles/*` 为六个 x64/ARM64 配置增加 30 项测试，覆盖 C++ IR、对象、hosted DynCode、非内联辅助函数/递归和不支持 C++ 的拒绝。`NeverDSourcePatchDynCodeTests` 拒绝伪造摘要、入口、目标、状态和最终验证。`SourcePatchException.NeverC*` 在真实进程检查生命周期及穿过两个 hosted 帧的异常回调。Windows C++ 检查器要求九种补丁场景、原始对照、三次执行以及匹配的机器、提交、摘要和原生 x64/ARM64 主机。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+原生生产器验证固定 NeverC 提交 `182fd2c5dc`，使用独立编译的原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 要求每种架构完成 36 次原生 Windows 观测，覆盖 C++ IR/对象/hosted 生命周期，以及异常穿过两个 hosted 帧的回调。`check_source_patch_elf_runtime.py` 要求每种架构完成 66 次原生 Linux 观测，覆盖 C++ IR/对象/hosted、hosted 异常传播及九种 Clang 异常场景。回执、制品哈希和实际主机架构必须匹配。这些检查安装真实编译器产物，不表示在 CI 主机上运行过 NeverC 编译器。
+
+原生验证 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次进程观测全部通过：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公共源码接口生成 C++ IR、普通对象和 C++ hosted DynCode，并验证异常穿过两层 NeverC 栈帧。重放核对当前引擎源码与子模块摘要、原件和最终字节、安装回执及实际原生主机。macOS ARM64 与 Rosetta x64 在本地通过相同的三条 C++ 路径和两层异常传播。Clang FH3 原生验证 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通过九种异常场景及对照，共各 36 次观测。

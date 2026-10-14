@@ -9,6 +9,8 @@ add_neverd_component_library(NeverDIRLowValidation
   SEHRuntimeMemory.cpp
   SEHEstablisherFrame.cpp
   X86/SEHFrameCRTControl.cpp
+  X86/SEHFrameFormat.cpp
+  Windows/SEHScalarFormat.cpp
   X87PartialRemainder.cpp
 
   LINK_COMPONENTS
@@ -69,6 +71,7 @@ add_neverd_component_library(NeverDIRLow
   FuncDetectorX86.cpp
   FuncDetectorARM.cpp
   FuncDetectorAArch64.cpp
+  GuardedZeroSelect.cpp
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
   X86/RegistrationCFG.cpp
@@ -100,6 +103,8 @@ add_neverd_component_library(NeverDIRLow
   NdOpEmulatorX86FPScale.cpp
   NdOpEmulatorX86FPCompare.cpp
   NdOpEmulatorX87.cpp
+  NdOpEmulatorX87Context.cpp
+  X87NativeContext.cpp
   PlatformEvidence.cpp
   X86ApproxReference.c
   X86ApproxReference28.c

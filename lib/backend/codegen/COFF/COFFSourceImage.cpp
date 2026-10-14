@@ -79,18 +79,25 @@ llvm::Error verifyLanguage(const BinaryImage &Reloaded,
       return fail("generated unwind record did not reload exactly");
     if (Original.Arch != Arch::X64) {
       if (EH.PackedUnwindData != Row->second.Unwind ||
-          EH.Personality != ExceptionPersonality::None)
+          (EH.Personality != ExceptionPersonality::None &&
+           Original.Arch != Arch::AArch64))
         return fail("ARM compiler unwind record did not reload exactly");
-      continue;
     }
     const auto *Range = NativeObject ? nullptr : Ranges.at(EH.CodeRange.Begin);
-    const auto *Unwind = Reloaded.readVA(EH.UnwindInfoVA, 4);
-    if (!Unwind ||
-        !owns(Compiled, EH.UnwindInfoVA,
-              4 + 2 * llvm::alignTo(uint64_t(Unwind[2]), 2) +
-                  (EH.Personality == ExceptionPersonality::None ? 0 : 8),
-              Kind::ReadOnlyData))
-      return fail("unwind program leaves compiler read-only storage");
+    if (Original.Arch == Arch::X64) {
+      const auto *Unwind = Reloaded.readVA(EH.UnwindInfoVA, 4);
+      if (!Unwind ||
+          !owns(Compiled, EH.UnwindInfoVA,
+                4 + 2 * llvm::alignTo(uint64_t(Unwind[2]), 2) +
+                    (EH.Personality == ExceptionPersonality::None ? 0 : 8),
+                Kind::ReadOnlyData))
+        return fail("unwind program leaves compiler read-only storage");
+    } else if (!(EH.PackedUnwindData & 3) &&
+               (EH.NativeUnwindBytes.empty() ||
+                !owns(Compiled, EH.UnwindInfoVA, EH.NativeUnwindBytes.size(),
+                      Kind::ReadOnlyData))) {
+      return fail("ARM xdata leaves compiler read-only storage");
+    }
     if (EH.Personality == ExceptionPersonality::None)
       continue;
     if (NativeObject)
@@ -132,6 +139,7 @@ llvm::Error verifyLanguage(const BinaryImage &Reloaded,
         auto Target = Ranges.find(Catch.HandlerVA);
         if (Target == Ranges.end() || Target->second->ParentOwnerVA != Parent ||
             Catch.ParentFrameOffset < 0 || Catch.ParentFrameOffset % 8 ||
+            (Original.Arch == Arch::AArch64 && Catch.ParentFrameOffset != 0) ||
             (Catch.TypeDescriptorVA &&
              !Reloaded.readVA(Catch.TypeDescriptorVA, 17)))
           return fail("C++ catch has no exact compiler funclet/type record");
@@ -255,7 +263,9 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
           ((Original.Arch == Arch::X64 || !(Row.Unwind & 3)) &&
            !owns(Compiled, Original.Base + Row.Unwind, 4, Kind::ReadOnlyData)))
         return fail("runtime row disagrees with its exact compiler range");
-      if (Row.HasLanguageHandler && (Object || Original.Arch != Arch::X64))
+      if (Row.HasLanguageHandler &&
+          (Object ||
+           (Original.Arch != Arch::X64 && Original.Arch != Arch::AArch64)))
         return fail("unverified replacement ARM language-handler program");
       Generated.emplace(Row.Begin, Row);
     }

@@ -159,5 +159,40 @@ def run(executable):
         assert [warning for warning in opened["warnings"] if "PDB was not loaded" in warning]
 
 
+def answered_before_open(executable):
+    """The PDB a PE names, found before the PE opens, and both answers."""
+    with tempfile.TemporaryDirectory(prefix="neverd-pdb-prompt-") as directory, ExitStack() as clients:
+        root = Path(directory)
+        binary = root / "input.exe"
+        beside = root / "safety_cases_pe_x64.pdb"
+        shutil.copyfile(FIXTURES / "safety_cases_pe_x64.exe", binary)
+        shutil.copyfile(FIXTURES / "safety_cases_pe_x64.pdb", beside)
+
+        owner = clients.enter_context(Client(executable))
+        assert "pdb_reference" in owner.hello["capabilities"]
+        reference = ok(owner, "pdb_reference", {"path": str(binary)})["pdb"]
+        assert reference["file"] == "safety_cases_pe_x64.pdb"
+        assert reference["found"] == {"path": str(beside), "location": "beside"}
+        assert ok(owner, "pdb_reference", {"path": str(FIXTURES / "safety_cases_pe_x64.exe.map")})["pdb"] is None
+
+        # No: the PDB beside the input stays unloaded, in the replica too, and
+        # is not offered for download.
+        opened = ok(owner, "open", {"path": str(binary), "analysis": False, "pdb": {"mode": "none"}})
+        assert opened["pdb"] == {"mode": "none"} and opened["pdb_download"] is None
+        assert ok(owner, "functions", {"filter": FUNCTION})["total"] == 0
+        snapshot = ok(owner, "analysis_snapshot")
+        replica = clients.enter_context(Client(executable))
+        ok(replica, "analysis_restore", snapshot)
+        assert ok(replica, "functions", {"filter": FUNCTION})["total"] == 0
+
+        # Yes: the copy the reference found is the one that loads.
+        chosen = clients.enter_context(Client(executable))
+        opened = ok(chosen, "open", {"path": str(binary), "read_only": True, "analysis": False,
+                                     "pdb": {"path": reference["found"]["path"], "mode": "verified"}})
+        assert opened["pdb"]["verified"] and not opened["warnings"]
+        assert ok(chosen, "functions", {"filter": FUNCTION})["total"] == 1
+
+
 if __name__ == "__main__":
     run(sys.argv[1])
+    answered_before_open(sys.argv[1])

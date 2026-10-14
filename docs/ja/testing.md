@@ -283,11 +283,21 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` は未定義動作のトラップを有効にし、O0/O2 で両方の復元 C 経路を実行し、すべてのバイト値と生のシフト回数を網羅します。
 `NeverDLLVMCIntrinsicSemanticTests` は i1/8/16/32/64/128 の符号付き・符号なし整数 min/max も O0/O2 で実行し、代入とインラインの結果、生成処理の順序、単一評価を検査します。未対応のスカラー幅と不正なオペランドは明示的に失敗する必要があります。
 
+## x64 x87 コンテキストの所有権
+
+`NeverDX86X87ConvertStateTests` は元のバイト列と LLVM、HighC、LLVMC の実行を default/NoOpt、C O0/O2 で比較します。そのフィクスチャは `BinaryImage::X87ContextOverride` によりすべてのホストで所有コンテキストを固定し、整数ロード、符号、x87 FPU の各スイートは System V の型付き射影も検証します。変換、八種の算術形式、フラグ、MMX/EMMS、満杯・空スタック、呼び出し、ラッパー、入口ループ、独立入口を検証します。四種の FLDENV/FRSTOR 形式で保留例外、タグ、保持データを確認し、適用可能な場合は四種の RC、三種の有効 PC、64 種の例外マスクを使用します。Low/Med/High 契約は不正な形状、偽造ハンドル、切り詰められたセレクターを拒否します。狭い戻り値は呼び出し効果を保持し、必要な不明ビットを拒否します。ネイティブ比較には x64 と Clang が必要で、全命令、プラットフォーム、CPU、障害順序、型付き浮動小数点インポート ABI の網羅は主張しません。
+
 ## 構造化 C の制御フローと呼び出しの検証
 
 `HighControlFlowSemantics.*` は、ループの出口や末尾を移動しても、他のジャンプが参照するラベルが保持されることを検証します。先頭・末尾の出口への直接ジャンプと break の置換を対象に、生成 C を O0/O2 で実行し、独立した期待戻り値と比較します。
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` は、推定された必須レジスタ引数の末尾にある未知スロットが保持されることを検証します。未知の必須引数や条件を評価すると明示的にトラップし、省略・null・入れ子のオペランドを黙ってゼロに置き換えてはいけません。既知の値と、読み取られないことが証明された余分なオペランドは実行可能なままです。トラップは診断境界であり、復元動作の等価性の証明ではありません。
+
+## LLVM C のオブジェクト領域
+
+`NeverDLLVMCAllocaTests` は元の LLVM と生成 C を O0/O2、未定義動作トラップ付きで実行します。全動的範囲、パディングを含む要素幅、16/32/64 バイト整列、同時・ループ割り当ての独立性、要素数を返す呼び出しの一回評価を検証します。通常と型保持の C 経路を確認し、未対応・オーバーフローする割り当てと明示的 stack save/restore は DCE 前に拒否します。元のスタックアドレスや例外フレーム同一性は保証しません。
+
+同じターゲットで静的スカラー、ポインター、配列、パックされたレコードの最大 128 バイトのアラインメント、グローバルのアラインメント、ゼロ埋め文字列の全領域、および初期化子・戻り値・呼び出し・選択・ポインター整数変換でのグローバルアドレスの同一性を比較する。適用可能な通常/型保持および全体/選択関数出力を検証する。
 
 ## CPU 実行テスト
 
@@ -1754,3 +1764,17 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。
+
+ソース patch の Windows ワークフローは `scripts/check_source_patch_pe_runtime.py` も実行します。x86/x64/ARM64 の元プログラム 3 個と置換結果 27 個を生成し、アーキテクチャごとにプロセス実行を 30 回観測します。x86/x64 は Windows x64、ARM64 は `windows-11-arm` で実行し、コミット、PE の種類、ファイルハッシュ、全ケースの一致を要求します。この C プロファイルは ARM64 C++ 例外を検証しません。`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` は通常モードの NeverC を選択します。3389.1.5 の 66 チェックは x64/ARM64 と ELF、PE、Mach-O を対象とし、x86/ARM32 は非対応です。コンパイラーは自動で切り替わりません。PE アダプターは `-fno-autolink` を使用し、外部の `.drectve` オブジェクトは引き続き拒否します。
+
+行列は、コンパイル済みおよび外部のネイティブオブジェクトについて、独立した ABI 一覧と `target` 証跡を照合します。不正なオブジェクトのテストでは、未変更の有効なオブジェクトもインストールして実行する必要があります。
+
+任意の `NeverCProfiles/*` は六つの x64/ARM64 構成で 30 件を追加し、C++ IR/オブジェクト/hosted DynCode、非インライン補助関数・再帰、未対応 C++ の拒否を扱います。`NeverDSourcePatchDynCodeTests` はハッシュ、入口、対象、状態、検証の偽造を拒否します。`SourcePatchException.NeverC*` は実プロセスで寿命と二つのフレームを通る例外を検証します。Windows 検査は九つの置換シナリオと元の対照を三回実行し、マシン・コミット・ハッシュと native x64/ARM64 ホストを要求します。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+ネイティブ検証は NeverC リビジョン `182fd2c5dc`、独立してコンパイルした元プログラム、現在の NeverD インストーラを使用します。`check_source_patch_hosted_pe_runtime.py` は各アーキテクチャで 36 回のネイティブ Windows 観測を要求し、C++ IR/オブジェクト/hosted のライフタイムと二つの hosted フレームを通る例外コールバックを確認します。`check_source_patch_elf_runtime.py` は各アーキテクチャで 66 回のネイティブ Linux 観測を要求し、C++ IR/オブジェクト/hosted、hosted の例外伝播、九つの Clang 例外シナリオを確認します。レシート、成果物ハッシュ、実際のホストアーキテクチャは一致しなければなりません。実際のコンパイラ出力をインストールする検証であり、CI ホスト上で NeverC 実行ファイルを動かしたとは主張しません。
+
+ネイティブ検証 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) は全 204 回の観測に成功しました。Windows x64/ARM64 は各 36 回、Linux x64/ARM64 は各 66 回です。公開ソース API で C++ IR、通常オブジェクト、C++ hosted DynCode を生成し、二つの NeverC フレームを通る例外も確認しました。再生時に現在のソースとサブモジュールのダイジェスト、元と最終のバイト、発行レシート、実際のネイティブホストを確認します。macOS ARM64 と Rosetta x64 でも三つの C++ 経路と二フレームの伝播が成功しました。Clang FH3 の検証 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) は Windows x64/ARM64 の九つの例外シナリオと対照、各 36 回にも成功しました。

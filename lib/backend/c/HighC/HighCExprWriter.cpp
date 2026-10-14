@@ -19,7 +19,9 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
@@ -927,6 +929,12 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
     return Declared == ExternalFunctionIdentifiers.end() ? Slot
                                                          : Declared->second;
   }
+  // The function this unit defines at the address, under the identifier its
+  // definition took: a second static `helper` is `helper_2`.
+  if (auto At = DefinedFunctionsByAddress.find(E.CallAddr);
+      At != DefinedFunctionsByAddress.end() && At->second &&
+      !isVariadicImportStub(*At->second))
+    return functionIdentifier(*At->second);
   return Name + "_" + llvm::utohexstr(E.CallAddr);
 }
 
@@ -1098,6 +1106,15 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX87ContextIntrinsic(E.IntrinsicId))
+    return renderX87ContextCall(E);
+  // In an Itanium handler the exception the runtime took is the catch's
+  // parameter: its address, or for a caught pointer its value.  Both are the
+  // `void *` the call returns.
+  if (ItaniumCatchParameter && E.Operands.empty() &&
+      isItaniumRuntimeCall(E, "__cxa_begin_catch"))
+    return (ItaniumCatchParameter->second ? "" : "&") +
+           ItaniumCatchParameter->first;
   if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
     if (!x87ConstantControlShapeIsValid(
             E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
@@ -1802,7 +1819,8 @@ void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
       const std::string Name = varName(S.Dst->Var);
       if (Name.empty())
         return;
-      if (isUnknownCallOperand(S.Val.get()))
+      if ((S.Val->Kind == ExprKind::Call && knownVoidCall(*S.Val)) ||
+          isUnknownCallOperand(S.Val.get()))
         HasUnknown.insert(Name);
       else
         HasKnown.insert(Name);
@@ -1862,7 +1880,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   }
   // A function this unit defines returns the type its definition prints.
   if (Defined != DefinedFunctionsByIdentifier.end() && Defined->second)
-    return Defined->second->ReturnType;
+    return analyzeVoidReturn(*Defined->second) ? NdType::makeVoid()
+                                               : Defined->second->ReturnType;
   // A C library routine returns the floating type its declaration names,
   // or a math routine the one its arguments have.
   if (const libc::LibCPrototype *Prototype = calleePrototype(E)) {
@@ -1883,9 +1902,11 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
     return false;
   // A function this unit defines returns what its definition declares: a
   // bound source signature decides over debug information.
-  if (const HighFunc *Definition = calledDefinition(E))
+  if (const HighFunc *Definition = calledDefinition(E)) {
     if (const TypeRef Declared = declaredFunctionReturnType(*Definition))
       return Declared->Kind == NdTypeKind::Void;
+    return analyzeVoidReturn(*Definition);
+  }
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
@@ -2256,6 +2277,11 @@ bool HighCWriter::isUnknownCallOperand(const HighExpr *Op) const {
   if (Inner->Kind == ExprKind::Undef)
     return true;
   if (Inner->Kind != ExprKind::Var && Inner->Kind != ExprKind::Phi)
+    return false;
+  // The unwinder hands a landing pad its exception object and selector; no
+  // statement assigns them, but they are the pad's own values, not unknown.
+  if (Inner->Var.Kind == MedVar::EHException ||
+      Inner->Var.Kind == MedVar::EHSelector)
     return false;
   // The stack pointer the function was entered with is frame_base, which no
   // statement assigns: `_start` passes it to __libc_start_main as stack_end.
@@ -4937,6 +4963,40 @@ std::string HighCWriter::collapseHiLo(const HighExpr &Expr) {
 }
 
 std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
+  if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Int) {
+    const HighExpr *Value = &Expr;
+    if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) {
+      const std::string Name = copyForwardName(varName(Value->Var));
+      if (auto Forward = ValueForward.find(Name);
+          Forward != ValueForward.end() && Forward->second &&
+          Forward->second != Value)
+        Value = Forward->second;
+    }
+    if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::CONCAT &&
+        Value->Operands.size() == 2 && Value->Operands[0] &&
+        Value->Operands[1] && Value->Operands[1]->Type &&
+        Value->Operands[1]->Type->Kind == NdTypeKind::Int &&
+        Value->Operands[1]->Type->Size >= FuncReturnType->Size) {
+      const HighExpr *High = Value->Operands[0].get();
+      for (unsigned Depth = 0;
+           High && Depth < limits::kMaxIntegerViewUnwrapDepth; ++Depth) {
+        if (High->Kind == ExprKind::BinOp && High->Op == NdOp::SUBBYTES &&
+            High->Operands.size() == 2 && High->Operands[0] &&
+            High->Operands[1] && High->Operands[1]->Kind == ExprKind::Const) {
+          High = High->Operands[0].get();
+          continue;
+        }
+        break;
+      }
+      // A narrow declared return does not read the unbound upper register
+      // slice. Keep demanded unknown bits, loads and calls fail-closed.
+      if (High &&
+          (High->Kind == ExprKind::Undef ||
+           ((High->Kind == ExprKind::Var || High->Kind == ExprKind::Phi) &&
+            isUnknownCallOperand(High))))
+        return formatReturnExpr(*Value->Operands[1]);
+    }
+  }
   if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Ptr) {
     const HighExpr *Inner = unwrapIntegerView(&Expr);
     if (Inner &&
@@ -5420,13 +5480,13 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
       // A mangled name keeps the underscores its scheme starts with
       // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
       // identifier is spelled from: `vtable for QDomNode`, Go's
-      // `main.Flags`.
+      // `main.Flags`, or `__dso_handle`, whose underscores C drops.
       const llvm::StringRef CName =
           cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
       Named.Raw = symbolScheme(CName) != SymbolScheme::None
                       ? CName.str()
                       : stripLeadingUnderscores(Sym->Name).str();
-      Named.Readable = demangledComment(CName);
+      Named.Readable = symbolComment(CName, Named.Raw);
       Named.Symbol = Sym->Name;
     }
   }
@@ -5444,8 +5504,11 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     const ImageSymbolName Named = imageSymbolName(Addr);
     if (!Named.Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
-    if (!Named.Readable.empty())
-      Obj.Readable = Named.Readable;
+    // An identifier spelled from the name, or numbered after another object
+    // took it, has the name in its comment.
+    Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()
+                       ? Named.Readable
+                       : symbolComment(Named.Raw, Obj.Name);
     if (!Named.Symbol.empty())
       Obj.Symbol = Named.Symbol;
     if (Obj.Symbol.empty())
@@ -6151,7 +6214,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
       const std::string Name = varName(Stmt.Dst->Var);
       if (!JoinPhiNames.count(Name) &&
           (FieldForward.count(Name) || ValueForward.count(Name) ||
-           UnknownOnlyNames.count(Name)))
+           (UnknownOnlyNames.count(Name) &&
+            (!Stmt.Val || !highCExpressionHasEffect(*Stmt.Val)))))
         return true;
     }
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&

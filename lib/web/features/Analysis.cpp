@@ -18,7 +18,7 @@
 namespace neverd::web::client_features {
 
 void Context::step(uint64_t Count) {
-  if (Count > MaxJavaScriptClientFeatureSteps - A.Steps)
+  if (Count > sourceWorkLimit(S, MaxJavaScriptClientFeatureSteps) - A.Steps)
     throw Error("source_feature_budget_exceeded");
   A.Steps += Count;
 }
@@ -65,37 +65,13 @@ void Context::prepare() {
   Calls.assign(Size, None);
   References.assign(Size, None);
   if (N.Functions.size() > Size || N.Calls.size() > Size ||
-      B.Bindings.size() > 2 * MaxJavaScriptNodes ||
-      B.References.size() > MaxJavaScriptNodes)
+      B.Bindings.size() > 2 * sourceLimits(S).Nodes ||
+      B.References.size() > sourceLimits(S).Nodes)
     throw Error("source_feature_budget_exceeded");
-  BindingFunctions.assign(B.Bindings.size(), None);
-  std::vector<bool> Ambiguous(B.Bindings.size());
-  for (uint32_t I = 0; I < N.Functions.size(); ++I) {
-    step();
-    const auto &F = N.Functions[I];
-    if (F.Node >= Size || FunctionNodes[F.Node] != None ||
-        (S.Nodes[F.Node].Kind != "FunctionDeclaration" &&
-         S.Nodes[F.Node].Kind != "FunctionExpression" &&
-         S.Nodes[F.Node].Kind != "ArrowFunctionExpression"))
-      throw Error("invalid_source_navigation_model");
-    FunctionNodes[F.Node] = I;
-    for (const auto Binding : {F.NameBinding, F.InitializerBinding}) {
-      step();
-      if (Binding == None)
-        continue;
-      if (Binding >= B.Bindings.size())
-        throw Error("invalid_source_navigation_model");
-      auto &Previous = BindingFunctions[Binding];
-      if (Previous != None && Previous != I)
-        Ambiguous[Binding] = true;
-      Previous = I;
-    }
-  }
-  for (uint32_t I = 0; I < BindingFunctions.size(); ++I) {
-    step();
-    if (Ambiguous[I])
-      BindingFunctions[I] = None;
-  }
+  auto Index = indexSourceFunctions(S, B, N);
+  step(Index.Steps);
+  FunctionNodes = std::move(Index.NodeFunctions);
+  BindingFunctions = std::move(Index.BindingFunctions);
   for (uint32_t I = 0; I < N.Calls.size(); ++I) {
     step();
     const auto &Call = N.Calls[I];

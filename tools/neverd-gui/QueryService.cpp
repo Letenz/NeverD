@@ -45,6 +45,8 @@ bool readable(const QString &operation) {
                                         "string_options",
                                         "identify",
                                         "pdb_inspect",
+                                        "pdb_reference",
+                                        "function_attributes",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -59,6 +61,7 @@ bool command(const QString &operation) {
                                         "code_edit",
                                         "function_create",
                                         "function_delete",
+                                        "function_edit",
                                         "item_define",
                                         "operand_format",
                                         "save",

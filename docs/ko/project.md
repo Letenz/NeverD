@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: a8eff56b06f3078eafd48075ca74a3de8751f14892f389fe874abf3ca4295038 -->
+<!-- i18n-source: 93151a7aad0a03cb94dfc975d040357c0d8cc63c2db3d921bcde771c87d09e09 -->
 
 <div align="center">
 
@@ -143,6 +143,12 @@ cmake --build build
 ./build/bin/neverd decompile --language=source -o out.rs rust-binary
 ./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
+
+# 단일 네이티브 함수의 선택적 변환 (일반 HighC는 이 단계를 건너뜁니다)
+./build/bin/neverd decompile --func main --symbolic-simplify -o enhanced.c binary
+./build/bin/neverd decompile --func main --llvm --llvm-opt=O3 -o optimized.c binary
+./build/bin/neverd decompile --func main --llvm --llvm-opt=custom \
+  --llvm-passes=instcombine,early-cse,simplifycfg,dce -o cleaned.c binary
 
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll

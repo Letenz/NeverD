@@ -14,6 +14,7 @@
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -197,33 +198,59 @@ void expectSameSelection(const PipelineResult &Kept,
 TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
   for (unsigned Count : {1u, 4u}) {
     ScopedThreadCount Threads(Count);
-    for (bool Floating : {false, true}) {
-      SCOPED_TRACE(Count);
-      SCOPED_TRACE(Floating);
-      BinaryImage Image = selectionCacheImage(Floating);
-      PipelineAnalysisCache Cache;
-      PipelineResult First;
-      PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
-      const auto Facts = PipelineTestPeer::analysisFacts(Cache);
-      ASSERT_NE(Facts, nullptr);
-      for (va_t Entry : {0x1100, 0x1000}) {
-        PipelineResult Kept, Cold;
-        PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
-        PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
-        EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
-        expectSameSelection(Kept, Cold);
-        ASSERT_EQ(Kept.LowFuncs.size(), 1u);
-        EXPECT_EQ(Kept.LowFuncs[0].Entry, Entry);
-        bool FoundCall = false;
-        for (const auto &Block : Kept.LowFuncs[0].Blocks)
-          for (const auto &Op : Block.Ops)
-            if (Op.Opcode == NdOp::CALL) {
-              FoundCall = true;
-              EXPECT_EQ(Op.Output.Size, Floating ? 10u : 8u);
-            }
-        EXPECT_TRUE(FoundCall);
+    for (bool Floating : {false, true})
+      for (bool Owned : {false, true}) {
+        SCOPED_TRACE(Count);
+        SCOPED_TRACE(Floating);
+        SCOPED_TRACE(Owned);
+        BinaryImage Image = selectionCacheImage(Floating);
+        Image.X87ContextOverride = Owned;
+        PipelineAnalysisCache Cache;
+        PipelineResult First;
+        PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
+        const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+        ASSERT_NE(Facts, nullptr);
+        for (va_t Entry : {0x1100, 0x1000}) {
+          PipelineResult Kept, Cold;
+          PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+          PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+          EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+          expectSameSelection(Kept, Cold);
+          ASSERT_EQ(Kept.LowFuncs.size(), 1u);
+          EXPECT_EQ(Kept.LowFuncs[0].Entry, Entry);
+          bool FoundCall = false;
+          for (const auto &Block : Kept.LowFuncs[0].Blocks)
+            for (const auto &Op : Block.Ops)
+              if (Op.Opcode == NdOp::CALL) {
+                FoundCall = true;
+                // A typed long double returns in st0; an owned context
+                // transports it instead.
+                EXPECT_EQ(Op.Output.Size, Floating && !Owned ? 10u : 8u);
+                if (Floating && Owned)
+                  EXPECT_EQ(Op.Output, NdVar::reg(x86reg::RAX, 8));
+              }
+          EXPECT_TRUE(FoundCall);
+          if (Floating && Owned) {
+            unsigned Captures = 0, Exports = 0, Imports = 0;
+            for (const auto &B : Kept.LowFuncs[0].Blocks)
+              for (const auto &Op : B.Ops)
+                if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                    Op.Inputs[0].isConst()) {
+                  Captures += Op.Inputs[0].Offset ==
+                              unsigned(Intrinsic::X87ContextBegin);
+                  Exports += Op.Inputs[0].Offset ==
+                             unsigned(Intrinsic::X87ContextExport);
+                  Imports += Op.Inputs[0].Offset ==
+                             unsigned(Intrinsic::X87ContextRefresh);
+                }
+            // The wrapper returns its call's state directly: one export
+            // before the call, no refresh/export pair before its RET.
+            EXPECT_EQ(Captures, 1u);
+            EXPECT_EQ(Exports, 1u);
+            EXPECT_EQ(Imports, 0u);
+          }
+        }
       }
-    }
   }
 }
 
@@ -357,12 +384,18 @@ TEST(PipelineOutcome, ParallelCalleeFrontiersPreserveEveryRegisterSummary) {
 }
 
 TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
-  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+  for (auto [Architecture, Format] :
+       {std::pair{Arch::X86, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::COFF}}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
+    SCOPED_TRACE(static_cast<int>(Format));
     BinaryImage Image;
     Image.Arch = Architecture;
     Image.Bits = Architecture == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
-    Image.Format = BinaryFormat::ELF;
+    Image.Format = Format;
+    const bool Owned =
+        x87ContextOwnsStack(Architecture, Format, Image.X87ContextOverride);
     Image.Entry = 0x1000;
     Segment Text;
     Text.Name = ".text";
@@ -413,9 +446,21 @@ TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
         EXPECT_EQ(Function.Entry, Entries[I]);
         ASSERT_TRUE(Function.hasCompleteInstructionLift());
         size_t Calls = 0, Returns = 0;
-        const auto ResultSlot = NdVar::reg(x86reg::ST7, x86reg::FPURegSize);
+        const auto ResultSlot =
+            Owned ? NdVar::reg(x86reg::RAX, 8)
+                  : NdVar::reg(x86reg::ST7, x86reg::FPURegSize);
+        unsigned Captures = 0, Exports = 0, Imports = 0;
         for (const auto &Block : Function.Blocks)
           for (const auto &Op : Block.Ops) {
+            if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                Op.Inputs[0].isConst()) {
+              Captures +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+              Exports +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextExport);
+              Imports +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextRefresh);
+            }
             if (Op.Opcode == NdOp::CALL) {
               ++Calls;
               ASSERT_GT(Op.NumInputs, 0u);
@@ -430,6 +475,10 @@ TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
           }
         EXPECT_EQ(Calls, 1u);
         EXPECT_EQ(Returns, 1u);
+        // Each wrapper returns its call's state directly (call; ret).
+        EXPECT_EQ(Captures, Owned ? 1u : 0u);
+        EXPECT_EQ(Exports, Owned ? 1u : 0u);
+        EXPECT_EQ(Imports, 0u);
       }
     }
     EXPECT_EQ(Parallel.CallMayWriteGPRs, Serial.CallMayWriteGPRs);

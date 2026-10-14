@@ -1,14 +1,47 @@
 #include "NeverDLiftFixture.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/lift/X86Regs.h"
 
 #include "llvm/Support/raw_ostream.h"
 
 using namespace neverd;
 
-class X86_64_X87FPU : public NeverDLiftTest {};
+class X86_64_X87FPU : public NeverDLiftTest {
+protected:
+  void verifyContextStep(uint8_t Escape, uint8_t ModRM,
+                         unsigned MemoryBytes = 0) {
+    Decoder D;
+    ASSERT_TRUE(D.init(Arch::X64));
+    D.setX87ContextOwnership(true);
+    const uint8_t Bytes[] = {Escape, ModRM};
+    DecodedInsn I;
+    ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), 0x1000, I), 2);
+    std::vector<LowOp> Ops;
+    ASSERT_NO_THROW(D.liftToLow(I, Ops));
+    const auto Step = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+      return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+             Op.Inputs[0].isConst() &&
+             Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextStep);
+    });
+    ASSERT_NE(Step, Ops.end());
+    const uint32_t Selector =
+        Escape | (uint32_t(MemoryBytes ? ModRM & 0x38 : ModRM) << 8) |
+        (MemoryBytes ? X87ContextMemory |
+                           (uint32_t(ModRM) << X87ContextOriginalModRMShift)
+                     : 0);
+    ASSERT_TRUE(x87ContextLowShapeIsValid(*Step, Arch::X64));
+    EXPECT_EQ(Step->Inputs[2].Offset, Selector);
+    ASSERT_TRUE(x87ContextInstruction(Selector));
+    EXPECT_EQ(x87ContextInstruction(Selector)->MemoryBytes, MemoryBytes);
+    EXPECT_EQ(Step->Inputs[1], NdVar::reg(x86reg::X87ContextHandle, 8));
+    EXPECT_EQ(Step->Inputs[5], NdVar::cst(0x1000, 8));
+  }
+};
 
 static fs::path testObj() { return fs::path(TEST_OBJ_DIR) / "test_x87_fpu.o"; }
 
@@ -23,30 +56,37 @@ TEST_F(X86_64_X87FPU, NoUnreachable) { verifyLLVMIRNoUnreachable(testObj()); }
 
 TEST_F(X86_64_X87FPU, FaddPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fadd", "FLOAT_ADD");
+  verifyContextStep(0xdc, 0x07, 8);
 }
 
 TEST_F(X86_64_X87FPU, FsubPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fsub", "FLOAT_SUB");
+  verifyContextStep(0xdc, 0x27, 8);
 }
 
 TEST_F(X86_64_X87FPU, FmulPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fmul", "FLOAT_MULT");
+  verifyContextStep(0xdc, 0x0f, 8);
 }
 
 TEST_F(X86_64_X87FPU, FdivPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fdiv", "FLOAT_DIV");
+  verifyContextStep(0xdc, 0x37, 8);
 }
 
 TEST_F(X86_64_X87FPU, FabsPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fabs", "INT_AND");
+  verifyContextStep(0xd9, 0xe1, 0);
 }
 
 TEST_F(X86_64_X87FPU, FchsPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fchs", "INT_XOR");
+  verifyContextStep(0xd9, 0xe0, 0);
 }
 
 TEST_F(X86_64_X87FPU, FsqrtPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fsqrt", "FLOAT_SQRT");
+  verifyContextStep(0xd9, 0xfa, 0);
 }
 
 TEST_F(X86_64_X87FPU, FildFistpPreservesSemantics) {
@@ -54,14 +94,18 @@ TEST_F(X86_64_X87FPU, FildFistpPreservesSemantics) {
   ASSERT_TRUE(r.ok());
   EXPECT_TRUE(r.contains("FLOAT_INT2FLOAT") || r.contains("FLOAT_FLOAT2INT"))
       << "FILD/FISTP should produce float conversion ops";
+  verifyContextStep(0xdb, 0x07, 4);
+  verifyContextStep(0xdb, 0x1f, 4);
 }
 
 TEST_F(X86_64_X87FPU, FxchPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fxch", "COPY");
+  verifyContextStep(0xd9, 0xc9, 0);
 }
 
 TEST_F(X86_64_X87FPU, Fld1FldZPreservesSemantics) {
   verifyLowIRContains(testObj(), "test_fld1_fldz", "COPY");
+  verifyContextStep(0xd9, 0xe8, 0);
 }
 
 TEST_F(X86_64_X87FPU, LLVMIRNoVerifierErrors) {

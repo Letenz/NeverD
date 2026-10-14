@@ -136,7 +136,8 @@ bool hasProvenNoReturnExit(const MedFunc &Func, Arch TheArch) {
   return provesNoReturn(Func, TheArch, {});
 }
 
-void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
+void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch,
+                               const std::map<va_t, bool> &Stated) {
   std::set<va_t> InternalEntries;
   for (const MedFunc &Func : Funcs)
     if (!Func.Blocks.empty())
@@ -165,7 +166,16 @@ void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
             InternalEntries.count(Op.Inputs[0].ConstVal) != 0)
           CallersByTarget[Op.Inputs[0].ConstVal].push_back(FuncIndex);
 
-  std::set<va_t> NoReturnEntries;
+  // Calls to NoReturnEntries end their blocks; ProvenEntries' bodies never
+  // return.  What the user states decides the former, as in the CFG.
+  std::set<va_t> NoReturnEntries, ProvenEntries;
+  for (const auto &[Entry, Never] : Stated)
+    if (Never && InternalEntries.count(Entry))
+      NoReturnEntries.insert(Entry);
+  const auto statedToReturn = [&](va_t Entry) {
+    const auto It = Stated.find(Entry);
+    return It != Stated.end() && !It->second;
+  };
   std::queue<size_t> Pending;
   std::vector<bool> Queued(Funcs.size(), true);
   for (size_t I = 0; I < Funcs.size(); ++I)
@@ -176,16 +186,19 @@ void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
     Pending.pop();
     Queued[FuncIndex] = false;
     const MedFunc &Func = Funcs[FuncIndex];
-    if (NoReturnEntries.count(Func.Entry) != 0 ||
+    if (ProvenEntries.count(Func.Entry) != 0 ||
         !provesNoReturn(Func, TheArch, NoReturnEntries))
       continue;
 
-    NoReturnEntries.insert(Func.Entry);
+    ProvenEntries.insert(Func.Entry);
+    if (statedToReturn(Func.Entry) ||
+        !NoReturnEntries.insert(Func.Entry).second)
+      continue;
     auto Callers = CallersByTarget.find(Func.Entry);
     if (Callers == CallersByTarget.end())
       continue;
     for (size_t CallerIndex : Callers->second) {
-      if (NoReturnEntries.count(Funcs[CallerIndex].Entry) != 0 ||
+      if (ProvenEntries.count(Funcs[CallerIndex].Entry) != 0 ||
           Queued[CallerIndex])
         continue;
       Pending.push(CallerIndex);
@@ -194,7 +207,7 @@ void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
   }
 
   for (MedFunc &Func : Funcs) {
-    Func.DoesNotReturn = NoReturnEntries.count(Func.Entry) != 0;
+    Func.DoesNotReturn = ProvenEntries.count(Func.Entry) != 0;
     for (MedBlock &Block : Func.Blocks)
       for (MedOp &Op : Block.Ops) {
         // A following trap belongs to this caller; it cannot establish that

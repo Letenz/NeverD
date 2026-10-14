@@ -90,6 +90,8 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("nexe_records"), ASARAvailable);
   EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
   EXPECT_EQ(Has("pkg_records"), ASARAvailable);
+  EXPECT_TRUE(Has("datapack_extract"));
+  EXPECT_TRUE(Has("datapack_records"));
   EXPECT_EQ(Has("wails_extract"), ASARAvailable);
   EXPECT_EQ(Has("wails_records"), ASARAvailable);
   EXPECT_EQ(Has("wails_export"), ASARAvailable);
@@ -181,6 +183,26 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     EXPECT_EQ(Entry->getBoolean("executes_input"), false);
   }
   EXPECT_EQ(BranchProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
+  unsigned NavigationProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "javascript_source_navigation")
+      continue;
+    ++NavigationProfiles;
+    EXPECT_EQ(Entry->getString("configuration_files_profile"),
+              "javascript-configuration-file-navigation-v1");
+    EXPECT_EQ(Entry->getInteger("max_configuration_file_records"), 1024);
+    EXPECT_EQ(Entry->getInteger("max_configuration_file_terms"), 4096);
+    EXPECT_EQ(Entry->getBoolean("resolves_runtime_values"), false);
+    const auto *Kinds = Entry->getArray("record_kinds");
+    ASSERT_NE(Kinds, nullptr);
+    EXPECT_NE(std::find_if(Kinds->begin(), Kinds->end(),
+                           [](const auto &Value) {
+                             return Value.getAsString() == "config_files";
+                           }),
+              Kinds->end());
+  }
+  EXPECT_EQ(NavigationProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
   EXPECT_EQ(Has("asar_extract"), ASARAvailable);
   EXPECT_EQ(Has("asar_records"), ASARAvailable);
   EXPECT_TRUE(Has("native_open"));
@@ -194,6 +216,7 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_TRUE(Has("native_metadata"));
   EXPECT_TRUE(Has("native_analyze"));
   EXPECT_EQ(Has("source_analyze"), bool(NEVERD_TEST_WEB_JS));
+  EXPECT_EQ(Has("source_analyze_large"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_map_lookup"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_bindings_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_binding_records"), bool(NEVERD_TEST_WEB_JS));
@@ -298,6 +321,13 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                      0, 0, 1),
         neverd_web_pkg_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                     0),
+        neverd_web_datapack_extract_json(nullptr, nullptr, 0, nullptr, 0,
+                                         nullptr, 0),
+        neverd_web_datapack_records_json(nullptr, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_datapack_decode_json(nullptr, nullptr, 0, nullptr, 0,
+                                        nullptr, 0),
+        neverd_web_datapack_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                        nullptr, 0),
         neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
                                     0, 1),
         neverd_web_wails_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
@@ -430,6 +460,8 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
         neverd_web_artifacts_json(nullptr, nullptr, 0, 0, 1),
         neverd_web_source_analyze_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
+        neverd_web_source_analyze_large_json(nullptr, nullptr, 0, nullptr, 0,
+                                             nullptr, 0),
         neverd_web_source_nodes_json(nullptr, nullptr, 0, nullptr, 0, 0, 1),
         neverd_web_source_bindings_analyze_json(nullptr, nullptr, 0, nullptr,
                                                 0),

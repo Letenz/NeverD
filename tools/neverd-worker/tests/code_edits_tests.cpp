@@ -184,6 +184,42 @@ int main() {
                              large.size() -
                                  large.rfind('\n', large.size() - 2) - 2),
         "Large comment source lost its final row or edit anchor");
+
+  // C calls the start-up function `_fini` fini, as the C runtime defines its
+  // own: the definition and the call find the function, and read as its
+  // symbol, but the comments that spell them do not. The engine spells the
+  // address in upper case.
+  auto renamedView = page("/* _fini */\n"
+                          "void fini(void) {\n"
+                          "  return;\n"
+                          "}\n"
+                          "void other(void) { fini(); /* fini */ }\n");
+  renamedView["identifier_symbols"] = Json::array(
+      {{{"identifier", "fini"}, {"symbol", "_fini"}, {"address", "0x10AB"}}});
+  CodeEdits::spellIdentifierSymbols(renamedView);
+  check(renamedView.at("source_names").size() == 2,
+        "An identifier the engine renamed is not a source name where spelled");
+  for (const auto &name : renamedView.at("source_names"))
+    check(name.at("identifier") == "fini" && name.at("symbol") == "_fini" &&
+              name.at("address") == "0x10ab",
+          "A renamed identifier lost its symbol or address");
+  CodeEdits::decorate(
+      renamedView, nullptr, 0x10ab, "c",
+      Json::array({{{"addr", "0x10ab"}, {"renamed", "shutdown"}}}),
+      Json::array(), {}, resolve);
+  const auto &renamedText =
+      renamedView.at("text").get_ref<const std::string &>();
+  check(renamedText.find("void shutdown(void) {") != std::string::npos &&
+            renamedText.find("{ shutdown(); /* fini */ }") !=
+                std::string::npos &&
+            renamedText.find("/* _fini */") != std::string::npos,
+        "A rename of a renamed function does not show where C spells it");
+  bool definitionTarget = false;
+  for (const auto &name : renamedView.at("code_names"))
+    definitionTarget |= name.at("original") == "fini" &&
+                        name.value("address", std::string()) == "0x10ab";
+  check(definitionTarget, "A renamed definition has no edit target");
+
   std::cout << "Precise variable/image targets, literal isolation, UTF-8 spans "
                "and stale-edit checks passed\n";
 }

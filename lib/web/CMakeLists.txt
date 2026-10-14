@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDWeb
   ArtifactStore.cpp
+  SourceLimits.cpp
   packages/PackageReader.cpp
   packages/PackageDiff.cpp
   packages/PackageArchive.cpp
@@ -71,6 +72,10 @@ add_neverd_component_library(NeverDWeb
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
   desktop/ResourceManifest.cpp
+  desktop/DataPack.cpp
+  SessionDataPack.cpp
+  SessionDataPackExport.cpp
+  compression/Gzip.cpp
   desktop/wails/ELF.cpp
   desktop/wails/PE.cpp
   desktop/wails/Mappings.cpp
@@ -85,6 +90,7 @@ add_neverd_component_library(NeverDWeb
   desktop/tauri/Reader.cpp
   desktop/bridge/Publication.cpp
   features/configuration/Publication.cpp
+  features/configuration/FilesPublication.cpp
   SessionTauri.cpp
   SessionTauriExport.cpp
   compression/Brotli.cpp
@@ -190,6 +196,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
     desktop/bridge/Source.cpp
     features/configuration/Analysis.cpp
+    features/configuration/Files.cpp
     packages/behavior/Rules.cpp
     packages/behavior/Source.cpp
     packages/behavior/Package.cpp

@@ -35,8 +35,10 @@
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/debug/PDBFunctionNameHint.h"
 #include "neverd/debug/PDBLoader.h"
+#include "neverd/debug/SymbolStore.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/FuncDetector.h"
+#include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
@@ -45,8 +47,11 @@
 #include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Object/Binary.h"
+#include "llvm/Object/COFF.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -189,6 +194,10 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   }
   Img = std::move(*ImgOrErr);
   settleBinaryFilePlatform(Img, LoadOpts.Choice);
+  // Analysis of the session's input reads what its user states, as the
+  // function edits the options carry.
+  if (Policy)
+    Img.UserNoReturn = Policy->Img.UserNoReturn;
 
   auto Found = loadDebugInfo(Path, Img, DbgRequest);
   if (!Found.Error.empty()) {
@@ -272,6 +281,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Annotations.clear();
   S.Renames.clear();
   S.FunctionEdits.clear();
+  S.FunctionAttributeEdits.clear();
   S.DataItems.clear();
   S.OperandFormats.clear();
   S.SigDB.clear();
@@ -343,6 +353,85 @@ const char *neverd_identify_json(const char *Path) {
   }
   Root["rows"] = std::move(Rows);
   return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+}
+
+namespace {
+/// Why a local copy of a PDB does not load, in the C API.
+constexpr llvm::StringLiteral MismatchedPDB("mismatch");
+constexpr llvm::StringLiteral UnreadablePDB("unreadable");
+} // namespace
+
+const char *neverd_pdb_reference_json(const char *Path,
+                                      const char *SearchPath) {
+  llvm::json::Object Root;
+  const auto Answer = [&] {
+    return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+  };
+  Root["pdb"] = nullptr;
+  const auto Input = std::filesystem::u8path(Path ? Path : "");
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Input), /*IsText=*/false,
+                                            /*RequiresNullTerminator=*/false);
+  if (!Buffer) {
+    Root["error"] = jsonSafeText("cannot read " + pathToUTF8(Input) + ": " +
+                                 Buffer.getError().message());
+    return Answer();
+  }
+  // The debug directory alone says which PDB the image names; reading it
+  // costs no load of the image.
+  auto Object = llvm::object::createBinary((*Buffer)->getMemBufferRef());
+  if (!Object) {
+    llvm::consumeError(Object.takeError());
+    return Answer();
+  }
+  const auto *COFF =
+      llvm::dyn_cast<llvm::object::COFFObjectFile>(Object->get());
+  if (!COFF)
+    return Answer();
+  BinaryImage Image;
+  Image.Format = BinaryFormat::COFF;
+  coff_loader::parseDebugDirectory(*COFF, Image);
+  const auto Request = pdbSymbolRequest(Image);
+  if (!Request)
+    return Answer();
+
+  const PDBBuildIdentity &Expected = *Image.DynInfo.CodeViewPDBIdentity;
+  const SymbolPath Search = symbolPath(
+      SearchPath ? std::optional<std::string>(SearchPath) : std::nullopt);
+  llvm::json::Value Found = nullptr;
+  llvm::json::Array Rejected;
+  for (const PDBCandidate &Candidate : pdbCandidates(Input, Image, Search)) {
+    std::error_code EC;
+    if (!std::filesystem::is_regular_file(Candidate.Path, EC))
+      continue;
+    // A frontend keeps the path it loads, so it must not depend on the
+    // working directory the input was named against.
+    llvm::json::Object Copy{
+        {"path", pathToUTF8(std::filesystem::absolute(Candidate.Path, EC))},
+        {"location", pdbLocationName(Candidate.Location)}};
+    auto Identity = readPDBBuildIdentity(Candidate.Path);
+    if (Identity && *Identity == Expected) {
+      Found = std::move(Copy);
+      break;
+    }
+    Copy["reason"] = Identity ? MismatchedPDB : UnreadablePDB;
+    if (!Identity)
+      Copy["detail"] = jsonSafeText(llvm::toString(Identity.takeError()));
+    Rejected.push_back(std::move(Copy));
+  }
+  llvm::json::Array Servers;
+  for (const SymbolServer &Server : Search.Servers)
+    if (!Server.Cache.empty())
+      Servers.push_back(llvm::json::Object{
+          {"url", jsonSafeText(symbolServerURL(Server, *Request))},
+          {"path", pathToUTF8(symbolStorePath(Server.Cache, *Request))}});
+  Root["pdb"] =
+      llvm::json::Object{{"file", Request->FileName},
+                         {"key", Request->Key},
+                         {"recorded", jsonSafeText(Image.DynInfo.PDBPath)},
+                         {"found", std::move(Found)},
+                         {"rejected", std::move(Rejected)},
+                         {"servers", std::move(Servers)}};
+  return Answer();
 }
 
 int neverd::sdk::loadNativeSnapshotSession(neverd_session_t Sess,
@@ -608,6 +697,7 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
   // Retire analysis while its old image and debug owners still exist.
   S->clearPipeline();
   S->Img = std::move(Image);
+  S->applyUserNoReturn();
   S->Dbg = std::move(Found.Context);
   S->DbgKind = Found.Kind;
   S->DbgPath = std::move(Found.Path);
@@ -626,6 +716,18 @@ void neverd_session_set_map_path(neverd_session_t Sess, const char *Path) {
 void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
   if (auto *S = toSession(Sess))
     S->DbgRequest.Enabled = Enabled != 0;
+}
+
+void neverd_session_set_pdb_search(neverd_session_t Sess, int Enabled) {
+  if (auto *S = toSession(Sess))
+    S->DbgRequest.SearchPDB = Enabled != 0;
+}
+
+void neverd_session_set_symbol_path(neverd_session_t Sess,
+                                    const char *SymbolPath) {
+  if (auto *S = toSession(Sess))
+    S->DbgRequest.SymbolPath =
+        SymbolPath ? std::optional<std::string>(SymbolPath) : std::nullopt;
 }
 
 void neverd_session_restrict_function(neverd_session_t Sess,

@@ -69,12 +69,17 @@ struct MockSession {
   std::string path, error;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
+  /// Whether a load searches for the fixture PDB, and whether it found one.
+  bool pdbSearch = true;
+  bool pdbFound = false;
   bool pdbLoaded = false;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
+  /// What the user states of a function (neverd_func_edit), by entry.
+  std::map<std::uint64_t, Json> functionAttributes;
   /// The user's data items, as neverd_items_json lists them.
   std::map<std::uint64_t, Json> items;
   /// The user's operand formats by address and operand index.
@@ -146,6 +151,73 @@ void neverd_session_set_load_progress(neverd_session_t s,
     session(s)->progressUser = userData;
   }
 }
+namespace {
+constexpr char FixturePdb[] = "fixture.pdb";
+constexpr char FixturePdbKey[] = "123456789ABCDEF0123456789ABCDEF01";
+constexpr char FixturePdbBytes[] = "matching fixture PDB";
+
+bool symbolsFixture(const std::filesystem::path &input) {
+  const auto name = input.filename().string();
+  return name == "symbols-missing.bin" || name == "symbols-local.bin";
+}
+
+/// Where the fixture's symbol store keeps its PDB: beside the input, as
+/// <dir>/symbols/<pdb>/<key>/<pdb>.
+std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
+  return input.parent_path() / "symbols" / FixturePdb / FixturePdbKey /
+         FixturePdb;
+}
+
+bool matchingFixturePdb(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  return bytes == FixturePdbBytes;
+}
+} // namespace
+
+const char *neverd_pdb_reference_json(const char *path, const char *) {
+  const auto input = std::filesystem::u8path(path);
+  if (!symbolsFixture(input))
+    return copy(Json{{"pdb", nullptr}}.dump());
+  const auto utf8 = [](const std::filesystem::path &p) {
+    const auto text = p.u8string();
+    return std::string(text.begin(), text.end());
+  };
+  Json found = nullptr;
+  Json rejected = Json::array();
+  const std::pair<std::filesystem::path, const char *> candidates[] = {
+      {input.parent_path() / FixturePdb, "beside"},
+      {fixtureStorePdb(input), "store"}};
+  for (const auto &[candidate, location] : candidates) {
+    if (!std::filesystem::is_regular_file(candidate))
+      continue;
+    Json entry{{"path", utf8(candidate)}, {"location", location}};
+    if (matchingFixturePdb(candidate)) {
+      found = std::move(entry);
+      break;
+    }
+    entry["reason"] = "mismatch";
+    rejected.push_back(std::move(entry));
+  }
+  const std::string url = std::string("https://msdl.microsoft.com/download/"
+                                      "symbols/") +
+                          FixturePdb + "/" + FixturePdbKey + "/" + FixturePdb;
+  return copy(Json{
+      {"pdb",
+       {{"file", FixturePdb},
+        {"key", FixturePdbKey},
+        {"recorded", FixturePdb},
+        {"found", found},
+        {"rejected", rejected},
+        {"servers", Json::array({{{"url", url},
+                                  {"path", utf8(fixtureStorePdb(input))}}})}}}}
+                  .dump());
+}
+
+void neverd_session_set_pdb_search(neverd_session_t s, int enabled) {
+  session(s)->pdbSearch = enabled != 0;
+}
+
 int neverd_session_load(neverd_session_t s, const char *path) {
   const auto notify = [&](const char *phase, unsigned long long done) {
     if (session(s)->progress)
@@ -171,6 +243,13 @@ int neverd_session_load(neverd_session_t s, const char *path) {
                           : std::set<std::uint64_t>{};
   session(s)->functions = listedFunctions({}, session(s)->imageFunctions,
                                           session(s)->absentFunctions);
+  // The local fixture's PDB is beside it; the missing one's is found once a
+  // download put it in the store.
+  const auto input = std::filesystem::u8path(path);
+  session(s)->pdbFound =
+      session(s)->debugInfo && session(s)->pdbSearch &&
+      (input.filename() == "symbols-local.bin" ||
+       (symbolsFixture(input) && matchingFixturePdb(fixtureStorePdb(input))));
   notify("ready", 1);
   return 1;
 }
@@ -314,10 +393,8 @@ const char *neverd_headers_json(neverd_session_t s) {
       session(s)->path.ends_with("symbols-local.bin")) {
     result["debug_info"] = {
         {"enabled", session(s)->debugInfo},
-        {"kind", session(s)->pdbLoaded ||
-                         session(s)->path.ends_with("symbols-local.bin")
-                     ? "pdb"
-                     : "none"}};
+        {"kind",
+         session(s)->pdbLoaded || session(s)->pdbFound ? "pdb" : "none"}};
     result["dynamic"]["pdb_symbol"] = {
         {"file", "fixture.pdb"}, {"key", "123456789ABCDEF0123456789ABCDEF01"}};
   }
@@ -883,6 +960,41 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
       .dump();
 }
 } // namespace
+
+const char *neverd_ir_view_ex_json(neverd_session_t s, neverd_va_t address,
+                                   const char *representation,
+                                   std::size_t offset, std::size_t limit,
+                                   const char *options) {
+  const auto policy = Json::parse(options ? options : "{}", nullptr, false);
+  if (!policy.is_object() ||
+      (policy.contains("symbolic") && !policy["symbolic"].is_boolean())) {
+    session(s)->error = "invalid source options";
+    return nullptr;
+  }
+  if (!policy.empty()) {
+    std::fprintf(stderr, "fixture source options %s\n", policy.dump().c_str());
+    std::fflush(stderr);
+  }
+  if (session(s)->path.ends_with("source-options-fail.bin") &&
+      policy.value("symbolic", false)) {
+    session(s)->error = "fixture transformation refused";
+    return nullptr;
+  }
+  if (session(s)->path.ends_with("source-options-slow.bin") &&
+      policy.value("symbolic", false)) {
+    std::fprintf(stderr, "fixture symbolic transformation started\n");
+    std::fflush(stderr);
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+  }
+  const char *raw =
+      neverd_ir_view_json(s, address, representation, offset, limit);
+  if (!raw)
+    return nullptr;
+  auto page = Json::parse(raw);
+  neverd_free_string(raw);
+  page["fixture_source_options"] = policy;
+  return copy(page.dump());
+}
 
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
@@ -1636,24 +1748,105 @@ int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
     return -1;
   }
   state.functionEdits[address] = false;
+  state.functionAttributes.erase(address);
   state.functions = listedFunctions(state.functionEdits, state.imageFunctions,
                                     state.absentFunctions);
   return 0;
 }
+constexpr const char *FunctionAttributeKeys[] = {"noreturn", "library",
+                                                 "static", "color"};
+int neverd_func_edit(neverd_session_t s, neverd_va_t address,
+                     const char *text) {
+  auto &state = *session(s);
+  if (neverd_func_find_by_addr(s, address) < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return -1;
+  }
+  Json row;
+  try {
+    row = Json::parse(text ? text : "");
+  } catch (...) {
+    row = nullptr;
+  }
+  if (!row.is_object()) {
+    state.error = "a function edit is a JSON object";
+    return -1;
+  }
+  Json stated = state.functionAttributes.contains(address)
+                    ? state.functionAttributes[address]
+                    : Json::object();
+  for (const auto &[key, value] : row.items()) {
+    if (std::find(std::begin(FunctionAttributeKeys),
+                  std::end(FunctionAttributeKeys),
+                  key) == std::end(FunctionAttributeKeys)) {
+      state.error = "unknown function attribute \"" + key + "\"";
+      return -1;
+    }
+    if (value.is_null())
+      stated.erase(key);
+    else
+      stated[key] = value;
+  }
+  if (stated.empty())
+    state.functionAttributes.erase(address);
+  else
+    state.functionAttributes[address] = stated;
+  return 0;
+}
+const char *neverd_func_attributes_json(neverd_session_t s,
+                                        neverd_va_t address) {
+  auto &state = *session(s);
+  const int index = neverd_func_find_by_addr(s, address);
+  if (index < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return nullptr;
+  }
+  const Json stated = state.functionAttributes.contains(address)
+                          ? state.functionAttributes[address]
+                          : Json::object();
+  const auto size = static_cast<std::uint64_t>(neverd_func_size(s, index));
+  const char *name = neverd_func_name(s, index);
+  const std::string spelled = name ? name : "";
+  neverd_free_string(name);
+  Json result{{"addr", hexAddress(address)},
+              {"name", spelled},
+              {"start", hexAddress(address)},
+              {"end", hexAddress(address + size)},
+              {"noreturn", stated.value("noreturn", false)},
+              {"library", stated.value("library", false)},
+              {"static", stated.contains("static") ? stated["static"] : Json()},
+              {"color", stated.contains("color") ? stated["color"] : Json()},
+              {"purged_bytes", 0},
+              {"stated", stated}};
+  return copy(result.dump());
+}
 const char *neverd_functions_json(neverd_session_t s) {
-  Json result = Json::array();
+  std::map<std::uint64_t, Json> rows;
   for (const auto &[address, created] : session(s)->functionEdits)
-    result.push_back({{"addr", hexAddress(address)},
-                      {"state", created ? "created" : "deleted"}});
+    rows[address]["state"] = created ? "created" : "deleted";
+  for (const auto &[address, stated] : session(s)->functionAttributes)
+    rows[address].update(stated);
+  Json result = Json::array();
+  for (auto &[address, row] : rows) {
+    row["addr"] = hexAddress(address);
+    result.push_back(std::move(row));
+  }
   return copy(result.dump());
 }
 int neverd_functions_load(neverd_session_t s) {
   try {
     std::map<std::uint64_t, bool> edits;
-    for (const auto &item : read(session(s)->path + ".neverd-functions.json"))
-      edits[parseAddress(item.at("addr").get<std::string>())] =
-          item.at("state").get<std::string>() == "created";
+    std::map<std::uint64_t, Json> attributes;
+    for (const auto &item : read(session(s)->path + ".neverd-functions.json")) {
+      const auto address = parseAddress(item.at("addr").get<std::string>());
+      if (item.contains("state"))
+        edits[address] = item.at("state").get<std::string>() == "created";
+      for (const char *key : FunctionAttributeKeys)
+        if (item.contains(key))
+          attributes[address][key] = item.at(key);
+    }
     session(s)->functionEdits = std::move(edits);
+    session(s)->functionAttributes = std::move(attributes);
     session(s)->functions =
         listedFunctions(session(s)->functionEdits, session(s)->imageFunctions,
                         session(s)->absentFunctions);

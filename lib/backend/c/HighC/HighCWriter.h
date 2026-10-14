@@ -27,6 +27,8 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/DataSymbolBinding.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -164,6 +166,8 @@ public:
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
+  void writeX87ContextHelpers(const std::vector<HighFunc> &Funcs);
+  std::string renderX87ContextCall(const HighExpr &E);
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
   void writeLinuxSyscallHelpers();
@@ -175,6 +179,9 @@ public:
   bool isEmbeddedWindowsCallback(const HighStmt &Stmt, size_t I) const;
   void writeEmbeddedNativeCallbacks(const HighStmt &Stmt, int Indent);
   bool writeRegistrationCleanup(const HighStmt &Stmt, size_t I, int Indent);
+  /// Whether cleanup clause \p I is a PE32 relay writeRegistrationCleanup
+  /// prints as its native action.
+  bool isNativeRegistrationCleanup(const HighStmt &Stmt, size_t I) const;
   unsigned NativeExceptionRegionNumber = 0;
   struct MemoryLoadDestination {
     std::string Name;
@@ -237,6 +244,27 @@ public:
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
+  /// A C++ `try` around the body \p WriteBody prints at the indent it is
+  /// given, then its handlers.  A cleanup clause is an object's unwind
+  /// action, which standard C++ spells as `catch (...)` that runs it and
+  /// rethrows.  Next to typed handlers it is a try of its own inside them:
+  /// the object is destroyed before a handler runs.
+  void writeCxxTry(const HighStmt &Try, int Indent,
+                   llvm::function_ref<void(int)> WriteBody);
+  /// The unwind actions of cleanup clauses \p Cleanups, deepest object
+  /// first, then the rethrow that continues the unwind.
+  void writeCxxCleanupHandler(const HighStmt &Try,
+                              llvm::ArrayRef<size_t> Cleanups, int Indent);
+  /// Whether every clause of the Itanium region \p Stmt has the body
+  /// attachItaniumHandlerBodies gave it from the landing pad.
+  static bool hasItaniumHandlerBodies(const HighStmt &Stmt);
+  /// The catch parameter of the Itanium handler being written and whether it
+  /// is a pointer: the object `__cxa_begin_catch` hands the handler is its
+  /// address, or for a caught pointer its value.
+  std::optional<std::pair<std::string, bool>> ItaniumCatchParameter;
+  /// Landing pads no clause names: their labels say the unwinder enters
+  /// them, since nothing in the C jumps there.
+  std::set<va_t> LandingPadLabels;
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
   bool tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts, size_t I,
@@ -787,6 +815,8 @@ public:
   /// The x87 helpers the output calls, and whether it computes with the
   /// x87 extended `long double`.
   std::set<X87CHelper> X87Helpers;
+  std::map<std::tuple<Intrinsic, uint32_t, NdMemoryAddressSpace>, std::string>
+      X87ContextHelperNames;
   std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
   bool UsesX87Extended = false;
   /// The bytes a plain access of the C memory type \p Type copies inline: 0
@@ -1156,6 +1186,10 @@ public:
     uint64_t Pad = 0;
   };
   std::vector<ImageBacking> ImageBackings;
+  /// The symbol the object a backing is named after has in its comment, as
+  /// the backing's `neverd.image` line names it; empty for a name the
+  /// emitter made.
+  std::string backingReadable(const ImageBacking &Backing) const;
   /// The C address a relocated pointer slot holds: the function or data it
   /// names, or none when no C object names it.
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;

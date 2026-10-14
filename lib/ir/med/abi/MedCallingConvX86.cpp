@@ -842,29 +842,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   }
 
   // A load of more than two slots composes in temporaries numbered above
-  // every value: MedIR numbers registers, temporaries and stack values from
-  // one counter, which HighIR keys values by.
-  int NextTemp = 0;
-  const auto Observe = [&](const MedVar &V) {
-    if (!V.isConst())
-      NextTemp = std::max(NextTemp, V.Id + 1);
-  };
-  for (const auto &Parameter : Func.Params)
-    Observe(Parameter);
-  for (const auto &Blk : Func.Blocks) {
-    for (const auto &Phi : Blk.Phis) {
-      Observe(Phi.Output);
-      for (const auto &[Pred, Input] : Phi.Args)
-        Observe(Input);
-    }
-    for (const auto &Op : Blk.Ops) {
-      Observe(Op.Output);
-      for (const auto &V : Op.Inputs)
-        Observe(V);
-      for (const auto &V : Op.IntrinsicOutputs)
-        Observe(V);
-    }
-  }
+  // every value.
+  int NextTemp = med_calling_conv_detail::nextValueId(Func);
   // The compositions to insert before an op, by its block and index.
   std::map<std::pair<size_t, size_t>, std::vector<MedOp>> Compositions;
   for (size_t BI = 0; BI < Func.Blocks.size(); ++BI)
@@ -879,8 +858,9 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       auto Off = stackArgOffset(Op.Inputs[0]);
       if (Off) {
         const uint16_t Bytes = Op.Output.Size > 0 ? Op.Output.Size : 4;
-        // A load wider than a slot reads every slot it covers.
-        const unsigned Slots = Bytes > 4 && Bytes % 4 == 0 ? Bytes / 4 : 1;
+        // A load wider than a slot reads every slot it covers, the last one
+        // perhaps in part.
+        const unsigned Slots = Bytes > 4 ? (Bytes + 3u) / 4u : 1;
         bool Mutable = false;
         for (unsigned K = 0; K < Slots; ++K)
           Mutable |= MutableArgOffsets.count(*Off + 4 * K) != 0;
@@ -893,37 +873,15 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
         Param.RegOff = kNoParamReg;
         Param.TheArch = TargetArch;
         if (Slots > 1) {
-          // A load of several slots, an eight-byte double or a vectorized
-          // copy of four arguments, spans as many four-byte ABI parameters.
+          // A load of several slots, an eight-byte double, a ten-byte long
+          // double or a vectorized copy of four arguments, spans as many
+          // four-byte ABI parameters.
           // Encode that composition in MedIR, each slot above the ones below
           // it, so both source routes keep every slot and agree about which
           // incoming slots are actually used.
-          Param.Size = 4;
-          auto SlotParam = [&](unsigned K) {
-            MedVar Slot = Param;
-            Slot.Id += static_cast<int>(K);
-            return Slot;
-          };
-          MedVar Low = SlotParam(0);
           std::vector<MedOp> Prefix;
-          for (unsigned K = 1; K + 1 < Slots; ++K) {
-            MedOp Compose;
-            Compose.Opcode = NdOp::CONCAT;
-            Compose.Addr = Op.Addr;
-            Compose.OriginSeq = Op.OriginSeq;
-            Compose.Output = Low;
-            Compose.Output.Kind = MedVar::Temp;
-            Compose.Output.Id = NextTemp++;
-            Compose.Output.Size = static_cast<uint16_t>(4 * (K + 1));
-            Compose.addInput(SlotParam(K));
-            Compose.addInput(Low);
-            Low = Compose.Output;
-            Prefix.push_back(Compose);
-          }
-          Op.Opcode = NdOp::CONCAT;
-          Op.Inputs[0] = SlotParam(Slots - 1);
-          Op.Inputs[1] = Low;
-          Op.NumInputs = 2;
+          med_calling_conv_detail::composeStackSlots(Op, Param, 4, Bytes,
+                                                     NextTemp, Prefix);
           if (!Prefix.empty())
             Compositions[{BI, OI}] = std::move(Prefix);
           continue;
@@ -1055,30 +1013,7 @@ void recoverFPStackReads(
     const std::set<int64_t> &MutableSlots) {
   if (Architecture != Arch::X86 && Architecture != Arch::X64)
     return;
-  // MedIR numbers registers, temporaries and stack values from one counter,
-  // and HighIR keys them by {Id, SSAVer} alone: a new temporary takes an id
-  // above every value's, or it aliases a register's (`t30` read as EAX.30).
-  int NextTemp = 0;
-  const auto Observe = [&](const MedVar &V) {
-    if (!V.isConst())
-      NextTemp = std::max(NextTemp, V.Id + 1);
-  };
-  for (const auto &Parameter : Func.Params)
-    Observe(Parameter);
-  for (const auto &Block : Func.Blocks) {
-    for (const auto &Phi : Block.Phis) {
-      Observe(Phi.Output);
-      for (const auto &[Pred, Input] : Phi.Args)
-        Observe(Input);
-    }
-    for (const auto &Op : Block.Ops) {
-      Observe(Op.Output);
-      for (const auto &V : Op.Inputs)
-        Observe(V);
-      for (const auto &V : Op.IntrinsicOutputs)
-        Observe(V);
-    }
-  }
+  int NextTemp = nextValueId(Func);
   struct Rewrite {
     MedOp Value;
     std::vector<MedOp> Prefix;

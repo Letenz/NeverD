@@ -15,6 +15,10 @@ leur propre architecture interne.
 
 `sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles.
 
+`SourcePatchCompiler` compose NeverC `cpp-core-v2` et C23 ; `validateDynCodePatchImage` lie l’audit aux empreintes, octets et entrée réels. Les installateurs enregistrent les vrais records de déroulage. ARM64 FH3 utilise les limites xdata du chargeur et les groupes funclet/FuncInfo du MC. Sans DWARF original, tous les cadres Mach-O doivent avoir des records compacts natifs.
+
+`CompiledImage` normalise une seule fois les spécificateurs ELF AArch64 à deux-points pour la résolution réelle et les fixups capturés. Le résolveur ELF et la publication des relocations utilisent les mêmes identités ABS/GOT exactes ; TLS et formes inconnues restent refusés. COFF peut utiliser les limites des fonctions natives décodées, mais le code hosted exige une couverture complète des records de déroulage du compilateur.
+
 ## Frontière du système
 
 ```mermaid
@@ -68,6 +72,10 @@ Une hiérarchie externe manquante impose l’accord global des sélecteurs, sans
 Les ivar de type objet explicite prolongent la preuve du récepteur par au plus huit chargements de largeur complète. Chaque étape conserve le slot d’offset à l’exécution, sa largeur et tout offset littéral utilisé par l’instruction. Un littéral doit encore correspondre à la disposition actuelle ; une référence d’offset peut suivre un champ déplacé. Le chargeur vérifie la lignée de classes et la déclaration du champ. Les accès partiels, id sans classe, blocs, types limités à un protocole, stockages ambigus et bases inconnues ne donnent aucun fait de classe. La validation du source revérifie tout le chemin dans l’image courante. Ces faits ne prouvent ni l’identité d’objet ni le droit de supprimer des opérations mémoire.
 
 Le chargeur valide des graphes bornés et acycliques de chaînes constantes, objets entiers, tableaux et dictionnaires triés Darwin. Chaque champ et chaque arête exigent une mémoire mappée immuable et des preuves non ambiguës d’importation ou de relocalisation ; les encodages non pris en charge, cycles et graphes incomplets échouent explicitement. Les liaisons source revérifient le graphe et le slot de pointeur entrant. Les fonctions générées préservent les bits entiers, l’ordre des enfants et les adresses partagées, en réutilisant les identités des chaînes. Les slots sont initialisés une seule fois avec publication acquire/release, uniquement par des appels aux enfants validés. Chaque fonction porte leurs déclarations pour permettre le partage d’une définition entre méthodes récupérées indépendamment. Les tests portables couvrent les entrées malformées et les budgets ; les fixtures natives comparent contenu, alias, identité des copies et initialisation concurrente aux méthodes originales.
+
+## Contexte x87 détenu par les fonctions x64
+
+Pour les images x64 Win64, dont l’ABI C ne transmet aucune valeur x87, `ir/X87Context.h` définit les encodages admis et `CFGBuilderX86Fpu` possède un contexte mutable par fonction : CW, SW, TOP dynamique, tags abrégés et huit valeurs binary80 brutes. Les entrées indépendantes capturent l’état ; les arêtes ordinaires le publient avant cette capture. Les appels et les sauvegardes/restaurations étendues exportent et rafraîchissent le contexte, même dans les wrappers sans instruction x87 locale. Les boucles conservent leur contexte. LLVM, HighC et LLVMC partagent ce contrat ; HighC emploie des helpers nommés et un stockage aligné fixe. MMX relie les alias physiques ; EMMS vide les tags. L’exécution concrète exige un état et une mémoire authentifiés, refuse les effets inconnus et réserve les résultats dépendant de l’implémentation au mode de référence natif explicite. Les preuves statiques TOP/tags ci-dessus restent la projection de x86-32 et de x64 System V, dont les paramètres long double et les résultats st0 restent des valeurs typées ; `x87ContextOwnsStack` choisit le modèle pour chaque image et `BinaryImage::X87ContextOverride` impose l’un ou l’autre. Tous les processeurs, instructions, priorités de faute et ABI de retour flottant ne sont pas certifiés.
 
 ## Représentations IR et parcours
 
@@ -301,6 +309,12 @@ Les constantes conservent, de LowIR à MedIR puis HighIR, leur provenance scalai
 Gardez la logique propre à une représentation dans sa bibliothèque IR ou
 backend ; le pipeline doit orchestrer ces composants, pas absorber leurs
 algorithmes.
+
+## Stockage des objets en LLVM C
+
+`LLVMCStackAllocation` gère les allocations comptées ou hors entrée dans le clone C privé. Le pas DataLayout, le nombre non signé, l’alignement et la position restent exacts. Un appel privé à effets émet `__builtin_alloca` à la position initiale, contrôle le débordement et aligne dans des octets supplémentaires ; la durée atteint donc le retour sous Clang/GCC. Une allocation d’un objet à l’entrée garde sa déclaration locale. Les nombres trop larges, le stockage scalable, les espaces non standards, inalloca/swifterror, stack save/restore explicites et les marqueurs privés d’entrée sont refusés avant normalisation. L’IR original reste intact.
+
+`LLVMCStorage` partage le suralignement explicite des objets locaux et globaux et de leurs déclarations. Les chaînes conservent toute la taille du tableau LLVM, y compris les octets nuls finaux. Les valeurs globales LLVM représentent des adresses dans les expressions et initialisations ; seules les déclarations et les lectures/écritures directes utilisent le nom C seul. Les données importées conservent leur représentation d’adresse existante.
 
 ## Contrat de traduction inter-architectures
 

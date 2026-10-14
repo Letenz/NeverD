@@ -1,0 +1,120 @@
+name: Web producer qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpus_url:
+        description: 'HTTPS URL of the immutable redistributable full producer corpus tar archive'
+        required: true
+        type: string
+      corpus_sha256:
+        description: 'Exact lowercase SHA-256 of that corpus archive'
+        required: true
+        type: string
+      snapshot_witness:
+        description: 'Fixed opaque snapshot witness; original metadata is preserved'
+        required: true
+        type: choice
+        default: original
+        options: [original, '2026-10-13']
+  workflow_call:
+    inputs:
+      corpus_url:
+        required: true
+        type: string
+      corpus_sha256:
+        required: true
+        type: string
+      snapshot_witness:
+        required: false
+        type: string
+        default: original
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: All fixed full producer inputs (macOS arm64 reader)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CORPUS_URL: ${{ inputs.corpus_url }}
+      CORPUS_SHA256: ${{ inputs.corpus_sha256 }}
+      NEVERD_REQUIRE_WEB_PRODUCER_CORPUS: '1'
+      NEVERD_BUN_142_CORPUS: ${{ github.workspace }}/web-producer-corpus/bun-linux
+      NEVERD_BUN_142_CROSS_CORPUS: ${{ github.workspace }}/web-producer-corpus/bun-cross
+      NEVERD_NODE_SEA_22150_CORPUS: ${{ github.workspace }}/web-producer-corpus/sea-cases
+      NEVERD_NODE_SEA_22150_IMAGES: ${{ github.workspace }}/web-producer-corpus/sea-images
+      NEVERD_NODE_SEA_SNAPSHOT_WITNESS: ${{ inputs.snapshot_witness }}
+      NEVERD_NEXE_4RC7_CORPUS: ${{ github.workspace }}/web-producer-corpus/nexe
+      NEVERD_PKG_581_CORPUS: ${{ github.workspace }}/web-producer-corpus/pkg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Require the immutable corpus and verify its envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CORPUS_URL" != https://* || ! "$CORPUS_SHA256" =~ ^[0-9a-f]{64}$ || \
+                ( "$NEVERD_NODE_SEA_SNAPSHOT_WITNESS" != original && \
+                  "$NEVERD_NODE_SEA_SNAPSHOT_WITNESS" != 2026-10-13 ) ]]; then
+            printf 'A pinned HTTPS archive, lowercase SHA-256 and known snapshot witness are required.\n' >&2
+            exit 1
+          fi
+          curl --fail --location --retry 2 --max-time 1200 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$RUNNER_TEMP/web-producer-corpus.tar" "$CORPUS_URL"
+          printf '%s  %s\n' "$CORPUS_SHA256" \
+            "$RUNNER_TEMP/web-producer-corpus.tar" | shasum -a 256 -c -
+          mkdir -p web-producer-corpus
+          tar -xf "$RUNNER_TEMP/web-producer-corpus.tar" -C web-producer-corpus
+          for directory in bun-linux bun-cross sea-cases sea-images nexe pkg; do
+            test -d "web-producer-corpus/$directory"
+          done
+      - name: Prepare pinned in-process decoder dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install cmake ninja icu4c@77
+          git init "$RUNNER_TEMP/zstd"
+          git -C "$RUNNER_TEMP/zstd" remote add origin https://github.com/facebook/zstd.git
+          git -C "$RUNNER_TEMP/zstd" fetch --depth 1 origin f8745da6ff1ad1e7bab384bd1f9d742439278e99
+          git -C "$RUNNER_TEMP/zstd" checkout --detach FETCH_HEAD
+          cmake -S "$RUNNER_TEMP/zstd/build/cmake" -B "$RUNNER_TEMP/zstd-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/web-codecs" \
+            -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF \
+            -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON
+          cmake --build "$RUNNER_TEMP/zstd-build" --target install --parallel 3
+      - name: Build the C++ consumers
+        shell: bash
+        run: |
+          cmake -S . -B build-web-qualification -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DNEVERD_LLVM_PREBUILT=ON \
+            -DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r4 \
+            -DNEVERD_ENABLE_WEB_ANALYSIS=ON \
+            -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON \
+            -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
+            -DICU_ROOT="$(brew --prefix icu4c@77)" \
+            -Dzstd_DIR="$RUNNER_TEMP/web-codecs/lib/cmake/zstd"
+          cmake --build build-web-qualification --parallel 3 \
+            --target NeverDWebArtifactTests NeverDWebSourceMapTests \
+            NeverDWebNativeTests NeverDWebSDKTests
+      - name: Require all eleven fixed producer qualification tests
+        run: >-
+          ctest --test-dir build-web-qualification/unittests/web
+          --output-on-failure --no-tests=error
+          --output-junit "$GITHUB_WORKSPACE/build-web-qualification/unittests/web/producer-results.xml"
+          -L '^NeverDWebProducerCorpus$'
+      - name: Retain qualification diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-full-producer-qualification
+          path: |
+            build-web-qualification/unittests/web/producer-results.xml
+            build-web-qualification/Testing/Temporary/LastTest.log
+          if-no-files-found: warn

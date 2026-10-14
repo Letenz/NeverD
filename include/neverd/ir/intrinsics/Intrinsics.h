@@ -354,6 +354,16 @@ enum class Intrinsic : uint16_t {
   X86FPMaskCompareState,
   X86FPMaskCompareMemoryState,
 
+  // Explicit, function-owned x87 context. Keep TOP, tags, pending exceptions
+  // and all eight raw values together rather than projecting host long double.
+  X87ContextBegin,
+  X87ContextRefresh,
+  X87ContextExport,
+  X87ContextStep,
+  X87ContextMMXRead,
+  X87ContextMMXWrite,
+  X87ContextMMXEnter,
+
   _Count = 16000
 };
 
@@ -678,6 +688,7 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::Ldmxcsr:
   case Intrinsic::Stmxcsr:
   case Intrinsic::Fxsave:
+  case Intrinsic::X87ContextStep:
   case Intrinsic::Fxrstor:
   case Intrinsic::Fxsave64Mem:
   case Intrinsic::Fxrstor64Mem:
@@ -843,6 +854,12 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::X87ContextStep:
+    // [id,context,selector,address,flags,source-PC]; the full selector and
+    // architecture contract belongs to X87Context.h.
+    return NumInputs == 6 && AddressSize == 8 && MaskSize == 4 &&
+           DataSize == 8 &&
+           (OutputSize == 0 || OutputSize == 2 || OutputSize == 8);
   case Intrinsic::X86FPFmaMemoryState:
     return NumInputs == 6 && AddressSize == 8 && MaskSize == 2 &&
            DataSize + 4 == OutputSize &&
@@ -1068,6 +1085,16 @@ const char *llvmIntrinsicToCName(const char *LLVMName);
 Intrinsic intrinsicFromName(const char *Name);
 bool isSideeffectIntrinsic(Intrinsic Id);
 uint8_t intrinsicOutputCount(Intrinsic Id);
+
+/// True when \p Id writes no register and no memory, so the arguments a call
+/// sets up before it still reach the call: the x87 wait for pending
+/// exceptions that FILD, FABS and FCHS also check, and the owned x87
+/// context's transport around a call, which moves the function's private
+/// context between its buffer and the FPU.
+constexpr bool preservesCallSetup(Intrinsic Id) {
+  return Id == Intrinsic::X87Wait || Id == Intrinsic::X87ContextExport ||
+         Id == Intrinsic::X87ContextRefresh;
+}
 
 /// The control or debug register (`%cr8`, `%dr7`) that a ReadCr*/WriteCr*
 /// intrinsic names, or that ReadDr/WriteDr names by its constant first

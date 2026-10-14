@@ -12,6 +12,7 @@
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFrame.h"
+#include "WindowFramePlatform.h"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -40,6 +41,7 @@
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QSet>
 #include <QSplitter>
 #include <QSqlDatabase>
@@ -139,6 +141,34 @@ QList<QKeySequence> idaKeys(QLatin1StringView spelling) {
     return {};
   return {key};
 }
+/// The window states the window system confirmed on a native window, which
+/// it reports with a WindowStateChange event there.
+class AppliedStates final : public QObject {
+public:
+  Qt::WindowStates states;
+  int count = 0;
+
+protected:
+  bool eventFilter(QObject *object, QEvent *event) override {
+    if (event->type() == QEvent::WindowStateChange) {
+      states = static_cast<QWindow *>(object)->windowStates();
+      ++count;
+    }
+    return false;
+  }
+};
+
+/// The state a window shows, of several it holds at once.
+Qt::WindowState effectiveState(Qt::WindowStates states) {
+  if (states & Qt::WindowMinimized)
+    return Qt::WindowMinimized;
+  if (states & Qt::WindowFullScreen)
+    return Qt::WindowFullScreen;
+  if (states & Qt::WindowMaximized)
+    return Qt::WindowMaximized;
+  return Qt::WindowNoState;
+}
+
 } // namespace
 
 class WorkbenchUnitTests : public QObject {
@@ -1160,6 +1190,87 @@ private slots:
     QTRY_VERIFY(!button("closeButton")->isVisible());
     window.showNormal();
     QTRY_VERIFY(button("closeButton")->isVisible());
+  }
+
+  void nativeFrameKeepsTheTitleBarOnScreen() {
+    // Windows and macOS keep the system frame without its caption, so the
+    // window system decides where a maximized or full-screen window's client
+    // area lies; CI runs this with their native platforms.
+    if (platform::frameKind() != platform::FrameKind::Captionless)
+      QSKIP("The platform has no captionless system frame");
+    QWidget window;
+    auto *menus = new QMenuBar;
+    menus->addMenu(QStringLiteral("&File"));
+    auto *bar = new TitleBar(window, menus);
+    QVERIFY(WindowFrame::attach(window, bar));
+    // Small CI screens (1024x768) leave the default placement partly off
+    // screen; start inside the available area.
+    window.resize(900, 600);
+    window.move(window.screen()->availableGeometry().topLeft() +
+                QPoint(40, 40));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    AppliedStates applied;
+    window.windowHandle()->installEventFilter(&applied);
+    QScreen *screen = window.screen();
+    const auto barRect = [&] {
+      return QRect(bar->mapToGlobal(QPoint(0, 0)), bar->size());
+    };
+    const auto report = [&](const char *step) {
+      qInfo() << step << "applied" << applied.states << "frame"
+              << window.frameGeometry() << "client" << window.geometry()
+              << "contents" << window.contentsMargins() << "bar" << barRect()
+              << "screen" << screen->geometry() << "available"
+              << screen->availableGeometry();
+    };
+    // Each step waits until the window system confirms the state on the
+    // native window: macOS animates full screen and ignores a request made
+    // before an animation ends, and reports full screen alone over maximized.
+    const auto request = [&](Qt::WindowStates states, const char *step) {
+      const int before = applied.count;
+      window.setWindowState(states);
+      const bool confirmed = QTest::qWaitFor(
+          [&] {
+            return applied.count > before &&
+                   effectiveState(applied.states) == effectiveState(states);
+          },
+          10000);
+      QTest::qWait(300);
+      report(step);
+      return confirmed;
+    };
+    report("normal");
+    const QSize normal = window.size();
+    QVERIFY(screen->geometry().contains(barRect()));
+
+    QVERIFY(request(Qt::WindowMaximized, "maximized"));
+    QVERIFY(screen->availableGeometry().contains(barRect()));
+    QVERIFY(request(Qt::WindowNoState, "restored"));
+    QCOMPARE(window.size(), normal);
+
+    // Full screen twice: its client area must not lose the title bar, and a
+    // restore must not move the window's size.
+    for (int round = 0; round < 2; ++round) {
+      QVERIFY(request(Qt::WindowFullScreen, "full screen"));
+      QVERIFY(screen->geometry().contains(barRect()));
+      QCOMPARE(barRect().top(), screen->geometry().top());
+      QVERIFY(request(Qt::WindowNoState, "restored"));
+      QCOMPARE(window.size(), normal);
+    }
+
+    // F11 keeps a maximized window maximized under full screen: no border
+    // inset there, and leaving full screen returns to the maximized size.
+    QVERIFY(request(Qt::WindowMaximized, "maximized"));
+    const QSize maximized = window.size();
+    QVERIFY(request(Qt::WindowMaximized | Qt::WindowFullScreen,
+                    "full screen from maximized"));
+    QVERIFY(screen->geometry().contains(barRect()));
+    QCOMPARE(barRect().top(), screen->geometry().top());
+    QVERIFY(request(Qt::WindowMaximized, "maximized again"));
+    QCOMPARE(window.size(), maximized);
+    QVERIFY(screen->availableGeometry().contains(barRect()));
+    QVERIFY(request(Qt::WindowNoState, "restored"));
+    QCOMPARE(window.size(), normal);
   }
 
   void dialogTitleBarOffersTheButtonsItsFlagsAskFor() {

@@ -78,6 +78,7 @@ add_neverd_tool(neverd
   neverd.cpp
   NeverDCLIOptions.cpp
   NeverDCLIFunctions.cpp
+  NeverDSymbolDownload.cpp
   NeverDTranslateOutput.cpp
   cmd/NeverDCmdInfo.cpp
   cmd/NeverDCmdTables.cpp
@@ -114,6 +115,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdWebSEA.cpp
   cmd/NeverDCmdWebNexe.cpp
   cmd/NeverDCmdWebPkg.cpp
+  cmd/NeverDCmdWebDataPack.cpp
   cmd/NeverDCmdWebWails.cpp
   cmd/NeverDCmdWebTauri.cpp
   cmd/NeverDCmdWebReadableExport.cpp
@@ -122,6 +124,16 @@ add_neverd_tool(neverd
   neverd_shared
   NeverDMobile
 )
+
+# Symbol downloads go through the system's HTTP client: WinHTTP on Windows,
+# and elsewhere libcurl, loaded only when a download is asked for.
+if(WIN32)
+  target_sources(neverd PRIVATE NeverDSymbolTransportWinHTTP.cpp)
+  target_link_libraries(neverd PRIVATE winhttp)
+else()
+  target_sources(neverd PRIVATE NeverDSymbolTransportCurl.cpp)
+  target_link_libraries(neverd PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # Keep notices with redistributable binaries in both source and package builds.
 if(NEVERD_LLVM_PREBUILT)

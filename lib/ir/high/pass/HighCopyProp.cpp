@@ -32,6 +32,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+
 #include <algorithm>
 #include <functional>
 #include <set>
@@ -92,62 +95,128 @@ void filterStableCopyCandidates(const std::vector<HighStmt> &Stmts,
                                 VarKeyMap<ExprPtr> &Candidates) {
   if (Candidates.empty())
     return;
-  VarKeyMap<int> Definitions;
-  VarKeyMap<VarKeySet> Dependents;
-  VarKeySet Unstable;
+  struct Node {
+    llvm::SmallVector<size_t, 2> Users;
+    bool Unstable = false;
+  };
+  struct Variable {
+    size_t Node;
+    unsigned Definitions = 0;
+  };
+  llvm::SmallVector<Node, 16> Nodes;
+  VarKeyMap<Variable> Variables;
+  llvm::DenseMap<const HighExpr *, size_t> Expressions;
+  llvm::SmallVector<std::pair<const HighExpr *, size_t>, 16> ExpressionsToVisit;
+  llvm::SmallVector<std::pair<VarKey, const HighExpr *>, 16> Definitions;
+  llvm::SmallVector<size_t, 16> Work;
+  auto InternVariable = [&](VarKey Key) -> Variable & {
+    auto [It, Added] = Variables.try_emplace(Key, Variable{Nodes.size()});
+    if (Added)
+      Nodes.emplace_back();
+    return It->second;
+  };
+  constexpr size_t NoDependency = ~size_t{0};
+  auto InternExpression = [&](const HighExpr *E) {
+    if (E->Operands.empty())
+      return E->Kind == ExprKind::Var ? InternVariable(VK(E->Var)).Node
+                                      : NoDependency;
+    auto [It, Added] = Expressions.try_emplace(E, Nodes.size());
+    if (Added) {
+      Nodes.emplace_back();
+      ExpressionsToVisit.emplace_back(E, It->second);
+    }
+    return It->second;
+  };
+  auto MarkUnstable = [&](size_t Index) {
+    if (!Nodes[Index].Unstable) {
+      Nodes[Index].Unstable = true;
+      Work.push_back(Index);
+    }
+  };
   walkStmts(Stmts, [&](const HighStmt &S) {
     if (S.Kind != StmtKind::Assign || !S.Dst || S.Dst->Kind != ExprKind::Var)
       return;
-    auto Key = VK(S.Dst->Var);
-    if (++Definitions[Key] > 1 || S.IsPhiCopy)
-      Unstable.insert(Key);
-    std::vector<ExprPtr> Work{S.Val};
-    HighExprSet Seen;
-    while (!Work.empty()) {
-      auto E = Work.back();
-      Work.pop_back();
-      if (!E || !Seen.insert(E.get()).second)
-        continue;
-      if (E->Kind == ExprKind::Var) {
-        auto Input = VK(E->Var);
-        Dependents[Input].insert(Key);
-        if (Input == Key)
-          Unstable.insert(Key);
-      }
-      Work.insert(Work.end(), E->Operands.begin(), E->Operands.end());
+    const auto Key = VK(S.Dst->Var);
+    auto &V = InternVariable(Key);
+    const size_t Index = V.Node;
+    if (++V.Definitions > 1 || S.IsPhiCopy)
+      MarkUnstable(Index);
+    if (S.Val) {
+      const size_t Input = InternExpression(S.Val.get());
+      if (Input != NoDependency)
+        Nodes[Input].Users.push_back(Index);
+      if (S.Val->Kind == ExprKind::Var && VK(S.Val->Var) == Key)
+        MarkUnstable(Index);
+      else if (!S.Val->Operands.empty())
+        Definitions.emplace_back(Key, S.Val.get());
     }
   });
-  auto ReadsUnstable = [&](const ExprPtr &Root) {
-    std::vector<ExprPtr> Work{Root};
-    HighExprSet Seen;
-    while (!Work.empty()) {
-      auto E = Work.back();
-      Work.pop_back();
-      if (!E || !Seen.insert(E.get()).second)
-        continue;
-      if (E->Kind == ExprKind::Var && Unstable.count(VK(E->Var)))
-        return true;
-      Work.insert(Work.end(), E->Operands.begin(), E->Operands.end());
-    }
-    return false;
-  };
-  std::vector<VarKey> Work(Unstable.begin(), Unstable.end());
-  while (!Work.empty()) {
-    auto Key = Work.back();
-    Work.pop_back();
-    auto Users = Dependents.find(Key);
-    if (Users == Dependents.end())
-      continue;
-    for (auto User : Users->second)
-      if (Unstable.insert(User).second)
-        Work.push_back(User);
+  for (const auto &[Key, Value] : Candidates) {
+    InternVariable(Key);
+    if (Value)
+      InternExpression(Value.get());
   }
-  for (auto I = Candidates.begin(); I != Candidates.end();)
-    if (Definitions[I->first] != 1 || Unstable.count(I->first) ||
-        ReadsUnstable(I->second))
+  // Connect shared expressions once. An unstable read taints the expression
+  // containing it and every local assigned that expression; no expanded set
+  // of all transitive variable dependencies is needed for each assignment.
+  for (size_t I = 0; I < ExpressionsToVisit.size(); ++I) {
+    const auto [E, Index] = ExpressionsToVisit[I];
+    if (E->Kind == ExprKind::Var)
+      Nodes[InternVariable(VK(E->Var)).Node].Users.push_back(Index);
+    for (const auto &Operand : E->Operands)
+      if (Operand) {
+        const size_t Input = InternExpression(Operand.get());
+        if (Input != NoDependency)
+          Nodes[Input].Users.push_back(Index);
+      }
+  }
+  auto Propagate = [&] {
+    while (!Work.empty()) {
+      const size_t Index = Work.back();
+      Work.pop_back();
+      for (size_t User : Nodes[Index].Users)
+        MarkUnstable(User);
+    }
+  };
+  Propagate();
+
+  // A single assignment may still read its own destination. Check that
+  // direct expression relation without following other variables' definitions:
+  // a cycle between distinct single-definition locals is not a self-read.
+  // Already unstable definitions and destinations never read in this graph
+  // need no further traversal. Leaf self-reads were classified when interned.
+  llvm::SmallVector<const HighExpr *, 32> Pending;
+  HighExprSet Seen;
+  for (const auto &[Key, Value] : Definitions) {
+    const size_t Index = Variables.find(Key)->second.Node;
+    if (Nodes[Index].Unstable || Nodes[Index].Users.empty())
+      continue;
+    Pending.clear();
+    Seen.clear();
+    Pending.push_back(Value);
+    while (!Pending.empty()) {
+      const HighExpr *E = Pending.pop_back_val();
+      if (!E || !Seen.insert(E).second)
+        continue;
+      if (E->Kind == ExprKind::Var && VK(E->Var) == Key) {
+        MarkUnstable(Index);
+        Propagate();
+        break;
+      }
+      for (const auto &Operand : E->Operands)
+        Pending.push_back(Operand.get());
+    }
+  }
+  for (auto I = Candidates.begin(); I != Candidates.end();) {
+    const Variable &V = Variables.find(I->first)->second;
+    const size_t Input =
+        I->second ? InternExpression(I->second.get()) : NoDependency;
+    if (V.Definitions != 1 || Nodes[V.Node].Unstable ||
+        (Input != NoDependency && Nodes[Input].Unstable))
       I = Candidates.erase(I);
     else
       ++I;
+  }
 }
 
 void rewriteRhsVars(std::vector<HighStmt> &Stmts,

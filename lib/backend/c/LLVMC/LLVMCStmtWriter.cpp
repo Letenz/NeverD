@@ -16,10 +16,12 @@
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCSourceStrings.h"
+#include "LLVMCStackAllocation.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
@@ -38,6 +40,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -1432,12 +1435,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       return;
   // Aggregate SSA values and storage arrays have distinct C declarations but
   // identical byte layouts. A byte copy also preserves unaligned accesses.
-  auto AggregateAddress = [&](const llvm::Value *Ptr) {
-    std::string Text = valueStr(Ptr);
-    if (llvm::isa<llvm::GlobalVariable>(Ptr))
-      Text = "&" + Text;
-    return Text;
-  };
+  auto AggregateAddress = [&](const llvm::Value *Ptr) { return valueStr(Ptr); };
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
       Load && Load->getType()->isAggregateType()) {
     if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
@@ -1644,14 +1642,13 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       AddressText = "&" + Image;
     else if (const auto *Slot = asAllocaPointer(Address))
       AddressText = "&" + getName(Slot);
-    else if (llvm::isa<llvm::GlobalVariable>(Address->stripPointerCasts()))
-      AddressText = "&" + valueStr(Address->stripPointerCasts());
     else
       AddressText = valueStr(Address);
     if (!OnlyFunction && !Load->isAtomic())
       if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(
               llvm::getUnderlyingObject(Address));
-          Global && parseNdCodePtrSymbol(Global->getName())) {
+          Global && Global->hasInitializer() &&
+          parseNdCodePtrSymbol(Global->getName())) {
         // Relocated pointer mirrors have a packed byte layout. Keep one
         // volatile scalar access without claiming its original alignment or
         // a separate scalar object's C effective type.
@@ -3593,17 +3590,17 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
     // permits direct access; differently typed views still copy object bytes.
     if (Global->getValueType() == Type &&
         !ExternalDataIdentifiers.count(Global)) {
+      const std::string Object = globalNameStr(Global);
       emitIndent(Indent);
       if (Load)
-        OS << getName(Load) << " = " << Pointer << ";\n";
+        OS << getName(Load) << " = " << Object << ";\n";
       else
-        OS << Pointer << " = "
+        OS << Object << " = "
            << (Integer ? integerPointerOperandStr(Store->getValueOperand())
                        : valueStr(Store->getValueOperand()))
            << ";\n";
       return true;
     }
-    Pointer = "&" + Pointer;
   }
   emitIndent(Indent);
   if (WideInteger) {
@@ -3702,6 +3699,36 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::x86_fxsave ||
+      IID == llvm::Intrinsic::x86_fxsave64 ||
+      IID == llvm::Intrinsic::x86_fxrstor ||
+      IID == llvm::Intrinsic::x86_fxrstor64) {
+    if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
+        Call.arg_size() != 1 || !Call.getType()->isVoidTy() ||
+        !Call.getArgOperand(0)->getType()->isPointerTy() ||
+        Call.getArgOperand(0)->getType()->getPointerAddressSpace() != 0 ||
+        ((IID == llvm::Intrinsic::x86_fxsave64 ||
+          IID == llvm::Intrinsic::x86_fxrstor64) &&
+         Opts.TheArch != Arch::X64))
+      throw std::runtime_error("invalid x86 FP snapshot C contract");
+    const bool Restore = IID == llvm::Intrinsic::x86_fxrstor ||
+                         IID == llvm::Intrinsic::x86_fxrstor64;
+    const char *Mnemonic = IID == llvm::Intrinsic::x86_fxsave     ? "fxsave"
+                           : IID == llvm::Intrinsic::x86_fxsave64 ? "fxsave64"
+                           : IID == llvm::Intrinsic::x86_fxrstor  ? "fxrstor"
+                                                                  : "fxrstor64";
+    emitIndent(Indent);
+    OS << "__asm__ volatile(\"" << Mnemonic << " (%0)\" :: \"r\"("
+       << valueStr(Call.getArgOperand(0)) << ") : \"memory\"";
+    if (Restore) {
+      OS << ", \"st\", \"st(1)\", \"st(2)\", \"st(3)\", \"st(4)\", \"st(5)\", "
+            "\"st(6)\", \"st(7)\"";
+      for (unsigned I = 0; I < (Opts.TheArch == Arch::X64 ? 16U : 8U); ++I)
+        OS << ", \"xmm" << I << "\"";
+    }
+    OS << ");\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::abs && Call.getType()->isIntegerTy() &&
       Call.getType()->getIntegerBitWidth() <= 64) {
     const unsigned Bits = Call.getType()->getIntegerBitWidth();
@@ -3964,6 +3991,17 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return true;
   }
 
+  if (auto Context = classifyX87ContextAsm(Call)) {
+    if (Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error(
+          "complete x87 context C projection requires x64");
+    std::vector<std::string> Args;
+    for (const auto &Arg : Call.args())
+      Args.push_back(valueStr(Arg.get()));
+    emitIndent(Indent);
+    OS << renderX87ContextAsm(*Context, Args) << "\n";
+    return true;
+  }
   if (auto Selector = classifyX87ConstantAsm(Call)) {
     if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
       llvm::report_fatal_error(
@@ -4565,6 +4603,39 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
 
 void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
                                 int Indent) {
+  if (const auto Allocation = llvmc::cStackAllocation(Call)) {
+    // Plain alloca has function lifetime on both Clang and GCC. GCC's aligned
+    // variant may release at a nested block exit, so align inside extra bytes.
+    // Keep the allocation at this call, never in a returning helper or VLA.
+    const auto Count = freshVar("allocation_count");
+    const auto Offset = freshVar("allocation_offset");
+    const std::string IntegerType =
+        Allocation->CountBits == 64 ? "uint64_t" : "uint32_t";
+    const std::string Max =
+        Allocation->CountBits == 64 ? "UINT64_MAX" : "UINT32_MAX";
+    const uint64_t Padding = Allocation->Alignment - 1;
+    emitIndent(Indent);
+    OS << "{ const " << IntegerType << " " << Count << " = "
+       << valueStr(Call.getArgOperand(0)) << ";\n";
+    if (Allocation->Stride) {
+      emitIndent(Indent + 1);
+      OS << "if (" << Count << " > (" << Max << " - " << Padding << ") / "
+         << Allocation->Stride << ") __builtin_trap();\n";
+    }
+    emitIndent(Indent + 1);
+    OS << Name << " = __builtin_alloca(" << Count << " * " << Allocation->Stride
+       << " + " << Padding << ");\n";
+    if (Padding) {
+      emitIndent(Indent + 1);
+      OS << "const " << IntegerType << " " << Offset << " = (-(" << IntegerType
+         << ")(uintptr_t)" << Name << ") & " << Padding << ";\n";
+      emitIndent(Indent + 1);
+      OS << Name << " = (uint8_t*)" << Name << " + " << Offset << ";\n";
+    }
+    emitIndent(Indent);
+    OS << "}\n";
+    return;
+  }
   if (writeIntrinsicCall(Call, Indent))
     return;
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Call))
@@ -4690,6 +4761,9 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
+  if (llvmc::cStackAllocation(Call))
+    throw std::runtime_error(
+        "private C stack allocation cannot be an expression");
   for (const llvm::CallBase *Pending : RenderingCalls)
     if (Pending == &Call)
       return getName(&Call);

@@ -682,7 +682,9 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       const size_t StatementBegin = Func.Body.size();
       switch (CurOp.Opcode) {
       case NdOp::STORE:
-        lowerStore(Func, CurOp);
+        // A prologue save keeps the caller's register, which no source reads.
+        if (!CurOp.PrologueSave)
+          lowerStore(Func, CurOp);
         break;
       case NdOp::CALL:
         lowerCall(Func, CurBlock, CurOp);

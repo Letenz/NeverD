@@ -527,6 +527,42 @@ cl::opt<bool> PdbUnverified(
     cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
     cl::sub(HuntCmd));
 
+cl::opt<std::string> SymbolPathOption(
+    "symbol-path",
+    cl::desc("Search these directories and symbol stores for the PDB a PE "
+             "names, in _NT_SYMBOL_PATH syntax (srv*<store>*<server>;<dir>), "
+             "instead of _NT_SYMBOL_PATH or the user's symbol cache.  Servers "
+             "are not contacted"),
+    cl::value_desc("path"), cl::sub(LiftCmd), cl::sub(DecompileCmd),
+    cl::sub(PatchCmd), cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(FunctionEditsCmd),
+    cl::sub(ItemsCmd), cl::sub(OperandsCmd), cl::sub(SearchCmd),
+    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
+    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
+    cl::sub(AuditCmd), cl::sub(HuntCmd));
+
+cl::opt<bool> DownloadSymbols(
+    "download-symbols",
+    cl::desc("Download the PDB a PE names from the symbol servers of the "
+             "search path (--symbol-path, _NT_SYMBOL_PATH, or Microsoft's "
+             "public server) into their store when no copy here matches.  "
+             "Only the PDB's name and build identity are sent"),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(FuncsCmd),
+    cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(ExportCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
+
 cl::opt<std::string> MapFile(
     "map",
     cl::desc("Load symbols from this linker .map (MSVC, lld, GNU ld, or "
@@ -573,6 +609,24 @@ cl::opt<bool> Devirtualize(
     "devirtualize",
     cl::desc("Recover an x64 interpreter (experimental; requires --func)"),
     cl::sub(DecompileCmd));
+cl::opt<bool> SourceSymbolic(
+    "symbolic-simplify",
+    cl::desc("Symbolically simplify the selected source function"),
+    cl::sub(DecompileCmd));
+cl::opt<std::string>
+    SourceLLVMLevel("llvm-opt",
+                    cl::desc("LLVM C optimization: basic, O0, O1, O2, O3 or "
+                             "custom (default O2; requires --func --llvm)"),
+                    cl::init("O2"), cl::sub(DecompileCmd));
+cl::opt<bool> SourceLLVMControlFlow(
+    "llvm-control-flow",
+    cl::desc("Recover LLVM source control flow (default true; requires --func "
+             "--llvm)"),
+    cl::init(true), cl::sub(DecompileCmd));
+cl::list<std::string> SourceLLVMPasses(
+    "llvm-passes",
+    cl::desc("Custom scalar passes: instcombine,early-cse,simplifycfg,dce"),
+    cl::CommaSeparated, cl::sub(DecompileCmd));
 cl::opt<bool> VMMachineState(
     "vm-machine-state",
     cl::desc(
@@ -1122,6 +1176,26 @@ cl::opt<std::string>
                             "as one"),
                    cl::init(""), cl::value_desc("address"),
                    cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string>
+    FunctionEdit("edit",
+                 cl::desc("State what the function at this address (hex) "
+                          "is, by --set"),
+                 cl::init(""), cl::value_desc("address"),
+                 cl::sub(FunctionEditsCmd));
+
+cl::list<std::string> FunctionSet(
+    "set",
+    cl::desc("An attribute --edit states: noreturn, library or static "
+             "=true|false, color=#RRGGBB; =default hands it back to analysis"),
+    cl::value_desc("key=value"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string>
+    FunctionShow("show",
+                 cl::desc("Show what the function at this address (hex) is, "
+                          "as the Edit function dialog does"),
+                 cl::init(""), cl::value_desc("address"),
+                 cl::sub(FunctionEditsCmd));
 
 cl::opt<bool> FunctionEditsList("list",
                                 cl::desc("List the function edits (default)"),

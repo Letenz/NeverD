@@ -18,6 +18,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/NoFolder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
@@ -224,6 +225,66 @@ TEST(LLVMCIntrinsicSemantics,
       Driver + "return 0;\n}\n";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndCheck(Source, false, {}, Optimization, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, FxSnapshotsRetainLegacyAnd64BitStateEffects) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "native x64 snapshot oracle required";
+#endif
+  llvm::LLVMContext Context;
+  llvm::Module Module("fx-snapshots", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  const llvm::Intrinsic::ID IDs[] = {
+      llvm::Intrinsic::x86_fxsave, llvm::Intrinsic::x86_fxsave64,
+      llvm::Intrinsic::x86_fxrstor, llvm::Intrinsic::x86_fxrstor64};
+  const char *Names[] = {"save_legacy", "save_64", "restore_legacy",
+                         "restore_64"};
+  for (unsigned I = 0; I < 4; ++I) {
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, Names[I], Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+    B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(&Module, IDs[I]),
+                 {Fn->getArg(0)});
+    B.CreateRetVoid();
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module));
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_x86_fx"), std::string::npos);
+  const std::string Source =
+      "#include <stdint.h>\n#include <string.h>\n" + Text + R"fx(
+int main(void) {
+  _Alignas(16) unsigned char expected[512]={0}, actual[512]={0};
+  for(unsigned form=0;form<2;++form) {
+    __asm__ volatile("fninit\n\tfldpi\n\tfchs\n\tfxsave64 (%0)"::"r"(expected):"memory","st");
+  if (form)
+    save_64(actual);
+  else
+    save_legacy(actual);
+  if (memcmp(expected, actual, 5))
+    return 1;
+  for (unsigned slot = 0; slot < 8; ++slot)
+    if (memcmp(expected + 32 + slot * 16, actual + 32 + slot * 16, 10))
+      return 2;
+  __asm__ volatile("fninit" ::: "memory", "st");
+  if (form)
+    restore_64(actual);
+  else
+    restore_legacy(actual);
+  __asm__ volatile("fxsave64 (%0)" ::"r"(actual) : "memory");
+  if (memcmp(expected, actual, 5))
+    return 3;
+  for (unsigned slot = 0; slot < 8; ++slot)
+    if (memcmp(expected + 32 + slot * 16, actual + 32 + slot * 16, 10))
+      return 4;
+}
+__asm__ volatile("fninit" ::: "memory", "st");
+return 0;
+}
+)fx";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Level, true);
 }
 
 TEST(LLVMCIntrinsicSemantics, SaturatingConversionsClampBeforeCasting) {

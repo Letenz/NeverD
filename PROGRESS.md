@@ -1,5 +1,101 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-14
+
+- Cutoff: **2026-10-14 01:01 UTC / 09:01 Asia/Shanghai**. Bounded review pinned to [c1ccbe23](https://github.com/NeverSight/NeverD/commit/c1ccbe2322d2fbcd47beeacc3a667530d304bb1d); the only later delta through current dev [841dc099](https://github.com/NeverSight/NeverD/commit/841dc099a973dcf2196bcbc5acb9d4710400de7b) is today's two fixes and their externally performed merge.
+- Incoming [587227e5…c1ccbe23](https://github.com/NeverSight/NeverD/compare/587227e57dcf7855d317e62e264dd343edb5cfd2...c1ccbe2322d2fbcd47beeacc3a667530d304bb1d): **186 commits / 666 changed file paths** (263 added, 403 modified, none removed). Complete endpoint trees replaced the comparison API's 300-file cap; directory objects are excluded. Commit pagination was 100 + 86. Through 841dc099 there are 189 commits and the same 666 paths.
+- Report-only e8575ea4 and its merge 40632e25 are reporting activity, not product delivery. Commit/path counts include merges, fixtures and prose; they are inventory, not completion percentages.
+- **Two confirmed small I/O defects fixed**, remote-verified in [#955](https://github.com/NeverSight/NeverD/pull/955). It was created as a draft and merged externally at 01:00:26 UTC; this review did not perform or request the merge. This separate documentation branch follows the contribution workflow against dev.
+- Strict static-only source/diff/caller/interface/configuration and existing-CI inspection. **No project execution, build, test, benchmark, repository script, dynamic analysis, manual CI dispatch or rerun.** No dependency/security changes, issue-field changes or deployments.
+
+## Activity and review queue
+
+**29 ordinary open issues / 20 pre-existing open PRs**, versus yesterday's 28 / 16. New [#946](https://github.com/NeverSight/NeverD/issues/946) and [#947](https://github.com/NeverSight/NeverD/issues/947) report distinct Windows-EH crash paths; these are author reports, not reproduced here. [#859](https://github.com/NeverSight/NeverD/issues/859) closed after #920 merged. Closure is not independent verification of every acceptance criterion; #858 remains open.
+
+Between October 13 01:51 UTC and the pre-publication snapshot: **37 PRs opened, 32 merged, one closed without merge (#943)**. These include yesterday's report #916, so excluding that reporting PR gives 36 opened / 31 merged / one closed. Today's subsequently merged repair #955 adds one opening and one merge; the 20-item pre-existing queue remains unchanged. This new report is excluded. Previously open #910 and #912 merged; six new open proposals (#926, #933, #939, #941, #948, #951) account for the net increase.
+
+Open issues returned 49 records (29 issues plus 20 PRs), followed by an empty page; open PRs returned 20 then empty. The changed-since issue collection returned 43 then empty, and the 100 most recently updated PR records extend before the cutoff. All 20 open PRs had no submitted reviews, no inline review comments and no requested reviewers at 00:58 UTC. The repository-wide issue-comment collection since the cutoff was empty. No reviewer readiness is inferred from an empty queue.
+
+## Bounded static review
+
+Read root AGENTS.md and CONTRIBUTING.md, the relevant PDB/system boundaries in architecture guidance and testing guidance. The complete tree contains only the root AGENTS.md. Build/test/format instructions yield to the explicit static-only constraint. Environment discovery found no usable connected authorized computer or saved coding environment, so connector-based source reads and minimal edits were used.
+
+### PDB symbol-store ownership and download error paths
+
+Read complete current files:
+- include/neverd/debug/SymbolStore.h and SymbolStore.def; lib/debug/SymbolStore.cpp
+- lib/debug/DebugInfoDiscovery.cpp
+- tools/neverd/NeverDSymbolDownload.h, NeverDSymbolDownload.cpp, NeverDSymbolTransportCurl.cpp, NeverDSymbolTransportWinHTTP.cpp and SymbolDownloadABI.def
+- tools/neverd-gui/app/SymbolDownload.cpp and MicrosoftSymbols.cpp
+- unittests/debug/SymbolStoreTests.cpp
+
+Also read the CLI download introduction's registration/build/caller patches and current neverd.cpp lines 125–190. Traced explicit download opt-in, no-debug/manual-PDB gating, unique CodeView identity admission, portable basename handling, GUID/age key construction, URL segment escaping, ordered local candidates and strict post-download engine identity checking. The engine remains separate from frontend transport.
+
+Reviewed GUI serial/epoch/request guards, modal deferral, cancellation, bounded read/transfer behavior, temporary-file ownership, compressed-file admission and publication. Existing fixture sources cover path ordering, cache/server syntax, ambiguous identity refusal and URL escaping; no fixture executed. No universal safety claim is made for the complete network/filesystem surface.
+
+### Confirmed fixes
+
+1. **Lost save-failure diagnostics**, tools/neverd/NeverDSymbolDownload.cpp, original lines 118–123. Trigger: renaming a downloaded partial file fails, then cleanup runs. Both calls use the same error_code; successful removal clears it and the report can say “cannot save …: Success”, or report cleanup's unrelated failure. [0da5403b](https://github.com/NeverSight/NeverD/commit/0da5403b25b77c9b728e6bf44297e61e95535245) captures the original message before removal (+2/-1). Cleanup and fallback control flow are unchanged. Static evidence: exact data flow and remote diff/readback; no filesystem failure was induced.
+2. **Unobserved Windows close/flush failure**, tools/neverd/NeverDSymbolTransportWinHTTP.cpp, final return after line 152. Trigger: buffered writes appear successful but stream close fails. Previously the function returned HTTP success before destructor-driven close, losing that result; its caller could proceed to rename and later misclassify the bad file as an identity mismatch. [6d3c11e1](https://github.com/NeverSight/NeverD/commit/6d3c11e15af802c937d27f2cc3e2867c087ed3a2) explicitly closes and checks the stream before success (+3/-0), matching the existing curl transport. Static review confirms failure returns Status 0 through the existing caller path.
+
+Fresh branch file reads supplied both current blob SHAs; both exact committed files and diff hunks were read back. [c1ccbe23…841dc099](https://github.com/NeverSight/NeverD/compare/c1ccbe2322d2fbcd47beeacc3a667530d304bb1d...841dc099a973dcf2196bcbc5acb9d4710400de7b) contains only those two files (+5/-1). No new fixture was executed or runtime regression pass claimed. Acceptance still needs controlled rename/cleanup and delayed-write/close failures on the supported platforms.
+
+**Uncovered / open questions:** most of the 666 changed paths, EH crash root causes, whole PDB parser validation, all GUI consumers, shared-cache concurrent downloads, complete platform transport/version compatibility, native code generation, hosted DynCode integration and large-source web/resource extraction. Those broader paths are not certified by this bounded review. No speculative fix is claimed for them. Recent source work includes native hosted-C++ and Chromium/WebView2 resources; issue openness does not mean all implementation is absent, and author qualification claims are not our execution results.
+
+## Existing CI evidence
+
+At **01:01 UTC**, integrated dev **841dc099** has three newly automatic workflows: [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/38493336602) in progress, [CI](https://github.com/NeverSight/NeverD/actions/runs/38493336597) pending, [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/38493336604) pending. They do not establish acceptance of either fix.
+
+At 01:00 UTC, earlier reviewed **c1ccbe23** had LLVM Style success and CI/Mobile Decompilation in progress. At 00:57 UTC its 16 exact-head checks were 5 success, 5 in progress, 1 queued and 5 skipped; native Windows-EH gates were skipped. Legacy statuses were empty. Yesterday's **587227e5** ended with one style success, two cancelled workflows and one skipped mobile-real-applications workflow, not full green.
+
+At 01:00 UTC, repair PR head **6d3c11e1** had seven automatic run records: three pending, one queued, one in progress and two cancelled. These include superseded/cancellation automation; cancelled runs are not failures or passes. All workflow/check results above fit 100-entry responses. No manually initiated run exists from this review.
+
+Pre-existing PR exact-head checks at **00:58 UTC** (failed causes not exhaustively diagnosed):
+
+| PR | Exact head | Existing check counts |
+|---|---|---|
+| [#951](https://github.com/NeverSight/NeverD/pull/951) | `09093108731ca50910f335737a84317078520768` | No exact-head checks returned |
+| [#948](https://github.com/NeverSight/NeverD/pull/948) | `99c5108cc2837bec31079211b98617d2511d190e` | No exact-head checks returned |
+| [#941](https://github.com/NeverSight/NeverD/pull/941) | `5cc8d41dde44500bb358e66ddd13ed5433f4dcc5` | 6 skipped, 13 success, 3 failure, 1 cancelled |
+| [#939](https://github.com/NeverSight/NeverD/pull/939) | `535638d32c60f6f07196338aa3b81764897aa834` | 5 skipped, 4 failure, 6 success, 1 cancelled |
+| [#933](https://github.com/NeverSight/NeverD/pull/933) | `26e07b5be04d8c2b0e93f69105978625ad85ab44` | 5 skipped, 7 success, 4 failure |
+| [#926](https://github.com/NeverSight/NeverD/pull/926) | `3b45c955dc7a10d717b7b7689863de870213117c` | 6 skipped, 12 success, 4 failure, 1 cancelled |
+| [#906](https://github.com/NeverSight/NeverD/pull/906) | `f79b8144ab7ccd706592e2d2fbf1c68fc16e1ed4` | 5 skipped, 13 success, 4 failure |
+| [#895](https://github.com/NeverSight/NeverD/pull/895) | `42c039454fd5721cd3fa30337849ae564f6222d4` | 5 skipped, 13 success, 4 failure |
+| [#889](https://github.com/NeverSight/NeverD/pull/889) | `00e232132b474cadbfd0e1c96c5e0854a82adca6` | 5 skipped, 12 success, 4 failure, 1 cancelled |
+| [#882](https://github.com/NeverSight/NeverD/pull/882) | `014da8476c9806806cf2d70dcc42de60fbf5f3e7` | 5 skipped, 12 success, 4 failure, 1 cancelled |
+| [#866](https://github.com/NeverSight/NeverD/pull/866) | `29429abb8d6c9e988eb4ecb909320c01cadb142d` | 5 skipped, 12 success, 5 failure |
+| [#855](https://github.com/NeverSight/NeverD/pull/855) | `639f2c4fa2a3f7db745d0147ece5a933b48e684c` | 5 skipped, 12 success, 5 failure |
+| [#850](https://github.com/NeverSight/NeverD/pull/850) | `6916e39381529576ac6deb667e2ed0219d2ecc4f` | 5 skipped, 12 success, 5 failure |
+| [#847](https://github.com/NeverSight/NeverD/pull/847) | `eedb586ddbea23661eb56e5e474de14ac25b2754` | 5 skipped, 12 success, 5 failure |
+| [#845](https://github.com/NeverSight/NeverD/pull/845) | `e1026072f9dc4f89ee2eee969c8ad32433d473f6` | 5 skipped, 12 success, 5 failure |
+| [#842](https://github.com/NeverSight/NeverD/pull/842) | `31af683a3e2ebb08ddf8abbc2c171688ddff140b` | 5 skipped, 12 success, 5 failure |
+| [#839](https://github.com/NeverSight/NeverD/pull/839) | `2d33959271e3a2c4379e67d6b850cfc483b6e09e` | 5 skipped, 12 success, 5 failure |
+| [#838](https://github.com/NeverSight/NeverD/pull/838) | `e5272285f87bc37692c26727b33f7aff55b8793b` | No exact-head checks returned |
+| [#834](https://github.com/NeverSight/NeverD/pull/834) | `895037760df5cb5f6c2a4ce2a4e6728b1e05a113` | 4 skipped, 4 failure, 6 success, 1 cancelled |
+| [#829](https://github.com/NeverSight/NeverD/pull/829) | `64dd74afcbec93c50427e985a497ffb2a993381f` | 9 skipped, 6 failure, 8 success |
+
+Three heads (#838, #948, #951) have missing exact-head check evidence, not green. Every other sampled pre-existing PR head has failed checks. All supplied author-local testing remains author-reported unless an exact workflow result is separately linked. The later documentation commit's checks are separate from source qualification.
+
+## Suggested priorities
+
+1. **Qualify the merged download I/O fixes.** Dependencies: exact-head automatic platform results and fault-injection coverage. Acceptance: rename error survives successful or failed cleanup; delayed close failure returns transport failure and does not publish a partial file. Retain the no-build/no-test limitation until actual evidence exists.
+2. **Diagnose #946/#947 independently and review EH dependencies.** Dependencies: current source/call relationships and the original report's exact corpus/revision, plus #933/#838/#829 overlap. Acceptance: a bounded proven root cause or explicit unresolved boundary; no guessed semantics or inferred success from #859 closure.
+3. **Reduce the 20-PR evidence/review backlog.** Dependencies: independent reviews of the Darwin stack, #939 forwarding changes and #941 Swift state, and exact-head checks for #838/#948/#951. Acceptance: each selected proposal has a reviewed contract and relevant platform evidence; integrated dev reaches explicit terminal results with skipped gates retained. Priorities are suggestions, without assigned owners or delivery dates.
+
+## Daily log — 2026-10-14
+
+- Inventoried 186 incoming commits / 666 paths, then verified today's two-file, three-commit integrated delta.
+- Completed the bounded symbol-store, CLI/GUI download ownership and I/O review.
+- Published two minimal statically proven repairs in draft #955; recorded its external merge without taking a merge action.
+- Reconciled two new issues, one closure, the 20-PR review queue and exact-head CI limitations.
+- Added this English snapshot and daily record; preserved prior history and human edits verbatim below.
+
+<details>
+<summary>Previous snapshots (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-13
 
 - Cutoff: **2026-10-13 01:51 UTC / 09:51 Asia/Shanghai**. Detailed source review was pinned at [41141c57](https://github.com/NeverSight/NeverD/commit/41141c57c4c5eaddacc68b53f145d7534e5e6f52); five later commits through current dev [587227e5](https://github.com/NeverSight/NeverD/commit/587227e57dcf7855d317e62e264dd343edb5cfd2) received patch-level inspection.
@@ -1997,6 +2093,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 

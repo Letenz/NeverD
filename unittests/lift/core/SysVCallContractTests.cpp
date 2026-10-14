@@ -956,6 +956,9 @@ TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
   ASSERT_FALSE(Body.empty()) << Source;
   EXPECT_NE(Body.find("_ITM_registerTMCloneTable("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+  // The jump through the import's GOT slot reaches a void routine, so the
+  // wrapper returns nothing either, like GCC's register_tm_clones.
+  EXPECT_NE(Source.find("void wrap(void)"), std::string::npos) << Source;
 }
 
 TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
@@ -1249,7 +1252,9 @@ TEST(SysVCallContract, ACopyOfEaxAfterSeteIsNoVectorCount) {
 TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
   // fatal(fmt, ...) as GCC builds it: va_start stores gp_offset and fp_offset
   // as two 32-bit constants where Clang stores one 64-bit word.  Either marks
-  // the variadic prologue, so its vector register save area is no parameter.
+  // the variadic prologue, whose register save area holds what va_arg reads:
+  // the integer registers, and in the vector ones the doubles a floating
+  // vararg is promoted to, never a whole vector.
   constexpr va_t Fatal = Text, VprintfStub = Text + 0x100,
                  ExitStub = Text + 0x110;
   std::vector<uint8_t> Code(0x120, 0xCC);
@@ -1297,8 +1302,16 @@ TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
       [&](const MedFunc &Function) { return Function.Entry == Fatal; });
   ASSERT_NE(F, Result.MedFuncs.end());
   EXPECT_TRUE(F->IsVariadic);
-  for (const MedVar &Param : F->Params)
-    EXPECT_LE(Param.Size, 8u) << "vector save-area slot as a parameter";
+  for (const MedVar &Param : F->Params) {
+    if (Param.RegOff < x86reg::VectorBase) {
+      EXPECT_LE(Param.Size, 8u);
+      continue;
+    }
+    const auto Scalar = F->FPParamScalarBytes.find(Param.RegOff);
+    ASSERT_NE(Scalar, F->FPParamScalarBytes.end())
+        << "vector save-area slot as a vector parameter";
+    EXPECT_EQ(Scalar->second, sizeof(double));
+  }
 }
 
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {

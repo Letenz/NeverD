@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>从所选 PDB 文件加载符号</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>编辑函数(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>更改当前函数的名称及其属性</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1469,6 +1477,14 @@ Double-click to go to the declaration.</source>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>折叠代码块 (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>符号化简</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>转换失败：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1483,6 +1499,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>反汇编视图移动时保持显示此函数</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>优化</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>转换当前函数</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>对此函数进行符号化简</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>恢复 LLVM 控制流</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM 优化</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>基本清理</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2（默认）</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>选择优化遍…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>此函数的 LLVM 优化遍</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>选择标量清理优化遍。符号化简单独控制。</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>恢复默认源代码</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>取消转换</translation>
     </message>
 </context>
 <context>
@@ -2160,6 +2224,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Wait for the function to finish loading before finding references</source>
         <translation>请等待函数加载完成后再查找引用</translation>
     </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>无法确定 %1 指定的 PDB：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2441,6 +2509,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>已加载 PDB 用于分析：%1（%2 个名称，用户已确认，身份未验证）</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>已按选择打开，未加载输入文件指定的 PDB</translation>
+    </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>已编辑 %1 处的函数</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2694,74 +2770,141 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
 </context>
 <context>
-    <name>neverd::gui::MicrosoftSymbols</name>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>加载 PDB 文件</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>输入文件链接时使用的调试信息保存在：</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>浏览(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>下载已取消。</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>该路径下有匹配的副本。</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>输入文件旁边有匹配的副本：</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>符号目录中有匹配的副本：</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>符号存储中有匹配的副本：</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>是否加载？</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 属于其他版本。</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>无法读取 %1。</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>本机没有匹配的副本，也没有配置符号服务器。</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>是否在磁盘上浏览 PDB 文件？</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>本机没有匹配的副本。查找时只发送 PDB 的名称和版本标识。</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>是否在微软符号服务器上查找此文件？</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>是否在符号服务器 %1 上查找此文件？</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>正在从 %2 下载 %1…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>正在验证 %1…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>下载的文件不是此版本的 PDB。</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>找不到 PDB 文件“%1”。</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>是否重试，或在磁盘上浏览 PDB 文件？</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 文件 (*.pdb);;所有文件 (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
     <message>
         <source>The symbol download timed out.</source>
         <translation>符号下载超时。</translation>
     </message>
     <message>
-        <source>Download debug symbols</source>
-        <translation>下载调试符号</translation>
+        <source>No symbol server is configured.</source>
+        <translation>未配置符号服务器。</translation>
     </message>
     <message>
-        <source>No matching local PDB was loaded for %1.
-
-Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
-
-The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
-        <translation>未能为 %1 加载匹配的本地 PDB。
-
-是否尝试从微软符号服务器下载 %2？仅当微软提供此版本的符号时才能下载成功。
-
-会发送 PDB 文件名和版本标识，不会上传二进制文件。匹配的符号将自动缓存并加载。</translation>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 不是 HTTP 符号服务器。</translation>
     </message>
     <message>
-        <source>Download</source>
-        <translation>下载</translation>
-    </message>
-    <message>
-        <source>Not now</source>
-        <translation>暂不下载</translation>
-    </message>
-    <message>
-        <source>Cannot create the symbol cache directory: %1</source>
-        <translation>无法创建符号缓存目录：%1</translation>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>无法创建符号存储目录 %1。</translation>
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
         <translation>无法在 %1 中打开临时符号文件：%2</translation>
     </message>
     <message>
-        <source>Cancel</source>
-        <translation>取消</translation>
-    </message>
-    <message>
-        <source>Symbol download cancelled.</source>
-        <translation>已取消符号下载。</translation>
-    </message>
-    <message>
-        <source>Downloading %1…</source>
-        <translation>正在下载 %1…</translation>
-    </message>
-    <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
         <translation>符号文件超过 2 GiB 下载限制。</translation>
     </message>
     <message>
-        <source>Microsoft has no matching symbols for this build.</source>
-        <translation>微软没有此版本的匹配符号。</translation>
-    </message>
-    <message>
-        <source>Symbol download failed: %1</source>
-        <translation>符号下载失败：%1</translation>
-    </message>
-    <message>
-        <source>The downloaded symbol file is empty.</source>
-        <translation>下载的符号文件为空。</translation>
-    </message>
-    <message>
         <source>Cannot write the symbol file %1: %2</source>
         <translation>无法写入符号文件 %1：%2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1 没有此版本的匹配符号。</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>从 %1 下载符号失败：%2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 返回了空的符号文件。</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
@@ -2772,10 +2915,6 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>无法在 %1 中创建临时符号目录：%2</translation>
     </message>
     <message>
-        <source>Expanding compressed symbols…</source>
-        <translation>正在解压符号…</translation>
-    </message>
-    <message>
         <source>Could not expand the compressed symbol file.</source>
         <translation>无法解压符号文件。</translation>
     </message>
@@ -2784,20 +2923,131 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>压缩符号需要 Windows。</translation>
     </message>
     <message>
-        <source>Verifying downloaded symbols…</source>
-        <translation>正在验证下载的符号…</translation>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>无法将符号文件保存到 %1：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>编辑函数</translation>
     </message>
     <message>
-        <source>The PDB does not match the loaded file.</source>
-        <translation>PDB 与已加载文件不匹配。</translation>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD 不保存此栈帧大小</translation>
     </message>
     <message>
-        <source>Cannot save the verified PDB to %1: %2</source>
-        <translation>无法将已验证的 PDB 保存到 %1：%2</translation>
+        <source>&amp;Name of function</source>
+        <translation>函数名称(&amp;N)</translation>
     </message>
     <message>
-        <source>Symbol verification failed: %1</source>
-        <translation>符号验证失败：%1</translation>
+        <source>Analysis decodes where the function ends</source>
+        <translation>函数的结束位置由分析确定</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>起始地址(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>结束地址(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>选择(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>函数颜色</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>默认(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>颜色(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>输入大小（字节）</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>局部变量区(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>保存的寄存器(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>只有 x86 函数会自行弹出参数</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>清除的字节数(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>帧指针差值(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD 不保存此标志</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>不返回(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>分析将对此函数的每次调用视为终止</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>远函数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>只有 16 位 x86 代码才有远函数</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>库函数(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>静态函数</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>基于 BP 的帧(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP 等于 SP(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>模糊 SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>外联代码</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>确定(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>默认</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
     </message>
 </context>
 </TS>

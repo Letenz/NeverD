@@ -118,15 +118,15 @@ TEST_F(WebSEASDK, PrivateMetadataAndOpaqueRegionsStayPrivate) {
     }
     if (Kind == "v8_code_cache") {
       const auto Region = field(R, "region_id");
+#if NEVERD_TEST_WEB_JAVASCRIPT
+      const char *Expected = "unknown_artifact";
+#else
+      const char *Expected = "capability_unavailable";
+#endif
       EXPECT_EQ(code(take(neverd_web_source_analyze_json(
                     S, Revision.data(), Revision.size(), Region.data(),
                     Region.size(), "commonjs", 8))),
-#if NEVERD_TEST_WEB_JAVASCRIPT
-                "unknown_artifact"
-#else
-                "capability_unavailable"
-#endif
-      );
+                Expected);
     }
   }
   const auto Source = field(E, "source_artifact_id");

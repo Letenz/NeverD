@@ -12,6 +12,7 @@
 #include "../../../unittests/web/AsarEnvelopeFixture.h"
 #include "../../../unittests/web/BunFixture.h"
 #include "../../../unittests/web/BunSourceMapFixture.h"
+#include "../../../unittests/web/DataPackFixture.h"
 #include "../../../unittests/web/NativeFixture.h"
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PackageArchiveFixture.h"
@@ -513,6 +514,14 @@ int main(int argc, char **argv) {
     if (hasBindings) {
       reply = process.call("web_source_analyze", sourceRequest, "1", project);
       check(reply.at("status") == "ok", "Worker source analysis failed");
+      const auto large = web.execute("web_source_analyze_large", sourceRequest);
+      reply =
+          process.call("web_source_analyze_large", sourceRequest, "1", project);
+      check(reply.at("payload") == large &&
+                large.at("parser_profile") ==
+                    "hermes-602befee-large-source-js-v1" &&
+                large.at("source_id") != bindingRequest.at("source_id"),
+            "Worker lost explicit large-source profile or direct API parity");
       reply = process.call("web_source_bindings_analyze", bindingRequest, "1",
                            project);
       check(reply.at("payload") == bindingSummary &&
@@ -2493,6 +2502,63 @@ int main(int argc, char **argv) {
       check(reply["error"]["code"] == "invalid_request",
             "pkg accepted execution option");
     }
+    {
+      using namespace neverd::web::datapack_test;
+      const auto path = fixture.root / "pak";
+      std::ofstream(path, std::ios::binary)
+          << widePack({{70000, gzipStored("var x='CANARY';")}}, {{90000, 0}});
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "DataPack capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{{"schema_version", 1},
+                      {"revision", revision},
+                      {"artifact_id", items["items"][0]["artifact_id"]},
+                      {"profile", "msedge-webview2-datapack-v5-u32-v1"}};
+      const auto E = web.execute("web_datapack_extract", args);
+      reply = process.call("web_datapack_extract", args, revision, project);
+      check(reply["payload"] == E && E["resource_id_width"] == 32,
+            "DataPack extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", E["extraction_id"]},
+                      {"limit", 1}};
+      const auto R = web.execute("web_datapack_records", page);
+      reply = process.call("web_datapack_records", page, revision, project);
+      check(reply["payload"] == R && R["next_offset"] == 1 &&
+                R["items"][0]["resource_id"] == 70000 &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "DataPack pages differ or reveal contents");
+      if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                    "datapack_decode") != caps["operations"].end()) {
+        const Json decode{{"schema_version", 1},
+                          {"revision", revision},
+                          {"resource_id", R["items"][0]["selection_id"]},
+                          {"codec", "gzip-rfc1952-v1"}};
+        const auto D = web.execute("web_datapack_decode", decode);
+        reply = process.call("web_datapack_decode", decode, revision, project);
+        check(reply["payload"] == D &&
+                  reply.dump().find("CANARY") == std::string::npos,
+              "DataPack decoded metadata differs");
+      }
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_datapack_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "DataPack accepted execution option");
+    }
     if (std::find(caps["operations"].begin(), caps["operations"].end(),
                   "wails_extract") != caps["operations"].end()) {
       const auto path = fixture.root / "wails";
@@ -2591,7 +2657,9 @@ int main(int argc, char **argv) {
           "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
           "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
           "const defaults=loadSettings('CANARY');"
-          "({...defaults,permissions:{},...CANARY_OVERRIDES});");
+          "({...defaults,permissions:{},...CANARY_OVERRIDES});"
+          "function x(){return j('CANARY','managed-settings.json');}x();"
+          "const layers=['userSettings',...CANARY,'projectSettings'];");
       const auto before = web.revision(), projectBefore = web.projectId();
       const Json input{{"schema_version", 1}, {"path", fixture.path()}};
       const auto preview = web.execute("web_import_preview", input);
@@ -2657,6 +2725,17 @@ int main(int argc, char **argv) {
                     true &&
                 reply.dump().find("CANARY") == std::string::npos,
             "Worker configuration source order differs or reveals values");
+      args["record_kind"] = "config_files";
+      const auto files = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == files &&
+                files["configuration_files"]["lexical_call_count"] == 1 &&
+                files["configuration_files"]["layer_sequence_count"] == 1 &&
+                files["items"][0]["role"] == "managed_settings_file" &&
+                files["next_offset"] == 1 &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker minified configuration links differ or reveal values");
       args["execute"] = true;
       reply = process.call("web_source_navigation_records", args, revision,
                            project);
