@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
+<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
 
 [← Documentation Index](README.md)
 
@@ -173,3 +173,5 @@ Les relocalisations d’instructions AArch64 exigent des addends RELA explicites
 La qualification du producteur C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) a réussi les 312 observations de processus natifs : 36 sur chacune des architectures Windows x64 et ARM64, et 120 sur chacune des architectures Linux x64 et ARM64. Linux vérifie séparément neuf scénarios d’exceptions pour Clang IR, les objets natifs Clang et les objets natifs GCC ; les entrées NeverC IR, objet et hosted DynCode sont toutes en C.
 
 La qualification de l’installateur reconstruit [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) a réussi 19 vérifications PE/objet, les 143 cas de la matrice CPU et 474 observations de processus natifs Windows/Linux. Les processus Windows x86 ont tourné sur Windows x64 ; x64 et ARM64 ont utilisé des hôtes correspondants. La [qualification Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) séparée a réussi les 108 cas initiaux, plus trois vérifications LLVM-C et trois Clang/GCC C++, sans échec ni saut.
+
+La [qualification d’intégration 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) a revérifié les 312 observations de processus sur Windows/Linux natifs x64 et ARM64. Les 30 images finales correspondent aux octets déjà qualifiés ; les empreintes source et les justificatifs de publication C uniquement ont été actualisés et vérifiés indépendamment.

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
+<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
 
 [← Documentation Index](README.md)
 
@@ -173,3 +173,5 @@ AArch64 명령어 재배치에는 명시적인 RELA 가수가 필요합니다. �
 C 전용 생성기 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213)은 네이티브 프로세스 관측 312회를 모두 통과했습니다. Windows x64와 ARM64는 각각 36회, Linux x64와 ARM64는 각각 120회입니다. Linux는 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체의 아홉 예외 시나리오를 각각 검증하며 NeverC의 IR, 객체, hosted DynCode 입력은 모두 C입니다.
 
 설치기를 다시 빌드한 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600)은 PE/객체 검사 19개, CPU 매트릭스 143개 전체, Windows/Linux 네이티브 프로세스 관측 474회를 통과했습니다. Windows x86 프로세스는 Windows x64 호스트에서, x64와 ARM64는 일치하는 호스트에서 실행했습니다. 별도 [Linux 검증](https://github.com/NeverSight/NeverD/actions/runs/38585759996)은 기존 108개와 추가 LLVM-C 3개, Clang/GCC C++ 3개를 모두 통과했으며 실패와 건너뛰기는 없습니다.
+
+[통합 검증 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097)은 Windows/Linux의 x64 및 ARM64 네이티브 환경에서 312회의 프로세스 관측을 모두 재검증했습니다. 최종 이미지 30개는 이전에 검증한 바이트와 일치하며, 소스 해시와 C 전용 출력 영수증을 갱신하고 독립적으로 확인했습니다.

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
+<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
 
 [← Documentation Index](README.md)
 
@@ -173,3 +173,5 @@ Le rilocazioni delle istruzioni AArch64 richiedono addendi RELA espliciti. Gli a
 La verifica del produttore C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) ha superato tutte le 312 osservazioni di processi nativi: 36 per ciascuna architettura Windows x64 e ARM64 e 120 per ciascuna architettura Linux x64 e ARM64. Linux verifica separatamente nove scenari di eccezioni per Clang IR, oggetti nativi Clang e oggetti nativi GCC; tutti gli ingressi NeverC per IR, oggetti e hosted DynCode sono C.
 
 La verifica dell’installatore ricompilato [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) ha superato 19 controlli PE/oggetto, tutti i 143 casi della matrice CPU e 474 osservazioni di processi nativi Windows/Linux. I processi Windows x86 sono stati eseguiti su Windows x64; x64 e ARM64 hanno usato host corrispondenti. La [verifica Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) separata ha superato i 108 casi originali più tre controlli LLVM-C e tre Clang/GCC C++, senza errori né casi saltati.
+
+La [verifica di integrazione 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) ha riconfermato tutte le 312 osservazioni di processo su Windows/Linux nativi x64 e ARM64. Le 30 immagini finali corrispondono ai byte già verificati; gli hash dei sorgenti e le ricevute di pubblicazione solo C sono stati aggiornati e controllati indipendentemente.
