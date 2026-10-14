@@ -11,6 +11,8 @@
 #include "neverd/emulation/IntegerABI.h"
 #include "neverd/loader/ELF/ELFProgramLinking.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <map>
 #include <variant>
 
@@ -164,6 +166,9 @@ private:
   BionicResult compareMemory(const NativeCallEvent &Call);
   BionicResult stringLength(const NativeCallEvent &Call);
   BionicResult decimalInteger(const NativeCallEvent &Call);
+  llvm::Expected<std::optional<uint64_t>>
+  decimalValue(bool Narrow,
+               llvm::function_ref<llvm::Expected<uint8_t>(uint64_t)> ReadByte);
   BionicResult compareString(const NativeCallEvent &Call);
   BionicResult getErrno(const NativeCallEvent &Call);
   BionicResult getPageSize(const NativeCallEvent &Call);

@@ -74,7 +74,12 @@ before execution.
 
 An optional `read_only_mappings` array supplies complete RAM pages, independently
 of ioctl transactions. Each entry has exactly `offset` (unsigned byte offset)
-and `bytes_hex`. Offsets and nonempty payload lengths must be multiples of
+and one of `bytes_hex` or `bytes_base64`. Base64 uses canonical padded RFC 4648
+encoding; whitespace, URL-safe variants and nonzero padding bits are rejected.
+The decoded bytes have identical validation and mapping semantics. This compact
+encoding permits a 32 KiB snapshot plus options within the unchanged 64 KiB
+JSON request limit; larger complete requests still fail at that boundary.
+Offsets and nonempty payload lengths must be multiples of
 4,096; their sum must fit a signed 64-bit offset. Entries cannot overlap.
 At most 16 entries per device are admitted, and their bytes count against the
 same 16 MiB catalogue budget. Omitting the array preserves the unsupported

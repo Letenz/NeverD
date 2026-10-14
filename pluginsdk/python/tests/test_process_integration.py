@@ -6,9 +6,11 @@ NEVERD_TEST_DARWIN_FIXTURES enables the macOS/iOS Mach-O corpus.
 """
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
 import os
+import struct
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -63,6 +65,18 @@ class ProcessIntegrationTests(unittest.TestCase):
                                        libraries={"libdevice.so": ["ioctl", "mmap"]})
             result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
                                              "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], "0")
+
+        pages = b"1" * 4096 + b"2" * 4096 + b"3" * 4096 + bytes(range(256)) * 80
+        device["read_only_mappings"] = [{"offset": 4096,
+                                         "bytes_base64": base64.b64encode(pages).decode("ascii")}]
+        for route in range(4):
+            options["android"]["arguments"] = [route]
+            encoded = json.dumps(options)
+            self.assertLess(len(encoded), 64 * 1024)
+            result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                             "android-aarch64-api28-v1", encoded)
             self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
             self.assertEqual(result["return_value"], "0")
 
@@ -2774,6 +2788,22 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertEqual(call["library"], "libfixture.so")
         self.assertEqual(call["pc"], lookup["result"])
         self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+        for properties, expected in (({}, -1), ({"ro.build.version.sdk": "33"}, 33)):
+            with self.subTest(properties=properties):
+                options = json.dumps({"backend": "unicorn", "android": {
+                    "entry_symbol": "device_api_level", "arguments": [0x20000000, 1],
+                    "properties": properties,
+                    "libraries": {"libplatform.so": ["android_get_device_api_level"]},
+                    "memory": [{"address": 0x20000000, "size": 4096}],
+                    "read_memory": [{"address": 0x20000000, "size": 16}],
+                }})
+                result = session.emulate_process(str(Path(fixtures) / "relr.so"),
+                                                 "android-aarch64-api28-v1", options)
+                self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                self.assertEqual(int(result["return_value"], 16), expected % (1 << 64))
+                snapshot = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+                self.assertEqual(snapshot, struct.pack("<IIII", expected % (1 << 32), 77,
+                                                      expected % (1 << 32), 77))
         names = ("getuid", "geteuid", "getgid", "getegid")
         for scope, stop, expected in ((["libfixture.so"], "returned", 6),
                                       ([], "returned", 100),

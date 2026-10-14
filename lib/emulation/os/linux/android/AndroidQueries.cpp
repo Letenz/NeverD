@@ -24,7 +24,26 @@ BionicResult Bionic::getPageSize(const NativeCallEvent &) {
   return value(PageSize);
 }
 
-BionicResult Bionic::getAPILevel(const NativeCallEvent &) { return value(28); }
+BionicResult Bionic::getAPILevel(const NativeCallEvent &) {
+  const auto &Properties = Options.Android->Properties;
+  auto I = Properties.find("ro.build.version.sdk");
+  if (I == Properties.end() || I->second.empty())
+    return value(UINT32_MAX);
+  // This query observes the device property, not the selected Bionic ABI.
+  // Share atoi's defined prefix, width and overflow decisions. Inputs are
+  // immutable, so repeated queries never need a separate cached identity.
+  const std::string &Text = I->second;
+  auto Parsed =
+      decimalValue(true, [&](uint64_t Offset) -> llvm::Expected<uint8_t> {
+        return Offset < Text.size() ? static_cast<uint8_t>(Text[Offset])
+                                    : uint8_t(0);
+      });
+  if (!Parsed)
+    return Parsed.takeError();
+  if (!*Parsed)
+    return std::optional<BionicValue>();
+  return value(**Parsed && **Parsed <= INT32_MAX ? **Parsed : UINT32_MAX);
+}
 
 BionicResult Bionic::queryConfiguration(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;

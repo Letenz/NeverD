@@ -3465,6 +3465,9 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+The device API query reads the explicit immutable property catalogue and shares
+`AndroidStrings`' bounded decimal conversion with `atoi`. The reported property
+does not select a different Bionic ABI or infer a Linux kernel contract.
 `NativeMemoryRead::RequireMappedAtEntry` defaults to true. An explicit false
 permits observing mappings created during execution without adding memory or
 changing the allocator. Android preparation still accounts for every requested

@@ -162,12 +162,22 @@ The supported Bionic subset is:
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
-- `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`,
-  `android_get_device_api_level` (28). Identity queries share the Linux
+- `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`.
+  Identity queries share the Linux
   process model: PID/TID and real/effective UID/GID are 1000, including raw
   `svc #0` and calls resolved through the explicit dynamic catalogue. They
   preserve errno and never query host credentials. Credential changes such
   as `setuid` remain unsupported.
+- `android_get_device_api_level`, reading the explicitly supplied
+  `android.properties["ro.build.version.sdk"]`. Missing, empty, nonnumeric or
+  nonpositive values return signed `int` -1; positive decimal prefixes use the
+  same bounded parser as `atoi`, including whitespace and a leading sign.
+  Out-of-range conversion stops explicitly. The query preserves errno and
+  observes immutable guest input, never host properties. Direct imports and
+  declared dynamic providers share this behavior. The reported device version
+  does not change the profile's pinned API 28 Bionic structures, supported
+  services or selected kernel contract. See the
+  [Bionic query](https://android.googlesource.com/platform/bionic/+/android-13.0.0_r1/libc/include/bits/get_device_api_level_inlines.h).
 - `getpagesize`, returning the Android profile's 4096-byte guest page size
   without changing errno. It uses the same layout as guest mappings,
   independently of the host page size. Direct imports and explicit dynamic

@@ -13,6 +13,7 @@
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Base64.h"
 
 namespace neverd::emulation {
 namespace {
@@ -36,6 +37,30 @@ bytes(const llvm::json::Object &Object, llvm::StringRef Key, uint64_t &Total) {
   Total += Hex->size() / 2;
   std::string Data = llvm::fromHex(*Hex);
   return std::vector<uint8_t>(Data.begin(), Data.end());
+}
+llvm::Expected<std::vector<uint8_t>>
+mappingBytes(const llvm::json::Object &Object, uint64_t &Total) {
+  const bool Hex = Object.get(field::Bytes);
+  const bool Base64 = Object.get(field::DeviceBytesBase64);
+  if (Hex == Base64)
+    return invalid();
+  if (Hex)
+    return bytes(Object, field::Bytes, Total);
+  auto Text = Object.getString(field::DeviceBytesBase64);
+  const uint64_t Remaining = linux_model::FileByteLimit - Total;
+  // Bound decoder allocation before reading the payload. Canonical padded
+  // RFC 4648 encoding admits no whitespace, alternate alphabet or spare bits.
+  if (!Text || Text->size() % 4 || Text->size() / 4 > (Remaining + 2) / 3)
+    return invalid();
+  std::vector<char> Decoded;
+  if (auto E = llvm::decodeBase64(*Text, Decoded)) {
+    llvm::consumeError(std::move(E));
+    return invalid();
+  }
+  if (Decoded.size() > Remaining || llvm::encodeBase64(Decoded) != *Text)
+    return invalid();
+  Total += Decoded.size();
+  return std::vector<uint8_t>(Decoded.begin(), Decoded.end());
 }
 } // namespace
 
@@ -98,7 +123,7 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
       auto Offset = number<uint64_t>(*Object, field::DeviceOffset);
       if (!Offset)
         return invalid();
-      auto Data = bytes(*Object, field::Bytes, PayloadBytes);
+      auto Data = mappingBytes(*Object, PayloadBytes);
       if (!Data)
         return Data.takeError();
       Out.ReadOnlyMappings.push_back({*Offset, std::move(*Data)});

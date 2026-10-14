@@ -4998,6 +4998,23 @@ earlier field stores and retained state after a later user-space pointer fault.
 `ProcessReportTests` checks lossless input, malformed entries and profile gates.
 These tests validate action bookkeeping, not signal delivery or handler frames.
 
+`AndroidNativeTests.cpp` checks device API queries against absent, empty,
+positive, nonpositive, prefix and overflowing property values through direct
+imports and dynamic providers. Repeated results, errno preservation and closed
+provider rejection are checked with independently compiled O1 callers across
+ordinary, APS2 and RELR relocations. The O0/O2 decimal conversion tests cover
+the shared parser's guest-memory behavior.
+An external device query must be replayed from explicit captured properties;
+its API level alone does not establish compatibility with that Android release.
+
+`ProcessReport.LinuxDeviceMappingBase64PreservesCompleteBinaryPages` compares
+every decoded byte of a 32 KiB binary page input while retaining the 64 KiB JSON
+limit. It rejects ambiguous encodings, malformed padding/alphabet, noncanonical
+spare bits, partial pages and unaligned offsets. The Python process tests execute
+the same mapping lifecycle through raw, named, variadic and dynamic calls with
+the compact input. Base64 changes transport only; shared Linux mapping and
+catalogue bounds remain authoritative.
+
 `AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
 with `getpagesize`, page-aligned allocation and its final valid byte. Compiled
 callers check selector width, errno, dynamic provider lifetime and explicit

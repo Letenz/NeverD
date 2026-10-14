@@ -275,6 +275,7 @@ TEST_P(AndroidNative, ConstructorsStackArgumentsAndUninitializedAnalysis) {
 }
 TEST_P(AndroidNative, PropertiesMemoryAndTLS) {
   Options.Android->Properties["test.device"] = "sample";
+  Options.Android->Properties["ro.build.version.sdk"] = "28";
   auto R = run("properties", {Buffer});
   returned(R, 28);
   ASSERT_EQ(R.MemorySnapshots.size(), 1);
@@ -287,6 +288,64 @@ TEST_P(AndroidNative, PropertiesMemoryAndTLS) {
   returned(R, 0);
   ASSERT_EQ(R.MemorySnapshots.size(), 1);
   EXPECT_EQ(R.MemorySnapshots[0].Bytes[0], 0);
+}
+TEST_P(AndroidNative, DeviceAPILevelUsesOnlyTheSuppliedProperty) {
+  Options.Android->Libraries["libplatform.so"] = {
+      "android_get_device_api_level"};
+  for (uint64_t Mode : {0, 1}) {
+    const std::pair<const char *, int32_t> Cases[] = {{nullptr, -1},
+                                                      {"", -1},
+                                                      {"28", 28},
+                                                      {"33", 33},
+                                                      {" \t\n+0035suffix", 35},
+                                                      {"2147483647", INT32_MAX},
+                                                      {"0", -1},
+                                                      {"-1", -1},
+                                                      {"-2147483648", -1},
+                                                      {"no-digits", -1},
+                                                      {"+", -1},
+                                                      {"+ 33", -1}};
+    for (auto [Text, Expected] : Cases) {
+      SCOPED_TRACE(Text ? Text : "absent");
+      Options.Android->Properties.clear();
+      if (Text)
+        Options.Android->Properties["ro.build.version.sdk"] = Text;
+      auto R = run("device_api_level", {Buffer, Mode});
+      returned(R, static_cast<uint64_t>(static_cast<int64_t>(Expected)));
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      for (unsigned Offset : {0, 8}) {
+        EXPECT_EQ(llvm::support::endian::read32le(
+                      R.MemorySnapshots[0].Bytes.data() + Offset),
+                  static_cast<uint32_t>(Expected));
+        EXPECT_EQ(llvm::support::endian::read32le(
+                      R.MemorySnapshots[0].Bytes.data() + Offset + 4),
+                  77u);
+      }
+    }
+  }
+}
+TEST_P(AndroidNative, DeviceAPILevelRejectsOverflowAndClosedProviders) {
+  Options.Android->Libraries["libplatform.so"] = {
+      "android_get_device_api_level"};
+  for (const char *Text :
+       {"2147483648", "-2147483649", "99999999999999999999"}) {
+    Options.Android->Properties["ro.build.version.sdk"] = Text;
+    for (uint64_t Mode : {0, 1}) {
+      auto R = run("device_api_level", {Buffer, Mode});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(R.Diagnostic.find("out-of-range decimal"), std::string::npos);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(64));
+    }
+  }
+  Options.Android->Properties["ro.build.version.sdk"] = "33";
+  auto R = run("device_api_level", {Buffer, 2});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+  EXPECT_EQ(R.NativeCalls.back().Library, "libplatform.so");
 }
 TEST_P(AndroidNative, KernelErrorsAndLibcErrnoHaveDifferentContracts) {
   returned(run("libc_error"), 0);

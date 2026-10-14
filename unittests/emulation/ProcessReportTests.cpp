@@ -13,6 +13,7 @@
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Base64.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
@@ -2435,6 +2436,74 @@ TEST(ProcessReport, LinuxDeviceTransactionsAreExplicitLosslessAndBounded) {
   auto Duplicate = Parse(std::string(Device) + ',' + Device);
   EXPECT_FALSE(bool(Duplicate));
   llvm::consumeError(Duplicate.takeError());
+}
+
+TEST(ProcessReport, LinuxDeviceMappingBase64PreservesCompleteBinaryPages) {
+  std::vector<uint8_t> Bytes(32768);
+  for (size_t I = 0; I < Bytes.size(); ++I)
+    Bytes[I] = uint8_t(I);
+  const auto Encoded = llvm::encodeBase64(Bytes);
+  auto Parse = [](llvm::json::Object Mapping) {
+    llvm::json::Value V = llvm::json::Object{
+        {"linux_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{}},
+             {"devices", llvm::json::Array{llvm::json::Object{
+                             {"path", "/fixture/pages"},
+                             {"access_mode", 2},
+                             {"open_errno", 0},
+                             {"ioctls", llvm::json::Array{}},
+                             {"read_only_mappings",
+                              llvm::json::Array{std::move(Mapping)}}}}}}}};
+    return processOptionsFromJSON(llvm::formatv("{0}", V).str());
+  };
+  auto Valid =
+      Parse(llvm::json::Object{{"offset", 4096}, {"bytes_base64", Encoded}});
+  ASSERT_TRUE(bool(Valid)) << llvm::toString(Valid.takeError());
+  const auto &Mapping =
+      Valid->LinuxFiles->Devices.at("/fixture/pages").ReadOnlyMappings;
+  ASSERT_EQ(Mapping.size(), 1u);
+  EXPECT_EQ(Mapping[0].Offset, 4096u);
+  EXPECT_EQ(Mapping[0].Bytes, Bytes);
+  for (size_t Size : {4096u, 8192u, 12288u}) {
+    std::vector<uint8_t> Pages(Bytes.begin(), Bytes.begin() + Size);
+    auto R = Parse(llvm::json::Object{
+        {"offset", 0}, {"bytes_base64", llvm::encodeBase64(Pages)}});
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(
+        R->LinuxFiles->Devices.at("/fixture/pages").ReadOnlyMappings[0].Bytes,
+        Pages);
+  }
+  // The same bytes in hex exceed the unchanged transport limit.
+  auto Hex = Parse(
+      llvm::json::Object{{"offset", 4096}, {"bytes_hex", llvm::toHex(Bytes)}});
+  ASSERT_FALSE(bool(Hex));
+  EXPECT_NE(llvm::toString(Hex.takeError()).find("64 KiB"), std::string::npos);
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    llvm::json::Object M{{"offset", 4096}, {"bytes_base64", Encoded}};
+    if (Mode == 0)
+      M["bytes_hex"] = "";
+    if (Mode == 1)
+      M["bytes_base64"] = nullptr;
+    if (Mode == 2)
+      M["bytes_base64"] = Encoded.substr(0, Encoded.size() - 1);
+    if (Mode == 3)
+      M["bytes_base64"] = " " + Encoded.substr(1);
+    if (Mode == 4)
+      M["bytes_base64"] = "-" + Encoded.substr(1);
+    if (Mode == 5)
+      M["bytes_base64"] = Encoded.substr(0, Encoded.size() - 2) + "9=";
+    if (Mode == 6)
+      M["bytes_base64"] = llvm::encodeBase64(std::vector<uint8_t>(4095));
+    if (Mode == 7)
+      M["offset"] = 1;
+    if (Mode == 8)
+      M["bytes_base64"] = "====";
+    auto R = Parse(std::move(M));
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
 }
 
 TEST(ProcessReport, LinuxDeviceMappingsRequireCompleteDisjointBoundedPages) {
