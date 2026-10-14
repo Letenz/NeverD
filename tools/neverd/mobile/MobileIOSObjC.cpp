@@ -1,3 +1,4 @@
+#include "FloatingPointContract.h"
 #include "MobileIOSInternal.h"
 
 #include "neverd/loader/ObjC/ObjCEncoding.h"
@@ -132,6 +133,14 @@ std::vector<Token> tokens(std::string_view s) {
       line = line == s.npos ? 0 : line + 1;
       if (!llvm::StringRef(s.data() + line, p - line).trim().empty())
         throw Error("preprocessor marker outside a directive");
+      // Preserve the emitter's fixed contraction pragmas as one directive.
+      // General conditional branches still require a real preprocessor.
+      if (s.substr(p).starts_with(c_float::ContractionPolicy)) {
+        p += sizeof(c_float::ContractionPolicy) - 1;
+        result.push_back(
+            {std::string(s.substr(start, p - start)), start, p, 2});
+        continue;
+      }
       for (;;) {
         auto end = s.find('\n', p);
         if (end == s.npos) {
@@ -201,7 +210,8 @@ std::vector<Definition> definitions(const std::vector<Token> &t,
     if (t[i].kind == 2) {
       auto text = llvm::StringRef(v).drop_front().ltrim();
       auto d = text.take_front(text.find_first_of(" \t\r\n"));
-      if (d != "include" && d != "import" && d != "pragma")
+      if (v != c_float::ContractionPolicy && d != "include" && d != "import" &&
+          d != "pragma")
         throw Error(
             "conditional or mutating preprocessor directives are unsupported");
       start = i + 1;

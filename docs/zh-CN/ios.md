@@ -374,3 +374,9 @@ Objective-C 选择器桩调用也仅在重新验证准确的接收者声明和�
 在 ARM64 Mach-O 中，作为 Objective-C 方法暴露的 Swift CGFloat、Double 或 Bool getter，只有当精确的 `d16@0:8` 或 `B16@0:8` 方法编码、匹配且唯一的 Swift getter thunk 符号、接收者 ivar 偏移引用、来自 libswiftCore 的强 _swift_isaMask 导入、经掩码 isa 的表项加载以及 blr x21 目标全部吻合时，才会绑定其虚调用。Setter 还要求相同的证据、精确的 `v24@0:8d16` 或 `v20@0:8B16` 编码，以及匹配且唯一的 Swift setter thunk；Bool setter 使用 blr x22，浮点 setter 使用 blr x21。无参数 void 方法还要求精确的 `v16@0:8` 编码、匹配的 `yyFTo` 符号，以及 retain 到调用之间没有普通参数寄存器写入、或恰好将 X0/X1 两个参数字清零的窗口；Swift 调用会在 context 之前保留这两个零值。生成的 C 将表项加载保留在 retain/release 之前，并以 swiftcall 和 swift_context 调用目标；Bool getter 的结果和 setter 的传入值使用 `_Bool`，其他虚调用形态仍不恢复。
 
 另一种无参数 void 桥接仅在唯一的 `yyFTo` 入口与 `v16@0:8` 编码一致、LowIR 将 `self` 追溯到来自 libobjc 的强引用 retain，且不可变的 `mov x20, x19; blr x8` 字节与经掩码 isa 的表项加载一致时，才绑定保留的 `self` 上的虚调用。生成的 Swift 调用仅通过 `swift_context` 接收该对象。
+
+## Swift scalar instruction completion
+
+恢复的 x86_64 Swift 支持标量寄存器 ADD/SUB/MUL/DIV，以及 Float32、signed32、signed64 寄存器到 Double 的转换，保留数值位和完整的输入、输出 MXCSR。其他转换、内存、打包算术、SQRT/MIN/MAX、FMA、舍入和近似运算仍不支持。这些修复解决已观察到的 Swift 栈参数与混合函数恢复失败；完整 macOS/iOS 运行时和框架环境仍未完成。
+
+The unchanged scripts/test_mobile_swift_backend.py workflow must pass arm64/x86_64 × classic/default, preserving25 native method bodies, nine compiler projections and all34 callable identities. Each original and independently compiled recovered program must pass858 independent oracle checks. Scalar arithmetic and the three Double conversions address stackFloats/stackMixed and compiler-dependent mixed-function refusals without changing the corpus or weakening acceptance. A failed startup remains failed evidence even if the same retained original succeeds in a separate diagnostic; no deadline expansion is used. Results are limited to this macOS corpus. Translated x86_64 execution does not qualify physical Intel traps, physical iOS applications, full dyld/Mach IPC or Objective-C/Swift and Foundation/UIKit framework execution.

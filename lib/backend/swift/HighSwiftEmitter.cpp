@@ -53,6 +53,54 @@ unsigned width(const TypeRef &Type) {
   return Type->Size * 8;
 }
 
+// Generic register completions have the same numerical/state contract as the
+// original scalar intrinsics only for these exact controls. Normalize the
+// helper key too, so one function mixing both forms defines each helper once.
+std::optional<Intrinsic> scalarStateImplementation(Intrinsic Id,
+                                                   unsigned Layout) {
+  if (!isX86FPArithStateIntrinsic(Id))
+    return Id;
+  if (Id != Intrinsic::X86FPArithState)
+    return std::nullopt;
+  const unsigned Control = x86FPArithStateControl(Layout);
+  if (!x86FPArithStateIsScalar(Control) || (Control & ~31u))
+    return std::nullopt;
+  switch (static_cast<X86FPArithKind>(Control & 7)) {
+  case X86FPArithKind::Add:
+    return Intrinsic::X86FPAddState;
+  case X86FPArithKind::Subtract:
+    return Intrinsic::X86FPSubState;
+  case X86FPArithKind::Multiply:
+    return Intrinsic::X86FPMulState;
+  case X86FPArithKind::Divide:
+    return Intrinsic::X86FPDivState;
+  default:
+    return std::nullopt;
+  }
+}
+
+// Only the three completed register conversions needed by the Double corpus.
+// The lifter owns VEX upper lanes; their completed numerical/state pair shares
+// the same helper key as the corresponding legacy register conversion.
+std::optional<unsigned> scalarDoubleConversionLayout(Intrinsic Id,
+                                                     unsigned Layout) {
+  if (Id != Intrinsic::X86FPScalarConvertState)
+    return std::nullopt;
+  const unsigned Control = x86FPArithStateControl(Layout) & ~8u;
+  if (Control != 4 && Control != 5 && Control != 7)
+    return std::nullopt;
+  return x86FPRoundStateLayout(x86FPStateSourceBytes(Layout), Control, 0,
+                               NdMemoryAddressSpace::Default);
+}
+
+std::string scalarDoubleConversionMnemonic(unsigned Layout) {
+  const unsigned Control = x86FPArithStateControl(Layout);
+  return std::string(x86FPScalarConvertIsInteger(Control) ? "signed"
+                                                          : "float") +
+         std::to_string(x86FPScalarConvertSourceBytes(Control) * 8) +
+         "ToDouble";
+}
+
 std::string uintType(unsigned Bits) {
   if (Bits > 64)
     throw Unsupported(
@@ -475,7 +523,28 @@ class Writer {
         "            var state = Swift.UInt32(truncatingIfNeeded: value)\n"
         "            " +
         MXCSRLoadName + "(&state)\n        }\n";
-    for (const auto &[Id, Bytes] : FPStateOperations) {
+    for (const auto &[Id, LayoutOrBytes] : FPStateOperations) {
+      if (Id == Intrinsic::X86FPScalarConvertState) {
+        const unsigned Control = x86FPArithStateControl(LayoutOrBytes);
+        const unsigned Bits = x86FPStateSourceBytes(LayoutOrBytes) * 8;
+        const std::string Input = x86FPScalarConvertIsInteger(Control)
+                                      ? signedValue("source", Bits)
+                                      : floatValue("source", Bits);
+        Text += Attributes + "        static func " +
+                scalarDoubleConversionMnemonic(LayoutOrBytes) +
+                "(_ source: Swift.UInt64, _ incoming: Swift.UInt64) -> " +
+                WideType +
+                " {\n"
+                "            write(incoming)\n"
+                "            let result = Swift.Double(" +
+                Input +
+                ").bitPattern\n"
+                "            let outgoing = read()\n"
+                "            return " +
+                WideType + "(lo: result, hi: outgoing)\n        }\n";
+        continue;
+      }
+      const unsigned Bytes = LayoutOrBytes;
       const unsigned Bits = Bytes * 8;
       const char *Operator = Id == Intrinsic::X86FPAddState   ? "+"
                              : Id == Intrinsic::X86FPSubState ? "-"
@@ -516,17 +585,21 @@ class Writer {
     if (E && E->Kind == ExprKind::Call &&
         isX86FPStateIntrinsic(E->IntrinsicId)) {
       const auto Shape = x86FPStateHighShape(*E, Arch::Unknown);
+      const unsigned Layout = x86FPStateHelperLayout(E->IntrinsicId, Shape);
+      const auto Implementation =
+          scalarStateImplementation(E->IntrinsicId, Layout);
+      const auto Conversion =
+          scalarDoubleConversionLayout(E->IntrinsicId, Layout);
       if (E->IsIndirectCall || E->IndirectTarget || E->SourceCallHint ||
           E->DoesNotReturn || !x86FPStateShapeIsValid(E->IntrinsicId, Shape) ||
           isX86FPConversionStateIntrinsic(E->IntrinsicId) ||
-          isX86FPScalarConvertStateIntrinsic(E->IntrinsicId) ||
+          (isX86FPScalarConvertStateIntrinsic(E->IntrinsicId) && !Conversion) ||
           isX86F16CStateIntrinsic(E->IntrinsicId) ||
           isX86FPComiStateIntrinsic(E->IntrinsicId) ||
           isX86FPMaskCompareStateIntrinsic(E->IntrinsicId) ||
           isX86FPPackedConvertStateIntrinsic(E->IntrinsicId) ||
           isX86FPRoundStateIntrinsic(E->IntrinsicId) ||
-          isX86FPApprox12Intrinsic(E->IntrinsicId) ||
-          isX86FPArithStateIntrinsic(E->IntrinsicId) ||
+          isX86FPApprox12Intrinsic(E->IntrinsicId) || !Implementation ||
           (Statement && x86FPStateReturnsValue(E->IntrinsicId)) ||
           (!Statement && !x86FPStateReturnsValue(E->IntrinsicId)))
         throw Unsupported("unsupported Swift x86 floating-point state shape");
@@ -536,13 +609,25 @@ class Writer {
       if (E->IntrinsicId == Intrinsic::X86WriteMXCSR)
         return FPStateType + ".write(" + expression(E->Operands[0], Depth + 1) +
                ")";
-      FPStateOperations.insert({E->IntrinsicId, Shape.LeftSize});
+      if (Conversion) {
+        FPStateOperations.insert(
+            {Intrinsic::X86FPScalarConvertState, *Conversion});
+        UsesWide = true;
+        // The shared validator proves Source, literal Control, State. Only the
+        // control is consumed here; the source and complete state retain order.
+        return FPStateType + "." + scalarDoubleConversionMnemonic(*Conversion) +
+               "(" + expression(E->Operands[0], Depth + 1) + ", " +
+               expression(E->Operands[2], Depth + 1) + ")";
+      }
+      const unsigned Bytes = x86FPStateSourceBytes(Layout);
+      FPStateOperations.insert({*Implementation, Bytes});
       UsesWide |= Shape.OutputSize == 12;
       std::string Text = FPStateType + "." +
-                         x86ScalarFPStateMnemonic(E->IntrinsicId) +
-                         std::to_string(Shape.LeftSize * 8) + "(";
-      for (size_t I = 0; I < E->Operands.size(); ++I) {
-        if (I)
+                         x86ScalarFPStateMnemonic(*Implementation) +
+                         std::to_string(Bytes * 8) + "(";
+      const size_t First = E->IntrinsicId == Intrinsic::X86FPArithState ? 1 : 0;
+      for (size_t I = First; I < E->Operands.size(); ++I) {
+        if (I != First)
           Text += ", ";
         Text += expression(E->Operands[I], Depth + 1);
       }

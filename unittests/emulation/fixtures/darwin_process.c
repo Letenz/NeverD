@@ -7641,6 +7641,2071 @@ static int immediate_pselect_unsupported(unsigned mode) {
   return 251;
 }
 
+/* Original SDK-free regular mode controls; complete stat records are captured
+ * before the first change. Native ctime is never treated as a constant. */
+union mode_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int mode_result(u64 number, u64 object, u64 a1, u64 a2, u64 a3,
+                       u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, a1, a2, a3, 0, 0, &error);
+  if (value != expected || error != !!expected)
+    return 210;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? a2 : 0))
+#endif
+    return 211;
+  return 0;
+}
+static int mode_status(u64 number, u64 object, union mode_stat_guard *record,
+                       unsigned mode, const union mode_stat_guard *initial) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 212;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL)
+    return 213;
+  const u64 actual = little_integer(record->bytes + 12, 2);
+  if ((actual & 0170000) != 0100000 || (actual & 07000) ||
+      (mode != 0xffffffffu && (actual & 0777) != mode) ||
+      little_integer(record->bytes + 80, 8) >= 1000000000UL)
+    return 214;
+  if (initial) {
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i) {
+      if (i == 9 || i == 10) /* ctime seconds/nanoseconds */
+        continue;
+      const u64 mask = i == 1 ? ~(07777UL << 32) : -1UL;
+      if (((record->words[i] ^ initial->words[i]) & mask) != 0)
+        return 215;
+    }
+  }
+  return 0;
+}
+static int ordinary_mode_mutations(const char *path) {
+  unsigned error;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 216;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd ||
+      call(199, fd, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 217;
+  union mode_stat_guard initial, a, b, c;
+  if (mode_status(339, copy, &initial, 0xffffffffu, 0))
+    return 218;
+  const u64 numbers[] = {15, 124, 467};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const unsigned modes[] = {0, 0640, 0604};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 mode = high[h] | 0x7fff0000UL | modes[h];
+      const u64 number = high[h] | numbers[api];
+      const u64 object = api == 0 ? (u64)path : high[h] | fd;
+      const u64 a1 = api == 2 ? (u64)path : mode;
+      if (mode_result(number, object, a1, api == 2 ? mode : 0, 0, 0))
+        return 219;
+      if (mode_status(339, fd, &a, modes[h], &initial) ||
+          mode_status(338, (u64)path, &b, modes[h], &initial) ||
+          mode_status(339, copy, &c, modes[h], &initial))
+        return 220;
+      for (unsigned i = 0; i != 20; ++i)
+        if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+          return 221;
+    }
+  union mode_stat_guard before_failures;
+  for (unsigned i = 0; i != 20; ++i)
+    before_failures.words[i] = c.words[i];
+  if (mode_result(15, -1UL, 07000, 0, 0, 14) ||
+      mode_result(124, -1UL, 07000, 0, 0, 9) ||
+      mode_result(467, -1UL, -1UL, 07000, 8, 22) ||
+      mode_result(467, -1UL, (u64) "data", 07000, 0, 9) ||
+      mode_status(339, copy, &a, 0604, &initial))
+    return 222;
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != before_failures.words[i])
+      return 223;
+  /* Absolute path bypasses the invalid dirfd. Same-mode success may change
+   * ctime, so only the other complete metadata fields are compared. */
+  if (mode_result(467, -1UL, (u64)path, 0604, 0, 0) ||
+      mode_status(339, copy, &a, 0604, &initial) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 2 || error || secondary ||
+      mode_result(6, fd, 0, 0, 0, 0) || mode_result(124, fd, 07000, 0, 0, 9) ||
+      mode_result(124, copy, 0604, 0, 0, 0) ||
+      mode_status(339, copy, &a, 0604, &initial) ||
+      mode_result(6, copy, 0, 0, 0, 0))
+    return 224;
+  const char mark = 'M';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 225;
+  return 0;
+}
+
+/* Original directory controls: compare all 144 stat bytes and both guards.
+ * Native times are observations. Virtual variants also check an independently
+ * authored complete record, including independent mode and namespace ctimes. */
+static int directory_mode_status(u64 number, u64 object,
+                                 union mode_stat_guard *record, unsigned mode,
+                                 const union mode_stat_guard *before,
+                                 unsigned virtual_kind, u64 seconds,
+                                 u64 nanoseconds) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 226;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      little_integer(record->bytes + 12, 2) != (0040000u | mode) ||
+      little_integer(record->bytes + 80, 8) >= 1000000000UL)
+    return 227;
+  if (before) {
+    // The same 144 bytes: permissions occupy word 1 bits 32..43 and ctime
+    // occupies words 9/10. Type and all other bits stay checked independently.
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i) {
+      if (i == 9 || i == 10)
+        continue;
+      const u64 mask = i == 1 ? ~(07777UL << 32) : -1UL;
+      if ((record->words[i] ^ before->words[i]) & mask)
+        return 228;
+    }
+  }
+  if (virtual_kind) {
+    const u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
+                              7UL | ((u64)(0040000u | mode) << 32) |
+                                  (2UL << 48),
+                              virtual_kind == 2 ? 100UL : 3UL,
+                              501UL | (20UL << 32),
+                              0,
+                              virtual_kind == 2 ? 41UL : 1UL,
+                              virtual_kind == 2 ? 42UL : 2UL,
+                              virtual_kind == 2 ? 41UL : 3UL,
+                              virtual_kind == 2 ? 42UL : 4UL,
+                              seconds,
+                              nanoseconds,
+                              virtual_kind == 2 ? 41UL : 7UL,
+                              virtual_kind == 2 ? 42UL : 8UL,
+                              virtual_kind == 2 ? 64UL : 32UL,
+                              7,
+                              512,
+                              9,
+                              0,
+                              0,
+                              0xa5a5a5a5a5a5a5a5UL};
+#pragma clang loop unroll(full)
+    for (unsigned i = 0; i != 20; ++i)
+      if (record->words[i] != expected[i])
+        return 229;
+  }
+  return 0;
+}
+static __attribute__((noinline)) int
+directory_mode_mutations(const char *path, unsigned virtual_kind) {
+  unsigned error;
+  char moved[1024];
+  unsigned length = 0;
+  while (path[length] && length < 1017) {
+    moved[length] = path[length];
+    ++length;
+  }
+  if (path[length])
+    return 230;
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[length + i] = suffix[i];
+  if (virtual_kind == 2 && mode_result(136, (u64)path, 0700, 0, 0, 0))
+    return 231;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 232;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd)
+    return 233;
+  const u64 other = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || other == fd || other == copy)
+    return 234;
+  union mode_stat_guard initial, a, b, c;
+  const u64 initial_seconds = virtual_kind == 2 ? 41 : 5;
+  const u64 initial_nanoseconds = virtual_kind == 2 ? 42 : 6;
+  if (directory_mode_status(339, fd, &initial, 0700, 0, virtual_kind,
+                            initial_seconds, initial_nanoseconds))
+    return 235;
+  const u64 numbers[] = {15, 124, 467};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const unsigned modes[] = {0750, 0755, 0700};
+  const u64 mode_seconds = virtual_kind == 2 ? 101 : 71;
+  const u64 mode_nanoseconds = virtual_kind == 2 ? 102 : 72;
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 object = api == 0 ? (u64)path : api == 1 ? high[h] | fd : -1UL;
+      const u64 mode = high[h] | modes[h];
+      if (mode_result(high[h] | numbers[api], object,
+                      api == 2 ? (u64)path : mode, api == 2 ? mode : 0, 0, 0))
+        return 236;
+      if (directory_mode_status(339, copy, &a, modes[h], &initial, virtual_kind,
+                                mode_seconds, mode_nanoseconds) ||
+          directory_mode_status(338, (u64)path, &b, modes[h], &initial,
+                                virtual_kind, mode_seconds, mode_nanoseconds) ||
+          directory_mode_status(339, other, &c, modes[h], &initial,
+                                virtual_kind, mode_seconds, mode_nanoseconds))
+        return 237;
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 20; ++i)
+        if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+          return 238;
+    }
+  if (mode_result(13, copy, 0, 0, 0, 0) ||
+      mode_result(15, (u64) ".", 0750, 0, 0, 0) ||
+      mode_result(467, other, (u64) ".", 0700, 0x20, 0) ||
+      directory_mode_status(339, fd, &a, 0700, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds) ||
+      mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_mode_status(339, copy, &b, 0700, &initial, virtual_kind,
+                            virtual_kind == 2 ? 101 : 81,
+                            virtual_kind == 2 ? 102 : 82) ||
+      mode_result(124, copy, 0755, 0, 0, 0) ||
+      directory_mode_status(338, (u64)moved, &c, 0755, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds))
+    return 239;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    a.words[i] = c.words[i];
+  if (mode_result(124, -1UL, 07000, 0, 0, 9) ||
+      mode_result(467, -1UL, -1UL, 07000, 8, 22) ||
+      directory_mode_status(339, fd, &c, 0755, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds))
+    return 240;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != c.words[i])
+      return 241;
+  if (mode_result(12, (u64) "/", 0, 0, 0, 0) ||
+      mode_result(6, fd, 0, 0, 0, 0) || mode_result(124, fd, 0700, 0, 0, 9) ||
+      mode_result(124, copy, 0755, 0, 0, 0) ||
+      directory_mode_status(339, other, &b, 0755, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds) ||
+      mode_result(6, copy, 0, 0, 0, 0) || mode_result(6, other, 0, 0, 0, 0))
+    return 242;
+  const char mark = 'Q';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 243;
+  return 0;
+}
+
+/* Original complete directory timestamp workload. Fixed metadata is virtual;
+ * the native mode checks actual complete observations outside time fields. */
+static int directory_timestamp_status(u64 number, u64 object,
+                                      union mode_stat_guard *record,
+                                      const union mode_stat_guard *before,
+                                      unsigned kind, unsigned phase) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 211;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(record->bytes + 12, 2) & 0170000u) != 0040000u)
+    return 212;
+  if (before) {
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i)
+      if ((i < 5 || i > 12) && record->words[i] != before->words[i])
+        return 213;
+  }
+  if (kind) {
+    u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
+                        7UL | (0040700UL << 32) | (2UL << 48),
+                        kind == 2 ? 100UL : 3UL,
+                        501UL | (20UL << 32),
+                        0,
+                        kind == 2 ? 41UL : 1UL,
+                        kind == 2 ? 42UL : 2UL,
+                        kind == 2 ? 41UL : 3UL,
+                        kind == 2 ? 42UL : 4UL,
+                        kind == 2 ? 41UL : 5UL,
+                        kind == 2 ? 42UL : 6UL,
+                        kind == 2 ? 41UL : 7UL,
+                        kind == 2 ? 42UL : 8UL,
+                        kind == 2 ? 64UL : 32UL,
+                        7,
+                        512,
+                        9,
+                        0,
+                        0,
+                        0xa5a5a5a5a5a5a5a5UL};
+    if (phase) {
+      expected[5] = phase == 2 || phase == 3 ? 21 : 11;
+      expected[6] = phase == 2 || phase == 3 ? 22000 : 12000;
+      expected[7] = phase == 2 || phase == 3 ? 21 : 13;
+      expected[8] = phase == 2 || phase == 3 ? 22000 : 14000;
+      expected[9] = kind == 2 ? 101 : phase == 3 ? 81 : 111;
+      expected[10] = kind == 2 ? 102 : phase == 3 ? 82 : 112;
+      if (kind == 2) {
+        expected[11] = 13;
+        expected[12] = 14000;
+      }
+    }
+#pragma clang loop unroll(full)
+    for (unsigned i = 0; i != 20; ++i)
+      if (record->words[i] != expected[i])
+        return 214;
+  }
+  return 0;
+}
+static __attribute__((noinline)) int
+directory_timestamp_mutations(const char *path, unsigned kind) {
+  char moved[1024];
+  unsigned n = 0, error;
+  while (path[n] && n < 1017) {
+    moved[n] = path[n];
+    ++n;
+  }
+  if (path[n])
+    return 215;
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[n + i] = suffix[i];
+  if (kind == 2 && mode_result(136, (u64)path, 0700, 0, 0, 0))
+    return 216;
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 217;
+  u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd)
+    return 218;
+  u64 other = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || other == fd || other == copy)
+    return 219;
+  union mode_stat_guard initial, a, b, c;
+  if (directory_timestamp_status(339, fd, &initial, 0, kind, 0))
+    return 220;
+  u64 input[4] = {11, 0xa5a5a5a50000000cUL, 13, 0x13579bdf0000000eUL};
+  const u64 high[3] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned api = 0; api != 2; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      if (mode_result(high[h] | (api ? 139 : 138),
+                      api ? (high[h] | copy) : (u64)path, (u64)input, 0, 0, 0))
+        return 221;
+      if (input[0] != 11 || input[1] != 0xa5a5a5a50000000cUL ||
+          input[2] != 13 || input[3] != 0x13579bdf0000000eUL)
+        return 222;
+      if (directory_timestamp_status(339, copy, &a, &initial, kind, 1) ||
+          directory_timestamp_status(338, (u64)path, &b, &initial, kind, 1) ||
+          directory_timestamp_status(339, other, &c, &initial, kind, 1))
+        return 223;
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 20; ++i)
+        if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+          return 224;
+    }
+  if (mode_result(139, copy, 0, 0, 0, 0) ||
+      directory_timestamp_status(339, copy, &a, &initial, kind, 2))
+    return 225;
+  if (mode_result(138, (u64)moved, 1, 0, 0, 2) ||
+      mode_result(139, -1UL, 1, 0, 0, 14) ||
+      mode_result(139, -1UL, (u64)input, 0, 0, 9) ||
+      mode_result(139, fd, 1, 0, 0, 14) ||
+      directory_timestamp_status(339, copy, &b, &initial, kind, 2))
+    return 226;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != b.words[i])
+      return 227;
+  if (mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_timestamp_status(339, copy, &b, &initial, kind, 3) ||
+      mode_result(139, copy, (u64)input, 0, 0, 0) ||
+      directory_timestamp_status(338, (u64)moved, &c, &initial, kind, 4))
+    return 228;
+  if (mode_result(6, fd, 0, 0, 0, 0) ||
+      mode_result(139, fd, (u64)input, 0, 0, 9) ||
+      mode_result(139, copy, (u64)input, 0, 0, 0) ||
+      directory_timestamp_status(339, other, &b, &initial, kind, 4) ||
+      mode_result(6, copy, 0, 0, 0, 0) || mode_result(6, other, 0, 0, 0, 0))
+    return 229;
+  const char mark = 'T';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 230;
+  return 0;
+}
+
+/* Original ordinary directory ownership workload. Fixed metadata is virtual;
+ * native controls preserve complete observations outside UID/GID and ctime. */
+static int directory_ownership_result(u64 number, u64 object, u64 a1, u64 a2,
+                                      u64 a3, u64 a4, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, a1, a2, a3, a4, 0, &error);
+  if (value != expected || error != !!expected)
+    return 254;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? a2 : 0))
+#endif
+    return 255;
+  return 0;
+}
+static int directory_ownership_status(u64 number, u64 object,
+                                      union mode_stat_guard *record,
+                                      const union mode_stat_guard *before,
+                                      unsigned kind, unsigned gid,
+                                      unsigned phase) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 231;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(record->bytes + 12, 2) & 0170000u) != 0040000u)
+    return 232;
+  if (before) {
+    if (little_integer(record->bytes + 24, 4) !=
+            little_integer(before->bytes + 24, 4) ||
+        little_integer(record->bytes + 28, 4) != gid)
+      return 233;
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i)
+      if (i != 3 && i != 9 && i != 10 && record->words[i] != before->words[i])
+        return 234;
+  }
+  if (kind) {
+    u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
+                        7UL | (0040700UL << 32) | (2UL << 48),
+                        kind == 2 ? 100UL : 3UL,
+                        501UL | ((u64)gid << 32),
+                        0,
+                        kind == 2 ? 41UL : 1UL,
+                        kind == 2 ? 42UL : 2UL,
+                        kind == 2 ? 41UL : 3UL,
+                        kind == 2 ? 42UL : 4UL,
+                        kind == 2 ? 41UL : 5UL,
+                        kind == 2 ? 42UL : 6UL,
+                        kind == 2 ? 41UL : 7UL,
+                        kind == 2 ? 42UL : 8UL,
+                        kind == 2 ? 64UL : 32UL,
+                        7,
+                        512,
+                        9,
+                        0,
+                        0,
+                        0xa5a5a5a5a5a5a5a5UL};
+    if (phase) {
+      expected[9] = kind == 2 ? 101 : 81;
+      expected[10] = kind == 2 ? 102 : 82;
+    }
+#pragma clang loop unroll(full)
+    for (unsigned i = 0; i != 20; ++i)
+      if (record->words[i] != expected[i])
+        return 235;
+  }
+  return 0;
+}
+static __attribute__((noinline)) int
+directory_ownership_mutations(const char *path, unsigned kind) {
+  char moved[1024];
+  unsigned n = 0, error;
+  while (path[n] && n < 1017) {
+    moved[n] = path[n];
+    ++n;
+  }
+  if (path[n])
+    return 236;
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[n + i] = suffix[i];
+  if (kind == 2 && mode_result(136, (u64)path, 0700, 0, 0, 0))
+    return 237;
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 238;
+  u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd)
+    return 239;
+  u64 other = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || other == fd || other == copy)
+    return 240;
+  union mode_stat_guard initial, a, b, c;
+  if (directory_ownership_status(339, fd, &initial, 0, kind,
+                                 kind == 1 ? 31 : 20, 0))
+    return 241;
+  unsigned uid = (unsigned)little_integer(initial.bytes + 24, 4),
+           gid = (unsigned)little_integer(initial.bytes + 28, 4),
+           target = kind ? 20 : gid;
+  unsigned phase = 0;
+  const u64 high[3] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      u64 number = high[h] | (api == 0   ? 16
+                              : api == 1 ? 123
+                                         : 468),
+          object = api == 0   ? (u64)path
+                   : api == 1 ? (high[h] | copy)
+                              : -1UL;
+      u64 ids[4][2] = {{0xffffffffUL, 0xffffffffUL},
+                       {uid, 0xffffffffUL},
+                       {0xffffffffUL, target},
+                       {uid, target}};
+      for (unsigned pattern = h ? 3 : 0; pattern != 4; ++pattern) {
+        // All ID patterns use the base carrier. Upper carriers repeat the
+        // active-both request; full Cartesian typing is covered independently.
+        if (pattern == 0) {
+#pragma clang loop unroll(full)
+          for (unsigned i = 0; i != 20; ++i)
+            b.words[i] = phase ? a.words[i] : initial.words[i];
+        }
+        u64 u = high[h] | ids[pattern][0], g = high[h] | ids[pattern][1];
+        if (api == 2) {
+          if (directory_ownership_result(number, object, (u64)path, u, g,
+                                         high[h], 0))
+            return 242;
+        } else if (mode_result(number, object, u, g, 0, 0))
+          return 243;
+        if (pattern)
+          phase = 1;
+        if (pattern >= 2)
+          gid = target;
+        if (directory_ownership_status(339, copy, &a, &initial, kind, gid,
+                                       phase))
+          return 244;
+        if (pattern == 2) {
+          if (directory_ownership_status(338, (u64)path, &b, &initial, kind,
+                                         gid, phase) ||
+              directory_ownership_status(339, other, &c, &initial, kind, gid,
+                                         phase))
+            return 245;
+#pragma clang loop unroll(full)
+          for (unsigned i = 0; i != 20; ++i)
+            if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+              return 246;
+        }
+        if (pattern == 0) {
+#pragma clang loop unroll(full)
+          for (unsigned i = 0; i != 20; ++i)
+            if (a.words[i] != b.words[i])
+              return 247;
+        }
+      }
+    }
+  if (mode_result(123, -1UL, uid, gid, 0, 9) ||
+      directory_ownership_result(468, -1UL, 1, uid, gid, 8, 22) ||
+      mode_result(16, (u64)moved, uid, gid, 0, 2) ||
+      directory_ownership_status(339, copy, &b, &initial, kind, gid, phase))
+    return 248;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != b.words[i])
+      return 249;
+  if (mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_ownership_status(339, copy, &b, &initial, kind, gid, 2) ||
+      mode_result(123, copy, 0xffffffffUL, 0xffffffffUL, 0, 0) ||
+      directory_ownership_status(338, (u64)moved, &c, &initial, kind, gid, 2))
+    return 250;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (b.words[i] != c.words[i])
+      return 251;
+  if (mode_result(6, fd, 0, 0, 0, 0) || mode_result(123, fd, uid, gid, 0, 9) ||
+      mode_result(123, copy, uid, gid, 0, 0) ||
+      directory_ownership_status(339, other, &b, &initial, kind, gid, 1) ||
+      mode_result(6, copy, 0, 0, 0, 0) || mode_result(6, other, 0, 0, 0, 0))
+    return 252;
+  const char mark = 'O';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 253;
+  return 0;
+}
+
+/* Original SDK-free ordinary ownership controls. Native ctime remains a
+ * captured provider result; both-inactive calls compare the complete record. */
+union ownership_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int ownership_result(u64 number, u64 object, u64 a1, u64 a2, u64 a3,
+                            u64 a4, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, a1, a2, a3, a4, 0, &error);
+  if (value != expected || error != !!expected)
+    return 230;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? a2 : 0))
+#endif
+    return 231;
+  return 0;
+}
+static int ownership_status(u64 number, u64 object,
+                            union ownership_stat_guard *record, u64 uid,
+                            u64 gid,
+                            const union ownership_stat_guard *initial) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (ownership_result(number, object, (u64)(record->bytes + 8), 0, 0, 0, 0))
+    return 232;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL)
+    return 233;
+  const u64 mode = little_integer(record->bytes + 12, 2);
+  if ((mode & 0170000) != 0100000 || (mode & 07000) ||
+      (uid != -1UL && little_integer(record->bytes + 24, 4) != uid) ||
+      (gid != -1UL && little_integer(record->bytes + 28, 4) != gid) ||
+      little_integer(record->bytes + 80, 8) >= 1000000000UL)
+    return 234;
+  if (initial) {
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i) {
+      if (i == 3 || i == 9 || i == 10) /* UID/GID and ctime */
+        continue;
+      if (record->words[i] != initial->words[i])
+        return 235;
+    }
+  }
+  return 0;
+}
+static int ownership_equal(const union ownership_stat_guard *a,
+                           const union ownership_stat_guard *b) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a->words[i] != b->words[i])
+      return 236;
+  return 0;
+}
+static int ordinary_ownership_mutations(const char *path) {
+  unsigned error;
+  const u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || !uid || uid > 0xfffffffeUL)
+    return 237;
+  const u64 gid = call(43, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || gid > 0xfffffffeUL)
+    return 238;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 239;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd ||
+      call(199, fd, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 240;
+  union ownership_stat_guard initial, a, b, c;
+  if (ownership_status(339, copy, &initial, -1UL, -1UL, 0) ||
+      little_integer(initial.bytes + 24, 4) != uid)
+    return 241;
+  const u64 numbers[] = {16, 123, 468};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 requested_uid = high[h] | (h == 1 ? 0xffffffffUL : uid);
+      const u64 requested_gid = high[h] | (h == 2 ? 0xffffffffUL : gid);
+      const u64 number = high[h] | numbers[api];
+      const u64 object = api == 0 ? (u64)path : high[h] | fd;
+      if (ownership_result(number, object, api == 2 ? (u64)path : requested_uid,
+                           api == 2 ? requested_uid : requested_gid,
+                           api == 2 ? requested_gid : 0, high[h], 0))
+        return 242;
+      if (ownership_status(339, fd, &a, uid, gid, &initial) ||
+          ownership_status(338, (u64)path, &b, uid, gid, &initial) ||
+          ownership_status(339, copy, &c, uid, gid, &initial) ||
+          ownership_equal(&a, &b) || ownership_equal(&a, &c))
+        return 243;
+      const u64 inactive = high[h] | 0xffffffffUL;
+      if (ownership_result(number, object, api == 2 ? (u64)path : inactive,
+                           inactive, api == 2 ? inactive : 0, high[h], 0) ||
+          ownership_status(339, copy, &a, uid, gid, &initial) ||
+          ownership_equal(&a, &c))
+        return 244;
+    }
+  union ownership_stat_guard before_failures;
+  for (unsigned i = 0; i != 20; ++i)
+    before_failures.words[i] = c.words[i];
+  if (ownership_result(16, -1UL, uid, gid, 0, 0, 14) ||
+      ownership_result(123, -1UL, uid, gid, 0, 0, 9) ||
+      ownership_result(468, -1UL, -1UL, uid, gid, 0x4000, 22) ||
+      ownership_result(468, -1UL, -1UL, uid, gid, 0x800, 22) ||
+      ownership_result(468, -1UL, (u64) "data", uid, gid, 0, 9) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      ownership_equal(&a, &before_failures))
+    return 245;
+  const u64 third_party = uid == 1 ? 2 : 1;
+  if (ownership_result(123, copy, third_party, 0xffffffffUL, 0, 0, 1) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      ownership_equal(&a, &before_failures))
+    return 246;
+  if (ownership_result(468, -1UL, (u64)path, uid, gid, 0, 0) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 2 || error || secondary ||
+      ownership_result(6, fd, 0, 0, 0, 0, 0) ||
+      ownership_result(123, fd, uid, gid, 0, 0, 9) ||
+      ownership_result(123, copy, uid, gid, 0, 0, 0) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      ownership_result(6, copy, 0, 0, 0, 0, 0))
+    return 247;
+  const char mark = 'O';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 248;
+  return 0;
+}
+
+/* Original SDK-free whole-file advisory lock controls. */
+union flock_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int flock_result(u64 number, u64 fd, u64 how, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, how, 0, 0, 0, 0, &error);
+  if (value != expected || error != !!expected || secondary)
+    return 250;
+  return 0;
+}
+static int flock_status(u64 fd, const union flock_stat_guard *initial) {
+  union flock_stat_guard observed;
+  for (unsigned i = 0; i != 20; ++i)
+    observed.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(observed.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 251;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 252;
+  return 0;
+}
+static int flock_offset(u64 fd, u64 expected) {
+  unsigned error;
+  if (call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary)
+    return 253;
+  return 0;
+}
+static int ordinary_advisory_locks(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 254;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 254;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 254;
+  union flock_stat_guard initial;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(339, a, (u64)(initial.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || initial.words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      initial.words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(initial.bytes + 12, 2) & 0170000) != 0100000)
+    return 255;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h) {
+    const u64 high = highs[h], number = high | 131;
+    if (flock_result(number, high | a, high | 2, 0) ||
+        flock_result(number, high | d, high | 6, 0) ||
+        flock_result(number, high | b, high | 5, 35) ||
+        flock_result(number, high | d, high | 8, 0) ||
+        flock_result(number, high | b, high | 5, 0) ||
+        flock_result(number, high | a, high | 5, 0) ||
+        flock_result(number, high | a, high | 6, 35) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 35) ||
+        flock_result(number, high | a, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 0) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_status(a, &initial) || flock_status(b, &initial) ||
+        flock_status(d, &initial) || flock_offset(d, 2) || flock_offset(b, 0))
+      return 256;
+  }
+  if (flock_result(131, a, 0, 9) || flock_result(131, a, 4, 9) ||
+      flock_result(131, a, 0x40000000, 9) ||
+      flock_result(131, a, 0x40000005, 0) ||
+      flock_result(131, a, 0x4000000a, 0) ||
+      flock_result(131, a, 0x40000007, 0) || flock_result(131, b, 5, 35) ||
+      flock_result(131, d, 8, 0) || flock_result(131, 0xffffffffUL, 0, 9) ||
+      flock_status(a, &initial) || flock_status(b, &initial))
+    return 257;
+  if (flock_result(131, a, 6, 0) || flock_result(6, a, 0, 0) ||
+      flock_result(131, a, 6, 9) || flock_result(131, b, 6, 35) ||
+      flock_result(6, d, 0, 0) || flock_result(131, b, 6, 0) ||
+      flock_result(131, b, 8, 0) || flock_status(b, &initial) ||
+      flock_result(6, b, 0, 0))
+    return 258;
+  if (call(4, 1, (u64) "K", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 259;
+  return 0;
+}
+
+/* Original SDK-free ordinary file integrity completion controls. */
+union file_sync_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int file_sync_result(u64 number, u64 fd, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, 0, 0, 0, 0, 0, &error);
+  return value != expected || error != !!expected || secondary ? 260 : 0;
+}
+static int file_sync_status(u64 fd, const union file_sync_stat_guard *initial) {
+  union file_sync_stat_guard observed;
+  for (unsigned i = 0; i != 20; ++i)
+    observed.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(observed.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 261;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 262;
+  return 0;
+}
+static int file_sync_offset(u64 fd, u64 expected) {
+  unsigned error;
+  return call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary
+             ? 263
+             : 0;
+}
+static int ordinary_file_synchronization(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 264;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 264;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 264;
+  union file_sync_stat_guard initial;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(339, a, (u64)(initial.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || initial.words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      initial.words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(initial.bytes + 12, 2) & 0170000) != 0100000)
+    return 265;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 2; ++n) {
+      const u64 high = highs[h], number = high | (n ? 408 : 95);
+      if (file_sync_result(number, high | a, 0) ||
+          file_sync_result(number, high | d, 0) ||
+          file_sync_result(number, high | b, 0) ||
+          file_sync_result(number, high | 0xffffffffUL, 9) ||
+          file_sync_status(a, &initial) || file_sync_status(b, &initial) ||
+          file_sync_status(d, &initial) || file_sync_offset(d, 2) ||
+          file_sync_offset(b, 0))
+        return 266;
+    }
+  if (file_sync_result(6, a, 0) || file_sync_result(95, a, 9) ||
+      file_sync_result(95, d, 0) || file_sync_result(6, d, 0) ||
+      file_sync_result(408, d, 9) || file_sync_result(408, b, 0) ||
+      file_sync_status(b, &initial) || file_sync_result(6, b, 0))
+    return 267;
+  if (call(4, 1, (u64) "S", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 268;
+  return 0;
+}
+
+/* Original SDK-free ordinary data integrity completion controls. */
+union data_sync_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int data_sync_result(u64 number, u64 fd, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, 0, 0, 0, 0, 0, &error);
+  return value != expected || error != !!expected || secondary ? 260 : 0;
+}
+static int data_sync_status(u64 fd, const union data_sync_stat_guard *initial) {
+  union data_sync_stat_guard observed;
+  for (unsigned i = 0; i != 20; ++i)
+    observed.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(observed.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 261;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 262;
+  return 0;
+}
+static int data_sync_offset(u64 fd, u64 expected) {
+  unsigned error;
+  return call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary
+             ? 263
+             : 0;
+}
+static int ordinary_data_synchronization(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 264;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 264;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 264;
+  union data_sync_stat_guard initial;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(339, a, (u64)(initial.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || initial.words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      initial.words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(initial.bytes + 12, 2) & 0170000) != 0100000)
+    return 265;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 1; ++n) {
+      const u64 high = highs[h], number = high | 187;
+      if (data_sync_result(number, high | a, 0) ||
+          data_sync_result(number, high | d, 0) ||
+          data_sync_result(number, high | b, 0) ||
+          data_sync_result(number, high | 0xffffffffUL, 9) ||
+          data_sync_status(a, &initial) || data_sync_status(b, &initial) ||
+          data_sync_status(d, &initial) || data_sync_offset(d, 2) ||
+          data_sync_offset(b, 0))
+        return 266;
+    }
+  if (data_sync_result(6, a, 0) || data_sync_result(187, a, 9) ||
+      data_sync_result(187, d, 0) || data_sync_result(6, d, 0) ||
+      data_sync_result(187, d, 9) || data_sync_result(187, b, 0) ||
+      data_sync_status(b, &initial) || data_sync_result(6, b, 0))
+    return 267;
+  if (call(4, 1, (u64) "D", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 268;
+  return 0;
+}
+
+/* Original SDK-free ordinary full/barrier completion controls. */
+union full_barrier_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int full_barrier_capture(u64 fd, union full_barrier_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0100000)
+    return 311;
+  return 0;
+}
+static int full_barrier_status(u64 fd,
+                               const union full_barrier_stat_guard *initial) {
+  union full_barrier_stat_guard observed;
+  if (full_barrier_capture(fd, &observed))
+    return 312;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 312;
+  return 0;
+}
+static int full_barrier_result(u64 number, u64 fd, u64 command, u64 argument,
+                               u64 expected) {
+  unsigned error;
+  const u64 result =
+      call(number, fd, command, argument, -1UL, -1UL, -1UL, &error);
+  if (result != expected || error != !!expected)
+    return 313;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? argument : 0))
+#endif
+    return 313;
+  return 0;
+}
+static int full_barrier_flags(u64 fd, u64 expected) {
+  unsigned error;
+  return call(92, fd, 3, 0, 0, 0, 0, &error) != expected || error || secondary
+             ? 314
+             : 0;
+}
+static __attribute__((noinline)) int
+full_barrier_synchronization(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 315;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || a == b)
+    return 315;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 315;
+  union full_barrier_stat_guard initial;
+  if (full_barrier_capture(a, &initial))
+    return 316;
+  const u64 flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 316;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 arguments[] = {0, 1, -1UL};
+  const u64 commands[] = {51, 85};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 2; ++n)
+      for (unsigned c = 0; c != 2; ++c) {
+        const u64 high = highs[h], number = high | (n ? 406 : 92),
+                  command = high | commands[c], argument = arguments[h];
+        if (full_barrier_result(number, high | a, command, argument, 0) ||
+            full_barrier_result(number, high | d, command, argument, 0) ||
+            full_barrier_result(number, high | b, command, argument, 0) ||
+            full_barrier_result(number, high | 0xffffffffUL, command, argument,
+                                9) ||
+            full_barrier_status(a, &initial) ||
+            full_barrier_status(b, &initial) ||
+            full_barrier_status(d, &initial) || file_sync_offset(d, 2) ||
+            file_sync_offset(b, 0) || full_barrier_flags(a, flags) ||
+            full_barrier_flags(b, flags))
+          return 317;
+      }
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      full_barrier_result(92, a, 51, -1UL, 9) ||
+      full_barrier_result(406, d, 85, -1UL, 0) ||
+      call(6, d, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      full_barrier_result(92, d, 51, -1UL, 9) ||
+      full_barrier_result(406, b, 85, -1UL, 0) ||
+      full_barrier_status(b, &initial) || full_barrier_flags(b, flags) ||
+      call(6, b, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 318;
+  if (call(4, 1, (u64) "F", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 319;
+  return 0;
+}
+
+/* Explicit virtual creation metadata is not a native byte/time oracle. */
+static __attribute__((noinline)) int virtual_full_barrier_creation(void) {
+  unsigned error;
+  const u64 fd = call(5, (u64) "/fresh", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary)
+    return 320;
+  union full_barrier_stat_guard before, after;
+  if (full_barrier_capture(fd, &before) ||
+      full_barrier_result(92, fd, 51, -1UL, 0) ||
+      full_barrier_result(406, fd, 85, -1UL, 0) ||
+      full_barrier_capture(fd, &after))
+    return 321;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (before.words[i] != after.words[i])
+      return 321;
+  if (call(6, fd, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      full_barrier_result(92, fd, 51, -1UL, 9) ||
+      full_barrier_result(406, fd, 85, -1UL, 9))
+    return 322;
+  if (call(4, 1, (u64)before.bytes, 160, 0, 0, 0, &error) != 160 || error ||
+      secondary || call(4, 1, (u64)after.bytes, 160, 0, 0, 0, &error) != 160 ||
+      error || secondary)
+    return 323;
+  return 0;
+}
+
+/* Original SDK-free ordinary timestamp controls. The declared virtual storage
+ * contract is separate from these captures on the native test filesystem. */
+static int timestamp_result(u64 number, u64 object, u64 input, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, input, -1UL, -1UL, -1UL, -1UL, &error);
+  if (value != expected || error != !!expected)
+    return 330;
+#if defined(__aarch64__)
+  if (secondary)
+    return 330;
+#else
+  if (secondary != (expected ? -1UL : 0))
+    return 330;
+#endif
+  return 0;
+}
+static int timestamp_capture(u64 fd, union full_barrier_stat_guard *out) {
+  return full_barrier_capture(fd, out);
+}
+static int timestamp_same(const union full_barrier_stat_guard *a,
+                          const union full_barrier_stat_guard *b) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a->words[i] != b->words[i])
+      return 331;
+  return 0;
+}
+static int timestamp_change(const union full_barrier_stat_guard *before,
+                            const union full_barrier_stat_guard *after,
+                            u64 seconds, u64 nanos) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if ((i < 5 || i > 12) && before->words[i] != after->words[i])
+      return 332;
+  if (after->words[5] != seconds || after->words[6] != nanos ||
+      after->words[7] != seconds || after->words[8] != nanos)
+    return 332;
+  u64 bs = before->words[11], bn = before->words[12];
+  if ((long)seconds >= 0 &&
+      ((long)seconds < (long)bs || (seconds == bs && nanos < bn))) {
+    bs = seconds;
+    bn = nanos;
+  }
+  if (after->words[11] != bs || after->words[12] != bn)
+    return 332;
+  return 0;
+}
+static __attribute__((noinline)) int
+ordinary_timestamp_mutations(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 333;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || a == b)
+    return 333;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b || file_sync_offset(d, 0))
+    return 333;
+  if (call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 333;
+  const u64 flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 333;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 secs[] = {11, 0, 0, 0, 0x7fffffffffffffffUL, 0x8000000000000000UL};
+  const unsigned usecs[] = {12,          0xffffffffu, 0x80000000u,
+                            0x7fffffffu, 0x7fffffffu, 0x80000000u};
+  const u64 wanted_secs[] = {11,   -1UL,         (u64)-2148,
+                             2147, 9223372036UL, (u64)-9223372037L};
+  const u64 wanted_nanos[] = {12000,     999999000, 516352000,
+                              483647000, 854775807, 145224192};
+  for (unsigned n = 0; n != 6; ++n)
+    for (unsigned route = 0; route != 2; ++route) {
+      const u64 high = highs[n % 3];
+      u64 times[4] = {secs[n], 0xffffffff00000000UL | usecs[n], secs[n],
+                      0x13579bdf00000000UL | usecs[n]};
+      const u64 saved0 = times[0], saved1 = times[1], saved2 = times[2],
+                saved3 = times[3];
+      union full_barrier_stat_guard before, after, other;
+      if (timestamp_capture(a, &before) ||
+          timestamp_result(high | (route ? 139 : 138),
+                           route ? high | d : (u64)path, (u64)times, 0) ||
+          times[0] != saved0 || times[1] != saved1 || times[2] != saved2 ||
+          times[3] != saved3 || timestamp_capture(a, &after) ||
+          timestamp_change(&before, &after, wanted_secs[n], wanted_nanos[n]) ||
+          timestamp_capture(b, &other) || timestamp_same(&after, &other) ||
+          timestamp_capture(d, &other) || timestamp_same(&after, &other) ||
+          file_sync_offset(d, 2) || file_sync_offset(b, 0) ||
+          full_barrier_flags(a, flags) || full_barrier_flags(b, flags))
+        return 334;
+    }
+  u64 times[4] = {11, 12, 11, 12};
+  union full_barrier_stat_guard before, after;
+  if (timestamp_capture(b, &before) || timestamp_result(138, (u64) "", 1, 2) ||
+      timestamp_result(139, -1UL, 1, 14) ||
+      timestamp_result(139, -1UL, (u64)times, 9) ||
+      timestamp_capture(b, &after) || timestamp_same(&before, &after))
+    return 335;
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      timestamp_result(139, a, (u64)times, 9) ||
+      call(6, d, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, b, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "T", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 336;
+  return 0;
+}
+/* Virtual fixed ctime/current sample and created-record bytes are not native
+ * clock or creation oracles. Both complete records and guards are emitted. */
+static __attribute__((noinline)) int virtual_timestamp_creation(void) {
+  unsigned error;
+  const u64 fd = call(5, (u64) "/fresh", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary)
+    return 337;
+  union full_barrier_stat_guard before, after;
+  u64 times[4] = {11, 0xffffffff0000000cUL, 13, 0x13579bdf0000000eUL};
+  if (timestamp_capture(fd, &before) ||
+      timestamp_result(139, fd, (u64)times, 0) ||
+      timestamp_capture(fd, &after) || timestamp_result(139, fd, 0, 0) ||
+      timestamp_capture(fd, &after) || call(6, fd, 0, 0, 0, 0, 0, &error) ||
+      error || secondary || timestamp_result(139, fd, (u64)times, 9) ||
+      call(4, 1, (u64)before.bytes, 160, 0, 0, 0, &error) != 160 || error ||
+      secondary || call(4, 1, (u64)after.bytes, 160, 0, 0, 0, &error) != 160 ||
+      error || secondary)
+    return 338;
+  return 0;
+}
+
+/* Original SDK-free completion on explicitly declared created regular objects.
+ */
+union created_sync_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int created_sync_result(u64 number, u64 fd, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, 0, 0, 0, 0, 0, &error);
+  return value != expected || error != !!expected || secondary ? 270 : 0;
+}
+static int created_sync_capture(u64 fd, union created_sync_stat_guard *out) {
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0100000)
+    return 271;
+  return 0;
+}
+static int created_sync_status(u64 fd,
+                               const union created_sync_stat_guard *initial) {
+  union created_sync_stat_guard observed;
+  if (created_sync_capture(fd, &observed))
+    return 272;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 272;
+  return 0;
+}
+static int created_sync_offset(u64 fd, u64 expected) {
+  unsigned error;
+  return call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary
+             ? 273
+             : 0;
+}
+static int created_regular_synchronization(const char *path) {
+  char name[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4087)
+      return 274;
+    name[size] = path[size];
+    ++size;
+  }
+  const char suffix[] = ".created";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    name[size + i] = suffix[i];
+  unsigned error;
+  const u64 a = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, a, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary)
+    return 275;
+  const u64 b = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 275;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b)
+    return 275;
+  const u64 f = call(92, a, 0, 10, 0, 0, 0, &error);
+  if (error || secondary || f != 10 ||
+      call(90, a, 20, 0, 0, 0, 0, &error) != 20 || error || secondary ||
+      call(199, b, 3, 0, 0, 0, 0, &error) != 3 || error || secondary)
+    return 275;
+  const u64 initial_flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary || (initial_flags & 3) != 2)
+    return 275;
+  union created_sync_stat_guard initial;
+  if (created_sync_capture(a, &initial))
+    return 276;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 numbers[] = {95, 408, 187};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 3; ++n) {
+      const u64 high = highs[h], number = high | numbers[n];
+      if (created_sync_result(number, high | a, 0) ||
+          created_sync_result(number, high | d, 0) ||
+          created_sync_result(number, high | f, 0) ||
+          created_sync_result(number, high | 20, 0) ||
+          created_sync_result(number, high | b, 0) ||
+          created_sync_result(number, high | 0xffffffffUL, 9) ||
+          created_sync_status(a, &initial) ||
+          created_sync_status(b, &initial) ||
+          created_sync_status(d, &initial) || created_sync_offset(a, 10) ||
+          created_sync_offset(b, 3) ||
+          call(92, a, 3, 0, 0, 0, 0, &error) != initial_flags || error ||
+          secondary)
+        return 277;
+    }
+  if (call(201, a, 6, 0, 0, 0, 0, &error) || error || secondary ||
+      created_sync_capture(a, &initial))
+    return 278;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], b, 0))
+      return 278;
+  if (created_sync_status(a, &initial) || created_sync_status(b, &initial) ||
+      created_sync_status(d, &initial) || created_sync_result(6, a, 0))
+    return 278;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], a, 9))
+      return 279;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], d, 0))
+      return 279;
+  if (created_sync_result(6, d, 0))
+    return 279;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], d, 9))
+      return 279;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], f, 0))
+      return 279;
+  if (created_sync_status(b, &initial) || call(199, b, 0, 0, 0, 0, 0, &error) ||
+      error || secondary)
+    return 280;
+  char bytes[6];
+  if (call(3, b, (u64)bytes, 6, 0, 0, 0, &error) != 6 || error || secondary)
+    return 280;
+  for (unsigned i = 0; i != 6; ++i)
+    if (bytes[i] != "012345"[i])
+      return 280;
+  if (created_sync_result(6, f, 0) || created_sync_result(6, 20, 0) ||
+      created_sync_result(6, b, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "C", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 281;
+  return 0;
+}
+
+/* Original SDK-free created-object locks and persistent description status. */
+static int created_lock_flags(u64 fd, u64 expected) {
+  unsigned error;
+  return call(92, fd, 3, 0, 0, 0, 0, &error) != expected || error || secondary
+             ? 281
+             : 0;
+}
+static int created_regular_advisory_locks(const char *path) {
+  char name[4096], alias[4096], moved[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4080)
+      return 282;
+    name[size] = alias[size] = moved[size] = path[size];
+    ++size;
+  }
+  const char a_suffix[] = ".locked", b_suffix[] = ".alias",
+             c_suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(a_suffix); ++i)
+    name[size + i] = a_suffix[i];
+  for (unsigned i = 0; i != sizeof(b_suffix); ++i)
+    alias[size + i] = b_suffix[i];
+  for (unsigned i = 0; i != sizeof(c_suffix); ++i)
+    moved[size + i] = c_suffix[i];
+  unsigned error;
+  const u64 a = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, a, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary)
+    return 283;
+  const u64 b = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 283;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(92, a, 0, 10, 0, 0, 0, &error) != 10 ||
+      error || secondary || call(90, a, 20, 0, 0, 0, 0, &error) != 20 ||
+      error || secondary || call(199, b, 3, 0, 0, 0, 0, &error) != 3 || error ||
+      secondary || call(92, a, 4, 0x14002, 0, 0, 0, &error) || error ||
+      secondary || created_lock_flags(a, 0x10002))
+    return 283;
+  union created_sync_stat_guard initial;
+  if (created_sync_capture(a, &initial))
+    return 284;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h) {
+    const u64 high = highs[h], number = high | 131;
+    if (flock_result(number, high | a, high | 6, 0) ||
+        created_lock_flags(a, 0x14002) || created_lock_flags(d, 0x14002) ||
+        created_lock_flags(b, h ? 0x4000 : 0) ||
+        flock_result(number, high | b, high | 5, 35) ||
+        created_lock_flags(b, h ? 0x4000 : 0) ||
+        flock_result(number, high | d, high | 8, 0) ||
+        call(92, a, 4, 2, 0, 0, 0, &error) || error || secondary ||
+        created_lock_flags(a, 0x14002) ||
+        flock_result(number, high | a, high | 1, 0) ||
+        flock_result(number, high | b, high | 1, 0) ||
+        created_lock_flags(b, 0x4000) ||
+        flock_result(number, high | a, high | 6, 35) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 35) ||
+        flock_result(number, high | 10, high | 6, 0) ||
+        flock_result(number, high | 20, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 0) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_result(number, high | a, high | 0, 9) ||
+        flock_result(number, high | 0xffffffffUL, high | 6, 9) ||
+        created_sync_status(a, &initial) || created_sync_status(b, &initial) ||
+        created_sync_status(d, &initial) || created_sync_offset(a, 10) ||
+        created_sync_offset(b, 3) || created_lock_flags(a, 0x14002) ||
+        created_lock_flags(b, 0x4000))
+      return 285;
+  }
+  if (call(9, (u64)name, (u64)alias, 0, 0, 0, 0, &error) || error ||
+      secondary || flock_result(131, a, 6, 0) || flock_result(131, b, 6, 35))
+    return 286;
+  const u64 other = call(5, (u64)alias, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || flock_result(131, other, 6, 35) ||
+      call(128, (u64)alias, (u64)moved, 0, 0, 0, 0, &error) || error ||
+      secondary || flock_result(131, b, 6, 35) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      flock_result(131, b, 6, 35) ||
+      call(10, (u64)moved, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      flock_result(131, b, 6, 35) || created_sync_capture(b, &initial))
+    return 286;
+  const u64 fresh = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, fresh, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary || flock_result(131, fresh, 6, 0) ||
+      created_lock_flags(fresh, 0x14002) || flock_result(131, b, 6, 35) ||
+      flock_result(131, fresh, 8, 0) || flock_result(6, fresh, 0, 0) ||
+      flock_result(6, a, 0, 0) || flock_result(131, a, 6, 9) ||
+      flock_result(131, b, 6, 35) || flock_result(6, d, 0, 0) ||
+      flock_result(131, b, 6, 35) || flock_result(6, 10, 0, 0) ||
+      flock_result(131, b, 6, 35) || flock_result(6, 20, 0, 0) ||
+      flock_result(131, b, 6, 0) || created_lock_flags(b, 0x4000) ||
+      flock_result(131, b, 8, 0) || created_sync_status(b, &initial) ||
+      call(199, b, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 287;
+  char bytes[10];
+  if (call(3, b, (u64)bytes, 10, 0, 0, 0, &error) != 10 || error || secondary)
+    return 288;
+  for (unsigned i = 0; i != 10; ++i)
+    if (bytes[i] != '0' + i)
+      return 288;
+  if (flock_result(6, other, 0, 0) || flock_result(6, b, 0, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "L", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 289;
+  return 0;
+}
+
+/* Independently authored SDK-free creation/attribute/object controls. */
+static __attribute__((noinline)) int
+created_regular_attributes(const char *path) {
+  char name[4096], alias[4096], moved[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4079)
+      return 290;
+    name[size] = alias[size] = moved[size] = path[size];
+    ++size;
+  }
+  const char a_suffix[] = ".attrs", b_suffix[] = ".attrs-alias",
+             c_suffix[] = ".attrs-moved";
+  for (unsigned i = 0; i != sizeof(a_suffix); ++i)
+    name[size + i] = a_suffix[i];
+  for (unsigned i = 0; i != sizeof(b_suffix); ++i)
+    alias[size + i] = b_suffix[i];
+  for (unsigned i = 0; i != sizeof(c_suffix); ++i)
+    moved[size + i] = c_suffix[i];
+  unsigned error;
+  const u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || !uid || uid > 0xfffffffeUL)
+    return 291;
+  const u64 gid = call(43, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || gid > 0xfffffffeUL)
+    return 291;
+  const u64 a = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, a, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary)
+    return 292;
+  const u64 b = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 292;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || a == b || a == d || b == d ||
+      call(92, a, 0, 10, 0, 0, 0, &error) != 10 || error || secondary ||
+      call(90, a, 20, 0, 0, 0, 0, &error) != 20 || error || secondary ||
+      call(199, b, 3, 0, 0, 0, 0, &error) != 3 || error || secondary ||
+      created_lock_flags(a, 0x10002))
+    return 292;
+  union mode_stat_guard initial, ma, mb, md;
+  if (mode_status(339, a, &initial, 0600, 0) ||
+      mode_result(124, b, 0640, 0, 0, 0) ||
+      mode_status(339, a, &ma, 0640, &initial) ||
+      mode_status(339, b, &mb, 0640, &initial) ||
+      mode_status(339, d, &md, 0640, &initial))
+    return 293;
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 modes[] = {0640, 0, 0604};
+  const u64 mode_numbers[] = {15, 124, 467};
+  for (unsigned route = 0; route != 3; ++route)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 mode = high[h] | 0x7fff0000UL | modes[h];
+      if (mode_result(high[h] | mode_numbers[route],
+                      route == 0 ? (u64)name : high[h] | b,
+                      route == 2 ? (u64)name : mode, route == 2 ? mode : 0, 0,
+                      0) ||
+          mode_status(339, a, &ma, modes[h], &initial) ||
+          mode_status(339, b, &mb, modes[h], &initial) ||
+          mode_status(339, d, &md, modes[h], &initial))
+        return 294;
+      for (unsigned i = 0; i != 20; ++i)
+        if (ma.words[i] != mb.words[i] || ma.words[i] != md.words[i])
+          return 294;
+    }
+  union ownership_stat_guard owned, oa, ob, od;
+  for (unsigned i = 0; i != 20; ++i)
+    owned.words[i] = ma.words[i];
+  const u64 owner_numbers[] = {16, 123, 468};
+  for (unsigned route = 0; route != 3; ++route)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 number = high[h] | owner_numbers[route];
+      const u64 object = route == 0 ? (u64)name : high[h] | b;
+      const u64 first = route == 2 ? (u64)name : high[h] | 0xffffffffUL;
+      if (ownership_result(number, object, first, high[h] | 0xffffffffUL,
+                           route == 2 ? high[h] | 0xffffffffUL : 0, 0, 0) ||
+          ownership_status(339, a, &oa, uid, gid, &owned) ||
+          ownership_status(339, b, &ob, uid, gid, &owned) ||
+          ownership_equal(&oa, &owned) || ownership_equal(&ob, &owned))
+        return 295;
+      for (unsigned request = 0; request != 3; ++request) {
+        const u64 requested_uid = request == 1 ? 0xffffffffUL : uid;
+        const u64 requested_gid = request == 0 ? 0xffffffffUL : gid;
+        if (ownership_result(number, object,
+                             route == 2 ? (u64)name : high[h] | requested_uid,
+                             route == 2 ? high[h] | requested_uid
+                                        : high[h] | requested_gid,
+                             route == 2 ? high[h] | requested_gid : 0, 0, 0) ||
+            ownership_status(339, a, &oa, uid, gid, &owned) ||
+            ownership_status(339, b, &ob, uid, gid, &owned) ||
+            ownership_status(339, d, &od, uid, gid, &owned) ||
+            ownership_equal(&oa, &ob) || ownership_equal(&oa, &od))
+          return 296;
+        for (unsigned i = 0; i != 20; ++i)
+          owned.words[i] = oa.words[i];
+      }
+    }
+  if (mode_result(15, -1UL, 07000, 0, 0, 14) ||
+      mode_result(124, -1UL, 07000, 0, 0, 9) ||
+      mode_result(467, -1UL, -1UL, 07000, 8, 22) ||
+      mode_result(467, -1UL, (u64) "data", 0600, 0, 9) ||
+      ownership_result(16, -1UL, uid, gid, 0, 0, 14) ||
+      ownership_result(123, -1UL, uid, gid, 0, 0, 9) ||
+      ownership_result(468, -1UL, -1UL, uid, gid, 0x800, 22) ||
+      ownership_result(468, -1UL, (u64) "data", uid, gid, 0, 9) ||
+      ownership_status(339, 20, &oa, uid, gid, &owned) ||
+      ownership_equal(&oa, &owned) || created_lock_flags(a, 0x10002) ||
+      created_lock_flags(b, 0) || created_sync_offset(a, 10) ||
+      created_sync_offset(d, 10) || created_sync_offset(b, 3))
+    return 297;
+  if (call(9, (u64)name, (u64)alias, 0, 0, 0, 0, &error) || error || secondary)
+    return 298;
+  const u64 other = call(5, (u64)alias, 0, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(128, (u64)alias, (u64)moved, 0, 0, 0, 0, &error) || error ||
+      secondary || mode_result(124, other, 0600, 0, 0, 0) ||
+      ownership_status(339, a, &owned, uid, gid, 0) ||
+      ownership_result(123, other, 0xffffffffUL, 0xffffffffUL, 0, 0, 0) ||
+      ownership_status(339, other, &oa, uid, gid, &owned) ||
+      ownership_equal(&oa, &owned) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(10, (u64)moved, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      ownership_status(339, b, &owned, uid, gid, 0) ||
+      little_integer(owned.bytes + 14, 2))
+    return 298;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = owned.words[i];
+  const u64 fresh = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary || mode_result(124, fresh, 0640, 0, 0, 0) ||
+      ownership_result(123, fresh, uid, gid, 0, 0, 0) ||
+      ownership_status(339, fresh, &oa, uid, gid, 0) ||
+      little_integer(oa.bytes + 16, 8) == little_integer(owned.bytes + 16, 8) ||
+      mode_result(6, fresh, 0, 0, 0, 0) ||
+      mode_result(124, fresh, 0600, 0, 0, 9) ||
+      ownership_result(123, fresh, uid, gid, 0, 0, 9) ||
+      mode_result(6, a, 0, 0, 0, 0) || mode_result(124, a, 0600, 0, 0, 9) ||
+      ownership_result(123, a, uid, gid, 0, 0, 9) ||
+      mode_result(124, d, 0604, 0, 0, 0) ||
+      ownership_result(123, d, uid, gid, 0, 0, 0) ||
+      mode_result(6, d, 0, 0, 0, 0) || mode_result(6, 10, 0, 0, 0, 0) ||
+      mode_result(6, 20, 0, 0, 0, 0) || mode_result(124, b, 0604, 0, 0, 0) ||
+      ownership_result(123, b, uid, gid, 0, 0, 0) ||
+      mode_status(339, b, &ma, 0604, &initial) ||
+      ownership_status(339, b, &oa, uid, gid, 0) ||
+      call(199, b, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 299;
+  char bytes[10];
+  if (call(3, b, (u64)bytes, 10, 0, 0, 0, &error) != 10 || error || secondary)
+    return 300;
+  for (unsigned i = 0; i != 10; ++i)
+    if (bytes[i] != '0' + i)
+      return 300;
+  if (mode_result(6, other, 0, 0, 0, 0) || mode_result(6, b, 0, 0, 0, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "A", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 301;
+  return 0;
+}
+
+/* Independent configured record output; never used as a native byte oracle. */
+static __attribute__((noinline)) int
+virtual_created_regular_attributes(const char *path) {
+  char name[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4078)
+      return 302;
+    name[size] = path[size];
+    ++size;
+  }
+  const char suffix[] = ".attribute-record";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    name[size + i] = suffix[i];
+  unsigned error;
+  const u64 fd = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  union mode_stat_guard before, after;
+  if (error || secondary || mode_status(339, fd, &before, 0600, 0) ||
+      mode_result(124, fd, 0640, 0, 0, 0) ||
+      ownership_result(123, fd, 501, 31, 0, 0, 0) ||
+      mode_status(339, fd, &after, 0640, 0) ||
+      call(4, 1, (u64)before.bytes, 160, 0, 0, 0, &error) != 160 || error ||
+      secondary || call(4, 1, (u64)after.bytes, 160, 0, 0, 0, &error) != 160 ||
+      error || secondary || mode_result(6, fd, 0, 0, 0, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 303;
+  return 0;
+}
+
+/* Original bounded LP64 filesystem controls. Dynamic native capacity counts
+ * are observations, never constants derived from virtual bytes. */
+union file_system_guard {
+  u64 words[275];
+  unsigned char bytes[2200];
+};
+static int file_system_result(u64 number, u64 object, u64 output, u64 wanted) {
+  unsigned error;
+  const u64 value =
+      call(number, object, output, -1UL, -1UL, -1UL, -1UL, &error);
+  if (value != wanted || error != !!wanted)
+    return 350;
+#if defined(__aarch64__)
+  if (secondary)
+    return 350;
+#else
+  if (secondary != (wanted ? -1UL : 0))
+    return 350;
+#endif
+  return 0;
+}
+static int file_system_capture(u64 number, u64 object,
+                               union file_system_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 275; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (file_system_result(number, object, (u64)(out->bytes + 16), 0))
+    return 351;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 16; ++i)
+    if (out->bytes[i] != 0xa5 || out->bytes[2184 + i] != 0xa5)
+      return 351;
+#pragma clang loop unroll(full)
+  for (unsigned i = 16 + 2140; i != 2184; ++i)
+    if (out->bytes[i])
+      return 351;
+  const unsigned starts[] = {72, 88, 1112}, lengths[] = {16, 1024, 1024};
+  for (unsigned n = 0; n != 3; ++n) {
+    unsigned i = 0;
+    while (i < lengths[n] && out->bytes[16 + starts[n] + i])
+      ++i;
+    if (i == lengths[n])
+      return 351;
+  }
+  return 0;
+}
+static int file_system_same_stable(const union file_system_guard *a,
+                                   const union file_system_guard *b) {
+/* words3..7 are five dynamic uint64 counters, deliberately not compared. */
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 275; ++i)
+    if ((i < 3 || i > 7) && a->words[i] != b->words[i])
+      return 352;
+  return 0;
+}
+static int directory_file_system_status(u64 fd,
+                                        union full_barrier_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0040000)
+    return 369;
+  return 0;
+}
+
+/* Original SDK-free directory creation controls. The common workload compares
+ * stable native fields; virtual-only writes expose every guarded payload byte.
+ */
+static __attribute__((noinline)) int
+created_directory_filesystem(const char *name, unsigned literal) {
+  unsigned error, size = 0;
+  char moved[4096];
+  while (name[size]) {
+    if (size >= 4088)
+      return 370;
+    moved[size] = name[size];
+    ++size;
+  }
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[size + i] = suffix[i];
+  if (mode_result(136, (u64)name, 0700, 0, 0, 0))
+    return 370;
+  const u64 dir = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 371;
+  const u64 dup = call(41, dir, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 371;
+  union file_system_guard first, current;
+  union full_barrier_stat_guard before, after;
+  if (file_system_capture(346, dir, &first) ||
+      file_system_capture(345, (u64)name, &current) ||
+      file_system_same_stable(&first, &current) ||
+      directory_file_system_status(dir, &before))
+    return 372;
+  const u64 highs[] = {0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 2; ++i)
+    if (file_system_capture(highs[i] | 346, highs[i] | dup, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(highs[i] | 345, (u64)name, &current) ||
+        file_system_same_stable(&first, &current))
+      return 373;
+  if (directory_file_system_status(dir, &after) ||
+      timestamp_same(&before, &after) || full_barrier_flags(dir, 0))
+    return 374;
+  if (literal && (call(4, 1, (u64)first.bytes, 2200, 0, 0, 0, &error) != 2200 ||
+                  error || secondary))
+    return 375;
+  if (file_system_result(346, -1UL, 1, 9) ||
+      file_system_result(346, dir, 1, 14) ||
+      file_system_result(345, (u64) "", 1, 2) ||
+      mode_result(128, (u64)name, (u64)moved, 0, 0, 0) ||
+      file_system_result(345, (u64)name, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      file_system_capture(345, (u64)moved, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(137, (u64)moved, 0, 0, 0, 0) ||
+      file_system_result(345, (u64)moved, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(136, (u64)name, 0700, 0, 0, 0))
+    return 376;
+  const u64 replacement = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || file_system_capture(346, replacement, &current) ||
+      file_system_same_stable(&first, &current) ||
+      directory_file_system_status(replacement, &after) ||
+      before.words[2] == after.words[2])
+    return 377;
+  if (literal &&
+      (call(4, 1, (u64)current.bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+       secondary))
+    return 378;
+  if (file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(6, dir, 0, 0, 0, 0) || file_system_result(346, dir, 1, 9) ||
+      mode_result(6, dup, 0, 0, 0, 0) ||
+      mode_result(6, replacement, 0, 0, 0, 0) ||
+      mode_result(137, (u64)name, 0, 0, 0, 0) ||
+      call(4, 1, (u64) "D", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 379;
+  return 0;
+}
+
+/* Original SDK-free symbolic-vnode controls; path queries follow the target.
+ * Virtual-only output makes every guarded snapshot byte independently visible.
+ */
+static int symbolic_file_system_status(u64 fd,
+                                       union full_barrier_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0120000)
+    return 380;
+  return 0;
+}
+static int symbolic_file_system_emit(const union file_system_guard *out) {
+  unsigned error;
+  return call(4, 1, (u64)out->bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+                 secondary
+             ? 381
+             : 0;
+}
+static __attribute__((noinline)) int symbolic_filesystem(const char *name,
+                                                         unsigned kind) {
+  unsigned error, size = 0;
+  char moved[4096];
+  while (name[size]) {
+    if (size >= 4088)
+      return 382;
+    moved[size] = name[size];
+    ++size;
+  }
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[size + i] = suffix[i];
+  const unsigned literal = kind == 2;
+  if (kind == 1 && mode_result(57, (u64) "data", (u64)name, 0, 0, 0))
+    return 383;
+  const u64 link = call(5, (u64)name, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 384;
+  const u64 dup = call(41, link, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 384;
+  union file_system_guard first, target, current;
+  union full_barrier_stat_guard before, after;
+  if (file_system_capture(346, link, &first) ||
+      file_system_capture(345, (u64)name, &target) ||
+      (!literal && file_system_same_stable(&first, &target)) ||
+      symbolic_file_system_status(link, &before))
+    return 385;
+  const u64 highs[] = {0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 2; ++i)
+    if (file_system_capture(highs[i] | 346, highs[i] | dup, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(highs[i] | 345, (u64)name, &current) ||
+        file_system_same_stable(&target, &current))
+      return 386;
+  if (symbolic_file_system_status(link, &after) ||
+      timestamp_same(&before, &after))
+    return 387;
+  if (literal &&
+      (symbolic_file_system_emit(&first) || symbolic_file_system_emit(&target)))
+    return 388;
+  if (file_system_result(346, -1UL, 1, 9) ||
+      file_system_result(346, link, 1, 14) ||
+      file_system_result(345, (u64) "", 1, 2) ||
+      mode_result(128, (u64)name, (u64)moved, 0, 0, 0) ||
+      file_system_result(345, (u64)name, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      file_system_capture(345, (u64)moved, &current) ||
+      file_system_same_stable(&target, &current) ||
+      mode_result(10, (u64)moved, 0, 0, 0, 0) ||
+      file_system_result(345, (u64)moved, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(57, (u64) "missing", (u64)name, 0, 0, 0))
+    return 389;
+  const u64 replacement = call(5, (u64)name, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary || file_system_capture(346, replacement, &current) ||
+      (!literal && file_system_same_stable(&first, &current)) ||
+      symbolic_file_system_status(replacement, &after) ||
+      before.words[2] == after.words[2])
+    return 390;
+  if (literal && symbolic_file_system_emit(&current))
+    return 391;
+  if (file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      file_system_result(345, (u64)name, 1, 2) ||
+      mode_result(6, link, 0, 0, 0, 0) || file_system_result(346, link, 1, 9) ||
+      mode_result(6, dup, 0, 0, 0, 0) ||
+      mode_result(6, replacement, 0, 0, 0, 0) ||
+      mode_result(10, (u64)name, 0, 0, 0, 0) ||
+      call(4, 1, (u64) "Y", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 392;
+  return 0;
+}
+
+static __attribute__((noinline)) int filesystem_observations(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  const u64 b = call(5, (u64)path, 1, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  const u64 dir = call(5, (u64) "/", 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 353;
+  const u64 flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  union full_barrier_stat_guard before, after;
+  if (full_barrier_capture(a, &before))
+    return 353;
+  union file_system_guard first, current;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h) {
+    const u64 high = highs[h];
+    if (file_system_capture(high | 345, (u64)path, &current))
+      return 354;
+    if (!h) {
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 275; ++i)
+        first.words[i] = current.words[i];
+    } else if (file_system_same_stable(&first, &current))
+      return 354;
+    if (file_system_capture(high | 346, high | a, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(high | 346, high | b, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(high | 346, high | d, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(high | 346, high | dir, &current) ||
+        full_barrier_capture(a, &after) || timestamp_same(&before, &after) ||
+        file_sync_offset(d, 2) || file_sync_offset(b, 0) ||
+        full_barrier_flags(a, flags) || full_barrier_flags(b, 1))
+      return 354;
+  }
+  if (file_system_result(345, (u64) "", 1, 2) ||
+      file_system_result(346, -1UL, 1, 9) ||
+      file_system_result(346, a, 1, 14) || file_system_result(346, a, 0, 14) ||
+      file_system_result(345, (u64)path, 1, 14) ||
+      full_barrier_capture(b, &after) || timestamp_same(&before, &after))
+    return 355;
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      file_system_result(346, a, 1, 9) || call(6, d, 0, 0, 0, 0, 0, &error) ||
+      error || secondary || call(6, b, 0, 0, 0, 0, 0, &error) || error ||
+      secondary || call(6, dir, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "W", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 356;
+  return 0;
+}
+/* Independent explicit creation snapshots and full guarded literal output;
+ * this virtual-only mode makes no native counter/mount identity claim. */
+static __attribute__((noinline)) int virtual_filesystem_creation(void) {
+  unsigned error;
+  const u64 a = call(5, (u64) "/fresh", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary)
+    return 357;
+  union file_system_guard first, second;
+  if (file_system_capture(346, a, &first))
+    return 357;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || file_system_capture(346, d, &second))
+    return 357;
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      file_system_result(346, a, 1, 9) || call(6, d, 0, 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(4, 1, (u64)first.bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+      secondary ||
+      call(4, 1, (u64)second.bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+      secondary)
+    return 358;
+  return 0;
+}
+
+/* SDK-free common getfsstat64 ABI and virtual-only literal output. Real mount
+ * counters are never used as the oracle for declared virtual observations. */
+union mount_guard {
+  u64 words[817];
+  unsigned char bytes[6536];
+};
+static int mount_call(u64 number, u64 output, u64 size, u64 flags, u64 wanted,
+                      unsigned bad) {
+  unsigned error;
+  const u64 value = call(number, output, size, flags, -1UL, -1UL, -1UL, &error);
+  if (value != wanted || error != bad)
+    return 360;
+#if defined(__aarch64__)
+  if (secondary)
+    return 360;
+#else
+  if (secondary != (bad ? flags : 0))
+    return 360;
+#endif
+  return 0;
+}
+static int mount_capture(union mount_guard *out, u64 number, u64 size,
+                         u64 flags, u64 count, unsigned capacity) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 817; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  const unsigned wanted = count < capacity ? count : capacity;
+  if (mount_call(number, (u64)(out->bytes + 16), size, flags, wanted, 0))
+    return 361;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 16; ++i)
+    if (out->bytes[i] != 0xa5 || out->bytes[6520 + i] != 0xa5)
+      return 361;
+#pragma clang loop unroll(full)
+  for (unsigned n = 0; n != 3; ++n) {
+    if (n >= wanted) {
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 271; ++i)
+        if (out->words[2 + n * 271 + i] != 0xa5a5a5a5a5a5a5a5UL)
+          return 361;
+      continue;
+    }
+    const unsigned char *p = out->bytes + 16 + n * 2168;
+#pragma clang loop unroll(full)
+    for (unsigned i = 2140; i != 2168; ++i)
+      if (p[i])
+        return 361;
+    const unsigned starts[] = {72, 88, 1112}, lengths[] = {16, 1024, 1024};
+#pragma clang loop unroll(full)
+    for (unsigned f = 0; f != 3; ++f) {
+      unsigned i = 0;
+      while (i < lengths[f] && p[starts[f] + i])
+        ++i;
+      if (i == lengths[f])
+        return 361;
+    }
+  }
+  return 0;
+}
+static int mount_emit(const union mount_guard *out, int virtual_mode) {
+  unsigned error;
+  if (virtual_mode &&
+      (call(4, 1, (u64)out->bytes, 6536, 0, 0, 0, &error) != 6536 || error ||
+       secondary))
+    return 362;
+  return 0;
+}
+static __attribute__((noinline)) int mount_enumeration(int virtual_mode) {
+  unsigned error;
+  const u64 count = call(347, 0, 0, 2, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !count)
+    return 363;
+  if (mount_call(347, 0, -1UL, 0, count, 0) || mount_call(347, 1, 0, 0, 0, 0) ||
+      mount_call(347, 1, 2167, 4, 0, 0))
+    return 363;
+  union mount_guard out;
+  if (mount_capture(&out, 347, 4335, 2, count, 1) ||
+      mount_capture(&out, 347, 4336, 2, count, 2) ||
+      mount_capture(&out, 347, 6504, 2, count, 3) ||
+      mount_emit(&out, virtual_mode) ||
+      mount_call(347, 1, 0xffffffffUL, 2, 14, 1) ||
+      mount_capture(&out, 347, 6504, 1, count, 3) ||
+      mount_emit(&out, virtual_mode) ||
+      mount_capture(&out, 347, 6504, 2, count, 3) ||
+      mount_emit(&out, virtual_mode))
+    return 364;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 3; ++i)
+    if (mount_capture(&out, highs[i] | 347, highs[i] | 4336, highs[i] | 2,
+                      count, 2))
+      return 365;
+  if (mount_call(347, 1, 2168, 1, 14, 1) ||
+      mount_call(347, 0, 2168, 2, count, 0) ||
+      call(4, 1, (u64) "M", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 366;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -7687,6 +9752,122 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "mount-enumeration")) {
+    const int status = mount_enumeration(0);
+    return status ? status : 52;
+  }
+  if (equal(argv[1], "virtual-mount-enumeration")) {
+    const int status = mount_enumeration(1);
+    return status ? status : 53;
+  }
+  if (equal(argv[1], "created-directory-filesystem") ||
+      equal(argv[1], "virtual-created-directory-filesystem")) {
+    const int status =
+        argc < 3 ? 370
+                 : created_directory_filesystem(
+                       argv[2],
+                       equal(argv[1], "virtual-created-directory-filesystem"));
+    return status ? status : 56;
+  }
+  if (equal(argv[1], "symbolic-filesystem-observations") ||
+      equal(argv[1], "created-symbolic-filesystem") ||
+      equal(argv[1], "virtual-symbolic-filesystem")) {
+    const unsigned kind = equal(argv[1], "created-symbolic-filesystem")   ? 1
+                          : equal(argv[1], "virtual-symbolic-filesystem") ? 2
+                                                                          : 0;
+    const int status = argc < 3 ? 382 : symbolic_filesystem(argv[2], kind);
+    return status ? status : 57;
+  }
+  if (equal(argv[1], "filesystem-observations")) {
+    const int status = argc < 3 ? 349 : filesystem_observations(argv[2]);
+    return status ? status : 50;
+  }
+  if (equal(argv[1], "virtual-filesystem-creation")) {
+    const int status = virtual_filesystem_creation();
+    return status ? status : 51;
+  }
+  if (equal(argv[1], "ordinary-timestamp-mutations")) {
+    const int status = argc < 3 ? 329 : ordinary_timestamp_mutations(argv[2]);
+    return status ? status : 48;
+  }
+  if (equal(argv[1], "virtual-timestamp-creation")) {
+    const int status = virtual_timestamp_creation();
+    return status ? status : 49;
+  }
+  if (equal(argv[1], "ordinary-full-barrier-synchronization")) {
+    const int status = argc < 3 ? 310 : full_barrier_synchronization(argv[2]);
+    return status ? status : 46;
+  }
+  if (equal(argv[1], "virtual-full-barrier-creation")) {
+    const int status = virtual_full_barrier_creation();
+    return status ? status : 47;
+  }
+  if (equal(argv[1], "created-regular-attributes")) {
+    const int status = created_regular_attributes(argv[2]);
+    return status ? status : 44;
+  }
+  if (equal(argv[1], "virtual-created-regular-attributes")) {
+    const int status = virtual_created_regular_attributes(argv[2]);
+    return status ? status : 45;
+  }
+  if (equal(argv[1], "created-regular-advisory-locks")) {
+    const int status = argc < 3 ? 209 : created_regular_advisory_locks(argv[2]);
+    return status ? status : 43;
+  }
+  if (equal(argv[1], "created-regular-synchronization")) {
+    const int status =
+        argc < 3 ? 282 : created_regular_synchronization(argv[2]);
+    return status ? status : 42;
+  }
+  if (equal(argv[1], "ordinary-data-synchronization")) {
+    const int status = argc < 3 ? 269 : ordinary_data_synchronization(argv[2]);
+    return status ? status : 41;
+  }
+  if (equal(argv[1], "ordinary-file-synchronization")) {
+    const int status = argc < 3 ? 209 : ordinary_file_synchronization(argv[2]);
+    return status ? status : 40;
+  }
+  if (equal(argv[1], "ordinary-advisory-locks")) {
+    int result = ordinary_advisory_locks(argc > 2 ? argv[2] : "/data");
+    return result ? result : 39;
+  }
+  if (equal(argv[1], "ordinary-ownership-mutations")) {
+    int result = ordinary_ownership_mutations(argc > 2 ? argv[2] : "/data");
+    return result ? result : 38;
+  }
+  if (equal(argv[1], "ordinary-mode-mutations")) {
+    const int status = argc < 3 ? 209 : ordinary_mode_mutations(argv[2]);
+    return status ? status : 37;
+  }
+  if (equal(argv[1], "directory-timestamp-mutations") ||
+      equal(argv[1], "virtual-directory-timestamps") ||
+      equal(argv[1], "created-directory-timestamps")) {
+    const unsigned kind = equal(argv[1], "created-directory-timestamps")   ? 2
+                          : equal(argv[1], "virtual-directory-timestamps") ? 1
+                                                                           : 0;
+    const int status =
+        argc < 3 ? 209 : directory_timestamp_mutations(argv[2], kind);
+    return status ? status : 54;
+  }
+  if (equal(argv[1], "directory-ownership-mutations") ||
+      equal(argv[1], "virtual-directory-ownership") ||
+      equal(argv[1], "created-directory-ownership")) {
+    const unsigned kind = equal(argv[1], "created-directory-ownership")   ? 2
+                          : equal(argv[1], "virtual-directory-ownership") ? 1
+                                                                          : 0;
+    const int status =
+        argc < 3 ? 209 : directory_ownership_mutations(argv[2], kind);
+    return status ? status : 55;
+  }
+  if (equal(argv[1], "directory-mode-mutations") ||
+      equal(argv[1], "virtual-directory-mode") ||
+      equal(argv[1], "created-directory-mode")) {
+    const unsigned kind = equal(argv[1], "created-directory-mode")   ? 2
+                          : equal(argv[1], "virtual-directory-mode") ? 1
+                                                                     : 0;
+    const int status = argc < 3 ? 209 : directory_mode_mutations(argv[2], kind);
+    return status ? status : 53;
+  }
   if (equal(argv[1], "immediate-pselect")) {
     const int status = immediate_pselect(argc < 3 ? "/data" : argv[2]);
     return status ? status : 37;

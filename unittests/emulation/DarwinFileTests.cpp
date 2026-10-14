@@ -4077,6 +4077,9 @@ TEST_P(DarwinFileTest, OwnerQueriesCloseEveryOtherDispatchedFileRoute) {
     ownerQueries();
     path("/data");
     const ServiceKind Closed[] = {
+        ServiceKind::Chown,         ServiceKind::Fchown,
+        ServiceKind::FchownAt,      ServiceKind::Chmod,
+        ServiceKind::Fchmod,        ServiceKind::FchmodAt,
         ServiceKind::Pselect,       ServiceKind::Select,
         ServiceKind::Poll,          ServiceKind::Truncate,
         ServiceKind::Ftruncate,     ServiceKind::Symlink,
@@ -4098,8 +4101,12 @@ TEST_P(DarwinFileTest, OwnerQueriesCloseEveryOtherDispatchedFileRoute) {
         ServiceKind::ListXattr,     ServiceKind::FlistXattr,
         ServiceKind::PathConf,      ServiceKind::FpathConf,
         ServiceKind::Stat64,        ServiceKind::Fstat64,
-        ServiceKind::Lstat64};
-    static_assert(std::size(Closed) == 43);
+        ServiceKind::Lstat64,       ServiceKind::Flock,
+        ServiceKind::Fsync,         ServiceKind::Fdatasync,
+        ServiceKind::Utimes,        ServiceKind::Futimes,
+        ServiceKind::Statfs64,      ServiceKind::Fstatfs64,
+        ServiceKind::Getfsstat64};
+    static_assert(std::size(Closed) == 57);
     std::array<uint8_t, 64> Before, After;
     llvm::cantFail(Space->read(Base, Before));
     for (auto Service : Closed) {
@@ -15785,7 +15792,18 @@ TEST_P(DarwinFileTest,
   EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
   error(ServiceKind::Fcntl, {A, 4, 1}, 25);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), 0x10002u);
-  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 0x4000}));
+  // Recognized history is never user-settable, including symbolic controls.
+  // XNU still reports ENOTTY after the existing settable-mask treatment.
+  for (uint64_t Request : {uint64_t(0x4000), uint64_t(0x14002), uint64_t(2)}) {
+    error(ServiceKind::Fcntl, {A, 4, Request}, 25);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), 0x10002u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {ReadOnly, 3}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 7u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+    EXPECT_EQ(status(A), Before);
+  }
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 0x8000}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::FileControl);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
   EXPECT_EQ(status(A), Before);
