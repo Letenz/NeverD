@@ -11,6 +11,16 @@ import subprocess
 
 
 def baseline_source(text, newline):
+    if "// MSVC 19.44 crashes when these helper types are function-local." in text:
+        first = text.index("// MSVC 19.44 crashes when these helper types are function-local.")
+        last = text.index("/// The stores of", first)
+        types = text[text.index("struct Slot {", first):last].rstrip()
+        types = newline.join("  " + line for line in types.splitlines()) + newline
+        comment = ("  // An address as a base register family, how often that family had been\n"
+                   "  // written when the address was formed, and a displacement.\n").replace("\n", newline)
+        text = text[:first] + text[last:]
+        at = text.index("  std::array<unsigned, kX64GPRBytes / 8> Versions")
+        text = text[:at] + comment + types + text[at:]
     mapped = "std::map<size_t, llvm::ArrayRef<uint64_t>>"
     span_mapped = "std::map<size_t, std::span<const uint64_t>>"
     if text.count(mapped) == 0 and text.count(span_mapped) == 3:

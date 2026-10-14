@@ -70,6 +70,21 @@ void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
     Into[I] = std::max(Into[I], From[I]);
 }
 
+// MSVC 19.44 crashes when these helper types are function-local. Keep their
+// definitions private here without changing the save-area recognition.
+// An address as a base register family, how often that family had been
+// written when the address was formed, and a displacement.
+struct Slot {
+  unsigned Family = 0;
+  unsigned Version = 0;
+  int64_t Displacement = 0;
+};
+struct Spill {
+  size_t Block = 0;
+  size_t Op = 0;
+  Slot Address;
+};
+
 /// The stores of \p F, a System V function, that spill the incoming argument
 /// registers to the register save area of a variadic prologue, as (block,
 /// op) indices.  The prologue reads AL, the count of vector registers the
@@ -122,18 +137,6 @@ findRegisterSaveAreaSpills(const BinaryImage &Img, CallRegisterBodyView F,
           break;
         }
       }
-  // An address as a base register family, how often that family had been
-  // written when the address was formed, and a displacement.
-  struct Slot {
-    unsigned Family = 0;
-    unsigned Version = 0;
-    int64_t Displacement = 0;
-  };
-  struct Spill {
-    size_t Block = 0;
-    size_t Op = 0;
-    Slot Address;
-  };
   std::array<unsigned, kX64GPRBytes / 8> Versions{};
   std::map<uint64_t, Slot> TempSlots;
   GPRFamilyMask Written = 0;
