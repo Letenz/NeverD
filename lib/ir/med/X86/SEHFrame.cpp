@@ -108,15 +108,18 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
                          llvm::StringRef LocalUnwindDigest,
                          bool CxxContinuation,
                          std::vector<int> *ProtectedSources,
-                         std::map<int, std::set<va_t>> *ProtectedCalls) {
+                         std::map<int, std::set<va_t>> *ProtectedCalls,
+                         bool SourceProjection, bool *IndependentEntries) {
   auto Fail = [](const std::string &Why) -> void {
     throw LowToMedConversionError(
         std::string("Windows SEH establisher frame: ") + Why);
   };
   size_t WorkRemaining = limits::kMaxSEHEstablisherFrameWork;
-  auto Proof = proveLowSEHEstablisherFrame(Low, Handler, TRI, OrdinaryEntry,
-                                           WorkRemaining, LocalUnwindDigest,
-                                           CxxContinuation);
+  auto Proof = proveLowSEHEstablisherFrame(
+      Low, Handler, TRI, OrdinaryEntry, WorkRemaining, LocalUnwindDigest,
+      CxxContinuation,
+      SourceProjection ? LowSEHFrameUse::SourceProjection
+                       : LowSEHFrameUse::InvocationIdentity);
   if (!Proof)
     Fail(llvm::toString(Proof.takeError()));
   auto Charge = [&](size_t Amount = 1) {
@@ -170,11 +173,13 @@ proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med, va_t Handler,
     Fail("converted prologue disagrees with decoded SP effects");
   if (DynamicSP && Proof->HasRelevantLocalUnwind)
     Fail("local-unwind call does not carry the protected frame");
-  if (DynamicSP && OrdinaryEntry)
+  if (DynamicSP && OrdinaryEntry && !Proof->HasIndependentEntries)
     Fail("SP moves before a handler that ordinary flow also enters");
   if (ProtectedSources || ProtectedCalls)
     projectProtectedSources(Low, Med, *Proof, WorkRemaining, ProtectedSources,
                             ProtectedCalls);
+  if (IndependentEntries)
+    *IndependentEntries = Proof->HasIndependentEntries;
   if (DynamicSP)
     return std::nullopt;
   return Proof->FrameBytes;

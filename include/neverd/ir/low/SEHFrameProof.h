@@ -22,6 +22,11 @@ namespace neverd {
 struct TargetRegInfo;
 class LowSEHRuntimeMemory;
 
+/// Source analysis can retain a runtime SP without proving that it names the
+/// original invocation. Such a result cannot authorize memory forwarding or
+/// native reconstruction.
+enum class LowSEHFrameUse { InvocationIdentity, SourceProjection };
+
 /// Fresh structural proof for one Windows handler/continuation and the exact
 /// LowFunc supplied to the query. Index vectors refer to that snapshot only.
 /// Decoded unwind actions and all reaching protected prefixes own the frame;
@@ -29,6 +34,7 @@ class LowSEHRuntimeMemory;
 struct LowSEHEstablisherFrame {
   uint64_t FrameBytes = 0;
   bool DynamicSP = false;
+  bool HasIndependentEntries = false;
   bool HasRelevantLocalUnwind = false;
   std::vector<bool> RelevantBlocks;
   std::vector<bool> ProtectedBlocks;
@@ -40,11 +46,14 @@ struct LowSEHEstablisherFrame {
 
 /// Shared decoded-frame authority. MedIR must additionally check converted
 /// ABI effects against DecodedAdjustments. A dynamic frame has no fixed-SP
-/// seed. Missing provenance, independent entries and exhausted work refuse.
+/// seed. Invocation identity rejects independent entries. Source projection
+/// instead retains unknown entry values and requires its caller to prohibit
+/// native lowering. Missing provenance and exhausted work always refuse.
 llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
     const LowFunc &Function, va_t Handler, const TargetRegInfo &TRI,
     bool OrdinaryEntry, size_t &WorkRemaining,
-    llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false);
+    llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false,
+    LowSEHFrameUse Use = LowSEHFrameUse::InvocationIdentity);
 
 struct LowSEHFrameProof {
   /// Exact entry-relative SP at direct calls whose first Win64 argument is

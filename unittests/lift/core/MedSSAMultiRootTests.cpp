@@ -8,15 +8,19 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
+
+#include "llvm/IR/Module.h"
 
 #include <regex>
 #include <set>
@@ -363,6 +367,111 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+TEST(MedSEHEstablisherFrame, SourceIndependentEntriesKeepUnknownStackValues) {
+  for (bool SharedHandler : {false, true}) {
+    SCOPED_TRACE(SharedHandler);
+    auto Img = makeFixedSEHFrameImage();
+    if (SharedHandler)
+      // The ordinary branch also reaches the exception handler.
+      Img.Segments.front().Data[0x12] = 0x0d;
+    auto Low = decodeFixedSEHFrame(Img);
+    Low.ModuleAnalysisRoots.insert(Img.Entry + 0x10);
+    Low.OrdinaryModuleAnalysisRoots.insert(Img.Entry + 0x10);
+    EXPECT_THROW(
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+        LowToMedConversionError);
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Strict = proveLowSEHEstablisherFrame(Low, Img.Entry + 0x20,
+                                              getTargetRegInfo(Arch::X64),
+                                              SharedHandler, Work);
+    EXPECT_FALSE(Strict);
+    llvm::consumeError(Strict.takeError());
+
+    LowToMedConverter Converter;
+    Converter.setSEHSourceProjectionEnabled(true);
+    auto Med = Converter.convert(Low, Arch::X64, BinaryFormat::COFF);
+    EXPECT_TRUE(Low.SEHLocalUnwindContinuations.empty());
+    EXPECT_TRUE(verifyMedFunc(Med, "seh-source-independent-entry"));
+    EXPECT_TRUE(Med.HasUnresolvedSEHFrame);
+    bool SawHandler = false;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::LOAD && Op.Addr == Img.Entry + 0x20) {
+          SawHandler = true;
+          // The entry store uses SP-100; the runtime entry cannot reuse it.
+          EXPECT_FALSE(entrySPOffset(Med, Op.Inputs[0]));
+        }
+    EXPECT_TRUE(SawHandler);
+    auto High = MedToHighConverter().convert(Med, Arch::X64);
+    EXPECT_TRUE(High.HasUnresolvedSEHFrame);
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    EXPECT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+    EXPECT_NE(Source.find("unresolved runtime stack"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+    llvm::LLVMContext Context;
+    EXPECT_THROW((void)MedLLVMEmitter().emit({Med}, Context),
+                 std::runtime_error);
+  }
+}
+
+TEST(MedSEHEstablisherFrame, SourceSwitchRequiresEveryResolvedTarget) {
+  auto Img = makeFixedSEHFrameImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  int Dispatch = -1, Join = -1;
+  for (const auto &Block : Low.Blocks) {
+    if (!Block.Ops.empty() && Block.Ops.back().Addr == Img.Entry + 0x11)
+      Dispatch = Block.Id;
+    if (Block.StartAddr == Img.Entry + 0x30)
+      Join = Block.Id;
+  }
+  ASSERT_GE(Dispatch, 0);
+  ASSERT_GE(Join, 0);
+  // Model the resolver's published target set, independently of this frame
+  // consumer. An unresolved jmp rax is instead decoded as a tail call, so
+  // start with the complete branch CFG and replace the dispatch operation.
+  // Unknown or changed dispatches must not borrow that closure.
+  auto &Branch = Low.Blocks[Dispatch].Ops.back();
+  Branch.Opcode = NdOp::INDIR_BR;
+  Branch.Inputs[0] = NdVar::reg(x86reg::RAX, 8);
+  auto &Boundary = Low.Blocks[Dispatch].InstructionBoundaries.back();
+  Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+  Boundary.Immediate.reset();
+  JumpTable Table;
+  Table.InsnAddr = Img.Entry + 0x11;
+  Table.Targets = {Img.Entry + 0x30};
+  Low.JumpTables = {Table};
+  Low.UnsafeIndirectBranchAddresses.erase(Table.InsnAddr);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Low;
+    if (Mutation == 1)
+      Changed.JumpTables.clear();
+    if (Mutation == 2)
+      Changed.JumpTables.front().Targets.push_back(Img.Entry + 0x20);
+    if (Mutation == 3)
+      Changed.JumpTables.front().MutatedUnsafe = true;
+    if (Mutation == 4)
+      Changed.UnsafeIndirectBranchAddresses.insert(Table.InsnAddr);
+    if (Mutation == 5)
+      Changed.JumpTables.push_back(Table);
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Proof = proveLowSEHEstablisherFrame(
+        Changed, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
+        false, LowSEHFrameUse::SourceProjection);
+    std::string Failure = Proof ? "" : llvm::toString(Proof.takeError());
+    EXPECT_EQ(bool(Proof), Mutation == 0) << Failure;
+    if (Proof) {
+      EXPECT_FALSE(Proof->DynamicSP);
+      EXPECT_FALSE(Proof->HasIndependentEntries);
+      EXPECT_EQ(Proof->FrameBytes, 136u);
+    }
+  }
+}
+
 LowFunc makeFixedCxxContinuationFrame(
     const BinaryImage &Image = makeFixedSEHFrameImage()) {
   auto Low = decodeFixedSEHFrame(Image);
@@ -538,6 +647,10 @@ TEST(MedCxxContinuationFrame, RejectsUncertifiedParentFrame) {
     EXPECT_THROW(
         LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
         LowToMedConversionError);
+    LowToMedConverter Source;
+    Source.setSEHSourceProjectionEnabled(true);
+    EXPECT_THROW(Source.convert(Low, Arch::X64, BinaryFormat::COFF),
+                 LowToMedConversionError);
   }
 }
 
@@ -1430,6 +1543,10 @@ TEST(MedSEHEstablisherFrame, RejectsUncertifiedFramesWithoutAborting) {
     EXPECT_THROW(
         LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
         LowToMedConversionError);
+    LowToMedConverter Source;
+    Source.setSEHSourceProjectionEnabled(true);
+    EXPECT_THROW(Source.convert(Low, Arch::X64, BinaryFormat::COFF),
+                 LowToMedConversionError);
   }
 }
 

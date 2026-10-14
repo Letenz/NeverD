@@ -5629,6 +5629,34 @@ callee changes and saved-frame overwrites refuse. Truncated and ambiguous image
 storage supplies no destination authority. The original xcpt4 matrix remains
 the acceptance check for initial writable literals and exception activations.
 
+`MedSEHEstablisherFrame.SourceIndependentEntriesKeepUnknownStackValues`
+checks ordinary and shared exception entries without borrowing the prologue's
+stack cells. Strict conversion still refuses, source conversion retains
+unknown memory operands, and direct LLVM emission rejects the result.
+`SourceSwitchRequiresEveryResolvedTarget` checks the resolver-to-frame CFG
+boundary, including absent, duplicated, changed and unsafe target sets.
+Malformed unwind/prologue and converted-SP checks run with source projection
+enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
+runs the original eleven-case matrix, including the complete x64 xcpt4 image.
+
+Run the original x64 executable locally and verify the separate source result:
+
+```bash
+python scripts/check_windows_xcpt4_source.py --neverd build-release/bin/neverd \
+  --output /tmp/neverd-xcpt4-source --wine-prefix /tmp/neverd-xcpt4-wine64
+```
+
+The script accepts `wine`, `wine64` or `wine64-stable` (or `--wine`), uses an
+isolated 64-bit prefix and checks all 90 reported cases even when the EXE exits
+zero. The x64 fixture reports 89 successes and one explicit skip: test 29's
+alignment check is compiled only for ARM. Unexpected skips fail. It then runs
+the original source CLI and checks main's body, language/GS
+metadata and explicit unresolved-frame annotation. JSON keeps original runtime
+and source-analysis results separate. Neither successful original execution
+nor readable source is evidence that a replacement PE can execute. The Windows
+EH CI lane runs this check and the full analysis matrix; source/patch refusal
+and saved-slot overwrite controls remain required independently.
+
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC
 controls. Wrong providers, delay imports, missing or conflicting import storage,

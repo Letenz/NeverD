@@ -13,6 +13,7 @@
 
 #include "../X86/RegistrationRoots.h"
 #include "../X86/SEHFrame.h"
+#include "../X86/SEHSourceRoots.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -409,6 +410,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // Handler roots of a frame-register function that moves SP after its
   // prologue: they resume with the SP live throughout the protected range.
   std::set<int> SEHProtectedSPRoots;
+  std::set<int> SharedSourceSPRoots;
   // The calling convention's callee-saved registers, which the unwinder
   // restores as well. The stack pointer has its own frame proof.
   auto IsNonvolatile = [&](const MedVar &V) {
@@ -612,11 +614,18 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         // Ordinary flow and runtime resumption must agree on the same frame.
         // A runtime-only continuation is a real root: its SP is the proved
         // target frame, not a second ordinary function-entry SP.
+        bool IndependentEntries = false;
         const auto FrameBytes = proveSEHEstablisherFrame(
             Low, Func, Func.Blocks[B].StartAddr, TRI,
-            /*OrdinaryEntry=*/!IsRoot[B], LocalUnwindDigest);
-        if (!IsRoot[B])
+            /*OrdinaryEntry=*/!IsRoot[B], LocalUnwindDigest,
+            /*CxxContinuation=*/false, nullptr, nullptr,
+            SEHSourceProjectionEnabled, &IndependentEntries);
+        Func.HasUnresolvedSEHFrame |= IndependentEntries;
+        if (!IsRoot[B]) {
+          if (IndependentEntries)
+            SharedSourceSPRoots.insert(B);
           continue;
+        }
         if (FrameBytes)
           SEHFrameOffsets[B] = *FrameBytes;
         else
@@ -625,6 +634,9 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           LocalUnwindRoots.insert(B);
       }
     }
+
+    if (Func.HasUnresolvedSEHFrame)
+      x86_seh::seedSourceEntries(Func, Low, LiveIn, VarOfId, TargetArch);
 
     for (int Root : Roots) {
       if (Root != 0)
@@ -828,6 +840,17 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         VarDefs[Id].insert(B);
       }
 
+  // The runtime SP of a shared source handler is a separate incoming value.
+  // Its ordinary predecessors retain their actual SP; neither side grants a
+  // constant offset from the function entry.
+  for (int B : SharedSourceSPRoots)
+    if (auto It = RegOffToIds.find(TRI.StackPointer); It != RegOffToIds.end())
+      for (int Id : It->second) {
+        x86_seh::mergeSourceHandlerStack(Func.Blocks[B], RegVarOfId.at(Id),
+                                         FlowPreds[B], VirtualRoot, TargetArch);
+        VarDefs[Id].insert(B);
+      }
+
   // Step 4: Insert phi nodes
   std::map<int, MedVar> VarIdToVar = RegVarOfId;
   for (auto &Blk : Func.Blocks)
@@ -944,6 +967,9 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (Op.Output.Id >= 0 && Op.Output.Size > 0) {
         Op.Output.SSAVer = NewVersion(Op.Output.Id);
         F.SavedSizes[Op.Output.Id]++;
+        if (Func.HasUnresolvedSEHFrame && Op.Addr == InvalidVA &&
+            SEHProtectedBlocks.count(F.B) && SEHTrackedIds.count(Op.Output.Id))
+          SEHEntryVersions[F.B][Op.Output.Id] = Op.Output.SSAVer;
       }
       for (MedVar &Aux : Op.IntrinsicOutputs) {
         if (Aux.Id < 0 || Aux.Size == 0)
