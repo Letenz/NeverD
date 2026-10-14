@@ -33,10 +33,10 @@ constantOperand(const SymContext &Ctx, SymRef Value, SymOp Op) {
   return std::nullopt;
 }
 
-std::optional<uint64_t> normalizeFrameOffset(SymContext &Ctx, SymRef Value,
-                                             SymRef Root,
-                                             uint64_t MaxSymbolicNodes,
-                                             FrameOffsetNormalization &Budget) {
+std::optional<SymRef>
+normalizeFrameExpression(SymContext &Ctx, SymRef Value,
+                         uint64_t MaxSymbolicNodes,
+                         FrameOffsetNormalization &Budget) {
   // Charge the context prefix that readability inspection can visit. Counts
   // are fixed-width metadata: obtain the price without walking operand lists
   // or inspecting constant payloads. These are admission/measurement units,
@@ -67,7 +67,7 @@ std::optional<uint64_t> normalizeFrameOffset(SymContext &Ctx, SymRef Value,
       Result.Expr.index() >= Ctx.numNodes() || Ctx.width(Result.Expr) != 64 ||
       Result.Evidence != MBAEvidence::Derivation)
     return std::nullopt;
-  return frameRelativeOffset(Ctx, Result.Expr, Root);
+  return Result.Expr;
 }
 
 // Derive Value - Root without subtracting two full-width copies of Root.
@@ -228,11 +228,20 @@ static FrameOffset proveFrameOffsetImpl(
   case FiniteValueStatus::Unknown:
   case FiniteValueStatus::QueryBudgetExceeded:
     if (!Cached && Normalization && Normalization->MaxWork)
-      if (const auto Offset = normalizeFrameOffset(
-              Ctx, Value, Root, MaxSymbolicNodes, *Normalization))
+      if (const auto Normalized = normalizeFrameExpression(
+              Ctx, Value, MaxSymbolicNodes, *Normalization)) {
         // Algebra proves the offset independently of Predicate. It provides
         // no satisfiability witness and must not cache a nonempty domain.
-        return {FrameOffsetStatus::Exact, *Offset};
+        if (const auto Offset = frameRelativeOffset(Ctx, *Normalized, Root))
+          return {FrameOffsetStatus::Exact, *Offset};
+        // An exact derivation may still need the ordinary predicate-dependent
+        // proof. Retry once with a fresh encoding and the original limits and
+        // cumulative query count. Do not normalize again or reset WorkUsed.
+        // Neither outcome of this fallback enters the finite-domain cache.
+        if (*Normalized != Value)
+          return proveFrameOffset(Ctx, Predicate, *Normalized, Root, Settings,
+                                  MaxQueries, MaxSymbolicNodes, Queries);
+      }
     return {FrameOffsetStatus::BudgetExceeded};
   }
   llvm_unreachable("invalid finite value status");
