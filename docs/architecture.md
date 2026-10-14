@@ -686,6 +686,14 @@ the physical registration and callback frame recovery. The COFF transaction
 authenticates emitted scope rows, SafeSEH and absolute relocations before
 installing the complete module through either patch mode. Analysis facts alone
 cannot authorize native installation.
+`X86RegistrationSEHException` binds current EH3/EH4 filter-field occurrences
+for the native emitter and source replay. `COFFRegistrationSEHException` binds
+them to independently checked callback bridges. The shared frame address
+proof follows private spills but keeps pointers and records from each filter
+in distinct runtime domains. Scalar code/flags retain runtime values without
+inheriting the synthetic frame's address; mixed frame arithmetic still refuses.
+The post-edit closure checks every runtime read, protects the pointer slot and
+retains pointer taint through indexed and unindexed private spills.
 COFF owns the bounded SEH3/EH4 scope-table byte extent. Both preserved callees
 and edited/generated LLVM must leave that complete table unchanged; EH4 also
 protects the exact image cookie. A compiler-owned scope snapshot cannot replace

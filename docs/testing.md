@@ -5790,6 +5790,13 @@ Partial temporary aliases must not preserve a full runtime pointer, including
 when the truncated value feeds address arithmetic in the same instruction.
 `WindowsRegistrationNative.RuntimeExceptionFieldsRequireAReplacementObjectReceipt`
 checks atomic refusal of incomplete or unconsumed runtime access evidence.
+The `exception-code` and `exception-flags` reconstruction cases, including their
+`eh4-` and `eh4-gs-` variants, execute original and reconstructed PE32 files in
+both CLI modes and at a changed image base. Each source replay also rejects
+wrong field offsets, pointers and widths, unindexed and duplicated reads,
+runtime writes, overwritten pointer cells and pointer escapes (including an
+extra unindexed pointer-slot read). These are native reconstruction checks;
+they do not grant arbitrary context access or a nonlocal continuation contract.
 
 PE32 LowIR branch
 targets use 64-bit code-address constants; they must still fit the 32-bit address

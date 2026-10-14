@@ -9,6 +9,7 @@
 #include "COFFRegistrationFrameBits.h"
 #include "COFFRegistrationFrameStores.h"
 #include "COFFRegistrationFrameTaint.h"
+#include "COFFRegistrationSEHException.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -48,7 +49,8 @@ llvm::Error validateFramePrivacy(
     const std::set<const llvm::Instruction *> &ChainProtocolReads,
     va_t SecurityCookieVA,
     llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges,
-    const RegistrationCxxFrameContract *Cxx) {
+    const RegistrationCxxFrameContract *Cxx,
+    const RegistrationSEHExceptionContract *SEH) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -114,6 +116,9 @@ llvm::Error validateFramePrivacy(
     return Found == Invocations.end() ? nullptr : Found->second;
   };
   std::set<const llvm::Value *> Addresses;
+  if (SEH)
+    for (const auto &[Function, Bridge] : SEH->Bridges)
+      Addresses.insert(Bridge->getValueOperand());
   const llvm::IntrinsicInst *Escape = nullptr;
   for (const auto *Function : Functions) {
     if (Function != &Parent && Function->arg_size() == 2)
@@ -272,6 +277,11 @@ llvm::Error validateFramePrivacy(
     // normal paths must establish the same address before this exact load;
     // an entry zero or an unwritten path cannot stand in for a frame address.
     if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Value)) {
+      // This is a candidate identity only. Every such load must independently
+      // pass the address, width and invocation checks in the use closure.
+      if (SEH)
+        if (const auto *Root = SEH->pointerResult(*Load))
+          return Cell{Root, 0};
       auto Slot = Locate(Load->getPointerOperand(), Depth + 1);
       const auto *Catch = CatchAt(*Load);
       const auto *Home = Slot && Slot->Root == LogicalFrame
@@ -414,6 +424,17 @@ llvm::Error validateFramePrivacy(
             if (ChainProtocolReads.count(Load))
               continue;
             auto Where = Locate(Load->getPointerOperand(), 0);
+            if (SEH && (SEH->Reads.count(Load) ||
+                        (Where && SEH->Roots.count(Where->Root)))) {
+              if (!Where || !SEH->validRead(*Load, Where->Root, Where->Offset))
+                return Reject("SEH exception read changed its runtime field");
+              const auto *Bridge = SEH->Reads.at(Load).Bridge;
+              if (!Dominators.at(Function)->dominates(Bridge, Load))
+                return Reject("SEH exception read precedes its invocation");
+              if (SEH->pointerResult(*Load))
+                Changed |= Addresses.insert(Load).second;
+              continue;
+            }
             if (Cxx && Cxx->RuntimeAccesses.count(Load) &&
                 (!Where || Where->Root != Cxx->RuntimeAccesses.at(Load).Catch))
               return Reject(
@@ -471,7 +492,7 @@ llvm::Error validateFramePrivacy(
                 (IsAddress(Load->getPointerOperand()) ||
                  !I.getMetadata(
                      windows_eh_md::RegistrationOperationAttachment) ||
-                 !CallerPCWrites.empty() || Cxx) &&
+                 !CallerPCWrites.empty() || Cxx || SEH) &&
                 !IncomingAccesses.count(Load)) {
               const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(
                   Load->getPointerOperand());
@@ -516,6 +537,11 @@ llvm::Error validateFramePrivacy(
           if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
             auto Where = Locate(Store->getPointerOperand(), 0);
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
+            if (SEH && Where &&
+                (SEH->Roots.count(Where->Root) ||
+                 SEH->clobbersPointers(*Store, Where->Root, Where->Offset,
+                                       Bytes)))
+              return Reject("SEH exception runtime storage is overwritten");
             if (!CallbackStacks.empty()) {
               const auto Stored = Locate(Store->getValueOperand(), 0);
               if (Where && Where->Root == LogicalFrame &&

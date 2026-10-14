@@ -35,11 +35,13 @@ OBSERVATION = re.compile(
 CASES = {"filter": (0, 0), "nested-finally": (1, 123),
          "continue-search": (2, 123), "continue-execution": (3, 1),
          "normal-finally": (4, 2), "cdecl-parameter": (5, 7),
-         "cdecl-parameter-write": (6, 177)}
+         "cdecl-parameter-write": (6, 177), "exception-code": (7, 7),
+         "exception-flags": (8, 7)}
 CASES.update({"eh4-" + name: value for name, value in tuple(CASES.items())})
 CASES.update({"eh4-gs-" + name: CASES[name] for name in
               ("filter", "nested-finally", "continue-search", "continue-execution",
-               "normal-finally", "cdecl-parameter", "cdecl-parameter-write")})
+               "normal-finally", "cdecl-parameter", "cdecl-parameter-write",
+               "exception-code", "exception-flags")})
 
 
 class PE32:

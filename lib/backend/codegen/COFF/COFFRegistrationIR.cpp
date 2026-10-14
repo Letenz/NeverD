@@ -8,6 +8,7 @@
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHException.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -264,6 +265,10 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   std::vector<const llvm::Function *> NativeFunctions{&Function};
   NativeFunctions.insert(NativeFunctions.end(), CallbackFunctions.begin(),
                          CallbackFunctions.end());
+  auto ExceptionFields = bindSEHExceptionReads(
+      ReplayMed, *Frame, *CallbackMap, ExceptionBridges, NativeFunctions);
+  if (!ExceptionFields)
+    return ExceptionFields.takeError();
   std::set<const llvm::Instruction *> IncomingAccesses, IncomingSetup;
   if (llvm::Error Error =
           validateIncomingCallerFrame(Function, ReplayMed, NativeFunctions,
@@ -523,7 +528,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
-          States.SecurityCookieVA, ImmutableImageRanges))
+          States.SecurityCookieVA, ImmutableImageRanges, nullptr,
+          &*ExceptionFields))
     return Error;
   auto SourceSegments = validateSourceSegments(Function, ReplayMed,
                                                *CallbackMap, NativeFunctions);
@@ -785,7 +791,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     if (auto Error = coff_registration::validateFramePrivacy(
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
             IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
-            States.SecurityCookieVA, ImmutableImageRanges))
+            States.SecurityCookieVA, ImmutableImageRanges, nullptr,
+            &*ExceptionFields))
       return Error;
   return llvm::Error::success();
 #endif

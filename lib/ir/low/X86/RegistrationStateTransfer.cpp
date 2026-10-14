@@ -150,7 +150,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       const auto Address = Transfer.read(*Memory.Address);
       if (!Memory.Complete)
         CompleteCookies = false;
-      if (After.Installed && (!Address.Offset && Address.MayBeFrame))
+      if (After.Installed && !RuntimeMemory &&
+          (!Address.Offset && Address.MayBeFrame))
         CompleteCookies = false;
       if (After.Installed && Address.Offset) {
         auto Touches = [&](std::optional<int32_t> Slot) {
