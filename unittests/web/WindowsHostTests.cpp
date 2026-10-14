@@ -254,7 +254,8 @@ TEST_F(WebWindowsHost, ExportIsVerifiedPrivateAndManifestDoesNotClobber) {
   EXPECT_EQ(read(Root / "other" / "manifest.json"), "foreign");
 }
 TEST_F(WebWindowsHost, RenameAPIDiagnostics) {
-  using SetInfo = decltype(&NtSetInformationFile);
+  using SetInfo = NTSTATUS(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG,
+                                    FILE_INFORMATION_CLASS);
   auto Native = reinterpret_cast<SetInfo>(
       GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
   ASSERT_NE(Native, nullptr);
@@ -280,7 +281,7 @@ TEST_F(WebWindowsHost, RenameAPIDiagnostics) {
     } else {
       IO_STATUS_BLOCK Status{};
       const auto Code = Native(File.get(), &Status, Info, ULONG(Buffer.size()),
-                                FileRenameInformation);
+                                static_cast<FILE_INFORMATION_CLASS>(10));
       std::cout << "rename-probe case=" << Case << " size=" << Size
                 << " ntstatus=" << std::hex << ULONG(Code) << std::dec << '\n';
     }
