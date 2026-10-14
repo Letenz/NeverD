@@ -67,6 +67,10 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::ZwQuerySystemInformation:
   case KernelAPIKind::ExFreePool:
   case KernelAPIKind::ExFreePoolWithTag:
+#define NEVERD_KERNEL_RUNTIME_STRING_API(Name, Arity, IRQL, Operation)         \
+  case KernelAPIKind::Name:
+#include "KernelRuntimeStringAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_STRING_API
     break;
   case KernelAPIKind::IoAllocateMdl:
   case KernelAPIKind::IoFreeMdl:
@@ -194,6 +198,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelThreadAPIs.def"
 #undef NEVERD_KERNEL_THREAD_API
+#define NEVERD_KERNEL_RUNTIME_STRING_API(Name, Arity, IRQL, Operation)         \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelRuntimeStringAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_STRING_API
 #define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
   case KernelAPIKind::Name:                                                    \
     return Operation;

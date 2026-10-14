@@ -324,6 +324,10 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 |-----|------------------------|
 | `RtlInitUnicodeString` | 範囲を限定した NUL 終端ソースからゲスト `UNICODE_STRING` を作る |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 長さを持つ UTF-16 文字列のコピーと、大文字小文字を区別する比較。区別しない比較には Windows の大小文字テーブルが必要なため停止する |
+| `RtlInitAnsiString`、`RtlInitString` | NUL 終端のバイト列ソースからゲスト `STRING` を作る。長さは `0xFFFE` で打ち切られ、`MaximumLength` は終端文字を含み、レコードのパディングはクリアされる |
+| `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 長さを持つ UTF-16 の宛先に追記する。`STATUS_BUFFER_TOO_SMALL` のときは宛先を変更せず、終端文字は空きが 2 バイト以上あるときだけ書き込む。`0x7FFE` 単位を超える NUL 終端ソースも `STATUS_BUFFER_TOO_SMALL` を返す |
+| `RtlPrefixUnicodeString` | 長さを持つ UTF-16 の接頭辞判定。大文字小文字を区別しない要求は、異なる単位の比較に Windows の大小文字テーブルが必要な場合だけ停止する |
+| `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 基数 2、8、10、16 の符号なし変換。先頭の空白、符号、`0x`/`0o`/`0b` 接頭辞、32 ビットのラップアラウンドはカーネルの規則に従う。書式化には終端文字の領域が必要で、長さを格納した後に `STATUS_BUFFER_OVERFLOW` を返す |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | ゲスト例外を発生し通常の API 復帰なし。実際の C フィルター／ハンドラーと unwind finally、ユーザー CPU メモリー例外の限定的な再開は後述 |
 | `ExAllocatePool2` | ページプール／非ページ NX プールの割り当て。デフォルトでゼロ初期化し、未初期化とキャッシュ整列のフラグをモデル化する。無効な必須フラグは NULL を返し、クォータ／実行可能プールおよび割り当て例外の送出では停止する |
 | `MmGetSystemRoutineAddress` | 長さを持つゲストの名前を、共通のエクスポート一覧で解決する |

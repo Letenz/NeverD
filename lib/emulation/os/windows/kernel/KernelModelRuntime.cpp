@@ -530,6 +530,317 @@ llvm::Expected<uint64_t> unicodeOperation(const KernelModel &Model,
   return static_cast<uint32_t>(Difference);
 }
 
+llvm::Expected<uint64_t> initializeAnsiString(const KernelModel &Model,
+                                              GuestMemory &Memory,
+                                              llvm::ArrayRef<uint64_t> A) {
+  // ntoskrnl (RVA 0x24fb00) scans to the terminator, truncates the counted
+  // length to 0xFFFE and counts the terminator in MaximumLength.
+  uint64_t Length = 0;
+  if (A[1]) {
+    for (;; ++Length) {
+      if (auto E = checkBufferRange(A[1], Length + 1))
+        return E;
+      auto Byte = readInteger(Model, Memory, A[1] + Length, 1);
+      if (!Byte)
+        return Byte.takeError();
+      if (!*Byte)
+        break;
+    }
+    Length = std::min<uint64_t>(Length, 0xfffe);
+  }
+  // The routine clears the whole first quadword, including the padding.
+  if (auto E = Model.validateGuestAccess(A[0], UnicodeRecordSize, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[0], 0, 8))
+    return E;
+  if (auto E = Memory.writeInteger(A[0], Length, 2))
+    return E;
+  if (auto E = Memory.writeInteger(A[0] + UnicodeMaximumOffset,
+                                   A[1] ? Length + 1 : 0, 2))
+    return E;
+  if (auto E = Memory.writeInteger(A[0] + UnicodeBufferOffset, A[1], 8))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> appendUnicodeString(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A,
+                                             bool CountedSource) {
+  uint64_t Source = A[1];
+  uint64_t Length = 0;
+  if (CountedSource) {
+    // An empty counted source succeeds before the destination is read
+    // (RVA 0x3480c0).
+    auto Record = readCountedString(Model, Memory, A[1]);
+    if (!Record)
+      return Record.takeError();
+    if (!Record->Length)
+      return StatusSuccess;
+    Source = Record->Buffer;
+    Length = Record->Length;
+  } else {
+    // A null source is an empty append (RVA 0x32ead0). Others are measured
+    // like RtlInitUnicodeStringEx (RVA 0x32eb60), which rejects sources
+    // longer than 0x7FFE units; the append then reports a short buffer.
+    if (!Source)
+      return StatusSuccess;
+    for (;; Length += 2) {
+      if (auto E = checkBufferRange(Source, Length + 2))
+        return E;
+      auto Unit = readInteger(Model, Memory, Source + Length, 2);
+      if (!Unit)
+        return Unit.takeError();
+      if (!*Unit)
+        break;
+    }
+    if (Length > MaxUnicodeBytes)
+      return StatusBufferTooSmall;
+  }
+  auto Destination = readCountedString(Model, Memory, A[0]);
+  if (!Destination)
+    return Destination.takeError();
+  const uint64_t Combined = Destination->Length + Length;
+  if (Combined > Destination->MaximumLength)
+    return StatusBufferTooSmall;
+  auto Bytes = readBytes(Model, Memory, Source, Length);
+  if (!Bytes)
+    return Bytes.takeError();
+  // The result is terminated only when a complete UTF-16 unit still fits.
+  if (Combined + 1 < Destination->MaximumLength)
+    Bytes->resize(Length + 2, 0);
+  const uint64_t Target = Destination->Buffer + Destination->Length;
+  if (auto E = Model.validateGuestAccess(A[0], 2, true))
+    return E;
+  if (auto E = Model.validateGuestAccess(Target, Bytes->size(), true))
+    return E;
+  if (!Bytes->empty())
+    if (auto E = Memory.write(Target, *Bytes))
+      return E;
+  if (auto E = Memory.writeInteger(A[0], Combined, 2))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> prefixUnicodeString(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A) {
+  auto Prefix = readCountedString(Model, Memory, A[0]);
+  if (!Prefix)
+    return Prefix.takeError();
+  auto String = readCountedString(Model, Memory, A[1]);
+  if (!String)
+    return String.takeError();
+  // RVA 0x5edbe0 compares only the prefix's counted units. Equal units never
+  // consult the case table, even for a case-insensitive request.
+  if (String->Length < Prefix->Length)
+    return 0;
+  if (!Prefix->Length)
+    return 1;
+  auto Left = readBytes(Model, Memory, Prefix->Buffer, Prefix->Length);
+  if (!Left)
+    return Left.takeError();
+  auto Right = readBytes(Model, Memory, String->Buffer, Prefix->Length);
+  if (!Right)
+    return Right.takeError();
+  for (size_t I = 0; I < Left->size(); I += 2)
+    if (codeUnit(*Left, I) != codeUnit(*Right, I)) {
+      if (static_cast<uint8_t>(A[2]))
+        return runtimeError("case-insensitive Unicode prefix requires an "
+                            "unmodeled Windows case table");
+      return 0;
+    }
+  return 1;
+}
+
+llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A) {
+  // RtlIntegerToChar (RVA 0x6f7000) formats the unsigned value with uppercase
+  // digits and no padding before rejecting any record access.
+  uint32_t Value = static_cast<uint32_t>(A[0]);
+  uint32_t Base = static_cast<uint32_t>(A[1]);
+  if (!Base)
+    Base = 10;
+  unsigned Shift = 0;
+  switch (Base) {
+  case 2:
+    Shift = 1;
+    break;
+  case 8:
+    Shift = 3;
+    break;
+  case 10:
+    break;
+  case 16:
+    Shift = 4;
+    break;
+  default:
+    return StatusInvalidParameter;
+  }
+  static constexpr char Digits[] = "0123456789ABCDEF";
+  char Reversed[32];
+  unsigned Count = 0;
+  do {
+    uint32_t Digit;
+    if (Shift) {
+      Digit = Value & ((1u << Shift) - 1);
+      Value >>= Shift;
+    } else {
+      Digit = Value % Base;
+      Value /= Base;
+    }
+    Reversed[Count++] = Digits[Digit];
+  } while (Value);
+  if (!A[2])
+    return runtimeError("UNICODE_STRING record must not be null");
+  if (auto E = Model.validateGuestAccess(A[2], UnicodeRecordSize, false))
+    return E;
+  auto Maximum = Memory.readInteger(A[2] + UnicodeMaximumOffset, 2);
+  if (!Maximum)
+    return Maximum.takeError();
+  auto Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  // RtlAnsiStringToUnicodeString (RVA 0x6f6840) stores Length before checking
+  // that MaximumLength also holds the terminator.
+  const uint64_t Length = Count * 2;
+  if (auto E = Model.validateGuestAccess(A[2], 2, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[2], Length, 2))
+    return E;
+  if (Length + 2 > *Maximum)
+    return StatusBufferOverflow;
+  std::vector<uint8_t> Bytes(Length + 2, 0);
+  for (unsigned I = 0; I < Count; ++I)
+    Bytes[I * 2] = static_cast<uint8_t>(Reversed[Count - 1 - I]);
+  if (auto E = Model.validateGuestAccess(*Buffer, Bytes.size(), true))
+    return E;
+  if (auto E = Memory.write(*Buffer, Bytes))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> unicodeStringToInteger(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A) {
+  // RVA 0x6638e0: empty or odd lengths and unsupported radices store zero and
+  // fail; other text succeeds and stops at the first invalid digit.
+  if (!A[0])
+    return runtimeError("UNICODE_STRING record must not be null");
+  if (auto E = Model.validateGuestAccess(A[0], UnicodeRecordSize, false))
+    return E;
+  auto Length = Memory.readInteger(A[0], 2);
+  if (!Length)
+    return Length.takeError();
+  auto Buffer = Memory.readInteger(A[0] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (auto E = Model.validateGuestAccess(A[2], 4, true))
+    return E;
+  auto Store = [&](uint32_t Value,
+                   uint64_t Status) -> llvm::Expected<uint64_t> {
+    if (auto E = Memory.writeInteger(A[2], Value, 4))
+      return E;
+    return Status;
+  };
+  if (!*Length || (*Length & 1))
+    return Store(0, StatusInvalidParameter);
+  auto Bytes = readBytes(Model, Memory, *Buffer, *Length);
+  if (!Bytes)
+    return Bytes.takeError();
+  // Take yields zero once the counted text is exhausted, like the routine's
+  // remaining-unit checks; an embedded zero unit also ends the digits.
+  size_t Index = 0;
+  size_t Remaining = *Length / 2;
+  auto Take = [&]() -> uint16_t {
+    if (!Remaining)
+      return 0;
+    --Remaining;
+    return codeUnit(*Bytes, 2 * Index++);
+  };
+  // Units up to and including U+0020 are leading whitespace.
+  uint16_t First = 0;
+  while (Remaining) {
+    const uint16_t Unit = Take();
+    if (Unit > 0x20) {
+      First = Unit;
+      break;
+    }
+  }
+  uint16_t Current = First;
+  if (First == u'+' || First == u'-')
+    Current = Take();
+  uint32_t Base = static_cast<uint32_t>(A[1]);
+  unsigned Shift = 0;
+  if (!Base) {
+    // Only a zero radix recognizes 0x, 0o and 0b. Any other unit after the
+    // leading zero is read again as the first digit.
+    Base = 10;
+    if (Current == u'0') {
+      if (Remaining) {
+        const size_t SavedIndex = Index;
+        const size_t SavedRemaining = Remaining;
+        switch (Take()) {
+        case u'x':
+          Base = 16;
+          Shift = 4;
+          break;
+        case u'o':
+          Base = 8;
+          Shift = 3;
+          break;
+        case u'b':
+          Base = 2;
+          Shift = 1;
+          break;
+        default:
+          Index = SavedIndex;
+          Remaining = SavedRemaining;
+          break;
+        }
+      }
+      Current = Take();
+    }
+  } else {
+    switch (Base) {
+    case 2:
+      Shift = 1;
+      break;
+    case 8:
+      Shift = 3;
+      break;
+    case 10:
+      break;
+    case 16:
+      Shift = 4;
+      break;
+    default:
+      return Store(0, StatusInvalidParameter);
+    }
+  }
+  uint32_t Value = 0;
+  while (Current) {
+    uint32_t Digit;
+    if (uint16_t(Current - u'0') <= 9)
+      Digit = Current - u'0';
+    else if (uint16_t(Current - u'A') <= 5)
+      Digit = Current - u'A' + 10;
+    else if (uint16_t(Current - u'a') <= 5)
+      Digit = Current - u'a' + 10;
+    else
+      break;
+    if (Digit >= Base)
+      break;
+    // The routine accumulates without overflow checks in 32 bits.
+    Value = Shift ? Digit | (Value << Shift) : Digit + Base * Value;
+    Current = Take();
+  }
+  if (First == u'-')
+    Value = 0u - Value;
+  return Store(Value, StatusSuccess);
+}
+
 llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                GuestMemory &Memory,
                                                uint64_t Format,

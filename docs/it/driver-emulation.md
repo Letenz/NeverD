@@ -365,6 +365,10 @@ Il modello API iniziale ha intenzionalmente un contratto limitato:
 |-----|--------------------------------------|
 | `RtlInitUnicodeString` | Costruisce una `UNICODE_STRING` guest per una sorgente limitata terminata da NUL |
 | `RtlCopyUnicodeString`, `RtlCompareUnicodeString`, `RtlEqualUnicodeString` | Copia UTF-16 a lunghezza esplicita e confronto sensibile alle maiuscole; il confronto che ignora le maiuscole richiede una tabella Windows e arresta l’esecuzione |
+| `RtlInitAnsiString`, `RtlInitString` | Costruisce una `STRING` guest da una sorgente di byte terminata da NUL; la lunghezza esplicita è limitata a `0xFFFE`, `MaximumLength` include il terminatore e il padding del record viene azzerato |
+| `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | Accoda a una destinazione UTF-16 a lunghezza esplicita; `STATUS_BUFFER_TOO_SMALL` la lascia invariata, il terminatore viene scritto solo se restano due byte liberi e una sorgente terminata da NUL oltre `0x7FFE` unità restituisce anch’essa `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | Test di prefisso UTF-16 a lunghezza esplicita; una richiesta che ignora le maiuscole arresta l’esecuzione solo quando unità diverse richiederebbero la tabella Windows |
+| `RtlIntegerToUnicodeString`, `RtlUnicodeStringToInteger` | Conversione senza segno in base 2, 8, 10 e 16 con le regole del kernel per spazi iniziali, segno, prefissi `0x`/`0o`/`0b` e overflow a 32 bit; la formattazione richiede spazio per il terminatore e restituisce `STATUS_BUFFER_OVERFLOW` dopo aver memorizzato la lunghezza |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | Eccezioni C `__except`, filtri reali e `__finally` di unwind; nessun ritorno API normale |
 | `ExAllocatePool2` | Allocazioni NX paginabili/non paginabili, azzerate per impostazione predefinita; sono modellati i flag di memoria non inizializzata e allineamento alla cache; flag obbligatori non validi restituiscono NULL; pool con quote/eseguibili ed eccezioni di allocazione arrestano l’esecuzione |
 | `MmGetSystemRoutineAddress` | Risolve un nome guest a lunghezza esplicita tramite l’inventario condiviso degli export |
