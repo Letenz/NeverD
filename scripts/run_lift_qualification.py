@@ -136,6 +136,7 @@ def main() -> int:
         "parity_image": str(PARITY_IMAGE), "parity_sha256": parity_source_digest,
     }
     env = dict(os.environ, NEVERD_PARITY_BIN=str(parity), NEVERD=str(neverd),
+               NEVERD_SIGNATURE_CACHE="off",
                TMPDIR=str(output / "tmp"))
     Path(env["TMPDIR"]).mkdir(exist_ok=True)
     with (output / "execution.log").open("w") as log:
