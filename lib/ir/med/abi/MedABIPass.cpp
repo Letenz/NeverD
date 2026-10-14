@@ -762,6 +762,18 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         CalleeRegArgs = 0;
         CalleeArgs = 2;
       }
+      // Checked ordinary members and constructors own exactly one ECX
+      // receiver plus their proved scalar stack words. Other live registers
+      // cannot extend that physical contract.
+      const bool RegistrationObjectCall =
+          Registration && Registration->BorrowsECX;
+      if (RegistrationObjectCall) {
+        IntegerLayout.Registers = Registration->integerArgumentRegisters();
+        IntParamRegs = IntegerLayout.Registers;
+        CI.ArgumentsInCalleeRegisterOrder = true;
+        CalleeRegArgs = 1;
+        CalleeArgs = 1 + Registration->ScalarStackWords;
+      }
 
       // Apple/Darwin AArch64 passes EVERY variadic argument on the stack
       // (unlike AAPCS64/Linux, which fills x0-x7 first).  For a known-variadic
@@ -2047,8 +2059,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // only exactly that shape fills gaps there, so ordinary calls keep the
       // strict first-gap cutoff and their register/stack lane classification.
       bool LeadingGap = false;
-      if (!RuntimeThrow && Policy && Policy->LeadingStackGapIsUnusedArgument &&
-          !CI.IsIndirect && CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
+      if (!RuntimeThrow && !RegistrationObjectCall && Policy &&
+          Policy->LeadingStackGapIsUnusedArgument && !CI.IsIndirect &&
+          CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
         for (int K = 1; K < MaxArgs; ++K)
           if (FoundMask[K]) {
             LeadingGap = true;
@@ -2062,7 +2075,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // but no trailing argument is invented.  A reliable callee arity (>0; a
       // not-yet-promoted forwarder still reports 0 at this point) additionally
       // drops a stray lane recovered above the real argument list.
-      int AssembleEnd = RuntimeThrow ? 2 : MaxArgs;
+      int AssembleEnd = RuntimeThrow             ? 2
+                        : RegistrationObjectCall ? CalleeArgs
+                                                 : MaxArgs;
       if (FillGaps) {
         int LastFound = -1;
         for (int K = 0; K < MaxArgs; ++K)

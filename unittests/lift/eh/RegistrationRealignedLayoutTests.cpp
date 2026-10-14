@@ -223,8 +223,7 @@ TEST(RegistrationRealignedLayout, ParentOwnsStraightLinePaddingLookalikes) {
     EXPECT_EQ(EH.CodeRange.End, Shape == 0 ? Text.VA + Text.Size : Boundary);
     for (size_t Remaining : {0, 2}) {
       size_t Work = limits::kMaxRegistrationEHStateWork - Remaining;
-      EXPECT_FALSE(
-          callbackFallsThroughBoundary(F.Image, Text.VA, Boundary, Work));
+      EXPECT_FALSE(disprovesCallbackBoundary(F.Image, Text.VA, Boundary, Work));
       EXPECT_EQ(Work, limits::kMaxRegistrationEHStateWork);
     }
   }

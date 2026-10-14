@@ -21,8 +21,9 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
                               Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4
                           ? CalleeIndices.find(Op.Inputs[0].Offset)
                           : CalleeIndices.end();
-  const auto StackPointer =
+  auto StackPointer =
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+  std::optional<FrameValue> CallResult;
   const auto SP = parentStackOffset(After);
   bool Valid = !After.Unknown && !Facts.Invalid && Op.Seq >= 0 &&
                Boundary != Boundaries.end() &&
@@ -57,10 +58,12 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
     if (BorrowsObject)
       Effect.ECXFrameOffset =
           After.Frame.Registers[x86reg::RCX / x86reg::GeneralRegStride].Offset;
-    Valid &= !BorrowsObject || Effect.ECXFrameOffset.has_value();
-    if (Valid && BorrowsObject) {
+    if (BorrowsObject && !Effect.ECXFrameOffset)
+      Valid &= bindRuntimeObjectBorrow(After, Contract, Effect);
+    if (Valid && Effect.ECXFrameOffset) {
       Valid &= projectFrameObject(After, *Effect.ECXFrameOffset, SP,
-                                  Contract.ECXReads, Effect.FrameReads, true);
+                                  Contract.ECXReads, Effect.FrameReads,
+                                  !Contract.isInitializer());
       Valid &=
           projectFrameObject(After, *Effect.ECXFrameOffset, SP,
                              Contract.ECXWrites, Effect.FrameWrites, false);
@@ -78,18 +81,24 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
         }
         // Callee writes are may-effects. They invalidate value facts
         // without inventing definite initialization on untaken paths.
-        for (auto It = After.Frame.Cells.begin();
-             It != After.Frame.Cells.end();)
-          if (int64_t(It->first) < Write.End &&
-              Write.Begin < int64_t(It->first) + 4) {
-            if (It->second.MayBeFrame && (Write.Begin > It->first ||
-                                          int64_t(It->first) + 4 > Write.End)) {
-              It->second = {{}, {}, false, true};
-              ++It;
-            } else
-              It = After.Frame.Cells.erase(It);
-          } else
-            ++It;
+        After.Frame.forgetCellValues(Write.Begin,
+                                     uint32_t(Write.End - Write.Begin));
+      }
+    }
+    if (Valid && Contract.isInitializer()) {
+      FrameValue Object;
+      Valid = transferInitializer(After, Contract, StackPointer, Object);
+      if (Valid)
+        CallResult = Object;
+    } else {
+      if (Valid && Contract.StackPopBytes)
+        Valid = transferScalarArguments(After, Contract, StackPointer,
+                                        Effect.ECXFrameOffset);
+      if (Valid && Contract.HasIndependentScalarReturn &&
+          hasX86ScalarCallOutput(Op)) {
+        // The exact result has no frame provenance. Keep every other volatile
+        // register unknown and grant neither returned-this nor must-writes.
+        CallResult = FrameValue{};
       }
     }
   }
@@ -109,7 +118,8 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
       After.Frame.forgetCellValues();
     return std::nullopt;
   }
-  return CallTransfer{StackPointer, Effect.DoesNotReturn, Effect.EndAddress};
+  return CallTransfer{StackPointer, Effect.DoesNotReturn, Effect.EndAddress,
+                      CallResult};
 }
 
 } // namespace neverd::registration_state

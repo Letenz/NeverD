@@ -133,11 +133,8 @@ int main(void) {
   }
 }
 
-// Half-precision arithmetic computes in _Float16, each result rounded to
-// half precision as the instruction rounds it, where it used to print every
-// value as unknown.  Compile the C on the host, which computes _Float16 in
-// float and rounds once per operation: exact for these operations, since
-// float has more than twice the bits of half precision.
+// Each operation rounds to binary16. APFloat supplies the independent oracle;
+// the test-only host provider supplies fmaf16 on older host C libraries.
 TEST_F(AArch64_FP, HalfPrecisionArithmeticExecutesThroughHighC) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "floating-point source execution requires Clang";
@@ -171,24 +168,30 @@ half_ops:
                            std::istreambuf_iterator<char>());
   ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
   EXPECT_NE(Source.find("_Float16"), std::string::npos) << Source;
-  const std::string Harness = R"C(
-static uint16_t half_reference(uint16_t A, uint16_t B) {
-  const _Float16 a = __builtin_bit_cast(_Float16, A);
-  const _Float16 b = __builtin_bit_cast(_Float16, B);
-  _Float16 t = a + b;
-  t = t * a;
-  t = t - b;
-  t = t / b;
-  return __builtin_bit_cast(uint16_t, __builtin_fmaf16(a, b, t));
-}
+  std::string Harness;
+  llvm::raw_string_ostream HarnessOS(Harness);
+  HarnessOS << "static const uint16_t cases[][3] = {\n";
+  const uint16_t Values[] = {0x3c00, 0x4000, 0x3555, 0xc500, 0x7bff,
+                             1,      0x3800, 0x8400, 0x5bff};
+  for (uint16_t ABits : Values)
+    for (uint16_t BBits : Values) {
+      const llvm::APFloat A(llvm::APFloat::IEEEhalf(), llvm::APInt(16, ABits));
+      const llvm::APFloat B(llvm::APFloat::IEEEhalf(), llvm::APInt(16, BBits));
+      auto Value = A;
+      Value.add(B, llvm::APFloat::rmNearestTiesToEven);
+      Value.multiply(A, llvm::APFloat::rmNearestTiesToEven);
+      Value.subtract(B, llvm::APFloat::rmNearestTiesToEven);
+      Value.divide(B, llvm::APFloat::rmNearestTiesToEven);
+      auto Fused = A;
+      Fused.fusedMultiplyAdd(B, Value, llvm::APFloat::rmNearestTiesToEven);
+      HarnessOS << '{' << ABits << ',' << BBits << ','
+                << Fused.bitcastToAPInt().getZExtValue() << "},\n";
+    }
+  HarnessOS << R"C(};
 int main(void) {
-  static const uint16_t Values[] = {0x3C00, 0x4000, 0x3555, 0xC500, 0x7BFF,
-                                    0x0001, 0x3800, 0x8400, 0x5BFF};
-  for (unsigned I = 0; I != sizeof(Values) / sizeof(Values[0]); ++I)
-    for (unsigned J = 0; J != sizeof(Values) / sizeof(Values[0]); ++J)
-      if ((uint16_t)half_ops(Values[I], Values[J]) !=
-          half_reference(Values[I], Values[J]))
-        return 1;
+  for (unsigned i = 0; i != sizeof(cases) / sizeof(cases[0]); ++i)
+    if ((uint16_t)half_ops(cases[i][0], cases[i][1]) != cases[i][2])
+      return 1;
   return 0;
 }
 )C";
@@ -214,9 +217,12 @@ int main(void) {
   EXPECT_NE(Body.find("fmul half"), std::string::npos) << Body;
   EXPECT_NE(Body.find("fsub half"), std::string::npos) << Body;
   const auto Program = tmpFile("fp16-ops-host.exe");
-  const auto Compiled =
-      exec(NEVERD_TEST_CLANG, {"-std=gnu11", "-O2", CFile.string(), "-lm", "-o",
-                               Program.string()});
+  const auto Provider =
+      fs::path(TEST_SOURCE_DIR) / "core/fixtures/half_fma_host.c";
+  ASSERT_TRUE(fs::exists(Provider));
+  const auto Compiled = exec(
+      NEVERD_TEST_CLANG, {"-std=gnu11", "-O2", CFile.string(),
+                          Provider.string(), "-lm", "-o", Program.string()});
   ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << Source;
   const auto Executed = exec(Program.string(), {});
   EXPECT_EQ(Executed.exitCode, 0) << Source;

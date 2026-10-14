@@ -135,6 +135,45 @@ TEST(RegistrationCatchContext, RejectsWrongObjectBoundsAndExitedLifetimes) {
   }
 }
 
+TEST(RegistrationCatchContext, BindsTheSelectedLiveMemberReceiver) {
+  for (bool Outer : {false, true}) {
+    SCOPED_TRACE(Outer);
+    auto Function = makeNestedReferenceCatches();
+    auto Contracts = throws();
+    auto &Member = Contracts.emplace_back();
+    Member.Target = 0x2300;
+    Member.HasIndependentScalarReturn = true;
+    Member.ECXReads = {{0, 4}};
+    auto &Handler = Function.Blocks[7];
+    Handler.Ops[Handler.Ops.size() - 2].Addr += 10;
+    Handler.Ops.back().Addr += 10;
+    Handler.EndAddr += 10;
+    Handler.InstructionBoundaries.back().Address += 10;
+    Handler.InstructionBoundaries.insert(
+        Handler.InstructionBoundaries.begin() + 1, {{0x1855, 5}, {0x185a, 5}});
+    Handler.InstructionBoundaries[1].Control = LowInstructionControl::Call;
+    LowBlock Call;
+    emitOp(Call, 0x1850, NdOp::INT_ADD, NdVar::tmp(70, 4),
+           {NdVar::reg(x86reg::RBP, 4),
+            NdVar::cst(uint32_t(Outer ? -24 : -20), 4)});
+    emitOp(Call, 0x1850, NdOp::LOAD, NdVar::reg(x86reg::RCX, 4),
+           {NdVar::tmp(70, 4)});
+    emitOp(Call, 0x1855, NdOp::CALL, NdVar::reg(x86reg::RAX, 4),
+           {NdVar::cst(0x2300, 4)});
+    Handler.Ops.insert(Handler.Ops.end() - 2, Call.Ops.begin(), Call.Ops.end());
+    for (size_t I = 0; I != Handler.Ops.size(); ++I)
+      Handler.Ops[I].Seq = I;
+    const auto States = analyzeRegistrationStates(Function, 0, 0, &Contracts);
+    ASSERT_TRUE(States.Complete);
+    ASSERT_TRUE(States.CallFrameEffectsComplete);
+    ASSERT_EQ(States.CallFrameEffects.size(), 1u);
+    const auto &Effect = States.CallFrameEffects.front();
+    ASSERT_TRUE(Effect.ECXRuntimeObject);
+    EXPECT_EQ(Effect.ECXRuntimeObject->TryIndex, unsigned(Outer));
+    EXPECT_FALSE(Effect.ECXFrameOffset);
+  }
+}
+
 TEST(RegistrationCatchContext, RetainsOnlyAliasesUntouchedByCleanupWrites) {
   const auto Calls = throws();
   for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {

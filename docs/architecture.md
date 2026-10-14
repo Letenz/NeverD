@@ -394,7 +394,17 @@ their byte-addressed node stores still consume the previous-head definition.
 The MedIR call owner binds each retained callee ABI to its current occurrence.
 HighIR reads that call's current ECX SSA value and uses the proved argument
 count; a private EBP spill cannot become an extra stack argument.
-Unproved or ambiguous bodies retain handler/continuation annotations.
+Unproved or ambiguous bodies retain handler/continuation annotations. The x86
+SSA root owner also recognizes isolated, exact EH3/EH4 table entries when state
+propagation exhausts its budget. A checked parent EBP remains available for
+analysis; ordinary predecessors, an independent ordinary role, conflicting
+entry roles or a mismatched frame/personality cannot borrow that definition.
+This frame fact does not prove protected state intervals or native rebuilding.
+The x86 HighIR filter owner admits only bounded pure return expressions. Its
+proof is shared by structured clauses and fallback annotations before any
+native filter code moves. Side-effecting filters retain their original body.
+The COFF C renderer emits lexical SEH/C++ protection only for reducible nodes;
+fallback views preserve native dispatch annotations and original statements.
 The fixed LLVM C++ prologue has its own COFF decoder. It authenticates the
 saved-register prefix, allocation, all node fields and six-byte FS publication.
 `RegistrationChainInfo` owns translation from runtime EBP to the source frame;
@@ -561,6 +571,20 @@ private frame spills preserve that identity without treating it as an image or
 parent-frame pointer. Exact typed access receipts require the active catch
 context, bounded scalar reads/writes and complete source occurrences. Partial
 spills, pointer escape and use after catch return discard runtime authority.
+`RegistrationStateObjectCall` binds ordinary ECX member receivers in that
+runtime domain, retaining try/catch identity and object-relative bounds without
+publishing parent-frame effects. `MedLLVMRegistrationCxxObjectCall` checks the
+receiver's live source contexts before retaining the actual LLVM argument.
+`COFFRegistrationCxxObjectCall` binds freshly replayed source effects to the
+checked reference catchpad. The shared LLVM frame-privacy owner then locates
+the edited argument, checks its active catch ancestry and bounds, and keeps CRT
+object initialization separate from private-frame must-writes.
+`RegistrationMemberCalleeABI` owns ordinary scalar member stack arguments
+without changing the zero-pop CRT callback policy. `RegistrationStateCallArguments`
+checks initialized, pointer-free parent or callback-private words and retires
+callee-popped storage. Initializers share this scalar-word transfer and retain
+their separate normal-return must-writes. Native LLVM and COFF independently
+redecode the member ABI and check actual scalar arguments alongside the receiver.
 `COFFRegistrationEHRange` recovers contiguous and disjoint table-owned callback
 chunks without claiming intervening cleanup relays. Canonical metadata schema
 11 and semantic-token schema 2 bind all code ranges. Cleanup relays retain their
@@ -4305,9 +4329,84 @@ The x86 adapter assigns a copy block only when both source endpoints belong to
 the same proved invocation. COFF installation independently recognizes the
 actual single-edge block and private scalar spill accesses; names and emitter
 receipts cannot authorize added calls, aliased memory or altered CFG targets.
-The COFF ThrowInfo decoder owns trivial-copy eligibility. State analysis still
-proves complete initialization and pointer privacy for every object byte;
+The COFF ThrowInfo decoder owns single-type identity adjustment and the optional
+copy-constructor and destructor addresses. `RegistrationThrowObjectABI.cpp` owns
+the independent LowIR proof of bounded runtime callbacks: returning private
+object callees, nonescaping accesses, immutable code and checked image effects.
+`RegistrationObjectCallbackABI.cpp` extends this proof to acyclic direct object
+call graphs. Each query owns success, failure and in-progress cache entries;
+depth 32, 256 distinct callees and one cumulative work budget bound the proof.
+Children borrow the same object or a nonnegative subobject and take only
+initialized private scalar words. Exact callee cleanup cannot consume saved
+registers or caller storage. A child result remains unknown unless every return
+independently proves a 32-bit scalar. Only that result loses frame, object and
+copy-source taint; it grants no constructor identity or initialized bytes.
+A source-observed root needs its own independent scalar result.
+`RegistrationCalleeFrameContract` retains that result proof for ordinary parent
+and catch calls. The state solver clears only the exact 32-bit result in its
+frame and runtime-object domains, preserving all other volatile clobbers and
+keeping initialization separate. LLVM emission and independent COFF admission
+compare this source fact with a fresh proof of the current callee.
+Transitive code and image effects join the same closure at source analysis,
+LLVM emission and independent COFF installation. Runtime destruction has no
+constructor return-this or must-initialization authority.
+`RegistrationCallResult.cpp` owns the current-SSA proof of an unused ordinary
+result, shared by native emission and independent COFF admission. Its bounded
+transport closure rejects every observation, implicit call arguments and
+preserved call inputs included. `MedLLVMRegistrationCallResult.cpp` separately
+binds that proof to removable integer transports ending only in exact emitter
+slots without loads, escapes or source effects. The call remains executable;
+neither proof invents a callee return type or grants unbound root arguments.
+`RegistrationCopyABI.cpp` binds the CRT's ECX destination and callee-popped source
+pointer to separate address domains in the shared private-frame transfer. Source
+storage is read-only; every returning path must initialize every destination
+byte. Merges intersect destination initialization and preserve both pointer
+identities through private spills. Private
+throw helpers, direct runtime calls, LLVM lowering and COFF installation consume
+that same contract. Both callbacks' effects and code join the preserved call
+closure. Only independently authenticated invocations whose result the CRT
+discards can ignore a leaf's return register; ordinary calls retain return-value
+privacy checks. State analysis
+still proves complete initialization and pointer privacy for every object byte;
 RTTI remains a type identity, not a recovered member layout.
+Ordinary object initialization has a separate x86 LowIR contract in
+`RegistrationInitializerABI.cpp`. It authenticates scalar stack words, callee
+cleanup, exact ECX return identity and definitely initialized object bytes.
+Each query owns a bounded, cycle-rejecting cache of direct initializer callees;
+cached results and transitive ranges consume the same work budget. There is no
+cross-image proof cache. `RegistrationBorrowedObjectCall.cpp` composes each
+child's must-writes relative to the borrowed object or subobject while keeping
+outgoing scalar storage in the private-frame domain. Child return pointers
+retain the object domain, and outer returns must recover the original object.
+This composition grants no generic leaf, copy-callback or indirect-call ABI.
+`RegistrationInitializerCall.cpp` composes that proof into a preserved private
+throw helper, keeping its outgoing argument area separate from the object and
+caller storage. `RegistrationStateInitializer.cpp` binds parent and catch calls
+to initialized scalar arguments and grants must-writes only on normal return.
+A catch's outgoing argument area belongs to its unique live callback invocation;
+callee cleanup cannot release parent object storage. The callback stack owner
+checks cross-block SSA copies against every ordinary predecessor and treats
+runtime resumes as independent roots unless the definition belongs to the
+callback entry that already ran.
+The x86 MedIR call adapter carries that cleanup into stack SSA even when no
+whole-image callee map exists, and ABI recovery retains ECX followed by the
+proved scalar words. Native LLVM calls preserve the exact returned object
+identity. Independent COFF replay checks argument privacy and keeps constructor
+initialization off the exceptional edge. The shared private-frame transfer owns reads, writes, spills,
+nonvolatile registers and return identity for leaf, copy and initializer
+contracts; call sites consume these facts without decoding a competing ABI.
+May-write effects invalidate exact scalar values while retaining possible
+frame-pointer provenance. Only must-writes discharge that provenance and grant
+initialization. Preserved initializer code and image effects join the same
+closure consumed by source analysis, LLVM and independent PE installation.
+
+The HighC Windows throw adapter also owns whether a throw keeps its runtime
+call. Emission and external-declaration collection share that decision. PE32
+RTTI alone cannot fold an arbitrary call into a constructor or hide object
+initialization stores.
+`HighC/X86/HighCCallSetup.cpp` owns x86 outgoing-stack display cleanup. It
+retains address definitions read outside the hidden setup and their transitive
+inputs, including uses in catch continuations and nested statement bodies.
 
 The PE32 registration solver schedules ordinary blocks in reverse postorder per
 entry component, with stable address ordering for independent roots. Runtime
@@ -4319,10 +4418,13 @@ a candidate makes the reduced graph easier to analyze. The x86 CFG closure in
 callee contracts to ordinary reachability. Dead fallthrough cannot create
 overlapping callback instructions; independent runtime and address-taken roots
 retain their own identities. The loader applies its
-shared decode budget to long straight-line registration initializers. It retains
-confirmed function boundaries and stops at control transfers; padding-like
-immediate bytes cannot truncate a decoded instruction merely because a local
-instruction-count cutoff was reached.
+shared decode budget to registration instruction paths. It retains confirmed
+function boundaries and follows ordinary branches without entering call targets.
+After a control transfer, only a guess inside a decoded instruction can be
+removed; exact entries and conflicting or overlapping decoding remain boundaries.
+Returns, traps and unresolved jumps stop that path. Padding-like immediate bytes
+cannot truncate a decoded instruction merely because a local instruction-count
+cutoff was reached.
 
 ## Verified LowIR concolic branch flips
 
@@ -5926,3 +6028,5 @@ DarwinFiles retains one declaration admission, namespace publication owner and a
 The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the new exact Boolean only for FileSystem; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
 
 DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
+
+`WindowsRegistrationStackCopies` separately checks emitter-private ESP copies at PHI joins. All defining values must retain the same independently derived displacement, and every load needs a definition on every predecessor or a checked callback-entry definition. Missing paths, unknown values, changed offsets and unproved resumes remain rejected.

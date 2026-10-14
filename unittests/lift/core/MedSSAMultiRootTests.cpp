@@ -16,6 +16,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
@@ -1185,7 +1186,8 @@ BinaryImage makeSEHHandlerRegisterImage() {
   return Img;
 }
 
-// Follow copies and register-view extensions to the value a use reads.
+// Follow value copies and register-view extensions. A runtime frame definition
+// has its own occurrence and cannot be replaced by the incoming register.
 MedVar sourceValue(const MedFunc &F, MedVar V) {
   for (unsigned Step = 0; Step != 16; ++Step) {
     const MedOp *Def = nullptr;
@@ -1195,6 +1197,7 @@ MedVar sourceValue(const MedFunc &F, MedVar V) {
             Op.Output.SSAVer == V.SSAVer)
           Def = &Op;
     if (!Def || Def->NumInputs == 0 ||
+        Def->RegistrationRoot != MedOp::RegistrationRootKind::None ||
         (Def->Opcode != NdOp::COPY && Def->Opcode != NdOp::INT_ZEXT))
       return V;
     V = Def->Inputs[0];
@@ -1524,6 +1527,108 @@ TEST(MedSEHHandlerEntry, X86RegistrationRestoresOnlyTheProvenFramePointer) {
       }
       EXPECT_EQ(Other->Kind, MedVar::Unspecified) << Other->display();
     }
+  }
+}
+
+TEST(MedSEHHandlerEntry, IsolatedX86TableEntryKeepsFrameAfterStateExhaustion) {
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "isolated_x86_table_entry";
+    Low.Blocks.resize(2);
+    for (int I = 0; I != 2; ++I) {
+      auto &Block = Low.Blocks[I];
+      Block.Id = I;
+      Block.StartAddr = Low.Entry + 0x20 * I;
+      Block.EndAddr = Block.StartAddr + 0x10;
+    }
+    LowOp PushFrame;
+    PushFrame.Opcode = NdOp::INT_SUB;
+    PushFrame.Addr = Low.Entry;
+    PushFrame.Output = NdVar::reg(TRI.StackPointer, 4);
+    PushFrame.addInput(PushFrame.Output);
+    PushFrame.addInput(NdVar::scalar(4, 4));
+    Low.Blocks[0].Ops.push_back(PushFrame);
+    LowOp EstablishFrame;
+    EstablishFrame.Opcode = NdOp::COPY;
+    EstablishFrame.Addr = Low.Entry + 1;
+    EstablishFrame.Output = NdVar::reg(TRI.FramePointer, 4);
+    EstablishFrame.addInput(PushFrame.Output);
+    Low.Blocks[0].Ops.push_back(EstablishFrame);
+    LowOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = 0x1020;
+    Store.addInput(NdVar::cst(0x3000, 4));
+    Store.addInput(NdVar::reg(TRI.FramePointer, 4));
+    Low.Blocks[1].Ops.push_back(Store);
+    for (auto &Block : Low.Blocks) {
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Block.EndAddr - 1;
+      Block.Ops.push_back(Return);
+    }
+    auto &EH = Low.ExceptionMetadata.emplace();
+    EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+    EH.Personality = ExceptionPersonality::ExceptHandler3;
+    EH.CodeRange = {0x1000, 0x1040};
+    auto &Chain = EH.Registration.emplace();
+    Chain.RegistrationOffset = -16;
+    Chain.TryLevelOffset = -4;
+    Chain.ChainInstallVA = 0x1004;
+    Chain.Scopes = {{-1, 0x1020, 0x1030, false}};
+    auto &States = Low.RegistrationStates.emplace();
+    States.Complete = false;
+    States.Diagnostics = {"registration-state propagation budget exhausted"};
+    switch (Mutation) {
+    case 1:
+      Low.OrdinaryModuleAnalysisRoots.insert(0x1020);
+      break;
+    case 2:
+      Low.Blocks[0].Succs = {1};
+      Low.Blocks[1].Preds = {0};
+      break;
+    case 3:
+      EH.Personality = ExceptionPersonality::ExceptHandler4;
+      break;
+    case 4:
+      Chain.RegistrationOffset = -12;
+      break;
+    case 5:
+      EH.CodeRange.Begin = 0x0ff0;
+      break;
+    case 6:
+      Chain.Scopes.front().FilterVA = 0x1021;
+      break;
+    case 7:
+      Chain.ChainInstallVA = 0x1040;
+      break;
+    case 8:
+      Chain.Scopes.push_back({-1, 0, 0x1020, false});
+      break;
+    }
+    const auto Med =
+        LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+    ASSERT_TRUE(verifyMedFunc(Med, "isolated-x86-table-entry"));
+    auto Frame = storedValueAt(Med, 0x1020);
+    ASSERT_TRUE(Frame);
+    unsigned RuntimeDefinitions = 0;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.RegistrationRoot ==
+            MedOp::RegistrationRootKind::EstablishedFramePointer) {
+          ++RuntimeDefinitions;
+          EXPECT_EQ(registrationRootEntryStackOffset(Op), -4)
+              << Op.Output.display() << " <- " << Op.Inputs[0].display()
+              << " origin=" << Op.OriginSeq;
+        }
+    EXPECT_EQ(RuntimeDefinitions, Mutation == 0 ? 1u : 0u);
+    if (!Mutation)
+      EXPECT_EQ(entryStackOffset(Med, *Frame, Arch::X86, BinaryFormat::COFF),
+                -4)
+          << Frame->display() << " kind=" << unsigned(Frame->Kind)
+          << " id=" << Frame->Id << " ssa=" << Frame->SSAVer;
   }
 }
 

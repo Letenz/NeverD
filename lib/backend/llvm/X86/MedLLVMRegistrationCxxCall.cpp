@@ -50,8 +50,11 @@ std::optional<va_t> throwInfoAddress(const llvm::Value *Value,
 std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const BinaryImage &Image, const RegistrationCalleeFrameContract &Contract,
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,
-    size_t &Work) {
+    size_t &Work, bool ResultUnused) {
   if (Contract.Target != Effect.Target ||
+      (Effect.ECXFrameOffset && Effect.ECXRuntimeObject) ||
+      Contract.StackPopBytes != Effect.StackPopBytes ||
+      (Contract.isThrow() && Effect.StackPopBytes) ||
       Contract.DoesNotReturn != Effect.DoesNotReturn)
     return std::nullopt;
   auto &Context = Call.getContext();
@@ -60,7 +63,8 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
   auto *I32 = llvm::Type::getInt32Ty(Context);
   RegistrationCxxCallABI ABI;
   if (Contract.isThrow()) {
-    if (!Effect.DoesNotReturn || Effect.ECXFrameOffset || !Call.use_empty())
+    if (!Effect.DoesNotReturn || Effect.ECXFrameOffset ||
+        Effect.ECXRuntimeObject || !Call.use_empty())
       return std::nullopt;
     if (Contract.isRuntimeThrow()) {
       if (!getCheckedX86RegistrationThrowImportABI(Image, Effect.Target,
@@ -85,11 +89,11 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
         }
       } else {
         const auto &Throw = *Effect.RuntimeThrow;
-        const auto Info = coff_loader::getCheckedX86SimpleCxxThrowInfo(
-            Image, Throw.ThrowInfoVA);
+        const auto Object = getCheckedX86RegistrationThrowObjectABI(
+            Image, Throw.ThrowInfoVA, &Work);
         const auto Table = throwInfoAddress(Call.getArgOperand(1),
                                             Call.getModule()->getDataLayout());
-        if (!Info || Info->ObjectSize != Throw.ObjectSize || !Table ||
+        if (!Object || Object->Info.ObjectSize != Throw.ObjectSize || !Table ||
             *Table != Throw.ThrowInfoVA ||
             llvm::isa<llvm::Constant>(Call.getArgOperand(0)))
           return std::nullopt;
@@ -105,18 +109,68 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
         return std::nullopt;
       ABI.Type = llvm::FunctionType::get(Void, false);
     }
+  } else if (Contract.isInitializer()) {
+    const auto Proof = getCheckedX86RegistrationInitializerCalleeABI(
+        Image, Effect.Target, &Work);
+    if (!Proof || Proof->Object.StackPopBytes != Effect.StackPopBytes ||
+        Proof->Initialized != Contract.ECXInitialized || Effect.DoesNotReturn ||
+        !Effect.ECXFrameOffset || Effect.ECXRuntimeObject ||
+        Call.arg_size() != 1 + Effect.StackPopBytes / 4 ||
+        (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
+      return std::nullopt;
+    const auto *Object = Call.getArgOperand(0);
+    if (llvm::isa<llvm::Constant>(Object) ||
+        (!Object->getType()->isIntegerTy(32) &&
+         !Object->getType()->isIntegerTy(64) &&
+         (!Object->getType()->isPointerTy() ||
+          Object->getType()->getPointerAddressSpace())))
+      return std::nullopt;
+    for (unsigned I = 1; I < Call.arg_size(); ++I)
+      if (!Call.getArgOperand(I)->getType()->isIntegerTy(32))
+        return std::nullopt;
+    llvm::SmallVector<llvm::Type *, 4> Arguments(Call.arg_size(), I32);
+    Arguments.front() = Ptr;
+    ABI.Type = llvm::FunctionType::get(Void, Arguments, false);
+    ABI.Convention = llvm::CallingConv::X86_ThisCall;
+    ABI.BorrowsECX = ABI.Initializer = true;
   } else {
-    const auto Proof =
-        getCheckedX86RegistrationLeafCalleeABI(Image, Effect.Target, &Work);
-    if (!Proof || !Proof->HasIndependentScalarReturn || Proof->StackPopBytes ||
-        Effect.DoesNotReturn ||
+    const auto Proof = getCheckedX86RegistrationMemberCalleeABI(
+        Image, Effect.Target, &Work, RegistrationLeafResult::Discarded);
+    if (!Proof || Proof->ECXReads != Contract.ECXReads ||
+        Proof->ECXWrites != Contract.ECXWrites ||
+        Proof->HasIndependentScalarReturn !=
+            Contract.HasIndependentScalarReturn ||
+        (!Proof->HasIndependentScalarReturn && !ResultUnused) ||
+        Proof->StackPopBytes != Effect.StackPopBytes || Effect.DoesNotReturn ||
         (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
       return std::nullopt;
     ABI.BorrowsECX = !Proof->ECXReads.empty() || !Proof->ECXWrites.empty();
-    if (ABI.BorrowsECX != Effect.ECXFrameOffset.has_value())
+    if (ABI.BorrowsECX != (Effect.ECXFrameOffset.has_value() ||
+                           Effect.ECXRuntimeObject.has_value()))
       return std::nullopt;
-    ABI.Type = ABI.BorrowsECX ? llvm::FunctionType::get(I32, {Ptr}, false)
-                              : llvm::FunctionType::get(I32, false);
+    if (ABI.BorrowsECX) {
+      if (Call.arg_size() != 1 + Effect.StackPopBytes / 4)
+        return std::nullopt;
+      const auto *Object = Call.getArgOperand(0);
+      if (llvm::isa<llvm::Constant>(Object) ||
+          (!Object->getType()->isIntegerTy(32) &&
+           !Object->getType()->isIntegerTy(64) &&
+           (!Object->getType()->isPointerTy() ||
+            Object->getType()->getPointerAddressSpace())))
+        return std::nullopt;
+    }
+    ABI.DiscardResult = !Proof->HasIndependentScalarReturn;
+    auto *Return = ABI.DiscardResult ? Void : I32;
+    llvm::SmallVector<llvm::Type *, 4> Arguments;
+    if (ABI.BorrowsECX) {
+      Arguments.push_back(Ptr);
+      for (unsigned I = 1; I < Call.arg_size(); ++I) {
+        if (!Call.getArgOperand(I)->getType()->isIntegerTy(32))
+          return std::nullopt;
+        Arguments.push_back(I32);
+      }
+    }
+    ABI.Type = llvm::FunctionType::get(Return, Arguments, false);
     ABI.Convention =
         ABI.BorrowsECX ? llvm::CallingConv::X86_ThisCall : llvm::CallingConv::C;
   }

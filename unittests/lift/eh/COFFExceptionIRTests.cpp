@@ -342,6 +342,7 @@ TEST(COFFExceptionIR, HighCCxxTryRendersCatchSyntaxInReadableListing) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -380,6 +381,7 @@ TEST(COFFExceptionIR, HighCCxxCatchRendersQualifiedTypeName) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -411,6 +413,7 @@ TEST(COFFExceptionIR, HighCCxxCatchRendersRecoveredTypeName) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;
@@ -442,6 +445,7 @@ TEST(COFFExceptionIR, HighCCxxCatchRendersConstReferenceTypeAndHandlerNote) {
 
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
+  Try.EHIsReducible = true;
   Try.EHRange = {0x140001000, 0x140001040};
   HighStmt BodyRet;
   BodyRet.Kind = StmtKind::Return;

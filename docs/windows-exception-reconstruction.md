@@ -36,7 +36,7 @@ Analysis support does not imply native reconstruction support.
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
 | x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
 | x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated direct-frame subset below, including initialized EH/GS cookies |
-| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, trivial-object or unbound catch subset below |
+| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, unadjusted object or unbound catch subset below, including bounded copy constructors, destructors, ordinary object initialization and live reference member calls |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -232,7 +232,7 @@ requires `LLVM_NEVERD_X86_REGISTRATION_GS`. The older published r3 package
 rejects native installation.
 
 Native x86 C++ reconstruction supports synchronous parent try groups with
-ordered catches, with at most 128 source unwind states. A catch may bind a checked scalar or trivial object
+ordered catches, with at most 128 source unwind states. A catch may bind a checked scalar or unadjusted object
 by value or reference, omit its local object, or be `catch(...)`. An unbound
 typed catch retains its exact RTTI and adjectives; catch-all retains null RTTI
 and its native catch-all adjective. An absent object home requires complete
@@ -393,8 +393,8 @@ modes and forced bases. General object lifetimes and conversions remain unsuppor
 
 Trivially copied PE32 exception objects can also be thrown and caught by value
 or reference, including direct throws and rethrows. The immutable ThrowInfo
-must describe one catchable type, an identity adjustment and no copy,
-destructor or forwarding callback. Every source object byte must be initialized;
+must describe one catchable type, an identity adjustment and no copy or
+forwarding callback. Every source object byte must be initialized;
 private-frame pointers cannot escape through its representation. The same
 original RTTI and object extent bind the generated catch home. O0/O1 fixtures
 check distinct 8-byte and 12-byte records, field updates, conditional catch exits,
@@ -404,6 +404,114 @@ admits only private scalar spills on one original CFG edge; calls, aliased
 storage and changed targets are rejected. RTTI alone does not reveal member
 layouts: C++ syntax checks use the fixture's real type declarations, while
 output retains native offsets and unknown aggregate throw calls.
+
+An optional exception destructor requires a separate LowIR proof: it must be a
+returning object callee with a private stack, preserved nonvolatile registers
+and bounded ECX-relative object accesses. Bounded acyclic direct calls may
+borrow that same object or a nonnegative subobject and consume initialized
+private scalar arguments. The proof rejects recursion and shares depth, node
+and work limits; children supply no returned-pointer or constructor-initialization
+authority. Its transitive image effects and immutable code join the
+preserved call closure. It cannot observe the CRT caller PC, escape the object,
+change exception metadata or make an unchecked call. The CRT discards its return
+register; that invocation rule does not authorize an ordinary pointer-returning
+call. Both private helpers and direct throws use this same proof, including at
+independent installation. O0/O1 lifetime fixtures check the count, order and
+object contents of catch-copy and exception destruction across rethrow, both
+patch modes, forced bases and a second reconstruction. A separate destructor-graph
+fixture retains two out-of-line member calls and checks those same lifetime
+observations. Ordinary observed graph calls additionally require an independently
+computed scalar return; discarding a runtime result cannot authorize its use
+at an ordinary call. A child result may be consumed only when every child return
+independently proves a 32-bit scalar; borrowed pointers and unproved return
+paths remain unknown. The same callee proof clears only the exact 32-bit result
+at ordinary parent and catch calls, including calls exposed by destructor
+inlining; other volatile results remain unknown. Source analysis grants no
+object identity or initialized bytes, and both native consumers repeat the
+current scalar-return proof. The separate scalar-result destructor corpus checks
+those values through the same lifetime order and content oracle.
+An ordinary member call may also borrow a live reference catch's scalar
+exception allocation through ECX. Its receipt retains the owning try/catch and
+object-relative offset, separately from parent-frame borrows. The checked
+callee's reads and writes must stay inside that allocation and cannot escape
+the pointer. LLVM retains the actual source receiver and checks every reaching
+catch lifetime; independent COFF installation replays the original source and
+checks the edited pointer's allocation, offset, bounds and active funclet
+ancestry. Runtime-object writes grant no parent-frame initialization. The
+reference-member corpus consumes the returned value before normal completion
+or rethrow and retains the same destruction order/content oracle across both
+rewrite generations.
+Ordinary member roots may consume independently checked 32-bit scalar stack
+words, including members on live reference catches. Source state proves every
+argument byte written in the parent frame or the active callback private stack,
+rejects frame and exception-object pointers, and retires popped storage before
+later argument and private-stack checks. Fresh callee decoding binds the exact
+cleanup and argument count;
+LLVM emission and independent installation recheck the actual defined scalar
+arguments. This does not change the CRT destructor callback ABI. The separate
+member-argument corpus uses a nonzero argument and repeats the lifetime oracle
+across both reconstruction generations.
+Callback ownership can cross a padding-derived boundary inside an ordinary
+branch only after a bounded, closed instruction graph disproves that boundary.
+The proof rejects overlapping decoding, escaping or indirect branches, in-range
+callees and incomplete paths; symbols, exports, other handlers and cleanup
+entries retain their independent boundaries.
+An ordinary call without an independent result can be
+lowered as void only when current SSA proves that copies, extensions and PHIs
+carry no observed result, and its LLVM uses end exclusively in exact
+emitter-private store-only slots. Both native emission and independent COFF
+installation repeat the source-use proof. Roots with unbound stack arguments
+remain rejected; private graph children retain their checked scalar arguments.
+
+A nontrivial runtime copy constructor is also supported when its independent
+LowIR proof separates the destination in ECX from the source pointer in one
+callee-popped stack word. The source is read-only, accesses stay inside each
+object, and every destination byte must be initialized on every return. The
+callback preserves nonvolatile registers and cannot escape either pointer,
+observe the CRT caller PC or call an unproved target. Its immutable code and
+checked image effects join the same preserved closure as the destructor. O0/O1
+fixtures check four copies and twelve destructions per run, including object
+contents, nested catches, reference rethrows, both patch modes, forced bases
+and both reconstruction generations. RTTI does not prove a source constructor:
+unknown aggregate throws retain their exact runtime call, declaration and
+initialization stores instead of inventing `throw Type()`.
+
+The rewritten parent, its catch callbacks and preserved private throw helpers
+may call an independently checked ordinary object initializer before entering
+the CRT. Its physical ABI takes the destination in
+ECX and scalar words in its callee-popped stack area, and returns exactly that
+destination. The caller proves initialized, pointer-free arguments and a
+bounded object disjoint from those arguments and caller storage. Only bytes
+initialized on every normal return become initialized in the caller; reads
+inside the initializer must follow its own writes. Mutable code, pointer
+escapes, caller observations, unchecked nested calls and unproved return
+identities reject reconstruction. The original initializer's code and image
+effects remain in the preserved closure. O0/O1 fixtures retain the ordinary
+constructor calls and observe copies, destruction, nested catches and rethrows
+across both patch modes, rebasing and two generations. Direct parent calls
+recover ECX and each stack argument from the current SSA values. The checked
+callee cleanup also reaches single-function stack SSA without a whole-image
+callee map. Native lowering preserves the exact returned destination, and the
+installer independently checks argument privacy and seeds only the normal edge
+with constructor must-writes. A catch constructor can initialize a parent-frame
+object using scalar arguments in its own proved private stack. Those stack
+bytes must be initialized, pointer-free and consumed by the callee's exact
+cleanup; the parent object retains its separate lifetime. Cross-block private
+stack copies require a reaching definition on every path, including runtime
+resumes. The secondary-throw fixtures construct a new object from the caught
+object's current fields and observe four copies and sixteen destructions,
+distinguishing both object lifetimes from a rethrow. A constructor may delegate
+to another independently checked constructor using initialized scalar words
+and the same ECX object or a bounded subobject. Child must-writes are translated
+to that subobject, and the outer constructor still returns the original object.
+A fresh proof owns the complete acyclic graph, with at most 32 levels and 256
+distinct callees, under the shared work budget. Recursion, indirect calls,
+pointer arguments and child cleanup that consumes caller storage are refused.
+Every child's code and image effects join the preserved closure. Separate
+O0/O1 source/control evidence checks private, parent and catch construction
+through both reconstruction generations. Construction into callback
+stack objects, general constructor/destructor call graphs, conversions and
+virtual-base copying remain unsupported.
 
 ## IR contract
 
@@ -445,9 +553,22 @@ their original control-flow form and increment the function's unstructured-EH
 count.
 
 The C backend emits MSVC SEH syntax for a reducible single-clause SEH region.
-It emits deterministic C-compatible comments for C++ catches and cleanup
-states because HighC is a C backend and must not claim to produce compilable
-C++ source. Out-of-line native funclets retain their exact addresses.
+An irreducible SEH region retains its native body and an annotation for every
+filter, handler, finally action, state and continuation. Registration annotations
+also retain enclosing levels and the exact width and literal bits of try-level
+stores. A bounded pure filter may supply its return expression using the proven
+parent-frame coordinate; its original native statements remain available.
+Owned filter, handler and continuation entries keep their labels and bodies
+after ordinary branches or returns, even without an explicit machine `goto`.
+The renderer does not invent a catch-all clause for an unstructured region.
+Isolated EH3/EH4 table entries retain their checked parent EBP when state
+propagation exhausts its budget. This proves a frame coordinate for analysis,
+without proving active protection intervals or authorizing reconstruction.
+Side-effecting filters retain their native code instead of acquiring a guessed
+C call ABI. An irreducible C++ region likewise retains its unwind-table view
+instead of acquiring lexical `try`/`catch` protection.
+The C view emits deterministic C-compatible comments for C++ catches and
+cleanup states. Out-of-line native funclets retain their exact addresses.
 
 ## LLVM metadata schema
 

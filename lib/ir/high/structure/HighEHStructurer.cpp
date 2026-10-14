@@ -20,6 +20,7 @@
 
 #include "CxxCleanupScope.h"
 #include "HighCFSimplifyDetail.h"
+#include "X86RegistrationFilter.h"
 #include "X86RegistrationTry.h"
 
 #include "neverd/Common.h"
@@ -642,6 +643,8 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
     Clause.FilterOrActionVA =
         Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA;
     Clause.HandlerVA = Scope.HandlerVA;
+    Clause.State = int32_t(I);
+    Clause.ParseStatus = EH.ParseStatus;
     Candidate.Clauses.push_back(std::move(Clause));
     Candidates.push_back(std::move(Candidate));
   }
@@ -1279,94 +1282,6 @@ bool absorbSplitTryPart(std::vector<HighStmt> &Body, StmtKind Kind,
   return true;
 }
 
-/// The value an x86 filter thunk returns when that is all it computes:
-/// `return E;`, or `t = E; return t;`.  E may read only memory, constants and
-/// the frame, the one register the personality enters a filter with; each
-/// frame register becomes the entry stack pointer plus its proven offset, the
-/// way the function's own frame accesses are written.
-ExprPtr x86FilterValue(const std::vector<HighStmt> &Body, const MedFunc &Med) {
-  std::vector<const HighStmt *> Live;
-  for (const HighStmt &S : Body)
-    if (S.Kind != StmtKind::Nop &&
-        !(S.Kind == StmtKind::Block && S.Body.empty()))
-      Live.push_back(&S);
-  if (Live.empty() || Live.size() > 2 ||
-      Live.back()->Kind != StmtKind::Return || !Live.back()->RetVal)
-    return nullptr;
-  ExprPtr Value = Live.back()->RetVal;
-  if (Live.size() == 2) {
-    const HighStmt &Def = *Live.front();
-    if (Def.Kind != StmtKind::Assign || !Def.Dst || !Def.Val ||
-        Def.Dst->Kind != ExprKind::Var || Value->Kind != ExprKind::Var ||
-        varKey(Def.Dst->Var) != varKey(Value->Var))
-      return nullptr;
-    Value = Def.Val;
-  }
-  size_t Budget = 256;
-  std::map<const HighExpr *, ExprPtr> Rebuilt;
-  std::function<ExprPtr(const ExprPtr &)> Rebuild =
-      [&](const ExprPtr &E) -> ExprPtr {
-    if (!E || !Budget--)
-      return nullptr;
-    if (auto It = Rebuilt.find(E.get()); It != Rebuilt.end())
-      return It->second;
-    ExprPtr Result;
-    switch (E->Kind) {
-    case ExprKind::Const:
-      Result = E;
-      break;
-    case ExprKind::Var: {
-      const TargetRegInfo &TRI = getTargetRegInfo(E->Var.TheArch);
-      if (E->Var.Kind != MedVar::Reg || E->Var.Size != TRI.PointerSize ||
-          (E->Var.RegOff != TRI.StackPointer &&
-           E->Var.RegOff != TRI.FramePointer))
-        return nullptr;
-      const std::optional<int64_t> Offset =
-          entryStackOffset(Med, E->Var, E->Var.TheArch, BinaryFormat::COFF);
-      if (!Offset)
-        return nullptr;
-      MedVar EntrySP;
-      EntrySP.Kind = MedVar::Reg;
-      EntrySP.TheArch = E->Var.TheArch;
-      EntrySP.RegOff = TRI.StackPointer;
-      EntrySP.Size = TRI.PointerSize;
-      Result = HighExpr::makeVar(EntrySP, E->Type);
-      if (*Offset != 0) {
-        const bool Down = *Offset < 0;
-        Result = HighExpr::makeBinop(
-            Down ? NdOp::INT_SUB : NdOp::INT_ADD, Result,
-            HighExpr::makeConst(
-                static_cast<uint64_t>(Down ? -*Offset : *Offset),
-                TRI.PointerSize, ConstantAddressProvenance::Scalar));
-        Result->Type = E->Type;
-      }
-      break;
-    }
-    case ExprKind::Load:
-      if (E->MemoryOrdering != NdMemoryOrdering::None ||
-          E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
-        return nullptr;
-      [[fallthrough]];
-    case ExprKind::BinOp:
-    case ExprKind::UnaryOp:
-    case ExprKind::Cast:
-    case ExprKind::BitCast: {
-      auto Copy = std::make_shared<HighExpr>(*E);
-      for (ExprPtr &Operand : Copy->Operands)
-        if (!(Operand = Rebuild(Operand)))
-          return nullptr;
-      Result = Copy;
-      break;
-    }
-    default:
-      return nullptr;
-    }
-    Rebuilt.emplace(E.get(), Result);
-    return Result;
-  };
-  return Rebuild(Value);
-}
-
 std::optional<va_t> windowsClauseBodyTarget(const HighEHClause &Clause) {
   if (Clause.Kind == HighEHClauseKind::SEHExcept ||
       Clause.Kind == HighEHClauseKind::CxxCatch)
@@ -1462,6 +1377,47 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
   AddressSet Result(Span, std::move(Ranges));
   Result.SplitScope = true;
   return Result;
+}
+
+/// Describe native filters before moving any protected or handler statements.
+/// A failed proof remains memoized, and all body copies share the EH budget.
+std::map<va_t, ExprPtr> registrationFilterValues(const HighFunc &Func,
+                                                 const MedFunc &Med,
+                                                 const ExceptionFunction &EH,
+                                                 size_t &CopyBudget) {
+  std::map<va_t, ExprPtr> Values;
+  if (!EH.Registration || EH.Cxx ||
+      EH.ParseStatus != ExceptionParseStatus::Complete ||
+      EH.Registration->Scopes.size() > limits::kMaxRegistrationEHRecords)
+    return Values;
+  size_t BodyWork = 0;
+  walkStmts(Func.Body, [&](const auto &) {
+    if (BodyWork <= limits::kMaxRegistrationEHStateWork)
+      ++BodyWork;
+  });
+  BodyWork = std::max(size_t{1}, BodyWork);
+  for (const auto &Scope : EH.Registration->Scopes) {
+    if (Scope.IsFinally || !Scope.FilterVA || Values.count(Scope.FilterVA))
+      continue;
+    if (BodyWork > CopyBudget)
+      break;
+    CopyBudget -= BodyWork;
+    auto &Value = Values[Scope.FilterVA];
+    if (!llvm::any_of(Med.Blocks, [&](const MedBlock &Block) {
+          return Block.StartAddr == Scope.FilterVA;
+        }))
+      continue;
+    const auto Range = uniqueHandlerBlockRange(Med, EH, Scope.FilterVA, {});
+    if (!Range)
+      continue;
+    auto Copy = Func.Body;
+    std::vector<HighStmt> FilterBody;
+    size_t At = 0;
+    if (extractAddressSlice(Copy, *Range, EH.CodeRange, FilterBody, At,
+                            /*IncludeFunctionEdgeUnknown=*/false))
+      Value = registrationFilterValue(FilterBody, Med);
+  }
+  return Values;
 }
 
 /// Whether \p S is a plain statement with no address.  Nothing jumps to it,
@@ -1589,6 +1545,11 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   if (!Func.ExceptionMetadata)
     return;
   const ExceptionFunction &EH = *Func.ExceptionMetadata;
+  size_t SplitCopyBudget = limits::kMaxRegistrationEHStateWork;
+  const auto FilterValues =
+      TargetArch == Arch::X86
+          ? registrationFilterValues(Func, Med, EH, SplitCopyBudget)
+          : std::map<va_t, ExprPtr>{};
 
   std::vector<RegionCandidate> Candidates;
   unsigned Rejected = 0;
@@ -1710,7 +1671,6 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   std::iota(Order.begin(), Order.end(), size_t{0});
   std::vector<bool> Processed(Candidates.size(), false);
   std::vector<bool> Absorbed(Candidates.size(), false);
-  size_t SplitCopyBudget = limits::kMaxRegistrationEHStateWork;
   for (size_t K = 0; K < Order.size(); ++K) {
     const size_t I = Order[K];
     if (Absorbed[I])
@@ -1724,6 +1684,23 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     if (hasCrossingRegions(Candidates, I)) {
       Rejected += Candidate.NativeRegionCount;
       continue;
+    }
+    if (EH.Registration && Candidate.Kind == StmtKind::SEHTry) {
+      bool Complete = true;
+      for (auto &Clause : Candidate.Clauses) {
+        if (Clause.Kind != HighEHClauseKind::SEHExcept)
+          continue;
+        const auto It = FilterValues.find(Clause.FilterOrActionVA);
+        if (It == FilterValues.end() || !It->second) {
+          Complete = false;
+          break;
+        }
+        Clause.FilterValue = It->second;
+      }
+      if (!Complete) {
+        Rejected += Candidate.NativeRegionCount;
+        continue;
+      }
     }
     // A PE32 try can surround its out-of-line catch in address order. Its
     // checked state intervals form one lexical body only after that callback
@@ -2089,13 +2066,14 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     }
 
     // Filter thunks live in the same function as x86 registration EH but are
-    // called only by the personality.  Drop them from the C body; the except
-    // header names the filter, or prints the value it returns.
+    // called only by the personality. Remove one only after the pure return
+    // expression has been proved; a native frame ABI is not a C call ABI.
     if (HighStmt *InsertedTry = FindInsertedTry()) {
       for (HighEHClause &Clause : InsertedTry->EHClauses) {
         if (Clause.Kind != HighEHClauseKind::SEHExcept ||
             Clause.FilterOrActionVA == 0 ||
-            Clause.FilterOrActionVA == Clause.HandlerVA)
+            Clause.FilterOrActionVA == Clause.HandlerVA ||
+            (EH.Registration && !Clause.FilterValue))
           continue;
         const auto FilterRange = uniqueHandlerBlockRange(
             Med, EH, Clause.FilterOrActionVA, Candidates);
@@ -2103,11 +2081,8 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
           continue;
         size_t FilterAt = 0;
         std::vector<HighStmt> FilterBody;
-        if (extractAddressSlice(Func.Body, *FilterRange, EH.CodeRange,
-                                FilterBody, FilterAt,
-                                /*IncludeFunctionEdgeUnknown=*/false) &&
-            EH.Registration)
-          Clause.FilterValue = x86FilterValue(FilterBody, Med);
+        extractAddressSlice(Func.Body, *FilterRange, EH.CodeRange, FilterBody,
+                            FilterAt, /*IncludeFunctionEdgeUnknown=*/false);
       }
     }
 
@@ -2116,9 +2091,9 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   }
   Func.UnstructuredExceptionRegions += Rejected;
 
-  // x86 registration and VC6 C++ often have no IP map.  Still surface a
-  // readable try around the recovered body rather than leaving a flat listing.
-  // Cleanup-only C++ (UnwindMap, no TryBlocks) is a destructor scope, not SEH.
+  // Without a provable lexical range, retain the native dispatch graph around
+  // the original listing. Cleanup-only C++ still carries unwind actions;
+  // this fallback does not grant a destructor scope or catch-all semantics.
   if (Func.StructuredExceptionRegions == 0 && !Func.Body.empty() &&
       (EH.SEH || EH.Cxx || EH.Registration)) {
     HighStmt Try;
@@ -2157,13 +2132,16 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         }
       }
     } else if (EH.Registration) {
-      for (const RegistrationScopeRecord &Scope : EH.Registration->Scopes) {
+      for (size_t I = 0; I < EH.Registration->Scopes.size(); ++I) {
+        const auto &Scope = EH.Registration->Scopes[I];
         HighEHClause Clause;
         Clause.Kind = Scope.IsFinally ? HighEHClauseKind::SEHFinally
                                       : HighEHClauseKind::SEHExcept;
         Clause.FilterOrActionVA =
             Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA;
         Clause.HandlerVA = Scope.HandlerVA;
+        Clause.State = int32_t(I);
+        Clause.ParseStatus = EH.ParseStatus;
         Try.EHClauses.push_back(std::move(Clause));
         Try.EHClauseBodies.emplace_back();
       }
@@ -2175,8 +2153,24 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
                           : HighEHClauseKind::SEHExcept;
         Clause.FilterOrActionVA = Scope.FilterOrFinallyVA;
         Clause.HandlerVA = Scope.HandlerVA;
+        Clause.ParseStatus = Scope.ParseStatus;
+        if (Scope.ContinuationVA)
+          Clause.ContinuationVAs.push_back(Scope.ContinuationVA);
         Try.EHClauses.push_back(std::move(Clause));
         Try.EHClauseBodies.emplace_back();
+      }
+    }
+    if (Try.Kind == StmtKind::SEHTry && EH.Registration) {
+      // Annotation uses the same proof as structuring and leaves native code.
+      for (auto &Clause : Try.EHClauses) {
+        if (Clause.Kind != HighEHClauseKind::SEHExcept ||
+            !Clause.FilterOrActionVA ||
+            Clause.FilterOrActionVA == Clause.HandlerVA)
+          continue;
+        if (const auto It = FilterValues.find(Clause.FilterOrActionVA);
+            It != FilterValues.end()) {
+          Clause.FilterValue = It->second;
+        }
       }
     }
     if (Try.EHClauses.empty()) {

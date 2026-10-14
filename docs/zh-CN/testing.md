@@ -1847,3 +1847,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 `X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模块和单函数的 CLI 检查覆盖两种优化设置，拒绝内部代码地址并保留已有输出；其他原子指令函数仍必须成功输出 C。地址低位观察尚未支持，LLVM 验证通过不能证明其语义。
 
 真实 PE32 CFI 用例需要 `i686-w64-mingw32-ld`，先断言 FDE、非空跳转表和精确字段来源，再检查普通展开放行及未知 augmentation/未解析间接 LSDA 的拒绝。来源查询覆盖外层记录、fragment、显式入口、可识别的畸形 FDE、顺序交换和清除最终注解；单槽清单的缺口、重复、额外范围和错误步长均拒绝。`ItaniumEHDriver`/`DarwinUnwindSymbols` 覆盖 x86/x64/AArch64 的混合正常/不完整记录、语言刷新、两种 compact/FDE 绑定、缺失 personality 数组、未知 provider、相同初值/名字但不同动态槽、LSDA 冲突和外来/超范围 FDE。完整 section 不新增 language-refresh provenance。以上检查不代表原生异常执行验证。
+
+`member-arguments` 样本为引用 catch 中的普通成员传入非零 32 位栈参数，分别认证源码、类型和参数证明。`RegistrationMemberCallee.*` 验证普通成员与 CRT 回调的策略边界；`RegistrationMemberArgumentState.*` 覆盖父函数、值 catch 和引用 catch 中一至三个参数字，以及缺失、部分、指针来源、不平衡和已弹栈存储。LLVM 帧检查与真实源码变异用例拒绝指针、undef 和 poison 参数。O0/O1、负向控制、两种 patch 模式、重定位及两代重建使用同一析构次数、顺序和对象内容校验。
+
+`RegistrationStackCopy.*` 验证两个回调前驱的相同位移副本，拒绝不同位移、未知或未定义来源、缺失路径、外部定义、先读后写、volatile 写入和未初始化的自复制。

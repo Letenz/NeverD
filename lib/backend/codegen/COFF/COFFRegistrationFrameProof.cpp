@@ -629,10 +629,19 @@ llvm::Error validateFramePrivacy(
               if (Borrow != Cxx->Borrows.end()) {
                 const auto &Checked = Borrow->second;
                 const auto *Root = Checked.Root ? Checked.Root : LogicalFrame;
+                const auto Runtime = RuntimeObjects.find(Root);
+                if (Runtime != RuntimeObjects.end() &&
+                    (!Runtime->second->Reference || Checked.Initializer ||
+                     Checked.ThrowInfoVA || !Checked.Initialized.empty() ||
+                     !Catch ||
+                     !isActiveCxxCatch(Runtime->second->Catch, Catch->Catch)))
+                  return Reject("callee borrows an inactive runtime object");
                 const bool Throw = Checked.ThrowInfoVA != 0;
-                const auto Where = Call->arg_size() == (Throw ? 2u : 1u)
-                                       ? Locate(Call->getArgOperand(0), 0)
-                                       : std::nullopt;
+                const auto Where =
+                    Call->arg_size() ==
+                            (Throw ? 2u : 1u + Checked.ScalarStackWords)
+                        ? Locate(Call->getArgOperand(0), 0)
+                        : std::nullopt;
                 if (!Where || Where->Root != Root ||
                     Where->Offset != Checked.Offset ||
                     Call->getCallingConv() !=
@@ -642,6 +651,15 @@ llvm::Error validateFramePrivacy(
                      CallbackStacks.at(Root) != Catch))
                   return Reject(
                       "callee borrow changed its source frame object");
+                if (Checked.ScalarStackWords)
+                  for (unsigned Index = 1; Index < Call->arg_size(); ++Index) {
+                    const auto *Argument = Call->getArgOperand(Index);
+                    if (!Argument->getType()->isIntegerTy(32) ||
+                        IsAddress(Argument) ||
+                        llvm::isa<llvm::UndefValue, llvm::PoisonValue>(
+                            Argument))
+                      return Reject("member argument is not a defined scalar");
+                  }
                 if (Throw) {
                   const auto Table = Locate(Call->getArgOperand(1), 0);
                   const auto *Global =
@@ -658,16 +676,18 @@ llvm::Error validateFramePrivacy(
                         "direct throw changed its original ThrowInfo");
                 }
                 for (const auto *Effects :
-                     {&Borrow->second.Reads, &Borrow->second.Writes})
+                     {&Checked.Reads, &Checked.Writes, &Checked.Initialized})
                   for (const auto &Effect : *Effects) {
                     const Cell Access{Where->Root,
                                       Where->Offset + Effect.Begin};
-                    if (Effect.Begin >= Effect.End ||
+                    if (++Work > limits::kMaxRegistrationEHStateWork ||
+                        Effect.Begin >= Effect.End ||
                         !Bounded(Access,
                                  uint64_t(int64_t(Effect.End) - Effect.Begin)))
                       return Reject(
                           "callee borrow leaves its allocated source frame");
-                    if (Effects == &Borrow->second.Reads) {
+                    if (Effects == &Borrow->second.Reads &&
+                        !Checked.Initializer) {
                       const auto Tainted = TaintedMemory.overlaps(
                           Access.Root, Access.Offset,
                           uint64_t(int64_t(Effect.End) - Effect.Begin), Work);
@@ -679,7 +699,8 @@ llvm::Error validateFramePrivacy(
                                       "scalar object borrow");
                     }
                     const auto *Home =
-                        Effects == &Borrow->second.Writes
+                        Effects == &Borrow->second.Writes &&
+                                Access.Root == LogicalFrame
                             ? activeCxxReferenceHome(
                                   Cxx, Catch, Access.Offset,
                                   uint64_t(int64_t(Effect.End) - Effect.Begin))
@@ -788,9 +809,11 @@ llvm::Error validateFramePrivacy(
     return Reject("address proof exhausted its work budget");
   if (Cxx) {
     // Recompute definite initialization from actual LLVM stores and the CRT
-    // catch write. Callee write summaries are may-effects and never seed bytes.
+    // catch write. Only independently proved constructor must-writes seed
+    // bytes after calls; ordinary callee write summaries remain may-effects.
     std::map<const llvm::Instruction *, std::vector<Cell>> RequiredBytes;
-    std::map<const llvm::Instruction *, std::pair<Cell, uint64_t>> Writes;
+    std::map<const llvm::Instruction *, std::vector<std::pair<Cell, uint64_t>>>
+        Writes;
     std::set<Cell> Bytes;
     auto Require = [&](const llvm::Instruction *I, Cell Address,
                        uint64_t Size) {
@@ -826,28 +849,40 @@ llvm::Error validateFramePrivacy(
                     Store->getValueOperand()))
               return Reject(
                   "undefined value initializes a source frame object");
-            Writes.emplace(
-                Store, std::make_pair(
-                           *Where, Size(Store->getValueOperand()->getType())));
+            Writes[Store].emplace_back(
+                *Where, Size(Store->getValueOperand()->getType()));
           }
         }
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I)) {
           const auto Borrow = Cxx->Borrows.find(Call);
-          if (Borrow != Cxx->Borrows.end())
-            for (const auto &Read : Borrow->second.Reads)
-              if (!Require(
-                      Call,
-                      {Borrow->second.Root ? Borrow->second.Root : LogicalFrame,
-                       Borrow->second.Offset + Read.Begin},
-                      uint64_t(int64_t(Read.End) - Read.Begin)))
-                return Reject("callee initialization exceeds its work budget");
+          if (Borrow != Cxx->Borrows.end()) {
+            const auto &Checked = Borrow->second;
+            const auto *Root = Checked.Root ? Checked.Root : LogicalFrame;
+            if (RuntimeObjects.count(Root))
+              continue;
+            if (Checked.Initializer)
+              for (const auto &Write : Checked.Initialized) {
+                if (++Work > limits::kMaxRegistrationEHStateWork)
+                  return Reject(
+                      "constructor initialization exceeds its work budget");
+                Writes[Call].emplace_back(
+                    Cell{Root, Checked.Offset + Write.Begin},
+                    uint64_t(int64_t(Write.End) - Write.Begin));
+              }
+            else
+              for (const auto &Read : Checked.Reads)
+                if (!Require(Call, {Root, Checked.Offset + Read.Begin},
+                             uint64_t(int64_t(Read.End) - Read.Begin)))
+                  return Reject(
+                      "callee initialization exceeds its work budget");
+          }
         }
       }
     for (const auto &Catch : Cxx->Catches)
       if (Catch.ObjectSize)
-        Writes.emplace(Catch.Catch,
-                       std::make_pair(Cell{LogicalFrame, Catch.HomeOffset},
-                                      Catch.Reference ? 4 : Catch.ObjectSize));
+        Writes[Catch.Catch].emplace_back(Cell{LogicalFrame, Catch.HomeOffset},
+                                         Catch.Reference ? 4
+                                                         : Catch.ObjectSize);
     std::map<Cell, unsigned> Indices;
     for (Cell Byte : Bytes)
       Indices.emplace(Byte, Indices.size());
@@ -881,15 +916,15 @@ llvm::Error validateFramePrivacy(
       const auto Write = Writes.find(&I);
       if (Write == Writes.end())
         return true;
-      for (auto It = Indices.lower_bound(Write->second.first);
-           It != Indices.end() && It->first.Root == Write->second.first.Root &&
-           It->first.Offset <
-               Write->second.first.Offset + int64_t(Write->second.second);
-           ++It) {
-        if (++Work > limits::kMaxRegistrationEHStateWork)
-          return false;
-        State.set(It->second);
-      }
+      for (const auto &[Address, Width] : Write->second)
+        for (auto It = Indices.lower_bound(Address);
+             It != Indices.end() && It->first.Root == Address.Root &&
+             It->first.Offset < Address.Offset + int64_t(Width);
+             ++It) {
+          if (++Work > limits::kMaxRegistrationEHStateWork)
+            return false;
+          State.set(It->second);
+        }
       return true;
     };
     bool Changed = true;
@@ -903,10 +938,10 @@ llvm::Error validateFramePrivacy(
         auto State = Incoming(Block);
         Initialized BeforeUnwind = State;
         for (const auto &I : Block) {
-          if (++Work > limits::kMaxRegistrationEHStateWork || !Seed(State, I))
-            return Reject("initialization transfer exhausted its work budget");
           if (llvm::isa<llvm::InvokeInst>(I))
             BeforeUnwind = State;
+          if (++Work > limits::kMaxRegistrationEHStateWork || !Seed(State, I))
+            return Reject("initialization transfer exhausted its work budget");
         }
         if (Normal.at(&Block) != State || Unwind.at(&Block) != BeforeUnwind) {
           Normal[&Block] = std::move(State);

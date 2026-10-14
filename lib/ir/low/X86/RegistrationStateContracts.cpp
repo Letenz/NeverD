@@ -49,10 +49,20 @@ bool RegistrationStateSolver::initializeContracts() {
       const bool Leaf =
           Callee.CalleeKind == RegistrationCalleeFrameContract::Kind::Leaf;
       const bool Throw = Callee.isThrow();
+      const bool Initializer = Callee.isInitializer();
+      const bool Member =
+          Leaf && (!Callee.ECXReads.empty() || !Callee.ECXWrites.empty()) &&
+          Callee.CallerPCWrites.empty();
       if (!charge(1) || !Callee.Target || Callee.Target > UINT32_MAX ||
-          Callee.StackPopBytes || (!Leaf && !Throw) ||
-          Callee.DoesNotReturn != Throw ||
-          ((Leaf || Callee.isRethrow() || Callee.isRuntimeThrow()) &&
+          (Initializer || Member
+               ? Callee.StackPopBytes > UINT16_MAX ||
+                     Callee.StackPopBytes % 4 ||
+                     (Leaf && Callee.StackPopBytes / 4 >= limits::kMaxCallArgs)
+               : Callee.StackPopBytes != 0) ||
+          (!Leaf && !Throw && !Initializer) || Callee.DoesNotReturn != Throw ||
+          (Callee.HasIndependentScalarReturn && !Leaf) ||
+          ((Leaf || Initializer || Callee.isRethrow() ||
+            Callee.isRuntimeThrow()) &&
            (Callee.ThrownTypeVA || Callee.ThrownObjectSize)) ||
           (Throw && (!Callee.ECXReads.empty() || !Callee.ECXWrites.empty())) ||
           (Throw && !Callee.isRethrow() && !Callee.isRuntimeThrow() &&
@@ -60,12 +70,26 @@ bool RegistrationStateSolver::initializeContracts() {
             !Callee.ThrownObjectSize ||
             Callee.ThrownObjectSize > limits::kMaxSourceCallBorrowedBytes)) ||
           !validObjects(Callee.ECXReads) || !validObjects(Callee.ECXWrites) ||
+          !validObjects(Callee.ECXInitialized) ||
+          (Initializer != !Callee.ECXInitialized.empty()) ||
+          (Initializer && !Callee.CallerPCWrites.empty()) ||
           !validImageRanges(Callee.ImageReads) ||
           !validImageRanges(Callee.ImageWrites) ||
           !validImageRanges(Callee.CallerPCWrites) ||
           !CalleeIndices.emplace(Callee.Target, CalleeIndices.size()).second) {
         Result.Diagnostics.push_back("registration callee contract is invalid");
         return false;
+      }
+      for (const auto &Initialized : Callee.ECXInitialized) {
+        bool Covered = false;
+        for (const auto &Write : Callee.ECXWrites) {
+          if (!charge(1))
+            return false;
+          Covered |=
+              Write.Begin <= Initialized.Begin && Initialized.End <= Write.End;
+        }
+        if (!Covered)
+          return false;
       }
       if (!Callee.isRuntimeThrow() && !Callee.RuntimeThrowInfos.empty())
         return false;
@@ -147,8 +171,8 @@ bool RegistrationStateSolver::initializeContracts() {
             Leaf.CalleeKind != RegistrationCalleeFrameContract::Kind::Leaf ||
             Leaf.StackPopBytes || Leaf.DoesNotReturn || Leaf.ThrownTypeVA ||
             Leaf.ThrownObjectSize || !Leaf.RuntimeThrowInfos.empty() ||
-            !Leaf.CallerPCWrites.empty() || !validObjects(Leaf.ECXReads) ||
-            !validObjects(Leaf.ECXWrites) ||
+            !Leaf.ECXInitialized.empty() || !Leaf.CallerPCWrites.empty() ||
+            !validObjects(Leaf.ECXReads) || !validObjects(Leaf.ECXWrites) ||
             !validImageRanges(Leaf.ImageReads) ||
             !validImageRanges(Leaf.ImageWrites)) {
           Result.Diagnostics.push_back("registration cleanup call is invalid");

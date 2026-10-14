@@ -725,6 +725,10 @@ checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
 `HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
 frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 
+`HighX86CallSetup` compiles and executes recovered outgoing-stack arithmetic
+through straight-line and nested continuation uses, including 32-bit wraparound.
+It also requires unused argument stores and address chains to disappear.
+
 `LLVMCValues.SelectedFunctionKeeps*SynthesizedTableStorage` compiles and executes
 selected lookup-table output at O0/O2 for x86, x64, ARM and AArch64 source
 profiles across ELF, COFF and Mach-O. Execution uses host scalar C for 64-bit
@@ -4165,6 +4169,155 @@ generations, Microsoft CRT identity, field effects and throw caller ranges are
 mandatory evidence. Second-generation direct throws run the normal call ABI
 recovery pass before native LLVM emission.
 
+The `destructors` profile uses the same sixteen O0/O1 source/control cases with
+observable exception-object and catch-copy destructors. Each execution checks
+twelve destructions and a rolling trace of their order and object contents,
+alongside catch results, reference effects, caller ownership and FS:[0]. Negative
+controls change only the expected destruction count. The shared source driver,
+record declarations and independent destructor proof are hashed into admission.
+Both `check_windows_registration_nested_try.py --profile destructors` and
+`check_windows_registration_relift.py --profile destructors` produce 128 images;
+their replay tools validate the identical files with Wine or native Windows.
+`RegistrationThrowObject.*` rejects out-of-bounds effects, escapes, CRT caller
+observations, mutable code, metadata writes, unchecked calls and exhausted
+budgets. It also retains helper and destructor code in either address order.
+
+The separate `destructor-graphs` profile keeps both observable destructor
+operations behind two real out-of-line member calls. Its sixteen O0/O1 cases
+and controls each exercise both installation routes and forced bases (128
+images per generation); capture, replay, re-lift and replay retain the exact
+source, declarations and transitive lifetime proof hashes. The existing leaf
+destructor profile remains a control. `RegistrationObjectGraph.*` checks
+same-object and subobject effects, conditional may-writes, private scalar
+arguments, exact cleanup, child-result privacy, pointer escapes, metadata and
+code writes, recursion, depth, distinct-node and work exhaustion, and changed
+transitive code. The input-PE32 test requires complete runtime object and cleanup
+state, both destructor identities, two actual child calls and closure of their
+code ranges in the parent's current contracts.
+The separate `destructor-results` profile consumes a returned object-field
+calculation when updating the same independent lifetime trace. Its sixteen
+O0/O1 cases and controls produce 128 images per generation, with identical-file
+replay on Wine and native Windows.
+`RegistrationScalarCallState.*` additionally checks parent and catch calls,
+physical and instruction-local return values, unproved or wide results,
+changed output identities, other volatile register escapes and separate object
+initialization. Authentic source tests also flip the result proof and require
+native emission to refuse the stale contract. O1 corpus inputs expose ordinary scalar calls
+after destructor inlining and require complete source state before rewriting.
+`RegistrationRuntimeMemberState.*` checks distinct runtime allocation identity,
+subobject offsets, reordered CFGs, bounds, partial pointers, constructor
+authority and expired catches. `RegistrationRuntimeMemberFrame.*` independently
+checks the actual LLVM pointer and lifetime, rejecting parent-frame or constant
+receivers, changed offsets, wide effects and invented initialization or stack
+arguments. The `reference-members` profile consumes a real out-of-line member
+call on a catch reference before normal completion or rethrow. Its sixteen
+O0/O1 cases and controls produce 128 images per generation and retain source,
+declaration, callback and receiver-proof hashes for Wine and native Windows
+replay. Its input-PE32 test also rejects six changed source receiver contracts,
+three missing, extra or constant receiver argument projections and three
+post-emission LLVM pointer edits. O1 keeps a live EDX value beside ECX; the
+checked member contract must exclude that scratch value from the call ABI.
+Pure graph tests require an independent
+scalar on every return, reject borrowed pointers and entry-EAX alternatives,
+and retain the private scalar-argument proof when a child returns an argument.
+`NeverDRegistrationCallResultTests` independently checks source result-use
+proofs and LLVM deletion plans. SSA copies, extensions and PHIs may transport
+an unused result; returns, branches, source stores, implicit call arguments,
+preserved call inputs, ambiguous definitions and exhausted budgets reject.
+LLVM plans remove only integer transports into exact emitter-owned store-only
+slots, retaining the call and rejecting loads, escapes, metadata, volatile and
+atomic stores. O1 destructor graph cases exercise the ordinary void member
+calls exposed when the compiler inlines the outer destructor.
+`SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` checks the
+frontend IR argument types for the C/C++ views on every host: a C declaration
+with unknown parameters cannot become a zero-argument C++ prototype. Both views
+execute against an independent C callee where the physical ABIs agree. Darwin
+AArch64 executes the C view and checks the C++ view's promoted IR types, because
+its fully variadic and fixed C ABIs differ. The provider uses the exact assembler
+label on Mach-O. The source ellipsis does not grant a native variadic ABI contract.
+The `member-arguments` profile adds a nonzero 32-bit stack argument to those
+member calls and separately authenticates its source, type and scalar-word proof.
+`RegistrationMemberCallee.*` keeps CRT callback and ordinary member policies
+separate; `RegistrationMemberArgumentState.*` checks one through three words in
+parent, value-catch and reference-catch contexts, including missing, partial,
+pointer-bearing, unbalanced and retired storage.
+`RegistrationRuntimeMemberFrame.RechecksDefinedScalarStackWords` and authentic
+source mutants reject pointer, undef and poison arguments after LLVM emission.
+Capture, replay and a second reconstruction cover both optimizations, negative
+controls, both patch modes, rebasing and lifetime count/order/content.
+
+`WindowsSEHFallback.*` checks complete native clause annotations, narrow state
+stores, pure and side-effecting filters, refusal to discard an unbound handler
+body, native continuations after an ordinary return, and irreducible C++ views.
+`MedSEHHandlerEntry` checks table-owned x86
+frame recovery after state-budget exhaustion, including independent ordinary
+roles, predecessors, mismatched personalities, frame offsets and entry ranges.
+The large original `xcpt4` corpus regression must keep its frame-reading filter
+expression in the native annotation without claiming lexical protection.
+
+`NeverDLiftTest.HostHalfFMAProviderMatchesIndependentIEEEOracle` checks the
+test-only binary16 FMA provider against APFloat for 10,936 edge and randomized
+triples at O0/O2. `AArch64_FP.HalfPrecisionArithmeticExecutesThroughHighC` uses
+that provider when an older host library lacks `fmaf16`; its expected values
+also come from APFloat. This fixture proves default nearest-even execution,
+without granting a product floating-environment or other rounding-mode contract.
+
+The `copies` source and relift profiles extend that matrix with nontrivial CRT
+copy callbacks for both records. Each run checks four copies and twelve
+destructions with separate count and object-content traces. Negative controls
+change the expected copy count. The sixteen source/control cases produce 128
+executions per capture or replay, including both patch modes and forced bases.
+`RegistrationCopy.*` separately rejects source writes, bounds violations,
+partial destination initialization on any return, pointer escapes, caller
+storage observations and incorrect `RET 4` cleanup. Replay admission binds the
+copy proof and source declarations and rejects a trivial-object or destructor
+capture in their place. C/C++ syntax checks also cover records with no default
+constructor; RTTI alone must not invent a constructor or remove initialization.
+
+The `initializers` source and relift profiles keep ordinary scalar-argument
+constructors out of line in the parent, its catch callback and private throw
+helpers before entering the CRT. Twenty O0/O1 direct/private nested/rethrow and
+direct-secondary source/control cases produce 160 images per capture or replay;
+the complete two-generation sequence executes 640 images. The source
+profile binds the initializer proof, the constructor-selection wrapper, both
+shared drivers and the actual type declarations. It retains the independent
+four-copy/twelve-destruction oracle for nested catches and rethrows. A new
+object constructed from a catch's modified fields requires four copies and
+sixteen destructions with a distinct content/order trace. Copy-only evidence
+cannot replace ordinary-constructor evidence. `RegistrationInitializer.*` checks
+callee stack cleanup, exact returned destination, private spills, all-path initialization,
+source closure and the nearest pointer/argument/caller-storage refusals.
+`RegistrationInitializerState.*` checks exact stack cleanup and return identity
+without borrowing uninitialized arguments. `RegistrationInitializerFrame.*`
+checks disjoint must-writes, exceptional-edge isolation and scalar argument
+privacy. Direct-source mutations also challenge the installed constructor ABI,
+object pointer and optimizer promises at every call occurrence, including a
+constructor shared by parent and callback. `RegistrationCallbackInitializer.*`
+checks callback argument privacy, stack cleanup and parent-object initialization
+independently of block order. `RegistrationCallbackStackFlow.*` checks cross-block
+SSA copies, loops, bypassed definitions and runtime resumes without treating the
+parent's ordinary entry as the callback's dominator root.
+Second-generation receipts retain disjoint callback ranges. Replay checks each
+range and rejects gaps, overlap and chunks from the previous generation.
+`RegistrationInstructionRange.*` distinguishes instruction operands containing padding
+bytes from real entries after branches and calls, including loops, unreachable
+bytes, conflicting branch targets and overlapping instruction decodes.
+`RegistrationState.APossibleCalleeWriteCannotLaunderTheObjectPointer` checks
+that both partial and full-width may-writes preserve possible frame-pointer
+provenance until a definite replacement has been proved.
+
+The separate `delegating` source and relift profiles retain both ordinary
+constructor bodies and require a current-machine transitive construction proof.
+Their twenty O0/O1 source/control cases cover private helpers, direct parent
+calls, catch construction, rethrows and secondary exceptions, producing 160
+executions per capture or replay and 640 across both generations. Native Windows
+replays the identical files. Ordinary initializer evidence cannot replace the
+constructor-graph proof or its source dependencies. `RegistrationInitializerGraph.*`
+checks transitive image/code effects, independent subobjects sharing one callee,
+subobject return identity, partial must-writes, scalar privacy, exact cleanup,
+recursion and exhausted depth/work budgets. The source proof verifies actual
+child calls on ordinary entry paths, independently of other address-taken roots.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.
@@ -5846,6 +5999,8 @@ source replay also rejects replacing the generated finally return with
 `RAMReservationTests.cpp` checks public write witnesses across identical-value and ABA stores, retained slices, address reuse, sibling mappings, rollback, cancellation, fault-prefix commits and opaque execution. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` checks owned loader facts at preferred, downward and kernel load addresses: restored bytes do not restore invalidated provenance. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distinguishes active CFG pointer replacement from dormant fallback retention.
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` checks PE output, an independent DIR64 reader, model rebasing and exclusion of rewritten debug records. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rejects source/base/order mismatches and excludes formatting replacements even when bytes match. These checks certify diagnostic metadata, not native recovery.
+
+`RegistrationStackCopy.*` authenticates equal-displacement copies from both callback predecessors and rejects changed displacements, unknown or undefined sources, missing paths, external definitions, reads before definition, volatile stores and uninitialized self-copies.
 
 ## Source and native object replacement tests
 

@@ -86,6 +86,20 @@ void FrameState::store(int32_t Offset, uint16_t Width,
                        const FrameValue &Value) {
   storeCell(Cells, Offset, Width, Value);
 }
+
+void FrameState::forgetCellValues(int32_t Offset, uint32_t Width) {
+  if (!Width)
+    return;
+  auto It = Cells.lower_bound(
+      int32_t(std::max<int64_t>(INT32_MIN, int64_t(Offset) - 3)));
+  while (It != Cells.end() && int64_t(It->first) < int64_t(Offset) + Width) {
+    if (It->second.MayBeFrame) {
+      It->second = {{}, {}, false, true};
+      ++It;
+    } else
+      It = Cells.erase(It);
+  }
+}
 void FrameState::storeEntry(int32_t Offset, uint16_t Width,
                             const FrameValue &Value) {
   storeCell(EntryCells, Offset, Width, Value);

@@ -156,6 +156,9 @@ private:
   std::optional<int32_t> parentStackOffset(const Domain &State) const;
   void preserveCxxFrameCells(Domain &Root, const Domain &Source);
   bool initializeContracts();
+  bool bindRuntimeObjectBorrow(const Domain &State,
+                               const RegistrationCalleeFrameContract &Callee,
+                               RegistrationCallFrameEffect &Effect);
   std::optional<RegistrationRuntimeThrow>
   runtimeThrowArguments(const Domain &State,
                         const RegistrationCalleeFrameContract &Callee,
@@ -167,10 +170,18 @@ private:
     FrameValue StackPointer;
     bool DoesNotReturn;
     va_t EndAddress;
+    std::optional<FrameValue> Result;
   };
   std::optional<CallTransfer> transferCall(size_t I, Domain &After,
                                            const LowOp &Op,
                                            const BlockFacts &Facts);
+  bool transferScalarArguments(Domain &After,
+                               const RegistrationCalleeFrameContract &Callee,
+                               FrameValue &StackPointer,
+                               std::optional<int32_t> Object);
+  bool transferInitializer(Domain &After,
+                           const RegistrationCalleeFrameContract &Callee,
+                           FrameValue &StackPointer, FrameValue &Object);
   std::optional<FrameValue> transferLocalUnwind(size_t I, Domain &After,
                                                 const LowOp &Op,
                                                 BlockFacts &Facts);
