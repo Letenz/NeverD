@@ -20,6 +20,7 @@
 #include "neverd/Limits.h"
 #include "neverd/decode/InstructionRelocations.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportedMemoryCopy.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/lift/ARMRegs.h"
 #include "neverd/lift/X86Regs.h"
@@ -1488,6 +1489,10 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
             Insns.find(Occurrence.DereferenceInstructionAddr);
         const LowOp *Dereference = exactProofOp(
             Occurrence.DereferenceInstructionAddr, Occurrence.DereferenceOpSeq);
+        if (Dereference && Dereference->Opcode == NdOp::CALL)
+          return importedMemoryCopyDereferenceMatches(Img, Insns, *Dereference,
+                                                      Occurrence, Current,
+                                                      Address, ExpectedAddress);
         if (DereferenceRec == Insns.end() || !Dereference ||
             DereferenceRec->second.Addr != ExpectedAddress ||
             DereferenceRec->second.IsBranch || DereferenceRec->second.IsCall ||
@@ -3357,6 +3362,39 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
     std::vector<RelocatedInstructionAddressArithmeticStep> Steps;
     std::vector<JumpTableValueQuery> CandidateQueries;
     va_t ExpectedAddress = RootRec.Addr + RootRec.Size;
+    auto publishCandidate = [&](va_t Owner, const LowOp &Dereference,
+                                const NdVar &MemoryAddress, uint16_t Bytes) {
+      RelocationFreeCandidate Candidate;
+      for (JumpTableValueQuery &Query : CandidateQueries) {
+        Candidate.QueryIndices.push_back(RelocationFreeQueries.size());
+        RelocationFreeQueries.push_back(std::move(Query));
+      }
+      auto &Occurrence = Candidate.Occurrence;
+      Occurrence.FieldVA = InvalidVA;
+      Occurrence.InstructionAddr = Steps.back().InstructionAddr;
+      Occurrence.OpSeq = Steps.back().OpSeq;
+      Occurrence.TargetVA = CurrentAddress;
+      Occurrence.TargetOwnerVA = Owner;
+      Occurrence.Width = static_cast<uint8_t>(PointerSize);
+      Occurrence.Provenance = ConstantAddressProvenance::DataAddress;
+      Occurrence.DefinesOutput = true;
+      Occurrence.OutputOpcode = Steps.back().Opcode;
+      Occurrence.OutputWitness = Steps.back().OutputWitness;
+      Occurrence.Authority = RelocatedInstructionAddressProofKind::
+          AArch64RelocationFreeDataDereference;
+      Occurrence.SeedInstructionAddr = Root.Addr;
+      Occurrence.SeedOpSeq = Root.Seq;
+      Occurrence.SeedOpcode = Root.Opcode;
+      Occurrence.SeedInputWitness = Root.Inputs[0];
+      Occurrence.SeedOutputWitness = Root.Output;
+      Occurrence.ArithmeticProof = Steps;
+      Occurrence.DereferenceInstructionAddr = Dereference.Addr;
+      Occurrence.DereferenceOpSeq = Dereference.Seq;
+      Occurrence.DereferenceOpcode = Dereference.Opcode;
+      Occurrence.DereferenceAddressWitness = MemoryAddress;
+      Occurrence.DereferenceAccessSize = Bytes;
+      RelocationFreeCandidates.push_back(std::move(Candidate));
+    };
 
     for (auto UseIt = std::next(RootIt);
          UseIt != Insns.end() && Steps.size() < MaxLookaheadInstructions;
@@ -3364,9 +3402,40 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
       const InsnRecord &UseRec = UseIt->second;
       if (UseRec.Addr != ExpectedAddress || UseRec.Size == 0 ||
           UseRec.Size > InvalidVA - UseRec.Addr || UseRec.IsInstructionGuard ||
-          UseRec.IsBranch || UseRec.IsCall || UseRec.IsRet ||
+          (UseRec.IsBranch && !UseRec.IsCall) || UseRec.IsRet ||
           UseRec.IsOpaqueTerminator || UseRec.IsResumableTerminator)
         break;
+      if (UseRec.IsCall) {
+        if (Steps.empty())
+          break;
+        const LowOp *Call = nullptr;
+        for (const LowOp &Op : UseRec.Ops)
+          if (Op.Opcode == NdOp::CALL)
+            Call = &Op;
+        const auto Read =
+            Call ? importedMemoryCopyRead(Img, Insns, *Call) : std::nullopt;
+        if (!Read || Read->Source != CurrentValue)
+          break;
+        const auto Owner = uniqueImmutableDataOwner(CurrentAddress, Read->Size);
+        if (!Owner ||
+            !Img.relocatedTargetBelongsToOwner(CurrentAddress, *Owner))
+          break;
+        CandidateQueries.push_back({Read->Source,
+                                    Call->Addr,
+                                    Call->Seq,
+                                    {CurrentDefinition},
+                                    false,
+                                    false});
+        CandidateQueries.push_back({Read->Length,
+                                    Call->Addr,
+                                    Call->Seq,
+                                    {{Read->Length, Read->LengthInstructionAddr,
+                                      Read->LengthOpSeq, true}},
+                                    false,
+                                    false});
+        publishCandidate(*Owner, *Call, Read->Source, Read->Size);
+        break;
+      }
 
       // AArch64 unsigned-offset LDR/STR folds the address calculation into the
       // memory instruction.  Its LowIR is instruction-local rather than three
@@ -3499,37 +3568,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
                                     /*AllowZeroExtension=*/false,
                                     /*AllowSignExtension=*/false});
 
-        RelocationFreeCandidate Candidate;
-        for (JumpTableValueQuery &Query : CandidateQueries) {
-          Candidate.QueryIndices.push_back(RelocationFreeQueries.size());
-          RelocationFreeQueries.push_back(std::move(Query));
-        }
-        RelocatedInstructionAddressOccurrence &Occurrence =
-            Candidate.Occurrence;
-        Occurrence.FieldVA = InvalidVA;
-        Occurrence.InstructionAddr = Steps.back().InstructionAddr;
-        Occurrence.OpSeq = Steps.back().OpSeq;
-        Occurrence.TargetVA = CurrentAddress;
-        Occurrence.TargetOwnerVA = *Owner;
-        Occurrence.Width = static_cast<uint8_t>(PointerSize);
-        Occurrence.Provenance = ConstantAddressProvenance::DataAddress;
-        Occurrence.DefinesOutput = true;
-        Occurrence.OutputOpcode = Steps.back().Opcode;
-        Occurrence.OutputWitness = Steps.back().OutputWitness;
-        Occurrence.Authority = RelocatedInstructionAddressProofKind::
-            AArch64RelocationFreeDataDereference;
-        Occurrence.SeedInstructionAddr = Root.Addr;
-        Occurrence.SeedOpSeq = Root.Seq;
-        Occurrence.SeedOpcode = Root.Opcode;
-        Occurrence.SeedInputWitness = Root.Inputs[0];
-        Occurrence.SeedOutputWitness = Root.Output;
-        Occurrence.ArithmeticProof = Steps;
-        Occurrence.DereferenceInstructionAddr = LocalDereference->Addr;
-        Occurrence.DereferenceOpSeq = LocalDereference->Seq;
-        Occurrence.DereferenceOpcode = LocalDereference->Opcode;
-        Occurrence.DereferenceAddressWitness = LocalDereferenceAddress;
-        Occurrence.DereferenceAccessSize = LocalDereferenceMemory.AccessSize;
-        RelocationFreeCandidates.push_back(std::move(Candidate));
+        publishCandidate(*Owner, *LocalDereference, LocalDereferenceAddress,
+                         LocalDereferenceMemory.AccessSize);
         break;
       }
 
@@ -3654,36 +3694,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
                                   {CurrentDefinition},
                                   /*AllowZeroExtension=*/false,
                                   /*AllowSignExtension=*/false});
-      RelocationFreeCandidate Candidate;
-      for (JumpTableValueQuery &Query : CandidateQueries) {
-        Candidate.QueryIndices.push_back(RelocationFreeQueries.size());
-        RelocationFreeQueries.push_back(std::move(Query));
-      }
-      RelocatedInstructionAddressOccurrence &Occurrence = Candidate.Occurrence;
-      Occurrence.FieldVA = InvalidVA;
-      Occurrence.InstructionAddr = Steps.back().InstructionAddr;
-      Occurrence.OpSeq = Steps.back().OpSeq;
-      Occurrence.TargetVA = CurrentAddress;
-      Occurrence.TargetOwnerVA = *Owner;
-      Occurrence.Width = static_cast<uint8_t>(PointerSize);
-      Occurrence.Provenance = ConstantAddressProvenance::DataAddress;
-      Occurrence.DefinesOutput = true;
-      Occurrence.OutputOpcode = Steps.back().Opcode;
-      Occurrence.OutputWitness = Steps.back().OutputWitness;
-      Occurrence.Authority = RelocatedInstructionAddressProofKind::
-          AArch64RelocationFreeDataDereference;
-      Occurrence.SeedInstructionAddr = Root.Addr;
-      Occurrence.SeedOpSeq = Root.Seq;
-      Occurrence.SeedOpcode = Root.Opcode;
-      Occurrence.SeedInputWitness = Root.Inputs[0];
-      Occurrence.SeedOutputWitness = Root.Output;
-      Occurrence.ArithmeticProof = Steps;
-      Occurrence.DereferenceInstructionAddr = Dereference->Addr;
-      Occurrence.DereferenceOpSeq = Dereference->Seq;
-      Occurrence.DereferenceOpcode = Dereference->Opcode;
-      Occurrence.DereferenceAddressWitness = DereferenceAddress;
-      Occurrence.DereferenceAccessSize = DereferenceMemory.AccessSize;
-      RelocationFreeCandidates.push_back(std::move(Candidate));
+      publishCandidate(*Owner, *Dereference, DereferenceAddress,
+                       DereferenceMemory.AccessSize);
       break;
     }
   }
