@@ -125,5 +125,5 @@ jobs:
           name: web-full-producer-qualification
           path: |
             build-web-qualification/unittests/web/producer-results.xml
-            build-web-qualification/Testing/Temporary/LastTest.log
+            build-web-qualification/unittests/web/Testing/Temporary/LastTest.log
           if-no-files-found: warn
