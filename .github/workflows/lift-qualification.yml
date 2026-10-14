@@ -70,13 +70,37 @@ jobs:
             -DNEVERD_BUILD_GUI=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF
       - name: Build the production CLI and complete Lift test owner
-        run: cmake --build build-lift-qualification --target neverd NeverDLiftTests --parallel 4
+        run: cmake --build build-lift-qualification --target neverd NeverDLiftTests NeverDLLVMCValueTests --parallel 4
       - name: Require all 108 previous failures and skips to pass
         run: |
           python scripts/run_lift_qualification.py \
             --binary build-lift-qualification/bin/NeverDLiftTests \
             --neverd build-lift-qualification/bin/neverd \
             --output build-lift-qualification/evidence
+      - name: Execute LLVM-C wide values and native i386 table storage
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          names = (
+              'LLVMCValues.WideIntegerConstantsPreserveEveryWordAndStoreExtent',
+              'LLVMCValues.WideConstantsPreserveEveryStoredByte',
+              'LLVMCValues.SelectedFunctionKeeps32BitSynthesizedTableStorage',
+          )
+          output = Path('build-lift-qualification/evidence')
+          xml = output / 'llvmc-native.xml'
+          with (output / 'llvmc-native.log').open('w') as log:
+              result = subprocess.run([
+                  'build-lift-qualification/bin/NeverDLLVMCValueTests',
+                  '--gtest_filter=' + ':'.join(names), '--gtest_output=xml:' + str(xml)],
+                  env=dict(os.environ, NEVERD_SIGNATURE_CACHE='off'),
+                  stdout=log, stderr=subprocess.STDOUT, timeout=600)
+          report = audit(ET.parse(xml).getroot(), names, result.returncode)
+          (output / 'llvmc-native.json').write_text(json.dumps(report, indent=2) + '\n')
+          print('LLVM-C native integration: 3 passed, zero failed, zero skipped')
+          PY
       - name: Retain individual results, compiler identities and native logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
