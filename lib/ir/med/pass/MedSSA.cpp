@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../X86/RegistrationRoots.h"
+#include "../X86/SEHFrame.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -37,87 +38,7 @@
 
 namespace neverd {
 
-namespace {
-
-std::optional<uint64_t> proveSEHEstablisherFrame(
-    const LowFunc &Low, const MedFunc &Med, va_t Handler,
-    const TargetRegInfo &TRI, bool OrdinaryEntry,
-    llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false,
-    std::vector<int> *ProtectedSources = nullptr,
-    std::map<int, std::set<va_t>> *ProtectedCalls = nullptr) {
-  auto Fail = [](const std::string &Why) -> void {
-    throw LowToMedConversionError(
-        std::string("Windows SEH establisher frame: ") + Why);
-  };
-  size_t WorkRemaining = limits::kMaxSEHEstablisherFrameWork;
-  auto Proof = proveLowSEHEstablisherFrame(Low, Handler, TRI, OrdinaryEntry,
-                                           WorkRemaining, LocalUnwindDigest,
-                                           CxxContinuation);
-  if (!Proof)
-    Fail(llvm::toString(Proof.takeError()));
-  auto Charge = [&](size_t Amount = 1) {
-    if (Amount > WorkRemaining)
-      Fail("converted frame propagation budget exhausted");
-    WorkRemaining -= Amount;
-  };
-  const auto &EH = *Low.ExceptionMetadata;
-  const bool HasFrameRegister = EH.FrameRegister != 0;
-  const va_t PrologueEnd = Low.Entry + EH.PrologueSize;
-  const size_t N = Low.Blocks.size();
-  const auto &Relevant = Proof->RelevantBlocks;
-  const auto &ProtectedBlock = Proof->ProtectedBlocks;
-  const auto &CheckedEnd = Proof->CheckedEnd;
-  const auto &DecodedAdjustments = Proof->DecodedAdjustments;
-  bool DynamicSP = Proof->DynamicSP;
-  // Low->Med may add ABI effects (for example a known callee's ret-pop).
-  // Such effects are absent from decoded LowOps and must not bypass the SP
-  // stability certificate, whether in the prologue or a protected prefix.
-  std::map<va_t, uint64_t> ConvertedAdjustments;
-  for (const MedBlock &Block : Med.Blocks) {
-    Charge();
-    for (const MedOp &Op : Block.Ops) {
-      Charge();
-      if (Op.Output.Kind != MedVar::Reg ||
-          Op.Output.RegOff != TRI.StackPointer || !Op.Output.Size)
-        continue;
-      Charge(N);
-      for (size_t B = 0; B < N; ++B) {
-        if (!Relevant[B] || Op.Addr >= CheckedEnd[B] ||
-            Op.Addr < Low.Blocks[B].StartAddr ||
-            Op.Addr >= Low.Blocks[B].EndAddr)
-          continue;
-        if (HasFrameRegister && !ProtectedBlock[B] &&
-            (B != 0 || Op.Addr >= PrologueEnd)) {
-          DynamicSP = true;
-          continue;
-        }
-        if (Op.Addr >= PrologueEnd || Op.Opcode != NdOp::INT_SUB ||
-            Op.Output.Size != 8 || Op.NumInputs != 2 ||
-            Op.Inputs[0].Kind != MedVar::Reg ||
-            Op.Inputs[0].RegOff != TRI.StackPointer || Op.Inputs[0].Size != 8 ||
-            !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 8 ||
-            !ConvertedAdjustments.emplace(Op.Addr, Op.Inputs[1].ConstVal)
-                 .second)
-          Fail("converted ABI effect changes the protected SP");
-      }
-    }
-  }
-  if (ConvertedAdjustments != DecodedAdjustments)
-    Fail("converted prologue disagrees with decoded SP effects");
-  if (DynamicSP && Proof->HasRelevantLocalUnwind)
-    Fail("local-unwind call does not carry the protected frame");
-  if (DynamicSP && OrdinaryEntry)
-    Fail("SP moves before a handler that ordinary flow also enters");
-  if (ProtectedSources)
-    *ProtectedSources = std::move(Proof->ProtectedSources);
-  if (ProtectedCalls)
-    *ProtectedCalls = std::move(Proof->ProtectedCalls);
-  if (DynamicSP)
-    return std::nullopt;
-  return Proof->FrameBytes;
-}
-
-} // namespace
+using x86_seh::proveSEHEstablisherFrame;
 
 void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   if (Func.Blocks.empty())

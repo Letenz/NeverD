@@ -236,6 +236,52 @@ TEST(WindowsEHModesCorpus,
   }
 }
 
+TEST(WindowsEHModesCorpus, DecompilesOptimizedFH3ProtectedSourceProjection) {
+  auto ExpectationsOrErr = loadExpectations();
+  ASSERT_TRUE(static_cast<bool>(ExpectationsOrErr))
+      << toString(ExpectationsOrErr.takeError());
+  const std::filesystem::path CorpusRoot(NEVERD_BINARY_CORPUS_ROOT);
+  for (bool SecurityCookie : {false, true}) {
+    SCOPED_TRACE(SecurityCookie ? "gs" : "no-gs");
+    auto ExpectationOrErr =
+        selectUnique(*ExpectationsOrErr, {"cxx_eh_probe", "msvc", "x86_64",
+                                          "fh3", SecurityCookie, "o2"});
+    ASSERT_TRUE(static_cast<bool>(ExpectationOrErr))
+        << toString(ExpectationOrErr.takeError());
+    auto OutputOrErr =
+        decompileToSource(CorpusRoot / (*ExpectationOrErr)->Path);
+    ASSERT_TRUE(static_cast<bool>(OutputOrErr))
+        << toString(OutputOrErr.takeError());
+    EXPECT_TRUE(StringRef(*OutputOrErr).contains("cxx.format=fh3"));
+    EXPECT_FALSE(guardedAnalysisBlocks(*OutputOrErr).empty());
+  }
+}
+
+TEST(WindowsEHModesCorpus, DecompilesRegistrationCalleeProofCycles) {
+  const std::filesystem::path CorpusRoot =
+      std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) / "corpus/windows-eh";
+  const std::array<StringRef, 5> Inputs{{
+      "msvc/vs2019/x86/native/gs/o2/windows-seh-tests/"
+      "xcpt4-msvc-x86-native-gs-o2.exe",
+      "msvc/x86/native/gs/o0/windows-seh-tests/"
+      "xframe_eh_exe-msvc-x86-native-gs-o0.exe",
+      "msvc/x86/native/gs/o0/windows-seh-tests/"
+      "xframe_eh_dll-msvc-x86-native-gs-o0.dll",
+      "msvc/x86/native/no-gs/o0/windows-seh-tests/"
+      "xframe_eh_dll-msvc-x86-native-no-gs-o0.dll",
+      "msvc/x86/native/gs/o2/windows-seh-tests/"
+      "xframe_eh_dll-msvc-x86-native-gs-o2.dll",
+  }};
+  for (StringRef Input : Inputs) {
+    SCOPED_TRACE(Input.str());
+    auto OutputOrErr = decompileToSource(CorpusRoot / Input.str());
+    ASSERT_TRUE(static_cast<bool>(OutputOrErr))
+        << toString(OutputOrErr.takeError());
+    EXPECT_TRUE(StringRef(*OutputOrErr).contains("encoding=x86-"));
+    EXPECT_FALSE(guardedAnalysisBlocks(*OutputOrErr).empty());
+  }
+}
+
 enum class NativeTargetRecord : uint8_t {
   FH4,
   GSWrappedCxx,

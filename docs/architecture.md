@@ -5416,9 +5416,23 @@ DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in Darwi
 
 Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP.
 
+`med/X86/SEHFrame` rechecks converted SP effects and projects protected sources
+by their native operation addresses. CFG compaction and entry splitting change
+MedIR block IDs; a LowIR source ID never indexes the converted block vector.
+Synchronous catches sample their retained throwing calls, so nonvolatile values
+come from the actual call rather than a neighbouring reindexed block. Missing
+source effects or throwing calls fail the conversion explicitly.
+
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.
+
+Registration returning-stack queries and x87 call queries share one registration
+callee index across nested CFG construction. Pending answers, recursion depth
+and cumulative work survive that boundary. Query-local registration graphs
+bypass the shared x87 graph cache and parallel prefetch. The ordinary x87
+projection leaves a registration language graph opaque before constructing its
+callback closure; that graph needs a separate dispatcher invocation domain.
 
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 
