@@ -2383,7 +2383,7 @@ jobs:
       - name: Verify x86 recovery and ARM32 cross-target PE reconstruction
         run: |
           build-windows-eh/bin/NeverDLiftTests \
-            --gtest_filter='COFFException*:*ARM32*:PatchCOFF_ARM32.*:MedSSAMultiRoot.*:MedTempIdentity.*:MedSEHEstablisherFrame.*:MedSEHHandlerEntry.*:MedCxxContinuationFrame.*:HighCParamUsage.*:X87CallStack.*:X87CallGraphCache.*:Win64Forwarder.*' \
+            --gtest_filter='COFFException*:*ARM32*:PatchCOFF_ARM32.*:FPParameterMask.*:MedCallingConvValueFlow.*:MedABIPass.Win64VTableIndirectRecoversThisAndSret:MedSSAMultiRoot.*:MedTempIdentity.*:MedSEHEstablisherFrame.*:MedSEHHandlerEntry.*:MedCxxContinuationFrame.*:HighCParamUsage.*:X87CallStack.*:X87CallGraphCache.*:Win64Forwarder.*' \
             --gtest_output=xml:build-windows-eh/evidence/ir-pe.xml
           build-windows-eh/bin/NeverDWindowsEHCorpusTests \
             --gtest_filter='WindowsEHCorpus.RecoversX86RegistrationChains:WindowsEHCorpus.MasksThumbBitInARM32LanguageTables:WindowsEHCorpus.DecodesARMUnwindOperations:WindowsEHCorpus.ParsesDeclaredExceptionMetadata:WindowsEHModesCorpus.DecompilesOptimizedFH3ProtectedSourceProjection:WindowsEHModesCorpus.DecompilesRegistrationCalleeProofCycles' \

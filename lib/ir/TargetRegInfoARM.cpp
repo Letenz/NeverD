@@ -68,7 +68,7 @@ TargetRegInfo ARMRegInfo = {
     armreg::VFLAG,
     armreg::D(0),
     8,
-    16,
+    32, // The full D0-D31 bank; the argument bank remains D0-D7.
     CondCode::UGE,
     getARMRegName,
 };

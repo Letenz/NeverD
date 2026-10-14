@@ -452,6 +452,14 @@ and disabled, then executes its LLVM-derived C at O0/O2 with UB traps for
 1,024 independent argument tuples. This checks host C execution, not native
 execution of every source architecture.
 
+`NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
+The mask controls retain live bytes, earlier stores, ambiguous definitions and
+unmasked return paths while discarding only fully cleared or replaced bytes.
+They cover intermediate D0 transport, D16-D31 scratch registers and both arms
+of an FP return join. `NeverDARM32ObjectImmediateTests` runs the five ARM32 host C
+differentials separately; the Windows EH CI lane runs these cases with its
+Clang 18 toolchain, including NEON zip/mask shapes different from Clang 23.
+
 `NeverDX86RdSspAccuracyTests` checks every x86/x64 encoded GPR destination,
 full-width disabled preservation, enabled concrete SSP reads, flags, unknown
 state, call/mutator invalidation, malformed descriptors in both strict modes,

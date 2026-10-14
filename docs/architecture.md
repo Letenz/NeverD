@@ -5314,6 +5314,15 @@ SourceFrameAnalysis owns complete native output-byte proofs separately from requ
 
 Floating parameter discovery follows current SSA call-clobber preserved-prefix edges in the same byte-use graph as COPY and PHI. Each edge requires a unique returning call occurrence, matching pre/post register identity and width, distinct SSA versions and the authoritative architecture/format preservation prefix. Volatile upper bytes, missing or mismatched call ownership, self-canceling and unobserved paths supply no incoming parameter evidence. Scalar width and logical results still require independent entry-byte and return proofs, fresh lifting and normal publication and closure gates.
 
+`MedCallingConvFP` owns this shared floating/vector byte demand. Constant AND
+and OR masks discard only bytes fully cleared or replaced by a unique, bounded
+SSA constant proof, including concatenated masks first written at version zero.
+Missing, ambiguous, loaded or call-defined masks keep the incoming input.
+Intermediate writes to an FP return register remain transport; possible return
+reads use the definitions reaching each RETURN through the current CFG. Unknown
+return paths retain conservative demand. ARM32's register owner describes the
+complete D0-D31 bank independently of its D0-D7 argument bank.
+
 Private-frame carrier tracing for dynamic formatting and NSFastEnumeration follows a bounded graph of all current source-local definitions. A cycle alone supplies no frame address; any reachable synthetic entry SP still marks the carrier as frame-derived. Exhausted depth or work bounds reject the proof. Loads and call results remain separate values, and exact slot writes, every reaching path, complete source flow and current SDK effects remain required.
 
 The Swift SDK catalog authenticates the generic Foundation NSRange initializer with six ordinary pointer carriers (range, string, both metadata values and both witnesses) and a complete two-word result. Swift 6.1.2 compiler declarations and SDK exports agree on ARM64/x86-64 macOS and Mac Catalyst. Only the two exported Foundation install names qualify; the opaque input pointers acquire no layout, borrowing or noescape contract.

@@ -22,6 +22,22 @@ add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDFPParameterMaskTests
+  core/FPParameterMaskTests.cpp
+  core/MedCallingConvTests.cpp
+  LINK_COMPONENTS Pipeline BackendLLVM BackendC)
+
+add_neverd_unittest(NeverDARM32ObjectImmediateTests
+  arm32/ARM32_ObjectImmediateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDARM32ObjectImmediateTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDARM32ObjectImmediateTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+
 add_neverd_unittest(NeverDX87CallGraphTests
   x86_32/X86_32_X87FPUTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -294,6 +310,7 @@ add_neverd_unittest(NeverDLiftTests
   format/NativePointerRelocationBoundaryTests.cpp
   format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
+  core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp

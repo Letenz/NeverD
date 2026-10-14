@@ -41,11 +41,13 @@
 
 namespace neverd {
 
-// ---- x86-specific helpers (MedCallingConvX86.cpp) ----
-void detectXMMParams(
+// ---- Shared FP/vector parameters (MedCallingConvFP.cpp) ----
+void detectFPParams(
     MedFunc &Func, const MedBlock &Entry, const TargetRegInfo &TRI,
     const std::map<std::pair<uint64_t, uint16_t>, int> &RegVarMap,
     Arch TargetArch, BinaryFormat TargetFormat);
+
+// ---- x86-specific helpers (MedCallingConvX86.cpp) ----
 void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
 
 // ---- variadic (...) prologue detection (MedVariadic.cpp) ----
@@ -1330,7 +1332,7 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
       ParamRegs.push_back(R);
   } else {
     // Floating-point arguments use a *separate* register class with its own
-    // argument index (XMM0-7, V0-7, ARM D0-7), recovered by detectXMMParams.
+    // argument index (XMM0-7, V0-7, ARM D0-7), recovered by detectFPParams.
     // Folding them into the integer parameter list would make
     // detectRegisterParams synthesize bogus integer placeholders up to the FP
     // index (so a `double f(double,double)` would become N integer placeholders
@@ -1357,15 +1359,15 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // finalizeVariadicCallees).
     detectVariadic(Func, TRI, TargetArch, Fmt);
 
-    // x86-64/x86: also check for XMM floating-point parameters (no-op on ARM).
+    // Recover floating/vector parameters in their target's register bank.
     // A variadic function's FP register save area is not its parameter list,
     // except where it saves the vector registers (System V x86-64): past the
     // named ones, they carry the floating arguments a caller passes, each
     // promoted to double, and va_arg reads them from the area.
     if (!Func.IsVariadic) {
-      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      detectFPParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
     } else if (Func.takesVectorArgumentRegisters()) {
-      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      detectFPParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
       const auto VectorRegs = TRI.floatingParamRegs(TargetFormat);
       size_t Passed = 0;
       for (size_t K = 0; K < VectorRegs.size(); ++K)
