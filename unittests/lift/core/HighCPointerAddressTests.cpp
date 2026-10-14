@@ -41265,6 +41265,264 @@ int main(void) { return double_bits(2.0) != UINT64_C(0x4000000000000000); }
 )");
 }
 
+TEST(LLVMCPointerAddresses, ASlotReadBeforeACallKeepsItsValue) {
+  // `fill(&x); before = x; refill(&x); return before * 10 + x;`: `refill`
+  // changes `x` between the first load and its use.
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-slot-read-before-call", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *FillTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
+  auto *Fill = llvm::Function::Create(
+      FillTy, llvm::GlobalValue::ExternalLinkage, "fill", Module);
+  auto *Refill = llvm::Function::Create(
+      FillTy, llvm::GlobalValue::ExternalLinkage, "refill", Module);
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "read_before_call", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 40), "frame_end");
+  llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+  llvm::Value *Home = Builder.CreateIntToPtr(
+      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16)), Ptr, "home");
+  Builder.CreateCall(Fill, {Home});
+  llvm::Value *Before = Builder.CreateLoad(I64, Home, "before");
+  Builder.CreateCall(Refill, {Home});
+  llvm::Value *After = Builder.CreateLoad(I64, Home, "after");
+  Builder.CreateRet(Builder.CreateAdd(
+      Builder.CreateMul(Before, llvm::ConstantInt::get(I64, 10)), After));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  // The first load reads the slot into a temporary before `refill` runs; the
+  // second has no write before its use and reads the slot there.
+  EXPECT_NE(Source.find("before0 = frame0.var_m10;"), std::string::npos)
+      << Source;
+  EXPECT_LT(Source.find("before0 = "), Source.find("refill(&")) << Source;
+  EXPECT_NE(Source.find("+ frame0.var_m10)"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+static int64_t *kept;
+void fill(void *out) { kept = (int64_t *)out; *kept = 1; }
+void refill(void *out) { (void)out; *kept = 7; }
+)" + Source + R"(
+int main(void) { return read_before_call() != 17; }
+)");
+}
+
+TEST(LLVMCPointerAddresses, ALocalReadBeforeACallKeepsItsValue) {
+  // The same reads of a debug-typed local `x`: its type bounds both escapes,
+  // so `x` is a separate C local, read into a temporary before `refill`.
+  class LocalDbg : public NullDebugContext {
+  public:
+    std::optional<VariableSym> resolveVariable(va_t FuncAddr,
+                                               int64_t Disp) const override {
+      if (FuncAddr != 0x140001000 || Disp != -16)
+        return std::nullopt;
+      VariableSym Var;
+      Var.Name = "x";
+      Var.Type = NdType::makeInt(8, true);
+      Var.StackOffset = Disp;
+      return Var;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-local-read-before-call", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *FillTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
+  auto *Fill = llvm::Function::Create(
+      FillTy, llvm::GlobalValue::ExternalLinkage, "fill", Module);
+  auto *Refill = llvm::Function::Create(
+      FillTy, llvm::GlobalValue::ExternalLinkage, "refill", Module);
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "read_local_before_call", Module);
+  rewrite_source::setOriginalVA(*Function, 0x140001000);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 40), "frame_end");
+  llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+  llvm::Value *Home = Builder.CreateIntToPtr(
+      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16)), Ptr, "home");
+  Builder.CreateCall(Fill, {Home});
+  llvm::Value *Before = Builder.CreateLoad(I64, Home, "before");
+  Builder.CreateCall(Refill, {Home});
+  llvm::Value *After = Builder.CreateLoad(I64, Home, "after");
+  Builder.CreateRet(Builder.CreateAdd(
+      Builder.CreateMul(Before, llvm::ConstantInt::get(I64, 10)), After));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  OS.flush();
+  EXPECT_EQ(Source.find("frame0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("before0 = x;"), std::string::npos) << Source;
+  EXPECT_LT(Source.find("before0 = "), Source.find("refill(&x)")) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+static int64_t *kept;
+void fill(void *out) { kept = (int64_t *)out; *kept = 1; }
+void refill(void *out) { (void)out; *kept = 7; }
+)" + Source + R"(
+int main(void) { return read_local_before_call() != 17; }
+)");
+}
+
+TEST(LLVMCPointerAddresses, ASlotValueCopiedToAHomeKeepsItsValue) {
+  // `fill(&x); kept = x; refill(&x); return kept * 10 + x;` with `kept` in a
+  // scalar home: its reload can print the stored value's text, so the slot
+  // is read before `refill`, as a frame record member and as a local.
+  for (bool Local : {false, true}) {
+    SCOPED_TRACE(Local);
+    class LocalDbg : public NullDebugContext {
+    public:
+      bool Named = false;
+      std::optional<VariableSym> resolveVariable(va_t FuncAddr,
+                                                 int64_t Disp) const override {
+        if (!Named || FuncAddr != 0x140001000 || Disp != -16)
+          return std::nullopt;
+        VariableSym Var;
+        Var.Name = "x";
+        Var.Type = NdType::makeInt(8, true);
+        Var.StackOffset = Disp;
+        return Var;
+      }
+      bool hasInfo() const override { return true; }
+    } Dbg;
+    Dbg.Named = Local;
+    llvm::LLVMContext Context;
+    llvm::Module Module("llvm-c-carrier", Context);
+    llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+    llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+    llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+    auto *FillTy =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
+    auto *Fill = llvm::Function::Create(
+        FillTy, llvm::GlobalValue::ExternalLinkage, "fill", Module);
+    auto *Refill = llvm::Function::Create(
+        FillTy, llvm::GlobalValue::ExternalLinkage, "refill", Module);
+    auto *Function = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                            llvm::GlobalValue::ExternalLinkage,
+                                            "carrier_read", Module);
+    rewrite_source::setOriginalVA(*Function, 0x140001000);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    llvm::Value *Frame =
+        Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
+    llvm::Value *Carrier = Builder.CreateAlloca(I64, nullptr, "carrier");
+    llvm::Value *End = Builder.CreateInBoundsGEP(
+        I8, Frame, llvm::ConstantInt::get(I64, 40), "frame_end");
+    llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+    llvm::Value *Home = Builder.CreateIntToPtr(
+        Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16)), Ptr, "home");
+    Builder.CreateCall(Fill, {Home});
+    // A reload of the home before the copy reads its older value.
+    Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Carrier);
+    llvm::Value *Stale = Builder.CreateLoad(I64, Carrier, "stale");
+    llvm::Value *Before = Builder.CreateLoad(I64, Home, "before");
+    Builder.CreateStore(Before, Carrier);
+    Builder.CreateCall(Refill, {Home});
+    llvm::Value *Kept =
+        Builder.CreateAdd(Builder.CreateLoad(I64, Carrier, "kept"), Stale);
+    llvm::Value *After = Builder.CreateLoad(I64, Home, "after");
+    Builder.CreateRet(Builder.CreateAdd(
+        Builder.CreateMul(Kept, llvm::ConstantInt::get(I64, 10)), After));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.EmitIncludes = false;
+    Options.TheArch = Arch::X64;
+    ASSERT_TRUE(
+        LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+    OS.flush();
+    const auto ReadAt = Source.find("before0 = ");
+    ASSERT_NE(ReadAt, std::string::npos) << Source;
+    EXPECT_LT(ReadAt, Source.find("refill(&")) << Source;
+    compileAndRunCallOrdering(R"(
+#include <stdint.h>
+static int64_t *kept;
+void fill(void *out) { kept = (int64_t *)out; *kept = 1; }
+void refill(void *out) { (void)out; *kept = 7; }
+)" + Source + R"(
+int main(void) { return carrier_read() != 17; }
+)");
+  }
+}
+
+TEST(LLVMCPointerAddresses, AHomeReadOnlyBeforeTheCopyEndsNoSlotRead) {
+  // `kept = 0; stale = kept; kept = x; refill(&x); return stale + x;`: the
+  // home's only reload precedes the copy, so it bounds nothing.
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-stale-home", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *FillTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
+  auto *Fill = llvm::Function::Create(
+      FillTy, llvm::GlobalValue::ExternalLinkage, "fill", Module);
+  auto *Refill = llvm::Function::Create(
+      FillTy, llvm::GlobalValue::ExternalLinkage, "refill", Module);
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "stale_home", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *Carrier = Builder.CreateAlloca(I64, nullptr, "carrier");
+  llvm::Value *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 40), "frame_end");
+  llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+  llvm::Value *Home = Builder.CreateIntToPtr(
+      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16)), Ptr, "home");
+  Builder.CreateCall(Fill, {Home});
+  Builder.CreateStore(llvm::ConstantInt::get(I64, 3), Carrier);
+  llvm::Value *Stale = Builder.CreateLoad(I64, Carrier, "stale");
+  Builder.CreateStore(Builder.CreateLoad(I64, Home, "before"), Carrier);
+  Builder.CreateCall(Refill, {Home});
+  Builder.CreateRet(
+      Builder.CreateAdd(Stale, Builder.CreateLoad(I64, Home, "after")));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+static int64_t *kept;
+void fill(void *out) { kept = (int64_t *)out; *kept = 1; }
+void refill(void *out) { (void)out; *kept = 7; }
+)" + Source + R"(
+int main(void) { return stale_home() != 10; }
+)");
+}
+
 TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
   auto NarrowTy = NdType::makeNamedRecord("PtrBox", 8);
   NarrowTy->FieldDisplayNames = {"p"};
