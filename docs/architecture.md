@@ -35,6 +35,8 @@ graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
 `CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
 
+Recovered indirect-call arguments retain separate integer and floating register runs and the remaining stack bytes. `LLVMCallContract` uses one binder during emission and after LLVM target resolution: surplus registers cannot shift another bank, and packed 32-bit stores are assembled into the callee’s complete stack slots. A callback table cannot replace an already recovered first argument with an inferred object pointer. AArch64 copy-initialized tables authenticate the native BL/import identity, MOVZ length, ADRP/ADD source and complete immutable span; publication and jump-table proof replay check the same witness.
+
 ## Manual PDB presentation boundary
 
 `PDBDebugContext::inspect` owns manual PE/PDB validation. A missing CodeView

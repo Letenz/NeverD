@@ -8,6 +8,8 @@ NeverD 的测试回答三个不同问题：表示形状是否符合预期、完�
 处理二进制 fixture，以及生成的代码是否保持行为。先选择能回答本次变更问题的
 最小套件；对于高风险拉取请求，再运行更广的聚合测试。
 
+`PipelineOutcome.ResolvedCalls*` 检查寄存器分组、call／invoke 身份、栈字节打包与拆分，以及缺失字节的拒绝。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 覆盖 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 覆盖三种格式，拒绝长度被改写、可写或越界范围、同名本地函数、错误源寄存器、替代入口和可重定位镜像。主机 C 差分测试将原始 C 独立按 O0 编译，生成的 C 仍按 O2 编译，避免主机优化器把循环递推算错后污染对照。AArch64 FMA 检查仅在 x86 主机上请求 `-mfma`。
+
 ## 配置测试构建
 
 除非启用 `BUILD_TESTING`，否则测试不会构建。完整套件通常使用 Release；Debug

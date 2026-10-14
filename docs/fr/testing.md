@@ -10,6 +10,8 @@ fixture binaire et le code généré préserve-t-il le comportement ? Choisissez
 plus petite suite qui répond à la question du changement, puis exécutez
 l’agrégat plus large avant une pull request à haut risque.
 
+`PipelineOutcome.ResolvedCalls*` vérifie les groupes de registres, l’identité call/invoke, le regroupement et la division des octets de pile, ainsi que le refus d’octets manquants. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` couvre x64, ARM32 et AArch64 en ELF, PE et Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` couvre ces trois formats et rejette les longueurs écrasées, les plages modifiables ou débordantes, les fonctions locales homonymes, les mauvais registres source, les entrées alternatives et les images relogeables. Les tests différentiels C compilent la référence séparément à O0 et le C généré à O2, afin qu’une erreur d’optimisation d’une récurrence sur l’hôte ne corrompe pas l’oracle. Le test FMA AArch64 ne demande `-mfma` que sur les hôtes x86.
+
 ## Configurer une compilation de test
 
 Les tests sont désactivés sans `BUILD_TESTING`. Une compilation Release est le

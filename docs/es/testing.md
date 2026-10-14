@@ -10,6 +10,8 @@ fixture binaria y si el código generado conserva el comportamiento. Elija la
 suite más pequeña que responda a la pregunta del cambio y ejecute después el
 agregado más amplio antes de un pull request de alto riesgo.
 
+`PipelineOutcome.ResolvedCalls*` comprueba grupos de registros, identidad call/invoke, unión y división de bytes de pila y rechazo de bytes ausentes. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` cubre x64, ARM32 y AArch64 en ELF, PE y Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` cubre los tres formatos y rechaza longitudes sobrescritas, intervalos modificables o excesivos, funciones locales homónimas, registros de origen incorrectos, entradas alternativas e imágenes reubicables. Las pruebas diferenciales C compilan la referencia por separado con O0 y el C generado con O2, para que un fallo del optimizador del host en una recurrencia no contamine el resultado esperado. La prueba FMA de AArch64 solo solicita `-mfma` en hosts x86.
+
 ## Configurar una compilación de pruebas
 
 Las pruebas están desactivadas si no se habilita `BUILD_TESTING`. Release es la
