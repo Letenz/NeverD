@@ -1,0 +1,174 @@
+//===- HighX86CallSetupTests.cpp - Live outgoing stack addresses ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Execute recovered x86 stack arithmetic across calls and nested uses.
+//===----------------------------------------------------------------------===//
+
+#include "gtest/gtest.h"
+
+#include "neverd/backend/c/HighC/HighCEmitter.h"
+
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
+#include "llvm/Support/raw_ostream.h"
+
+using namespace neverd;
+
+namespace {
+ExprPtr scalar(int Id, bool Parameter = false) {
+  MedVar V;
+  V.Kind = Parameter ? MedVar::Param : MedVar::Temp;
+  V.Id = Id;
+  V.Size = 4;
+  V.TheArch = Arch::X86;
+  return HighExpr::makeVar(V, NdType::makeInt(4, false));
+}
+
+ExprPtr offset(ExprPtr Base, NdOp Op, unsigned Bytes) {
+  return HighExpr::makeBinop(Op, std::move(Base),
+                             HighExpr::makeConst(Bytes, 4));
+}
+
+HighStmt result(ExprPtr Value) {
+  HighStmt S;
+  S.Kind = StmtKind::Return;
+  S.RetVal = std::move(Value);
+  return S;
+}
+
+std::string source(bool Live, bool Nested) {
+  HighFunc Callee;
+  Callee.Entry = 0x402000;
+  Callee.Name = "consume_word";
+  Callee.ReturnType = NdType::makeVoid();
+  Callee.Params = {{"word", NdType::makeInt(4, false)}};
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Callee.Body.push_back(Return);
+
+  HighFunc Func;
+  Func.Entry = 0x401000;
+  Func.Name = "stack_after_call";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"stack_base", NdType::makeInt(4, false)},
+                 {"word", NdType::makeInt(4, false)},
+                 {"choose", NdType::makeInt(4, false)}};
+  for (unsigned I = 1; I <= 3; ++I) {
+    auto Base = I == 1 ? scalar(0, true) : scalar(I - 1);
+    auto Address = offset(Base, NdOp::INT_SUB, 4);
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Dst = scalar(I);
+    Assign.Val = Address;
+    Func.Body.push_back(Assign);
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = Address;
+    Store.StoreVal = scalar(1, true);
+    Func.Body.push_back(Store);
+  }
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.CallExpr =
+      HighExpr::makeCall(Callee.Name, Callee.Entry, {scalar(1, true)});
+  Call.CallExpr->Type = Callee.ReturnType;
+  Func.Body.push_back(Call);
+  auto Restored = Live ? offset(scalar(3), NdOp::INT_ADD, 12) : scalar(0, true);
+  if (Nested) {
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Cond = scalar(2, true);
+    Branch.Body.push_back(result(Restored));
+    Branch.ElseBody.push_back(
+        result(Live ? offset(scalar(2), NdOp::INT_ADD, 8) : scalar(0, true)));
+    Func.Body.push_back(Branch);
+  } else {
+    Func.Body.push_back(result(Restored));
+  }
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X86;
+  Options.EmitComments = false;
+  EXPECT_TRUE(HighCEmitter().emit({Callee, Func}, OS, Options));
+  return Source;
+}
+
+void compileAndRun(const std::string &Source) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto Program = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(bool(Program)) << "clang is required for recovered C execution";
+  const std::string Compiler = *Program;
+#endif
+  llvm::SmallString<128> SourcePath, BinaryPath, ErrorPath;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-x86-call", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-x86-call", "exe", BinaryPath));
+  llvm::FileRemover RemoveBinary(BinaryPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-x86-call", "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(SourcePath, EC);
+    ASSERT_FALSE(EC);
+    OS << Source;
+  }
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  llvm::SmallVector<llvm::StringRef, 12> Arguments{Compiler,
+                                                   "-std=c11",
+                                                   "-O1",
+                                                   "-Werror=uninitialized",
+                                                   "-Werror=return-type",
+                                                   SourcePath,
+                                                   "-o",
+                                                   BinaryPath};
+  std::string Error;
+  const int Compiled = llvm::sys::ExecuteAndWait(
+      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+  auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+  ASSERT_EQ(Compiled, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "") << "\n"
+                         << Source;
+  const int Ran = llvm::sys::ExecuteAndWait(
+      BinaryPath, {BinaryPath}, std::nullopt, Redirects, 30, 0, &Error);
+  ASSERT_EQ(Ran, 0) << Error << "\n" << Source;
+}
+
+TEST(HighX86CallSetup, LiveAddressDependenciesExecuteAfterCalleePop) {
+  for (bool Nested : {false, true}) {
+    SCOPED_TRACE(Nested);
+    const std::string Source = source(true, Nested);
+    // Only the scalar address chain is live. The outgoing memory writes
+    // belong to the recovered call and must still disappear.
+    EXPECT_EQ(Source.find("*("), std::string::npos) << Source;
+    compileAndRun(Source + R"(
+int main(void) {
+    const uint32_t bases[] = {0, 1, 12, 4096, 0x80000000u, 0xffffffffu};
+    for (unsigned i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i)
+        for (unsigned choose = 0; choose < 2; ++choose)
+            if (stack_after_call(bases[i], 17, choose) != bases[i]) return 1;
+    return 0;
+}
+)");
+  }
+}
+
+TEST(HighX86CallSetup, UnusedOutgoingSetupStillDisappears) {
+  const std::string Source = source(false, false);
+  EXPECT_EQ(Source.find("*("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" - 4"), std::string::npos) << Source;
+}
+} // namespace

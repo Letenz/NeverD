@@ -106,6 +106,11 @@ llvm::Expected<uint64_t> KernelModel::call(
       Kind != KernelAPIKind::KeStackAttachProcess &&
       Kind != KernelAPIKind::KeUnstackDetachProcess &&
       Kind != KernelAPIKind::IoGetCurrentProcess &&
+      Kind != KernelAPIKind::PsGetCurrentProcess &&
+      Kind != KernelAPIKind::PsGetCurrentThread &&
+      Kind != KernelAPIKind::KeGetCurrentThread &&
+      Kind != KernelAPIKind::PsGetCurrentThreadId &&
+      Kind != KernelAPIKind::PsGetThreadId &&
       Kind != KernelAPIKind::IoGetRequestorProcess &&
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
@@ -175,7 +180,20 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::IoGetRequestorProcess:
     return requestorProcess(A[0]);
   case KernelAPIKind::IoGetCurrentProcess:
+  case KernelAPIKind::PsGetCurrentProcess:
     return currentProcess();
+  case KernelAPIKind::PsGetCurrentThread:
+  case KernelAPIKind::KeGetCurrentThread:
+    // The same borrowed identity the inline GS:[0x188] read observes.
+    return currentThreadObject();
+  case KernelAPIKind::PsGetCurrentThreadId: {
+    auto Thread = currentThreadObject();
+    if (!Thread)
+      return Thread.takeError();
+    return threadClientID(*Thread);
+  }
+  case KernelAPIKind::PsGetThreadId:
+    return threadClientID(A[0]);
   case KernelAPIKind::PsGetProcessId: {
     auto Process = ProcessObjectIDs.find(A[0]);
     if (Process == ProcessObjectIDs.end())
@@ -248,6 +266,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Registry.call(*this, Name, A);
   case KernelAPIKind::MmGetSystemRoutineAddress:
     return resolveRoutine(A[0]);
+  case KernelAPIKind::MmGetPhysicalMemoryRanges:
+    return queryPhysicalMemoryRanges();
   case KernelAPIKind::MmIsAddressValid:
     return isResidentKernelAddress(A[0]);
   case KernelAPIKind::KeRegisterBugCheckReasonCallback:

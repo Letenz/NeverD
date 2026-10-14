@@ -23,8 +23,11 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateCalls.cpp
   X86/RegistrationStateConditional.cpp
   X86/RegistrationStateBoundCall.cpp
+  X86/RegistrationStateCallArguments.cpp
+  X86/RegistrationStateInitializer.cpp
   X86/RegistrationStateCxx.cpp
   X86/RegistrationStateObject.cpp
+  X86/RegistrationStateObjectCall.cpp
   X86/RegistrationStateResume.cpp
   X86/RegistrationStateCallback.cpp
   X86/RegistrationStateContracts.cpp
@@ -79,6 +82,13 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCleanupABI.cpp
   X86/RegistrationCleanupFrame.cpp
   X86/RegistrationThrowABI.cpp
+  X86/RegistrationThrowObjectABI.cpp
+  X86/RegistrationCopyABI.cpp
+  X86/RegistrationInitializerABI.cpp
+  X86/RegistrationObjectCallbackABI.cpp
+  X86/RegistrationMemberCalleeABI.cpp
+  X86/RegistrationInitializerCall.cpp
+  X86/RegistrationBorrowedObjectCall.cpp
   X86/RegistrationThrowImportABI.cpp
   X86/RegistrationRuntimeThrowInfo.cpp
   X86/RegistrationCalleeFrame.cpp

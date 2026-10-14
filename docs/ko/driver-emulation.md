@@ -326,6 +326,9 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | 길이가 지정된 UTF-16 대상에 덧붙임. `STATUS_BUFFER_TOO_SMALL`이면 대상은 바뀌지 않고, 종료 문자는 여유 바이트가 2개 이상일 때만 쓰며, `0x7FFE` 단위를 넘는 NUL 종료 소스도 `STATUS_BUFFER_TOO_SMALL`을 반환함 |
 | `RtlPrefixUnicodeString` | 길이가 지정된 UTF-16 접두사 검사. 대소문자 무시 요청은 서로 다른 단위가 Windows 대소문자 테이블을 필요로 할 때만 중단함 |
 | `RtlIntegerToUnicodeString`, `RtlUnicodeStringToInteger` | 기수 2, 8, 10, 16의 부호 없는 변환. 앞쪽 공백, 부호, `0x`/`0o`/`0b` 접두사, 32비트 순환은 커널 규칙을 따름. 서식 지정에는 종료 문자 공간이 필요하며 길이를 저장한 뒤 `STATUS_BUFFER_OVERFLOW`를 반환함 |
+| `RtlAnsiStringToUnicodeString`, `RtlUnicodeStringToAnsiString`, `RtlFreeUnicodeString`, `RtlFreeAnsiString` | 길이가 지정된 8비트 레코드와 UTF-16 레코드 사이의 ASCII 변환. 그 밖의 텍스트는 모델링되지 않은 시스템 ANSI 코드 페이지에 의존하므로 중단함. 길이를 먼저 저장함. 할당은 `Strg` 태그의 페이지 풀에서 이루어지며 두 해제 루틴 모두 레코드를 지우며 해제함(풀 태그는 무시함). 할당하지 않으면 ANSI에서 Unicode로의 변환은 변환 없이 `STATUS_BUFFER_OVERFLOW`를 반환하지만 Unicode에서 ANSI로의 변환은 들어가는 앞부분을 변환해 종료 문자를 붙이고 `STATUS_BUFFER_OVERFLOW`를 반환함 |
+| `PsGetCurrentProcess`, `PsGetCurrentThread`, `KeGetCurrentThread` | `IoGetCurrentProcess`와 인라인 `GS:[0x188]` 읽기의 내보내기 별칭으로 모든 IRQL에서 사용 가능함. 현재 APC 상태의 프로세스는 연결된 프로세스를 따르지만 현재 논리 스레드의 빌린 불투명 식별자는 바뀌지 않음 |
+| `PsGetCurrentThreadId`, `PsGetThreadId` | 살아 있는 스레드 객체의 클라이언트 ID. 처음 관찰될 때 `0x2000`부터 4씩 할당하며 모델링된 프로세스 ID를 건너뛰고 재사용하지 않음. 발급된 스레드 ID와 같은 요청자 ID를 가진 요청은 거부함. `PsCreateSystemThread`도 `ClientId`로 시스템 프로세스 ID와 스레드 ID를 반환함. 포그라운드 디스패치는 하나의 논리 스레드에서 실행되므로 요청자 프로세스가 달라도 그 ID는 같지만 `PsGetCurrentProcessId`는 요청자를 따름. `PsGetThreadId`는 IRQL ≤ `DISPATCH_LEVEL`이 필요함 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 게스트 예외를 발생시키며 정상 API 반환은 없음. 실제 C 필터/처리기와 unwind finally, 사용자 CPU 메모리 예외의 제한된 재개는 아래 설명 참조 |
 | `ExAllocatePool2` | Paged/nonpaged NX 할당이며 기본값은 0으로 초기화. uninitialized 및 cache-aligned 플래그를 모델링함. 잘못된 필수 플래그는 NULL을 반환하고, quota/executable 풀과 할당 예외 발생은 중단함 |
 | `MmGetSystemRoutineAddress` | 공유 export 목록을 통해 길이가 지정된 게스트 이름을 해석함 |
@@ -416,7 +419,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 선택적인 루트 필드 `"load_address": "0x190000000"`는 베이스 재배치를 요청합니다. 생략하거나 `"0x0"`을 지정하면 선호 주소를 사용합니다. 이미지는 재배치 요구 사항을 충족해야 합니다. 기존 초기화 명령이나 C API에는 암묵적인 시나리오가 없습니다.
 
-루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
+루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
 
 READ/WRITE/IOCTL 요청만 선택적 `cancel_after_100ns` 필드를 허용합니다. 값은 0부터 `INT64_MAX`(9223372036854775807)까지의 JSON 정수입니다. 실제 시간이 아니라 요청 제출 시점을 기준으로 한 가상 100 ns 단위로 취소를 예약합니다. KMDF에서 0은 프레임워크 라우팅 후 게스트 I/O 콜백 전에 적용하며, 라우팅이 이미 요청을 완료했다면 완료가 우선합니다. WDM에서는 디스패치 반환 후 0을 적용합니다. 양수 지연에서는 준비된 콜백이나 실행 프레임이 없을 때만 타이머, 대기 또는 취소 기한으로 시간을 진행합니다. 보류 중인 WDM IRP는 등록된 취소 루틴을 취소 스핀락을 잡은 `DISPATCH_LEVEL`에서 호출합니다. 완료 전에 `Irp->CancelIrql`로 잠금을 해제해야 합니다. 일반 큐와 PnP 취소는 여전히 지원하지 않습니다. 각 요청 보고서의 `cancel_requested_at_100ns`는 취소가 실제 발생한 절대 가상 시간이거나, 완료가 먼저 발생하는 경우를 포함해 취소가 발생하지 않았다면 null입니다. 취소 요청만으로 IRP가 완료되거나 최종 상태가 정해지지는 않습니다.
 `IoSetCancelRoutine`, `IoAcquireCancelSpinLock`, `IoReleaseCancelSpinLock`, `IoCancelIrp`는 같은 IRP 상태와 취소 스핀락을 사용합니다. `IoCancelIrp`는 등록된 루틴을 동기적으로 호출하고 호출 여부를 반환합니다.
@@ -620,3 +623,10 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 빌린 160바이트 레코드에서는 `DllBase`(오프셋 48, 8바이트), `EntryPoint`(56, 8), `SizeOfImage`(64, 4), `Flags`(104, 4)만 읽을 수 있습니다. 처음 세 값은 재배치를 포함한 실제 로드 이미지에서 가져오며 플래그 의미를 추측하지 않습니다. 허용 범위 안의 부분 읽기는 가능하지만 알 수 없는 바이트에 걸친 접근과 모든 쓰기는 복사 서비스나 MDL 별칭을 통한 시도에서도 거부합니다. `DriverObject.Flags`는 불투명합니다. 보기는 모델 수명 주기 동안 유지되며 사용하지 않아도 재구성되지 않은 환경 의존성을 남깁니다. 기호 상수나 네이티브 런타임 복원 권한을 부여하지 않습니다.
 
 실행하려면 `DriverOptions.Contract` 또는 계약 선택을 지원하는 진입점에서 `checked-x64`를 지정해야 합니다. 기존 C v1 시나리오 진입점은 Legacy를 사용하므로 이 보기를 활성화할 수 없습니다. UNPACK은 기본적으로 checked를 선택합니다. 소프트웨어 쓰기 훅은 저장을 반영한 뒤 멈출 수 있으므로 Legacy는 이미지 로드나 관찰 시작 전에 거부됩니다.
+
+
+## 명시적 물리 메모리 목록
+
+선택 항목 `physical_memory_inventory`는 모의 RAM을 명시적으로 선택합니다: `{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`. 모든 필드는 필수이며 evidence는 인쇄 가능한 ASCII 1–256바이트입니다. 알 수 없는 필드, 지원하지 않는 버전/출처, `checked-x64` 외의 선언은 로드 전에 거부합니다. 이 출처는 공통 물리 식별 영역인 64 GiB에서 시작하는 64 MiB를 선택합니다. 호스트 RAM을 추정하거나 기반 저장소가 없는 페이지에 값과 접근 권한을 부여하지 않습니다.
+
+PASSIVE_LEVEL에서 `MmGetPhysicalMemoryRanges`는 새 32바이트 비페이징 풀을 반환합니다. 64비트 시작 주소와 바이트 길이 뒤에 영/영 종료 항목이 옵니다. 동시에 살아 있는 결과는 독립적이며 호출자가 각각 `ExFreePool` 또는 `ExFreePoolWithTag(...,0)`으로 해제합니다. 자원 부족은 NULL입니다. 선언 누락, 높은 IRQL, 잘못된 수명은 명확히 중단하며 고정 페이지는 조기 해제를 막습니다. Ex/Ex2, 임의 목록, 메모리 동적 추가/제거는 지원하지 않습니다. 보고서는 `configuration.physical_memory_inventory`를 유지합니다. 사용하지 않은 선언도 환경 의존성을 남깁니다. API 소유 결과는 빌린 상태와 활성 풀 의존성을 유지하며 재생성할 풀 API를 꾸며내지 않습니다. 해제는 기호 증명이나 네이티브 복원 증명이 아닙니다.

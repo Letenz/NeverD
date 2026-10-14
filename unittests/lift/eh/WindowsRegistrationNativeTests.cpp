@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -1872,6 +1873,9 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (Error)
     Module->print(llvm::errs(), nullptr);
   ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
+    registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
+                                              *Low.RegistrationStates);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
                             llvm::StringRef Diagnostic) {
     SCOPED_TRACE(Label.str());
@@ -1885,6 +1889,29 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     const auto Message = llvm::toString(std::move(Failure));
     EXPECT_NE(Message.find(Diagnostic.str()), std::string::npos) << Message;
   };
+  if (!Low.RegistrationStates->SEHInvocationExits.empty())
+    RejectMutation(
+        "an ordinary finally invocation must return to its caller",
+        [](llvm::Function &F) {
+          for (auto &Block : F)
+            for (auto &I : Block) {
+              auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+              if (!Call ||
+                  !I.getMetadata(
+                      windows_eh_md::RegistrationFinallyCallAttachment))
+                continue;
+              for (auto &CallbackBlock : *Call->getCalledFunction())
+                if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
+                        CallbackBlock.getTerminator())) {
+                  new llvm::UnreachableInst(F.getContext(),
+                                            Return->getIterator());
+                  Return->eraseFromParent();
+                  return true;
+                }
+            }
+          return false;
+        },
+        "callback return changed its source execution exit");
   RejectMutation(
       "edited LLVM cannot overwrite either registration scope format",
       [&](llvm::Function &F) {

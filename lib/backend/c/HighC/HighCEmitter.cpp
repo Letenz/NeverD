@@ -1405,9 +1405,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         }
         if (Ex.IntrinsicId == Intrinsic::None)
           Name = callIdentifier(Ex);
-        if ((!Opts.StructuredExceptionSyntax ||
-             (!isMsvcCxxThrowCallName(Name) &&
-              !isMsvcCxxThrowCallName(Ex.CallTarget))) &&
+        if (((!isMsvcCxxThrowCallName(Name) &&
+              !isMsvcCxxThrowCallName(Ex.CallTarget)) ||
+             cxxThrowUsesRuntimeCall(Ex)) &&
             !HiddenCxxCtorIdentifiers.count(Name)) {
           const bool UnresolvedIndirect =
               Ex.IsIndirectCall || Name == "indirect";

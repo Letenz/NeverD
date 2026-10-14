@@ -108,7 +108,8 @@ KernelModel::unpackDependencies() const {
       // lifetime and extent. Only that identity can exclude an arena object
       // from the untyped inventory; unrelated objects remain dependencies.
       const auto Pool = Allocations.find(Address);
-      if (Pool != Allocations.end() && Pool->second.Size == Size)
+      if (Pool != Allocations.end() && Pool->second.API &&
+          Pool->second.Size == Size)
         continue;
       Reasons.emplace_back("retained kernel object allocations");
       break;
@@ -140,9 +141,14 @@ KernelModel::captureUnpackRuntime(bool IncludeBacking) const {
   WindowsDriverState State;
   State.Reasons = std::move(*Reasons);
   for (const auto &[Address, Allocation] : Allocations) {
+    // API-owned results retain borrowed/lifetime dependencies. Do not invent
+    // an ExAllocatePool call that could recreate their environment semantics.
+    if (!Allocation.API)
+      continue;
     WindowsDriverState::PoolAllocation Pool{
-        Address,        Allocation.Size, Allocation.API, Allocation.TypeOrFlags,
-        Allocation.Tag, std::nullopt};
+        Address,         Allocation.Size,
+        *Allocation.API, Allocation.TypeOrFlags,
+        Allocation.Tag,  std::nullopt};
     if (IncludeBacking) {
       // The allocation owner bounds the total retained payload by its arena.
       // Keep exact live contents, independently of image integer references.

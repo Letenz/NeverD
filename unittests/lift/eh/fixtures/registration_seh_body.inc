@@ -21,7 +21,23 @@
 #endif
   jmp .Lfinish
 .Lfilter:
-#if REGISTRATION_CASE == 1
+#if REGISTRATION_CASE == 7 || REGISTRATION_CASE == 8
+  mov eax,[ebp-20]
+  mov eax,[eax]
+#if REGISTRATION_CASE == 8
+  mov eax,[eax+4]
+  cmp eax,1
+#else
+  mov eax,[eax]
+  cmp eax,0xe0420042
+#endif
+  jne .Lwrong_exception
+  mov dword ptr [_registration_trace],7
+  mov eax,1
+  ret
+.Lwrong_exception:
+  xor eax,eax
+#elif REGISTRATION_CASE == 1
   mov eax,[ebp-4]
   mov [_registration_trace],eax
   mov eax,1

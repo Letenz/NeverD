@@ -49,6 +49,7 @@ bool hasRegistrationCallFrameABI(
         return false;
   }
   std::set<va_t> Targets;
+  std::map<va_t, uint32_t> ScalarMemberPops;
   for (const auto &Block : Function.Blocks) {
     const RegistrationBlockState *State = nullptr;
     if (UseReachability) {
@@ -107,6 +108,19 @@ bool hasRegistrationCallFrameABI(
             Call->CalleeIndex < States->CalleeContracts.size()
                 ? &States->CalleeContracts[Call->CalleeIndex]
                 : nullptr;
+        if (Contract && Contract->StackPopBytes &&
+            Contract->CalleeKind ==
+                RegistrationCalleeFrameContract::Kind::Leaf) {
+          if (Contract->Target != Call->Target ||
+              Contract->StackPopBytes != Call->StackPopBytes ||
+              (!Call->ECXFrameOffset && !Call->ECXRuntimeObject) ||
+              (Call->ECXFrameOffset && Call->ECXRuntimeObject))
+            return false;
+          const auto [It, Added] =
+              ScalarMemberPops.emplace(Call->Target, Call->StackPopBytes);
+          if (!Added && It->second != Call->StackPopBytes)
+            return false;
+        }
         if (Contract && Contract->isRuntimeThrow()) {
           // A noreturn CRT dispatch has no return cleanup. Its two stack
           // arguments and object or active catch are owned by the source proof.
@@ -130,6 +144,17 @@ bool hasRegistrationCallFrameABI(
   std::deque<va_t> Pending(Targets.begin(), Targets.end());
   std::set<va_t> Examined;
   ImageFrameEffects Effects;
+  if (UseReachability)
+    for (const auto &Contract : States->CalleeContracts)
+      if (Contract.isRuntimeThrow()) {
+        if (!chargeCalleeWork(Work, Contract.ImageReads.size() +
+                                        Contract.ImageWrites.size()))
+          return false;
+        for (const auto &Read : Contract.ImageReads)
+          Effects.Reads.emplace(Read.Begin, Read.End);
+        for (const auto &Write : Contract.ImageWrites)
+          Effects.Writes.emplace(Write.Begin, Write.End);
+      }
   while (!Pending.empty()) {
     const va_t Target = Pending.front();
     Pending.pop_front();
@@ -171,8 +196,26 @@ bool hasRegistrationCallFrameABI(
         continue;
       }
     if (UseReachability)
-      if (const auto Leaf =
-              getCheckedX86RegistrationLeafCalleeABI(Image, Target, &Work)) {
+      if (const auto Initializer =
+              getCheckedX86RegistrationInitializerCalleeABI(Image, Target,
+                                                            &Work)) {
+        const auto &Object = Initializer->Object;
+        if (!chargeCalleeWork(Work, Object.ImageReads.size() +
+                                        Object.ImageWrites.size()))
+          return false;
+        for (const auto &Read : Object.ImageReads)
+          Effects.Reads.emplace(Read.Begin, Read.End);
+        for (const auto &Write : Object.ImageWrites)
+          Effects.Writes.emplace(Write.Begin, Write.End);
+        continue;
+      }
+    if (UseReachability)
+      if (const auto Leaf = getCheckedX86RegistrationMemberCalleeABI(
+              Image, Target, &Work, RegistrationLeafResult::Discarded)) {
+        if (Leaf->StackPopBytes &&
+            (!ScalarMemberPops.count(Target) ||
+             ScalarMemberPops.at(Target) != Leaf->StackPopBytes))
+          return false;
         if (!chargeCalleeWork(Work, Leaf->ImageReads.size() +
                                         Leaf->ImageWrites.size() +
                                         Leaf->CallerPCWrites.size()))

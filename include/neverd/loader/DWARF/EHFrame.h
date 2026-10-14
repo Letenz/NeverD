@@ -76,6 +76,14 @@ ParseResult parseEHFrame(const BinaryImage &Img, const FrameSection &Sec,
                          const PointerBases &Bases,
                          const ParseLimits &Limits = {});
 
+/// Carry incomplete section decoding into each normalized FDE-backed function.
+/// The decoder currently reports completeness for the whole section. Preserve
+/// that structural failure across later language refreshes without copying the
+/// section's unbounded diagnostic inventory into every function. Complete
+/// sections introduce no new provenance or language-refresh authority.
+void inheritFrameSectionDecodeStatus(const ParseResult &Frames,
+                                     ExceptionFunction &Function);
+
 /// Resolve one DWARF EH encoded pointer.
 ///
 /// \param Buf       Buffer holding the encoded value.

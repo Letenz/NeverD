@@ -12,9 +12,8 @@ from scripts.tests import test_check_windows_registration_nested_try as fixtures
 
 
 class ObjectEvidenceTests(unittest.TestCase):
-    def capture(self, root):
-        with patch.multiple(runner, SOURCE=objects.SOURCE, FORMS=objects.FORMS,
-                            CASES=objects.CASES):
+    def capture(self, root, forms=objects.FORMS, cases=objects.CASES):
+        with patch.multiple(runner, SOURCE=objects.SOURCE, FORMS=forms, CASES=cases):
             capture = fixtures.NestedTryEvidenceTests().capture(root)
         capture["profile"] = "objects"
         capture["object_proof_sha256"] = runner.file_digest(objects.PROOF)

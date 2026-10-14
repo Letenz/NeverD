@@ -14,9 +14,12 @@ add_neverd_component_library(NeverDWindowsRegistrationFrame
   X86/RegistrationCatch.cpp
   X86/RegistrationCatchBlocks.cpp
   X86/RegistrationEntry.cpp
+  X86/RegistrationSEHControl.cpp
+  X86/RegistrationSEHException.cpp
   X86/WindowsRegistrationABI.cpp
   X86/WindowsRegistrationCallbackPlan.cpp
   X86/WindowsRegistrationCallbackStack.cpp
+  X86/WindowsRegistrationStackCopies.cpp
   X86/WindowsRegistrationCatchStack.cpp
   X86/WindowsRegistrationFrame.cpp
 
@@ -62,6 +65,8 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMRegistrationCxxCatch.cpp
   X86/MedLLVMRegistrationCxxBlocks.cpp
   X86/MedLLVMRegistrationCxxCall.cpp
+  X86/MedLLVMRegistrationCxxObjectCall.cpp
+  X86/MedLLVMRegistrationCallResult.cpp
   emit/MedLLVMCall.cpp
   emit/MedLLVMDeadSlots.cpp
   emit/MedLLVMEmitter.cpp

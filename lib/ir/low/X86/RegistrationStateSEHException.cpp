@@ -25,8 +25,8 @@ bool RegistrationStateSolver::recordSEHExceptionMemory(
   if (Slot || RuntimeAddress) {
     const auto Boundary = Boundaries.find(Op.Addr);
     bool Valid =
-        !EH4 && After.Callback && !After.Parent &&
-        After.Activation.SearchFilter && !After.Activation.OrdinaryCall &&
+        After.Callback && !After.Parent && After.Activation.SearchFilter &&
+        !After.Activation.OrdinaryCall &&
         After.Activation.Entry == After.Frame.SEHFilterEntry &&
         !After.Unknown && !Facts.Invalid && Memory.Complete &&
         Op.Opcode == NdOp::LOAD && Op.Output.Size == 4 && Op.Seq >= 0 &&

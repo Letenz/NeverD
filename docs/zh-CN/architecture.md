@@ -981,6 +981,10 @@ Mach-O 加载器保留段的“重定位后只读”保证，同时保留初始�
 
 跳转表恢复只生成到普通后继块的转移，不再通过另一条路径重建块内语句。每个块只由统一流程转换一次，包括共享分支、默认目标和循环入口。分支边上的 PHI 赋值在对应转移前执行，并保留并行赋值快照；不完整的边绑定仍明确失败。
 
+模块仲裁区分输入容量、保留证据和重复工作。LowIR 清单最多包含 400000 个操作；队列仍限制为 65536 次扣费，块传递共用 1048576 个操作额度，涵盖所有函数、固定点访问及最终使用记录。地址 occurrence 的筛选计入扫描额度；保留的锚、字段索引节点及每个来源引用计入证据额度。同一份不可变字段索引保留全部匹配上下文，包括不精确或冲突来源。PC-relative occurrence 缺失时保留加载器字段所在容器，不使用其数值近似授权。任一额度耗尽都会保留全部请求的重定位槽，并拒绝可写的分派归属。
+
+x86/x64 绝对分派可能编码前一个表的尾后地址，却只消费自己的表。`CFGBuilder::proveInstructionLocalTableSource` 对冻结的最终 LowIR（含 x87 规范化）重新执行完整表证明，把精确加载器字段绑定到全宽地址运算及唯一的指令内 LOAD。导入图必须保留所有根和普通边，直接跳转只能落在块首；地址临时值逃逸、重复指令上下文和异常图均拒绝查询。仅当新证明的完整物理包络与旧归属的所有包络不相交时，模块仲裁才可排除这个精确来源。同字段的独立上下文仍分别检查。所有导入和重放共用一份累计证明额度，耗尽会撤销之前的授权。其他架构及复杂表继续采用原有保守规则。
+
 循环结构化保留原生入口的精确归属。恒真循环的包装节点保留首条循环体指令的标签，不重复创建入口。有条件的回边退出到原有后续语句，包括没有原生地址的边复制。只有精确匹配后续入口的跳转才转换为 break；嵌套循环和 switch 内的跳转保留其控制作用域。
 
 死值消除在删除 PHI 边复制之前规范化原生入口的归属。共享的合并逻辑区分条件分支入口及其紧邻的合成边复制前缀；不连续的标签以及无关的嵌套标签仍判为存在歧义。
@@ -1562,7 +1566,7 @@ LLVM 发射器只在当前不可变 MedFunc 内复用已完成、使用默认预
 
 `MaxFrameOffsetNormalizationWorkPerProof` 默认为零。启用后，未完成的首次栈偏移查询可使用现有 MBA 精确推导，相对于同一个根证明 64 位偏移，并保留原始操作。这不提供可达性或内存归属事实，也不填充有限值域缓存。每次尝试按当前上下文节点、操作数边及常量的每个 64 位块各收取一个单位，再加上 MBA 报告的测量工作，同时计入此限制和 `MaxOperations`；失败尝试仍计费。内部遍历、重建和采样缺陷检查不单独计量；最终的 `MaxSymbolicNodes` 检查限制结果发布，不限制峰值分配。 若精确化简改变了表达式，但未直接显露结构性偏移，普通栈偏移证明器会用新的编码重试一次，保留同一路径谓词、根和求解器设置，并沿用累计查询额度及节点上限。重试禁用再次化简，也不缓存结果。
 
-`MedCallingConvFP` 统一负责浮点/向量输入的字节需求。AND/OR 常量掩码仅在唯一、有界的 SSA 常量证明下排除完全清零或替换的字节，包括首写版本为零的拼接掩码；缺失、歧义、加载或调用产生的掩码保留输入。浮点返回寄存器的中间写入仍是值传递；返回读取依据当前 CFG 中到达各 RETURN 的定义，未知路径保守保留需求。恢复显式 ABI 操作数前，经浮点返回寄存器转发的值也是 CALL 的可能读取。ARM32 寄存器定义覆盖完整 D0-D31，与 D0-D7 参数组独立。
+`MedCallingConvFP` 统一负责浮点/向量输入的字节需求。AND/OR 常量掩码仅在唯一、有界的 SSA 常量证明下排除完全清零或替换的字节，包括首写版本为零的拼接掩码；缺失、歧义、加载或调用产生的掩码保留输入。浮点返回寄存器的中间写入仍是值传递；返回读取依据当前 CFG 中到达各 RETURN 的定义，未知路径保守保留需求。恢复显式 ABI 操作数前，经浮点返回寄存器转发的值也是 CALL 的可能读取。向量寄存器用自身低字节扩展（`vzeroupper`）时，只有它自己的入参字节算原地保留；从其他寄存器移入的字节与其他写入一样会到达返回。ARM32 寄存器定义覆盖完整 D0-D31，与 D0-D7 参数组独立。
 
 ELF 对象解析、原生重定位写入和加载器来源证明共用字段宽度表。AArch64 `PREL64` 使用八字节，并保留有符号 `S + A - P`，包括完整宽度的 REL 隐式加数。越界、写入重叠和有符号溢出会在发布前失败。
 
@@ -1678,3 +1682,17 @@ DarwinFiles retains one declaration admission, namespace publication owner and a
 The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the new exact Boolean only for FileSystem; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
 
 DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
+
+完整的普通结构展开记录不引入语言异常分派；跳转表来源查询复用共享分类器，并检查与最终代码相交的全部 image 记录、fragment、显式入口及范围畸形但仍可识别的 FDE 起点。连续的单槽清单必须完整分割重新证明的运行时区间。Itanium 和 Darwin 将 frame section 的解析不完整状态保留在各 FDE 函数的 Structural provenance 中，语言表刷新不能消除它；完整 section 不新增刷新权限。Darwin 保留被消费 CIE 的 personality/LSDA，拒绝缺失或冲突的 provider，并单独保留外来或超范围 FDE。动态槽绑定与例程命名共享规则，相同文件初值或名字不能等同不同绑定槽。这些规则不授予原生异常重建或帧内存权限。
+
+冻结的解析器图在保留标量操作前验证形状：已知整数/布尔操作必须具有完整输入个数、非零宽度及标量操作数；所有操作的输入个数均不得超出 LowOp 数组。畸形记录令图不完整，不能提供任意值或负依赖证明。验证使用同一共享图预算，缓存查询仍支付冷执行费用；此检查不为未支持的操作授予语义。
+
+栈帧内存的到达值在每个活动证明根都保留未知入口分支，包括带回边的根。后续循环迭代的 STORE 不能认证第一轮读取或其写入来源；读取之前的完整写入仍可证明值，未知加载上的独立标量掩码仍可证明数值范围。
+
+i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索引、LOAD 地址和目标角色之后，才返回一个持有输入的结果。物理候选边、前一阶段假设边和受限边分别保存，索引／LOAD／目标使用点及来源快照一并保留。轮内复用按值比较当前操作、来源清单、边界与借用保护集合；一个成员改变即撤销整组结果。两次图重放均要求每个给定根为真实指令块入口，每个可达普通间接跳转属于本轮完整成员边集合；非成员的非空原始目标列表不提供完整性权限。普通返回及已证明的直接分支仍可接受，缺失入口、块内畸形提前分支或预算不完整则拒绝整组结果。这些检查与数值重放共用图及预算。坐标成员关系不授予输入已知位或负依赖／来源权限；其他架构及格式保留现有证明入口。
+
+这条窄准入拒绝非空条件代码根输入，直至其精确本地归属和表存储排除具备独立准入；普通图查询保留原有条件根策略。
+
+`RegistrationMemberCalleeABI` 负责普通成员调用的标量栈参数，不改变 CRT 析构回调的零弹栈策略。`RegistrationStateCallArguments` 统一检查父栈帧或当前 catch 私有栈中完整初始化、无指针来源的参数字，并在被调用者弹栈后撤销存储权限。初始化函数复用这一参数检查，正常返回后的必写集合仍由独立规则管理。LLVM 发射和 COFF 安装分别重新解码当前成员 ABI，并检查实际标量参数及接收者。
+
+`WindowsRegistrationStackCopies` 独立检查 PHI 合流中的发射器私有 ESP 副本。所有定义必须保留同一已推导位移；每次读取必须在所有前驱上已有定义，或由已检查的回调入口定义覆盖。缺失路径、未知值、不同位移和未证明的恢复入口均被拒绝。

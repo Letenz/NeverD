@@ -19,6 +19,10 @@
 #include <algorithm>
 
 namespace neverd::emulation {
+std::pair<uint64_t, uint64_t> KernelPhysicalMemory::identityWindow() {
+  return {physical::PhysicalBase, physical::PhysicalSize};
+}
+
 char PhysicalMemoryLimitError::ID;
 void PhysicalMemoryLimitError::log(llvm::raw_ostream &OS) const {
   OS << Message;

@@ -66,7 +66,8 @@ def validate_search_context(receipt, case):
     return context
 
 
-def observe(path, case, route, receipt, launcher, env, timeout):
+def observe(path, case, route, receipt, launcher, env, timeout, *,
+            expected_lifetime=None, expected_copy=None):
     context = validate_search_context(receipt, case)
     rethrow, secondary = context["rethrow_search"], context["secondary_search"]
     expected = ((39, 28, 39, 39, 18, 39, 1, 12) if rethrow else
@@ -74,6 +75,8 @@ def observe(path, case, route, receipt, launcher, env, timeout):
                 (17, 28, 39, 7, 18, 39, 1, 12))
     return observe_catches(path, case, route, receipt, launcher, env, timeout,
                            expected_values=expected,
+                           expected_lifetime=expected_lifetime,
+                           expected_copy=expected_copy,
                            expected_cleanup=(0, 53, 0) if context["catch_cleanup"] else None)
 
 
@@ -118,12 +121,60 @@ def source_profile(name):
         else:
             from windows_registration_objects import profile
         return profile(validate_decompilation)
+    if name == "destructors":
+        if __package__:
+            from .windows_registration_destructors import profile
+        else:
+            from windows_registration_destructors import profile
+        return profile(validate_decompilation)
+    if name == "destructor-graphs":
+        if __package__:
+            from .windows_registration_destructor_graphs import profile
+        else:
+            from windows_registration_destructor_graphs import profile
+        return profile(validate_decompilation)
+    if name == "destructor-results":
+        if __package__:
+            from .windows_registration_destructor_results import profile
+        else:
+            from windows_registration_destructor_results import profile
+        return profile(validate_decompilation)
+    if name == "reference-members":
+        if __package__:
+            from .windows_registration_reference_members import profile
+        else:
+            from windows_registration_reference_members import profile
+        return profile(validate_decompilation)
+    if name == "member-arguments":
+        if __package__:
+            from .windows_registration_member_arguments import profile
+        else:
+            from windows_registration_member_arguments import profile
+        return profile(validate_decompilation)
+    if name == "copies":
+        if __package__:
+            from .windows_registration_copies import profile
+        else:
+            from windows_registration_copies import profile
+        return profile(validate_decompilation)
+    if name == "initializers":
+        if __package__:
+            from .windows_registration_initializers import profile
+        else:
+            from windows_registration_initializers import profile
+        return profile(validate_decompilation)
+    if name == "delegating":
+        if __package__:
+            from .windows_registration_delegating import profile
+        else:
+            from windows_registration_delegating import profile
+        return profile(validate_decompilation)
     raise ValueError("unknown nested source profile")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("nested", "objects"), default="nested")
+    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "destructor-graphs", "destructor-results", "reference-members", "member-arguments", "copies", "initializers", "delegating"), default="nested")
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--runtime-libs", type=Path, required=True)
@@ -160,6 +211,8 @@ def main() -> int:
         libraries, report["runtime_libraries"] = load_libraries(args.runtime_libs.resolve())
         runtime, report["catch_search_runtime"] = load_runtime(args.runtime_libs.resolve())
         report["source_sha256"], report["emitter_sha256"] = file_digest(profile.source), file_digest(EMITTER)
+        report["source_dependencies_sha256"] = {
+            path.name: file_digest(path) for path in getattr(profile, "dependencies", ())}
         report["proof_sha256"] = file_digest(PROOF)
         report["rethrow_proof_sha256"] = file_digest(RETHROW_PROOF)
         report["direct_proof_sha256"] = file_digest(DIRECT_PROOF)
@@ -182,7 +235,9 @@ def main() -> int:
                     context["secondary_search"], context["direct_throw"])
                 catch_try = context["catch_try"]
                 cleanup = context["catch_cleanup"]
-                first = (39 if rethrow else 17) + int(control and not cleanup)
+                first = (profile.expected_values(name)[0] if hasattr(profile, "expected_values")
+                         else 39 if rethrow else 17) + int(
+                    control and not cleanup and getattr(profile, "control_first", True))
                 run([compiler, "--target=i686-pc-windows-msvc", "-fms-extensions", "-fexceptions",
                      "-fcxx-exceptions", "-fno-omit-frame-pointer", optimization,
                      *(["-DDIRECT_TYPED_THROW"] if direct else []),
@@ -192,6 +247,7 @@ def main() -> int:
                      *(["-DINLINE_RETHROW_SEARCH"] if inline else []),
                      *(["-DRETHROW_SEARCH"] if rethrow else
                        ["-DSECONDARY_SEARCH"] if secondary else []),
+                     *getattr(profile, "definitions", lambda _: [])(control),
                      "-DEXPECTED_FIRST=" + str(first), "-c", profile.source,
                      "-o", case / "driver.obj"])
                 original, product = case / "original.exe", case / "product.exe"
@@ -250,7 +306,7 @@ def main() -> int:
                     rebased = case / (route + "-rebased.exe")
                     rebased.write_bytes(PE32(source.read_bytes()).rebase(BASES[1]))
                     for image in (source, rebased):
-                        record["images"].append(observe(image, name, route, receipt,
+                        record["images"].append(getattr(profile, "observe", observe)(image, name, route, receipt,
                                                         [wine] if wine else [], env, args.timeout))
                 print("PASS nested tries " + name + ": 8 executions, 12 dispatches each", flush=True)
         report["passed"] = True

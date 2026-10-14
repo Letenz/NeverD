@@ -41,7 +41,7 @@ permissions:
 jobs:
   windows:
     name: Native Windows x64 and relocated product
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     timeout-minutes: 90
     env:
       SCCACHE_GHA_ENABLED: 'true'
@@ -59,6 +59,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          $Pins = Get-Content cmake/web-product-dependencies.json -Raw | ConvertFrom-Json
+          if ([version]$env:VCToolsVersion -lt [version]$Pins.toolchain.msvc_toolset_minimum) {
+            throw 'The selected MSVC runtime is older than the pinned LLVM producer'
+          }
           $Frontend = & clang-cl --version
           $Frontend
           "NEVERD_WEB_PRODUCT_COMPILER=$($Frontend[0])" >> $env:GITHUB_ENV
@@ -109,8 +113,18 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $ICU = Join-Path $PWD 'web-deps/icu'
           $Prefix = Join-Path $PWD 'web-deps/native'
-          $CRT = Join-Path $env:VCToolsRedistDir 'x64/Microsoft.VC143.CRT'
+          $Candidates = @(Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'msvcp140.dll') })
+          if ($Candidates.Count -ne 1) { throw 'Require one matching x64 CRT in the selected toolset' }
+          $CRT = $Candidates[0].FullName
           cmake -S . -B build-web-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF -DNEVERD_ENABLE_Z3=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=OFF -DNEVERD_BUILD_GUI=OFF -DNEVERD_BUILD_WORKER=ON -DNEVERD_BUILD_WEB_MCP=ON -DNEVERD_ENABLE_WEB_ANALYSIS=ON -DNEVERD_ENABLE_WEB_ASAR=ON -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON -DNEVERD_BUILD_WEB_PRODUCT=ON -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache "-DICU_ROOT=$ICU" "-DCMAKE_PREFIX_PATH=$Prefix" "-DNEVERD_WEB_BROTLI_ROOT=$Prefix" "-DNEVERD_MSVC_REDIST_DIRECTORY=$CRT" -DZLIB_USE_STATIC_LIBS=ON
+          $Cache = Get-Content build-web-windows/CMakeCache.txt
+          $LLVM = ($Cache | Select-String '^LLVM_DIR:PATH=').Line.Substring(14)
+          cmake -S scripts/fixtures/windows_llvm_runtime -B build-llvm-runtime -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl "-DLLVM_DIR=$LLVM"
+          cmake --build build-llvm-runtime --parallel 2
+          & "$PWD/build-llvm-runtime/neverd-llvm-runtime-probe.exe"
+          cmake --build build-web-windows --target NeverDWebArtifactTests --parallel 4
+          Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
+          ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 -R '^WebWindowsHost\.'
           cmake --build build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests NeverDWebNativeTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
           Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
       - name: Qualify Windows owners and public API without skips

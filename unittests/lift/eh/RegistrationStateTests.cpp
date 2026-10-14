@@ -2005,46 +2005,49 @@ TEST(RegistrationState, FreedOrOpaqueFrameBytesCannotAuthorizeObjectReads) {
   }
 }
 
-TEST(RegistrationState, APartialCalleeWriteCannotLaunderTheObjectPointer) {
-  auto F = makeCxxObjectCall();
-  auto &Body = F.Blocks[1];
-  auto Store =
-      std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
-        return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
-               Op.Inputs[0].Offset == x86reg::RCX;
-      });
-  ASSERT_NE(Store, Body.Ops.end());
-  Store->Inputs[1] = NdVar::reg(x86reg::RBP, 4);
-  auto Writer = objectLeafContract();
-  Writer.ECXReads.clear();
-  Writer.ECXWrites = {{0, 1}};
-  auto Reader = objectLeafContract();
-  Reader.Target = 0x2200;
-  const std::vector Contracts{Writer, Reader};
-  F.Blocks[7].Succs = {8};
-  LowBlock Reload;
-  Reload.Id = 8;
-  Reload.StartAddr = 0x1110;
-  Reload.EndAddr = 0x1113;
-  Reload.InstructionBoundaries = {{0x1110, 3}};
-  Reload.Succs = {9};
-  emitOp(Reload, 0x1110, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
-  LowBlock Read = F.Blocks[7];
-  Read.Id = 9;
-  Read.StartAddr = 0x1120;
-  Read.EndAddr = 0x1125;
-  Read.Succs = {2};
-  Read.InstructionBoundaries[0].Address = 0x1120;
-  Read.Ops[0].Addr = 0x1120;
-  Read.Ops[0].Inputs[0] = NdVar::cst(0x2200, 4);
-  F.Blocks.push_back(std::move(Reload));
-  F.Blocks.push_back(std::move(Read));
-  const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
-  EXPECT_FALSE(A.CallFrameEffectsComplete);
-  ASSERT_EQ(A.CallFrameEffects.size(), 1u);
-  EXPECT_EQ(A.CallFrameEffects[0].Target, 0x2100u);
-  EXPECT_EQ(A.callFrameEffect(0x1120, 0), nullptr);
+TEST(RegistrationState, APossibleCalleeWriteCannotLaunderTheObjectPointer) {
+  for (int32_t End : {1, 4}) {
+    SCOPED_TRACE(End);
+    auto F = makeCxxObjectCall();
+    auto &Body = F.Blocks[1];
+    auto Store =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(), [](const auto &Op) {
+          return Op.Opcode == NdOp::STORE && Op.Inputs[0].isReg() &&
+                 Op.Inputs[0].Offset == x86reg::RCX;
+        });
+    ASSERT_NE(Store, Body.Ops.end());
+    Store->Inputs[1] = NdVar::reg(x86reg::RBP, 4);
+    auto Writer = objectLeafContract();
+    Writer.ECXReads.clear();
+    Writer.ECXWrites = {{0, End}};
+    auto Reader = objectLeafContract();
+    Reader.Target = 0x2200;
+    const std::vector Contracts{Writer, Reader};
+    F.Blocks[7].Succs = {8};
+    LowBlock Reload;
+    Reload.Id = 8;
+    Reload.StartAddr = 0x1110;
+    Reload.EndAddr = 0x1113;
+    Reload.InstructionBoundaries = {{0x1110, 3}};
+    Reload.Succs = {9};
+    emitOp(Reload, 0x1110, NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
+    LowBlock Read = F.Blocks[7];
+    Read.Id = 9;
+    Read.StartAddr = 0x1120;
+    Read.EndAddr = 0x1125;
+    Read.Succs = {2};
+    Read.InstructionBoundaries[0].Address = 0x1120;
+    Read.Ops[0].Addr = 0x1120;
+    Read.Ops[0].Inputs[0] = NdVar::cst(0x2200, 4);
+    F.Blocks.push_back(std::move(Reload));
+    F.Blocks.push_back(std::move(Read));
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_FALSE(A.CallFrameEffectsComplete);
+    ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+    EXPECT_EQ(A.CallFrameEffects[0].Target, 0x2100u);
+    EXPECT_EQ(A.callFrameEffect(0x1120, 0), nullptr);
+  }
 }
 
 TEST(RegistrationState, ADynamicWriteCannotKeepThePreviousState) {

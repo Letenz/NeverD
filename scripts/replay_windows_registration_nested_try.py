@@ -41,6 +41,9 @@ def validate_capture(root: Path, capture: dict) -> list[tuple]:
     if profile.proof and (capture.get("object_proof_sha256") != file_digest(profile.proof) or
                           capture.get("object_types_sha256") != file_digest(profile.types)):
         raise ValueError("trivial object proof or source declarations changed")
+    if capture.get("source_dependencies_sha256", {}) != {
+            path.name: file_digest(path) for path in getattr(profile, "dependencies", ())}:
+        raise ValueError("object source dependency changed")
     validate_manifest(capture.get("runtime_libraries", {}))
     if capture.get("proof_sha256") != file_digest(PROOF) or \
             capture.get("rethrow_proof_sha256") != file_digest(RETHROW_PROOF) or \
@@ -116,8 +119,9 @@ def main() -> int:
         capture = json.loads((root / "nested-try-rewrite.json").read_text())
         records = validate_capture(root, capture)
         report["profile"] = capture.get("profile", "nested")
+        profile = source_profile(report["profile"])
         for name, path, route, receipt in records:
-            result = observe(path, name, route, receipt, [wine] if wine else [],
+            result = getattr(profile, "observe", observe)(path, name, route, receipt, [wine] if wine else [],
                              os.environ.copy() | {"WINEDLLOVERRIDES": "vcruntime140=n"}, args.timeout)
             report["images"].append({"case": name, **result})
         report["passed"] = True

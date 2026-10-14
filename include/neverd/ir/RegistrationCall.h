@@ -81,16 +81,23 @@ struct RegistrationCalleeFrameContract {
     Leaf,
     PrivateThrow,
     PrivateRethrow,
-    RuntimeThrow
+    RuntimeThrow,
+    Initializer
   } CalleeKind = Kind::Leaf;
   va_t Target = InvalidVA;
   uint32_t StackPopBytes = 0;
   bool DoesNotReturn = false;
+  /// Every normal return proves a 32-bit scalar independent of incoming
+  /// registers, borrowed pointers and the physical caller PC. This grants no
+  /// object identity or initialization; native consumers reprove the callee.
+  bool HasIndependentScalarReturn = false;
   va_t ThrownTypeVA = 0;
   uint32_t ThrownObjectSize = 0;
   std::vector<RegistrationRuntimeThrowInfo> RuntimeThrowInfos;
   std::vector<RegistrationObjectExtent> ECXReads;
   std::vector<RegistrationObjectExtent> ECXWrites;
+  /// Bytes initialized on every normal return from an ordinary constructor.
+  std::vector<RegistrationObjectExtent> ECXInitialized;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;
@@ -103,11 +110,22 @@ struct RegistrationCalleeFrameContract {
   }
   bool isRethrow() const { return CalleeKind == Kind::PrivateRethrow; }
   bool isRuntimeThrow() const { return CalleeKind == Kind::RuntimeThrow; }
+  bool isInitializer() const { return CalleeKind == Kind::Initializer; }
+};
+
+/// An ordinary member call borrows a still-live reference catch's exception
+/// allocation. Offset is object-relative and never a parent-frame coordinate.
+struct RegistrationRuntimeObjectBorrow {
+  uint32_t TryIndex = 0;
+  uint32_t CatchIndex = 0;
+  int32_t Offset = 0;
+  bool operator==(const RegistrationRuntimeObjectBorrow &) const = default;
 };
 
 /// One exact source call with a proved stack and bounded, initialized object
-/// borrow. Frame extents use established parent EBP coordinates. CalleeIndex
-/// selects the immutable callee contract retained by the state analysis.
+/// borrow. Frame extents use established parent EBP coordinates; runtime
+/// borrows keep a distinct allocation identity. CalleeIndex selects the
+/// immutable callee contract retained by the state analysis.
 struct RegistrationCallFrameEffect {
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
@@ -117,6 +135,7 @@ struct RegistrationCallFrameEffect {
   uint32_t StackPopBytes = 0;
   bool DoesNotReturn = false;
   std::optional<int32_t> ECXFrameOffset;
+  std::optional<RegistrationRuntimeObjectBorrow> ECXRuntimeObject;
   std::optional<RegistrationRuntimeThrow> RuntimeThrow;
   std::vector<RegistrationObjectExtent> FrameReads;
   std::vector<RegistrationObjectExtent> FrameWrites;

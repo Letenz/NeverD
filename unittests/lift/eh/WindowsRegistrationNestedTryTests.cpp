@@ -117,8 +117,10 @@ void reconstructNestedSearch(bool Secondary, bool Rethrow = false,
   LowToMedConverter Converter;
   Converter.setBinaryImage(&*Image);
   auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
-  if (InlineRethrow || DirectThrow)
-    recoverCallAbi(Med, Arch::X86, {}, &*Image);
+  // Ordinary catch members need the same physical receiver recovery as the
+  // production pipeline, even when the throw itself remains in a private
+  // helper.
+  recoverCallAbi(Med, Arch::X86, {}, &*Image);
   inferMedTypes(Med, Arch::X86);
   for (const auto &State : States.Blocks)
     if (State.Reached)
@@ -200,6 +202,26 @@ void reconstructNestedSearch(bool Secondary, bool Rethrow = false,
   ASSERT_TRUE(Parent);
   ASSERT_TRUE(Parent->getMetadata(windows_eh_md::NativeAttachment));
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  // Source contracts describe checked code. Flipping a return fact cannot
+  // authorize an observed pointer or erase a current scalar result proof.
+  for (size_t I = 0; I != States.CalleeContracts.size(); ++I) {
+    if (States.CalleeContracts[I].CalleeKind !=
+            RegistrationCalleeFrameContract::Kind::Leaf ||
+        llvm::none_of(States.CallFrameEffects,
+                      [&](const auto &Call) { return Call.CalleeIndex == I; }))
+      continue;
+    auto Changed = Med;
+    auto &Contract = Changed.RegistrationStates->CalleeContracts[I];
+    Contract.HasIndependentScalarReturn = !Contract.HasIndependentScalarReturn;
+    llvm::LLVMContext ChangedContext;
+    auto Rejected =
+        MedLLVMEmitter().emit({Changed}, ChangedContext, "changed-return",
+                              Arch::X86, {}, &*Image, BinaryFormat::COFF);
+    ASSERT_TRUE(Rejected);
+    const auto *ChangedParent = Rejected->getFunction(Changed.Name);
+    ASSERT_TRUE(ChangedParent);
+    EXPECT_FALSE(ChangedParent->getMetadata(windows_eh_md::NativeAttachment));
+  }
   auto Proof = validateCOFFRegistrationCxxIR(*Parent, EH, *Image);
   ASSERT_FALSE(bool(Proof)) << llvm::toString(std::move(Proof));
   registration_test::checkNestedTryEdits(*Parent, EH, *Image, Secondary);

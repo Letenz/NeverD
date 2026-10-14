@@ -55,17 +55,28 @@ TypeRef HighCWriter::cxxScalarThrowType(const HighExpr &ThrowCall) const {
   return Result;
 }
 
-void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
-                                    const HighExpr &ThrowCall) {
+bool HighCWriter::cxxThrowUsesRuntimeCall(const HighExpr &ThrowCall) const {
   const bool NullObject = !ThrowCall.Operands.empty() &&
                           isNullThrowArgument(ThrowCall.Operands[0].get());
   const bool Rethrow = ThrowCall.Operands.size() == 2 && NullObject &&
                        isNullThrowArgument(ThrowCall.Operands[1].get());
   if (!Opts.StructuredExceptionSyntax || ThrowCall.Operands.empty() ||
-      (NullObject && !Rethrow)) {
+      (NullObject && !Rethrow))
+    return true;
+  return Opts.Image && Opts.Image->Arch == Arch::X86 && !Rethrow &&
+         !cxxScalarThrowType(ThrowCall);
+}
+
+void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
+                                    const HighExpr &ThrowCall) {
+  if (cxxThrowUsesRuntimeCall(ThrowCall)) {
     OS << exprStr(ThrowCall);
     return;
   }
+  const bool NullObject = !ThrowCall.Operands.empty() &&
+                          isNullThrowArgument(ThrowCall.Operands[0].get());
+  const bool Rethrow = ThrowCall.Operands.size() == 2 && NullObject &&
+                       isNullThrowArgument(ThrowCall.Operands[1].get());
   if (!NullObject)
     if (auto Type = cxxScalarThrowType(ThrowCall)) {
       // Read the current object bytes, including floating-point bits, rather
@@ -74,11 +85,6 @@ void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
          << memoryLoadExpr(Type, addrStr(*ThrowCall.Operands[0]));
       return;
     }
-  if (Opts.Image && Opts.Image->Arch == Arch::X86 && !Rethrow &&
-      !CxxThrowPrints.count(&Stmt)) {
-    OS << exprStr(ThrowCall);
-    return;
-  }
   OS << "throw";
   if (auto Printed = CxxThrowPrints.find(&Stmt);
       Printed != CxxThrowPrints.end()) {
