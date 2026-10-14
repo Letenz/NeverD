@@ -10,6 +10,8 @@ and whether generated code preserves behavior. Choose the smallest suite that
 answers the question behind a change, then run the broader aggregate before a
 high-risk pull request.
 
+`PipelineOutcome.ResolvedCalls*` checks register banks, call/invoke identity, packed and split stack bytes, and refusal of missing bytes. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` covers x64, ARM32 and AArch64 in ELF, PE and Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` checks all three formats and rejects clobbered lengths, writable or oversized spans, local names, wrong source registers, alternate entries and relocatable images. Host C differentials compile the source reference independently at O0 and emitted C at O2, preserving an independent oracle when a host optimizer miscompiles a recurrence. The AArch64 FMA check requests `-mfma` only on x86 hosts.
+
 ## Configure a test build
 
 Tests are disabled unless `BUILD_TESTING` is enabled. A Release build is the
@@ -5563,6 +5565,25 @@ range must retain separate owners; a damaged prefix supplies no new entry.
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` checks wrong sentinels, cycles, forward/out-of-range links, invalid initial levels and handler/filter roles despite a complete parser status. Initial-active-scope and empty-table controls preserve valid frame sentinels in both EH3 and EH4. Over-width handler and filter addresses also reject without publishing facts.
 
 The source registration solver uses one administration-boundary check for object borrows, catch-object construction and local-finally writes. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` and `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` cover EH3/EH4 reads, writes and partial overlaps with SavedESP, exception pointers and cookie cells. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` protects the saved entry frame independently of later reloads. Adjacent ordinary objects remain valid.
+
+`NeverDRegistrationCalleeStackTests` runs the decoded PE32 call/return ABI
+controls, including a cycle between a registration parent and an ordinary
+wrapper. An unbalanced recursive wrapper cannot borrow its own pending ESP
+answer. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
+`X87CallGraphCache.*` checks for the shared-cache and invocation boundaries.
+
+`MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses
+native jump blocks removed before SSA. Both asynchronous and synchronous
+catches must retain the parent's local slot and the nonvolatile value written
+before the throwing call. The original FH3/FH4 GS/no-GS O0/O2 ABI-probe CLIs
+remain the corpus-level check for this projection.
+
+`HighCParamUsage` checks shared expression DAGs, repeated callee queries and
+recursive argument uses. Its default and compacted parameter lists must agree
+with the operands that C prints. The two `WindowsEHModesCorpus.Decompiles*`
+regressions run the original FH3 O2 GS/no-GS probes and the five PE32 xcpt4 and
+xframe inputs through the full source CLI, including output generation. These
+checks also run in the Windows EH CI lane.
 
 `NeverDSEHRuntimeMemoryTests` checks nested authenticated UCRT calls, actual
 home-area writes, immutable formats and receipt freshness. Wrong providers,

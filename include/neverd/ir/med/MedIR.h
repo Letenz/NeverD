@@ -403,6 +403,11 @@ struct MedCallInfo {
   /// only the scalar in the low lane of a floating-point argument register
   /// (MedFunc::FPParamScalarBytes); 0, or no entry, for a whole argument.
   std::vector<uint16_t> ArgReadBytes;
+  /// Counts of the independent integer and floating register runs in Args;
+  /// remaining arguments are stack-passed. -1 means no bank proof (explicit
+  /// source ABI or a convention with positional argument slots).
+  int IntegerRegisterArgCount = -1;
+  int FloatingRegisterArgCount = -1;
 };
 
 struct MedFunc {

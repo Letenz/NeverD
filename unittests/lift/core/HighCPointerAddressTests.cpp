@@ -38035,12 +38035,14 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
   OS.flush();
   // `values_` hands the callee the address of the values, whose count only
   // `types_` encodes: no type bounds what the callee reads there, so the
-  // record and the values stay one frame object.
-  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ 32) = 43;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("= ((char*)&frame0 + 16);"), std::string::npos)
-      << Source;
+  // record and the values are members of one frame record.
+  EXPECT_NE(Source.find("} frame0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("frame0.var_m18 = 43;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= &frame0.var_m28;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("((char*)&frame0 + 40))"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m18)"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
@@ -38189,9 +38191,13 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   OS.flush();
   // `values_` hands the callee the address of the values, whose count only
   // `types_` encodes: no type bounds what the callee reads there, so the
-  // record and the values stay one frame object.
-  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), ((char*)&frame0 + 24))"),
+  // record and the values are members of one frame record.
+  EXPECT_NE(Source.find("} frame0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m38)"),
+            std::string::npos)
+      << Source;
+  // The packed sibling takes the call result.
+  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
@@ -38345,8 +38351,8 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
       sourceFunctionDefinition(Source, "leftover_eax_copy");
   // `values_` hands the callee the address of the values, whose count only
   // `types_` encodes: no type bounds what the callee reads there, so the
-  // record and the values stay one frame object.
-  EXPECT_EQ(Body.find("var_m"), std::string::npos) << Source;
+  // record and the values are members of one frame record.
+  EXPECT_NE(Body.find("} frame0;"), std::string::npos) << Source;
   // The call result's narrow store reaches the wide copy of the same bytes.
   EXPECT_NE(Body.find("*(uint32_t *)((char*)&frame0 + 8) = period_use"),
             std::string::npos)
@@ -38660,9 +38666,13 @@ TEST(LLVMCPointerAddresses,
   OS.flush();
   // `values_` hands the callee the address of the values, whose count only
   // `types_` encodes: no type bounds what the callee reads there, so the
-  // record and the values stay one frame object.
-  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), ((char*)&frame0 + 24))"),
+  // record and the values are members of one frame record.
+  EXPECT_NE(Source.find("} frame0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m38)"),
+            std::string::npos)
+      << Source;
+  // The packed sibling takes the call result.
+  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
@@ -40564,9 +40574,12 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
             llvm::StringRef(Handler).slice(LineStart, AssignAt).trim().str();
         const std::string Loaded =
             Handler.substr(AssignAt + 4, AddAt - AssignAt - 4);
-        const auto LoadAt = Handler.find(Loaded + " = " + Slot + ";");
-        ASSERT_NE(LoadAt, std::string::npos) << Source;
-        EXPECT_LT(LoadAt, LineStart) << Source;
+        // A frame record member reads and writes the slot in one statement.
+        if (Loaded != Slot) {
+          const auto LoadAt = Handler.find(Loaded + " = " + Slot + ";");
+          ASSERT_NE(LoadAt, std::string::npos) << Source;
+          EXPECT_LT(LoadAt, LineStart) << Source;
+        }
       }
     }
   }
@@ -41144,6 +41157,112 @@ TEST(LLVMCPointerAddresses, RsdsPdbNamesSyntheticCalleeOnSafetyFixture) {
                                   &*Img, Keep));
   OS.flush();
   EXPECT_NE(Source.find("tainted_stack_overflow"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, EscapedFrameNamesSlotsAsMembersOfOneRecord) {
+  // `s.len = 7; fill(&s); return s.buf;`: no type bounds what `fill` reaches,
+  // so the frame stays one object, and its named slot is a member of it.
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-frame-record", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *Fill = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false),
+      llvm::GlobalValue::ExternalLinkage, "fill", Module);
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "fill_and_read", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 40), "frame_end");
+  llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+  auto At = [&](int64_t Disp) {
+    return Builder.CreateIntToPtr(
+        Builder.CreateAdd(Rsp, llvm::ConstantInt::get(I64, Disp)), Ptr);
+  };
+  llvm::Value *Record = At(-24);
+  Builder.CreateStore(llvm::ConstantInt::get(I32, 7), Record);
+  Builder.CreateCall(Fill, {Record});
+  Builder.CreateRet(Builder.CreateLoad(I64, At(-16)));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("uint8_t gap0[16];"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint64_t var_m18;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} frame0;"), std::string::npos) << Source;
+  // A narrower store views the start of the member it lands in.
+  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = 7;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("fill(&frame0.var_m18)"), std::string::npos) << Source;
+  // The second word is the callee's, read from the same object.
+  EXPECT_NE(Source.find("((char*)&frame0 + 24)"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+#include <string.h>
+void fill(void *pointer) {
+  uint32_t length;
+  memcpy(&length, pointer, sizeof(length));
+  uint64_t buffer = length == 7 ? UINT64_C(0x1234) : 0;
+  memcpy((char *)pointer + 8, &buffer, sizeof(buffer));
+}
+)" + Source + R"(
+int main(void) { return fill_and_read() != 0x1234; }
+)");
+}
+
+TEST(LLVMCPointerAddresses, FrameRecordMemberTakesOnlyIntegerAccesses) {
+  // `fill(&slot); *(double *)&slot = d; return *(uint64_t *)&slot;`: the
+  // slot is an integer member, and C would convert a double assigned to it.
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-frame-record-double", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Type *F64 = llvm::Type::getDoubleTy(Context);
+  llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *Fill = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false),
+      llvm::GlobalValue::ExternalLinkage, "fill", Module);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, {F64}, false),
+      llvm::GlobalValue::ExternalLinkage, "double_bits", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 40), "frame_end");
+  llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+  llvm::Value *Slot = Builder.CreateIntToPtr(
+      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16)), Ptr, "slot");
+  Builder.CreateCall(Fill, {Slot});
+  Builder.CreateStore(Function->getArg(0), Slot);
+  Builder.CreateRet(Builder.CreateLoad(I64, Slot));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("fill(&frame0.var_m10)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("frame0.var_m10 = arg0"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+void fill(void *pointer) { (void)pointer; }
+)" + Source + R"(
+int main(void) { return double_bits(2.0) != UINT64_C(0x4000000000000000); }
+)");
 }
 
 TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {

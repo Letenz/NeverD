@@ -10,6 +10,8 @@ Fixture und bewahrt generierter Code das Verhalten? Wählen Sie die kleinste
 Suite, die die Frage der Änderung beantwortet, und führen Sie vor einem
 risikoreichen Pull Request das breitere Aggregat aus.
 
+`PipelineOutcome.ResolvedCalls*` prüft Registergruppen, call/invoke-Identität, Zusammenfügen und Aufteilen von Stackbytes sowie die Ablehnung fehlender Bytes. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` deckt x64, ARM32 und AArch64 für ELF, PE und Mach-O ab. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` prüft alle drei Formate und verwirft überschriebene Längen, beschreibbare oder zu große Bereiche, gleichnamige lokale Funktionen, falsche Quellregister, alternative Einstiege und verschiebbare Objektdateien. C-Differenztests kompilieren die Referenz separat mit O0 und den erzeugten C-Code mit O2, damit ein fehlerhaft optimierter Rekurrenzwert des Hostcompilers die Referenz nicht verfälscht. Der AArch64-FMA-Test fordert `-mfma` nur auf x86-Hosts an.
+
 ## Test-Build konfigurieren
 
 Tests sind deaktiviert, sofern `BUILD_TESTING` nicht aktiv ist. Release ist die

@@ -35,6 +35,8 @@ graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
 `CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
 
+Recovered indirect-call arguments retain separate integer and floating register runs and the remaining stack bytes. `LLVMCallContract` uses one binder during emission and after LLVM target resolution: surplus registers cannot shift another bank, and packed 32-bit stores are assembled into the callee’s complete stack slots. A callback table cannot replace an already recovered first argument with an inferred object pointer. AArch64 copy-initialized tables authenticate the native BL/import identity, MOVZ length, ADRP/ADD source and complete immutable span; publication and jump-table proof replay check the same witness.
+
 ## Manual PDB presentation boundary
 
 `PDBDebugContext::inspect` owns manual PE/PDB validation. A missing CodeView
@@ -2844,6 +2846,8 @@ should orchestrate those components rather than absorb their algorithms.
 
 `LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
 
+The lifted stack frame prints as the byte array `frame0`. Its named slots become separate C locals only while a type bounds every frame address the function passes to a call or stores to memory: the callee's prototype, a debug-typed local passed in the same position of the same callee, or the debug type of the local at that offset. `analyzeDeadFrameStores` records those escapes, and a frame store stays live while a call that may read memory can still run after it. A frame with an unbounded escape, or one that must stay whole for another reason, keeps one object, and its named slots become members of one record laid out exactly like the frame bytes. Such a member prints as `frame0.var_m10`, and the gaps are named `gapXX`, as IDA names structure gaps. Members are integers or arrays of integers at aligned offsets, and only integer accesses use them: a floating-point, vector or pointer access stays on the frame bytes, where C does not convert the value. A record type keeps its bytes raw, because its layout comes from the reader's headers. A member is read into a temporary where the load is, because a call can change escaped bytes before a later use.
+
 ## Cross-architecture translation contract
 
 `include/neverd/translate` defines a contract layer, not an
@@ -5414,9 +5418,23 @@ DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in Darwi
 
 Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP.
 
+`med/X86/SEHFrame` rechecks converted SP effects and projects protected sources
+by their native operation addresses. CFG compaction and entry splitting change
+MedIR block IDs; a LowIR source ID never indexes the converted block vector.
+Synchronous catches sample their retained throwing calls, so nonvolatile values
+come from the actual call rather than a neighbouring reindexed block. Missing
+source effects or throwing calls fail the conversion explicitly.
+
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.
+
+Registration returning-stack queries and x87 call queries share one registration
+callee index across nested CFG construction. Pending answers, recursion depth
+and cumulative work survive that boundary. Query-local registration graphs
+bypass the shared x87 graph cache and parallel prefetch. The ordinary x87
+projection leaves a registration language graph opaque before constructing its
+callback closure; that graph needs a separate dispatcher invocation domain.
 
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 

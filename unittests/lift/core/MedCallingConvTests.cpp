@@ -88,6 +88,51 @@ void addLiveIn(MedBlock &Entry, const MedVar &LiveIn) {
   Entry.Ops.push_back(unary(NdOp::COPY, LiveIn, LiveIn));
 }
 
+TEST(MedCallABI, CallbackTableAddressDoesNotReplaceTheActualFirstArgument) {
+  for (Arch A : {Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (bool Explicit : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << int(A) << ':' << int(Format) << ':' << Explicit);
+        const auto &TRI = getTargetRegInfo(A);
+        const auto Layout = TRI.integerArgumentLayout(Format);
+        ASSERT_FALSE(Layout.Registers.empty());
+        BinaryImage Image;
+        Image.Arch = A;
+        Image.Format = Format;
+        MedFunc F;
+        F.Entry = 0x1000;
+        F.Blocks.resize(1);
+        auto &B = F.Blocks[0];
+        B.Id = 0;
+        const auto Object = MedVar::makeConst(0x5000, TRI.PointerSize);
+        const auto Table = temp(1, 0, TRI.PointerSize, A);
+        const auto Slot = temp(2, 0, TRI.PointerSize, A);
+        const auto Target = temp(3, 0, TRI.PointerSize, A);
+        B.Ops.push_back(unary(NdOp::LOAD, Table, Object));
+        B.Ops.push_back(
+            binary(NdOp::INT_ADD, Slot, Table,
+                   MedVar::makeConst(TRI.PointerSize, TRI.PointerSize)));
+        B.Ops.push_back(unary(NdOp::LOAD, Target, Slot));
+        if (Explicit)
+          B.Ops.push_back(unary(
+              NdOp::COPY, reg(4, 1, TRI.PointerSize, Layout.Registers[0], A),
+              MedVar::makeConst(8, TRI.PointerSize)));
+        auto Call =
+            unary(NdOp::INDIR_CALL,
+                  reg(5, 1, TRI.PointerSize, TRI.IntReturnReg, A), Target);
+        Call.Addr = F.Entry + 16;
+        B.Ops.push_back(Call);
+        recoverCallAbi(F, A, {}, &Image);
+        ASSERT_EQ(F.CallInfos.size(), 1u);
+        ASSERT_FALSE(F.CallInfos[0].Args.empty());
+        const auto &First = F.CallInfos[0].Args[0];
+        ASSERT_TRUE(First.isConst()) << First.display();
+        EXPECT_EQ(First.ConstVal, Explicit ? 8u : Object.ConstVal);
+      }
+}
+
 TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
   enum class Case {
     Siblings,
@@ -1961,8 +2006,11 @@ TEST(MedABIPass, Win64VTableIndirectRecoversThisAndSret) {
 
   ASSERT_EQ(Func.CallInfos.size(), 1u);
   ASSERT_EQ(Func.CallInfos[0].Args.size(), 2u) << Func.CallInfos[0].Args.size();
-  EXPECT_EQ(Func.CallInfos[0].Args[0].Id, RCX1.Id);
-  EXPECT_EQ(Func.CallInfos[0].Args[0].SSAVer, RCX1.SSAVer);
+  // Recovery keeps the value copied into RCX, before the redundant register
+  // copy. The vtable shape must preserve that already-proven object argument;
+  // replacing it with the register alias is unnecessary and would also allow
+  // C callback tables to replace a different explicit first argument.
+  EXPECT_EQ(Func.CallInfos[0].Args[0], Badge);
   EXPECT_EQ(Func.CallInfos[0].Args[1].RegOff, x86reg::RDX);
 
   llvm::LLVMContext Ctx;

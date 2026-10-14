@@ -4750,6 +4750,7 @@ size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
 
 std::vector<size_t>
 HighCWriter::emittedParamIndices(const HighFunc &Func) const {
+  const auto Key = std::make_pair(&Func, Func.Entry);
   std::vector<size_t> All;
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
   const size_t N = Func.Params.size();
@@ -4758,19 +4759,24 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
-  const auto Key = std::make_pair(&Func, Func.Entry);
   if (auto It = EmittedParamIndices.find(Key);
       It != EmittedParamIndices.end() && It->second.size() <= N)
     return It->second;
   std::set<int> Used;
+  // Expressions can share children, and several call edges can query the same
+  // definition. Visit each expression once and retain every completed answer.
+  HighExprSet Visited;
   ParamIndicesInProgress.insert(&Func);
   const auto Done =
       llvm::make_scope_exit([&] { ParamIndicesInProgress.erase(&Func); });
   // An indirect call's target is a use too.  A call's operand that its
   // callee's definition does not declare is none: the call does not pass it.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
+    if (!Visited.insert(&E).second)
+      return;
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
         E.Var.Kind == MedVar::Param)
       Used.insert(E.Var.Id);
@@ -4819,6 +4825,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
   size_t Unused = 0;
@@ -4829,6 +4836,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     All.resize(N);
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
+    EmittedParamIndices[Key] = All;
     return All;
   }
   std::vector<int> Order(Used.begin(), Used.end());
@@ -4841,6 +4849,7 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
     for (size_t I = 0; I < N; ++I)
       All[I] = I;
   }
+  EmittedParamIndices[Key] = All;
   return All;
 }
 
