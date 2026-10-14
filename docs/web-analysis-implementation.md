@@ -3930,3 +3930,33 @@ release receipt cannot yet be claimed. The gate is ready to dispatch with the
 fixed archive SHA-256 and explicit `2026-10-13` snapshot witness once that input
 is supplied. This workflow does not publish fixtures or alter unrelated package
 publication. See [the release contract](web-producer-corpus-qualification.md).
+
+### Authenticated remote qualification (2026-10-14)
+
+The producer lane and combined gate now accept the optional repository/call
+Secret `NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION`. Only the producer download
+receives its bearer header; archive and independent artifact hashes still
+govern admission. Public archive callers can omit it. Nonempty curl option
+arrays preserve macOS Bash 3.2 behavior with `set -u`. Actionlint validates all
+three workflows, and the actual download option construction passes an
+authenticated HTTPS HEAD probe under Bash 3.2. Missing/wrong tokens are denied.
+
+The prior [invalid-input probe](https://github.com/NeverSight/NeverD/actions/runs/38424287437)
+finished with failed input validation, skipped producer/resource jobs and a
+failed final gate. The [full combined run](https://github.com/NeverSight/NeverD/actions/runs/38500156926)
+has been dispatched at `70f433ae49cc25841f0bda92bdcb649b0a847a3f` with the fixed
+archive SHA-256 recorded above and the explicit `2026-10-13` snapshot witness.
+The input preflight passes. A temporary authenticated HTTPS transfer serves
+only that archive; its token and endpoint will be retired after qualification.
+The first producer job stops before consumer tests: its HTTP/2 stream resets
+after approximately 405 MB, and curl exits 92 without using the existing retry
+count. This is a failed remote receipt.
+
+The download now retries all errors within the existing two-retry/time bounds.
+A task-local C++ transfer probe serves the unchanged full archive and cuts the
+first response after 1 MiB. Default retries stop with partial-file error 18;
+the revised policy retries into its explicit output file and recovers all
+1,251,173,226 bytes with SHA-256
+`7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+HTTPS restrictions, bearer authentication and both hash checks remain required.
+The corrected combined run still needs a successful remote receipt.
