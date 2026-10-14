@@ -137,8 +137,17 @@ TEST_F(WebWindowsHost, EnumeratedIdentityDetectsReplacementBeforeOpen) {
   auto Directory = win::openRoot(path(Root), true);
   const auto Entries = win::entries(Directory.get(), 1);
   ASSERT_EQ(Entries.size(), 1u);
+  const auto DirectoryID = win::inspect(Directory.get()).id();
+  // The retained enumeration directory prevents a path-based writer opening
+  // its target parent. Check identity after releasing and reopening that lock.
+  std::error_code Locked;
+  fs::rename(Root / "input", Root / "old", Locked);
+  ASSERT_TRUE(Locked);
+  Directory = {};
   fs::rename(Root / "input", Root / "old");
   write(Root / "input", "new");
+  Directory = win::openRoot(path(Root), true);
+  ASSERT_EQ(win::inspect(Directory.get()).id(), DirectoryID);
   auto New = win::openChild(Directory.get(), "input");
   EXPECT_FALSE(Entries[0].matches(win::inspect(New.get())));
 }
@@ -225,8 +234,8 @@ TEST_F(WebWindowsHost, StoreRequiresExactLengthSealAndCumulativeBudget) {
 TEST_F(WebWindowsHost, ExportIsVerifiedPrivateAndManifestDoesNotClobber) {
   {
     ExportDirectory E(path(Root / "output"));
-    E.write("source.js", "const x=1;");
-    E.complete("{}");
+    ASSERT_NO_THROW(E.write("source.js", "const x=1;"));
+    ASSERT_NO_THROW(E.complete("{}")) << "Win32 error: " << GetLastError();
     EXPECT_FALSE(
         MoveFileExW((Root / "output").c_str(), (Root / "moved").c_str(), 0));
   }

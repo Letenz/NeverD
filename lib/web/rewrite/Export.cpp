@@ -108,7 +108,7 @@ struct Export::Impl {
 
 Export::Export(std::string_view Path) : State(std::make_unique<Impl>()) {
 #ifdef _WIN32
-  State->Destination = win::newDirectory(Path);
+  State->Destination = win::newDirectory(Path, win::DirectoryAccess::Remove);
 #else
   if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
     throw Error("invalid_path");

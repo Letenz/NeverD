@@ -306,12 +306,19 @@ std::vector<Entry> entries(HANDLE Directory, uint64_t MaxEntries) {
   return Result;
 }
 
-Handle createDirectory(HANDLE Parent, std::string_view Name) {
+Handle createDirectory(HANDLE Parent, std::string_view Name,
+                       DirectoryAccess Access) {
   validateMemberName(Name);
   Security ACL;
+  // The kernel's relative rename opens the target directory for FILE_WRITE_DATA.
+  // Retaining DELETE or LIST_DIRECTORY access here conflicts with that open.
+  // Only the rollback owner needs directory removal authority.
+  const ACCESS_MASK Extra = Access == DirectoryAccess::Remove
+                               ? FILE_LIST_DIRECTORY | DELETE
+                               : 0;
   auto Result = openAt(Parent, wide(Name),
-                       FILE_LIST_DIRECTORY | FILE_TRAVERSE |
-                           FILE_READ_ATTRIBUTES | DELETE | READ_CONTROL,
+                       FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL |
+                           Extra,
                        FILE_CREATE, FILE_DIRECTORY_FILE,
                        FILE_SHARE_READ | FILE_SHARE_WRITE, ACL.get());
   inspect(Result.get());
@@ -331,7 +338,7 @@ Handle createFile(HANDLE Parent, std::string_view Name, bool Temporary) {
   inspect(Result.get());
   return Result;
 }
-Destination newDirectory(std::string_view Path) {
+Destination newDirectory(std::string_view Path, DirectoryAccess Access) {
   const std::filesystem::path P{wide(Path)};
   const auto Name = utf8(P.filename().native());
   validateMemberName(Name);
@@ -339,7 +346,7 @@ Destination newDirectory(std::string_view Path) {
       P.has_parent_path() ? utf8(P.parent_path().native()) : ".";
   Destination Result;
   Result.Parent = openRoot(Parent, true);
-  Result.Directory = createDirectory(Result.Parent.get(), Name);
+  Result.Directory = createDirectory(Result.Parent.get(), Name, Access);
   return Result;
 }
 Handle privateSpool() {
