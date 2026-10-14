@@ -138,13 +138,15 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   URL/hash inputs and fails missing files/consumers instead of skipping. The
   combined Web release qualification calls both the producer and fixed CEF
   lanes, and its final gate requires both to succeed; cancellation/skips fail.
-  full-image corpus has been rebuilt in persistent storage: all original
+  The full-image corpus has been rebuilt in persistent storage: all original
   container hashes match, and eleven required local cases pass without skips.
-  A separate fixed snapshot witness retains its opaque meaning. An accessible
-  archive and remote qualification receipt remain required for the release lane.
-  Native
-  Windows input formats are supported on the qualified macOS host; a Windows
-  analysis-host reader/export writer remains unavailable, as the matrix states.
+  A separate fixed snapshot witness retains its opaque meaning. The
+  [combined remote receipt](https://github.com/NeverSight/NeverD/actions/runs/38502323427)
+  now passes at `8c1f4ac03`: eleven producer and fifteen CEF/resource cases have
+  zero skips, and both called jobs plus the final gate succeed. Future calls
+  require a reachable pinned archive. Windows input formats are supported on
+  the qualified macOS host; a Windows analysis-host reader/export writer remains
+  unavailable, as the matrix states.
 
 Erased TypeScript information, general JSC/V8 bytecode decompilation, universal
 framework support and fabricated live traffic are not missing acceptance work.
