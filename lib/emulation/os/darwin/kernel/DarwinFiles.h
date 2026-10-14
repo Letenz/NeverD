@@ -212,6 +212,7 @@ private:
   struct LinkNode : NamedObject {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> CreatedTarget;
+    const DarwinFileSystemSnapshot *FileSystem = nullptr;
     const DarwinFileMetadata *Metadata = nullptr;
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;

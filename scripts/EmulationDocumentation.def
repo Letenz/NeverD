@@ -2252,16 +2252,17 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "host query mount identity quota live refresh MAC "
                            "refusal wait or process mountpoint rewrite")
 NEVERD_EMULATION_DOC_TOKEN(
-    Darwin, "initial regular and directory bindings / actual Contents "
-            "DirectoryNode / no target filestat prerequisite or recovery")
+    Darwin,
+    "initial regular directory and symbolic bindings / actual Contents "
+    "DirectoryNode LinkNode / no target filestat prerequisite or recovery")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "created_regular_objects defaultfalse / true requires complete "
     "CreationPolicy / successful new regular uses actual bound parent snapshot")
 NEVERD_EMULATION_DOC_TOKEN(
-    Darwin, "initial children unbound parents default-created directories "
-            "links receive "
-            "none / no fsid device inode or pathname prefix inference")
+    Darwin,
+    "initial children unbound parents default-created directories and links "
+    "receive none / no fsid device inode or pathname prefix inference")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "effective ordinary ancestor search uses shared authorizer and group "
@@ -2483,3 +2484,33 @@ NEVERD_EMULATION_DOC_TOKEN(
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "125 initial private and strict JSON checks / five software C CLI "
             "Python profiles / three matching ARM64 HVF profiles required")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "symbolic filesystem: fstatfs64 BSD346 O_SYMLINK own "
+            "LinkNode.FileSystem / statfs64 BSD345 follows target snapshot")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "CreatedSymbolicLinkObjects=false / FileSystemCreatedSymbolicLinkObjects "
+    "created_symbolic_link_objects strict Boolean / filesystem purpose only")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created symbolic snapshot requires complete "
+            "CreationPolicy.Namespace / actual parent binding before "
+            "successful publication / independent regular directory flags")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial symbolic snapshots need no target stat metadata or valid "
+            "target / unbound unknown and explicit zero distinct / "
+            "shared2168-byte plus path reference budget")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "link object snapshots survive dup parent moves exchanges rename "
+            "held unlink and name reuse / invalidated stat never restored")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "symbolic-filesystem-observations32 created-symbolic-filesystem33 "
+            "virtual-symbolic-filesystem35 authored services / main57 stdout Y "
+            "/ independent6600 guarded bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "114 owned ARM64 O0 O1 O2 native filesystem observations / common "
+            "native79 mandatory93 per platform ARM64279")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "166 initial private strict JSON checks / five software C CLI Python and "
+    "three matching ARM64 HVF profiles / public30s guest5000000us quantum1024")

@@ -1115,6 +1115,60 @@ TEST(DarwinNative, DirectoryRecordsMatchHostSDKAndCapturedFilesystemBytes) {
   EXPECT_EQ((**Seek).Value, uint64_t(Terminal));
 #endif
 }
+TEST(DarwinNative, SymbolicFileSystemWorkloadsMatchOwnedNativeLifetime) {
+#ifndef NEVERD_DARWIN_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(
+      "neverd-symbolic-filesystem", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  for (bool Created : {false, true}) {
+    const auto Parent = Root / (Created ? "created" : "initial");
+    ASSERT_TRUE(std::filesystem::create_directory(Parent));
+    std::filesystem::permissions(Parent, std::filesystem::perms::owner_all);
+    {
+      std::ofstream Data(Parent / "data", std::ios::binary);
+      Data << "owned";
+      ASSERT_TRUE(Data.good());
+    }
+    const auto Input = (Parent / "link").string();
+    if (!Created)
+      std::filesystem::create_symlink("data", Input);
+    const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
+    const auto Output = (Parent / "stdout").string(),
+               Error = (Parent / "stderr").string();
+    const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                        Error};
+    std::string LaunchError;
+    bool ExecutionFailed = false;
+    const auto Status = llvm::sys::ExecuteAndWait(
+        Program,
+        {Program,
+         Created ? "created-symbolic-filesystem"
+                 : "symbolic-filesystem-observations",
+         Input},
+        std::nullopt, Redirects, 5, 0, &LaunchError, &ExecutionFailed);
+    ASSERT_FALSE(ExecutionFailed) << LaunchError;
+    auto Out = llvm::MemoryBuffer::getFile(Output),
+         Err = llvm::MemoryBuffer::getFile(Error);
+    ASSERT_TRUE(bool(Out));
+    ASSERT_TRUE(bool(Err));
+    EXPECT_EQ(Status, 57) << LaunchError << (*Err)->getBuffer().str();
+    EXPECT_EQ((*Out)->getBuffer(), "Y");
+    EXPECT_TRUE((*Err)->getBuffer().empty());
+    EXPECT_FALSE(std::filesystem::exists(Input));
+    EXPECT_FALSE(std::filesystem::exists(Input + ".moved"));
+  }
+  Passed = !HasFailure();
+#endif
+}
+
 TEST(DarwinNative,
      CreatedDirectoryFileSystemWorkloadMatchesOwnedNativeLifetime) {
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
@@ -1392,7 +1446,21 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         std::filesystem::create_symlink(Target, Catalogue / "static" / Name);
       CaseInput = (Catalogue / "work" / "data").string();
     }
-    if (llvm::StringRef(Test.Mode) == "created-directory-filesystem") {
+    if (llvm::StringRef(Test.Mode) == "symbolic-filesystem-observations" ||
+        llvm::StringRef(Test.Mode) == "created-symbolic-filesystem") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
+      std::filesystem::permissions(Catalogue,
+                                   std::filesystem::perms::owner_all);
+      {
+        std::ofstream Data(Catalogue / "data", std::ios::binary);
+        Data << "owned";
+        ASSERT_TRUE(Data.good());
+      }
+      CaseInput = (Catalogue / "link").string();
+      if (llvm::StringRef(Test.Mode) == "symbolic-filesystem-observations")
+        std::filesystem::create_symlink("data", CaseInput);
+    } else if (llvm::StringRef(Test.Mode) == "created-directory-filesystem") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
       std::filesystem::permissions(Catalogue,

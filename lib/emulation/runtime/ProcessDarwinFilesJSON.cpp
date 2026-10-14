@@ -330,20 +330,29 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             ? Environment->get(field::FileSynchronizationCreatedRegularObjects)
             : nullptr;
     using ProviderType = std::remove_cvref_t<decltype(*Options)>;
+    constexpr bool SymbolicLinkProvider =
+        std::is_same_v<ProviderType, DarwinFileSystemOptions>;
     constexpr bool DirectoryProvider =
         std::is_same_v<ProviderType, DarwinModeMutationOptions> ||
         std::is_same_v<ProviderType, DarwinOwnershipMutationOptions> ||
         std::is_same_v<ProviderType, DarwinFileTimestampMutationOptions> ||
-        std::is_same_v<ProviderType, DarwinFileSystemOptions>;
+        SymbolicLinkProvider;
     const llvm::json::Value *CreatedDirectories = nullptr;
     if constexpr (DirectoryProvider) {
       if (Environment)
         CreatedDirectories =
             Environment->get(field::FileModeCreatedDirectoryObjects);
     }
+    const llvm::json::Value *CreatedSymbolicLinks = nullptr;
+    if constexpr (SymbolicLinkProvider) {
+      if (Environment)
+        CreatedSymbolicLinks =
+            Environment->get(field::FileSystemCreatedSymbolicLinkObjects);
+    }
     if (!Environment ||
-        Environment->size() !=
-            1 + unsigned(bool(Created)) + unsigned(bool(CreatedDirectories)) ||
+        Environment->size() != 1 + unsigned(bool(Created)) +
+                                   unsigned(bool(CreatedDirectories)) +
+                                   unsigned(bool(CreatedSymbolicLinks)) ||
         !Objects || Objects->size() > darwin_file_limits::Files)
       return invalid(Name);
     auto &Provider = Options.emplace();
@@ -359,6 +368,14 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         if (!Enabled)
           return invalid(Name);
         Provider.CreatedDirectoryObjects = *Enabled;
+      }
+    }
+    if constexpr (SymbolicLinkProvider) {
+      if (CreatedSymbolicLinks) {
+        const auto Enabled = CreatedSymbolicLinks->getAsBoolean();
+        if (!Enabled)
+          return invalid(Name);
+        Provider.CreatedSymbolicLinkObjects = *Enabled;
       }
     }
     return Objects;

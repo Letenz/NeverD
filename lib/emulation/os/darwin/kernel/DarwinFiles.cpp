@@ -375,10 +375,15 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (Environment && Environment->CreatedRegularObjects &&
         !Options.CreationPolicy)
       return failure(diagnostic::FileCreationPolicy);
+    bool NamespaceProvider = false;
     if constexpr (requires { Environment->CreatedDirectoryObjects; })
-      if (Environment && Environment->CreatedDirectoryObjects &&
-          (!Options.CreationPolicy || !Options.CreationPolicy->Namespace))
-        return failure(diagnostic::FileCreationPolicy);
+      NamespaceProvider |= Environment && Environment->CreatedDirectoryObjects;
+    if constexpr (requires { Environment->CreatedSymbolicLinkObjects; })
+      NamespaceProvider |=
+          Environment && Environment->CreatedSymbolicLinkObjects;
+    if (NamespaceProvider &&
+        (!Options.CreationPolicy || !Options.CreationPolicy->Namespace))
+      return failure(diagnostic::FileCreationPolicy);
     return llvm::Error::success();
   };
   const auto AdmitOrdinaryGrants =
@@ -413,8 +418,9 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     for (const auto &[Path, Snapshot] :
          Options.FileSystemObservations->Objects) {
       const auto Kind = pathKind(Options, Path);
-      if ((Kind != PathKind::File && Kind != PathKind::Directory) ||
-          !validFileSystemSnapshot(Snapshot))
+      // Every declared vnode kind may carry its own observation; no target
+      // metadata or followed path supplies a symbolic-vnode binding.
+      if (Kind == PathKind::Missing || !validFileSystemSnapshot(Snapshot))
         return failure(diagnostic::FileSystemOption);
       // Observing an otherwise implicit directory declares one bounded
       // catalogue object. Other observations or the later mutable-directory
@@ -796,6 +802,11 @@ void DarwinFiles::initializeNamespace() {
     const auto Policy = Options->SymbolicLinkMutationPolicies.find(Path);
     if (Policy != Options->SymbolicLinkMutationPolicies.end())
       Node->MutationTime = &Policy->second.Time;
+    if (Options->FileSystemObservations) {
+      const auto I = Options->FileSystemObservations->Objects.find(Path);
+      if (I != Options->FileSystemObservations->Objects.end())
+        Node->FileSystem = &I->second;
+    }
     Links.emplace(Path, std::make_shared<LinkEntry>(std::move(Node)));
   }
   NamespaceReady = true;
@@ -1802,6 +1813,9 @@ DarwinFiles::makeSymbolicLink(uint64_t Target, uint64_t Path,
         *Parent->Identity, FileSymbolicLinkMode | (0777 & ~CurrentUmask), 1,
         Bytes.size(), ((Bytes.size() + Unit - 1) / Unit) * (Unit / 512));
     Node->MutationTime = &Policy->Mutation.Time;
+    if (Options->FileSystemObservations &&
+        Options->FileSystemObservations->CreatedSymbolicLinkObjects)
+      Node->FileSystem = Parent->FileSystem;
   }
   // Reused names never inherit an old Options.Metadata observation. The
   // namespace extension is the only authority for link/directory metadata.

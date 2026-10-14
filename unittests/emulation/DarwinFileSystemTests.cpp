@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "DarwinCreatedDirectoryFileSystemTestData.h"
+#include "DarwinSymbolicLinkFileSystemTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
@@ -96,6 +96,16 @@ protected:
     llvm::cantFail(Space->read(Base + Page, B));
     return B;
   }
+  Record captureLink(uint64_t FD) {
+    Record B;
+    B.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, B));
+    EXPECT_EQ(ok(ServiceKind::Fstatfs64, {FD, Base + Page + 16, UINT64_MAX,
+                                          UINT64_MAX, UINT64_MAX, UINT64_MAX}),
+              0u);
+    llvm::cantFail(Space->read(Base + Page, B));
+    return B;
+  }
   std::array<uint8_t, 160> status(uint64_t FD) {
     std::array<uint8_t, 160> B;
     B.fill(0xa5);
@@ -133,7 +143,7 @@ TEST(DarwinFileSystemOptions, AdmissionAndClosedQueryDomains) {
       break;
     case 1:
       O.SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
-      F.Objects["/link"] = {};
+      F.Objects["/link/child"] = {};
       break;
     case 2:
       F.Objects["/data"].TypeName = std::string(16, 'x');
@@ -543,13 +553,13 @@ TEST_P(DarwinFileSystemTest,
   EXPECT_FALSE((**U).Error);
 }
 TEST_P(DarwinFileSystemTest,
-       OpaqueStreamsAndSymbolicDescriptorsStayUnsupported) {
+       OpaqueStreamsRemainUnsupportedAndUnknownSymbolicSnapshotsStayClosed) {
   for (uint64_t FD : {0u, 1u, 2u})
     refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemKind);
   Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
   reset();
   const auto FD = open("/link", 0x200000);
-  refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemKind);
+  refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemProvider);
 }
 
 TEST(DarwinFileSystemOptions, CreatedDirectoryFlagNeedsCompleteNamespace) {
@@ -603,7 +613,8 @@ TEST_P(DarwinFileSystemTest,
                 diagnostic::FileSystemProvider);
       ok(ServiceKind::Symlink, {path("leaf"), path("/dir/link", Base + 128)});
       const auto Link = open("/dir/link", 0x200000);
-      refused(ServiceKind::Fstatfs64, {Link, 1}, diagnostic::FileSystemKind);
+      refused(ServiceKind::Fstatfs64, {Link, 1},
+              diagnostic::FileSystemProvider);
     }
 }
 
@@ -812,6 +823,274 @@ TEST_P(DarwinFileSystemTest,
   error(ServiceKind::Statfs64, {path("/next"), 1}, 2);
   EXPECT_EQ(capture(Dir, "/dir"), darwin_test::fileSystemRecord());
   EXPECT_EQ(status(Dir), Before);
+}
+
+TEST(DarwinFileSystemOptions, SymbolicCreationRequiresIndependentNamespace) {
+  auto O = darwin_test::fileSystemOptions();
+  EXPECT_FALSE(O.FileSystemObservations->CreatedSymbolicLinkObjects);
+  O.FileSystemObservations->CreatedSymbolicLinkObjects = true;
+  auto E = validateFileOptions(O);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::FileCreationPolicy);
+  O = darwin_test::symbolicLinkFileSystemOptions(true);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.CreationPolicy->Namespace.reset();
+  E = validateFileOptions(O);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::FileCreationPolicy);
+  O.FileSystemObservations->CreatedSymbolicLinkObjects = false;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+TEST(DarwinFileSystemOptions,
+     InitialSymbolicSnapshotsShareExactReferenceBudget) {
+  auto O = darwin_test::fileSystemOptions();
+  O.Metadata.clear();
+  O.SymbolicLinks["/link"] = {255};
+  O.FileSystemObservations->Objects["/link"] = {};
+  uint64_t Low = 0, High = darwin_file_limits::Bytes;
+  while (Low < High) {
+    const auto Mid = (Low + High + 1) / 2;
+    O.Files["/data"].resize(Mid);
+    auto E = validateFileOptions(O);
+    const bool Good = !E;
+    llvm::consumeError(std::move(E));
+    if (Good)
+      Low = Mid;
+    else
+      High = Mid - 1;
+  }
+  O.Files["/data"].resize(Low);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.FileSystemObservations->Objects.erase("/link");
+  O.Files["/data"].resize(Low + 2168 + 6);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/data"].push_back(0);
+  auto E = validateFileOptions(O);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::FileOptionsLimit);
+}
+TEST_P(DarwinFileSystemTest,
+       SymbolicDescriptorAndFollowedTargetSnapshotsAreSeparate) {
+  Options = darwin_test::symbolicLinkFileSystemOptions();
+  Options->FileSystemObservations->Objects["/link"].Owner = 17;
+  reset();
+  const auto FD = open("/link", 0x200000);
+  EXPECT_EQ(captureLink(FD), darwin_test::directoryFileSystemRecord(17));
+  EXPECT_EQ(capture(FD, "/link"),
+            FDRoute ? darwin_test::directoryFileSystemRecord(17)
+                    : darwin_test::fileSystemRecord());
+  Options->FileSystemObservations->Objects.erase("/link");
+  reset();
+  const auto Unbound = open("/link", 0x200000);
+  refused(ServiceKind::Fstatfs64, {Unbound, 1}, diagnostic::FileSystemProvider);
+  EXPECT_EQ(ok(ServiceKind::Statfs64, {path("/link"), Base + Page + 16}), 0u);
+}
+TEST_P(DarwinFileSystemTest,
+       DanglingCyclicAndOpaqueTargetsNeedNoTargetMetadata) {
+  Options = darwin_test::fileSystemOptions();
+  const std::pair<const char *, std::vector<uint8_t>> Links[] = {
+      {"/dang", {'m', 'i', 's', 's'}},
+      {"/cycle", {'c', 'y', 'c', 'l', 'e'}},
+      {"/raw", {255}}};
+  for (unsigned I = 0; I != 3; ++I) {
+    Options->SymbolicLinks[Links[I].first] = Links[I].second;
+    Options->FileSystemObservations->Objects[Links[I].first] =
+        darwin_test::fileSystemSnapshot();
+    Options->FileSystemObservations->Objects[Links[I].first].Owner = 17 + I;
+  }
+  reset();
+  for (unsigned I = 0; I != 3; ++I) {
+    const auto FD = open(Links[I].first, 0x200000);
+    EXPECT_EQ(captureLink(FD), darwin_test::directoryFileSystemRecord(17 + I));
+    refused(ServiceKind::Fstat64, {FD, Base + Page * 2 + 8},
+            diagnostic::FileMetadata);
+    EXPECT_EQ(captureLink(FD), darwin_test::directoryFileSystemRecord(17 + I));
+  }
+  error(ServiceKind::Statfs64, {path("/dang"), 1}, 2);
+  error(ServiceKind::Statfs64, {path("/cycle"), 1}, 62);
+}
+TEST_P(DarwinFileSystemTest,
+       SymbolicQueriesPreserveFullStatFlagsAndTargetBytes) {
+  Options = darwin_test::symbolicLinkFileSystemOptions();
+  reset();
+  const auto FD = open("/link", 0x200000), Copy = ok(ServiceKind::Dup, {FD});
+  const auto Before = status(FD);
+  ok(ServiceKind::Fcntl, {Copy, 2, 1});
+  const auto Flags = ok(ServiceKind::Fcntl, {Copy, 3});
+  for (uint64_t High : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL}) {
+    EXPECT_EQ(captureLink(High | Copy), darwin_test::fileSystemRecord());
+    EXPECT_EQ(status(FD), Before);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 1}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), Flags);
+  }
+  std::array<uint8_t, 4> Target{};
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {path("/link"), Base + 256, 4}), 4u);
+  llvm::cantFail(Space->read(Base + 256, Target));
+  EXPECT_EQ(Target, (std::array<uint8_t, 4>{'d', 'a', 't', 'a'}));
+  refused(ServiceKind::Fchown, {Copy, UINT32_MAX, UINT32_MAX},
+          diagnostic::FileOwnershipTarget);
+  EXPECT_EQ(status(FD), Before);
+}
+TEST_P(DarwinFileSystemTest, HeldSymbolicAndReplacementNeverShareNameBindings) {
+  for (bool Created : {false, true}) {
+    Options = darwin_test::symbolicLinkFileSystemOptions();
+    Options->FileSystemObservations->Objects["/link"].Owner = 17;
+    Options->FileSystemObservations->CreatedSymbolicLinkObjects = Created;
+    reset();
+    const auto FD = open("/link", 0x200000), Copy = ok(ServiceKind::Dup, {FD});
+    ok(ServiceKind::Rename, {path("/link"), path("/moved", Base + 128)});
+    EXPECT_EQ(captureLink(Copy), darwin_test::directoryFileSystemRecord(17));
+    ok(ServiceKind::Unlink, {path("/moved")});
+    EXPECT_EQ(captureLink(FD), darwin_test::directoryFileSystemRecord(17));
+    error(ServiceKind::Statfs64, {path("/moved"), 1}, 2);
+    ok(ServiceKind::Symlink, {path("missing"), path("/link", Base + 128)});
+    const auto New = open("/link", 0x200000);
+    if (Created)
+      EXPECT_EQ(captureLink(New), darwin_test::fileSystemRecord());
+    else
+      refused(ServiceKind::Fstatfs64, {New, 1}, diagnostic::FileSystemProvider);
+    EXPECT_EQ(captureLink(Copy), darwin_test::directoryFileSystemRecord(17));
+    error(ServiceKind::Statfs64, {path("/link"), 1}, 2);
+    ok(ServiceKind::Close, {FD});
+    error(ServiceKind::Fstatfs64, {FD, 1}, 9);
+    EXPECT_EQ(captureLink(Copy), darwin_test::directoryFileSystemRecord(17));
+  }
+}
+TEST_P(DarwinFileSystemTest,
+       SymbolicRegularAndDirectoryCreationFlagsAreIndependent) {
+  for (bool Symbolic : {false, true})
+    for (bool Directory : {false, true})
+      for (bool Regular : {false, true}) {
+        Options = darwin_test::symbolicLinkFileSystemOptions(true);
+        auto &F = *Options->FileSystemObservations;
+        F.CreatedSymbolicLinkObjects = Symbolic;
+        F.CreatedDirectoryObjects = Directory;
+        F.CreatedRegularObjects = Regular;
+        Options->SymbolicLinks["/initial"] = {'d', 'a', 't', 'a'};
+        Options->MutableSymbolicLinks.insert("/initial");
+        reset();
+        refused(ServiceKind::Fstatfs64, {open("/initial", 0x200000), 1},
+                diagnostic::FileSystemProvider);
+        ok(ServiceKind::Symlink, {path("data"), path("/child", Base + 128)});
+        const auto Link = open("/child", 0x200000);
+        if (Symbolic)
+          EXPECT_EQ(captureLink(Link), darwin_test::fileSystemRecord());
+        else
+          refused(ServiceKind::Fstatfs64, {Link, 1},
+                  diagnostic::FileSystemProvider);
+        ok(ServiceKind::Mkdir, {path("/dir"), 0700});
+        ok(ServiceKind::Symlink,
+           {path("../data"), path("/dir/link", Base + 128)});
+        const auto Nested = open("/dir/link", 0x200000);
+        if (Symbolic && Directory)
+          EXPECT_EQ(captureLink(Nested), darwin_test::fileSystemRecord());
+        else
+          refused(ServiceKind::Fstatfs64, {Nested, 1},
+                  diagnostic::FileSystemProvider);
+        const auto Leaf = open("/dir/leaf", 0x202);
+        if (Directory && Regular)
+          EXPECT_EQ(captureLink(Leaf), darwin_test::fileSystemRecord());
+        else
+          refused(ServiceKind::Fstatfs64, {Leaf, 1},
+                  diagnostic::FileSystemProvider);
+      }
+}
+TEST_P(DarwinFileSystemTest, CreatedSymbolicUsesActualMovedAndExchangedParent) {
+  for (bool Swap : {false, true}) {
+    Options = darwin_test::symbolicLinkFileSystemOptions(true);
+    Options->Directories = {"/", "/a", "/b"};
+    for (const auto &V :
+         {std::pair<const char *, uint64_t>{"/a", 10}, {"/b", 11}}) {
+      Options->Metadata[V.first] = darwin_test::modeMetadata(0040700, V.second);
+      Options->MutableDirectories.insert(V.first);
+      Options->DirectoryMutationPolicies[V.first] = {16, {91, 92}};
+    }
+    Options->MovableDirectories.insert("/a");
+    Options->ExchangeableDirectories = {"/a", "/b"};
+    Options->SwapRenameDirectories.insert("/");
+    Options->FileSystemObservations->Objects["/a"] =
+        darwin_test::fileSystemSnapshot();
+    Options->FileSystemObservations->Objects["/a"].Owner = 17;
+    Options->FileSystemObservations->Objects["/b"] =
+        darwin_test::fileSystemSnapshot();
+    Options->FileSystemObservations->Objects["/b"].Owner = 23;
+    reset();
+    const auto From = path("/a"), To = path(Swap ? "/b" : "/moved", Base + 128);
+    if (Swap)
+      ok(ServiceKind::RenameAtX, {UINT64_MAX, From, UINT64_MAX, To, 2});
+    else
+      ok(ServiceKind::Rename, {From, To});
+    const std::string Name = std::string(Swap ? "/b" : "/moved") + "/link";
+    ok(ServiceKind::Symlink, {path("/data"), path(Name, Base + 128)});
+    const auto FD = open(Name, 0x200000);
+    EXPECT_EQ(captureLink(FD), darwin_test::directoryFileSystemRecord(17));
+    EXPECT_EQ(capture(FD, Name),
+              FDRoute ? darwin_test::directoryFileSystemRecord(17)
+                      : darwin_test::fileSystemRecord());
+    ok(ServiceKind::Rename, {path(Name), path("/link", Base + 128)});
+    EXPECT_EQ(captureLink(FD), darwin_test::directoryFileSystemRecord(17));
+  }
+}
+TEST_P(DarwinFileSystemTest, SymbolicSnapshotDoesNotRepairInvalidMetadata) {
+  Options = darwin_test::symbolicLinkFileSystemOptions();
+  Options->SymbolicLinkMutationPolicies.clear();
+  reset();
+  const auto FD = open("/link", 0x200000);
+  ok(ServiceKind::Unlink, {path("/link")});
+  refused(ServiceKind::Fstat64, {FD, Base + Page * 2 + 8},
+          diagnostic::SymbolicLinkMutatedMetadata);
+  EXPECT_EQ(captureLink(FD), darwin_test::fileSystemRecord());
+  refused(ServiceKind::Fstat64, {FD, Base + Page * 2 + 8},
+          diagnostic::SymbolicLinkMutatedMetadata);
+}
+TEST_P(DarwinFileSystemTest,
+       CreatedSymbolicZeroUnknownAndFailedInodesStayExplicit) {
+  for (bool Bound : {false, true}) {
+    Options = darwin_test::symbolicLinkFileSystemOptions(true);
+    Options->FileSystemObservations->Objects.erase("/");
+    if (Bound)
+      Options->FileSystemObservations->Objects["/"] = {};
+    Options->CreationPolicy->FirstInode = UINT64_MAX;
+    reset();
+    error(ServiceKind::Symlink, {1, path("/child", Base + 128)}, 14);
+    error(ServiceKind::Symlink, {path("data"), path("/data", Base + 128)}, 17);
+    ok(ServiceKind::Symlink, {path("data"), path("/child", Base + 128)});
+    const auto FD = open("/child", 0x200000);
+    if (Bound) {
+      Record Zero{};
+      std::fill_n(Zero.begin(), 16, 0xa5);
+      std::fill_n(Zero.end() - 16, 16, 0xa5);
+      EXPECT_EQ(captureLink(FD), Zero);
+      error(ServiceKind::Fstatfs64, {FD, 1}, 14);
+    } else
+      refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemProvider);
+    refused(ServiceKind::Symlink, {path("data"), path("/next", Base + 128)},
+            diagnostic::FileCreationInode);
+    error(ServiceKind::Statfs64, {path("/next"), 1}, 2);
+    if (Bound)
+      EXPECT_EQ(captureLink(FD)[16], 0);
+  }
+}
+TEST_P(DarwinFileSystemTest,
+       SymbolicDescriptorCopyoutHasNoPartialEffectsOrStatPrerequisite) {
+  Options = darwin_test::fileSystemOptions();
+  Options->SymbolicLinks["/link"] = {'m', 'i', 's', 's'};
+  Options->FileSystemObservations->Objects["/link"] =
+      darwin_test::fileSystemSnapshot();
+  Credentials.reset();
+  reset();
+  const auto FD = open("/link", 0x200000);
+  EXPECT_EQ(captureLink(FD), darwin_test::fileSystemRecord());
+  error(ServiceKind::Fstatfs64, {FD, 0}, 14);
+  std::array<uint8_t, 32> Before, After;
+  Before.fill(0x6c);
+  llvm::cantFail(Space->write(Base + Page * 4 - 32, Before));
+  refused(ServiceKind::Fstatfs64, {FD, Base + Page * 4 - 32},
+          diagnostic::FileSystemPartialOutput);
+  llvm::cantFail(Space->read(Base + Page * 4 - 32, After));
+  EXPECT_EQ(After, Before);
+  refused(ServiceKind::Fstat64, {FD, Base + Page * 2 + 8},
+          diagnostic::FileMetadata);
 }
 
 class DarwinMountEnumerationTest : public DarwinFileSystemTest {

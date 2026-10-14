@@ -147,7 +147,15 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
             case_input = catalogue / "work" / "data"
         if mode == "hard-links":
             (case_input.parent / "attributes").write_bytes(b"x")
-        if mode == "created-directory-filesystem":
+        if mode in ("symbolic-filesystem-observations", "created-symbolic-filesystem"):
+            catalogue = initial_root / mode
+            catalogue.mkdir(mode=0o700)
+            catalogue.chmod(0o700)
+            (catalogue / "data").write_bytes(b"owned")
+            case_input = catalogue / "link"
+            if mode == "symbolic-filesystem-observations":
+                case_input.symlink_to("data")
+        elif mode == "created-directory-filesystem":
             catalogue = initial_root / mode
             catalogue.mkdir(mode=0o700)
             catalogue.chmod(0o700)

@@ -151,6 +151,8 @@ NEVERD_PROCESS_REPORT_FIELD(FileAdvisoryLockObjects, "objects")
 NEVERD_PROCESS_REPORT_FIELD(FileTimestampMutations, "timestamp_mutations")
 NEVERD_PROCESS_REPORT_FIELD(FileSystemObservations, "filesystem_observations")
 NEVERD_PROCESS_REPORT_FIELD(FileSystemSnapshot, "snapshot")
+NEVERD_PROCESS_REPORT_FIELD(FileSystemCreatedSymbolicLinkObjects,
+                            "created_symbolic_link_objects")
 NEVERD_PROCESS_REPORT_FIELD(FileSystemEnumeration, "filesystem_enumeration")
 NEVERD_PROCESS_REPORT_FIELD(FileSystemMounts, "mounts")
 NEVERD_PROCESS_REPORT_FIELD(FileSystemCached, "cached")

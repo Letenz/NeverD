@@ -282,9 +282,10 @@ struct DarwinFileSystemSnapshot {
 /// lifecycle. Path lookup declares ordinary effective ancestor search (no ACL,
 /// bypass or special attributes). Descriptor lookup needs no target DAC/stat.
 struct DarwinFileSystemOptions {
-  /// Initial regular/directory objects, including implicit directories.
-  /// Actual objects retain snapshots through links, moves, dup and held unlink.
-  /// This neither restores file metadata nor identifies mounts by equal IDs.
+  /// Initial regular/directory/symbolic objects, including implicit
+  /// directories. Actual objects retain snapshots through links, moves, dup and
+  /// held unlink. This neither restores file metadata nor identifies mounts by
+  /// equal IDs.
   std::map<std::string, DarwinFileSystemSnapshot> Objects;
   /// Explicit new-regular provider relation: successful creation uses the
   /// actual parent's bound snapshot, if present. Requires CreationPolicy.
@@ -296,6 +297,11 @@ struct DarwinFileSystemOptions {
   /// if present. No snapshot is manufactured for an unbound parent. Initial
   /// objects, symlinks and other purposes receive no grant from this flag.
   bool CreatedDirectoryObjects = false;
+  /// Independent new-symbolic-vnode relation. True requires complete
+  /// CreationPolicy.Namespace; successful symlink captures the actual parent's
+  /// bound snapshot, if present. Path queries still follow the target. Initial
+  /// links, unknown parents and other creation flags confer no binding.
+  bool CreatedSymbolicLinkObjects = false;
 };
 
 /// One live, accessible mount with an explicit cached observation. Refreshed

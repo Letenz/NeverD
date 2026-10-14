@@ -94,12 +94,13 @@ DarwinFiles::fileSystemStatus(ServiceKind Service,
       return returned(BadDescriptor, true);
     File = *I->second.Open;
   }
-  if (File.Type != Kind::File && File.Type != Kind::Directory)
+  if (!File.File && !File.Directory && !File.Link)
     return unsupported(Result, diagnostic::FileSystemKind);
   if (!Options || !Options->FileSystemObservations)
     return unsupported(Result, diagnostic::FileSystemEnvironment);
-  const auto *Snapshot =
-      File.File ? File.File->FileSystem : File.Directory->FileSystem;
+  const auto *Snapshot = File.File        ? File.File->FileSystem
+                         : File.Directory ? File.Directory->FileSystem
+                                          : File.Link->FileSystem;
   if (!Snapshot)
     return unsupported(Result, diagnostic::FileSystemProvider);
   const auto Bytes = fileSystemRecord(*Snapshot);

@@ -9425,6 +9425,106 @@ created_directory_filesystem(const char *name, unsigned literal) {
   return 0;
 }
 
+/* Original SDK-free symbolic-vnode controls; path queries follow the target.
+ * Virtual-only output makes every guarded snapshot byte independently visible.
+ */
+static int symbolic_file_system_status(u64 fd,
+                                       union full_barrier_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0120000)
+    return 380;
+  return 0;
+}
+static int symbolic_file_system_emit(const union file_system_guard *out) {
+  unsigned error;
+  return call(4, 1, (u64)out->bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+                 secondary
+             ? 381
+             : 0;
+}
+static __attribute__((noinline)) int symbolic_filesystem(const char *name,
+                                                         unsigned kind) {
+  unsigned error, size = 0;
+  char moved[4096];
+  while (name[size]) {
+    if (size >= 4088)
+      return 382;
+    moved[size] = name[size];
+    ++size;
+  }
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[size + i] = suffix[i];
+  const unsigned literal = kind == 2;
+  if (kind == 1 && mode_result(57, (u64) "data", (u64)name, 0, 0, 0))
+    return 383;
+  const u64 link = call(5, (u64)name, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 384;
+  const u64 dup = call(41, link, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 384;
+  union file_system_guard first, target, current;
+  union full_barrier_stat_guard before, after;
+  if (file_system_capture(346, link, &first) ||
+      file_system_capture(345, (u64)name, &target) ||
+      (!literal && file_system_same_stable(&first, &target)) ||
+      symbolic_file_system_status(link, &before))
+    return 385;
+  const u64 highs[] = {0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 2; ++i)
+    if (file_system_capture(highs[i] | 346, highs[i] | dup, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(highs[i] | 345, (u64)name, &current) ||
+        file_system_same_stable(&target, &current))
+      return 386;
+  if (symbolic_file_system_status(link, &after) ||
+      timestamp_same(&before, &after))
+    return 387;
+  if (literal &&
+      (symbolic_file_system_emit(&first) || symbolic_file_system_emit(&target)))
+    return 388;
+  if (file_system_result(346, -1UL, 1, 9) ||
+      file_system_result(346, link, 1, 14) ||
+      file_system_result(345, (u64) "", 1, 2) ||
+      mode_result(128, (u64)name, (u64)moved, 0, 0, 0) ||
+      file_system_result(345, (u64)name, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      file_system_capture(345, (u64)moved, &current) ||
+      file_system_same_stable(&target, &current) ||
+      mode_result(10, (u64)moved, 0, 0, 0, 0) ||
+      file_system_result(345, (u64)moved, 1, 2) ||
+      file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      mode_result(57, (u64) "missing", (u64)name, 0, 0, 0))
+    return 389;
+  const u64 replacement = call(5, (u64)name, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary || file_system_capture(346, replacement, &current) ||
+      (!literal && file_system_same_stable(&first, &current)) ||
+      symbolic_file_system_status(replacement, &after) ||
+      before.words[2] == after.words[2])
+    return 390;
+  if (literal && symbolic_file_system_emit(&current))
+    return 391;
+  if (file_system_capture(346, dup, &current) ||
+      file_system_same_stable(&first, &current) ||
+      file_system_result(345, (u64)name, 1, 2) ||
+      mode_result(6, link, 0, 0, 0, 0) || file_system_result(346, link, 1, 9) ||
+      mode_result(6, dup, 0, 0, 0, 0) ||
+      mode_result(6, replacement, 0, 0, 0, 0) ||
+      mode_result(10, (u64)name, 0, 0, 0, 0) ||
+      call(4, 1, (u64) "Y", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 392;
+  return 0;
+}
+
 static __attribute__((noinline)) int filesystem_observations(const char *path) {
   unsigned error;
   const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
@@ -9668,6 +9768,15 @@ int main(int argc, char **argv, char **envp, char **apple) {
                        argv[2],
                        equal(argv[1], "virtual-created-directory-filesystem"));
     return status ? status : 56;
+  }
+  if (equal(argv[1], "symbolic-filesystem-observations") ||
+      equal(argv[1], "created-symbolic-filesystem") ||
+      equal(argv[1], "virtual-symbolic-filesystem")) {
+    const unsigned kind = equal(argv[1], "created-symbolic-filesystem")   ? 1
+                          : equal(argv[1], "virtual-symbolic-filesystem") ? 2
+                                                                          : 0;
+    const int status = argc < 3 ? 382 : symbolic_filesystem(argv[2], kind);
+    return status ? status : 57;
   }
   if (equal(argv[1], "filesystem-observations")) {
     const int status = argc < 3 ? 349 : filesystem_observations(argv[2]);

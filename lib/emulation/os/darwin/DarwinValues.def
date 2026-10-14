@@ -546,18 +546,19 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FileTimestampKind, "Darwin timestamp mutation requires a known vnode kind")
 NEVERD_DARWIN_DIAGNOSTIC(FileTimestampProvider,
                          "Darwin object timestamp provider is not configured")
-NEVERD_DARWIN_DIAGNOSTIC(FileSystemOption,
-                         "Darwin filesystem snapshots require known initial "
-                         "regular or directory objects and bounded names")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSystemOption,
+    "Darwin filesystem snapshots require known initial "
+    "regular, directory or symbolic objects and bounded names")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileSystemEnvironment,
     "Darwin filesystem observation environment is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileSystemSecurityAttributes,
                          "Darwin filesystem lookup requires current ordinary "
                          "ancestor security attributes")
-NEVERD_DARWIN_DIAGNOSTIC(
-    FileSystemKind,
-    "Darwin filesystem observation requires a known regular or directory vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileSystemKind,
+                         "Darwin filesystem observation requires a known "
+                         "regular, directory or symbolic vnode")
 NEVERD_DARWIN_DIAGNOSTIC(FileSystemProvider,
                          "Darwin object filesystem snapshot is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(

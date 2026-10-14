@@ -6,7 +6,6 @@
 #include "DarwinAdvisoryLockTestData.h"
 #include "DarwinCreatedAdvisoryLockTestData.h"
 #include "DarwinCreatedAttributeTestData.h"
-#include "DarwinCreatedDirectoryFileSystemTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinDirectoryModeTestData.h"
@@ -17,6 +16,7 @@
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinModeTestData.h"
 #include "DarwinOwnershipTestData.h"
+#include "DarwinSymbolicLinkFileSystemTestData.h"
 #include "DarwinSynchronizationTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
@@ -3107,6 +3107,82 @@ TEST_P(DarwinProcess,
       F->CreatedRegularObjects = Variant == 2;
     }
     auto R = run("created-directory-filesystem");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(
+        R->Diagnostic,
+        Variant == 0
+            ? "Darwin filesystem observation environment is not configured"
+            : "Darwin object filesystem snapshot is not configured");
+    EXPECT_TRUE(R->StandardOutput.empty());
+    ASSERT_EQ(R->Services.size(), 4u);
+    EXPECT_EQ(R->Services.back().Number, Class | 346);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
+       SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/link";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const char *Modes[] = {"symbolic-filesystem-observations",
+                         "created-symbolic-filesystem",
+                         "virtual-symbolic-filesystem"};
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    const auto Wanted = darwin_test::symbolicFileSystemServices(Kind);
+    ASSERT_EQ(Wanted.size(), Kind == 1 ? 33u : Kind == 2 ? 35u : 32u);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles =
+          darwin_test::symbolicLinkFileSystemOptions(Kind == 1);
+      if (Kind == 2)
+        Options.DarwinFiles->FileSystemObservations->Objects["/link"].Owner =
+            17;
+      auto R = run(Modes[Kind]);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 57);
+      EXPECT_EQ(R->StandardOutput, darwin_test::symbolicFileSystemOutput(Kind));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Output)
+          EXPECT_EQ(E.Arguments[1], *W.Output);
+        const auto N = W.Number & 0xffffff;
+        if (N == 345 || N == 346)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+  }
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    Options.DarwinFiles = darwin_test::symbolicLinkFileSystemOptions(true);
+    auto &F = Options.DarwinFiles->FileSystemObservations;
+    if (Variant == 0)
+      F.reset();
+    else if (Variant == 1)
+      F->Objects.clear();
+    else {
+      F->CreatedSymbolicLinkObjects = false;
+      F->CreatedRegularObjects = F->CreatedDirectoryObjects = true;
+    }
+    auto R = run(Modes[1]);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
     EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
     EXPECT_EQ(

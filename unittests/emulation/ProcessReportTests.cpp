@@ -5,10 +5,10 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinCreatedAdvisoryLockTestData.h"
 #include "DarwinCreatedAttributeTestData.h"
-#include "DarwinCreatedDirectoryFileSystemTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
+#include "DarwinSymbolicLinkFileSystemTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
 #include "DarwinTimestampMutationTestData.h"
@@ -801,6 +801,108 @@ TEST(ProcessReport, DarwinCreatedDirectoryFileSystemNeedsItsOwnCompletePolicy) {
       if (!Parsed)
         llvm::consumeError(Parsed.takeError());
     }
+}
+
+TEST(ProcessReport, DarwinSymbolicFilesystemFlagIsStrictAndPurposeSpecific) {
+  for (const char *Purpose :
+       {"filesystem_observations", "mode_mutations", "ownership_mutations",
+        "timestamp_mutations", "synchronization"})
+    for (const char *Flag : {"false", "true", "null", "1", "\"false\""}) {
+      auto V = llvm::cantFail(llvm::json::parse(darwin_test::ModeFilesJSON));
+      (*V.getAsObject())[Purpose] = llvm::cantFail(llvm::json::parse(
+          std::string("{\"objects\":[],\"created_symbolic_link_objects\":") +
+          Flag + "}"));
+      auto P = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(V)}}))
+              .str());
+      const bool Good = llvm::StringRef(Purpose) == "filesystem_observations" &&
+                        llvm::StringRef(Flag) == "false";
+      EXPECT_EQ(bool(P), Good);
+      if (P)
+        EXPECT_FALSE(
+            P->DarwinFiles->FileSystemObservations->CreatedSymbolicLinkObjects);
+      else
+        llvm::consumeError(P.takeError());
+    }
+  for (
+      const char *Bad :
+      {R"({"created_symbolic_link_objects":false})",
+       R"({"objects":[],"created_symbolic_link_objects":false,"extra":false})"}) {
+    auto V = llvm::cantFail(llvm::json::parse(darwin_test::ModeFilesJSON));
+    (*V.getAsObject())["filesystem_observations"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(V)}}))
+            .str());
+    EXPECT_FALSE(bool(P));
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+}
+TEST(ProcessReport, DarwinInitialSymbolicFilesystemDoesNotConsultTargetOrStat) {
+  auto V = darwin_test::symbolicLinkFileSystemFilesJSON();
+  auto &F = *V.getAsObject();
+  F.erase("creation_policy");
+  auto &Root = *(*F.getArray("directories"))[0].getAsObject();
+  Root.erase("mutable");
+  Root.erase("mutation_policy");
+  auto &Link = *(*F.getArray("symbolic_links"))[0].getAsObject();
+  Link.erase("metadata");
+  Link.erase("mutable");
+  Link.erase("mutation_policy");
+  Link["target_hex"] = "ff";
+  (*F.getObject("filesystem_observations"))["created_symbolic_link_objects"] =
+      false;
+  auto P = processOptionsFromJSON(
+      llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                               {"darwin_files", std::move(V)}}))
+          .str());
+  ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+  EXPECT_EQ(P->DarwinFiles->SymbolicLinks.at("/link"),
+            (std::vector<uint8_t>{255}));
+  EXPECT_FALSE(P->DarwinFiles->Metadata.contains("/link"));
+  EXPECT_EQ(P->DarwinFiles->FileSystemObservations->Objects.at("/link").Blocks,
+            0xfedcba9876543210ULL);
+}
+TEST(ProcessReport, DarwinSymbolicFilesystemCreationNeedsItsOwnCompletePolicy) {
+  for (bool Symbolic : {false, true})
+    for (bool Directory : {false, true})
+      for (bool Regular : {false, true}) {
+        auto V = darwin_test::symbolicLinkFileSystemFilesJSON(true);
+        auto &F = *V.getAsObject(),
+             &Env = *F.getObject("filesystem_observations");
+        Env["created_symbolic_link_objects"] = Symbolic;
+        Env["created_directory_objects"] = Directory;
+        Env["created_regular_objects"] = Regular;
+        const auto Parse = [&] {
+          return processOptionsFromJSON(
+              llvm::formatv("{0}", llvm::json::Value(
+                                       llvm::json::Object{{"darwin_files", V}}))
+                  .str());
+        };
+        auto P = Parse();
+        ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+        EXPECT_EQ(
+            P->DarwinFiles->FileSystemObservations->CreatedSymbolicLinkObjects,
+            Symbolic);
+        EXPECT_EQ(
+            P->DarwinFiles->FileSystemObservations->CreatedDirectoryObjects,
+            Directory);
+        EXPECT_EQ(P->DarwinFiles->FileSystemObservations->CreatedRegularObjects,
+                  Regular);
+        F.getObject("creation_policy")->erase("namespace_policy");
+        P = Parse();
+        EXPECT_EQ(bool(P), !Symbolic && !Directory);
+        if (!P)
+          llvm::consumeError(P.takeError());
+        F.erase("creation_policy");
+        P = Parse();
+        EXPECT_EQ(bool(P), !Symbolic && !Directory && !Regular);
+        if (!P)
+          llvm::consumeError(P.takeError());
+      }
 }
 
 TEST(ProcessReport, DarwinCreatedAttributeFlagsAreIndependentAndCompatible) {
