@@ -148,7 +148,10 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   the [NeverD corpus Release](https://github.com/NeverSight/NeverD/releases/tag/web-producer-corpus-2026-10-13).
   The combined lane defaults to its exact archive URL/SHA-256, and the required
   automatic caller selects the same pin for affected `dev`/PR changes without
-  credentials. Windows input formats are supported on
+  credentials. The [automatic public-download receipt](https://github.com/NeverSight/NeverD/actions/runs/38539252447)
+  at `e669ac89e` passes all eleven producer and fifteen CEF/resource cases
+  with zero failures/skips. Explicit invalid HTTP selection still fails
+  preflight and the final gate. Windows input formats are supported on
   the qualified macOS host; a Windows analysis-host reader/export writer remains
   unavailable, as the matrix states.
 
