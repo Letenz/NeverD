@@ -2006,8 +2006,11 @@ TEST(MedABIPass, Win64VTableIndirectRecoversThisAndSret) {
 
   ASSERT_EQ(Func.CallInfos.size(), 1u);
   ASSERT_EQ(Func.CallInfos[0].Args.size(), 2u) << Func.CallInfos[0].Args.size();
-  EXPECT_EQ(Func.CallInfos[0].Args[0].Id, RCX1.Id);
-  EXPECT_EQ(Func.CallInfos[0].Args[0].SSAVer, RCX1.SSAVer);
+  // Recovery keeps the value copied into RCX, before the redundant register
+  // copy. The vtable shape must preserve that already-proven object argument;
+  // replacing it with the register alias is unnecessary and would also allow
+  // C callback tables to replace a different explicit first argument.
+  EXPECT_EQ(Func.CallInfos[0].Args[0], Badge);
   EXPECT_EQ(Func.CallInfos[0].Args[1].RegOff, x86reg::RDX);
 
   llvm::LLVMContext Ctx;
