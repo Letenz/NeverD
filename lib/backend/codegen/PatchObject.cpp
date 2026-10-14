@@ -364,6 +364,22 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
             elf_loader::objectRelocationFieldWidth(Original.Arch, Type);
         if (!Width)
           return fail("unsupported implicit native relocation field");
+        if (Original.Arch == Arch::AArch64) {
+          // Instruction addends occupy encoded bitfields, not the whole word.
+          // Keep those records on the explicit RELA path until decoded here.
+          switch (Type) {
+          case llvm::ELF::R_AARCH64_NONE:
+          case llvm::ELF::R_AARCH64_ABS64:
+          case llvm::ELF::R_AARCH64_ABS32:
+          case llvm::ELF::R_AARCH64_ABS16:
+          case llvm::ELF::R_AARCH64_PREL64:
+          case llvm::ELF::R_AARCH64_PREL32:
+          case llvm::ELF::R_AARCH64_PREL16:
+            break;
+          default:
+            return fail("unsupported implicit AArch64 instruction relocation");
+          }
+        }
         if (!rangeInBounds(Relocation.r_offset, *Width, Data.size()))
           return fail("implicit relocation addend exceeds its section");
         const auto *Field = Data.data() + Relocation.r_offset;

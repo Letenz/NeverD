@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 3ceb56e2abf86f594f437a16b09a1888650cb49d4cf06860711e73458c52c68d -->
+<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
 
 [← Documentation Index](README.md)
 
@@ -167,3 +167,5 @@ Windows 네이티브 프로세스 검증 [a4a5ae3cb](https://github.com/NeverSig
 네이티브 검증은 NeverC `182fd2c5dc`, 독립 원본 및 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 Windows 아키텍처마다 C IR/객체/hosted 결과와 두 C 프레임의 예외 전달을 36회 관측합니다. `check_source_patch_elf_runtime.py`는 Linux 아키텍처마다 C, hosted 전달과 아홉 Clang C++ 예외 시나리오를 120회 관측합니다. 영수증, 해시, 실제 호스트 아키텍처가 일치해야 하며 CI 호스트에서 NeverC 실행 파일을 실행했다는 뜻은 아닙니다. Linux x64와 ARM64에서 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체 각각의 아홉 예외 시나리오를 검증합니다. NeverC는 계속 C 전용입니다.
 
 이전 변환 프로필의 204회 관측은 과거 기록이며 현재 C 전용 계약의 근거가 아닙니다. 현재 세 NeverC 경로는 C를 사용하고 Clang C++ FH3는 별도로 검증합니다. macOS x64는 Rosetta 2를 사용하며 Unicorn/QEMU CPU 결과는 네이티브 OS와 언와인더 검증을 대신하지 않습니다.
+
+AArch64 명령어 재배치에는 명시적인 RELA 가수가 필요합니다. 암시적 REL 명령어 가수는 게시 전에 거부되며 명령어 비트 필드를 일반 데이터로 해석하지 않습니다. 지원되는 PREL64 데이터 재배치는 REL과 RELA 모두에서 전체 부호 있는 가수를 유지합니다.

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 3ceb56e2abf86f594f437a16b09a1888650cb49d4cf06860711e73458c52c68d -->
+<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
 
 [← Documentation Index](README.md)
 
@@ -167,3 +167,5 @@ ctest --test-dir build-source -L \
 يثبت التحقق الأصلي إصدار NeverC عند `182fd2c5dc` مع برامج أصلية مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 مشاهدة لكل معمارية Windows لوسيط C وكائناته وhosted ومرور الاستثناء عبر إطارَي C. ويتطلب `check_source_patch_elf_runtime.py` عدد 120 مشاهدة لكل معمارية Linux لـC والمرور hosted وتسعة سيناريوهات لاستثناءات Clang C++. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية؛ ولا يعني ذلك تشغيل مترجم NeverC نفسه على مضيف CI. ينفذ Linux x64 وARM64 السيناريوهات التسعة لكل من وسيط Clang وكائنات Clang الأصلية وكائنات GCC الأصلية. ويبقى NeverC مخصصا لـC فقط.
 
 تعد المشاهدات الـ204 لملف الترجمة السابق سجلا تاريخيا ولا تثبت عقد C الخالصة الحالي. تستخدم مسارات NeverC الثلاثة الحالية لغة C، وتختبر Clang C++ FH3 منفصلة. تستخدم macOS x64 بيئة Rosetta 2. لا تحل نتائج CPU في Unicorn/QEMU محل التحقق الأصلي من النظام وفك المكدس.
+
+تتطلب إعادة تموضع تعليمات AArch64 قيما مضافة صريحة من RELA. ترفض القيم المضافة الضمنية لتعليمات REL قبل النشر، ولا تفسر حقول بتات التعليمات كبيانات عادية. تحتفظ إعادة تموضع بيانات PREL64 المدعومة بالقيم المضافة الموقعة كاملة في REL وRELA.

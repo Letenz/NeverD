@@ -153,6 +153,8 @@ void _start(void) {
 .type replacement,%function
 replacement:
 .cfi_startproc
+  adrp x1, replacement
+  add x1, x1, :lo12:replacement
   add w0, w0, #40
   ret
 .cfi_endproc
@@ -248,6 +250,52 @@ TEST_F(SourcePatchAArch64Object,
   Output = Directory / "implicit";
   ASSERT_EQ(patch(Bytes), 1) << error();
   checkRelativeFields();
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+
+TEST_F(SourcePatchAArch64Object,
+       ImplicitInstructionAddendsCannotBeReadAsPlainData) {
+  const auto OriginalBytes = read(Original), ObjectBytes = read(Object);
+  ASSERT_EQ(patch(ObjectBytes), 1) << error();
+  checkRelativeFields();
+  auto Bytes = ObjectBytes;
+  auto File = llvm::object::ELFFile<ELF>::create(Bytes);
+  ASSERT_TRUE(bool(File));
+  auto Sections = File->sections();
+  ASSERT_TRUE(bool(Sections));
+  bool Changed = false;
+  for (size_t I = 0; I < Sections->size(); ++I) {
+    const auto &Section = (*Sections)[I];
+    auto Name = File->getSectionName(Section);
+    ASSERT_TRUE(bool(Name));
+    if (*Name != ".rela.text")
+      continue;
+    auto Rows = File->relas(Section);
+    ASSERT_TRUE(bool(Rows));
+    ASSERT_EQ(Rows->size(), 2u);
+    auto *Header = reinterpret_cast<ELF::Shdr *>(Bytes.data() +
+                                                 File->getHeader().e_shoff) +
+                   I;
+    Header->sh_type = llvm::ELF::SHT_REL;
+    Header->sh_entsize = sizeof(ELF::Rel);
+    Header->sh_size = Rows->size() * sizeof(ELF::Rel);
+    for (size_t Index = 0; Index != Rows->size(); ++Index) {
+      const auto &Row = (*Rows)[Index];
+      ASSERT_EQ(Row.r_addend, 0);
+      ELF::Rel Rel;
+      Rel.r_offset = Row.r_offset;
+      Rel.r_info = Row.r_info;
+      std::memcpy(Bytes.data() + Section.sh_offset + Index * sizeof(Rel), &Rel,
+                  sizeof(Rel));
+    }
+    Changed = true;
+  }
+  ASSERT_TRUE(Changed);
+  Output = Directory / "implicit-code";
+  EXPECT_EQ(patch(Bytes), 0);
+  EXPECT_NE(error().find("unsupported implicit AArch64 instruction relocation"),
+            std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(Output));
   EXPECT_EQ(read(Original), OriginalBytes);
 }
 

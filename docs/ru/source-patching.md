@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 3ceb56e2abf86f594f437a16b09a1888650cb49d4cf06860711e73458c52c68d -->
+<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
 
 [← Documentation Index](README.md)
 
@@ -167,3 +167,5 @@ ctest --test-dir build-source -L \
 Нативная квалификация фиксирует NeverC `182fd2c5dc`, независимые исходные программы и текущий установщик NeverD. `check_source_patch_hosted_pe_runtime.py` требует 36 наблюдений для каждой архитектуры Windows: C IR/объекты/hosted и раскрутка двух кадров C. `check_source_patch_elf_runtime.py` требует 120 наблюдений для каждой архитектуры Linux: C, hosted-передача и девять сценариев исключений Clang C++. Квитанции, хеши и реальная архитектура должны совпадать; запуск самого NeverC на CI-хосте этим не подтверждается. В Linux x64 и ARM64 девять сценариев проверяются отдельно для IR Clang, нативных объектов Clang и нативных объектов GCC. NeverC по-прежнему принимает только C.
 
 204 наблюдения прежнего профиля трансляции остаются историческими и не подтверждают текущий контракт чистого C. Все три текущих пути NeverC используют C; Clang C++ FH3 проверяется отдельно. macOS x64 использует Rosetta 2. Unicorn/QEMU не заменяют нативную проверку ОС и механизма раскрутки.
+
+Перемещения инструкций AArch64 требуют явных слагаемых RELA. Неявные слагаемые REL для инструкций отклоняются до публикации; битовые поля инструкций не трактуются как обычные данные. Поддерживаемые перемещения данных PREL64 сохраняют полные знаковые слагаемые и в REL, и в RELA.

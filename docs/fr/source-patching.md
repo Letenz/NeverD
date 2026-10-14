@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 3ceb56e2abf86f594f437a16b09a1888650cb49d4cf06860711e73458c52c68d -->
+<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
 
 [← Documentation Index](README.md)
 
@@ -167,3 +167,5 @@ La qualification des processus Windows natifs [a4a5ae3cb](https://github.com/Nev
 La qualification native fixe NeverC à `182fd2c5dc`, avec des originaux indépendants et l’installateur NeverD actuel. `check_source_patch_hosted_pe_runtime.py` exige 36 observations par architecture Windows pour les résultats IR/objet/hosted C et deux cadres C traversés par une exception. `check_source_patch_elf_runtime.py` exige 120 observations par architecture Linux pour C, la propagation hosted et neuf scénarios d’exceptions C++ Clang. Reçus, empreintes et architecture réelle doivent correspondre ; cela ne signifie pas que NeverC lui-même tourne sur l’hôte CI. Sous Linux x64 et ARM64, les neuf scénarios sont exécutés pour chacune des voies IR Clang, objets natifs Clang et objets natifs GCC. NeverC reste limité au C.
 
 Les 204 observations de l’ancien profil de traduction sont historiques et ne prouvent pas le contrat actuel limité au C. Les trois voies NeverC actuelles utilisent C ; Clang C++ FH3 est qualifié séparément. macOS x64 utilise Rosetta 2. Unicorn/QEMU ne remplacent pas la validation native du système et du dérouleur.
+
+Les relocalisations d’instructions AArch64 exigent des addends RELA explicites. Les addends REL implicites d’instructions sont refusés avant publication ; leurs champs de bits ne sont pas interprétés comme des données ordinaires. Les relocalisations de données PREL64 prises en charge conservent leurs addends signés complets en REL comme en RELA.
