@@ -229,8 +229,11 @@ public:
   /// `Overlay` uses `CallType` (`ArgList.types_`) on integer stores of a
   /// richer PDB record (`TPtr.p`). Loads and address-of stay the PDB field.
   std::optional<TypedAccess>
+  /// \p ValueType is the type a value access reads or writes; a frame
+  /// record member serves only integer accesses.
   frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize, bool AddressOf,
-                  bool Synthesize = false, bool Overlay = false) const;
+                  bool Synthesize = false, bool Overlay = false,
+                  const llvm::Type *ValueType = nullptr) const;
   std::optional<TypedAccess> typedIndexAccess(const llvm::Value *Ptr);
   std::string indexExprStr(const llvm::Value *V);
   bool isComposedRemValue(const llvm::Value *V);
@@ -575,7 +578,8 @@ public:
                                   const llvm::Value *Other);
   std::string enumStoredText(const llvm::AllocaInst *Slot,
                              const llvm::Value *Stored);
-  std::string integerCallStoredText(const llvm::Value *Stored);
+  std::string integerCallStoredText(const llvm::Value *Stored,
+                                    bool AsInteger = false);
   std::string inplaceIntegerUpdate(const llvm::StoreInst &SI,
                                    llvm::StringRef Dest,
                                    const llvm::Value *Stored);
@@ -866,8 +870,24 @@ public:
     /// Address used as `&slot` or stored into `values_`. Leftover EAX
     /// siblings sit next to these homes and are not themselves taken.
     bool AddressTaken = false;
+    /// In a frame record, the type the member was laid out with. Later
+    /// display typing does not move or widen it.
+    TypeRef MemberType;
   };
   mutable std::map<uint64_t, NamedFrameSlot> FrameSlots;
+  /// The frame must stay one object (an escape no type bounds, a span that
+  /// crosses slots): its named slots print as members of one record laid out
+  /// exactly like the frame bytes, spelled `FrameRecordName.slot`.
+  bool FrameRecord = false;
+  std::string FrameRecordName;
+  /// \p Slot's spelling: its name, or its member of the frame record.
+  std::string slotText(const NamedFrameSlot &Slot) const;
+  /// Whether a member of type \p Ty (`uint64_t` when null) at frame offset
+  /// \p Off fits the frame record: inside the frame, aligned for its type,
+  /// and clear of every other member.
+  bool frameRecordAdmits(uint64_t Off, const TypeRef &Ty) const;
+  /// The frame record's declaration, from the members the body printed.
+  std::string frameRecordDeclaration(const llvm::AllocaInst &Frame) const;
   /// Different overlapping memory extents cannot become independent scalar
   /// locals. Keep unnamed views of those bytes in the shared backing frame.
   std::set<uint64_t> OverlappingFrameAccessOffsets;

@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LLVMCFrameLayout.h"
+#include "LLVMCStorage.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -1383,11 +1384,110 @@ const char *argListStandardField(const TypeRef &Ty, uint64_t Rel,
   return nullptr;
 }
 
+namespace {
+
+/// The bytes a frame record member of type \p Ty (`uint64_t` when null)
+/// takes; zero when it cannot be a member. A member is an integer, or an
+/// array of them, so it reads and writes integer values as they are. A
+/// record's layout comes from the reader's headers, so its bytes stay raw.
+uint64_t frameMemberSize(const TypeRef &Ty) {
+  if (!Ty)
+    return 8;
+  switch (Ty->Kind) {
+  case NdTypeKind::Int:
+    return llvm::is_contained({1, 2, 4, 8, 16}, Ty->Size) ? Ty->Size : 0;
+  case NdTypeKind::Array: {
+    const uint64_t Element = frameMemberSize(Ty->ElemType);
+    return Element && Element * Ty->ArrayCount == Ty->Size ? Ty->Size : 0;
+  }
+  default:
+    return 0;
+  }
+}
+
+/// The alignment the frame offset of that member needs for C to place it
+/// there.
+uint64_t frameMemberAlignment(const TypeRef &Ty) {
+  if (!Ty)
+    return 8;
+  if (Ty->Kind == NdTypeKind::Array)
+    return frameMemberAlignment(Ty->ElemType);
+  return Ty->Size;
+}
+
+} // namespace
+
+std::string LLVMCWriter::slotText(const NamedFrameSlot &Slot) const {
+  return FrameRecord ? FrameRecordName + "." + Slot.Name : Slot.Name;
+}
+
+bool LLVMCWriter::frameRecordAdmits(uint64_t Off, const TypeRef &Ty) const {
+  const uint64_t Size = frameMemberSize(Ty);
+  const auto *Bytes =
+      SyntheticFrame
+          ? llvm::dyn_cast<llvm::ArrayType>(SyntheticFrame->getAllocatedType())
+          : nullptr;
+  if (!Size || !Bytes || Off % frameMemberAlignment(Ty) ||
+      Size > Bytes->getNumElements() || Off > Bytes->getNumElements() - Size)
+    return false;
+  for (const auto &[Other, Slot] : FrameSlots)
+    if (Other != Off && !Slot.Name.empty() && Other < Off + Size &&
+        Off < Other + frameMemberSize(Slot.MemberType))
+      return false;
+  return true;
+}
+
+std::string
+LLVMCWriter::frameRecordDeclaration(const llvm::AllocaInst &Frame) const {
+  const uint64_t Size =
+      llvm::cast<llvm::ArrayType>(Frame.getAllocatedType())->getNumElements();
+  std::set<std::string> Names;
+  for (const auto &[Off, Slot] : FrameSlots)
+    if (!Slot.Name.empty())
+      Names.insert(Slot.Name);
+  // Gaps are named by their offset, as IDA names a structure's gaps.
+  auto Gap = [&](uint64_t At, uint64_t Bytes) {
+    std::string Name = "gap" + llvm::utohexstr(At);
+    while (Names.count(Name))
+      Name += '_';
+    return "        uint8_t " + Name + "[" + std::to_string(Bytes) + "];\n";
+  };
+  std::string Members;
+  uint64_t At = 0;
+  for (const auto &[Off, Slot] : FrameSlots) {
+    if (Slot.Name.empty())
+      continue;
+    if (Off > At)
+      Members += Gap(At, Off - At);
+    Members += "        " +
+               (Slot.MemberType ? declarationToC(Slot.MemberType, Slot.Name)
+                                : "uint64_t " + Slot.Name) +
+               ";\n";
+    At = Off + frameMemberSize(Slot.MemberType);
+  }
+  const std::string Alignment = llvmc::storageAlignment(
+      Frame.getAllocatedType(), Frame.getModule()->getDataLayout(),
+      Frame.getAlign());
+  // No slot became a member: the frame stays the byte array it is.
+  if (Members.empty())
+    return "    " + Alignment + "uint8_t " + FrameRecordName + "[" +
+           std::to_string(Size) + "];\n";
+  if (Size > At)
+    Members += Gap(At, Size - At);
+  return "    " + Alignment + "struct {\n" + Members + "    } " +
+         FrameRecordName + ";\n";
+}
+
 std::optional<LLVMCWriter::TypedAccess>
 LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
-                             bool AddressOf, bool Synthesize,
-                             bool Overlay) const {
-  if (!Ptr || !SyntheticFrame || Analysis.RawFrameAllocas.count(SyntheticFrame))
+                             bool AddressOf, bool Synthesize, bool Overlay,
+                             const llvm::Type *ValueType) const {
+  if (!Ptr || !SyntheticFrame ||
+      (Analysis.RawFrameAllocas.count(SyntheticFrame) && !FrameRecord))
+    return std::nullopt;
+  // An integer member cannot hold a floating-point, vector or pointer value
+  // without converting it: such an access stays on the frame bytes.
+  if (FrameRecord && !AddressOf && !(ValueType && ValueType->isIntegerTy()))
     return std::nullopt;
   const auto Peeled = peelPointerOffset(Ptr);
   if (!Peeled || Peeled->first != SyntheticFrame)
@@ -1412,12 +1512,24 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       static_cast<int64_t>(Off) - static_cast<int64_t>(FrameBaseOffset);
 
   auto Remember = [&](uint64_t SlotOff, const VariableSym &Var) {
+    // A frame record member keeps the name, place and extent the body
+    // already spells it with.
+    if (FrameRecord) {
+      const auto Known = FrameSlots.find(SlotOff);
+      if (Known != FrameSlots.end() && !Known->second.Name.empty())
+        return true;
+      if (!frameRecordAdmits(SlotOff, Var.Type))
+        return false;
+    }
     NamedFrameSlot &Slot = FrameSlots[SlotOff];
     Slot.Off = SlotOff;
     Slot.Name = Var.Name;
     if (Var.Type && (!Slot.Type || Var.Type->FieldDisplayNames.size() >
                                        Slot.Type->FieldDisplayNames.size()))
       Slot.Type = Var.Type;
+    if (FrameRecord)
+      Slot.MemberType = Var.Type;
+    return true;
   };
 
   const NamedFrameSlot *Owner = nullptr;
@@ -1430,7 +1542,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       WidthOk = Exact->Type->displayFieldNameAt(0, AccessSize).has_value();
     }
     if (WidthOk) {
-      Remember(Off, *Exact);
+      if (!Remember(Off, *Exact))
+        return std::nullopt;
       Owner = &FrameSlots[Off];
       Rel = 0;
     }
@@ -1470,7 +1583,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (!Var->Type->displayFieldPathAt(Candidate, AccessSize) &&
           !(AccessSize == 0 && Var->Type->displayFieldPathAt(Candidate)))
         continue;
-      Remember(Off - Candidate, *Var);
+      if (!Remember(Off - Candidate, *Var))
+        return std::nullopt;
       Owner = &FrameSlots[Off - Candidate];
       Rel = Candidate;
       break;
@@ -1481,12 +1595,22 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       return std::nullopt;
     const std::string Syn = syntheticFrameSlotName(Disp);
     if (!Syn.empty() && !isReservedFrameName(Syn)) {
+      const TypeRef SynType = AccessSize && AccessSize <= 8
+                                  ? NdType::makeInt(AccessSize, false)
+                                  : nullptr;
+      if (const auto Known = FrameSlots.find(Off);
+          FrameRecord &&
+          (Known == FrameSlots.end() || Known->second.Name.empty()) &&
+          !frameRecordAdmits(Off, SynType))
+        return std::nullopt;
       NamedFrameSlot &Slot = FrameSlots[Off];
       if (Slot.Name.empty()) {
         Slot.Off = Off;
         Slot.Name = Syn;
-        if (!Slot.Type && AccessSize && AccessSize <= 8)
-          Slot.Type = NdType::makeInt(AccessSize, false);
+        if (!Slot.Type && SynType)
+          Slot.Type = SynType;
+        if (FrameRecord)
+          Slot.MemberType = SynType;
       }
       Owner = &Slot;
       Rel = 0;
@@ -1494,6 +1618,35 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   }
   if (!Owner || Owner->Name.empty())
     return std::nullopt;
+  const std::string OwnerText = slotText(*Owner);
+  // A frame record member names only its own bytes, as the type it was laid
+  // out with: the whole member, its address, or a narrower view of its start.
+  if (FrameRecord) {
+    const TypeRef Member =
+        Owner->MemberType ? Owner->MemberType : NdType::makeInt(8, false);
+    const uint64_t Extent = frameMemberSize(Member);
+    if (Rel != 0 || !Extent || AccessSize > Extent)
+      return std::nullopt;
+    TypedAccess Out;
+    if (AddressOf) {
+      Out.Text = "&" + OwnerText;
+      Out.Type = NdType::makePtr(Member);
+      return Out;
+    }
+    if (Member->Kind != NdTypeKind::Array &&
+        (AccessSize == 0 || AccessSize == Extent)) {
+      Out.Text = OwnerText;
+      Out.Type = Member;
+      return Out;
+    }
+    if (AccessSize != 1 && AccessSize != 2 && AccessSize != 4 &&
+        AccessSize != 8)
+      return std::nullopt;
+    const TypeRef View = NdType::makeInt(AccessSize, false);
+    Out.Text = "*(" + typeToC(View) + " *)&" + OwnerText;
+    Out.Type = View;
+    return Out;
+  }
   uint64_t Cover = Owner->Type && Owner->Type->Size ? Owner->Type->Size : 8;
   if (Owner->Type && Owner->Type->SourceName == "ArgList" && Cover < 16)
     Cover = 16;
@@ -1518,13 +1671,13 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
                                   : std::string();
   auto FieldText = [&](llvm::StringRef Field) {
     if (ReinterpretRecord)
-      return "((" + ViewTag + " *)&" + Owner->Name + ")->" + Field.str();
-    return Owner->Name + "." + Field.str();
+      return "((" + ViewTag + " *)&" + OwnerText + ")->" + Field.str();
+    return OwnerText + "." + Field.str();
   };
   TypedAccess Out;
   if (Rel == 0) {
     if (AddressOf) {
-      Out.Text = "&" + Owner->Name;
+      Out.Text = "&" + OwnerText;
       Out.Type = Owner->Type ? NdType::makePtr(Owner->Type) : nullptr;
       return Out;
     }
@@ -1534,7 +1687,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
         (AccessSize == 2 || AccessSize == 4 || AccessSize == 8 ||
          AccessSize == 16)) {
       TypeRef Raw = NdType::makeInt(AccessSize, false);
-      Out.Text = "*(" + typeToC(Raw) + " *)&" + Owner->Name;
+      Out.Text = "*(" + typeToC(Raw) + " *)&" + OwnerText;
       Out.Type = Raw;
       return Out;
     }
@@ -1564,7 +1717,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       return Out;
     }
     if (ReinterpretRecord && Display->Size == AccessSize) {
-      Out.Text = "*((" + ViewTag + " *)&" + Owner->Name + ")";
+      Out.Text = "*((" + ViewTag + " *)&" + OwnerText + ")";
       Out.Type = Display;
       return Out;
     }
@@ -1576,11 +1729,11 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
         (AccessSize == 1 || AccessSize == 2 || AccessSize == 4 ||
          AccessSize == 8)) {
       Out.Text =
-          "*(uint" + std::to_string(AccessSize * 8) + "_t *)&" + Owner->Name;
+          "*(uint" + std::to_string(AccessSize * 8) + "_t *)&" + OwnerText;
       Out.Type = NdType::makeInt(AccessSize, false);
       return Out;
     }
-    Out.Text = Owner->Name;
+    Out.Text = OwnerText;
     Out.Type = Owner->Type;
     return Out;
   }
@@ -1595,7 +1748,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     Field = Owner->Type->displayFieldPathAt(Rel, AccessSize, EnterNested);
     Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
     if (Path) {
-      Out.Text = Owner->Name + "." + *Path;
+      Out.Text = OwnerText + "." + *Path;
       Out.Type = Owner->Type->displayFieldTypeAt(Rel, AccessSize);
       if (AddressOf)
         Out.Text = "&" + Out.Text;
@@ -2605,11 +2758,15 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
       return AddressText("&" + Acc->Text);
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (auto Acc = frameSlotAccess(LI->getPointerOperand(),
-                                   llvmAccessSize(LI->getType()),
-                                   /*AddressOf=*/false))
-      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
-                            : Acc->Text;
+    // A frame record member is read where the load is, into its temporary:
+    // a call between the load and a use can change the escaped bytes.
+    if (!FrameRecord)
+      if (auto Acc = frameSlotAccess(LI->getPointerOperand(),
+                                     llvmAccessSize(LI->getType()),
+                                     /*AddressOf=*/false, /*Synthesize=*/false,
+                                     /*Overlay=*/false, LI->getType()))
+        return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
+                              : Acc->Text;
     if (auto Acc = frameSlotAccess(LI, 0, /*AddressOf=*/true))
       return AddressText(Acc->Text);
   }
