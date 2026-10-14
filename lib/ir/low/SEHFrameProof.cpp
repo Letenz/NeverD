@@ -189,6 +189,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
   va_t Instruction = InvalidVA;
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
     if (!consume(Remaining, S.Values.size() + S.Spills.size() +
+                                S.FrameBytes.size() +
                                 S.InvalidatedImportSlots.size() + 1))
       return false;
     const LowOp &Op = Block.Ops[I];
@@ -233,9 +234,9 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
       }
       std::optional<State> Returned;
       if (Calls && Calls->Callees && CurrentSP &&
-          (ReturnSlot || !S.Spills.empty()) && Op.Opcode == NdOp::CALL &&
-          Op.NumInputs == 1 && Op.Inputs[0].isConst() &&
-          Op.Inputs[0].Size == 8) {
+          (ReturnSlot || !S.Spills.empty() || !S.FrameBytes.empty()) &&
+          Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 8) {
         const auto It = Calls->Callees->find(Op.Inputs[0].Offset);
         if (It != Calls->Callees->end() && It->second &&
             It->second->Entry == It->first) {
@@ -248,7 +249,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
         if (!consume(Remaining, Calls->ReturnSlots.size() + 1))
           return false;
         Returned = seh_frame::transferRuntimeMemory(
-            Op, S, TRI, *Calls->RuntimeMemory, Calls->ReturnSlots);
+            Op, S, TRI, *Calls->RuntimeMemory, Calls->ReturnSlots, Remaining);
         Calls->UsesRuntimeMemory |= Returned.has_value();
       }
       if (ReturnSlot && !Returned)
@@ -265,6 +266,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
             Returned->InvalidatedImportSlots.begin(),
             Returned->InvalidatedImportSlots.end());
         Preserved.Spills = std::move(Returned->Spills);
+        Preserved.FrameBytes = std::move(Returned->FrameBytes);
         const auto ReturnKey = key(NdVar::reg(TRI.IntReturnReg, 8));
         if (auto It = Returned->Values.find(ReturnKey);
             It != Returned->Values.end())
@@ -318,7 +320,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
         }
         if (ReturnSlot)
           return false; // It may overwrite this invocation's return PC.
-        S.Spills.clear();
+        S.clearMemory();
         S.EscapedFrame = true;
         continue;
       }
@@ -329,13 +331,17 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
       S.invalidateMemory(*Address, End);
       if (StoredValue && Op.Inputs[1].Size == 8)
         S.Spills[*Address] = *StoredValue;
+      if (StoredValue && StoredValue->Identity == Value::Kind::Constant)
+        for (unsigned Byte = 0; Byte != Op.Inputs[1].Size; ++Byte)
+          S.FrameBytes[*Address + Byte] =
+              uint8_t(StoredValue->Bits >> (Byte * 8));
       continue;
     }
     if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
         Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
       if (ReturnSlot)
         return false;
-      S.Spills.clear();
+      S.clearMemory();
       S.EscapedFrame = true;
     }
     std::optional<Value> Fact;
@@ -386,7 +392,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
                               ? std::optional<int64_t>{int64_t(Fact->Bits)}
                               : std::nullopt;
       if (!Offset || !Before || Op.Output != SP)
-        S.Spills.clear();
+        S.clearMemory();
       else if (*Before < *Offset)
         S.invalidateMemory(*Before, *Offset);
     }
@@ -429,7 +435,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
       (F.ExceptionMetadata &&
        (F.ExceptionMetadata->SEH || F.ExceptionMetadata->Cxx ||
         F.ExceptionMetadata->Registration)) ||
-      !consume(Remaining, Caller.Values.size() + Caller.Spills.size() + 1))
+      !consume(Remaining, Caller.Values.size() + Caller.Spills.size() +
+                              Caller.FrameBytes.size() + 1))
     return std::nullopt;
   Calls.ActiveFunctions.insert(F.Entry);
   Calls.ReturnSlots.insert(Slot);
@@ -464,6 +471,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
   // Reusing stale values from a previous invocation would prove false loads.
   std::erase_if(Initial.Spills,
                 [&](const auto &Cell) { return Cell.first < *CallerSP; });
+  std::erase_if(Initial.FrameBytes,
+                [&](const auto &Byte) { return Byte.first < *CallerSP; });
   std::vector<std::optional<State>> Inputs(F.Blocks.size());
   Inputs[*Entry] = std::move(Initial);
   std::deque<size_t> Queue{*Entry};
@@ -475,8 +484,9 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
     Queue.pop_front();
     Queued[I] = false;
     const auto &B = F.Blocks[I];
-    if (!consume(Remaining,
-                 Inputs[I]->Values.size() + Inputs[I]->Spills.size() + 1) ||
+    if (!consume(Remaining, Inputs[I]->Values.size() +
+                                Inputs[I]->Spills.size() +
+                                Inputs[I]->FrameBytes.size() + 1) ||
         B.Ops.empty())
       return std::nullopt;
     State Out = *Inputs[I];
@@ -504,8 +514,9 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
       if (!Returned)
         Returned = Out;
       else {
-        if (!consume(Remaining,
-                     Returned->Values.size() + Returned->Spills.size()))
+        if (!consume(Remaining, Returned->Values.size() +
+                                    Returned->Spills.size() +
+                                    Returned->FrameBytes.size()))
           return std::nullopt;
         Returned->intersect(Out);
       }
@@ -516,10 +527,11 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
     for (int Id : B.Succs) {
       const size_t Next = Positions.at(Id);
       const size_t OldFacts = Inputs[Next] ? Inputs[Next]->Values.size() +
-                                                 Inputs[Next]->Spills.size()
+                                                 Inputs[Next]->Spills.size() +
+                                                 Inputs[Next]->FrameBytes.size()
                                            : 0;
-      if (!consume(Remaining,
-                   Out.Values.size() + Out.Spills.size() + OldFacts + 1))
+      if (!consume(Remaining, Out.Values.size() + Out.Spills.size() +
+                                  Out.FrameBytes.size() + OldFacts + 1))
         return std::nullopt;
       bool Changed = !Inputs[Next];
       if (Changed)
@@ -536,12 +548,15 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
       }
     }
   }
-  if (Returned)
+  if (Returned) {
     std::erase_if(Returned->Spills, [&](const auto &Cell) {
       const auto Before = Caller.Spills.find(Cell.first);
       return Cell.first < *CallerSP || Before == Caller.Spills.end() ||
              Before->second != Cell.second;
     });
+    std::erase_if(Returned->FrameBytes,
+                  [&](const auto &Byte) { return Byte.first < *CallerSP; });
+  }
   return Returned;
 }
 
@@ -549,7 +564,7 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
 
 std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-low-seh-frame-cfg-v3");
+  Hash.update("neverd-low-seh-frame-cfg-v4");
   const auto Word = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -847,8 +862,9 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
     }
     for (int Id : Block.Preds) {
       const size_t P = Positions.at(Id);
-      if (!consume(Remaining,
-                   Outputs[P].Values.size() + Outputs[P].Spills.size() + 1))
+      if (!consume(Remaining, Outputs[P].Values.size() +
+                                  Outputs[P].Spills.size() +
+                                  Outputs[P].FrameBytes.size() + 1))
         return {};
       if (!Visited[P])
         continue;
