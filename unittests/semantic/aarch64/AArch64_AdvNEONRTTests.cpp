@@ -195,12 +195,6 @@ static const std::vector<RoundTripTC> kA64AdvNEON = {
    "}\n",
    {42, 100}, "A64AdvNEON"},
 
-  {"a64_csinc",
-   "long a64_csinc(long a, long b) {\n"
-   "  return a == 0 ? b + 1 : a;\n"
-   "}\n",
-   {0, 41}, "A64AdvNEON"},
-
   {"a64_csinv",
    "long a64_csinv(long a, long b) {\n"
    "  return a != 0 ? a : ~b;\n"

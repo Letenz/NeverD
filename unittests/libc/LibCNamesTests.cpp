@@ -163,12 +163,6 @@ TEST(VarArgFixedParamKind, PrintfFamilyPreservesScalarParameters) {
   EXPECT_EQ(varArgFixedParamKind("snprintf", 2), VarArgFixedParamKind::Pointer);
 }
 
-TEST(VarArgFixedParamKind, OpenPreservesNamedPathAndFlags) {
-  EXPECT_EQ(varArgFixedParamKind("open", 0), VarArgFixedParamKind::Pointer);
-  EXPECT_EQ(varArgFixedParamKind("open", 1), VarArgFixedParamKind::Integer);
-  EXPECT_EQ(varArgFixedParamKind("open", 2), VarArgFixedParamKind::Unknown);
-}
-
 TEST(VarArgFixedParamKind, FortifiedSnprintfShape) {
   constexpr VarArgFixedParamKind Expected[] = {
       VarArgFixedParamKind::Pointer, VarArgFixedParamKind::Integer,

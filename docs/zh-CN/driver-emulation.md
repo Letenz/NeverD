@@ -323,7 +323,12 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | API | 建模行为与限制 |
 |-----|----------------|
 | `RtlInitUnicodeString` | 根据有界、以 NUL 结尾的源字符串构造来宾 `UNICODE_STRING` |
+| `RtlGetVersion` | 显式 checked-x64 基础版本查询，不采用宿主版本默认值。要求 `version_query`；长度 276 的记录必须预先清零整个 CSD 数组。零长度兼容行为需单独启用且具有实际 20 字节缓冲区。扩展长度及未声明查询明确停止，保留环境依赖。 |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 带长度的 UTF-16 复制及区分大小写比较；不区分大小写的比较需要 Windows 大小写表，因此会停止 |
+| `RtlInitAnsiString`、`RtlInitString` | 根据以 NUL 结尾的字节源构造来宾 `STRING`；计数长度上限为 `0xFFFE`，`MaximumLength` 包含结尾符，记录中的填充字节会被清零 |
+| `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 追加到带长度的 UTF-16 目标；返回 `STATUS_BUFFER_TOO_SMALL` 时目标保持不变，至少剩余两个空闲字节时才写入结尾符，超过 `0x7FFE` 个单元的 NUL 结尾源同样返回 `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | 带长度的 UTF-16 前缀判断；不区分大小写的请求只有在不相等的单元需要 Windows 大小写表时才会停止 |
+| `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 为基数的无符号转换，前导空白、符号、`0x`/`0o`/`0b` 前缀和 32 位回绕均遵循内核规则；格式化需要为结尾符留出空间，并在写入长度后返回 `STATUS_BUFFER_OVERFLOW` |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 抛出来宾异常，无正常 API 返回；真实 C 过滤器／处理器及展开 finally，用户 CPU 访存异常的受限恢复见下文 |
 | `ExAllocatePool2` | 分页／非分页 NX 分配，默认清零；支持未初始化与缓存行对齐标志；无效的必需标志返回 NULL，配额／可执行池以及分配失败引发异常的路径会停止 |
 | `MmGetSystemRoutineAddress` | 通过共享导出清单解析带长度的来宾名称 |
@@ -414,7 +419,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 可选根字段 `"load_address": "0x190000000"` 请求更改加载基址；省略该字段或指定 `"0x0"` 时使用首选地址。映像必须满足重定位要求。原有的初始化命令或 C API 不会隐式执行任何请求场景。
 
-根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
+根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
 
 仅 READ／WRITE／IOCTL 请求接受可选字段 `cancel_after_100ns`，它必须是 0 到 `INT64_MAX`（9223372036854775807）之间的 JSON 整数。该值相对于请求提交时刻，以虚拟 100 ns 为单位，并非墙钟时间。对 KMDF，零表示框架路由后、来宾 I/O 回调前触发取消；若路由已直接完成请求，则完成优先。对 WDM，零在派发返回后生效。正数延迟仅在没有就绪回调或执行帧时，随时间推进至定时器、等待或取消期限而触发。挂起的 WDM IRP 会在持有取消自旋锁的 `DISPATCH_LEVEL` 调用已注册的取消例程；例程必须使用 `Irp->CancelIrql` 释放锁后再完成请求。通用队列与 PnP 取消仍不支持。每个请求报告都包含 `cancel_requested_at_100ns`，值为取消实际发生时的绝对虚拟时间；若未发生取消，包括完成先发生的情况，则为 null。请求取消本身不会完成 IRP，也不规定最终状态。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 和 `IoCancelIrp` 共用同一 IRP 状态与取消自旋锁；`IoCancelIrp` 同步调用已注册例程，并返回是否实际调用。
@@ -610,6 +615,12 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 ## 声明的加载记录视图
 
 可选的 `loader_view` 声明具体诊断环境，例如 `{"version":1,"flags":0,"evidence":"fixture declaration"}`。三个字段都必填；`flags` 是无符号 32 位整数，零也必须显式提供；`evidence` 是调用方提供的 1–256 字节可打印 ASCII 标签，不是经过认证的证据。版本 1 指模拟布局，不代表 Windows 版本。未知字段或无效声明在模型分配前拒绝。省略时 `DriverSection` 保持不透明，报告不增加该字段；提供时完整记录于 `configuration.loader_view`。
+
+可选 `version_query` 选择具体诊断算法：`{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`。`version`、`build_number`（0–65535，包含显式零）和 `evidence`（1–256 个可打印 ASCII 字节）必填；`allow_zero_size` 默认为 false。版本 1 仅向 [4,20) 写入主版本 10、次版本 0、声明的构建号和平台 2，其余字节保持不变。此版本标识算法，不认证某个 Windows 实现，也不从宿主推断数值。
+
+`RtlGetVersion` 要求 `checked-x64` 和 PASSIVE_LEVEL。基础记录长度必须为 276，整个 CSD 数组已清零；单独启用的零长度形式仅访问 20 字节，属于非通用兼容行为。长度 284/292、其他长度、非零 CSD、无效 RAM 或权限均在输出写入前拒绝，共享对象访问守卫同样适用。未使用的声明也保留未重建的环境依赖，不提供符号假设、指针布局或原生恢复证明。报告保留 `configuration.version_query`。参见 [API 契约](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion) 与[基础记录初始化](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow)。
+
+查询缓冲区必须位于该执行配置的内核地址范围；在本次停止 CPU 执行的 API 操作期间，每个访问的 RAM 字节在当前地址空间只能有一个虚拟映射。用户缓冲区以及任何第二映射（包括只读或不可访问别名）均在输出前拒绝。这是保守的准入限制，不根据高地址推断所有权，共享对象访问检查仍然适用。
 
 借用的 160 字节记录仅开放 `DllBase`（偏移 48，8 字节）、`EntryPoint`（56，8）、`SizeOfImage`（64，4）及 `Flags`（104，4）。前三项来自实际加载映像，包含重定位后的值；不推断标志位含义。允许这些范围内的部分读取；未知字节、跨越未知范围的访问和所有写入均拒绝，复制服务和尝试建立 MDL 别名也不能绕过。`DriverObject.Flags` 仍不透明。视图贯穿模拟生命周期，即使未读取也保留未重建的环境依赖，不授予符号常量或原生运行时恢复权限。
 

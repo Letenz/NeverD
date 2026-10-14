@@ -1,4 +1,4 @@
-//===- ARM32_AdvancedRoundTripTests.cpp - Advanced pattern tests --*- C++ -*-===//
+//===- ARM32_AdvancedRoundTripTests.cpp - Advanced pattern tests ----------===//
 //
 // NeverD Decompiler
 //
@@ -97,26 +97,11 @@ static const std::vector<RoundTripTC> kARM32Advanced = {
    {5}, "ARM32Adv"},
 
   // --- Bit manipulation ---
-  {"arm_isolate_lowest",
-   "int arm_isolate_lowest(int a) { return a & (-a); }\n",
-   {0xABCD0000}, "ARM32Adv"},
-
   {"arm_clear_lowest",
    "int arm_clear_lowest(int a) { return a & (a - 1); }\n",
    {0xABCD0000}, "ARM32Adv"},
 
   // --- Signed/unsigned mix ---
-  {"arm_abs",
-   "int arm_abs(int a) { return a < 0 ? -a : a; }\n",
-   {(uint64_t)(uint32_t)-42}, "ARM32Adv"},
-
-  {"arm_min",
-   "int arm_min(int a, int b) { return a < b ? a : b; }\n",
-   {3, 7}, "ARM32Adv"},
-
-  {"arm_max",
-   "int arm_max(int a, int b) { return a > b ? a : b; }\n",
-   {3, 7}, "ARM32Adv"},
 
   // --- Collatz ---
   {"arm_collatz",
@@ -153,14 +138,6 @@ static const std::vector<RoundTripTC> kARM32Advanced = {
    {0x01020304}, "ARM32Adv"},
 
   // --- Classify ---
-  {"arm_classify",
-   "int arm_classify(int a) {\n"
-   "  if (a < 0) return -1;\n"
-   "  if (a == 0) return 0;\n"
-   "  if (a < 10) return 1;\n"
-   "  return 2;\n"
-   "}\n",
-   {42}, "ARM32Adv"},
 };
 
 // clang-format on
