@@ -4008,6 +4008,17 @@ invalid overrides still fail preflight; the public default requires no corpus
 Secret. The producer lane retains the correct owning CTest `LastTest.log` path.
 Corpus releases skip the unrelated Python SDK publication lane. Actionlint and
 the SDK delivery-policy audit pass. This change establishes permanent public
-fixture distribution and the automatic caller; a new remote receipt still
-needs to qualify its selected integrated ref before extending the earlier
-`8c1f4ac03` test result.
+fixture distribution and the automatic caller.
+
+The [automatic public-download qualification](https://github.com/NeverSight/NeverD/actions/runs/38539252447)
+passes at integrated ref `e669ac89e189285b6cfda77bf76fc38a0d90780a`:
+eleven producer cases and fifteen CEF/resource cases have zero failures,
+errors or skips. Input preflight and the final combined gate succeed. The
+[explicit invalid HTTP override](https://github.com/NeverSight/NeverD/actions/runs/38541715306)
+at `f17748cc4` fails preflight, schedules neither reader and fails the final
+gate. The corpus Release's unrelated
+[Python SDK run](https://github.com/NeverSight/NeverD/actions/runs/38537325835)
+is skipped as intended. Both public source-companion download/envelope and
+all 205 contained source archive hashes are verified. The new qualified-ref
+receipt and both JUnit reports are retained as additional corpus Release
+assets; earlier receipts remain unchanged.
