@@ -222,44 +222,53 @@ void detectFPParams(
 
   // Writing a return register is transport, too: NEON may interleave scratch
   // bytes into D0 and mask them before producing the result. Only a definition
-  // that reaches RETURN can be an implicit return read. Keep explicit body
-  // consumers in Uses, and retain the conservative rule if this query cannot
-  // establish the reaching definitions within its budget.
-  llvm::DenseSet<ValueKey> PossibleFPReturns;
-  bool UnknownFPReturns = false;
-  size_t ReturnWork = 65536;
-  llvm::SmallVector<uint64_t, 4> ReturnRegs(TRI.FPReturnRegs);
-  if (TRI.hasFPReturnReg() && !llvm::is_contained(ReturnRegs, TRI.FPReturnReg))
-    ReturnRegs.push_back(TRI.FPReturnReg);
+  // that reaches RETURN can be an implicit return read. A value forwarded in
+  // that register may also be read by CALL before ABI recovery adds operands.
+  // Keep explicit body consumers in Uses, and retain conservative demand if
+  // this query cannot establish the reaching definitions within its budget.
+  llvm::DenseSet<ValueKey> PossibleFPReads;
+  bool UnknownFPReads = false;
+  size_t ReadWork = 65536;
+  llvm::SmallVector<uint64_t, 4> ReturnRegs;
+  if (!TRI.ReturnsFPInX87) {
+    ReturnRegs.append(TRI.FPReturnRegs.begin(), TRI.FPReturnRegs.end());
+    if (TRI.hasFPReturnReg() &&
+        !llvm::is_contained(ReturnRegs, TRI.FPReturnReg))
+      ReturnRegs.push_back(TRI.FPReturnReg);
+  }
   for (const MedBlock &Block : Func.Blocks) {
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      if (Block.Ops[I].Opcode != NdOp::RETURN)
+      const auto Opcode = Block.Ops[I].Opcode;
+      const bool Call = Opcode == NdOp::CALL || Opcode == NdOp::INDIR_CALL;
+      if (Opcode != NdOp::RETURN && !Call)
         continue;
       for (uint64_t RegOff : ReturnRegs) {
+        if (Call && !TRI.isFPArgReg(RegOff, TargetFormat))
+          continue;
         llvm::SmallVector<std::pair<int, size_t>, 8> Pending{{Block.Id, I}};
         std::set<std::pair<int, size_t>> Seen;
         while (!Pending.empty()) {
           const auto [Id, Before] = Pending.pop_back_val();
           if (!Seen.emplace(Id, Before).second)
             continue;
-          if (!ReturnWork || Id < 0 ||
+          if (!ReadWork || Id < 0 ||
               static_cast<size_t>(Id) >= Func.Blocks.size() ||
               Func.Blocks[Id].Id != Id || Before > Func.Blocks[Id].Ops.size()) {
-            UnknownFPReturns = true;
+            UnknownFPReads = true;
             break;
           }
           const auto &Predecessor = Func.Blocks[Id];
           bool Defined = false;
           for (size_t J = Before; J > 0; --J) {
-            if (!ReturnWork) {
-              UnknownFPReturns = true;
+            if (!ReadWork) {
+              UnknownFPReads = true;
               break;
             }
-            --ReturnWork;
+            --ReadWork;
             const MedOp &Op = Predecessor.Ops[J - 1];
             if (Op.Output.Kind == MedVar::Reg && Op.Output.Size &&
                 Op.Output.RegOff == RegOff) {
-              PossibleFPReturns.insert(valueKey(Op.Output));
+              PossibleFPReads.insert(valueKey(Op.Output));
               Defined = true;
               break;
             }
@@ -271,22 +280,22 @@ void detectFPParams(
               break;
             }
           }
-          if (Defined || UnknownFPReturns)
+          if (Defined || UnknownFPReads)
             continue;
           for (const PhiNode &Phi : Predecessor.Phis)
             if (Phi.Output.Kind == MedVar::Reg && Phi.Output.Size &&
                 Phi.Output.RegOff == RegOff) {
-              PossibleFPReturns.insert(valueKey(Phi.Output));
+              PossibleFPReads.insert(valueKey(Phi.Output));
               Defined = true;
               break;
             }
           if (Defined)
             continue;
           if (!Predecessor.ExceptionalPreds.empty())
-            UnknownFPReturns = true;
+            UnknownFPReads = true;
           for (int Pred : Predecessor.Preds) {
             if (Pred < 0 || static_cast<size_t>(Pred) >= Func.Blocks.size()) {
-              UnknownFPReturns = true;
+              UnknownFPReads = true;
               continue;
             }
             Pending.emplace_back(Pred, Func.Blocks[Pred].Ops.size());
@@ -333,9 +342,8 @@ void detectFPParams(
         return true;
       if (Output.Kind == MedVar::Reg &&
           (!TRI.isVectorReg(Output.RegOff) ||
-           (isFPReturnReg(Output.RegOff) &&
-            (UnknownFPReturns ||
-             PossibleFPReturns.contains(valueKey(Output))))))
+           PossibleFPReads.contains(valueKey(Output)) ||
+           (UnknownFPReads && isFPReturnReg(Output.RegOff))))
         return false;
       record(Output, Mask);
       return true;

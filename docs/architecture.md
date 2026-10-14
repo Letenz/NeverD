@@ -5320,7 +5320,10 @@ SSA constant proof, including concatenated masks first written at version zero.
 Missing, ambiguous, loaded or call-defined masks keep the incoming input.
 Intermediate writes to an FP return register remain transport; possible return
 reads use the definitions reaching each RETURN through the current CFG. Unknown
-return paths retain conservative demand. ARM32's register owner describes the
+paths retain conservative demand. Values forwarded through FP return registers
+also remain possible reads at CALL before ABI recovery supplies explicit
+operands.
+ARM32's register owner describes the
 complete D0-D31 bank independently of its D0-D7 argument bank.
 
 Private-frame carrier tracing for dynamic formatting and NSFastEnumeration follows a bounded graph of all current source-local definitions. A cycle alone supplies no frame address; any reachable synthetic entry SP still marks the carrier as frame-derived. Exhausted depth or work bounds reject the proof. Loads and call results remain separate values, and exact slot writes, every reaching path, complete source flow and current SDK effects remain required.

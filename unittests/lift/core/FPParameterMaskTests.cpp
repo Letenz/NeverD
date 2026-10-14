@@ -164,3 +164,20 @@ TEST(FPParameterMask, FpReturnDemandFollowsEveryPredecessor) {
     EXPECT_EQ(F.Params.size(), ClearBothPaths ? 0u : 1u);
   }
 }
+
+TEST(FPParameterMask, APreparedFloatingCallArgumentRemainsObserved) {
+  for (NdOp Opcode : {NdOp::CALL, NdOp::INDIR_CALL}) {
+    MedFunc F = maskedInput(0xff, false, false, armreg::D(0), true);
+    MedOp Call;
+    Call.Opcode = Opcode;
+    Call.Output = value(MedVar::Reg, 40, 4, armreg::R0);
+    Call.addInput(MedVar::makeConst(0x2000, 4));
+    // This stage precedes ABI recovery: the call has only its target.
+    F.Blocks[0].Ops.insert(F.Blocks[0].Ops.end() - 1, Call);
+    F.Params.clear();
+    F.FPParamScalarBytes.clear();
+    detectFPParams(F, F.Blocks[0], getTargetRegInfo(Arch::ARM),
+                   {{{armreg::D(4), 8}, 10}}, Arch::ARM, BinaryFormat::ELF);
+    EXPECT_EQ(F.Params.size(), 1u);
+  }
+}

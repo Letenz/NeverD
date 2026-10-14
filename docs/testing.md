@@ -459,6 +459,8 @@ They cover intermediate D0 transport, D16-D31 scratch registers and both arms
 of an FP return join. `NeverDARM32ObjectImmediateTests` runs the five ARM32 host C
 differentials separately; the Windows EH CI lane runs these cases with its
 Clang 18 toolchain, including NEON zip/mask shapes different from Clang 23.
+The call controls retain explicitly prepared floating registers for both direct
+and indirect calls whose ABI operands have not yet been recovered.
 
 `NeverDX86RdSspAccuracyTests` checks every x86/x64 encoded GPR destination,
 full-width disabled preservation, enabled concrete SSP reads, flags, unknown
