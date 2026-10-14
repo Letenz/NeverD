@@ -29,6 +29,10 @@ on:
         required: false
         type: string
         default: original
+    secrets:
+      NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION:
+        description: 'Optional bearer token for the immutable corpus archive'
+        required: false
 
 permissions:
   contents: read
@@ -41,6 +45,7 @@ jobs:
     env:
       CORPUS_URL: ${{ inputs.corpus_url }}
       CORPUS_SHA256: ${{ inputs.corpus_sha256 }}
+      CORPUS_AUTHORIZATION: ${{ secrets.NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION }}
       NEVERD_REQUIRE_WEB_PRODUCER_CORPUS: '1'
       NEVERD_BUN_142_CORPUS: ${{ github.workspace }}/web-producer-corpus/bun-linux
       NEVERD_BUN_142_CROSS_CORPUS: ${{ github.workspace }}/web-producer-corpus/bun-cross
@@ -63,8 +68,12 @@ jobs:
             printf 'A pinned HTTPS archive, lowercase SHA-256 and known snapshot witness are required.\n' >&2
             exit 1
           fi
-          curl --fail --location --retry 2 --max-time 1200 \
-            --proto '=https' --proto-redir '=https' \
+          curl_options=(--fail --location --retry 2 --max-time 1200
+                        --proto '=https' --proto-redir '=https')
+          if [[ -n "$CORPUS_AUTHORIZATION" ]]; then
+            curl_options+=(--header "Authorization: Bearer $CORPUS_AUTHORIZATION")
+          fi
+          curl "${curl_options[@]}" \
             --output "$RUNNER_TEMP/web-producer-corpus.tar" "$CORPUS_URL"
           printf '%s  %s\n' "$CORPUS_SHA256" \
             "$RUNNER_TEMP/web-producer-corpus.tar" | shasum -a 256 -c -
