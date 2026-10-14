@@ -17,6 +17,7 @@ __declspec(dllimport) NTSTATUS IoCreateDevice(void *, U32, void *, U32, U32, U8,
 __declspec(dllimport) void IoDeleteDevice(void *);
 __declspec(dllimport) void IofCompleteRequest(void *, U8);
 __declspec(dllimport) U32 DbgPrint(const char *, ...);
+__declspec(dllimport) U8 MmIsAddressValid(const volatile void *);
 
 static U8 *Object;
 static void *Device;
@@ -33,7 +34,8 @@ static U32 word(const volatile U8 *P, unsigned Offset) {
   return *(const volatile U32 *)(P + Offset);
 }
 static int consistent(void) {
-  return qword(Object, 40) == (U64)Loader &&
+  return MmIsAddressValid(Loader) && !MmIsAddressValid(0) &&
+         qword(Object, 40) == (U64)Loader &&
          qword(Loader, 48) == qword(Object, 24) &&
          qword(Loader, 56) == qword(Object, 88) &&
          qword(Loader, 56) == (U64)EntryAddress &&

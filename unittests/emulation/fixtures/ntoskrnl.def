@@ -60,6 +60,7 @@ EXPORTS
   DbgPrint
   DbgPrintEx
   MmGetSystemRoutineAddress
+  MmIsAddressValid
   RtlCopyUnicodeString
   RtlCompareUnicodeString
   RtlEqualUnicodeString

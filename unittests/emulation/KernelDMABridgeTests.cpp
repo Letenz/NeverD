@@ -235,6 +235,18 @@ TEST_F(KernelDMABridge, CommonDeviceWritePublishesAfterIrpCompletion) {
 }
 
 TEST_F(KernelDMABridge,
+       ResidentQueryCannotTreatCommonBufferBackingAsAnOrdinaryObject) {
+  const auto Buffer = invoke(1, {Adapter, 32, Scratch + 0x200, 1});
+  ASSERT_NE(Buffer, 0u);
+  // The arena owns a whole page, while the DMA data owner exposes 32 bytes.
+  for (uint64_t Offset : {0u, 31u, 32u, 4095u})
+    reject(Model->call("MmIsAddressValid", {Buffer + Offset}),
+           "non-pool physical");
+  invoke(2, {Adapter, 32, Logical, Buffer, 1});
+  reject(Model->call("MmIsAddressValid", {Buffer + 32}), "retired");
+}
+
+TEST_F(KernelDMABridge,
        CommonFreeChecksExactExtentAndFutureAddressIsNotReused) {
   const auto First = invoke(1, {Adapter, 32, Scratch + 0x200, 0});
   reject(Model->call(method(2), {Adapter, 31, Logical, First, 0}, nullptr),

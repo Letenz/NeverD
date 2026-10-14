@@ -1342,6 +1342,7 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   KernelSnapshotTests.cpp
   KernelUnpackStateTests.cpp
   KernelLoaderViewTests.cpp
+  KernelResidentQueryTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)
 target_include_directories(NeverDKernelSnapshotTests PRIVATE

@@ -327,6 +327,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 抛出来宾异常，无正常 API 返回；真实 C 过滤器／处理器及展开 finally，用户 CPU 访存异常的受限恢复见下文 |
 | `ExAllocatePool2` | 分页／非分页 NX 分配，默认清零；支持未初始化与缓存行对齐标志；无效的必需标志返回 NULL，配额／可执行池以及分配失败引发异常的路径会停止 |
 | `MmGetSystemRoutineAddress` | 通过共享导出清单解析带长度的来宾名称 |
+| `MmIsAddressValid` | IRQL ≤ 2 的有限具体查询：仅在零页未映射时将 NULL 判为假；只有活跃模型对象或非分页池的精确字节具有可读写 RAM 后备时才返回真。分页池、已释放或无主内存、分配填充、非池物理缓冲区及受保护后备均明确停止。查询不授予字段访问、所有权或未来生命周期保证，并保留环境恢复依赖。 |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支持类 `11`（`SystemModuleInformation`）：零长度大小查询，以及模拟提供者和输入驱动的完整 Win64 模块记录。部分缓冲区和未知信息类会明确停止。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 声明的转换后子区间；非缓存 RO／RW、共享别名、精确取消映射；不提供任意物理内存 |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 精确配置的独占／共享 latched 或 level_sensitive 线路；PASSIVE_LEVEL 下传统 ABI 与 Ex 1／2／4，严格连接代次和锁所有权 |
