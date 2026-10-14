@@ -76,8 +76,11 @@ def audit(document: ET.Element, expected: tuple[str, ...], exit_code: int) -> di
 
 
 def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def command(*args: str) -> str:
@@ -117,8 +120,11 @@ def main() -> int:
     # The Rust runtime is a pinned, independently produced AArch64 program.
     # Decode its actual .text rather than supplying synthetic parity words.
     parity = output / "aarch64-rust-runtime.text"
+    parity_source_digest = sha256(ROOT / PARITY_IMAGE)
     subprocess.run([tools["llvm-objcopy"]["path"], "--dump-section", f".text={parity}",
                     str(ROOT / PARITY_IMAGE), str(output / "parity-image.so")], check=True)
+    if sha256(ROOT / PARITY_IMAGE) != parity_source_digest:
+        raise ValueError("parity extraction changed the pinned corpus image")
     if parity.stat().st_size < 4096:
         raise ValueError("AArch64 parity text is missing or unexpectedly small")
     report = {
@@ -127,7 +133,7 @@ def main() -> int:
         "host": {"system": platform.system(), "machine": platform.machine()},
         "binary_sha256": sha256(binary), "neverd_sha256": sha256(neverd),
         "inventory_sha256": sha256(MANIFEST), "tools": tools,
-        "parity_image": str(PARITY_IMAGE), "parity_sha256": sha256(ROOT / PARITY_IMAGE),
+        "parity_image": str(PARITY_IMAGE), "parity_sha256": parity_source_digest,
     }
     env = dict(os.environ, NEVERD_PARITY_BIN=str(parity), NEVERD=str(neverd),
                TMPDIR=str(output / "tmp"))
