@@ -5355,6 +5355,9 @@ independently compiled LLVM at O0/O2 with UBSan traps. They vary branch polarity
 skipped null-pointer reads, aliased memory, indirect observer order, early
 returns, shared exit tails and parallel pointer PHIs over 2,048 inputs per
 level each. Selected-function and module bodies agree without mutating LLVM.
+`NestedOptionalCallsKeepTheirOuterContinuation` retains structured outer
+joins around optional effectful calls and distinct early returns, with the
+same independent O0/O2 comparison of return values, memory and observer order.
 
 `NeverDLLVMCValueTests` compares typed scalar-loop C directly with independently compiled LLVM at O0/O2, with undefined-behavior traps enabled for the generated C. Boundary and deterministic full-width inputs cover narrow multiplication and wrap before shifts, widened multiplication and right shifts, wide-to-boolean truncation, signed comparisons/extensions, precedence, conditional expressions, boolean arithmetic, unsupported-operation fallback and deep materialized expressions. The tests also assert unchanged caller IR and removal of redundant casts.
 

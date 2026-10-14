@@ -139,8 +139,11 @@ class ScalarRegionPlan {
         Continue = Test->getSuccessor(0) == Failure ? 1 : 0;
         Next = Test->getSuccessor(Continue);
       }
+      // Optional calls ending in a pure return already compose as local
+      // guards. Folding them into a ladder can consume an enclosing join
+      // when the terminal arm has no common postdominator.
       if (Tests.empty() || Seen.contains(Next) || Next == Failure ||
-          (Scope && !Scope->contains(Next)))
+          returnOnly(Next) || (Scope && !Scope->contains(Next)))
         continue;
       Tests.push_back({ScalarRegion::Kind::If,
                        Current->getParent(),

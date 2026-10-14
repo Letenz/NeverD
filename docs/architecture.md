@@ -5346,6 +5346,8 @@ shared loop exits. Distinct exit tails may execute inside the loop before
 `break` when their nearest common postdominator supplies one continuation.
 The full block/edge plan must still succeed; unrelated entries, shared tail
 fragments or incompatible loop scopes keep the existing projection.
+Ladders ending in a PHI-only return remain local guards, so a terminal arm
+without a common postdominator cannot consume an enclosing continuation.
 
 Scalar regions also admit internal exits sharing a destination in a loop with a unique latch. An explicit `while (1)` retains the header and body instructions at their original iteration points; exit-edge parallel PHI copies precede the conditional `break`, and continuing-edge copies remain on their own edge. Nested header and internal exits compose without moving observer calls. The complete block/edge plan must still succeed within the existing limits before any output is published. PHI-only return sinks may be repeated after the incoming edge's parallel copies, allowing local failure guards within loops without duplicating effects. Other distinct exit destinations and incomplete early-continuation regions keep the complete fallback. This adds no LLVM rewrite or native ABI evidence.
 

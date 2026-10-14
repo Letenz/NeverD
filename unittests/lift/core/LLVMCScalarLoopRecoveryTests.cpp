@@ -799,6 +799,87 @@ int main(void) {
     compileAndRun(Source + Main, Level, Reference, true);
 }
 
+TEST(LLVMCScalarLoopRecovery, NestedOptionalCallsKeepTheirOuterContinuation) {
+  llvm::LLVMContext Context;
+  auto Module = parse(R"(
+define i64 @optional_calls(ptr %p, i32 %mode, ptr %observe) {
+entry:
+  %enabled = icmp ne i32 %mode, 0
+  br i1 %enabled, label %start, label %finish
+start:
+  %first = call i64 %observe(ptr %p, i64 11)
+  %bad1 = icmp eq i64 %first, 7
+  br i1 %bad1, label %return1, label %body
+return1:
+  ret i64 %first
+body:
+  %bit = and i32 %mode, 1
+  %visit = icmp ne i32 %bit, 0
+  br i1 %visit, label %optional, label %middle
+optional:
+  %second = call i64 %observe(ptr %p, i64 22)
+  %bad2 = icmp eq i64 %second, 7
+  br i1 %bad2, label %return2, label %middle
+return2:
+  ret i64 %second
+middle:
+  %value = load i64, ptr %p, align 1
+  %bit2 = and i32 %mode, 2
+  %visit2 = icmp ne i32 %bit2, 0
+  br i1 %visit2, label %again, label %finish
+again:
+  %third = call i64 %observe(ptr %p, i64 33)
+  %bad3 = icmp eq i64 %third, 7
+  br i1 %bad3, label %return3, label %after
+return3:
+  ret i64 %third
+after:
+  %updated = load i64, ptr %p, align 1
+  br label %finish
+finish:
+  %chosen = phi i64 [0, %entry], [%value, %middle], [%updated, %after]
+  %answer = add i64 %chosen, 1
+  store i64 %answer, ptr %p, align 1
+  ret i64 %answer
+}
+)",
+                      Context);
+  ASSERT_TRUE(Module);
+  const auto Source = emit(*Module);
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  Module->getFunction("optional_calls")->setName("reference_calls");
+  const auto Reference = text(*Module);
+  const std::string Main = R"(
+#include <string.h>
+extern uint64_t reference_calls(void *, uint32_t, void *);
+static uint64_t trace[8];
+static unsigned count;
+static uint64_t observe(void *p, uint64_t tag) {
+  uint64_t value;
+  memcpy(&value,p,8);
+  value=(value*17U)^tag;
+  memcpy(p,&value,8);
+  trace[count++]=value;
+  return value&15;
+}
+int main(void) {
+  for(unsigned seed=0;seed<2048;++seed) {
+    uint64_t a=seed*0x123456789ULL, b=a, saved[8];
+    count=0;
+    uint64_t want=reference_calls(&a,seed&7,(void *)observe);
+    unsigned calls=count;
+    memcpy(saved,trace,calls*8);
+    count=0;
+    if(optional_calls(&b,seed&7,(void *)observe)!=want || a!=b || count!=calls ||
+       memcmp(saved,trace,calls*8)) return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, Reference, true);
+}
+
 TEST(LLVMCScalarLoopRecovery, DistinctLoopExitTailsKeepEffectsAndCommonPhis) {
   llvm::LLVMContext Context;
   auto Module = parse(R"(
