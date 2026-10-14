@@ -6,6 +6,7 @@
 
 #include "RegistrationCxxContinuationTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
+#include "RegistrationSEHJumpNativeTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -1876,6 +1877,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
     registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
                                               *Low.RegistrationStates);
+  if (!Low.RegistrationStates->SEHJumpCaptures.empty())
+    registration_test::checkSEHJumpEdits(*Parent, EH, Image);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
                             llvm::StringRef Diagnostic) {
     SCOPED_TRACE(Label.str());
@@ -2107,12 +2110,14 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           },
           Mutation == 0 ? "no recovered callback" : "normal parent-frame ABI");
   bool HasIncomingFrame = false;
+  unsigned IncomingLoadCount = 0;
   for (const auto &F : *Module)
     for (const auto &Block : F)
       for (const auto &I : Block)
-        HasIncomingFrame |=
-            I.getMetadata(windows_eh_md::RegistrationIncomingFrameAttachment) !=
-            nullptr;
+        if (I.getMetadata(windows_eh_md::RegistrationIncomingFrameAttachment)) {
+          HasIncomingFrame = true;
+          IncomingLoadCount += llvm::isa<llvm::LoadInst>(I);
+        }
   if (HasIncomingFrame)
     for (unsigned Mutation = 0; Mutation != 5; ++Mutation)
       RejectMutation(
@@ -2163,7 +2168,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           : Mutation == 3 ? "source memory"
           : Mutation == 4 ? "execution segment"
                           : "physical stack projection");
-  if (HasIncomingFrame)
+  if (IncomingLoadCount >= 2)
     RejectMutation(
         "swapped incoming recipes keep their original execution events",
         [](llvm::Function &F) {
@@ -2675,7 +2680,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   auto Compiled = compileImageForPatch(*Module, Arch::X86, BinaryFormat::COFF,
                                        CodeVA, Resolve, Image.Base);
   ASSERT_TRUE(Compiled.Success);
-  ASSERT_TRUE(Compiled.Unresolved.empty());
+  ASSERT_TRUE(Compiled.Unresolved.empty())
+      << ::testing::PrintToString(Compiled.Unresolved);
   auto Rows = validateCOFFRegistrationSemanticRows(*Parent, EH, Compiled);
   ASSERT_FALSE(bool(Rows)) << llvm::toString(std::move(Rows));
   va_t Generated = 0;
@@ -2895,6 +2901,11 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
         auto *Callee = Call ? Call->getCalledFunction() : nullptr;
         if (!Callee || !Callee->isDeclaration() || Callee->isIntrinsic())
+          continue;
+        // Jump runtimes have canonical names consumed by LLVM's EH state
+        // pass. Exercise the spelling collision on the ordinary callee.
+        if (Callee->getName() == "_setjmp3" ||
+            Callee->getName() == "_longjmpex")
           continue;
         auto Address = rewrite_source::getOriginalVA(*Callee);
         ASSERT_TRUE(bool(Address)) << llvm::toString(Address.takeError());

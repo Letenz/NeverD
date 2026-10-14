@@ -1481,6 +1481,8 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
   eh/RegistrationSEHExceptionNativeTests.cpp
+  eh/RegistrationSEHJumpNativeTests.cpp
+  eh/RegistrationSEHFrameProofTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
   eh/RegistrationCalleeRecursionTests.cpp
@@ -1936,6 +1938,7 @@ endif()
 # PassIR component), so the stamp/skip contract can be pinned without rebuilding
 # or relinking the ~100-TU NeverDLiftTests binary.
 add_neverd_unittest(NeverDSymSimplifyGuardTests
+  pipeline/PipelineOptNoneTests.cpp
   pipeline/SymSimplifyGuardTests.cpp
   pipeline/SymSimplifyFiniteTests.cpp
   pipeline/SymSimplifyPredicateTests.cpp

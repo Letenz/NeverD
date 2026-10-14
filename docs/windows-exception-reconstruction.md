@@ -192,6 +192,19 @@ filter's pointer slot, unindexed reads and pointer escapes refuse installation.
 This applies to checked EH3, EH4 and EH4+GS frames. Other exception/context
 fields and nonlocal continuations still require separate native contracts.
 
+Checked EH3 parents can capture a private 64-byte jump buffer with `_setjmp3`
+and resume it with `_longjmpex` in the same parent. The source proof binds the
+capture, buffer lifetime, unwind import, continuation, argument slot and scope
+state. LLVM supplies the generated continuation and registration state. Native
+lowering separately restores logical register spills and the captured source
+try level, while retaining source-frame writes made by finally callbacks.
+A checked unwind adapter copies the native buffer and substitutes the runtime
+registration's virtual EBP only for cleanup dispatch; the original physical EBP
+remains available for resumption. The installer independently verifies that
+adapter, the complete register snapshots and every capture/resume call. Reads
+of the original physical buffer representation remain refused. Callback or
+cross-callee resumptions and EH4 jump buffers require additional native contracts.
+
 Incoming cdecl stack slots are projected onto the real caller frame at their
 original memory-operation occurrences, including reads and writes in outlined
 callbacks. Preserved callees need a closed, frame-private call graph: stack
@@ -200,7 +213,7 @@ and callee-saved registers and SP must be restored. Frame provenance survives
 flags, vector aliases, spills and calls. A return-address observer may record
 the regenerated call site for an external observer; reloading that value inside
 the source/callee closure is rejected. Opaque imports other than authenticated
-`RaiseException`, and memory intrinsics without a checked access contract, are
+`RaiseException` and the jump routines described above, and memory intrinsics without a checked access contract, are
 outside this native subset.
 
 The compiler emits indexed scope rows with exact table extent, enclosing state,
