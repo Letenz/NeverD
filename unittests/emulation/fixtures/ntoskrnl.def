@@ -83,3 +83,15 @@ EXPORTS
   IoGetCurrentProcess
   KeStackAttachProcess
   KeUnstackDetachProcess
+  RtlInitAnsiString
+  RtlInitString
+  RtlAppendUnicodeToString
+  RtlAppendUnicodeStringToString
+  RtlPrefixUnicodeString
+  RtlIntegerToUnicodeString
+  RtlUnicodeStringToInteger
+  PsGetCurrentProcessId
+  PsGetProcessId
+  PsGetCurrentProcess
+  PsGetCurrentThread
+  KeGetCurrentThread

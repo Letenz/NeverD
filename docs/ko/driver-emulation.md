@@ -326,6 +326,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | 길이가 지정된 UTF-16 대상에 덧붙임. `STATUS_BUFFER_TOO_SMALL`이면 대상은 바뀌지 않고, 종료 문자는 여유 바이트가 2개 이상일 때만 쓰며, `0x7FFE` 단위를 넘는 NUL 종료 소스도 `STATUS_BUFFER_TOO_SMALL`을 반환함 |
 | `RtlPrefixUnicodeString` | 길이가 지정된 UTF-16 접두사 검사. 대소문자 무시 요청은 서로 다른 단위가 Windows 대소문자 테이블을 필요로 할 때만 중단함 |
 | `RtlIntegerToUnicodeString`, `RtlUnicodeStringToInteger` | 기수 2, 8, 10, 16의 부호 없는 변환. 앞쪽 공백, 부호, `0x`/`0o`/`0b` 접두사, 32비트 순환은 커널 규칙을 따름. 서식 지정에는 종료 문자 공간이 필요하며 길이를 저장한 뒤 `STATUS_BUFFER_OVERFLOW`를 반환함 |
+| `PsGetCurrentProcess`, `PsGetCurrentThread`, `KeGetCurrentThread` | `IoGetCurrentProcess`와 인라인 `GS:[0x188]` 읽기의 내보내기 별칭으로 모든 IRQL에서 사용 가능함. 현재 APC 상태의 프로세스는 연결된 프로세스를 따르지만 현재 논리 스레드의 빌린 불투명 식별자는 바뀌지 않음 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 게스트 예외를 발생시키며 정상 API 반환은 없음. 실제 C 필터/처리기와 unwind finally, 사용자 CPU 메모리 예외의 제한된 재개는 아래 설명 참조 |
 | `ExAllocatePool2` | Paged/nonpaged NX 할당이며 기본값은 0으로 초기화. uninitialized 및 cache-aligned 플래그를 모델링함. 잘못된 필수 플래그는 NULL을 반환하고, quota/executable 풀과 할당 예외 발생은 중단함 |
 | `MmGetSystemRoutineAddress` | 공유 export 목록을 통해 길이가 지정된 게스트 이름을 해석함 |

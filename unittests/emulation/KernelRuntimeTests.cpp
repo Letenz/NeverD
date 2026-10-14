@@ -16,6 +16,7 @@
 #include "os/windows/kernel/KernelModel.h"
 
 #include <initializer_list>
+#include <map>
 #include <string_view>
 
 namespace neverd::emulation {
@@ -749,6 +750,39 @@ TEST_F(KernelRuntime, CountedStringHelpersEnforceArityAndIRQLContracts) {
   invoke("KeLowerIrql", {Lowered});
 }
 
+TEST_F(KernelRuntime, CurrentThreadAndProcessQueriesMatchTheirKernelAliases) {
+  // The 19041.6456 kernel exports PsGetCurrentThread and KeGetCurrentThread as
+  // one routine (RVA 0x2c9210), and PsGetCurrentProcess as IoGetCurrentProcess
+  // (0x2bbc90).
+  EXPECT_NE(failure("PsGetCurrentThread", {}).find("active execution"),
+            std::string::npos);
+  EXPECT_NE(failure("PsGetCurrentProcess", {}).find("thread"),
+            std::string::npos);
+  Model->enterExecution(profile::StackBase, 0x42);
+  const uint64_t Thread = invoke("PsGetCurrentThread", {});
+  ASSERT_NE(Thread, 0u);
+  EXPECT_EQ(invoke("KeGetCurrentThread", {}), Thread);
+  auto Inline = Model->currentThreadObject();
+  ASSERT_TRUE(bool(Inline)) << llvm::toString(Inline.takeError());
+  EXPECT_EQ(*Inline, Thread);
+  const uint64_t Process = invoke("IoGetCurrentProcess", {});
+  ASSERT_NE(Process, 0u);
+  EXPECT_EQ(invoke("PsGetCurrentProcess", {}), Process);
+  EXPECT_EQ(invoke("PsGetProcessId", {Process}), 4u);
+  // Both identities are available at any IRQL.
+  const auto Previous = invoke("KfRaiseIrql", {15});
+  EXPECT_EQ(invoke("PsGetCurrentThread", {}), Thread);
+  EXPECT_EQ(invoke("PsGetCurrentProcess", {}), Process);
+  invoke("KeLowerIrql", {Previous});
+  // Each logical thread keeps its own identity.
+  Model->enterExecution(profile::StackBase, 0x43);
+  const uint64_t Other = invoke("PsGetCurrentThread", {});
+  EXPECT_NE(Other, Thread);
+  EXPECT_EQ(invoke("PsGetCurrentProcess", {}), Process);
+  Model->enterExecution(profile::StackBase, 0x42);
+  EXPECT_EQ(invoke("PsGetCurrentThread", {}), Thread);
+}
+
 TEST_F(KernelRuntime, DebugIntegersUseWindowsWidthsAndFormattingRules) {
   EXPECT_EQ(
       formatted(
@@ -884,6 +918,46 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
   EXPECT_EQ(LegacyCalls, 3u);
   EXPECT_EQ(ModuleQueries, 3u);
   EXPECT_EQ(CounterCalls, 3u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_strings.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 2u);
+  EXPECT_EQ(Result->Messages[0], "strings \\Device\\Sample42 42 -42 driver 32");
+  // The overflow still stores the formatted length in the short record.
+  EXPECT_EQ(Result->Messages[1], "status c0000023 80000005 10");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["RtlInitAnsiString"], 1u);
+  EXPECT_EQ(Calls["RtlInitString"], 1u);
+  EXPECT_EQ(Calls["RtlAppendUnicodeToString"], 2u);
+  EXPECT_EQ(Calls["RtlAppendUnicodeStringToString"], 2u);
+  EXPECT_EQ(Calls["RtlPrefixUnicodeString"], 2u);
+  EXPECT_EQ(Calls["RtlIntegerToUnicodeString"], 2u);
+  EXPECT_EQ(Calls["RtlUnicodeStringToInteger"], 2u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_identity.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  EXPECT_EQ(Result->Messages[0], "identity 4");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name : {"PsGetCurrentProcess", "IoGetCurrentProcess",
+                           "PsGetCurrentThread", "KeGetCurrentThread"})
+    EXPECT_EQ(Calls[Name], 1u) << Name;
 }
 } // namespace
 } // namespace neverd::emulation
