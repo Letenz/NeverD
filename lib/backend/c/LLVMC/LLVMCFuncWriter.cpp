@@ -2377,6 +2377,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   SpLocalNameCandidates.clear();
   SpLocalAmbiguousNames.clear();
   FrameSlots.clear();
+  SlotReadAtUses.clear();
   FrameRecord = false;
   FrameRecordName.clear();
   OverlappingFrameAccessOffsets.clear();
@@ -3151,8 +3152,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
                                        /*Synthesize=*/Size >= 16,
                                        /*Overlay=*/false, LI->getType())) {
           ValueTypes[LI] = Acc->Type;
-          // A frame record member is read where the load is.
-          if (!FrameRecord)
+          if (slotReadAtUses(*LI))
             ValueTexts[LI] = Acc->Text;
         } else if (auto Acc = typedIndexAccess(LI->getPointerOperand())) {
           ValueTypes[LI] = Acc->Type;
@@ -3297,7 +3297,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
                                        /*Synthesize=*/Size >= 16,
                                        /*Overlay=*/false, LI->getType())) {
           ValueTypes[LI] = Acc->Type;
-          if (!FrameRecord) {
+          if (slotReadAtUses(*LI)) {
             ValueTexts[LI] = Acc->Text;
             Changed = true;
           }
@@ -4251,8 +4251,8 @@ bool LLVMCWriter::storedTypedMemberLoad(const llvm::Value *Stored) const {
   const uint16_t Size = llvmAccessSize(LI->getType());
   if (typedRecordAccess(LI->getPointerOperand(), Size))
     return true;
-  // A frame record member is read into a temporary where the load is.
-  return !FrameRecord &&
+  // A slot read where the load is prints as its temporary.
+  return slotReadAtUses(*LI) &&
          frameSlotAccess(LI->getPointerOperand(), Size, /*AddressOf=*/false,
                          /*Synthesize=*/false, /*Overlay=*/false, LI->getType())
              .has_value();
@@ -8383,7 +8383,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
           if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
               typedRecordAccess(LI->getPointerOperand(),
                                 llvmAccessSize(LI->getType())) ||
-              (!FrameRecord &&
+              (slotReadAtUses(*LI) &&
                frameSlotAccess(LI->getPointerOperand(),
                                llvmAccessSize(LI->getType()),
                                /*AddressOf=*/false,

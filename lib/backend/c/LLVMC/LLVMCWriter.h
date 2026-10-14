@@ -888,6 +888,11 @@ public:
   bool frameRecordAdmits(uint64_t Off, const TypeRef &Ty) const;
   /// The frame record's declaration, from the members the body printed.
   std::string frameRecordDeclaration(const llvm::AllocaInst &Frame) const;
+  /// Whether a named frame slot \p Load reads can print at each use: every
+  /// use prints later in its block, and nothing between may write memory.
+  /// Otherwise the load reads the slot into its temporary where it is.
+  bool slotReadAtUses(const llvm::LoadInst &Load) const;
+  mutable std::map<const llvm::LoadInst *, bool> SlotReadAtUses;
   /// Different overlapping memory extents cannot become independent scalar
   /// locals. Keep unnamed views of those bytes in the shared backing frame.
   std::set<uint64_t> OverlappingFrameAccessOffsets;

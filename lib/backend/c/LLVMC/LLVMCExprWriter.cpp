@@ -17,6 +17,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
+#include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -1421,6 +1422,78 @@ std::string LLVMCWriter::slotText(const NamedFrameSlot &Slot) const {
   return FrameRecord ? FrameRecordName + "." + Slot.Name : Slot.Name;
 }
 
+bool LLVMCWriter::slotReadAtUses(const llvm::LoadInst &Load) const {
+  if (const auto Known = SlotReadAtUses.find(&Load);
+      Known != SlotReadAtUses.end())
+    return Known->second;
+  auto Decide = [&] {
+    if (!Load.isSimple())
+      return false;
+    // The statements that print the value: its users, through expressions
+    // printed inside theirs. A call may later print inside its own user. A
+    // copy stored to a scalar home can print again where the home is read.
+    const llvm::BasicBlock *Block = Load.getParent();
+    const llvm::Instruction *Last = nullptr;
+    llvm::SmallVector<const llvm::Instruction *, 8> Work{&Load};
+    llvm::SmallPtrSet<const llvm::Instruction *, 16> Seen;
+    while (!Work.empty()) {
+      const llvm::Instruction *Value = Work.pop_back_val();
+      for (const llvm::User *User : Value->users()) {
+        const auto *Use = llvm::dyn_cast<llvm::Instruction>(User);
+        if (!Use || Use->getParent() != Block || llvm::isa<llvm::PHINode>(Use))
+          return false;
+        // The home's reloads print the copy too: follow them.
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(Use);
+            Store && Store->getValueOperand() == Value)
+          if (const auto *Home = llvm::dyn_cast<llvm::AllocaInst>(
+                  Store->getPointerOperand()->stripPointerCasts());
+              Home && Home != SyntheticFrame)
+            for (const llvm::User *HomeUser : Home->users()) {
+              if (llvm::isa<llvm::StoreInst>(HomeUser) &&
+                  llvm::cast<llvm::StoreInst>(HomeUser)->getPointerOperand() ==
+                      Home)
+                continue;
+              const auto *Reload = llvm::dyn_cast<llvm::LoadInst>(HomeUser);
+              if (!Reload || Reload->getParent() != Block)
+                return false;
+              // An earlier reload reads an older value of the home.
+              if (!Store->comesBefore(Reload))
+                continue;
+              if (Seen.insert(Reload).second) {
+                if (!Last || Last->comesBefore(Reload))
+                  Last = Reload;
+                Work.push_back(Reload);
+              }
+            }
+        if (!Seen.insert(Use).second)
+          continue;
+        const bool Inline = Analysis.Inlinable.count(Use) != 0;
+        if (!Inline && (!Last || Last->comesBefore(Use)))
+          Last = Use;
+        if (Inline || llvm::isa<llvm::CallBase>(Use))
+          Work.push_back(Use);
+      }
+    }
+    // A store to another local cannot change the frame bytes.
+    auto WritesFrame = [&](const llvm::Instruction &I) {
+      if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I))
+        if (const auto *Local = llvm::dyn_cast<llvm::AllocaInst>(
+                Store->getPointerOperand()->stripPointerCasts());
+            Local && Local != SyntheticFrame && Store->isSimple())
+          return false;
+      return I.mayWriteToMemory();
+    };
+    size_t Scanned = 0;
+    for (const llvm::Instruction *Between = Load.getNextNode();
+         Last && Between != Last; Between = Between->getNextNode())
+      if (!Between || ++Scanned > limits::kMaxLLVMCSlotReadScan ||
+          WritesFrame(*Between))
+        return false;
+    return true;
+  };
+  return SlotReadAtUses[&Load] = Decide();
+}
+
 bool LLVMCWriter::frameRecordAdmits(uint64_t Off, const TypeRef &Ty) const {
   const uint64_t Size = frameMemberSize(Ty);
   const auto *Bytes =
@@ -2758,9 +2831,9 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
       return AddressText("&" + Acc->Text);
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    // A frame record member is read where the load is, into its temporary:
-    // a call between the load and a use can change the escaped bytes.
-    if (!FrameRecord)
+    // A slot that memory may change before a use is read where the load is,
+    // into its temporary.
+    if (slotReadAtUses(*LI))
       if (auto Acc = frameSlotAccess(LI->getPointerOperand(),
                                      llvmAccessSize(LI->getType()),
                                      /*AddressOf=*/false, /*Synthesize=*/false,
