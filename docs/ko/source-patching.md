@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
+<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
 
 [← Documentation Index](README.md)
 
@@ -169,3 +169,5 @@ Windows 네이티브 프로세스 검증 [a4a5ae3cb](https://github.com/NeverSig
 이전 변환 프로필의 204회 관측은 과거 기록이며 현재 C 전용 계약의 근거가 아닙니다. 현재 세 NeverC 경로는 C를 사용하고 Clang C++ FH3는 별도로 검증합니다. macOS x64는 Rosetta 2를 사용하며 Unicorn/QEMU CPU 결과는 네이티브 OS와 언와인더 검증을 대신하지 않습니다.
 
 AArch64 명령어 재배치에는 명시적인 RELA 가수가 필요합니다. 암시적 REL 명령어 가수는 게시 전에 거부되며 명령어 비트 필드를 일반 데이터로 해석하지 않습니다. 지원되는 PREL64 데이터 재배치는 REL과 RELA 모두에서 전체 부호 있는 가수를 유지합니다.
+
+C 전용 생성기 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213)은 네이티브 프로세스 관측 312회를 모두 통과했습니다. Windows x64와 ARM64는 각각 36회, Linux x64와 ARM64는 각각 120회입니다. Linux는 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체의 아홉 예외 시나리오를 각각 검증하며 NeverC의 IR, 객체, hosted DynCode 입력은 모두 C입니다.

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
+<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
 
 [← Documentation Index](README.md)
 
@@ -169,3 +169,5 @@ ctest --test-dir build-source -L \
 تعد المشاهدات الـ204 لملف الترجمة السابق سجلا تاريخيا ولا تثبت عقد C الخالصة الحالي. تستخدم مسارات NeverC الثلاثة الحالية لغة C، وتختبر Clang C++ FH3 منفصلة. تستخدم macOS x64 بيئة Rosetta 2. لا تحل نتائج CPU في Unicorn/QEMU محل التحقق الأصلي من النظام وفك المكدس.
 
 تتطلب إعادة تموضع تعليمات AArch64 قيما مضافة صريحة من RELA. ترفض القيم المضافة الضمنية لتعليمات REL قبل النشر، ولا تفسر حقول بتات التعليمات كبيانات عادية. تحتفظ إعادة تموضع بيانات PREL64 المدعومة بالقيم المضافة الموقعة كاملة في REL وRELA.
+
+اجتاز تحقق منتج C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) جميع مشاهدات العمليات الأصلية البالغ عددها 312:‏ 36 لكل من Windows x64 وARM64، و120 لكل من Linux x64 وARM64. يتحقق Linux بصورة منفصلة من تسعة سيناريوهات استثناءات لكل من وسيط Clang وكائنات Clang الأصلية وكائنات GCC الأصلية؛ وجميع مدخلات NeverC لوسيط IR والكائنات وhosted DynCode مكتوبة بلغة C.

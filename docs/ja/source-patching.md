@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
+<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
 
 [← Documentation Index](README.md)
 
@@ -169,3 +169,5 @@ Windows のネイティブプロセス検証 [a4a5ae3cb](https://github.com/Neve
 旧変換プロファイルの 204 回の観測は履歴であり、現在の C 専用契約の証拠にはなりません。現在の三つの NeverC 経路は C を使用し、Clang C++ FH3 は別途検証します。macOS x64 は Rosetta 2 を使います。Unicorn/QEMU の CPU 結果はネイティブ OS やアンワインダの検証を代替しません。
 
 AArch64 の命令再配置には明示的な RELA 加数が必要です。暗黙の REL 命令加数は公開前に拒否され、命令ビットフィールドを通常のデータとして解釈しません。対応する PREL64 データ再配置は、REL と RELA の両方で完全な符号付き加数を保持します。
+
+C 専用の生成元検証 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) は 312 回のネイティブプロセス観測すべてに合格しました。Windows x64 と ARM64 は各 36 回、Linux x64 と ARM64 は各 120 回です。Linux は Clang IR、Clang ネイティブオブジェクト、GCC ネイティブオブジェクトの九つの例外シナリオを個別に検証します。NeverC の IR、オブジェクト、hosted DynCode 入力はすべて C です。

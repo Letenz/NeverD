@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
+<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
 
 [← Documentation Index](README.md)
 
@@ -169,3 +169,5 @@ Die native Qualifikation verwendet NeverC `182fd2c5dc`, unabhängige Originale u
 Die 204 Beobachtungen des früheren Übersetzungsprofils sind historische Belege und weisen den aktuellen C-Vertrag nicht nach. Die drei aktuellen NeverC-Wege verwenden C; Clang C++ FH3 wird getrennt geprüft. macOS x64 nutzt Rosetta 2. Unicorn/QEMU ersetzen keine nativen Betriebssystem- und Unwinder-Prüfungen.
 
 AArch64-Instruktionsrelokationen benötigen explizite RELA-Addenden. Implizite REL-Instruktionsaddenden werden vor der Veröffentlichung abgelehnt; ihre Befehlsbitfelder werden nicht als gewöhnliche Daten interpretiert. Unterstützte PREL64-Datenrelokationen behalten bei REL und RELA die vollständigen vorzeichenbehafteten Addenden.
+
+Die C-Produzentenqualifizierung [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) bestand alle 312 nativen Prozessbeobachtungen: je 36 unter Windows x64 und ARM64 sowie je 120 unter Linux x64 und ARM64. Linux prüft neun Ausnahmeszenarien getrennt für Clang IR, native Clang-Objekte und native GCC-Objekte; alle NeverC-Eingaben für IR, Objekte und hosted DynCode sind C.

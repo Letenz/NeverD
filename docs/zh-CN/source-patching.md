@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: de56accce00ed0b8edbad6fe78cc66e5b82f07b938b206a39066fba08c9d3960 -->
+<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
 
 [← Documentation Index](README.md)
 
@@ -169,3 +169,5 @@ Windows 原生进程验收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/acti
 旧翻译配置的 204 次观测凭据仅保留为历史记录，不能证明当前纯 C 编译契约。当前三条 NeverC 路径都使用 C，Clang C++ FH3 另行验证。macOS x64 使用 Rosetta 2；Unicorn/QEMU 的 CPU 结果不能代替原生操作系统与异常展开验证。
 
 AArch64 指令重定位要求显式 RELA 加数。隐式 REL 指令加数会在发布前被拒绝，不会把指令位域当成普通数据。受支持的 PREL64 数据重定位在 REL、RELA 下均保留完整有符号加数。
+
+纯 C 生产端验证 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) 已通过全部 312 次原生进程观测：Windows x64、ARM64 各 36 次，Linux x64、ARM64 各 120 次。Linux 分别验证 Clang IR、Clang 原生对象和 GCC 原生对象的九种异常场景；NeverC 的 IR、对象和 hosted DynCode 输入均为 C。
