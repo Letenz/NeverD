@@ -327,6 +327,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `RtlPrefixUnicodeString` | 길이가 지정된 UTF-16 접두사 검사. 대소문자 무시 요청은 서로 다른 단위가 Windows 대소문자 테이블을 필요로 할 때만 중단함 |
 | `RtlIntegerToUnicodeString`, `RtlUnicodeStringToInteger` | 기수 2, 8, 10, 16의 부호 없는 변환. 앞쪽 공백, 부호, `0x`/`0o`/`0b` 접두사, 32비트 순환은 커널 규칙을 따름. 서식 지정에는 종료 문자 공간이 필요하며 길이를 저장한 뒤 `STATUS_BUFFER_OVERFLOW`를 반환함 |
 | `PsGetCurrentProcess`, `PsGetCurrentThread`, `KeGetCurrentThread` | `IoGetCurrentProcess`와 인라인 `GS:[0x188]` 읽기의 내보내기 별칭으로 모든 IRQL에서 사용 가능함. 현재 APC 상태의 프로세스는 연결된 프로세스를 따르지만 현재 논리 스레드의 빌린 불투명 식별자는 바뀌지 않음 |
+| `PsGetCurrentThreadId`, `PsGetThreadId` | 살아 있는 스레드 객체의 클라이언트 ID. 처음 관찰될 때 `0x2000`부터 4씩 할당하며 모델링된 프로세스 ID를 건너뛰고 재사용하지 않음. 발급된 스레드 ID와 같은 요청자 ID를 가진 요청은 거부함. `PsCreateSystemThread`도 `ClientId`로 시스템 프로세스 ID와 스레드 ID를 반환함. 포그라운드 디스패치는 하나의 논리 스레드에서 실행되므로 요청자 프로세스가 달라도 그 ID는 같지만 `PsGetCurrentProcessId`는 요청자를 따름. `PsGetThreadId`는 IRQL ≤ `DISPATCH_LEVEL`이 필요함 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 게스트 예외를 발생시키며 정상 API 반환은 없음. 실제 C 필터/처리기와 unwind finally, 사용자 CPU 메모리 예외의 제한된 재개는 아래 설명 참조 |
 | `ExAllocatePool2` | Paged/nonpaged NX 할당이며 기본값은 0으로 초기화. uninitialized 및 cache-aligned 플래그를 모델링함. 잘못된 필수 플래그는 NULL을 반환하고, quota/executable 풀과 할당 예외 발생은 중단함 |
 | `MmGetSystemRoutineAddress` | 공유 export 목록을 통해 길이가 지정된 게스트 이름을 해석함 |
