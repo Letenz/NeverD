@@ -25,19 +25,20 @@ def main():
     source = Path("lib/ir/low/CallRegisterEffects.cpp")
     original = source.read_bytes()
     text = original.decode("utf-8")
+    newline = "\r\n" if b"\r\n" in original else "\n"
     ctad = "llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters)"
     count = ("const std::optional<unsigned> Count =\n"
-             "        Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;")
+             "        Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;").replace("\n", newline)
     if text.count(ctad) != 1 or text.count(count) != 1:
         raise ValueError("The isolated source no longer matches the reported failure")
     variants = [
         ("original-o2", text, ""),
         ("original-od", text, " /Od"),
         ("explicit-arrayref-o2", text.replace(ctad, "llvm::ArrayRef<uint64_t>(kLinuxX64SyscallArgumentRegisters)"), ""),
-        ("explicit-optional-o2", text.replace(count,
+        ("explicit-optional-o2", text.replace(count, (
             "std::optional<unsigned> Count;\n"
             "    if (Number)\n"
-            "      Count = linuxX64SyscallArgumentCount(*Number);"), ""),
+            "      Count = linuxX64SyscallArgumentCount(*Number);").replace("\n", newline)), ""),
     ]
     results = []
     try:
