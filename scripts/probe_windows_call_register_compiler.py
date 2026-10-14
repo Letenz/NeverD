@@ -32,27 +32,35 @@ def variants(text, newline):
     begin = text.index(marker)
     end = text.index("/// The scalar writes", begin)
     prefix = text[:text.index("namespace neverd {")]
-    rest = ("const llvm::ArrayRef<uint64_t> Rest =\n"
-            "        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);").replace("\n", newline)
-    if text.count(mapped) != 3 or text.count(rest) != 1:
-        raise ValueError("Expected the three original map sites and exact register slice")
-    span = text.replace("#include <optional>", "#include <optional>" + newline + "#include <span>")
-    span = span.replace(mapped, "std::map<size_t, std::span<const uint64_t>>")
-    span = span.replace(rest, ("const std::span<const uint64_t> Rest =\n"
-        "        std::span<const uint64_t>(kLinuxX64SyscallArgumentRegisters).subspan(*Count);").replace("\n", newline))
-    counts = text.replace(mapped, "std::map<size_t, unsigned>").replace(rest, "")
-    counts = counts.replace("Unread[I] = Rest;", "Unread[I] = *Count;")
-    counts = counts.replace("llvm::any_of(Unread->second,", "llvm::any_of(llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(Unread->second),")
-    array_map = prefix + newline + "namespace neverd {" + newline + mapped + " minimalArrayMap() { return {}; }" + newline + "}" + newline
-    span_map = array_map.replace("#include <optional>", "#include <optional>" + newline + "#include <span>").replace(mapped, "std::map<size_t, std::span<const uint64_t>>")
-    isolated = prefix + newline + "namespace neverd {" + newline + text[begin:end] + newline + "}" + newline
+    close = newline + "} // namespace" + newline + "} // namespace neverd" + newline
+    save_begin = text.index("std::set<std::pair<size_t, size_t>>")
+    save_end = text.index("/// The byte and word writes", save_begin)
+    masked_begin = text.index("void findMaskedMerges")
+    masked_end = text.index("/// The argument registers", masked_begin)
+
+    def stub(start, stop, result):
+        signature_end = text.index("{", start, stop)
+        return text[start:signature_end] + "{ " + result + " }" + newline + newline
+
+    no_save = text[:save_begin] + stub(save_begin, save_end, "return {};") + text[save_end:]
+    no_masked = text[:masked_begin] + stub(masked_begin, masked_end, "") + text[masked_end:]
+    no_both = (text[:save_begin] + stub(save_begin, save_end, "return {};") +
+               text[save_end:masked_begin] + stub(masked_begin, masked_end, "") + text[masked_end:])
+    no_unread = text[:begin] + stub(begin, end, "return {};") + text[end:]
+    first_helper = text.index("GPRFamilyMask familyBit")
+    moved = text[:first_helper] + text[begin:end] + text[first_helper:begin] + text[end:]
+    isolated = prefix + newline + "namespace neverd { namespace {" + newline + text[begin:end] + close
     return [
         ("original-o2", text, ""),
-        ("minimal-arrayref-map", array_map, ""),
-        ("minimal-span-map", span_map, ""),
-        ("isolated-function", isolated, ""),
-        ("span-whole-file", span, ""),
-        ("count-index-whole-file", counts, ""),
+        ("through-masked-merges", text[:masked_end] + close, ""),
+        ("through-unread", text[:end] + close, ""),
+        ("isolated-in-anonymous", isolated, ""),
+        ("without-save-area-body", no_save, ""),
+        ("without-masked-merge-body", no_masked, ""),
+        ("without-both-earlier-bodies", no_both, ""),
+        ("without-unread-body", no_unread, ""),
+        ("unread-before-earlier-functions", moved, ""),
+        ("original-syntax-only", text, " /Zs"),
     ]
 
 
