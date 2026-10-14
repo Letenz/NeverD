@@ -873,6 +873,9 @@ public:
     /// In a frame record, the type the member was laid out with. Later
     /// display typing does not move or widen it.
     TypeRef MemberType;
+    /// `Type` is a debug symbol's: the object's extent, which a prototype's
+    /// pointee (one element of an array, say) must not replace.
+    bool DebugType = false;
   };
   mutable std::map<uint64_t, NamedFrameSlot> FrameSlots;
   /// The frame must stay one object (an escape no type bounds, a span that

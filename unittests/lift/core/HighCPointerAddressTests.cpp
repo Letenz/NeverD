@@ -41523,6 +41523,98 @@ int main(void) { return stale_home() != 10; }
 )");
 }
 
+TEST(LLVMCPointerAddresses, ADebugArrayKeepsItsExtentAcrossAPrototype) {
+  // `POINT pts[4]; pts[0].x = 1; pts[3].y = 2; fill(pts); return pts[3].y;`
+  // with `fill(POINT *)`: the prototype's pointee is one element, the debug
+  // symbol states the object, and every access stays inside it.
+  auto Point = NdType::makeNamedRecord("POINT", 8);
+  Point->FieldDisplayNames = {"x", "y"};
+  Point->FieldDisplayOffsets = {0, 4};
+  Point->FieldDisplayTypes = {NdType::makeInt(4, true),
+                              NdType::makeInt(4, true)};
+  auto Points = NdType::makeArray(Point, 4, 32);
+  class ArrayDbg : public NullDebugContext {
+  public:
+    TypeRef PointTy, PointsTy;
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "fill";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params.emplace_back("pts", NdType::makePtr(PointTy));
+      return FS;
+    }
+    std::optional<VariableSym> resolveVariable(va_t FuncAddr,
+                                               int64_t Disp) const override {
+      if (FuncAddr != 0x140001000 || Disp != -40)
+        return std::nullopt;
+      VariableSym Var;
+      Var.Name = "pts";
+      Var.Type = PointsTy;
+      Var.StackOffset = Disp;
+      return Var;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  Dbg.PointTy = Point;
+  Dbg.PointsTy = Points;
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-array-local", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Type *Ptr = llvm::PointerType::getUnqual(Context);
+  auto *Fill = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false),
+      llvm::GlobalValue::ExternalLinkage, "fill", Module);
+  rewrite_source::setOriginalVA(*Fill, 0x140002000);
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(I32, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "array_local", Module);
+  rewrite_source::setOriginalVA(*Function, 0x140001000);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 96), nullptr, "frame");
+  llvm::Value *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 72), "frame_end");
+  llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
+  auto At = [&](int64_t Disp) {
+    return Builder.CreateIntToPtr(
+        Builder.CreateAdd(Rsp, llvm::ConstantInt::get(I64, Disp)), Ptr);
+  };
+  Builder.CreateStore(llvm::ConstantInt::get(I32, 1), At(-40));
+  Builder.CreateStore(llvm::ConstantInt::get(I32, 2), At(-40 + 28));
+  Builder.CreateCall(Fill, {At(-40)});
+  Builder.CreateRet(Builder.CreateLoad(I32, At(-40 + 28)));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  OS.flush();
+  EXPECT_NE(Source.find("POINT pts[4];"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("*(uint32_t *)((char *)&pts + 28) = 2;"),
+            std::string::npos)
+      << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+typedef struct { int32_t x, y; } POINT;
+void fill(void *out) {
+  POINT *pts = (POINT *)out;
+  for (int i = 0; i < 4; ++i)
+    pts[i].y = pts[i].y == 2 ? 9 : 5;
+}
+)" + Source + R"(
+int main(void) { return array_local() != 9; }
+)");
+}
+
 TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
   auto NarrowTy = NdType::makeNamedRecord("PtrBox", 8);
   NarrowTy->FieldDisplayNames = {"p"};
