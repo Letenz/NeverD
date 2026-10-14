@@ -5680,6 +5680,16 @@ runs the original eleven-case matrix, including the complete x64 xcpt4 image.
 deadline. This accommodates slower hosts producing the large source body;
 the static proof work limits and output assertions do not change.
 
+`RegisterPairReturnTest` checks x86 and ARM32 high-word evidence across
+independent returns, transparent predecessors, clobbering calls, PHI inputs and
+tail calls. `RegisterPairReturnPipeline` keeps a partial-register callee and a
+`memset` veneer scalar despite callers reading EDX. The shared
+`MedSSAMultiRoot.UnwrittenPhiEdgeCannotBorrowASiblingDefinition` checks x86,
+x64, ARM32 and AArch64 merges. The PE32 xcpt4 corpus gate also requires the
+three affected EH entries and the memset veneer to retain their bodies without
+an unknown-return skeleton. These are source/IR checks, not native EH execution
+certificates.
+
 Run the original x64 executable locally and verify the separate source result:
 
 ```bash

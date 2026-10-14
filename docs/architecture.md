@@ -1682,6 +1682,15 @@ For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
+`PipelineWideIntReturnEvidence` checks the high-word carrier on every return
+before the shared pipeline widens an x86/ARM32 function to a register-pair
+result. Caller liveness only proposes candidates. Independent entries, unknown
+PHI inputs and clobbering calls cannot supply a missing high word; tail-call
+propagation starts from established results rather than mutually justifying
+forwarders. `MedSSA` publishes an explicit unspecified PHI input when a
+predecessor has no reaching definition, preventing constant propagation from
+borrowing a sibling's first version-zero write.
+
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and
 LLVM emission use the same query. Win64 has four positional floating slots

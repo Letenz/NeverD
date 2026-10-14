@@ -1007,7 +1007,15 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         continue;
       for (auto &Phi : Func.Blocks[S].Phis) {
         for (auto &[Pred, Arg] : Phi.Args) {
-          if (Pred == F.B)
+          if (Pred != F.B)
+            continue;
+          // A PHI can be placed for a register that no instruction reads on
+          // this edge. With no reaching definition, version zero may name a
+          // sibling's first write; publishing it would let propagation borrow
+          // that sibling's constant for this path.
+          if (VarStack[Arg.Id].empty())
+            Arg = MedVar::makeUnspecified(Arg.Size, TargetArch);
+          else
             Arg.SSAVer = GetVersion(Arg.Id);
         }
       }
