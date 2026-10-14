@@ -323,6 +323,121 @@ bool isPlainInteger(const TypeRef &T) {
 
 } // anonymous namespace
 
+void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
+                                            uint64_t FrameBaseOffset,
+                                            uint64_t StorageSize) {
+  FrameRecordMembers.clear();
+  // Every access at a displacement: its type, and whether it is a plain
+  // integer read or write a member could print.
+  struct Access {
+    TypeRef Type;
+    bool Plain = false;
+  };
+  std::map<int64_t, std::vector<Access>> Accesses;
+  auto Note = [&](const HighExpr &Address, const TypeRef &Type,
+                  NdMemoryOrdering Ordering, NdMemoryAddressSpace Space) {
+    if (const auto Disp = certifiedFrameStorageDisplacement(Address))
+      Accesses[*Disp].push_back(
+          {Type, isPlainInteger(Type) && Ordering == NdMemoryOrdering::None &&
+                     Space == NdMemoryAddressSpace::Default});
+  };
+  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0])
+      Note(*E.Operands[0], E.Type, E.MemoryOrdering, E.MemoryAddressSpace);
+    E.forEachChildExpr([&](const ExprPtr &Child) {
+      if (Child)
+        Visit(*Child);
+    });
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal)
+      Note(*S.StoreAddr, S.StoreVal->Type, S.MemoryOrdering,
+           S.MemoryAddressSpace);
+    if (S.Dst)
+      Visit(*S.Dst);
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        Visit(*E);
+    });
+  });
+  // A debug object of another type keeps its bytes raw, as in LLVM C: its
+  // layout comes from the reader's headers, not from one integer member.
+  std::set<int64_t> Starts;
+  for (const auto &Entry : Accesses)
+    Starts.insert(Entry.first);
+  for (const auto &Entry : FrameSlotNamesBeforeStorage)
+    Starts.insert(Entry.first);
+  std::map<int64_t, TypeRef> DebugTypes;
+  std::vector<std::pair<int64_t, int64_t>> RawObjects;
+  for (int64_t Start : Starts)
+    if (TypeRef DebugTy = debugTypeForDisplacement(Func.Entry, Start)) {
+      if (!isPlainInteger(DebugTy))
+        RawObjects.push_back(
+            {Start, Start + std::max<int64_t>(DebugTy->Size, 1)});
+      DebugTypes[Start] = std::move(DebugTy);
+    }
+  std::set<std::string> Names;
+  for (const auto &[Disp, List] : Accesses) {
+    const TypeRef &Type = List.front().Type;
+    if (!llvm::all_of(List, [&](const Access &A) {
+          return A.Plain && A.Type->Size == Type->Size &&
+                 A.Type->IsSigned == Type->IsSigned;
+        }))
+      continue;
+    const int64_t At = static_cast<int64_t>(FrameBaseOffset) + Disp;
+    if (At < 0 || static_cast<uint64_t>(At) + Type->Size > StorageSize ||
+        At % Type->Size)
+      continue;
+    if (const auto Debug = DebugTypes.find(Disp);
+        Debug != DebugTypes.end() && Debug->second->Size != Type->Size)
+      continue;
+    const int64_t End = Disp + static_cast<int64_t>(Type->Size);
+    if (llvm::any_of(RawObjects, [&](const auto &Object) {
+          return Object.first < End && Disp < Object.second;
+        }))
+      continue;
+    const bool Clear = llvm::none_of(Accesses, [&](const auto &Other) {
+      return Other.first != Disp &&
+             llvm::any_of(Other.second, [&](const Access &A) {
+               const int64_t Size = A.Type && A.Type->Size ? A.Type->Size : 1;
+               return Other.first < End && Disp < Other.first + Size;
+             });
+    });
+    if (!Clear)
+      continue;
+    std::string Name;
+    if (const auto Slot = FrameSlotNamesBeforeStorage.find(Disp);
+        Slot != FrameSlotNamesBeforeStorage.end())
+      Name = Slot->second;
+    // `gapXX` names the record's gaps.
+    if (Name.empty() || Names.count(Name) ||
+        llvm::StringRef(Name).starts_with("gap")) {
+      const uint64_t Magnitude = Disp < 0
+                                     ? uint64_t{0} - static_cast<uint64_t>(Disp)
+                                     : static_cast<uint64_t>(Disp);
+      Name = (Disp < 0 ? "var_m" : "var_") + llvm::utohexstr(Magnitude);
+    }
+    if (!Names.insert(Name).second)
+      continue;
+    FrameRecordMembers[Disp] = {Name, Type};
+  }
+}
+
+std::optional<std::string>
+HighCWriter::frameRecordMember(const HighExpr &Addr, const TypeRef &Ty) const {
+  if (FrameRecordMembers.empty() || !isPlainInteger(Ty))
+    return std::nullopt;
+  const auto Disp = certifiedFrameStorageDisplacement(Addr);
+  if (!Disp)
+    return std::nullopt;
+  const auto Member = FrameRecordMembers.find(*Disp);
+  if (Member == FrameRecordMembers.end() ||
+      Member->second.Type->Size != Ty->Size ||
+      Member->second.Type->IsSigned != Ty->IsSigned)
+    return std::nullopt;
+  return kFrameStorageName.str() + "." + Member->second.Name;
+}
+
 bool printsIntegerArithmetic(const HighExpr &E) {
   if (E.Kind == ExprKind::UnaryOp)
     return E.Op == NdOp::INT_NEGATE || E.Op == NdOp::INT_NOT;
@@ -4651,6 +4766,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedSlotLoadDisplay(E))
         return *Slot;
+      if (auto Member = frameRecordMember(*E.Operands[0], E.Type))
+        return Access(*Member);
       // A data import's slot holds the import's address, which the read
       // takes: `(int64_t)__imp__commode`.
       if (const auto Slot =
@@ -4716,6 +4833,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return *Member + " = " + Val;
       if (auto Slot = namedFrameSlot(*E.Operands[0]))
         return *Slot + " = " + Val;
+      if (auto Member = frameRecordMember(*E.Operands[0], E.Operands[1]->Type))
+        return *Member + " = " + Val;
     }
     return memoryStoreExpr(E.Operands[1]->Type, Addr, Val, E.MemoryOrdering,
                            E.MemoryAddressSpace);

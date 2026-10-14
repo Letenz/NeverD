@@ -1362,6 +1362,21 @@ the return address the call pushed. HighC prints it as
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
 
+When HighC must keep a frame whole, it declares the frame bytes as
+`stack_storage` with `frame_base` pointing into them. The storage prints as one
+record laid out exactly like those bytes, as the LLVM C route prints `frame0`.
+A displacement becomes a member when every access the writer can place there
+is a plain integer read or write of one width and signedness, at an aligned
+offset inside the storage, clear of every other access. The member keeps the
+slot's name from before the storage replaced it, else `var_mXX`, and prints as
+`stack_storage.var_m10`. Gaps are named `gapXX` by offset. A debug object of
+another type (a record, an array, a pointer or an enumeration) keeps its bytes
+raw, and a debug integer must have the access width. Every other access stays
+a raw access through `frame_base` to the same object, so a member and the bytes
+around it always alias. The record's tag is `frame_<entry>`: the C++, Go and
+Rust views parse the HighC text into one namespace of record tags, and the Go
+and Rust views print the record's type where the frame is declared.
+
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
 use this graph. Bounded partitions track repeated equality tests between scalar

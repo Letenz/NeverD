@@ -583,19 +583,17 @@ TEST(HighCStoreForwarding,
   Func.Body.push_back(ret(std::move(Address)));
 
   const auto Body = emitBody(Func, Arch::X64, /*Portable=*/true);
-  // Escaped frame addresses use the common backing buffer so the store and
-  // returned pointer retain the same memory identity.
-  EXPECT_NE(Body.find("uint8_t stack_storage["), std::string::npos) << Body;
-  EXPECT_NE(Body.find("frame_base = (uintptr_t)(stack_storage +"),
-            std::string::npos)
+  // Escaped frame addresses use the common backing storage so the store and
+  // returned pointer retain the same memory identity. The slot, read and
+  // written alike, is a member of that storage.
+  EXPECT_NE(Body.find("} stack_storage;"), std::string::npos) << Body;
+  EXPECT_NE(
+      Body.find("frame_base = (uintptr_t)((uint8_t *)&stack_storage + 24);"),
+      std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("memory_address = (uintptr_t)(frame_base - 8);"),
-            std::string::npos)
+  EXPECT_NE(Body.find("stack_storage.var_m8 = arg0;"), std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("= arg0;"), std::string::npos) << Body;
-  EXPECT_NE(Body.find("__builtin_memcpy((void *)"), std::string::npos) << Body;
-  EXPECT_NE(Body.find("return (int32_t *)(frame_base - 8);"),
-            std::string::npos)
+  EXPECT_NE(Body.find("return (int32_t *)(frame_base - 8);"), std::string::npos)
       << Body;
 }
 
