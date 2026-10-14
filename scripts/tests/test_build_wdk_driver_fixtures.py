@@ -278,12 +278,53 @@ class WDKDriverFixtureTests(unittest.TestCase):
         }
         self.assertTrue(caller_required)
         self.assertTrue(caller_required <= required)
+        # Derive every environment case from its real source. The two native
+        # transports must require the same behavior, including pure model guards.
+        environment_families = (
+            ("KernelLoaderViewTests.cpp", ()),
+            ("KernelResidentQueryTests.cpp", ()),
+            ("KernelBugCheckTests.cpp", ()),
+            ("KernelVersionQueryTests.cpp", ()),
+            ("DriverLoaderViewTests.cpp", ("{backend}_checked",)),
+            ("DriverBugCheckTests.cpp", ("{backend}",)),
+            ("DriverVersionQueryTests.cpp", ("{backend}",)),
+            ("DriverShadowStackTests.cpp",
+             ("{backend}_driver", "{backend}_checked")),
+        )
+        environment_required = set()
+        for backend in ("kvm", "whp"):
+            _, backend_required = native.declared_inventory(
+                fixtures.ROOT, True, backend,
+            )
+            expected = set()
+            for filename, suffixes in environment_families:
+                text = (source.parent / filename).read_text()
+                cases = {
+                    f"{suite}.{name}"
+                    for suite, name in re.findall(
+                        r"TEST(?:_F)?\((\w+),\s*(\w+)\)", text,
+                    )
+                }
+                cases.update(
+                    f"Native/{suite}.{name}/" + suffix.format(backend=backend)
+                    for suite, name in re.findall(
+                        r"TEST_P\((\w+),\s*(\w+)\)", text,
+                    )
+                    for suffix in suffixes
+                )
+                self.assertTrue(cases, filename)
+                expected.update(cases)
+            self.assertTrue(expected <= backend_required,
+                            sorted(expected - backend_required))
+            if backend == "whp":
+                environment_required = expected
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required) + len(scheduling_required)
                          + len(wait_required) + len(unpack_required)
                          + len(timestamp_required) + len(image_required)
                          + len(cpuid_required) + len(snapshot_required)
-                         + len(pool_required) + len(caller_required))
+                         + len(pool_required) + len(caller_required)
+                         + len(environment_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
                    f"+ {len(wait_required)} wait sets "
@@ -293,7 +334,8 @@ class WDKDriverFixtureTests(unittest.TestCase):
                    f"+ {len(cpuid_required)} CPUID "
                    f"+ {len(snapshot_required)} kernel snapshots "
                    f"+ {len(pool_required)} pool captures "
-                   f"+ {len(caller_required)} DriverEntry caller checks = {len(required)}")
+                   f"+ {len(caller_required)} DriverEntry caller checks "
+                   f"+ {len(environment_required)} driver environment checks = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         tokens = i18n.emulation_document_tokens(definitions.read_text(encoding="utf-8"))
         self.assertIn(formula, tokens["NativeDriverCI"])

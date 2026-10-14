@@ -329,6 +329,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 附加到計數式 UTF-16 目標；回傳 `STATUS_BUFFER_TOO_SMALL` 時目標保持不變，至少剩餘兩個空閒位元組時才寫入結尾字元，超過 `0x7FFE` 個單元的 NUL 結尾來源同樣回傳 `STATUS_BUFFER_TOO_SMALL` |
 | `RtlPrefixUnicodeString` | 計數式 UTF-16 前綴判斷；不區分大小寫的請求只有在不相等的單元需要 Windows 大小寫對照表時才會停止 |
 | `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 為基數的無號轉換，前導空白、正負號、`0x`/`0o`/`0b` 前綴與 32 位元回繞皆遵循核心規則；格式化需要為結尾字元預留空間，並在寫入長度後回傳 `STATUS_BUFFER_OVERFLOW` |
+| `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 與內嵌 `GS:[0x188]` 讀取的匯出別名，任意 IRQL 皆可呼叫：目前 APC 狀態中的行程隨行程附加而改變，目前邏輯執行緒的借用不透明身分則維持不變 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
 | `MmGetSystemRoutineAddress` | 透過共用匯出清單解析客體計數式名稱 |

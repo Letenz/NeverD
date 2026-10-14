@@ -191,7 +191,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         for backend in ("kvm", "whp"):
             _, cpu = native.declared_inventory(native.ROOT, backend=backend)
             _, combined = native.declared_inventory(native.ROOT, with_drivers=True, backend=backend)
-            outcomes[backend] = {name.replace("/" + backend + "_", "/{backend}_")
+            outcomes[backend] = {re.sub("/" + backend + r"(?=_|$)", "/{backend}", name)
                                  .replace("/" + backend.title(), "/{backend_title}")
                                  for name in combined - cpu}
             self.assertTrue(any("/{backend}_Original_" in name for name in outcomes[backend]))
