@@ -1860,6 +1860,13 @@ guest writes, signed arguments/results and nonzero statuses against independent
 gateway implementations at `-O0`/`-O2` with undefined-behavior traps. Partial-selector tests cover both
 byte orders, byte/halfword/word slices and an intervening overwrite. These checks use synthetic inputs;
 they do not authenticate a producer's isolation or host-service assertions.
+`LocalBankPreservesEveryByteAndOpaqueBoundaries` compares independently
+compiled original LLVM and emitted C at O0/O2 with UBSan traps: 2,048 inputs per
+level vary unaligned banks, overlapping partial writes, loops, every-byte opaque
+mutations, pointer identity, guest effects, call traces and full-width failure
+returns. Unsupported selected bank addresses retain the original body. These
+checks cover the implementation under the explicit private-bank assertion;
+they do not prove that arbitrary callers satisfy that assertion.
 The Python native integration suite checks static/callback producer parity,
 strict schema admission and reconstruction counts; the CLI retains existing
 output after a rejected source contract.
@@ -2136,6 +2143,11 @@ Seed regressions cover agreement at every external entry, multiple backedges, hi
 Additional loop regressions cover narrow wrapped last indices, separate body/latch blocks, both guard polarities, swapped equality operands, reordered and descending unit-step carriers, zero-trip high-data differences, newly executed poison and wrong boundary guesses. Exact/short construction and proof budgets plus candidate exhaustion preserve atomic refusal. Original LLVM and emitted C run at O0/O2 against independent arithmetic oracles.
 
 `NeverDLLVMCScalarLoopRecoveryTests` checks default whole-module and selected-function output, continued recovery after return-path cleanup, function identity and attributes, caller bindings, existing/new intrinsics and symbol collisions, shared budgets, effectful calls, missing input-definedness, metadata, image projections, external block addresses and foreign selections. Independent arithmetic and rotation oracles execute generated C at O0/O2 with undefined-behavior traps; arithmetic also compares independently compiled original LLVM across every byte control, boundary words and deterministic full-width data.
+The memory-region tests compare generated C with original LLVM at O0/O2 under
+UBSan. They cover aliased memory, indirect observer calls, pointer PHI swaps,
+acyclic diamonds, zero-trip loops and shared failure-return PHIs. The observer
+trace and complete buffers are compared, not only the final scalar return.
+
 
 `SymSimplifyPredicates.*` also compares standalone and full-pass policy, reported work, exact/one-short budgets, a disabled phase and stamped functions. Scalar source regressions cover arithmetic-encoded loop stops at 8/32/64 bits, signed-overflow refusal and construction limits shared across rounds and functions. Failed publication retains the original IR; emitted C runs at O0/O2 against independently compiled original LLVM and an arithmetic oracle.
 

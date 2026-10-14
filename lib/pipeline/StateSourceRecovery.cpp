@@ -11,6 +11,7 @@
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -24,6 +25,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <algorithm>
 #include <map>
@@ -742,6 +744,227 @@ bool exposeBankLoadSlices(llvm::Module &M) {
   return !Slices.empty();
 }
 
+// A private, writable bank may be cached in an alloca, exposing overlapping
+// byte/word accesses to the ordinary SROA/mem2reg owner. Publish before every
+// call (including a possibly non-returning native import) and return. Calls
+// receiving the real bank can change any byte, so reload after those calls.
+// Keep function boundaries and the complete original state ABI. Never replace
+// the bank operand of an opaque call with the cache's address.
+bool localizeBank(llvm::Function &F, unsigned Bytes) {
+  if (F.isDeclaration() || F.hasPersonalityFn() || F.hasLocalLinkage() ||
+      F.hasComdat() || F.hasAvailableExternallyLinkage() || Bytes > 4096 ||
+      F.getInstructionCount() > 16384)
+    return false;
+  if (auto Error = validateBank(F, Bytes)) {
+    llvm::consumeError(std::move(Error));
+    return false;
+  }
+  for (const auto &BB : F)
+    if (BB.hasAddressTaken())
+      return false;
+  auto *Bank = F.getArg(0);
+  const auto &DL = F.getParent()->getDataLayout();
+  struct Access {
+    llvm::Instruction *Inst;
+    unsigned Offset;
+    unsigned Width;
+  };
+  std::vector<Access> Accesses;
+  llvm::BitVector Readable(Bytes);
+  std::map<const llvm::Instruction *, llvm::BitVector> Writes;
+  llvm::MDNode *Scope = nullptr;
+  std::vector<std::pair<llvm::CallInst *, bool>> Calls;
+  std::vector<llvm::ReturnInst *> Returns;
+  for (auto &I : llvm::instructions(F)) {
+    if (auto *R = llvm::dyn_cast<llvm::ReturnInst>(&I))
+      Returns.push_back(R);
+    if (llvm::isa<llvm::InvokeInst, llvm::CallBrInst>(&I))
+      return false;
+    if (auto *C = llvm::dyn_cast<llvm::CallInst>(&I)) {
+      if (C->canReturnTwice() || C->isMustTailCall() || C->isInlineAsm() ||
+          C->isConvergent() || C->hasOperandBundles())
+        return false;
+      bool ReceivesBank =
+          !C->arg_empty() && displacement(C->getArgOperand(0), Bank, DL) == 0;
+      Calls.emplace_back(C, ReceivesBank);
+    }
+    llvm::Value *Pointer = nullptr;
+    if (auto *L = llvm::dyn_cast<llvm::LoadInst>(&I))
+      Pointer = L->getPointerOperand();
+    if (auto *S = llvm::dyn_cast<llvm::StoreInst>(&I))
+      Pointer = S->getPointerOperand();
+    if (!Pointer)
+      continue;
+    auto Offsets = bankOffsets(Pointer, Bank, DL);
+    if (!Offsets || Offsets->Bank.empty())
+      continue;
+    // Selected bank/guest addresses and multiple possible offsets retain the
+    // original implementation. Complete preflight precedes all mutations.
+    if (Offsets->Guest || Offsets->Bank.size() != 1)
+      return false;
+    const unsigned Offset = unsigned(Offsets->Bank.front());
+    auto *Stored = llvm::dyn_cast<llvm::StoreInst>(&I);
+    auto *T = Stored ? Stored->getValueOperand()->getType() : I.getType();
+    const unsigned Width = DL.getTypeStoreSize(T).getFixedValue();
+    Readable.set(Offset, Offset + Width);
+    if (Stored) {
+      llvm::BitVector Mask(Bytes);
+      Mask.set(Offset, Offset + Width);
+      Writes.emplace(&I, std::move(Mask));
+    }
+    if (auto *MD = I.getMetadata(llvm::LLVMContext::MD_alias_scope))
+      Scope = MD;
+    Accesses.push_back({&I, Offset, Width});
+  }
+  if (Accesses.empty() || Calls.size() > 256 ||
+      uint64_t(Bytes) * (2 * Calls.size() + Returns.size() + 1) > 262144)
+    return false;
+  // Publish only bytes possibly written since the last synchronization.
+  // A whole-function write set would re-publish stale/unmodified carriers at
+  // every call and multiply source size. Solve the original CFG first; a
+  // refused construction budget leaves the complete function unchanged.
+  std::map<const llvm::BasicBlock *, llvm::BitVector> DirtyOut;
+  std::map<const llvm::Instruction *, llvm::BitVector> Publish;
+  for (const auto &BB : F)
+    DirtyOut.emplace(&BB, llvm::BitVector(Bytes));
+  unsigned Work = 0;
+  bool Changed;
+  do {
+    Changed = false;
+    for (auto &BB : F) {
+      if (++Work > 65536)
+        return false;
+      llvm::BitVector Dirty(Bytes);
+      for (const auto *Pred : llvm::predecessors(&BB))
+        Dirty |= DirtyOut.at(Pred);
+      for (auto &I : BB) {
+        if (auto W = Writes.find(&I); W != Writes.end())
+          Dirty |= W->second;
+        if (llvm::isa<llvm::CallInst, llvm::ReturnInst>(I)) {
+          Publish[&I] = Dirty;
+          Dirty.reset();
+        }
+      }
+      if (Dirty != DirtyOut.at(&BB)) {
+        DirtyOut[&BB] = std::move(Dirty);
+        Changed = true;
+      }
+    }
+  } while (Changed);
+  llvm::IRBuilder<> Entry(&*F.getEntryBlock().getFirstInsertionPt());
+  auto *Cache = Entry.CreateAlloca(
+      llvm::ArrayType::get(Entry.getInt8Ty(), Bytes), nullptr, "local_bank");
+  auto Copy = [&](llvm::IRBuilder<> &B, bool Reload,
+                  const llvm::BitVector &Mask) {
+    for (unsigned Offset = 0; Offset < Bytes;) {
+      if (!Mask[Offset]) {
+        ++Offset;
+        continue;
+      }
+      unsigned Width = 1;
+      while (Width < 8 && Offset + Width * 2 <= Bytes &&
+             Mask.find_first_unset_in(Offset + Width, Offset + Width * 2) == -1)
+        Width *= 2;
+      auto *Real = slot(B, Bank, Offset);
+      auto *Local = slot(B, Cache, Offset);
+      auto *Value =
+          B.CreateAlignedLoad(B.getIntNTy(Width * 8), Reload ? Real : Local,
+                              llvm::Align(1), "bank_value");
+      auto *Store =
+          B.CreateAlignedStore(Value, Reload ? Local : Real, llvm::Align(1));
+      if (Scope)
+        (Reload ? static_cast<llvm::Instruction *>(Value) : Store)
+            ->setMetadata(llvm::LLVMContext::MD_alias_scope, Scope);
+      Offset += Width;
+    }
+  };
+  Copy(Entry, true, Readable);
+  for (const auto &[I, Offset, Width] : Accesses) {
+    llvm::IRBuilder<> B(I);
+    auto *Address = slot(B, Cache, Offset);
+    I->setOperand(llvm::isa<llvm::LoadInst>(I) ? 0 : 1, Address);
+  }
+  for (auto [Call, ReceivesBank] : Calls) {
+    llvm::IRBuilder<> Before(Call);
+    Copy(Before, false, Publish.at(Call));
+    if (ReceivesBank) {
+      llvm::IRBuilder<> After(Call->getNextNode());
+      Copy(After, true, Readable);
+    }
+    // Synchronization follows ordinary tail calls; they are no longer tail.
+    Call->setTailCallKind(llvm::CallInst::TCK_None);
+  }
+  for (auto *Return : Returns) {
+    llvm::IRBuilder<> B(Return);
+    Copy(B, false, Publish.at(Return));
+  }
+  return true;
+}
+
+// Evaluate through the shared optimizer before committing an ABI-local view.
+// Partial-width banks can require more scalar merges than their memory form;
+// never publish a more expensive body merely because promotion succeeded.
+llvm::Error localizeProfitableBanks(llvm::Module &M, StateSourceRecovery &R) {
+  std::vector<llvm::Function *> Functions;
+  for (auto &F : M)
+    if (!F.isDeclaration())
+      Functions.push_back(&F);
+  std::vector<std::pair<std::string, std::string>> Trials;
+  for (auto *F : Functions) {
+    llvm::ValueToValueMapTy Map;
+    auto *Backup = llvm::CloneFunction(F, Map);
+    if (localizeBank(*F, R.Contract.StateBytes))
+      Trials.emplace_back(F->getName().str(), Backup->getName().str());
+    else
+      Backup->eraseFromParent();
+  }
+  if (Trials.empty())
+    return llvm::Error::success();
+  Pipeline::OptimizationOptions Options;
+  Options.Strength = Pipeline::OptStrength::Deep;
+  Options.LLVMLevel = llvm::OptimizationLevel::O2;
+  auto Optimized = Pipeline::optimizeModule(M, Options);
+  if (Optimized.Stop == OptimizationStopReason::InputInvalid ||
+      Optimized.Stop == OptimizationStopReason::VerificationFailed)
+    return invalid("local bank optimization failed verification");
+  auto Cost = [](const llvm::Function &F) {
+    unsigned Value = 0;
+    for (const auto &I : llvm::instructions(F)) {
+      ++Value;
+      if (llvm::isa<llvm::LoadInst, llvm::StoreInst>(&I))
+        Value += 4;
+      if (const auto *P = llvm::dyn_cast<llvm::PHINode>(&I))
+        Value += P->getNumIncomingValues();
+      if (I.isTerminator())
+        Value += 2 * I.getNumSuccessors();
+    }
+    return Value;
+  };
+  // The shared optimizer commits a new module body transactionally. Resolve
+  // identities after it returns; pointers into the input body are invalid.
+  for (const auto &[Name, BackupName] : Trials) {
+    auto *F = M.getFunction(Name);
+    auto *Backup = M.getFunction(BackupName);
+    if (!F || !Backup)
+      return invalid("local bank trial lost a function boundary");
+    if (Cost(*F) < Cost(*Backup)) {
+      ++R.LocalizedFunctions;
+    } else {
+      F->deleteBody();
+      F->copyAttributesFrom(Backup);
+      llvm::ValueToValueMapTy Map;
+      for (auto &Arg : Backup->args())
+        Map[&Arg] = F->getArg(Arg.getArgNo());
+      llvm::SmallVector<llvm::ReturnInst *, 8> Returns;
+      llvm::CloneFunctionInto(F, Backup, Map,
+                              llvm::CloneFunctionChangeType::LocalChangesOnly,
+                              Returns);
+    }
+    Backup->eraseFromParent();
+  }
+  return llvm::Error::success();
+}
+
 } // namespace
 
 llvm::Expected<StateSourceRecovery>
@@ -1436,6 +1659,9 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
     }
     Probe->eraseFromParent();
   }
+  if (R.Contract.LocalizeBank)
+    if (auto E = localizeProfitableBanks(M, R))
+      return E;
   if (llvm::verifyModule(M, &llvm::errs()))
     return invalid("source projection failed verification");
   return llvm::Error::success();

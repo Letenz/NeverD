@@ -16,10 +16,11 @@ namespace neverd {
 namespace {
 
 // Keep source structuring separate from semantic recovery. Every admitted
-// block and successor edge is emitted once; the existing instruction and
+// effectful block and successor edge is emitted once; PHI-only return sinks
+// can be repeated after their edge copies. The existing instruction and
 // parallel-PHI writers retain their semantics. No IR rewrite is involved.
 struct ScalarRegion {
-  enum class Kind { Block, Edge, If, Loop, Repeat, Break } K;
+  enum class Kind { Block, Edge, If, Guard, Loop, Repeat, Break } K;
   llvm::BasicBlock *Block = nullptr;
   llvm::BasicBlock *Target = nullptr;
   bool Invert = false;
@@ -39,6 +40,50 @@ class ScalarRegionPlan {
   llvm::SmallPtrSet<const llvm::BasicBlock *, 32> Seen;
   unsigned Edges = 0;
   unsigned Work = 0;
+  std::map<const llvm::Loop *, llvm::BasicBlock *> LoopExits;
+
+  static bool returnOnly(const llvm::BasicBlock *BB) {
+    return llvm::isa<llvm::ReturnInst>(BB->getTerminator()) &&
+           llvm::all_of(*BB, [](const llvm::Instruction &I) {
+             return llvm::isa<llvm::PHINode, llvm::ReturnInst>(I);
+           });
+  }
+
+  // Ordinary postdominators can be pulled all the way to a failure-return
+  // sink. Nominate the nearest shared continuation while ignoring those
+  // terminal arms; sequence() must still prove every block and edge fits.
+  llvm::BasicBlock *normalJoin(llvm::CondBrInst &Branch,
+                               const llvm::Loop *Scope) {
+    std::map<llvm::BasicBlock *, unsigned> Distance[2];
+    for (unsigned Side = 0; Side != 2; ++Side) {
+      llvm::SmallVector<std::pair<llvm::BasicBlock *, unsigned>, 32> Queue;
+      Queue.emplace_back(Branch.getSuccessor(Side), 0);
+      for (size_t Next = 0; Next != Queue.size(); ++Next) {
+        if (++Work > 65536)
+          return nullptr;
+        auto [BB, Depth] = Queue[Next];
+        if (BB == Branch.getParent() || returnOnly(BB) ||
+            (Scope && !Scope->contains(BB)) ||
+            !Distance[Side].emplace(BB, Depth).second)
+          continue;
+        for (auto *Successor : llvm::successors(BB))
+          Queue.emplace_back(Successor, Depth + 1);
+      }
+    }
+    llvm::BasicBlock *Best = nullptr;
+    unsigned Score = ~0u;
+    for (auto &BB : Fn) {
+      auto A = Distance[0].find(&BB), B = Distance[1].find(&BB);
+      if (A == Distance[0].end() || B == Distance[1].end())
+        continue;
+      const unsigned Cost = A->second + B->second;
+      if (Cost < Score) {
+        Best = &BB;
+        Score = Cost;
+      }
+    }
+    return Best;
+  }
 
   bool edge(std::vector<ScalarRegion> &Into, llvm::BasicBlock *From,
             llvm::BasicBlock *To) {
@@ -57,17 +102,38 @@ class ScalarRegionPlan {
     bool First = StartAtStop;
     while (BB && (BB != Stop || First)) {
       First = false;
-      if (++Work > 65536 || (Scope && !Scope->contains(BB)) ||
-          !Seen.insert(BB).second)
+      if (++Work > 65536)
+        return false;
+      // A PHI-only return sink may be spelled at each incoming edge. The
+      // edge still owns its parallel copies; no effectful instruction is
+      // duplicated, and a failure exit need not become a loop-wide goto.
+      if (returnOnly(BB)) {
+        Seen.insert(BB);
+        Into.push_back({ScalarRegion::Kind::Block, BB, nullptr, false, {}, {}});
+        return true;
+      }
+      if ((Scope && !Scope->contains(BB)) || !Seen.insert(BB).second)
         return false;
       const llvm::Loop *Loop = Loops.getLoopFor(BB);
       if (Loop && Loop->getHeader() == BB && Loop != Scope) {
         auto *Branch = llvm::dyn_cast<llvm::CondBrInst>(BB->getTerminator());
-        if (Loop->getExitingBlock() != BB) {
-          auto *Exit = Loop->getExitBlock();
-          if (!Exit || !Loop->getExitingBlock() || !Loop->getLoopLatch() ||
-              Loop->getParentLoop() != Scope)
-            return false;
+        llvm::SmallVector<llvm::BasicBlock *, 4> Exits;
+        Loop->getUniqueExitBlocks(Exits);
+        llvm::BasicBlock *Exit = nullptr;
+        for (auto *Candidate : Exits)
+          if (!returnOnly(Candidate)) {
+            if (Exit && Exit != Candidate)
+              return false;
+            Exit = Candidate;
+          }
+        if (!Exit && Exits.size() == 1)
+          Exit = Exits.front();
+        if (!Exit || !Loop->getLoopLatch() || Loop->getParentLoop() != Scope)
+          return false;
+        LoopExits[Loop] = Exit;
+        const bool HeaderExit = Branch && (Branch->getSuccessor(0) == Exit ||
+                                           Branch->getSuccessor(1) == Exit);
+        if (!HeaderExit) {
           ScalarRegion Region{
               ScalarRegion::Kind::Repeat, BB, Exit, false, {}, {}};
           Region.Scope = Loop;
@@ -82,15 +148,12 @@ class ScalarRegionPlan {
           BB = Exit;
           continue;
         }
-        // A header exit retains the direct while/for form. Incomplete or
-        // multi-exit regions keep the existing goto projection.
-        if (!Branch || Loop->getExitingBlock() != BB || !Loop->getLoopLatch() ||
-            Loop->getParentLoop() != Scope)
-          return false;
+        // A header exit retains the direct while/for form. Additional
+        // PHI-only return exits remain local guard clauses in its body.
         const bool TrueBody = Loop->contains(Branch->getSuccessor(0));
         auto *Body = Branch->getSuccessor(TrueBody ? 0 : 1);
-        auto *Exit = Branch->getSuccessor(TrueBody ? 1 : 0);
-        if (!Loop->contains(Body) || Loop->contains(Exit))
+        auto *HeaderTarget = Branch->getSuccessor(TrueBody ? 1 : 0);
+        if (!Loop->contains(Body) || HeaderTarget != Exit)
           return false;
         ScalarRegion Region{
             ScalarRegion::Kind::Loop, BB, Exit, !TrueBody, {}, {}};
@@ -121,14 +184,34 @@ class ScalarRegionPlan {
       auto *Branch = llvm::dyn_cast<llvm::CondBrInst>(Term);
       if (!Branch || Branch->getSuccessor(0) == Branch->getSuccessor(1))
         return false;
-      // A repeat region keeps the sole internal exit at its original point.
-      // The taken exit's parallel copies must run before the lexical break.
-      if (Scope && BB == Scope->getExitingBlock()) {
+      // A return arm can terminate here while the other arm continues in
+      // the current sequence. It owns no shared body beyond the pure sink.
+      if (returnOnly(Branch->getSuccessor(0)) !=
+          returnOnly(Branch->getSuccessor(1))) {
+        const unsigned Ret = returnOnly(Branch->getSuccessor(0)) ? 0 : 1;
+        auto *Next = Branch->getSuccessor(1 - Ret);
+        if (!Scope || Scope->contains(Next)) {
+          ScalarRegion Region{
+              ScalarRegion::Kind::Guard, BB, Next, Ret != 0, {}, {}};
+          if (!edge(Region.First, BB, Branch->getSuccessor(Ret)) ||
+              !sequence(Branch->getSuccessor(Ret), nullptr, Scope, Region.First,
+                        Depth + 1) ||
+              !edge(Region.Second, BB, Next))
+            return false;
+          Into.push_back(std::move(Region));
+          BB = Next;
+          continue;
+        }
+      }
+      // A repeat region keeps each normal exit at its original point. Taken
+      // exit copies execute before break, including pointer PHI swaps.
+      if (Scope && (Scope->contains(Branch->getSuccessor(0)) !=
+                    Scope->contains(Branch->getSuccessor(1)))) {
         const bool TrueBody = Scope->contains(Branch->getSuccessor(0));
         auto *Body = Branch->getSuccessor(TrueBody ? 0 : 1);
         auto *Exit = Branch->getSuccessor(TrueBody ? 1 : 0);
         if (!Scope->contains(Body) || Scope->contains(Exit) ||
-            Exit != Scope->getExitBlock())
+            Exit != LoopExits.at(Scope))
           return false;
         ScalarRegion Region{
             ScalarRegion::Kind::Break, BB, Exit, TrueBody, {}, {}};
@@ -141,6 +224,9 @@ class ScalarRegionPlan {
       auto *Node = PostDominators.getNode(BB);
       auto *Join =
           Node && Node->getIDom() ? Node->getIDom()->getBlock() : nullptr;
+      if (!Join || returnOnly(Join) || (Scope && !Scope->contains(Join)))
+        if (auto *Candidate = normalJoin(*Branch, Scope))
+          Join = Candidate;
       if ((Scope && (!Join || !Scope->contains(Join))) || Join == BB)
         return false;
       ScalarRegion Region{ScalarRegion::Kind::If, BB, Join, false, {}, {}};
@@ -159,15 +245,19 @@ class ScalarRegionPlan {
 public:
   explicit ScalarRegionPlan(llvm::Function &Fn) : Fn(Fn) {}
 
-  bool build(std::vector<ScalarRegion> &Regions, llvm::DominatorTree &DT) {
-    // Bound analysis construction too, and leave memory, EH and aggregate
-    // source ownership to their existing projections. Integer observer calls
-    // remain admissible and are emitted at their original instruction site.
+  bool build(std::vector<ScalarRegion> &Regions, llvm::DominatorTree &DT,
+             bool TypedMemory) {
+    // Structuring changes only where branches are spelled, not where memory
+    // or calls execute. Keep the existing instruction and parallel-copy
+    // writers authoritative; EH, aggregate values and ordered memory retain
+    // their existing projection.
     if (Fn.size() > 1024 || Fn.hasPersonalityFn())
       return false;
-    auto Scalar = [](llvm::Type *T) {
+    auto Scalar = [&](llvm::Type *T) {
       return T->isIntegerTy(1) || T->isIntegerTy(8) || T->isIntegerTy(16) ||
-             T->isIntegerTy(32) || T->isIntegerTy(64);
+             T->isIntegerTy(32) || T->isIntegerTy(64) ||
+             (TypedMemory && T->isPointerTy() &&
+              T->getPointerAddressSpace() == 0);
     };
     if (!Fn.getReturnType()->isVoidTy() && !Scalar(Fn.getReturnType()))
       return false;
@@ -188,15 +278,26 @@ public:
           return false;
         if (Inst.isTerminator())
           continue;
+        // Frame-home projections have their own load snapshots, composed
+        // expressions and storage lifetimes. Do not mix those with SSA names.
+        if (llvm::isa<llvm::AllocaInst>(&Inst))
+          return false;
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
-          if (!Call->getCalledFunction() || Call->isConvergent() ||
+          if (Call->isInlineAsm() || Call->isConvergent() ||
               Call->isMustTailCall() || Call->hasOperandBundles())
             return false;
           for (const auto &Arg : Call->args())
             if (!Scalar(Arg->getType()))
               return false;
         } else {
-          if (Inst.mayReadOrWriteMemory() || Inst.mayHaveSideEffects())
+          if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+            if (!TypedMemory || !Load->isSimple())
+              return false;
+          } else if (const auto *Store =
+                         llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
+            if (!TypedMemory || !Store->isSimple())
+              return false;
+          } else if (Inst.mayReadOrWriteMemory() || Inst.mayHaveSideEffects())
             return false;
           for (const auto &Op : Inst.operands())
             if (!Scalar(Op->getType()))
@@ -207,7 +308,7 @@ public:
       }
     }
     Loops.analyze(DT);
-    if (Loops.empty())
+    if (Loops.empty() && !TypedMemory)
       return false;
     PostDominators.recalculate(Fn);
     return sequence(&Fn.getEntryBlock(), nullptr, nullptr, Regions, 0) &&
@@ -345,7 +446,9 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
   std::vector<ScalarRegion> Regions;
   // Region scopes borrow LoopInfo objects through the entire rendering pass.
   ScalarRegionPlan Plan(Fn);
-  if (!Plan.build(Regions, Dominators))
+  const bool TypedMemory = Opts.PreserveLLVMFunctionTypes && !Dbg && !Img &&
+                           ValueTexts.empty() && OmittedInlined.empty();
+  if (!Plan.build(Regions, Dominators, TypedMemory))
     return false;
   // Funnel shifts have total, typed C helpers. A single same-block use and
   // leaf operands need neither a snapshot nor an additional expression-tree
@@ -444,7 +547,8 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
     for (const auto &BB : Fn)
       for (const auto &Inst : BB)
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
-          UsedNames.insert(functionIdentifier(*Call->getCalledFunction()));
+          if (const auto *Callee = Call->getCalledFunction())
+            UsedNames.insert(functionIdentifier(*Callee));
     // These are generated C roles, not recovered debug names. Rename the
     // complete coalesced group so copies continue to refer to one object.
     std::map<std::string, std::vector<const llvm::Value *>> NameGroups;
@@ -575,7 +679,7 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
         WriteBlock(Region.Block, Level);
         if (auto *Ret =
                 llvm::dyn_cast<llvm::ReturnInst>(Region.Block->getTerminator()))
-          writeReturn(*Ret, Level);
+          writeInstruction(*Ret, Level);
         break;
       case ScalarRegion::Kind::Edge:
         ClearPath();
@@ -600,6 +704,14 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
         Write(Region.Second, Level + 1);
         emitIndent(Level);
         OS << "}\n";
+        break;
+      case ScalarRegion::Kind::Guard:
+        emitIndent(Level);
+        OS << "if (" << Condition(Region) << ") {\n";
+        Write(Region.First, Level + 1);
+        emitIndent(Level);
+        OS << "}\n";
+        Write(Region.Second, Level);
         break;
       case ScalarRegion::Kind::Repeat:
         emitIndent(Level);

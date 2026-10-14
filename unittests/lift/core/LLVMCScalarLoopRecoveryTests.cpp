@@ -512,9 +512,200 @@ int main(void) {
   }
   return 0;
 }
+
 )";
   for (llvm::StringRef Level : {"-O0", "-O2"})
     compileAndRun(Source + Main, Level, {}, true);
+}
+
+TEST(LLVMCScalarLoopRecovery, MemoryRegionsPreserveAliasCallsAndPointerPhis) {
+  const char *IR = R"(
+define i64 @memory_loop(ptr %a, ptr %b, i32 %limit, ptr %observer) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %latch]
+  %p = phi ptr [%a, %entry], [%q, %latch]
+  %q = phi ptr [%b, %entry], [%p, %latch]
+  %sum = phi i64 [0, %entry], [%total, %latch]
+  %more = icmp ult i32 %i, %limit
+  br i1 %more, label %body, label %exit
+body:
+  %before = load i64, ptr %p, align 1
+  %low = and i32 %i, 1
+  %odd = icmp ne i32 %low, 0
+  br i1 %odd, label %left, label %right
+left:
+  %inc = add i64 %before, 17
+  store i64 %inc, ptr %q, align 1
+  br label %latch
+right:
+  %flip = xor i64 %before, 123456789
+  store i64 %flip, ptr %p, align 1
+  br label %latch
+latch:
+  %observed = call i64 %observer(ptr %q, i32 %i)
+  %after = load i64, ptr %p, align 1
+  %part = xor i64 %after, %observed
+  %total = add i64 %sum, %part
+  %next = add i32 %i, 1
+  br label %header
+exit:
+  ret i64 %sum
+}
+define i64 @memory_diamond(ptr %p, i32 %which, ptr %observer) {
+entry:
+  %old = load i64, ptr %p, align 1
+  %test = icmp eq i32 %which, 0
+  br i1 %test, label %a, label %b
+a:
+  store i64 23, ptr %p, align 1
+  %x = call i64 %observer(ptr %p, i32 1)
+  br label %done
+b:
+  %y = call i64 %observer(ptr %p, i32 2)
+  store i64 %old, ptr %p, align 1
+  br label %done
+done:
+  %result = phi i64 [%x, %a], [%y, %b]
+  %last = load i64, ptr %p, align 1
+  %answer = xor i64 %result, %last
+  ret i64 %answer
+}
+define i64 @guarded_diamond(ptr %p, i32 %which, ptr %observer) {
+entry:
+  %test = icmp eq i32 %which, 0
+  br i1 %test, label %a, label %b
+a:
+  %x = call i64 %observer(ptr %p, i32 4)
+  br label %continue
+b:
+  %y = call i64 %observer(ptr %p, i32 3)
+  %low = and i64 %y, 1
+  %bad = icmp ne i64 %low, 0
+  br i1 %bad, label %return, label %continue
+continue:
+  %chosen = phi i64 [%x, %a], [%y, %b]
+  %last = load i64, ptr %p, align 1
+  %updated = add i64 %last, %chosen
+  store i64 %updated, ptr %p, align 1
+  %observed = call i64 %observer(ptr %p, i32 5)
+  br label %return
+return:
+  %result = phi i64 [%y, %b], [%observed, %continue]
+  ret i64 %result
+}
+)";
+  llvm::LLVMContext Context;
+  auto Module = parse(IR, Context);
+  ASSERT_TRUE(Module);
+  const auto Source = emit(*Module);
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
+  Module->getFunction("memory_loop")->setName("reference_loop");
+  Module->getFunction("memory_diamond")->setName("reference_diamond");
+  Module->getFunction("guarded_diamond")->setName("reference_guarded");
+  const auto Reference = text(*Module);
+  const std::string Main = R"(
+#include <string.h>
+extern uint64_t reference_loop(void *, void *, uint32_t, void *);
+extern uint64_t reference_diamond(void *, uint32_t, void *);
+extern uint64_t reference_guarded(void *, uint32_t, void *);
+static uint64_t trace[64];
+static unsigned count;
+static uint64_t observe(void *p, uint32_t tag) {
+  uint64_t value;
+  memcpy(&value, p, 8);
+  trace[count++] = value ^ ((uint64_t)tag << 40);
+  value = value * 17U + tag;
+  memcpy(p, &value, 8);
+  return value ^ 0x8000000000000041ULL;
+}
+int main(void) {
+  for (unsigned seed = 0; seed < 2048; ++seed) {
+    uint64_t a[8], b[8], expected[64];
+    for (unsigned i = 0; i < 8; ++i)
+      a[i] = b[i] = ((uint64_t)seed << (i + 19)) ^ (i * 0x87654321U);
+    unsigned j = (seed >> 5) & 3, n = seed & 31;
+    count = 0;
+    uint64_t want = reference_loop(a, a + j, n, (void *)observe);
+    unsigned calls = count;
+    memcpy(expected, trace, calls * 8);
+    count = 0;
+    if (memory_loop(b, b + j, n, (void *)observe) != want || count != calls ||
+        memcmp(a, b, sizeof(a)) || memcmp(expected, trace, calls * 8)) return 1;
+    count = 0;
+    want = reference_diamond(a, seed & 1, (void *)observe);
+    calls = count;
+    memcpy(expected, trace, calls * 8);
+    count = 0;
+    if (memory_diamond(b, seed & 1, (void *)observe) != want || count != calls ||
+        memcmp(a, b, sizeof(a)) || memcmp(expected, trace, calls * 8)) return 2;
+    count = 0;
+    want = reference_guarded(a, seed & 1, (void *)observe);
+    calls = count;
+    memcpy(expected, trace, calls * 8);
+    count = 0;
+    if (guarded_diamond(b, seed & 1, (void *)observe) != want || count != calls ||
+        memcmp(a, b, sizeof(a)) || memcmp(expected, trace, calls * 8)) return 3;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, Reference, true);
+}
+
+TEST(LLVMCScalarLoopRecovery, MemoryLoopFailureExitsKeepTheirPhiResults) {
+  llvm::LLVMContext Context;
+  auto Module = parse(R"(
+define i64 @guarded_loop(ptr %p, i32 %limit, i32 %fail) {
+entry:
+  %empty = icmp eq i32 %limit, 0
+  br i1 %empty, label %return, label %pre
+pre:
+  br label %header
+header:
+  %i = phi i32 [0, %pre], [%next, %step]
+  %more = icmp ult i32 %i, %limit
+  br i1 %more, label %body, label %done
+body:
+  %value = load i64, ptr %p, align 1
+  %sum = add i64 %value, 13
+  store i64 %sum, ptr %p, align 1
+  %bad = icmp eq i32 %i, %fail
+  br i1 %bad, label %return, label %step
+step:
+  %next = add i32 %i, 1
+  br label %header
+done:
+  %last = load i64, ptr %p, align 1
+  %answer = xor i64 %last, 12345
+  br label %return
+return:
+  %result = phi i64 [17, %entry], [%sum, %body], [%answer, %done]
+  ret i64 %result
+}
+)",
+                      Context);
+  ASSERT_TRUE(Module);
+  const auto Source = emit(*Module);
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  Module->getFunction("guarded_loop")->setName("reference_loop");
+  const auto Reference = text(*Module);
+  const std::string Main = R"(
+extern uint64_t reference_loop(void *, uint32_t, uint32_t);
+int main(void) {
+  for (unsigned n=0;n<32;++n) for(unsigned fail=0;fail<33;++fail) {
+    uint64_t a=0xfedcba9876543210ULL, b=a;
+    uint64_t x=reference_loop(&a,n,fail), y=guarded_loop(&b,n,fail);
+    if(x!=y || a!=b) return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, Reference, true);
 }
 
 TEST(LLVMCScalarLoopRecovery, FunctionAndExceptionMetadataRetainTheirBodies) {

@@ -176,7 +176,7 @@ int main(void) {
       ASSERT_TRUE(exec(Program.string(), {}).ok());
     }
   }
-  for (unsigned Case = 0; Case != 9; ++Case) {
+  for (unsigned Case = 0; Case != 10; ++Case) {
     Bytes();
     std::ofstream(Profile) << Specification;
     std::ofstream(Functions) << R"([{"entry":0,"end":4,"name":"example"}])";
@@ -202,7 +202,11 @@ int main(void) {
       std::ofstream(Contract) << R"({"schemaVersion":1,"state_bytes":8,
         "isolated_bank":false,"zero_status_gateways":true,"gateways":[]})";
       Args.insert(Args.end(), {"--source-contracts", Contract.string()});
-      if (Case == 8)
+      if (Case == 9)
+        std::ofstream(Contract) << R"({"schemaVersion":1,"state_bytes":8,
+          "isolated_bank":true,"zero_status_gateways":true,"gateways":[],
+          "localize_bank":"yes"})";
+      if (Case >= 8)
         Args.insert(Args.end(), {"--llvm", "--optimize"});
     }
     const auto Ran = exec(NEVERD_BYTECODE_BINARY, Args);

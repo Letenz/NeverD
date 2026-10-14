@@ -59,8 +59,9 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
                                 unsigned StateBytes) {
   auto *Root = V.getAsObject();
   if (!Root ||
-      !keys(*Root, {"schemaVersion", "state_bytes", "isolated_bank",
-                    "zero_status_gateways", "gateways", "images"}) ||
+      !keys(*Root,
+            {"schemaVersion", "state_bytes", "isolated_bank",
+             "zero_status_gateways", "localize_bank", "gateways", "images"}) ||
       Root->getInteger("schemaVersion") != 1 ||
       Root->getInteger("state_bytes") != StateBytes ||
       Root->getBoolean("isolated_bank") != true ||
@@ -74,6 +75,12 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
   Result.StateBytes = StateBytes;
   Result.IsolatedBank = true;
   Result.ZeroStatusGateways = true;
+  if (const auto *Localize = Root->get("localize_bank")) {
+    auto Enabled = Localize->getAsBoolean();
+    if (!Enabled)
+      return invalid("localize_bank must be an explicit boolean assertion");
+    Result.LocalizeBank = *Enabled;
+  }
   if (auto *ImagesValue = Root->get("images")) {
     auto *Images = ImagesValue->getAsArray();
     if (!Images || Images->size() > 16)

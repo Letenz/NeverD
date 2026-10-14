@@ -1644,7 +1644,9 @@ TEST_F(StateSourceCompiled,
   ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
   EXPECT_NE(Source.find("int32_t example_variadic(int32_t, ...)"),
             std::string::npos);
-  EXPECT_NE(Source.find("(uint64_t)(1)"), std::string::npos) << Source;
+  EXPECT_TRUE(Source.find("(uint64_t)(1)") != std::string::npos ||
+              Source.find("1ull") != std::string::npos)
+      << Source;
   auto After = tmpFile("variadic-after.c");
   std::ofstream(After) << Source;
   auto Harness = tmpFile("variadic-oracle.c");
@@ -2040,6 +2042,175 @@ int main(void) {
     ASSERT_TRUE(Built.ok()) << Built.err;
     auto Ran = exec(Executable.string(), {});
     EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
+}
+
+TEST_F(StateSourceCompiled, LocalBankPreservesEveryByteAndOpaqueBoundaries) {
+  llvm::LLVMContext C;
+  auto M = cell_test::parse(C, R"(
+declare i64 @observe_bank(ptr, ptr)
+declare void @observe_guest(ptr, i64)
+define i64 @work(ptr %state, ptr %context) {
+entry:
+  %n = load i8, ptr %context, align 1
+  %bound = and i8 %n, 15
+  %word = getelementptr i8, ptr %state, i64 3
+  %tail = getelementptr i8, ptr %state, i64 58
+  br label %loop
+loop:
+  %i = phi i8 [0, %entry], [%next, %continue]
+  %more = icmp ult i8 %i, %bound
+  br i1 %more, label %body, label %done
+body:
+  %old = load i64, ptr %state, align 1
+  %slice = trunc i64 %old to i16
+  %changed = xor i16 %slice, 1903
+  store i16 %changed, ptr %word, align 1
+  %wide = load i64, ptr %state, align 1
+  %narrow = trunc i64 %wide to i32
+  store i32 %narrow, ptr %tail, align 1
+  call void @observe_guest(ptr %context, i64 %wide)
+  %status = call i64 @observe_bank(ptr %state, ptr %context)
+  %bad = icmp ne i64 %status, 0
+  br i1 %bad, label %failed, label %continue
+continue:
+  %after = load i64, ptr %state, align 1
+  %adjusted = add i64 %after, 1
+  store i64 %adjusted, ptr %state, align 1
+  %next = add i8 %i, 1
+  br label %loop
+done:
+  %result = load i64, ptr %state, align 1
+  ret i64 %result
+failed:
+  ret i64 %status
+}
+define i64 @patch(ptr %state, ptr %context) {
+entry:
+  %seed = load i64, ptr %state, align 1
+  %input = load i32, ptr %context, align 1
+  %out = getelementptr i8, ptr %state, i64 8
+  %half = getelementptr i8, ptr %state, i64 10
+  %byte = getelementptr i8, ptr %state, i64 14
+  %sum = add i64 %seed, 19
+  store i64 %sum, ptr %out, align 1
+  store i32 %input, ptr %out, align 1
+  %upper = lshr i64 %seed, 37
+  %h = trunc i64 %upper to i16
+  store i16 %h, ptr %half, align 1
+  %b = trunc i64 %seed to i8
+  store i8 %b, ptr %byte, align 1
+  %result = load i64, ptr %out, align 1
+  ret i64 %result
+})");
+  ASSERT_TRUE(M);
+  M->getFunction("work")->setName("before");
+  M->getFunction("patch")->setName("before_patch");
+  auto Original = tmpFile("local-bank-before.ll");
+  std::ofstream(Original) << test::printHostCompilerFixture(*M);
+  M->getFunction("before")->setName("after");
+  M->getFunction("before_patch")->setName("after_patch");
+  StateSourceContract Contract;
+  Contract.StateBytes = 64;
+  Contract.IsolatedBank = true;
+  Contract.LocalizeBank = true;
+  auto R = prepareStateSourceRecovery(*M, Contract);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  optimize(*M);
+  auto E = finishStateSourceRecovery(*M, *R);
+  ASSERT_FALSE(E) << llvm::toString(std::move(E));
+  EXPECT_GE(R->LocalizedFunctions, 1u);
+  optimize(*M);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+  auto After = tmpFile("local-bank-after.c");
+  std::ofstream(After) << Source;
+  auto Harness = tmpFile("local-bank-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t before(void *,void *), after(void *,void *);
+extern uint64_t before_patch(void *,void *), after_patch(void *,void *);
+static uint64_t trace[64];
+static unsigned calls;
+static void *expected_bank;
+static int bad_identity;
+void observe_guest(void *ctx, uint64_t x) {
+ unsigned char *p=ctx;
+ trace[calls++]=x;
+ p[1]^=(unsigned char)x;
+}
+uint64_t observe_bank(void *s, void *ctx) {
+ unsigned char *p=s, *c=ctx;
+ if(s!=expected_bank) bad_identity=1;
+ uint64_t hash=17;
+ for(unsigned j=0;j<64;j++) hash=(hash*131)^p[j];
+ trace[calls++]=hash;
+ /* Mutate both cached and otherwise untouched bytes at an opaque boundary. */
+ for(unsigned j=0;j<64;j++) p[j]^=(unsigned char)(j*13+c[1]);
+ c[2]++;
+ return c[3] && c[2]>=c[3] ? UINT64_C(0x8000000000000017) : 0;
+}
+int main(void) {
+ for(unsigned k=0;k<2048;k++) {
+  unsigned char a[96], b[96], ca[8], cb[8];
+  for(unsigned j=0;j<96;j++) a[j]=(unsigned char)(k*29+j*71);
+  for(unsigned j=0;j<8;j++) ca[j]=(unsigned char)(k*7+j);
+  ca[0]=k&15; ca[2]=0; ca[3]=(k>>4)&7;
+  memcpy(b,a,96); memcpy(cb,ca,8);
+  unsigned off=1+(k&15);uint64_t saved[64];
+  calls=0; expected_bank=a+off;
+  uint64_t ra=before(a+off,ca);unsigned n=calls;
+  memcpy(saved,trace,n*8);
+  calls=0; expected_bank=b+off;
+  uint64_t rb=after(b+off,cb);
+  if(bad_identity || ra!=rb || calls!=n || memcmp(saved,trace,n*8) ||
+     memcmp(a,b,96) || memcmp(ca,cb,8)) return 1;
+  if(before_patch(a+off,ca)!=after_patch(b+off,cb) || memcmp(a,b,96)) return 2;
+ }
+ return 0;
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable = tmpFile(std::string("local-bank-oracle") + Level +
+                              test::executableSuffix());
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Level, "-fsanitize=undefined",
+                       "-fsanitize-trap=all", Original.string(), After.string(),
+                       Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err << '\n' << Source;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err << '\n' << Source;
+  }
+}
+
+TEST(StateSource, LocalBankRefusalsRetainTheOriginalStateImplementation) {
+  for (bool Enabled : {false, true}) {
+    llvm::LLVMContext C;
+    auto M = cell_test::parse(C, R"(
+define i64 @work(ptr %state, i1 %choose) {
+entry:
+  %other = getelementptr i8, ptr %state, i64 8
+  %selected = select i1 %choose, ptr %state, ptr %other
+  store i64 7, ptr %selected, align 1
+  ret i64 0
+})");
+    ASSERT_TRUE(M);
+    StateSourceContract Contract;
+    Contract.StateBytes = 16;
+    Contract.IsolatedBank = true;
+    Contract.LocalizeBank = Enabled;
+    auto R = prepareStateSourceRecovery(*M, Contract);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    const auto Before = cell_test::print(*M);
+    auto E = finishStateSourceRecovery(*M, *R);
+    ASSERT_FALSE(E) << llvm::toString(std::move(E));
+    EXPECT_EQ(R->LocalizedFunctions, 0u);
+    EXPECT_EQ(cell_test::print(*M), Before);
   }
 }
 } // namespace

@@ -353,9 +353,9 @@ exit:
  ret i32 %out
 })";
 
-TEST(LLVMCInternalExitRegions, SharedDestinationDoesNotMergeDistinctExitEdges) {
+TEST(LLVMCInternalExitRegions, SharedDestinationRetainsDistinctExitValues) {
   const auto C = emit(MultipleExits);
-  EXPECT_NE(C.find("goto "), std::string::npos) << C;
+  EXPECT_EQ(C.find("goto "), std::string::npos) << C;
   runOracle(MultipleExits, C, harness(R"(
       uint32_t v=seed;
       for (unsigned i=0;;++i) {
@@ -408,6 +408,15 @@ exit:
 
 TEST(LLVMCInternalExitRegions, FailedLaterRegionPublishesNoPartialStructure) {
   std::string IR = MultipleExits;
+  // Two effectful exit destinations still require the complete fallback.
+  replaceAll(IR, "br i1 %early, label %exit, label %latch",
+             "br i1 %early, label %early.exit, label %latch");
+  replaceAll(IR, "exit:\n %out", R"(early.exit:
+ call void @observe(i32 3, i32 %sum)
+ ret i32 %sum
+exit:
+ %out)");
+  replaceAll(IR, "[%v, %head], [%sum, %body]", "[%v, %head]");
   replaceAll(IR, "%entry", "%prefix.end");
   replaceAll(IR, "entry:\n", R"(entry:
  br label %prefix

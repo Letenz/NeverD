@@ -350,6 +350,11 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
            << StateRecovery->GuardedCalls << " guarded), "
            << StateRecovery->UnresolvedCalls
            << " declared gateway calls unresolved. */\n";
+        if (StateContract->LocalizeBank)
+          OS << "/* Explicit private writable bank: "
+             << StateRecovery->LocalizedFunctions
+             << " functions localized; complete state retained at boundaries. "
+                "*/\n";
       }
     } else {
       Pipeline::promoteScaffoldingAllocas(*Module);

@@ -136,6 +136,12 @@ struct StateSourceContract {
   bool ZeroStatusGateways = false;
   std::vector<StateSourceGateway> Gateways;
   std::vector<StateSourceImage> Images;
+  /// Opt in to local bank scalarization. The entire declared extent is
+  /// readable/writable for the invocation and exclusively owned except at
+  /// synchronous calls receiving the bank. No asynchronous observer or
+  /// nonlocal re-entry may inspect it. All bytes are preserved at boundaries;
+  /// this is not an assertion that scratch registers are dead on return.
+  bool LocalizeBank = false;
 };
 struct StateSourceRecovery {
   StateSourceContract Contract;
@@ -144,6 +150,7 @@ struct StateSourceRecovery {
   unsigned RewrittenCalls = 0;
   unsigned GuardedCalls = 0;
   unsigned UnresolvedCalls = 0;
+  unsigned LocalizedFunctions = 0;
 };
 
 /// Validate the entire contract/module before mutation. Scoped alias facts

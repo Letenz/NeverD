@@ -1105,6 +1105,17 @@ write. Unknown arity gets a runtime guard
 and original-call fallback. Unknown targets retain the original
 gateway and status. The bytecode JSON adapter owns schema parsing; observers
 remain conditional evidence and cannot supply these assertions implicitly.
+The opt-in `localize_bank` assertion additionally declares the complete bank
+readable/writable and exclusively owned between synchronous bank calls, without
+asynchronous observation or nonlocal re-entry. Bounded constant accesses can
+use local scalar storage. A CFG fixed point identifies bytes possibly written
+since each call/return; only those bytes synchronize to the original address.
+Opaque bank calls receive that same address and invalidate every cached byte.
+The shared optimizer evaluates both implementations; instruction, PHI-edge and
+branch cost must decrease before a localized body is retained. Unsupported
+addresses, ordered accesses, exceptional/re-entrant calls or construction
+limits preserve the original implementation. This does not discard return-state
+bytes, recover an ordinary parameter ABI or establish a producer's assertion.
 Explicit context forwarding prepends the captured gateway receiver to a native
 call. The same owner validates the two-pointer gateway ABI and maps physical
 parameter types, signed hints, variadic prefixes and string indices after
@@ -5326,9 +5337,9 @@ Before rendering C, `LLVMCCommonBranches` factors identical integer exit tests f
 
 `LLVMCLoopPhases` recombines the same total integer operation on every incoming edge of a loop PHI into one operation in the loop header. Operand PHIs preserve each edge and the previous iteration; identical tuples can reuse an existing PHI. Only an invariant available before the loop bypasses this selection. Shared roots, partial or poison-generating operations, constrained calls and exception-mapped functions remain unchanged. Planning is bounded and transactional, and only the source clone is modified; this does not merge peeled control-flow regions or recover source-level parameters.
 
-`LLVMCScalarRegions` plans complete integer CFGs before printing nested header-exit loops and conditionals. Every reachable block and successor edge must belong to the plan; memory, EH, irreducible or unsupported regions keep the existing projection. Bounds are 1024 blocks, 16384 instructions and 64 nesting levels. Printed-operand liveness coalesces only noninterfering PHIs, preserving parallel copies and live outer values. Constant-seeded, uniquely latched counters may use `for`; shared steps stay materialized, and header effects execute at every test. Single-use same-block funnel shifts with leaf operands can inline their total typed helpers. This rendering changes neither the caller IR nor the recovery/ABI contract.
+`LLVMCScalarRegions` plans complete integer/pointer CFGs before printing loops and conditionals, including acyclic functions, ordinary loads/stores and direct/indirect calls when the caller preserves explicit LLVM function types. Debug/image, composed-text and frame-home projections retain their existing path. Every effectful block and successor edge must belong to the plan; EH, ordered memory, irreducible or unsupported regions keep the existing projection. Memory and calls stay at their original instruction sites. Bounds are 1024 blocks, 16384 instructions and 64 nesting levels. Printed-operand liveness coalesces only noninterfering PHIs, preserving parallel copies and live outer values. Constant-seeded, uniquely latched counters may use `for`; shared steps stay materialized, and header effects execute at every test. Single-use same-block funnel shifts with leaf operands can inline their total typed helpers. This rendering changes neither the caller IR nor the recovery/ABI contract.
 
-Scalar regions also admit a unique exit inside a loop with a unique latch. An explicit `while (1)` retains the header and body instructions at their original iteration points; exit-edge parallel PHI copies precede the conditional `break`, and continuing-edge copies remain on their own edge. Nested header and internal exits compose without moving observer calls. The complete block/edge plan must still succeed within the existing limits before any output is published. Multiple exiting blocks, including those sharing a destination, and incomplete early-continuation regions keep the complete fallback. This adds no LLVM rewrite or native ABI evidence.
+Scalar regions also admit internal exits sharing a destination in a loop with a unique latch. An explicit `while (1)` retains the header and body instructions at their original iteration points; exit-edge parallel PHI copies precede the conditional `break`, and continuing-edge copies remain on their own edge. Nested header and internal exits compose without moving observer calls. The complete block/edge plan must still succeed within the existing limits before any output is published. PHI-only return sinks may be repeated after the incoming edge's parallel copies, allowing local failure guards within loops without duplicating effects. Other distinct exit destinations and incomplete early-continuation regions keep the complete fallback. This adds no LLVM rewrite or native ABI evidence.
 
 `LLVMCScalarExpressions` tracks LLVM bit width separately from the C expression type and operator precedence within admitted scalar regions. It removes redundant unsigned casts while preserving narrow wrap, signed interpretation, widened arithmetic and full-width shifts. Integer promotions, including byte/word multiplication and wide-to-boolean truncation, remain explicit when needed. Rendering is bounded to 128 visited values and 32 recursive levels; unsupported expressions use the existing writer. Debug, image and composed-text projections require separate type evidence and do not use this path. Caller IR and ABI contracts remain unchanged.
 
