@@ -31,7 +31,7 @@
 
 namespace neverd {
 // Internal parameter detector shared by the calling-convention pass.
-void detectXMMParams(
+void detectFPParams(
     MedFunc &Func, const MedBlock &Entry, const TargetRegInfo &TRI,
     const std::map<std::pair<uint64_t, uint16_t>, int> &RegVarMap,
     Arch TargetArch, BinaryFormat TargetFormat);
@@ -265,7 +265,7 @@ TEST(MedCallingConvValueFlow, VectorParameterBanksRespectTheImageABI) {
             binary(NdOp::STORE, {},
                    MedVar::makeConst(0x4000 + 16 * I, TRI.PointerSize), V));
       }
-      detectXMMParams(F, B, TRI, Vars, A, Format);
+      detectFPParams(F, B, TRI, Vars, A, Format);
       // Win64 passes floating arguments in its four positional slots; i386
       // in XMM0-XMM2 under System V, XMM0-XMM3 on Darwin and XMM0-XMM5 with
       // __vectorcall.
@@ -904,7 +904,7 @@ TEST(MedCallingConvValueFlow, FPInputsFollowOnlyAuthenticatedCallPrefixes) {
     const std::map<std::pair<uint64_t, uint16_t>, int> Vars{
         {{Incoming.RegOff, Incoming.Size}, Incoming.Id},
         {{Saved.RegOff, Saved.Size}, Saved.Id}};
-    detectXMMParams(F, B, TRI, Vars, A, BinaryFormat::MachO);
+    detectFPParams(F, B, TRI, Vars, A, BinaryFormat::MachO);
     EXPECT_EQ(F.Params.size(), Mutation <= 2 ? 1U : 0U);
     if (!F.Params.empty()) {
       EXPECT_EQ(F.Params[0].RegOff, Incoming.RegOff);
