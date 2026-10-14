@@ -5349,6 +5349,13 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `NeverDLLVMCPhiTests` also executes structured scalar regions at O0/O2: nested loops with shuffled block layout, diamonds, zero iterations, narrow wrap, header observers, PHI swaps, live outer carriers, shared steps and funnel-shift endpoints. It checks source-IR preservation, three-local coalescing, and executable fallback for multi-exit, irreducible and oversized graphs. These are independent synthetic fixtures; source rendering does not certify native recovery.
 
+`LLVMCScalarLoopRecovery.EffectfulGuardLaddersKeepSharedFailureAndEdgeValues`
+and `DistinctLoopExitTailsKeepEffectsAndCommonPhis` compare generated C with
+independently compiled LLVM at O0/O2 with UBSan traps. They vary branch polarity,
+skipped null-pointer reads, aliased memory, indirect observer order, early
+returns, shared exit tails and parallel pointer PHIs over 2,048 inputs per
+level each. Selected-function and module bodies agree without mutating LLVM.
+
 `NeverDLLVMCValueTests` compares typed scalar-loop C directly with independently compiled LLVM at O0/O2, with undefined-behavior traps enabled for the generated C. Boundary and deterministic full-width inputs cover narrow multiplication and wrap before shifts, widened multiplication and right shifts, wide-to-boolean truncation, signed comparisons/extensions, precedence, conditional expressions, boolean arithmetic, unsupported-operation fallback and deep materialized expressions. The tests also assert unchanged caller IR and removal of redundant casts.
 
 `NeverDLLVMCPhiTests` and `NeverDLLVMCValueTests` cover scoped byte counters across increment/decrement wrap, coalesced exit values, inlined uses after a loop, live outer carriers and PHI snapshots. Independent O0/O2 checks with undefined-behavior traps verify compound additions, reversed-subtraction refusal, narrow multiplication and boolean masks. Nested-region tests require loop-local counter declarations and a distinct result carrier without changing source LLVM. An executable naming regression makes external callees collide with the initially generated result/counter identifiers and checks that both calls and observer effects survive.

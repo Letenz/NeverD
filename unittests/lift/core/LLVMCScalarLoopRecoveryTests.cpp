@@ -708,6 +708,195 @@ int main(void) {
     compileAndRun(Source + Main, Level, Reference, true);
 }
 
+TEST(LLVMCScalarLoopRecovery,
+     EffectfulGuardLaddersKeepSharedFailureAndEdgeValues) {
+  llvm::LLVMContext Context;
+  auto Module = parse(R"(
+declare i64 @guard11(ptr, i64)
+define i64 @ladder(ptr %a, ptr %b, i32 %mode, ptr %observe) {
+entry:
+  %low = and i32 %mode, 1
+  %enabled = icmp ne i32 %low, 0
+  br i1 %enabled, label %test1, label %failure
+test1:
+  %before = load i64, ptr %b, align 1
+  %one = call i64 @guard11(ptr %a, i64 %before)
+  %bit = and i32 %mode, 2
+  %valid = icmp eq i32 %bit, 0
+  br i1 %valid, label %test2, label %failure
+test2:
+  %after = load i64, ptr %a, align 1
+  %two = call i64 %observe(ptr %b, i64 %after)
+  %bit2 = and i32 %mode, 4
+  %bad = icmp ne i32 %bit2, 0
+  br i1 %bad, label %failure, label %success
+success:
+  %combined = xor i64 %one, %two
+  store i64 %combined, ptr %b, align 1
+  br label %join
+failure:
+  %reason = phi i64 [13, %entry], [%one, %test1], [%two, %test2]
+  %pointer = phi ptr [%a, %entry], [%a, %test1], [%b, %test2]
+  %fallback = call i64 %observe(ptr %pointer, i64 %reason)
+  %halt = and i32 %mode, 8
+  %stop = icmp ne i32 %halt, 0
+  br i1 %stop, label %return, label %join
+join:
+  %chosen = phi i64 [%combined, %success], [%fallback, %failure]
+  %old = load i64, ptr %a, align 1
+  %answer = add i64 %old, %chosen
+  store i64 %answer, ptr %a, align 1
+  br label %return
+return:
+  %result = phi i64 [%fallback, %failure], [%answer, %join]
+  ret i64 %result
+}
+)",
+                      Context);
+  ASSERT_TRUE(Module);
+  const auto Source = emit(*Module);
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("guard"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("uint8_t guard11 ="), std::string::npos) << Source;
+  const auto Selected = emit(*Module, Module->getFunction("ladder"));
+  EXPECT_EQ(Selected.substr(Selected.find("uint64_t ladder(")),
+            Source.substr(Source.find("uint64_t ladder(")));
+  Module->getFunction("ladder")->setName("reference_ladder");
+  const auto Reference = text(*Module);
+  const std::string Main = R"(
+#include <string.h>
+extern uint64_t reference_ladder(void *, void *, uint32_t, void *);
+static uint64_t trace[32];
+static unsigned count;
+static uint64_t observe(void *p, uint64_t tag) {
+  uint64_t old;
+  memcpy(&old, p, 8);
+  trace[count++] = old;
+  trace[count++] = tag;
+  uint64_t value = (old * 17U) ^ tag;
+  memcpy(p, &value, 8);
+  return value + 0x8000000000000001ULL;
+}
+uint64_t guard11(void *p, uint64_t tag) { return observe(p, tag); }
+int main(void) {
+  for (unsigned seed = 0; seed < 2048; ++seed) {
+    uint64_t a[4], b[4], saved[32];
+    for (unsigned i=0;i<4;++i) a[i]=b[i]=((uint64_t)seed<<(i+19))^(i*0x7654321U);
+    unsigned mode=seed & 15, offset=(seed>>4)&3;
+    void *ap=(mode&1) ? a+offset : 0, *bp=(mode&1) ? b+offset : 0;
+    count=0;
+    uint64_t want=reference_ladder(a,ap,mode,(void *)observe);
+    unsigned calls=count;
+    memcpy(saved,trace,calls*8);
+    count=0;
+    if(ladder(b,bp,mode,(void *)observe)!=want || count!=calls ||
+       memcmp(a,b,sizeof a) || memcmp(saved,trace,calls*8)) return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, Reference, true);
+}
+
+TEST(LLVMCScalarLoopRecovery, DistinctLoopExitTailsKeepEffectsAndCommonPhis) {
+  llvm::LLVMContext Context;
+  auto Module = parse(R"(
+define i64 @exit_tails(ptr %p, ptr %q, i32 %n, i32 %fail, i32 %mode, ptr %observe) {
+entry:
+  br label %header
+header:
+  %i = phi i32 [0, %entry], [%next, %step]
+  %left = phi ptr [%p, %entry], [%right, %step]
+  %right = phi ptr [%q, %entry], [%left, %step]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %finished
+body:
+  %old = load i64, ptr %left, align 1
+  %value = add i64 %old, 17
+  store i64 %value, ptr %right, align 1
+  %bad = icmp eq i32 %i, %fail
+  br i1 %bad, label %cancelled, label %check
+check:
+  %seen = call i64 %observe(ptr %right, i64 %value)
+  %again = icmp eq i32 %i, %mode
+  br i1 %again, label %cancelled, label %check_escape
+check_escape:
+  %escape_index = add i32 %mode, 3
+  %other = icmp eq i32 %i, %escape_index
+  br i1 %other, label %escaped, label %step
+step:
+  %observed = call i64 %observe(ptr %left, i64 %value)
+  %next = add i32 %i, 1
+  br label %header
+finished:
+  %final = call i64 %observe(ptr %left, i64 19)
+  br label %join
+cancelled:
+  %why = phi i64 [%value, %body], [%seen, %check]
+  store i64 23, ptr %left, align 1
+  %cancel = call i64 %observe(ptr %right, i64 %why)
+  br label %join
+escaped:
+  %escape = call i64 %observe(ptr %left, i64 31)
+  store i64 %escape, ptr %right, align 1
+  br label %join
+join:
+  %a = phi ptr [%left, %finished], [%right, %cancelled], [%left, %escaped]
+  %b = phi ptr [%right, %finished], [%left, %cancelled], [%right, %escaped]
+  %v = phi i64 [%final, %finished], [%cancel, %cancelled], [%escape, %escaped]
+  %x = load i64, ptr %a, align 1
+  %y = load i64, ptr %b, align 1
+  %xy = xor i64 %x, %y
+  %result = add i64 %xy, %v
+  store i64 %result, ptr %a, align 1
+  ret i64 %result
+}
+)",
+                      Context);
+  ASSERT_TRUE(Module);
+  const auto Source = emit(*Module);
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("break;"), std::string::npos) << Source;
+  const auto Selected = emit(*Module, Module->getFunction("exit_tails"));
+  EXPECT_EQ(Selected.substr(Selected.find("uint64_t exit_tails(")),
+            Source.substr(Source.find("uint64_t exit_tails(")));
+  Module->getFunction("exit_tails")->setName("reference_exits");
+  const auto Reference = text(*Module);
+  const std::string Main = R"(
+#include <string.h>
+extern uint64_t reference_exits(void *, void *, uint32_t, uint32_t, uint32_t, void *);
+static uint64_t trace[128];
+static unsigned count;
+static uint64_t observe(void *p, uint64_t tag) {
+  uint64_t old;
+  memcpy(&old,p,8);
+  trace[count++]=old;
+  trace[count++]=tag;
+  old=(old*13U)+tag;
+  memcpy(p,&old,8);
+  return old^0x8000000000000000ULL;
+}
+int main(void) {
+  for(unsigned seed=0;seed<2048;++seed) {
+    uint64_t a[4],b[4],saved[128];
+    for(unsigned i=0;i<4;++i) a[i]=b[i]=((uint64_t)seed<<(i+13))^(i*0xfedcba9U);
+    unsigned n=seed&15, fail=(seed>>4)&31, mode=(seed>>8)&7, offset=(seed>>6)&3;
+    count=0;
+    uint64_t want=reference_exits(a,a+offset,n,fail,mode,(void *)observe);
+    unsigned calls=count;
+    memcpy(saved,trace,calls*8);
+    count=0;
+    if(exit_tails(b,b+offset,n,fail,mode,(void *)observe)!=want || count!=calls ||
+       memcmp(a,b,sizeof a) || memcmp(saved,trace,calls*8)) return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Level, Reference, true);
+}
+
 TEST(LLVMCScalarLoopRecovery, FunctionAndExceptionMetadataRetainTheirBodies) {
   for (bool Table : {false, true}) {
     llvm::LLVMContext Context;
