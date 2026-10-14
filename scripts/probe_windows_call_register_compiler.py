@@ -42,25 +42,46 @@ def variants(text, newline):
         signature_end = text.index("{", start, stop)
         return text[start:signature_end] + "{ " + result + " }" + newline + newline
 
-    no_save = text[:save_begin] + stub(save_begin, save_end, "return {};") + text[save_end:]
-    no_masked = text[:masked_begin] + stub(masked_begin, masked_end, "") + text[masked_end:]
-    no_both = (text[:save_begin] + stub(save_begin, save_end, "return {};") +
-               text[save_end:masked_begin] + stub(masked_begin, masked_end, "") + text[masked_end:])
-    no_unread = text[:begin] + stub(begin, end, "return {};") + text[end:]
-    first_helper = text.index("GPRFamilyMask familyBit")
-    moved = text[:first_helper] + text[begin:end] + text[first_helper:begin] + text[end:]
-    isolated = prefix + newline + "namespace neverd { namespace {" + newline + text[begin:end] + close
+    body = text[save_begin:save_end]
+    structures_begin = body.index("  struct Slot {")
+    structures_end = body.index("  std::array<unsigned", structures_begin)
+    loop_begin = body.index("  for (const size_t BI : Prologue)")
+    loop_end = body.index("  if (!ReadsVectorCount)", loop_begin)
+    prologue_begin = body.index("  if (Entry.Succs.size() == 2)")
+    prologue_end = body.index("  // An address", prologue_begin)
+    slot_begin = body.index("  auto SlotOf =")
+    slot_end = body.index("  // The temporaries", slot_begin)
+    entry_begin = body.index("  auto EntryValueAt =")
+    entry_end = body.index("  const std::optional<unsigned> VectorCount", entry_begin)
+
+    def whole(new_body):
+        return text[:save_begin] + new_body + text[save_end:]
+
+    moved_structures = whole(body[structures_begin:structures_end] +
+                             body[:structures_begin] + body[structures_end:])
+    renamed_slot = whole(body.replace("auto Slot = SlotOf(Address)", "auto AddressSlot = SlotOf(Address)").replace("Slot->", "AddressSlot->"))
+    explicit_optional = whole(body.replace("if (const auto Family = V.isReg()", "if (const std::optional<unsigned> Family = V.isReg()"))
+    prologue = body[prologue_begin:prologue_end]
+    choice_body = prologue.replace("    if (auto A = IndexOf(Entry.Succs[0]), B = IndexOf(Entry.Succs[1]); A && B)",
+        "    if (auto A = IndexOf(Entry.Succs[0]), B = IndexOf(Entry.Succs[1]); A && B) {")
+    choice_body = choice_body.replace("      for (const auto &[Around, Join] :" + newline + "           {std::pair{*A, *B}, std::pair{*B, *A}}) {",
+        "      const std::pair<size_t, size_t> Choices[]{{*A, *B}, {*B, *A}};" + newline +
+        "      for (const auto &[Around, Join] : Choices) {") + "    }" + newline
+    explicit_choices = whole(body[:prologue_begin] + choice_body + body[prologue_end:])
+    constants = text[text.index("constexpr uint64_t kX64GPRBytes"):text.index("GPRFamilyMask familyBit")]
+    isolated = prefix + newline + "namespace neverd { namespace {" + newline + constants + body + close
     return [
         ("original-o2", text, ""),
-        ("through-masked-merges", text[:masked_end] + close, ""),
-        ("through-unread", text[:end] + close, ""),
-        ("isolated-in-anonymous", isolated, ""),
-        ("without-save-area-body", no_save, ""),
-        ("without-masked-merge-body", no_masked, ""),
-        ("without-both-earlier-bodies", no_both, ""),
-        ("without-unread-body", no_unread, ""),
-        ("unread-before-earlier-functions", moved, ""),
-        ("original-syntax-only", text, " /Zs"),
+        ("isolated-save-area", isolated, ""),
+        ("save-area-without-prologue", whole(body[:prologue_begin] + body[prologue_end:]), ""),
+        ("save-area-without-scan", whole(body[:loop_begin] + body[loop_end:]), ""),
+        ("save-area-without-final-selection", whole(body[:loop_end] + "  return Spills;" + newline + "}" + newline), ""),
+        ("save-area-without-slot-lambda", whole(body[:slot_begin] + "  auto SlotOf = [&](const NdVar &) -> std::optional<Slot> { return std::nullopt; };" + newline + body[slot_end:]), ""),
+        ("save-area-without-entry-value-lambda", whole(body[:entry_begin] + "  auto EntryValueAt = [&](const NdVar &) -> std::optional<unsigned> { return std::nullopt; };" + newline + body[entry_end:]), ""),
+        ("save-area-namespace-structures", moved_structures, ""),
+        ("save-area-renamed-shadow", renamed_slot, ""),
+        ("save-area-explicit-optional", explicit_optional, ""),
+        ("save-area-explicit-choices", explicit_choices, ""),
     ]
 
 
