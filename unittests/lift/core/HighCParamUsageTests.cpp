@@ -93,3 +93,29 @@ TEST(HighCParamUsage, RecursiveCallsKeepEveryReadOperand) {
     EXPECT_EQ(Writer.emittedParamIndices(F),
               std::vector<size_t>({0, 1, 2, 3, 4, 5}));
 }
+
+TEST(HighCParamUsage, SharedCalleesKeepTheirDeclaredOperandProjection) {
+  std::vector<HighFunc> Functions;
+  for (size_t I = 0; I != 28; ++I) {
+    Functions.push_back(makeFunction(I));
+    Functions.back().Body.front().RetVal = makeParam(0);
+  }
+  for (size_t I = 0; I + 1 != Functions.size(); ++I) {
+    addCall(Functions[I], Functions[I + 1], true);
+    addCall(Functions[I], Functions[I + 1], true);
+  }
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  CEmitterOptions Options;
+  HighCWriter Writer(OS, Options, nullptr);
+  Writer.writeAll(Functions);
+  for (const auto &F : Functions) {
+    EXPECT_EQ(Writer.emittedParamIndices(F), std::vector<size_t>({0}));
+    for (const auto &S : F.Body)
+      if (S.Kind == StmtKind::Call) {
+        ASSERT_NE(S.CallExpr, nullptr);
+        EXPECT_EQ(Writer.printedCallOperands(*S.CallExpr),
+                  std::vector<size_t>({0}));
+      }
+  }
+}
