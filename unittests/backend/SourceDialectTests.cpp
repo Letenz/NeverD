@@ -880,6 +880,31 @@ int main(void) {
 /// both on the same inputs and compares what they print: the Rust view must
 /// compute what the C computes.  NEVERD_TEST_RUSTC or a `rustc` on PATH runs
 /// it; without one the check is skipped, as the SBF source suite is.
+TEST(SourceDialect, KeepsEveryDeclaratorOfADeclarationOnce) {
+  // Every declarator of `float a, b;` begins at the shared specifiers. The C
+  // and C++ views printed the first declarator again before the second.
+  constexpr const char *Source = R"C(#include <stdint.h>
+uint32_t bits(uint32_t x) {
+    float a, b;
+    uint32_t *p = &x, *q, y = 2;
+    __builtin_memcpy(&a, &x, 4);
+    b = a;
+    __builtin_memcpy(&x, &b, 4);
+    q = p;
+    return *q + y;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source)) << C.Text;
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("float a, b;"), std::string::npos) << Cpp.Text;
+  EXPECT_EQ(Cpp.Text.find("float a;"), std::string::npos) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("uint32_t *p = &x, *q, y = 2;"), std::string::npos)
+      << Cpp.Text;
+}
+
 TEST(SourceDialect, AFrameRecordPrintsItsTypeWhereItIsDeclared) {
   // HighC declares a kept frame as one record laid out like its bytes. C
   // and C++ define the record in the declaration; Go and Rust declare an

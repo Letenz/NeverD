@@ -18,6 +18,8 @@
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 
 using namespace neverd;
@@ -264,6 +266,11 @@ private:
       line("}");
       break;
     case csyntax::StmtKind::Declaration:
+      if (S->Decls.size() > 1 &&
+          llvm::none_of(S->Decls, [](const Decl *D) { return D->Body; })) {
+        declarators(S->Decls);
+        break;
+      }
       for (const Decl *D : S->Decls)
         declarationLine(D);
       break;
@@ -388,6 +395,22 @@ private:
       return;
     }
     line(text(D->Begin, D->End) + ";");
+  }
+
+  /// One declaration of several declarators, `float a, b;`. Every declarator
+  /// begins at the shared specifiers, so each prints from where the one
+  /// before it ends.
+  void declarators(llvm::ArrayRef<Decl *> Decls) {
+    std::string Text;
+    size_t From = Decls.front()->Begin;
+    for (const Decl *D : Decls) {
+      if (D->Init)
+        Text += text(From, D->Init->Begin) + " " + expr(D->Init).Text;
+      else
+        Text += text(From, D->End);
+      From = D->End;
+    }
+    line(Text + ";");
   }
 
   void declaration(const TopLevel &Item) override {
