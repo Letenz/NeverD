@@ -134,7 +134,8 @@ void detectFPParams(
     --ConstantWork;
     const unsigned Width = V.Size * 8;
     if (V.isConst())
-      return llvm::APInt(Width, V.ConstVal);
+      return llvm::APInt(Width, V.ConstVal, /*isSigned=*/false,
+                         /*implicitTrunc=*/true);
     const auto It = Defs.find(valueKey(V));
     if (It == Defs.end() || !It->second)
       return std::nullopt;

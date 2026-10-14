@@ -121,6 +121,20 @@ TEST(FPParameterMask, OnlyCompleteConstantBytesDiscardTheInput) {
       1u);
 }
 
+TEST(FPParameterMask, EncodedConstantsUseTheirDeclaredOperandWidth) {
+  for (uint64_t Bits : {UINT64_MAX, UINT64_C(0xffffffff000000ff)}) {
+    MedFunc F = maskedInput(0xff, false);
+    for (MedOp &Op : F.Blocks[0].Ops)
+      if (Op.Opcode == NdOp::INT_AND)
+        Op.Inputs[1] = MedVar::makeConst(Bits, 4);
+    F.Params.clear();
+    F.FPParamScalarBytes.clear();
+    detectFPParams(F, F.Blocks[0], getTargetRegInfo(Arch::ARM),
+                   {{{armreg::D(4), 8}, 10}}, Arch::ARM, BinaryFormat::ELF);
+    EXPECT_EQ(F.Params.size(), Bits == UINT64_MAX ? 1u : 0u);
+  }
+}
+
 TEST(FPParameterMask, FpReturnDemandFollowsEveryPredecessor) {
   for (bool ClearBothPaths : {false, true}) {
     MedFunc F = maskedInput(0xff, false, false, armreg::D(0), true);
