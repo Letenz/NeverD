@@ -77,7 +77,7 @@ bool chargeFrameMetadata(const LowFunc &F, size_t &Remaining) {
 
 bool completeLowSEHFrameCFG(const LowFunc &F,
                             const std::map<int, size_t> &Positions,
-                            size_t &Remaining) {
+                            size_t &Remaining, bool SourceProjection) {
   std::map<va_t, va_t> Ranges;
   for (const auto &B : F.Blocks) {
     if (!consume(Remaining, B.Preds.size() + B.Succs.size() + B.Ops.size() +
@@ -119,14 +119,35 @@ bool completeLowSEHFrameCFG(const LowFunc &F,
       if (B.Ops.empty())
         return false;
       const auto &Last = B.Ops.back();
-      const bool Conditional = Last.Opcode == NdOp::COND_BR;
-      if ((!Conditional && Last.Opcode != NdOp::BRANCH) ||
-          Last.NumInputs != (Conditional ? 2 : 1) ||
-          !Last.Inputs[0].isConst() || Last.Inputs[0].Size != 8)
-        return false;
-      Expected.insert(Last.Inputs[0].Offset);
-      if (Conditional)
-        Expected.insert(B.EndAddr);
+      if (Last.Opcode == NdOp::INDIR_BR) {
+        if (!SourceProjection || Last.NumInputs != 1 || Last.Output.Size ||
+            !hasLowInstructionControlFlag(
+                Insn.ControlFlags, LowInstructionControlFlag::Indirect) ||
+            F.UnsafeIndirectBranchAddresses.count(Last.Addr) ||
+            !consume(Remaining, F.JumpTables.size() + 1))
+          return false;
+        const JumpTable *Table = nullptr;
+        for (const auto &Candidate : F.JumpTables)
+          if (Candidate.InsnAddr == Last.Addr) {
+            if (Table || Candidate.MutatedUnsafe || Candidate.Targets.empty())
+              return false;
+            Table = &Candidate;
+          }
+        if (!Table || !consume(Remaining, Table->Targets.size()))
+          return false;
+        // The resolver owns the dispatch. The frame projection must visit
+        // every published target, including duplicate case destinations.
+        Expected.insert(Table->Targets.begin(), Table->Targets.end());
+      } else {
+        const bool Conditional = Last.Opcode == NdOp::COND_BR;
+        if ((!Conditional && Last.Opcode != NdOp::BRANCH) ||
+            Last.NumInputs != (Conditional ? 2 : 1) ||
+            !Last.Inputs[0].isConst() || Last.Inputs[0].Size != 8)
+          return false;
+        Expected.insert(Last.Inputs[0].Offset);
+        if (Conditional)
+          Expected.insert(B.EndAddr);
+      }
     } else if (Insn.Control != LowInstructionControl::Return &&
                Insn.Control != LowInstructionControl::TailCall &&
                !isUnconditionalNoReturn(Insn) &&

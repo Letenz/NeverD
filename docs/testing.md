@@ -5559,7 +5559,8 @@ registration work cap is 4,194,304. A Release observation used 1,144,583 state
 work units and 2,613,031 units for the complete decoded-callee closure. The
 original filter-output test also passes when built independently from its
 unchanged test body and helper. These work counts are deterministic accounting,
-not a throughput benchmark; the PE64 xcpt4 acceptance remains unresolved.
+not a throughput benchmark. PE64 source projection and native-frame proofs
+have separate acceptance gates.
 Unknown-address frame accesses still charge every potentially aliased cell.
 Their budget regression scales its load count with the configured limit and
 must withdraw all complete output when exhausted.
@@ -5651,6 +5652,41 @@ bytes, missing bytes/NUL, conflicting branches, unknown byte writes, `%n`,
 callee changes and saved-frame overwrites refuse. Truncated and ambiguous image
 storage supplies no destination authority. The original xcpt4 matrix remains
 the acceptance check for initial writable literals and exception activations.
+
+`MedSEHEstablisherFrame.SourceIndependentEntriesKeepUnknownStackValues`
+checks ordinary and shared exception entries without borrowing the prologue's
+stack cells. Strict conversion still refuses, source conversion retains
+unknown memory operands, and direct LLVM emission rejects the result.
+`SourceSwitchRequiresEveryResolvedTarget` checks the resolver-to-frame CFG
+boundary, including absent, duplicated, changed and unsafe target sets.
+`SourceRequiresExplicitIndependentEntry` rejects disconnected protected paths
+without a published source entry and accepts the same graph once that entry
+can receive explicit unknown values.
+Malformed unwind/prologue and converted-SP checks run with source projection
+enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
+runs the original eleven-case matrix, including the complete x64 xcpt4 image.
+`DecompilesRegistrationCalleeProofCycles` gives its full PE32 applications a
+240-second child-process allowance, within the corpus's 300-second CTest
+deadline. This accommodates slower hosts producing the large source body;
+the static proof work limits and output assertions do not change.
+
+Run the original x64 executable locally and verify the separate source result:
+
+```bash
+python scripts/check_windows_xcpt4_source.py --neverd build-release/bin/neverd \
+  --output /tmp/neverd-xcpt4-source --wine-prefix /tmp/neverd-xcpt4-wine64
+```
+
+The script accepts `wine`, `wine64` or `wine64-stable` (or `--wine`), uses an
+isolated 64-bit prefix and checks all 90 reported cases even when the EXE exits
+zero. The x64 fixture reports 89 successes and one explicit skip: test 29's
+alignment check is compiled only for ARM. Unexpected skips fail. It then runs
+the original source CLI and checks main's body, language/GS
+metadata and explicit unresolved-frame annotation. JSON keeps original runtime
+and source-analysis results separate. Neither successful original execution
+nor readable source is evidence that a replacement PE can execute. The Windows
+EH CI lane runs this check and the full analysis matrix; source/patch refusal
+and saved-slot overwrite controls remain required independently.
 
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC

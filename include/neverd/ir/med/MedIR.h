@@ -588,6 +588,9 @@ struct MedFunc {
   /// into an indirect call merely because the CFG has no static successors.
   std::set<va_t> UnsafeIndirectBranchAddresses;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  /// Source analysis retained unknown machine entries instead of asserting a
+  /// common SEH invocation frame. This function cannot be lowered to LLVM.
+  bool HasUnresolvedSEHFrame = false;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
 
   bool hasTypeInfo() const { return ReturnType != nullptr; }
