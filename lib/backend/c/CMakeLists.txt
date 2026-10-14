@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
+  HighC/HighCX87Context.cpp
   HighC/HighCSourceCalls.cpp
   HighC/HighCSourceNames.cpp
   HighC/HighCFuncWriter.cpp
@@ -25,6 +26,7 @@ add_neverd_component_library(NeverDBackendC
   LLVMC/LLVMCScalarRegions.cpp
   LLVMC/LLVMCScalarExpressions.cpp
   LLVMC/LLVMCStmtWriter.cpp
+  LLVMC/LLVMCStackAllocation.cpp
   pass/HighC/HighCDeadStoreAnalysis.cpp
   pass/HighC/HighCHiLoCollapse.cpp
   pass/HighC/HighCStoreForwarding.cpp

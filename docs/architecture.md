@@ -22,7 +22,7 @@ See [source patches](source-patching.md).
 `COFFSourceImage` owns installation of compiler-produced PE output on x86,
 x64, ARM32 and ARM64: separate code/state/metadata permissions, retained
 original runtime rows, new base relocations, exact compiler function/funclet
-ranges and bounded x64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
+ranges and bounded x64/ARM64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
 evidence and native base-relocation fields. `MachOPatchObject` authenticates
 native linker atoms and unwind records; format-owned native installers register
 DWARF/compact records without inventing MC tokens. `sourcePatchTargetTriple`
@@ -30,6 +30,10 @@ selects ARM mode, ELF float ABI and Mach-O CPU subtype from the loaded image. Th
 publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
+
+`SourcePatchCompiler` composes NeverC `cpp-core-v2` translation and C23 generation; `validateDynCodePatchImage` binds the hosted audit to actual object/payload hashes and exact linked code/entry layout. Format installers register real compiler unwind records. ARM64 source FH3 uses loader-owned xdata extents and MC-owned funclet/FuncInfo groups. Native compact records may cover every Mach-O function when the original has no DWARF section.
+
+`CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
 
 ## Manual PDB presentation boundary
 
@@ -58,8 +62,10 @@ path, beside the image, then the path's directories and stores). Discovery and
 `neverd_pdb_reference_json` share those candidates, so a PDB the GUI downloads
 into a store is the one the next load, and the command line's, finds; the C API
 names the first copy whose Info/DBI identity matches without loading the PE. No
-engine code contacts a server: the GUI owns consent and HTTPS transport into the
-store path the engine names, then loads the file through the strict PDB loader.
+engine code contacts a server: each frontend owns its transport into the store
+path the engine names, the GUI Qt's after the user consents and the command
+line the system's libcurl or WinHTTP for `--download-symbols`, and then loads
+the file through the strict PDB loader.
 `neverd_session_set_pdb_search(0)` opens a PE without the PDB the user declined,
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
@@ -132,11 +138,13 @@ prepared inputs used by a later HighC enhancement. The additive
 page API keeps default behavior and bytecode support. Source options never
 change the lifting, patching or general module optimizer defaults.
 
-LLVMC defaults to a scalar cleanup sequence after ordinary frame and SSA
-promotion. O0–O3 and a bounded custom pass selection are explicit alternatives.
-Symbolic fixed-point rewriting and LLVM dispatcher recovery require the
-independent symbolic option. Native machine CFG, jump-table, ABI and exception
-proofs remain authoritative and are unaffected. Worker source edits validate
+LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
+cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
+LLVM dispatcher recovery defaults on independently of the compiler level and
+optional symbolic fixed-point expression rewriting. Recovery retains its
+targeted constant proofs; `llvm_control_flow: false` explicitly disables that
+pass. Native machine CFG, jump-table, ABI and exception proofs remain
+authoritative and are unaffected. Worker source edits validate
 against the same source options used to display their targets.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
@@ -179,15 +187,32 @@ entry; an unmapped instruction reports the missing source mapping.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
-exception runtime. The C++ printer uses the shared symbol spelling rules for
-namespaces, STL aliases and qualified ATL types; non-default template arguments
-and explicit ABI arguments remain visible. DWARF record identities supply type
-spellings, not guessed layouts or implicit member-call conventions. The GUI
-offers a separate C choice for non-C images and omits it when only C is offered.
+exception runtime, and a function whose own exception personality is a C++
+runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
+spelling rules for namespaces, STL aliases and qualified ATL types; non-default
+template arguments and explicit ABI arguments remain visible. DWARF record
+identities supply type spellings, not guessed layouts or implicit member-call
+conventions. The GUI offers a separate C choice for non-C images and omits it
+when only C is offered.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
 tables; it is not a portable implementation of that unwinder.
+
+C++ spells every exception construct in standard syntax. An object's unwind
+action (an MSVC state's cleanup, an Itanium pad's destructors) is a
+`try { … } catch (...) { cleanup; throw; }` scope over the IPs where the
+object is live, nested by the state tree, so a handler runs after the cleanups
+of the objects its try contained and only for objects that were constructed.
+This differs from the runtime only where no handler exists at all: the runtime
+may then terminate without running the cleanups. An Itanium region's clauses
+take their bodies from the landing pad, as the pad runs for each clause's
+selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
+parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
+cannot follow exactly, or that also dispatches an enclosing try's clause,
+keeps the region in its commented form with the pad in place. In C, every
+landing pad of the call-site table keeps its label, so a pad that only runs
+cleanups is not read as dead code after a return.
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
@@ -660,6 +685,14 @@ qualified bundle source partitions, fixed-profile Bun container extraction,
 map decoding, budgets and query redaction. `SourceView` owns the bounded display
 projection and original/projected range mapping; `SessionView` owns preview,
 publication and revocation. CLI/worker/MCP adapters cannot bypass those policies.
+`SourceLimits` owns parser/model admission and work scaling for explicitly
+selected interactive and large-source profiles. `ParserBudget` consumes those
+same limits; `HermesModel` charges owned AST capacities and strings separately.
+Semantic consumers validate the complete model through `SourceModel` and use
+its selected node/work bounds. The session retains one large source independently
+of interactive cache counters. Recovery-export models remain outside semantic
+admission. Transports select the additive large-source operation and reuse
+ordinary evidence pages; they do not select limits or partition input syntax.
 `tools/common/web/Backend` owns the shared C++ worker/MCP C ABI client;
 `tools/common/transport/Json` owns bounded generic JSON admission. The compiled
 `neverd-web-mcp` separates launch inputs, schemas, lifecycle and stdio framing.
@@ -762,6 +795,14 @@ metadata and `SessionNavigation` composes its independent profile/cache with
 the other navigation owners. No layer promotes these source relationships to
 effective configuration or runtime values. See the
 [configuration order profile](web-configuration-order-profile.md).
+`features/configuration/Files` independently owns direct configuration file/layer
+literal sites, local minified lexical call candidates and array source sequences.
+`SourceModel::indexSourceFunctions` supplies the authoritative function/binding
+cardinality index to both this owner and existing client callbacks. The
+publication layer emits original anchors and fixed roles; it infers no runtime
+paths, enabled layers or effective configuration. `SessionNavigation` caches and
+revokes it with the other navigation results. See the
+[configuration file profile](web-configuration-file-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -959,6 +1000,15 @@ resource descriptor through the same captured namespace/path owner.
 `SessionDesktopExport` reuses the exclusive local writer and exact artifact
 origins; transport adapters neither infer a framework nor export raw resources.
 See the [resource descriptor profile](web-desktop-resource-profile.md).
+`desktop/DataPack` owns the explicit standard v5/u16 and measured WebView2
+v5/u32 table layouts, complete partitions, aliases and original resource hashes.
+`SessionDataPack` owns revision-bound publication and explicit gzip selections;
+`compression/Gzip` owns bounded native stream validation and discarded failures.
+`ArtifactView` retains separate original and decoded origins without granting a
+filesystem namespace or mapping decoded text into compressed storage.
+`SessionDataPackExport` uses the existing exclusive writer and fixed filenames.
+No transport infers a resource name, framework, runtime route or source language.
+See the [resource pack profiles](web-datapack-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker
@@ -1293,6 +1343,22 @@ exact offset only when an authenticated entry-SP definition and the target
 ABI's guaranteed alignment prove every discarded bit. Binary lift and patch
 keep the original operation. The LLVM-to-C route explicitly requests this
 source projection even though it otherwise uses the direct LLVM pipeline.
+
+The same source projection marks prologue saves: a store of a callee-saved
+register's entry value (`push rbx`, an AArch64 `stp`, MSVC's `mov [rsp+8],
+rbx` into a Win64 home slot) whose bytes nothing reads but that register's
+unused restore, and no other store writes. Both source routes leave a marked
+store out, as a C function leaves its caller's registers alone, so the
+prologue neither prints the caller's register as a stale value nor keeps a
+frame in byte storage. The MedIR text view shows the mark. Operations keep
+their positions, because call records index them. A save read for anything
+else stays a store, and binary lift and patch never mark one. On x86 the
+projection also marks a pointer-width load of the slot at the entry stack
+pointer, in a called function whose stores never write that slot: it reads
+the return address the call pushed. HighC prints it as
+`__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
+Neither view gives the frame a slot holding that address, so the read would
+otherwise print as an unassigned local or a zero.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -2032,6 +2098,10 @@ KVO context tokens use a separate writable-identity proof. A uniquely named writ
 
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
 
+## Owned x64 x87 context
+
+For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+
 ## IR representations and routes
 
 COFF loading records validated DWARF FDE extents before heuristic function
@@ -2767,6 +2837,12 @@ shorthand is applied.
 `lib/pipeline/Pipeline.cpp` is the source of truth for route selection. Keep
 representation-specific logic in its owning IR or backend library; the pipeline
 should orchestrate those components rather than absorb their algorithms.
+
+## LLVM C object storage
+
+`LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
+
+`LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
 
 ## Cross-architecture translation contract
 

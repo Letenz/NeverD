@@ -1,4 +1,11 @@
 C(Intrinsic::X86ReadMXCSR, "neverd_x86_read_mxcsr");
+C(Intrinsic::X87ContextBegin, "neverd_x87_begin_context");
+C(Intrinsic::X87ContextRefresh, "neverd_x87_refresh_context");
+C(Intrinsic::X87ContextExport, "neverd_x87_export_context");
+C(Intrinsic::X87ContextStep, "neverd_x87_step_context");
+C(Intrinsic::X87ContextMMXRead, "neverd_x87_read_mmx");
+C(Intrinsic::X87ContextMMXWrite, "neverd_x87_write_mmx");
+C(Intrinsic::X87ContextMMXEnter, "neverd_x87_enter_mmx");
 C(Intrinsic::X86WriteMXCSR, "neverd_x86_write_mxcsr");
 C(Intrinsic::X86FPAddState, "neverd_x86_fp_add_state");
 C(Intrinsic::X86FPSubState, "neverd_x86_fp_sub_state");

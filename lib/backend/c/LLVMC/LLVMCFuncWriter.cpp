@@ -14,6 +14,8 @@
 
 #include "../VariadicImportStub.h"
 #include "../X86GetPcThunk.h"
+#include "LLVMCStackAllocation.h"
+#include "LLVMCStorage.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
@@ -60,15 +62,10 @@ namespace neverd {
 
 namespace {
 
-std::string byteArrayAlignment(const llvm::AllocaInst &Alloca) {
-  const auto *Array =
-      llvm::dyn_cast<llvm::ArrayType>(Alloca.getAllocatedType());
-  // Byte backing storage has no natural alignment beyond one. Preserve its
-  // LLVM alignment for typed accesses and observable address-bit operations.
-  if (!Array || !Array->getElementType()->isIntegerTy(8) ||
-      Alloca.getAlign().value() == 1)
-    return {};
-  return "_Alignas(" + std::to_string(Alloca.getAlign().value()) + ") ";
+std::string allocaAlignment(const llvm::AllocaInst &Alloca) {
+  return llvmc::storageAlignment(Alloca.getAllocatedType(),
+                                 Alloca.getModule()->getDataLayout(),
+                                 Alloca.getAlign());
 }
 
 bool isLifetimeOrDbgUser(const llvm::User *U) {
@@ -514,6 +511,20 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
         Analysis.Inlinable.insert(&Inst);
         continue;
       }
+      // Each use spells a frame byte address from the frame itself, never by
+      // this name, so a statement for it would be a dead assignment.
+      if (llvm::isa<llvm::BinaryOperator, llvm::GetElementPtrInst,
+                    llvm::PtrToIntInst, llvm::IntToPtrInst, llvm::BitCastInst>(
+              &Inst))
+        if (const auto Peeled = peelPointerOffset(&Inst))
+          if (const auto *Frame =
+                  llvm::dyn_cast<llvm::AllocaInst>(Peeled->first))
+            if (const auto *Bytes =
+                    llvm::dyn_cast<llvm::ArrayType>(Frame->getAllocatedType());
+                Bytes && Bytes->getElementType()->isIntegerTy(8)) {
+              Analysis.Inlinable.insert(&Inst);
+              continue;
+            }
       if (!Inst.hasOneUse())
         continue;
       if (llvm::isa<llvm::AllocaInst>(&Inst))
@@ -669,6 +680,10 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
       if (!Call || Call->getType()->isVoidTy() || Call->use_empty() ||
           StatementCalls.count(Call))
+        continue;
+      // Allocation owns statement-local count/overflow/alignment operations
+      // and must execute at its original position, even with one printed use.
+      if (llvmc::cStackAllocation(*Call))
         continue;
       if (llvm::isa<llvm::IntrinsicInst>(Call) ||
           llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()) ||
@@ -2462,6 +2477,60 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   analyzeDeadFrameStores(Analysis, Fn);
   analyzeStoreForwarding(Analysis, Fn);
 
+  // A frame address passed on can reach any byte of the frame, unless a type
+  // bounds the object it starts: the callee's prototype, or the debug type of
+  // the local there. Named C locals would hide the other bytes from the
+  // consumer, so an unbounded escape keeps one backing array.
+  if (SyntheticFrame) {
+    // The size of the debug-described local at a frame offset, whatever its
+    // name: an ambiguous name still states the object's extent.
+    auto DebugObjectSize = [&](int64_t Offset) -> uint64_t {
+      const int64_t Disp = Offset - static_cast<int64_t>(FrameBaseOffset);
+      if (const auto Var = debugFrameVariable(Disp); Var && Var->Type)
+        return Var->Type->Size;
+      if (!Dbg || !FunctionEntry)
+        return 0;
+      auto Var = Dbg->resolveVariable(FunctionEntry, Disp);
+      if (!Var || !Var->Type)
+        return 0;
+      Dbg->completeType(Var->Type);
+      return Var->Type->Size;
+    };
+    // A parameter has one type: a debug-typed local passed in the same
+    // position of the same callee states it for every call.
+    std::set<std::pair<const llvm::Value *, unsigned>> TypedParameters;
+    for (const auto &Escape : Analysis.FrameEscapes)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(Escape.User);
+          Call && Escape.UnresolvedFrames.empty() &&
+          Escape.Locations.size() == 1 &&
+          Escape.Locations.begin()->first == SyntheticFrame &&
+          DebugObjectSize(Escape.Locations.begin()->second))
+        TypedParameters.emplace(Call->getCalledOperand()->stripPointerCasts(),
+                                Escape.Operand);
+    auto Bounded = [&](const LLVMCAnalysisState::FrameAddressEscape &Escape,
+                       int64_t Offset) {
+      if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(Escape.User)) {
+        if (const TypeRef Expected = expectedCallArgType(*Call, Escape.Operand);
+            Expected && Expected->Pointee && Expected->Pointee->Size)
+          return true;
+        if (TypedParameters.count(
+                {Call->getCalledOperand()->stripPointerCasts(),
+                 Escape.Operand}))
+          return true;
+      }
+      return DebugObjectSize(Offset) != 0;
+    };
+    for (const auto &Escape : Analysis.FrameEscapes) {
+      bool Unbounded = Escape.UnresolvedFrames.count(SyntheticFrame) != 0;
+      for (const auto &[Frame, Offset] : Escape.Locations)
+        Unbounded |= Frame == SyntheticFrame && !Bounded(Escape, Offset);
+      if (Unbounded) {
+        Analysis.RawFrameAllocas.insert(SyntheticFrame);
+        break;
+      }
+    }
+  }
+
   // A byte update and a qword read at the same address share storage. Naming
   // only the narrow store would allocate a byte local, then make the wider
   // access run past it. Likewise, an interior byte cannot be split from its
@@ -2916,37 +2985,38 @@ bool LLVMCWriter::isTrailingLiveInCopy(const llvm::Value *V) const {
   return false;
 }
 
+TypeRef LLVMCWriter::expectedCallArgType(const llvm::CallBase &Call,
+                                         unsigned Index) const {
+  if (auto FS = debugCallee(Call))
+    if (TypeRef Ty = cDisplayType(debugCallArgPointer(*FS, Index, Opts)))
+      return Ty;
+  std::string Name;
+  if (const auto *Callee = Call.getCalledFunction()) {
+    const std::string Raw = Callee->getName().str();
+    if (const char *CN = llvmIntrinsicToCName(Raw.c_str()))
+      Name = CN;
+    else
+      Name = functionIdentifier(*Callee);
+  } else {
+    Name = resolveImportCalleeName(Call.getCalledOperand());
+  }
+  if (Name.empty())
+    return {};
+  if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
+    if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
+        (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
+      TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
+      if (isNamedPointerDisplay(Ty))
+        return Ty;
+    }
+  }
+  return {};
+}
+
 void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
   AllocaLastValues.clear();
   AllocaImmediates.clear();
 
-  auto expectedCallArgType = [&](const llvm::CallBase &Call,
-                                 unsigned Index) -> TypeRef {
-    if (auto FS = debugCallee(Call))
-      if (TypeRef Ty = cDisplayType(debugCallArgPointer(*FS, Index, Opts)))
-        return Ty;
-    std::string Name;
-    if (const auto *Callee = Call.getCalledFunction()) {
-      const std::string Raw = Callee->getName().str();
-      if (const char *CN = llvmIntrinsicToCName(Raw.c_str()))
-        Name = CN;
-      else
-        Name = functionIdentifier(*Callee);
-    } else {
-      Name = resolveImportCalleeName(Call.getCalledOperand());
-    }
-    if (Name.empty())
-      return {};
-    if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
-      if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
-          (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
-        TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
-        if (isNamedPointerDisplay(Ty))
-          return Ty;
-      }
-    }
-    return {};
-  };
   auto applyCallSlotType = [&](llvm::Value *Arg, const TypeRef &Expected) {
     if (!isNamedPointerDisplay(Expected))
       return;
@@ -8336,7 +8406,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
     }
   }
 
-  bool EmittedNamedSlot = false;
+  bool EmittedLocal = false;
   std::set<std::string> DeclaredSlots;
   for (const auto &[_, Slot] : FrameSlots) {
     if (Slot.Name.empty() || !DeclaredSlots.insert(Slot.Name).second)
@@ -8347,7 +8417,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
     else
       OS << "uint64_t " << Slot.Name << ";\n";
     CallDeclNames.push_back(Slot.Name);
-    EmittedNamedSlot = true;
+    EmittedLocal = true;
   }
 
   for (auto &BB : Fn) {
@@ -8367,11 +8437,13 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         // Same rule as instruction temps: an alloca declared for a load that
         // the statement walk never prints is not a live local.
         CallDeclNames.push_back(AllocName);
+        EmittedLocal = true;
         emitIndent(1);
+        OS << allocaAlignment(*AI);
         auto *AllocTy = AI->getAllocatedType();
         if (auto *ArrTy = llvm::dyn_cast<llvm::ArrayType>(AllocTy)) {
-          OS << byteArrayAlignment(*AI) << typeToCLLVM(ArrTy->getElementType())
-             << " " << AllocName << "[" << ArrTy->getNumElements() << "];\n";
+          OS << typeToCLLVM(ArrTy->getElementType()) << " " << AllocName << "["
+             << ArrTy->getNumElements() << "];\n";
         } else {
           if (auto It = AllocaTypes.find(AI);
               It != AllocaTypes.end() && It->second &&
@@ -8391,7 +8463,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
     }
   }
 
-  if (!NeedsDecl.empty() || EmittedNamedSlot)
+  if (!NeedsDecl.empty() || EmittedLocal)
     OS << "\n";
 }
 
@@ -9537,7 +9609,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         if (const auto *Array =
                 llvm::dyn_cast<llvm::ArrayType>(AI->getAllocatedType()))
           ArrayDeclarations[It->second] =
-              byteArrayAlignment(*AI) + typeToCLLVM(Array->getElementType()) +
+              allocaAlignment(*AI) + typeToCLLVM(Array->getElementType()) +
               " " + It->second + "[" + std::to_string(Array->getNumElements()) +
               "];";
       if (DeclaredNames.count(It->second))
@@ -9550,7 +9622,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(&Inst)) {
         llvm::Type *Allocated = AI->getAllocatedType();
         if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Allocated)) {
-          Declaration = "    " + byteArrayAlignment(*AI) +
+          Declaration = "    " + allocaAlignment(*AI) +
                         typeToCLLVM(Array->getElementType()) + " " +
                         It->second + "[" +
                         std::to_string(Array->getNumElements()) + "];\n";
@@ -9566,7 +9638,8 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
             if (!Tag.empty())
               Type = Tag + "*";
           }
-          Declaration = "    " + Type + " " + It->second + ";\n";
+          Declaration =
+              "    " + allocaAlignment(*AI) + Type + " " + It->second + ";\n";
         }
       } else {
         Declaration =

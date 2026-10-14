@@ -26,6 +26,7 @@
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterBody.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -58,6 +59,12 @@ namespace {
 bool isStReg(const NdVar &V) {
   return V.isReg() && V.Offset >= x86reg::ST0 && V.Offset <= x86reg::ST7 &&
          ((V.Offset - x86reg::ST0) % x86reg::FPURegStride == 0);
+}
+
+/// The image's calling convention decides who owns the x87 register stack;
+/// Decoder::configureFor gives its lifter the same answer.
+bool ownsX87Context(const BinaryImage &Img) {
+  return x87ContextOwnsStack(Img.Arch, Img.abiFormat(), Img.X87ContextOverride);
 }
 
 // The intrinsics that load or reinitialize the whole x87 state, or stand for
@@ -281,6 +288,7 @@ struct X87CallGraph {
   std::vector<X87CallGraphBlock> Blocks;
   size_t Cost = 0;
   bool Complete = false;
+  bool UsesContext = false;
   ProjectionRejection Rejection = ProjectionRejection::None;
 };
 
@@ -1120,6 +1128,9 @@ class X87CallEffectIndex {
              O < Boundary.FirstOp + Boundary.OpCount; ++O) {
           const LowOp &Op = Source.Ops[O];
           if (Op.Opcode == NdOp::INTRINSIC) {
+            G.UsesContext |= Op.NumInputs && Op.Inputs[0].isConst() &&
+                             isX87ContextIntrinsic(
+                                 static_cast<Intrinsic>(Op.Inputs[0].Offset));
             S.Unknown |= !modeledIntrinsic(Op);
             B.Stops |= isArchitecturalNoReturn(Op);
           }
@@ -1273,7 +1284,44 @@ class X87CallEffectIndex {
 public:
   explicit X87CallEffectIndex(const CFGBuilder &Builder)
       : Settings(Builder), Image(*Builder.CurrentImg) {}
-  void prepareCalls(const LowFunc &F) {
+  std::optional<bool> usesContext(va_t Entry) {
+    Query Q;
+    std::set<va_t> Active;
+    std::map<va_t, bool> Done;
+    std::function<std::optional<bool>(va_t, unsigned)> Visit =
+        [&](va_t Address, unsigned Depth) -> std::optional<bool> {
+      if (!Q.pay(1) || Depth >= limits::kMaxX87CallProofDepth ||
+          Active.size() >= limits::kMaxX87CallProofFunctions)
+        return std::nullopt;
+      if (auto It = Done.find(Address); It != Done.end())
+        return It->second;
+      if (!importCalleeName(Image, Address).empty())
+        return false;
+      if (!Active.insert(Address).second)
+        return std::nullopt;
+      llvm::scope_exit Leave([&] { Active.erase(Address); });
+      const Graph &G = graph(Address);
+      if (!G.Complete || !Q.pay(G.Cost))
+        return std::nullopt;
+      if (G.UsesContext) {
+        Done[Address] = true;
+        return true;
+      }
+      bool Uses = false;
+      for (const Block &B : G.Blocks)
+        for (const Step &S : B.Steps)
+          if (S.Callee) {
+            const auto Callee = Visit(*S.Callee, Depth + 1);
+            if (!Callee)
+              return std::nullopt;
+            Uses |= *Callee;
+          }
+      Done[Address] = Uses;
+      return Uses;
+    };
+    return Visit(Entry, 0);
+  }
+  void prepareCalls(const LowFunc &F, bool ContextOwnership = false) {
     const auto &Cache = Settings.SharedX87CallGraphs;
     if (Settings.X87CallProofThreads <= 1 || workerThreadCount() <= 1 ||
         !Cache || CurrentX87CacheBuild ||
@@ -1329,7 +1377,10 @@ public:
           X87CallEffectIndex Worker(Settings);
           for (size_t I; (I = Claim()) < N;)
             try {
-              Values[I] = Worker.effect(Targets[I]);
+              if (ContextOwnership)
+                Worker.usesContext(Targets[I]);
+              else
+                Values[I] = Worker.effect(Targets[I]);
             } catch (...) {
               Failures[I] = std::current_exception();
             }
@@ -1341,7 +1392,8 @@ public:
     for (size_t I = 0; I < Targets.size(); ++I) {
       if (Failures[I])
         std::rethrow_exception(Failures[I]);
-      Answers.emplace(Targets[I], Values[I]);
+      if (!ContextOwnership)
+        Answers.emplace(Targets[I], Values[I]);
     }
   }
   std::optional<int> effect(va_t Entry) {
@@ -1384,14 +1436,16 @@ X87CallGraphCache::validatedSummary(
   for (const auto &[Target, Answer] : Facts->NoReturnAnswers)
     if (!NoReturnCallees || NoReturnCallees->neverReturns(Target, 0) != Answer)
       return {};
-  // No local stack use was observed at *any* skipped normalization. Only a
-  // proven floating call return could still change an operation or TOP. Each
-  // target retains the ordinary proof depth and its full private allowance;
-  // an unknown result has the same unchanged-call behavior as fixupFpuStack.
+  // A wrapper without local stack use can still require context lifetime for
+  // its callee. Raw machine bodies must not bypass that normalization. Every
+  // query retains the ordinary depth and its full private allowance.
   X87CallEffectIndex Effects(Request);
-  for (va_t Target : Facts->Calls)
+  for (va_t Target : Facts->Calls) {
+    if (ownsX87Context(Img) && Effects.usesContext(Target).value_or(false))
+      return {};
     if (Effects.effect(Target) == std::optional<int>(-1))
       return {};
+  }
   return Facts;
 }
 
@@ -1475,7 +1529,8 @@ bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
       NeedsStack |=
           Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
           Op.Inputs[0].isConst() &&
-          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam);
+          (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam) ||
+           isX87ContextIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)));
     }
     if (NeedsStack)
       break;
@@ -1499,7 +1554,8 @@ void CFGBuilder::recordSkippedFpuFixup(const LowFunc &Func) {
       LocalStack |=
           Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
           Op.Inputs[0].isConst() &&
-          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam);
+          (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam) ||
+           isX87ContextIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)));
       if (LocalStack) {
         Witness.Complete = false;
         return;
@@ -1539,6 +1595,214 @@ void CFGBuilder::recordSkippedFpuFixup(const LowFunc &Func) {
 }
 
 void CFGBuilder::fixupFpuStack(LowFunc &Func) {
+  if (SkipX87StackFixup) {
+    recordSkippedFpuFixup(Func);
+    return;
+  }
+  if (CurrentImg && ownsX87Context(*CurrentImg)) {
+    const auto ContextId = [](const LowOp &Op) {
+      return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                     Op.Inputs[0].isConst()
+                 ? static_cast<Intrinsic>(Op.Inputs[0].Offset)
+                 : Intrinsic::None;
+    };
+    bool HasContext = false, Prepared = false;
+    const auto MMXSlot = [](const NdVar &V) -> std::optional<unsigned> {
+      if (isStReg(V) && V.Size && V.Size <= 8)
+        return x86reg::stRegIndex(V.Offset);
+      return std::nullopt;
+    };
+    uint64_t Next = 0;
+    bool InvalidTemporary = false;
+    const auto ReserveTemporary = [&](uint64_t Offset, uint64_t Bytes) {
+      if (Offset > UINT64_MAX - Bytes) {
+        InvalidTemporary = true;
+        return;
+      }
+      Next = std::max(Next, Offset + Bytes);
+    };
+    for (const auto &B : Func.Blocks)
+      for (const auto &Op : B.Ops) {
+        HasContext |= ContextId(Op) == Intrinsic::X87ContextStep;
+        HasContext |= MMXSlot(Op.Output).has_value();
+        Prepared |= ContextId(Op) == Intrinsic::X87ContextBegin;
+        if (Op.Output.isTemp())
+          ReserveTemporary(Op.Output.Offset, Op.Output.Size);
+        for (unsigned I = 0; I < Op.NumInputs; ++I) {
+          HasContext |= MMXSlot(Op.Inputs[I]).has_value();
+          if (Op.Inputs[I].isTemp())
+            ReserveTemporary(Op.Inputs[I].Offset, Op.Inputs[I].Size);
+        }
+      }
+    // A returning wrapper can transport x87 state without a local floating
+    // instruction. Reuse the bounded raw call graph's ownership question,
+    // never manufacture a scalar FP return from a partial stack projection.
+    if (!HasContext)
+      for (const auto &B : Func.Blocks)
+        for (size_t I = 0; I < B.Ops.size(); ++I) {
+          const auto &Op = B.Ops[I];
+          if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+              !Op.NumInputs)
+            continue;
+          const auto Target = Op.Inputs[0].isConst()
+                                  ? std::optional<va_t>(Op.Inputs[0].Offset)
+                                  : loadedCallSlot(Func, B, I, Op.Inputs[0]);
+          if (!Target)
+            continue;
+          if (!X87CallEffects)
+            X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
+          HasContext |= X87CallEffects->usesContext(*Target).value_or(false);
+        }
+    if (HasContext) {
+      if (Prepared)
+        return;
+      if (SharedX87CallGraphs && X87CallProofThreads > 1) {
+        if (!X87CallEffects)
+          X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
+        X87CallEffects->prepareCalls(Func, /*ContextOwnership=*/true);
+      }
+      // Validate complete coverage before rewriting any block. Inconsistent
+      // boundaries cannot silently drop an operation or publish half a graph.
+      for (const auto &B : Func.Blocks) {
+        size_t End = 0;
+        for (const auto &Boundary : B.InstructionBoundaries) {
+          if (Boundary.FirstOp != End || End > B.Ops.size() ||
+              Boundary.OpCount > B.Ops.size() - End) {
+            UnsupportedInstructionAddresses.insert(B.StartAddr);
+            return;
+          }
+          End += Boundary.OpCount;
+        }
+        if (End != B.Ops.size() || B.InstructionBoundaries.empty()) {
+          UnsupportedInstructionAddresses.insert(B.StartAddr);
+          return;
+        }
+      }
+      for (const auto &Range : Func.FunctionTemporaries)
+        ReserveTemporary(Range.Offset, Range.Bytes);
+      if (InvalidTemporary || Next > UINT64_MAX - 8) {
+        UnsupportedInstructionAddresses.insert(Func.Entry);
+        return;
+      }
+      const NdVar Handle = NdVar::tmp(Next, 8);
+      Func.FunctionTemporaries.push_back({Next, 8});
+      const auto IsRoot = [&](const LowBlock &B) {
+        return B.StartAddr == Func.Entry || B.Preds.empty() ||
+               !B.ExceptionalPreds.empty() ||
+               Func.ModuleAnalysisRoots.count(B.StartAddr) ||
+               CurrentImg->CodeRefTargets.count(B.StartAddr);
+      };
+      std::set<int> RecapturedRoots;
+      for (const auto &B : Func.Blocks)
+        if (B.StartAddr != Func.Entry && IsRoot(B))
+          RecapturedRoots.insert(B.Id);
+      const auto Rewrite = [&](NdVar &V) {
+        if (V.isReg() && V.Offset == x86reg::X87ContextHandle)
+          V = Handle;
+      };
+      for (auto &B : Func.Blocks) {
+        const bool Root = IsRoot(B);
+        const bool PublishEdge =
+            std::any_of(B.Succs.begin(), B.Succs.end(), [&](int Successor) {
+              return RecapturedRoots.count(Successor);
+            });
+        std::vector<LowOp> Ops;
+        const auto emit = [&](Intrinsic Id, va_t Address) {
+          LowOp New;
+          New.Opcode = NdOp::INTRINSIC;
+          New.Addr = Address;
+          New.addInput(NdVar::cst(unsigned(Id), 2));
+          if (Id == Intrinsic::X87ContextBegin)
+            New.Output = Handle;
+          else
+            New.addInput(Handle);
+          Ops.push_back(New);
+        };
+        // Set while the previous operation was a call whose RETURN follows
+        // directly (a tail jump, or a call right before RET).
+        bool ReturnsCallState = false;
+        for (auto &Boundary : B.InstructionBoundaries) {
+          const auto First = Boundary.FirstOp, End = First + Boundary.OpCount;
+          if (First > B.Ops.size() || Boundary.OpCount > B.Ops.size() - First) {
+            UnsupportedInstructionAddresses.insert(Boundary.Address);
+            continue;
+          }
+          Boundary.FirstOp = Ops.size();
+          if (Root && First == 0)
+            emit(Intrinsic::X87ContextBegin, Boundary.Address);
+          std::set<unsigned> MMXReads, MMXWrites;
+          for (size_t I = First; I < End; ++I) {
+            const auto &Op = B.Ops[I];
+            if (auto Slot = MMXSlot(Op.Output))
+              MMXWrites.insert(*Slot);
+            for (unsigned J = 0; J < Op.NumInputs; ++J)
+              if (auto Slot = MMXSlot(Op.Inputs[J]))
+                MMXReads.insert(*Slot);
+          }
+          const bool MMX = !MMXReads.empty() || !MMXWrites.empty();
+          if (MMX) {
+            emit(Intrinsic::X87ContextStep, Boundary.Address);
+            auto &Wait = Ops.back();
+            Wait.addInput(NdVar::cst(0x9b, 4));
+            Wait.addInput(NdVar::cst(0, 8));
+            Wait.addInput(NdVar::cst(0, 8));
+            Wait.addInput(NdVar::cst(Boundary.Address, 8));
+            for (unsigned Slot : MMXReads) {
+              emit(Intrinsic::X87ContextMMXRead, Boundary.Address);
+              Ops.back().addInput(NdVar::cst(Slot, 4));
+              Ops.back().Output = NdVar::reg(x86reg::stReg(Slot), 8);
+            }
+          }
+          for (size_t I = First; I < End; ++I) {
+            LowOp Op = B.Ops[I];
+            Rewrite(Op.Output);
+            for (unsigned J = 0; J < Op.NumInputs; ++J)
+              Rewrite(Op.Inputs[J]);
+            const bool Call =
+                Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL;
+            const bool ExternalState =
+                x87ContextSynchronizesExternalState(ContextId(Op));
+            // Such a call hands the callee's x87 state straight back to this
+            // function's caller. Nothing reads the context in between, so no
+            // refresh/export pair separates the CALL from its RETURN, whose
+            // adjacency the ABI passes rely on.
+            const bool Returned = Call && I + 1 < B.Ops.size() &&
+                                  B.Ops[I + 1].Opcode == NdOp::RETURN;
+            if (Call || ExternalState ||
+                (Op.Opcode == NdOp::RETURN && !ReturnsCallState) ||
+                Op.Opcode == NdOp::INDIR_BR ||
+                (PublishEdge &&
+                 (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR)))
+              emit(Intrinsic::X87ContextExport, Op.Addr);
+            Ops.push_back(Op);
+            if (ExternalState)
+              emit(Intrinsic::X87ContextRefresh, Op.Addr);
+            if (Call && !Returned &&
+                !hasLowInstructionControlFlag(
+                    Boundary.ControlFlags, LowInstructionControlFlag::NoReturn))
+              emit(Intrinsic::X87ContextRefresh, Op.Addr);
+            ReturnsCallState = Returned;
+          }
+          if (MMX) {
+            emit(Intrinsic::X87ContextMMXEnter, Boundary.Address);
+            for (unsigned Slot : MMXWrites) {
+              emit(Intrinsic::X87ContextMMXWrite, Boundary.Address);
+              Ops.back().addInput(NdVar::cst(Slot, 4));
+              Ops.back().addInput(NdVar::reg(x86reg::stReg(Slot), 8));
+            }
+          }
+          if (PublishEdge && End == B.Ops.size() &&
+              (Ops.empty() || (Ops.back().Opcode != NdOp::BRANCH &&
+                               Ops.back().Opcode != NdOp::COND_BR &&
+                               Ops.back().Opcode != NdOp::INDIR_BR)))
+            emit(Intrinsic::X87ContextExport, Boundary.Address);
+          Boundary.OpCount = Ops.size() - Boundary.FirstOp;
+        }
+        B.Ops = std::move(Ops);
+      }
+      return;
+    }
+  }
   if (SkipX87StackFixup) {
     recordSkippedFpuFixup(Func);
     return;

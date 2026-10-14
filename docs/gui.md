@@ -91,7 +91,12 @@ Analysis uses the shared C++ backend and never launches the input. See the
 [workflow and limits](web-package-review-journal.md).
 
 A start without a file shows the quick start alone, as IDA does: the workbench
-appears once you choose how to start, and closing the quick start quits. Drag
+appears once you choose how to start, and closing the quick start quits. The
+questions asked before a file loads, **Load a new file** and **Load PDB file**,
+greet alone too while the workbench has not shown yet, after the quick start or
+for a file named on the command line; the workbench appears as the file starts
+to load, or when you cancel the load. A run that captures or measures asks
+nothing and loads the PDB that discovery finds. Drag
 its window edges or lower-right grip to resize it; the next opening remembers
 that size. The action pane stays the same width while the recent files use the
 available space. Its side pane holds the ways to start: **New** (N) asks for a
@@ -178,14 +183,21 @@ hiding a pane stops its requests; showing it again resumes its own function.
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
 right-click **Symbolically simplify this function** to enable it. C through LLVM
-offers basic scalar cleanup by default, separate O0–O3 compiler pipelines, and a
-custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE. Symbolic
-simplification is a separate choice for every LLVM profile. These choices apply
-to the current function; navigating to another function restores the defaults.
+defaults to control-flow recovery and O2, with basic scalar cleanup, O0, O1, O3,
+and a custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE available
+in the same menu. Symbolic simplification is a separate choice for every LLVM
+profile. **Recover LLVM control flow** has its own checked-by-default item;
+disabling symbolic
+expression simplification does not disable recovery or its targeted proofs.
+The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
+`--symbolic-simplify`. LLVM-specific overrides require `--func --llvm`;
+HighC symbolic simplification requires `--func`. These choices apply to the
+current function; navigating to another function restores the defaults.
 An enhancement runs in the analysis worker while the previous source remains
 visible. **Cancel transformation** stops that request, and **Restore default
 source** returns to the ordinary view. Failed enhancements retain the preceding
 source. Required machine control-flow, ABI and exception recovery still run.
+These display defaults do not change the conservative binary patch pipeline.
 
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
@@ -640,6 +652,9 @@ for its build. Transfers have a 2 GiB limit, a 30-second inactivity timeout and
 a 10-minute overall deadline; a broken connection or a server error is tried
 twice more before the dialog reports it. Windows also tries a server's
 compressed `.pd_` variant. Symbol-store `file.ptr` indirection is not followed.
+The command line searches the same stores, takes the search path as
+`--symbol-path`, and with `--download-symbols` downloads a missing PDB the same
+way before it loads the file, through the system's libcurl or WinHTTP.
 
 A project whose PDB no longer loads, and a file opened before anyone was asked,
 offer the same dialog once the file is open; a copy that has reached a store
@@ -720,6 +735,24 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Functions → Edit function** (Alt+P, and Ctrl+E on a row of the
+Functions window, as in IDA) opens IDA's Edit function dialog on the current
+function: its name, its start and end, its color, the frame sizes IDA lists
+and its flags. A new name is a rename. **Does not return** states that the
+function never returns, which ends every call to it, over its name and what
+analysis proves of its body, in either direction. **Library func**, **Static
+func** and the color are notes the dialog and the command line keep;
+analysis does not read them, and the listing does not paint the color yet.
+The bounds come from analysis and cannot be changed here. Of the frame sizes
+NeverD shows the bytes x86's `ret imm` purges; the other sizes and the flags
+**Far function**, **BP based frame**, **BP equals to SP**, **Fuzzy SP** and
+**Outlined code** describe IDA's frame model, which NeverD does not keep,
+and show disabled. The statements are kept in the function edits sidecar and
+go with a deleted function. A rename and a change of the flags are two steps
+of the history. The command line shows and states the same
+(`neverd function-edits <input> --show <address>`, `--edit <address> --set
+noreturn=true`, `--set color=#RRGGBB`, `--set library=default`).
 
 **Edit → Rename** (N) names any address, as the listing and the pseudocode
 show it: a name under the cursor renames what it denotes, otherwise the item

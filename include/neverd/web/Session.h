@@ -13,6 +13,7 @@
 
 #include "neverd/web/Error.h"
 #include "neverd/web/NativeInput.h"
+#include "neverd/web/Source.h"
 #include "neverd/web/Tauri.h"
 
 #include <cstdint>
@@ -224,6 +225,18 @@ public:
                          uint64_t Limit) const;
   std::string extractPkg(std::string_view ExpectedRevision,
                          std::string_view ArtifactID, std::string_view Profile);
+  std::string extractDataPack(std::string_view ExpectedRevision,
+                              std::string_view ArtifactID,
+                              std::string_view Profile);
+  std::string dataPackRecords(std::string_view ExpectedRevision,
+                              std::string_view ExtractionID, uint64_t Offset,
+                              uint64_t Limit) const;
+  std::string decodeDataPackResource(std::string_view ExpectedRevision,
+                                     std::string_view ResourceID,
+                                     std::string_view Codec);
+  std::string exportDataPack(std::string_view ExpectedRevision,
+                             std::string_view ExtractionID,
+                             std::string_view OutputDirectory);
   std::string pkgRecords(std::string_view ExpectedRevision,
                          std::string_view ExtractionID,
                          std::string_view RecordKind, uint64_t Offset,
@@ -274,6 +287,10 @@ public:
   std::string analyzeSource(std::string_view ExpectedRevision,
                             std::string_view ArtifactID,
                             std::string_view SourceType);
+  std::string analyzeSource(std::string_view ExpectedRevision,
+                            std::string_view ArtifactID,
+                            std::string_view SourceType,
+                            SourceAnalysisMode Mode);
   /// Explicit local disclosure from an immutable direct-byte selection.
   /// Recovery has independent bounds and never enters interactive caches.
   /// Parse refusals preserve exact original bytes without a readable file.

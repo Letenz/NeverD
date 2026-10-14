@@ -27,6 +27,7 @@
 #include "neverd/ir/NdOps.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
+#include "neverd/loader/LanguageRuntime.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
 #include "neverd/sbf/emit/SBFRustEmitter.h"
@@ -179,6 +180,11 @@ void emitMedView(const MedFunc &F, const LowFunc *Low, const IRRowSink &Sink) {
           OS << " " << Op.Output.display() << " =";
         for (int I = 0; I < Op.NumInputs; ++I)
           OS << " " << Op.Inputs[I].display();
+        // Source views leave this store out: say so where the IR shows it.
+        if (Op.PrologueSave)
+          OS << " ; prologue save";
+        if (Op.ReturnAddressRead)
+          OS << " ; return address";
         OS << "\n";
       });
     }
@@ -496,13 +502,19 @@ llvm::StringRef functionSymbol(const BinaryImage &Img, va_t Entry) {
 std::optional<SourceDialect> viewDialect(const Session &S, va_t Entry,
                                          llvm::StringRef Stage) {
   const LanguageRuntimeInfo &Language = S.Img.ExceptionMetadata.Runtime;
+  // The runtime whose personality dispatches this function's handlers.
+  SourceLanguageRuntime Handler = SourceLanguageRuntime::Unknown;
+  if (const ExceptionFunction *EH =
+          S.Img.ExceptionMetadata.findFunctionEntry(Entry))
+    Handler = getPersonalityRuntime(EH->Personality);
   if (Stage == "source") {
     const llvm::StringRef Symbol = functionSymbol(S.Img, Entry);
-    return sourceDialectOfFunction(Symbol, !Symbol.empty(), Language);
+    return sourceDialectOfFunction(Symbol, !Symbol.empty(), Language, Handler);
   }
   const SourceDialect Dialect =
       sourceDialectFromKey(Stage).value_or(SourceDialect::C);
-  if (!llvm::is_contained(offeredSourceDialects(Language), Dialect))
+  if (!llvm::is_contained(offeredSourceDialects(Language), Dialect) &&
+      dialectOfRuntime(Handler) != Dialect)
     return std::nullopt;
   return Dialect;
 }
@@ -878,7 +890,8 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
   SourceViewOptions Options;
   for (const auto &Field : *Object) {
     const llvm::StringRef Key = Field.first;
-    if (Key != "symbolic" && Key != "llvm_optimization" && Key != "llvm_passes")
+    if (Key != "symbolic" && Key != "llvm_optimization" &&
+        Key != "llvm_passes" && Key != "llvm_control_flow")
       throw std::invalid_argument("unknown source option: " + Key.str());
     if (Key != "symbolic" && Stage != "llvmc")
       throw std::invalid_argument("LLVM options require llvmc");
@@ -908,6 +921,12 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
       Options.LLVM = LevelKind::Custom;
     else
       throw std::invalid_argument("unsupported LLVM source optimization");
+  }
+  if (Object->get("llvm_control_flow")) {
+    auto Enabled = Object->getBoolean("llvm_control_flow");
+    if (!Enabled)
+      throw std::invalid_argument("llvm_control_flow must be a boolean");
+    Options.RecoverControlFlow = *Enabled;
   }
   const auto *Passes = Object->getArray("llvm_passes");
   if (Options.LLVM == SourceViewOptions::LLVMOptimization::Custom) {

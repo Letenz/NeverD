@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Source.h"
+#include "neverd/web/SourceLimits.h"
 
 namespace neverd::web {
 
@@ -32,5 +33,16 @@ struct SourceDeclarationIndex {
 SourceDeclarationIndex
 indexSourceDeclarations(const SourceAnalysis &Source,
                         const SourceBindingAnalysis &Bindings);
+
+struct SourceNavigation;
+struct SourceFunctionIndex {
+  std::vector<uint32_t> NodeFunctions, BindingFunctions;
+  uint64_t Steps = 0;
+};
+// Shared source-declaration/initializer links. Duplicate function candidates
+// leave their binding unresolved; links never establish a runtime call target.
+SourceFunctionIndex indexSourceFunctions(const SourceAnalysis &Source,
+                                         const SourceBindingAnalysis &Bindings,
+                                         const SourceNavigation &Navigation);
 
 } // namespace neverd::web

@@ -14,6 +14,44 @@ from unittest.mock import patch
 from scripts import check_source_patch_pe_runtime as runtime
 
 
+class PublicationReceiptTests(unittest.TestCase):
+    def receipt(self, target):
+        return json.dumps({"schema": "neverd.source-patch.v1", "success": True,
+                           "target": target})
+
+    def test_all_pe_object_receipts_require_the_matching_image_abi(self):
+        for arch, target in (("x86", "i686-pc-windows-msvc"),
+                             ("x64", "x86_64-pc-windows-msvc"),
+                             ("arm64", "aarch64-pc-windows-msvc")):
+            for artifact in ("object", "supplied-object"):
+                with self.subTest(arch=arch, artifact=artifact):
+                    report = runtime.publication_receipt(self.receipt(target), arch, artifact)
+                    self.assertEqual(report["target"], target)
+                    with self.assertRaisesRegex(ValueError, "target mismatch"):
+                        runtime.publication_receipt(
+                            self.receipt("x86_64-unknown-linux-gnu"), arch, artifact)
+
+    def test_ir_accepts_msvc_versions_but_never_another_architecture(self):
+        for arch, target in (("x86", "i686-pc-windows-msvc"),
+                             ("x64", "x86_64-pc-windows-msvc"),
+                             ("arm64", "aarch64-pc-windows-msvc")):
+            with self.subTest(arch=arch):
+                for suffix in ("", "19.51.36260"):
+                    report = runtime.publication_receipt(self.receipt(target+suffix), arch, "ir")
+                    self.assertEqual(report["target"], target+suffix)
+                for bad in (target+"-foreign", "thumbv7-pc-windows-msvc", None):
+                    with self.assertRaisesRegex(ValueError, "target mismatch"):
+                        runtime.publication_receipt(self.receipt(bad), arch, "ir")
+
+    def test_missing_failed_or_ambiguous_receipts_cannot_qualify(self):
+        receipt = self.receipt("x86_64-pc-windows-msvc")
+        for text in ("", receipt+"\n"+receipt,
+                     json.dumps({"schema": "neverd.source-patch.v1", "success": False})):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(ValueError, "missing successful"):
+                    runtime.publication_receipt(text, "x64", "object")
+
+
 class PEProcessQualificationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="neverd-pe-qualification-")

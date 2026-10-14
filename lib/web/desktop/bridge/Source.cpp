@@ -28,7 +28,7 @@ struct Context {
   DesktopBridgeSource A;
   std::vector<uint32_t> References;
   void step(uint64_t Count = 1) {
-    if (Count > MaxDesktopBridgeSteps - A.Steps)
+    if (Count > sourceWorkLimit(S, MaxDesktopBridgeSteps) - A.Steps)
       throw Error("desktop_bridge_work_budget_exceeded");
     A.Steps += Count;
   }

@@ -291,11 +291,21 @@ i1/8/16/32/64/128 a O0/O2, verificando risultati assegnati e incorporati,
 ordine dei produttori e valutazione singola. Le larghezze scalari non supportate
 e gli operandi malformati devono fallire esplicitamente.
 
+## Contesto x87 posseduto dalle funzioni x64
+
+`NeverDX86X87ConvertStateTests` confronta i byte originali con LLVM nativo, HighC e LLVMC in default/NoOpt e C O0/O2. Le sue fixture impongono il contesto posseduto su ogni host tramite `BinaryImage::X87ContextOverride`; le suite di caricamento intero, segno e FPU x87 coprono anche la proiezione tipizzata System V. Verifica conversioni, otto forme aritmetiche, flag, MMX/EMMS, stack pieni/vuoti, chiamate, wrapper, cicli e ingressi indipendenti. Quattro formati FLDENV/FRSTOR coprono eccezioni pendenti, tag e valori conservati; ove applicabile usa quattro RC, tre PC definiti e 64 maschere. I contratti Low/Med/High rifiutano forme errate, handle contraffatti e selettori troncati. I ritorni stretti mantengono gli effetti delle chiamate e rifiutano i bit sconosciuti necessari. L’oracolo richiede x64 e Clang; non certifica tutte le istruzioni, piattaforme, CPU, priorità dei guasti o ABI degli import floating point tipizzati.
+
 ## Verifiche di controllo e chiamata nel C strutturato
 
 `HighControlFlowSemantics.*` verifica che spostare uscite o code dei cicli conservi le etichette raggiunte da altri salti. Gli ingressi diretti nelle uscite iniziali e finali e la sostituzione di break eseguono il C generato a O0/O2 confrontandolo con valori di ritorno attesi indipendenti.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` verifica che gli argomenti di registro obbligatori dedotti mantengano le posizioni finali sconosciute. La valutazione di un argomento obbligatorio o di una condizione sconosciuta deve causare una trap esplicita; gli operandi omessi, nulli o annidati non devono diventare silenziosamente zero. I valori noti e gli operandi aggiuntivi di cui è dimostrata la mancata lettura restano eseguibili. Una trap è un limite diagnostico, non una prova di equivalenza del comportamento ricostruito.
+
+## Memoria degli oggetti in LLVM C
+
+`NeverDLLVMCAllocaTests` esegue LLVM originale e C generato a O0/O2 con trap per comportamento indefinito. Osserva intervalli completi, passo con padding, allineamento 16/32/64, indipendenza di allocazioni simultanee/nei cicli e valutazione unica del conteggio. I percorsi C normali e con tipi conservati mantengono memoria; contratti non supportati, overflow e stack save/restore falliscono prima di DCE. Non certifica indirizzi originali dello stack o identità dei frame di eccezione.
+
+Lo stesso target confronta l’allineamento di scalari, puntatori, array e record compatti statici fino a 128 byte, l’allineamento globale, l’intera memoria delle stringhe completate da zeri e l’identità degli indirizzi globali in inizializzatori, ritorni, chiamate, selezioni e conversioni da puntatore a intero. Copre, ove applicabile, le uscite ordinarie/con tipi preservati e complete/per funzione selezionata.
 
 ## Test di esecuzione CPU
 
@@ -1852,3 +1862,15 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 L’esecuzione KVM x64 verificata delega l’intero ciclo di istruzioni al thread vCPU privato tramite `withExecutionOwner`. Ammissione, transazioni RAM, hook e budget restano nel ciclo; ogni ingresso nativo mantiene i controlli e la priorità delle eccezioni. Il chiamante sorveglia gli ingressi attivi e attende la conferma della cancellazione. Gli hook CPU non devono dipendere dallo stato locale del thread chiamante. Il completamento di un ingresso nativo autonomo resta sul chiamante. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` e `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verificano proprietà e cancellazione reale; la modifica non certifica un driver recuperato.
 
 Il workflow Windows per patch sorgente esegue anche `scripts/check_source_patch_pe_runtime.py`: tre originali e 27 sostituzioni x86/x64/ARM64, poi 30 osservazioni di processo per architettura. x86/x64 usano Windows x64, ARM64 usa `windows-11-arm`. Commit, architettura PE, hash e tutti i casi devono corrispondere. Questo profilo C non verifica le eccezioni C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` seleziona NeverC ordinario. I 66 controlli di 3389.1.5 coprono x64/ARM64 con ELF, PE e Mach-O; x86/ARM32 non sono disponibili e il compilatore non viene sostituito automaticamente. L’adattatore PE usa `-fno-autolink`; gli oggetti esterni `.drectve` restano rifiutati.
+
+La matrice confronta anche le ricevute `target` degli oggetti nativi compilati e forniti con un inventario ABI indipendente. Dopo gli input malformati, i test devono installare ed eseguire l’oggetto non modificato come controllo valido.
+
+`NeverCProfiles/*` aggiunge 30 test su sei profili x64/ARM64: C++ IR/oggetti/hosted DynCode, helper non inline, ricorsione e rifiuto C++ non supportato. `NeverDSourcePatchDynCodeTests` rifiuta hash, ingressi, target, stato e verifiche falsificati. `SourcePatchException.NeverC*` verifica processi reali e eccezioni attraverso due frame. Windows richiede nove scenari modificati, controlli originali, tre ripetizioni e macchina, commit, hash e host nativi x64/ARM64 corrispondenti.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+La verifica nativa fissa NeverC alla revisione `182fd2c5dc`, usa originali compilati indipendentemente e l’installatore NeverD attuale. `check_source_patch_hosted_pe_runtime.py` richiede 36 osservazioni Windows native per architettura per i cicli di vita C++ IR/oggetti/hosted e un’eccezione che attraversa due frame hosted. `check_source_patch_elf_runtime.py` richiede 66 osservazioni Linux native per architettura per C++ IR/oggetti/hosted, propagazione hosted e nove scenari di eccezioni Clang. Ricevute, hash e architettura effettiva dell’host devono corrispondere. Le verifiche installano output reali del compilatore senza affermare che NeverC sia stato eseguito sull’host CI.
+
+La verifica nativa [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) ha superato tutte le 204 osservazioni: 36 per architettura Windows x64/ARM64 e 66 per architettura Linux x64/ARM64. L’API pubblica ha prodotto C++ IR, oggetti normali e C++ hosted DynCode, oltre a un’eccezione attraverso due frame NeverC. Il replay verifica digest del codice e dei sottomoduli correnti, byte originali e finali, ricevute e host nativo effettivo. macOS ARM64 e Rosetta x64 hanno superato gli stessi tre percorsi C++ e la propagazione locale. Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) ha superato separatamente nove scenari e controlli, 36 osservazioni per architettura Windows x64/ARM64.

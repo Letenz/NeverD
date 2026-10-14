@@ -287,6 +287,10 @@ struct BinaryImage {
   /// follows: ELF for System V and AAPCS, COFF for Windows, Mach-O for
   /// Apple.  Only a binary file sets it; see abiFormat().
   BinaryFormat ConventionFormat = BinaryFormat::Unknown;
+  /// Replaces the calling convention's choice of how lifted x86-64 code holds
+  /// the x87 register stack (x87ContextOwnsStack): true owns it as one
+  /// mutable context, false keeps typed binary80 values.
+  std::optional<bool> X87ContextOverride;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
   /// The image runs at its link-time addresses: no loader rebases it, so an
@@ -314,6 +318,16 @@ struct BinaryImage {
   /// addresses share their names (numberSharedFunctionNames()), by entry:
   /// the name their symbol gives them, and the name they are listed under.
   std::map<va_t, std::pair<std::string, std::string>> SharedFunctionNames;
+  /// What the user states of the function at an entry, as IDA's Edit
+  /// function does: true, it never returns; false, it returns.  An entry
+  /// absent here is analysis's to decide.  Every layer that asks whether a
+  /// call returns reads this first (userNoReturnAt).
+  std::map<va_t, bool> UserNoReturn;
+  std::optional<bool> userNoReturnAt(va_t Entry) const {
+    const auto It = UserNoReturn.find(Entry);
+    return It == UserNoReturn.end() ? std::nullopt
+                                    : std::optional<bool>(It->second);
+  }
   std::vector<Symbol> Symbols;
   std::vector<ObjCClass> ObjCClasses;
   std::vector<ObjCMethod> ObjCMethods;

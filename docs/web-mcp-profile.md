@@ -74,6 +74,12 @@ configuration-object-order profile. Ordered terms and lexical loading syntax
 links retain source spans and unknown-key barriers while configuration values
 stay private. Loader identity and effective configuration remain unverified.
 See the [configuration profile](web-configuration-order-profile.md).
+The same operation adds `config_files`, under the independent
+`javascript-configuration-file-navigation-v1` profile. Direct file/layer literal
+sites, minified lexical call candidates and ordered array terms retain original
+anchors and private values. Runtime targets and file-layer precedence remain
+unknown. Worker and MCP share the SDK result; see the
+[file navigation profile](web-configuration-file-profile.md).
 
 `neverd_web_package_install_analyze` requires revision and package analysis ID;
 the matching package behavior ID is optional. No source selection is needed to
@@ -103,6 +109,12 @@ available without JavaScript parsing. No tool accepts a key path, fetch URL,
 verification flag or raw-payload switch. Signature verification and package
 inventory binding remain unverified; see the
 [attestation profile](web-package-attestation-profile.md).
+
+The DataPack tools select explicit standard v5/u16 or measured WebView2 v5/u32
+resource tables, page exact original/alias ranges and explicitly decode a selected
+gzip stream. They use the same C++ SDK and retained storage origins; numeric IDs
+imply no filenames, framework identity or runtime routes. The derived selection
+uses ordinary source/HTML consumers. Raw DataPack export is excluded.
 
 MCP does not expose source review options or raw export. Structural source
 views replace private identifiers/literals/comments according to the shared

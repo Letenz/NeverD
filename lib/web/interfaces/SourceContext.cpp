@@ -22,7 +22,7 @@
 namespace neverd::web::interfaces {
 
 void SourceContext::step(uint64_t N) {
-  if (N > MaxInterfaceSteps - A.Steps)
+  if (N > sourceWorkLimit(S, MaxInterfaceSteps) - A.Steps)
     throw Error("interface_work_budget_exceeded");
   A.Steps += N;
 }
@@ -32,10 +32,10 @@ void SourceContext::prepare() {
   if (B.SourceID != S.ID || V.SourceID != S.ID ||
       V.Nodes.size() != S.Nodes.size() ||
       (B.Status != "ok" && B.Status != "partial") ||
-      B.References.size() > MaxJavaScriptNodes ||
-      B.Bindings.size() > MaxJavaScriptNodes ||
-      B.Scopes.size() > MaxJavaScriptNodes ||
-      B.Declarations.size() > 2 * MaxJavaScriptNodes)
+      B.References.size() > sourceLimits(S).Nodes ||
+      B.Bindings.size() > sourceLimits(S).Nodes ||
+      B.Scopes.size() > sourceLimits(S).Nodes ||
+      B.Declarations.size() > 2 * sourceLimits(S).Nodes)
     throw Error("interface_source_evidence_mismatch");
   for (const auto &Scope : B.Scopes) {
     step();

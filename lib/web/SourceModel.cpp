@@ -13,13 +13,16 @@
 
 #include "neverd/web/Error.h"
 #include "neverd/web/SourceBindings.h"
+#include "neverd/web/SourceNavigation.h"
 
 namespace neverd::web {
 
 uint64_t validateSourceModel(const SourceAnalysis &Source) {
+  const auto Limits = sourceLimits(Source);
   if (Source.ParseStatus != "parsed" || Source.Nodes.empty() ||
-      Source.Nodes.size() > MaxJavaScriptNodes ||
-      Source.Nodes[0].Kind != "Program" || !Source.Nodes[0].ParentID.empty() ||
+      Source.Nodes.size() > Limits.Nodes ||
+      Source.Nodes[0].End > Limits.Bytes || Source.Nodes[0].Kind != "Program" ||
+      !Source.Nodes[0].ParentID.empty() ||
       (Source.SourceType != "script" && Source.SourceType != "module" &&
        Source.SourceType != "commonjs"))
     throw Error("invalid_source_model");
@@ -50,9 +53,9 @@ uint64_t validateSourceModel(const SourceAnalysis &Source) {
 
 SourceDeclarationIndex indexSourceDeclarations(const SourceAnalysis &S,
                                                const SourceBindingAnalysis &B) {
-  if (B.SourceID != S.ID || S.Nodes.size() > MaxJavaScriptNodes ||
-      B.Declarations.size() > 2 * MaxJavaScriptNodes ||
-      B.Bindings.size() > 2 * MaxJavaScriptNodes)
+  const auto Limit = sourceLimits(S).Nodes;
+  if (B.SourceID != S.ID || S.Nodes.size() > Limit ||
+      B.Declarations.size() > 2 * Limit || B.Bindings.size() > 2 * Limit)
     throw Error("invalid_source_binding_model");
   SourceDeclarationIndex Result;
   Result.UniqueBindings.assign(S.Nodes.size(), NoSourceIndex);
@@ -73,6 +76,47 @@ SourceDeclarationIndex indexSourceDeclarations(const SourceAnalysis &S,
     } else if (!Multiple[D.Node]) {
       Unique = D.Binding;
     }
+  }
+  return Result;
+}
+
+SourceFunctionIndex indexSourceFunctions(const SourceAnalysis &S,
+                                         const SourceBindingAnalysis &B,
+                                         const SourceNavigation &N) {
+  const auto Size = S.Nodes.size();
+  if (N.SourceID != S.ID || B.SourceID != S.ID || N.BindingID != B.ID ||
+      Size > sourceLimits(S).Nodes || N.Functions.size() > Size ||
+      B.Bindings.size() > 2 * sourceLimits(S).Nodes)
+    throw Error("invalid_source_navigation_model");
+  SourceFunctionIndex Result;
+  Result.NodeFunctions.assign(Size, NoSourceIndex);
+  Result.BindingFunctions.assign(B.Bindings.size(), NoSourceIndex);
+  std::vector<bool> Ambiguous(B.Bindings.size());
+  for (uint32_t I = 0; I < N.Functions.size(); ++I) {
+    ++Result.Steps;
+    const auto &F = N.Functions[I];
+    if (F.Node >= Size || Result.NodeFunctions[F.Node] != NoSourceIndex ||
+        (S.Nodes[F.Node].Kind != "FunctionDeclaration" &&
+         S.Nodes[F.Node].Kind != "FunctionExpression" &&
+         S.Nodes[F.Node].Kind != "ArrowFunctionExpression"))
+      throw Error("invalid_source_navigation_model");
+    Result.NodeFunctions[F.Node] = I;
+    for (const auto Binding : {F.NameBinding, F.InitializerBinding}) {
+      ++Result.Steps;
+      if (Binding == NoSourceIndex)
+        continue;
+      if (Binding >= B.Bindings.size())
+        throw Error("invalid_source_navigation_model");
+      auto &Previous = Result.BindingFunctions[Binding];
+      if (Previous != NoSourceIndex && Previous != I)
+        Ambiguous[Binding] = true;
+      Previous = I;
+    }
+  }
+  for (uint32_t I = 0; I < Result.BindingFunctions.size(); ++I) {
+    ++Result.Steps;
+    if (Ambiguous[I] || B.Bindings[I].Conflicting)
+      Result.BindingFunctions[I] = NoSourceIndex;
   }
   return Result;
 }

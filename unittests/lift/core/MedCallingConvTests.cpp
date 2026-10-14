@@ -10,6 +10,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/GuardedZeroSelect.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
@@ -7804,6 +7805,66 @@ TEST(CallRegisterEffects, VzeroupperKeepsTheLowLanesInPlace) {
   };
   EXPECT_EQ(Reads(false), 0u);
   EXPECT_EQ(Reads(true), 16u);
+}
+
+TEST(GuardedZeroSelect, ANonzeroSourceDecidesTheBsrSelect) {
+  // `test rdi, rdi; je zero; bsr r8, rdi`: on the path where RDI is nonzero,
+  // the select bsr lifts to never keeps the old R8.
+  const NdVar Rdi = NdVar::reg(x86reg::RDI, 8);
+  const NdVar R8 = NdVar::reg(x86reg::R8, 8);
+  const NdVar Zf = NdVar::reg(0xCB, 1);
+  auto Build = [&](bool OnNonzeroEdge, bool WriteRdiFirst) {
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Blocks.resize(3);
+    for (int I = 0; I < 3; ++I)
+      Low.Blocks[I].Id = I;
+    Low.Blocks[0].StartAddr = 0x1000;
+    Low.Blocks[1].StartAddr = 0x1005;
+    Low.Blocks[2].StartAddr = 0x1010;
+    auto Push = [](LowBlock &Block, va_t Addr, NdOp Opcode, NdVar Out,
+                   std::initializer_list<NdVar> In) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Addr = Addr;
+      Op.Output = Out;
+      for (const NdVar &V : In)
+        Op.addInput(V);
+      Block.Ops.push_back(Op);
+    };
+    Push(Low.Blocks[0], 0x1000, NdOp::INT_AND, NdVar::tmp(0, 8), {Rdi, Rdi});
+    Push(Low.Blocks[0], 0x1000, NdOp::INT_EQUAL, Zf,
+         {NdVar::tmp(0, 8), NdVar::cst(0, 8)});
+    // `je` jumps to the zero block; the fall-through block runs the bsr.
+    const va_t ZeroBlock = OnNonzeroEdge ? 0x1010 : 0x1005;
+    Push(Low.Blocks[0], 0x1003, NdOp::COND_BR, NdVar(),
+         {NdVar::cst(ZeroBlock, 8), Zf});
+    Low.Blocks[0].Succs = {1, 2};
+    LowBlock &Bsr = Low.Blocks[1];
+    if (WriteRdiFirst)
+      Push(Bsr, 0x1005, NdOp::COPY, Rdi, {NdVar::cst(0, 8)});
+    Push(Bsr, 0x1008, NdOp::INT_EQUAL, NdVar::tmp(0, 1),
+         {Rdi, NdVar::cst(0, 8)});
+    Push(Bsr, 0x1008, NdOp::LZCOUNT, NdVar::tmp(2, 8), {Rdi});
+    Push(Bsr, 0x1008, NdOp::INT_SUB, NdVar::tmp(1, 8),
+         {NdVar::cst(63, 8), NdVar::tmp(2, 8)});
+    Push(Bsr, 0x1008, NdOp::SELECT, R8,
+         {NdVar::tmp(0, 1), R8, NdVar::tmp(1, 8)});
+    Push(Bsr, 0x100C, NdOp::RETURN, NdVar(), {R8});
+    Push(Low.Blocks[2], 0x1010, NdOp::RETURN, NdVar(), {});
+    return Low;
+  };
+  LowFunc Guarded = Build(/*OnNonzeroEdge=*/true, /*WriteRdiFirst=*/false);
+  EXPECT_EQ(foldGuardedZeroSelects(Guarded), 1u);
+  const LowOp &Folded = Guarded.Blocks[1].Ops[3];
+  EXPECT_EQ(Folded.Opcode, NdOp::COPY);
+  ASSERT_EQ(Folded.NumInputs, 1u);
+  EXPECT_TRUE(Folded.Inputs[0] == NdVar::tmp(1, 8));
+  // Reached where RDI is zero, or after RDI changes, the old R8 stays.
+  LowFunc ZeroEdge = Build(/*OnNonzeroEdge=*/false, /*WriteRdiFirst=*/false);
+  EXPECT_EQ(foldGuardedZeroSelects(ZeroEdge), 0u);
+  LowFunc Rewritten = Build(/*OnNonzeroEdge=*/true, /*WriteRdiFirst=*/true);
+  EXPECT_EQ(foldGuardedZeroSelects(Rewritten), 0u);
 }
 
 TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {

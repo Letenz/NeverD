@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../unittests/web/BunFixture.h"
+#include "../../../unittests/web/DataPackFixture.h"
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
@@ -111,14 +112,60 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
-                         Name == "tauri_export" || Name == "native_analyze" ||
-                         Name == "desktop_resources_export" ||
-                         Name == "source_readable_export" ||
-                         Name == "source_rewrite_export";
+    const bool Omitted =
+        Name == "bun_export" || Name == "wails_export" ||
+        Name == "tauri_export" || Name == "native_analyze" ||
+        Name == "desktop_resources_export" || Name == "datapack_export" ||
+        Name == "source_readable_export" || Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
   }
+}
+
+void largeSource(Harness &H) {
+  const auto Artifact = H.import(0);
+  const Json Parse{{"revision", H.Revision},
+                   {"artifact_id", Artifact},
+                   {"source_type", "module"}};
+  H.fail("web_source_analyze", Parse, "source_byte_budget_exceeded");
+  const auto S = H.same("web_source_analyze_large", Parse);
+  require(S.at("parse_status") == "parsed" &&
+              S.at("parser_profile") == "hermes-602befee-large-source-js-v1",
+          "MCP lost explicit large-source profile");
+  require(S == H.same("web_source_analyze_large", Parse),
+          "Large-source cache changed evidence");
+  const Json Selection{{"revision", H.Revision},
+                       {"source_id", S.at("source_id")}};
+  auto Nodes = Selection;
+  Nodes["limit"] = 1;
+  const auto Page = H.same("web_source_nodes", Nodes);
+  require(Page.at("next_offset") == 1 && Page.at("items").size() == 1,
+          "Large source lost ordinary paginated node evidence");
+  const auto I = H.same("web_interfaces_analyze", Selection);
+  require(I.at("analysis_status") == "partial" && I.at("interface_count") == 1,
+          "Large source lost static interface evidence");
+  const auto Report =
+      H.same("web_passive_report_create",
+             {{"revision", H.Revision},
+              {"interface_analysis_id", I.at("interface_analysis_id")}});
+  const auto Rows =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", Report.at("passive_report_id")}});
+  require(!Rows.at("items").empty(), "Large source report lost its anchors");
+  auto Anchor = Selection;
+  Anchor["byte_offset"] = Rows.at("items")[0].at("byte_offset");
+  Anchor["byte_length"] = Rows.at("items")[0].at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  auto Other = Parse;
+  Other["source_type"] = "commonjs";
+  H.fail("web_source_analyze_large", Other,
+         "large_source_cache_budget_exceeded");
+  auto Invalid = Parse;
+  Invalid["execute"] = true;
+  invalid([&] { H.get("web_source_analyze_large", Invalid); });
+  redacted(S);
+  redacted(Rows);
 }
 
 void clientSourceFeatures(Harness &H) {
@@ -194,6 +241,22 @@ void clientSourceFeatures(Harness &H) {
               Config.at("items")[0].at("terms")[0].at("unknown_keys") == true,
           "MCP lost the configuration overwrite barrier");
   redacted(Config);
+  const auto &Files = N.at("configuration_files");
+  require(Files.at("literal_site_count") == 3 &&
+              Files.at("lexical_call_count") == 1 &&
+              Files.at("layer_sequence_count") == 1 &&
+              Files.at("effective_configuration") == "not_analyzed",
+          "MCP lost minified configuration source relationships");
+  ConfigPage["record_kind"] = "config_files";
+  ConfigPage["limit"] = 1;
+  const auto FilePage = H.same("web_source_navigation_records", ConfigPage);
+  require(FilePage.at("next_offset") == 1 &&
+              FilePage.at("items")[0].at("role") == "managed_settings_file",
+          "MCP changed configuration file paging or roles");
+  Anchor["byte_offset"] = FilePage.at("items")[0].at("byte_offset");
+  Anchor["byte_length"] = FilePage.at("items")[0].at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  redacted(FilePage);
   BridgePage["execute"] = true;
   invalid([&] { H.get("web_source_navigation_records", BridgePage); });
   Page["execute"] = true;
@@ -976,11 +1039,70 @@ int main() {
           "const settings={...CANARY_DEFAULTS,permissions:{deny:['CANARY']},"
           "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
           "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
-          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
+          "function x(){return j('CANARY','managed-settings.json');}x();"
+          "const layers=['userSettings',...CANARY,'projectSettings'];");
       clientSourceFeatures(H);
+      F.write("source", "/*" + std::string(1024 * 1024, ' ') +
+                            "*/fetch(`/CANARY/${CANARY}`);");
+      largeSource(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);
+    {
+      using namespace neverd::web::datapack_test;
+      F.write("sea", widePack({{70000, gzipStored("const x='CANARY';")}},
+                              {{90000, 0}}));
+      const auto A = H.import(1);
+      const Json Args{{"revision", H.Revision},
+                      {"artifact_id", A},
+                      {"profile", "msedge-webview2-datapack-v5-u32-v1"}};
+      const auto E = H.same("web_datapack_extract", Args);
+      require(E.at("resource_count") == 1 && E.at("alias_count") == 1 &&
+                  E.at("resource_id_width") == 32 &&
+                  E.at("framework_identity") == "not_inferred",
+              "DataPack evidence differs or inferred a framework");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"limit", 1}};
+      const auto R = H.same("web_datapack_records", Page);
+      require(R.at("next_offset") == 1 &&
+                  R.at("items")[0].at("resource_id") == 70000,
+              "DataPack paging truncated a wide resource ID");
+      auto AliasPage = Page;
+      AliasPage["offset"] = 1;
+      const auto Alias = H.same("web_datapack_records", AliasPage);
+      require(Alias.at("items")[0].at("canonical_selection_id") ==
+                  R.at("items")[0].at("selection_id"),
+              "DataPack alias lost its stored resource");
+      if (std::find(Ops.begin(), Ops.end(), "datapack_decode") != Ops.end()) {
+        const auto D =
+            H.same("web_datapack_decode",
+                   {{"revision", H.Revision},
+                    {"resource_id", R.at("items")[0].at("selection_id")},
+                    {"codec", "gzip-rfc1952-v1"}});
+        if (HasParser) {
+          const auto S = H.same("web_source_analyze",
+                                {{"revision", H.Revision},
+                                 {"artifact_id", D.at("selection_id")},
+                                 {"source_type", "script"}});
+          const auto Anchor =
+              H.same("web_source_anchor", {{"revision", H.Revision},
+                                           {"source_id", S.at("source_id")},
+                                           {"byte_offset", "6"},
+                                           {"byte_length", "1"}});
+          require(Anchor.at("storage").at("mapping") ==
+                      "containing_compressed_frame",
+                  "DataPack decoder fabricated a direct byte anchor");
+        }
+        redacted(D);
+      }
+      auto Invalid = Args;
+      Invalid["output_directory"] = "CANARY";
+      invalid([&] { H.get("web_datapack_extract", Invalid); });
+      redacted(E);
+      redacted(R);
+    }
     if (std::find(Ops.begin(), Ops.end(), "nexe_extract") != Ops.end()) {
       F.write("sea",
               neverd::web::nexe_test::bundle(

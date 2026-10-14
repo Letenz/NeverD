@@ -3,6 +3,7 @@
 #include "CodeEdits.h"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 
 namespace neverd::worker {
@@ -50,9 +51,35 @@ void validateRow(std::string_view table, const Json &row) {
     (void)stringField(row, "original", {}, 4096);
     (void)stringField(row, "renamed", {}, 4096);
   } else if (table == "functions") {
-    const auto state = stringField(row, "state", {}, 16);
-    if (state != "created" && state != "deleted")
-      throw Error("history_invalid", "Function edit state is invalid");
+    // A row edits whether a function starts there, what it is, or both.
+    bool edits = false;
+    if (row.contains("state")) {
+      const auto state = stringField(row, "state", {}, 16);
+      if (state != "created" && state != "deleted")
+        throw Error("history_invalid", "Function edit state is invalid");
+      edits = true;
+    }
+    const auto isColor = [](const std::string &text) {
+      return text.size() == 7 && text[0] == '#' &&
+             std::all_of(text.begin() + 1, text.end(), [](char c) {
+               return std::isxdigit(static_cast<unsigned char>(c));
+             });
+    };
+#define NEVERD_FUNCTION_FLAG(Member, Key)                                      \
+  if (row.contains(Key)) {                                                     \
+    if (!row.at(Key).is_boolean())                                             \
+      throw Error("history_invalid", "Function attribute is invalid");         \
+    edits = true;                                                              \
+  }
+#define NEVERD_FUNCTION_COLOR(Key)                                             \
+  if (row.contains(Key)) {                                                     \
+    if (!isColor(stringField(row, Key, {}, 7)))                                \
+      throw Error("history_invalid", "Function color is invalid");             \
+    edits = true;                                                              \
+  }
+#include "neverd/sdk/FunctionAttributes.def"
+    if (!edits)
+      throw Error("history_invalid", "Function edit is empty");
   } else if (table == "items") {
     // The engine checks a data item against the image when it loads one.
     (void)stringField(row, "kind", {}, 32);

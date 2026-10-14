@@ -384,6 +384,39 @@ struct Session {
   /// address made the entry of a function (true) or no longer one (false).
   std::map<va_t, bool> FunctionEdits;
 
+  /// What the user states of a function beyond whether it is one
+  /// (neverd_func_edit), as IDA's Edit function does.  An unset member is
+  /// analysis's to decide.
+  struct FunctionAttributes {
+    /// Whether the function never returns, which ends every call to it.
+    std::optional<bool> NoReturn;
+    /// The user's notes, which analysis does not read: a library function,
+    /// a static one, and the 0xRRGGBB color it shows in.
+    std::optional<bool> Library;
+    std::optional<bool> Static;
+    std::optional<uint32_t> Color;
+    bool empty() const { return !NoReturn && !Library && !Static && !Color; }
+    bool operator==(const FunctionAttributes &) const = default;
+  };
+  std::map<va_t, FunctionAttributes> FunctionAttributeEdits;
+
+  /// Give the image the user's statements of which functions return, which
+  /// analysis reads; a change needs the pipeline cleared.
+  void applyUserNoReturn() {
+    Img.UserNoReturn.clear();
+    for (const auto &[Entry, Attributes] : FunctionAttributeEdits)
+      if (Attributes.NoReturn)
+        Img.UserNoReturn[Entry] = *Attributes.NoReturn;
+  }
+
+  /// The pipeline's MedIR for the function at \p Addr, or null.
+  const MedFunc *findMedFunc(va_t Addr) const {
+    for (const MedFunc &F : PipeResult.MedFuncs)
+      if (F.Entry == Addr)
+        return &F;
+    return nullptr;
+  }
+
   /// A data item the user defines (neverd_item_set): what the bytes from its
   /// address are, over what analysis reads there.
   struct DataItem {

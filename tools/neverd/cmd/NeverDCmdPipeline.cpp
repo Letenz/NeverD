@@ -175,7 +175,8 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
       PatchLanguage == "c++" ? NEVERD_SOURCE_PATCH_CXX : NEVERD_SOURCE_PATCH_C;
   Options.artifact =
       PatchArtifact == "object" || !PatchFromObject.empty() ||
-              (PatchCompiler == "gcc" && !PatchArtifact.getNumOccurrences())
+              ((PatchCompiler == "gcc" || PatchCompileMode == "dyncode") &&
+               !PatchArtifact.getNumOccurrences())
           ? NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT
           : NEVERD_SOURCE_PATCH_ARTIFACT_IR;
   Options.mode = PatchCompileMode == "dyncode" ? NEVERD_SOURCE_PATCH_DYNCODE
@@ -561,6 +562,7 @@ int runLift(neverd_session_t Sess) {
 
 int runDecompile(neverd_session_t Sess) {
   const bool SourceTransforms = SourceSymbolic.getNumOccurrences() ||
+                                SourceLLVMControlFlow.getNumOccurrences() ||
                                 SourceLLVMLevel.getNumOccurrences() ||
                                 SourceLLVMPasses.getNumOccurrences();
   if (SourceTransforms && (ExportFunc.empty() || NoOpt || Devirtualize)) {
@@ -569,7 +571,8 @@ int runDecompile(neverd_session_t Sess) {
            "combine with --no-opt or --devirtualize\n";
     return 1;
   }
-  if (!LlvmRoute && (SourceLLVMLevel.getNumOccurrences() ||
+  if (!LlvmRoute && (SourceLLVMControlFlow.getNumOccurrences() ||
+                     SourceLLVMLevel.getNumOccurrences() ||
                      SourceLLVMPasses.getNumOccurrences())) {
     WithColor::error() << "LLVM source options require --llvm\n";
     return 1;
@@ -577,6 +580,8 @@ int runDecompile(neverd_session_t Sess) {
   json::Object ViewOptions;
   if (SourceSymbolic.getNumOccurrences())
     ViewOptions["symbolic"] = bool(SourceSymbolic);
+  if (SourceLLVMControlFlow.getNumOccurrences())
+    ViewOptions["llvm_control_flow"] = bool(SourceLLVMControlFlow);
   if (SourceLLVMLevel.getNumOccurrences())
     ViewOptions["llvm_optimization"] = SourceLLVMLevel.getValue();
   if (SourceLLVMPasses.getNumOccurrences()) {

@@ -61,8 +61,6 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
     return Fail("unknown source patch option value");
   if (Options->strategy != 0)
     return Fail("source replacement currently requires section installation");
-  if (Options->mode != NEVERD_SOURCE_PATCH_NORMAL)
-    return Fail("dyncode requires a separate code-block installation contract");
   if (Options->mapping_count > 65536 ||
       (Options->mapping_count && !Options->mappings) ||
       Options->compiler_arg_count > 256 ||
@@ -78,6 +76,10 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
     if (!Options->bindings[I].symbol ||
         Options->bindings[I].kind > NEVERD_SOURCE_BIND_WRITABLE_DATA)
       return Fail("invalid original reference binding");
+  if (Options->mode == NEVERD_SOURCE_PATCH_DYNCODE &&
+      Options->input_kind != NEVERD_SOURCE_PATCH_SOURCE)
+    return Fail(
+        "hosted dyncode requires source and a verified producer sidecar");
   if (S.Img.Arch == Arch::EVM || S.Img.Arch == Arch::SBF)
     return Fail("binary patching is not supported for virtual-machine inputs");
   llvm::StringRef Text(static_cast<const char *>(Input), InputSize);
@@ -87,8 +89,10 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
   Report["compiler"] = Options->compiler;
   Report["artifact"] = Options->artifact;
   Report["mode"] = Options->mode;
+  Report["language"] = Options->language;
 
   std::string Artifact;
+  std::optional<DynCodePatchEvidence> DynCode;
   if (Options->input_kind == NEVERD_SOURCE_PATCH_SOURCE) {
     auto Compiled = compileSourcePatch(Text, *Options, S.Img);
     if (!Compiled)
@@ -101,6 +105,32 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
     for (std::string &Argument : Compiled->Arguments)
       Arguments.push_back(std::move(Argument));
     Report["compiler_arguments"] = std::move(Arguments);
+    Report["source_sha256"] = llvm::toHex(
+        llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+            reinterpret_cast<const uint8_t *>(Text.data()), Text.size())),
+        true);
+    if (!Compiled->TranslationManifest.empty()) {
+      auto Manifest = llvm::json::parse(Compiled->TranslationManifest);
+      auto Map = llvm::json::parse(Compiled->TranslationMap);
+      if (!Manifest)
+        return Error(Manifest.takeError());
+      if (!Map)
+        return Error(Map.takeError());
+      llvm::json::Array TranslationArgs;
+      for (auto &Arg : Compiled->TranslationArguments)
+        TranslationArgs.push_back(std::move(Arg));
+      Report["translation"] =
+          llvm::json::Object{{"arguments", std::move(TranslationArgs)},
+                             {"manifest", std::move(*Manifest)},
+                             {"map", std::move(*Map)}};
+    }
+    DynCode = std::move(Compiled->DynCode);
+    if (DynCode) {
+      auto Audit = llvm::json::parse(DynCode->Audit);
+      if (!Audit)
+        return Error(Audit.takeError());
+      Report["dyncode"] = std::move(*Audit);
+    }
   } else {
     const bool Object = Options->input_kind == NEVERD_SOURCE_PATCH_OBJECT;
     if ((Options->artifact == NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT) != Object)
@@ -152,7 +182,10 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
         S.IndirectCall || S.MBA || S.IndirectGlobal || S.ValueLaunder ||
         S.ConstantPooling || S.BitMasking)
       return Fail("session LLVM IR transforms do not apply to native objects");
-    Report["target"] = "x86_64-unknown-linux-gnu";
+    auto Target = sourcePatchTargetTriple(S.Img);
+    if (!Target)
+      return Error(Target.takeError());
+    Report["target"] = std::move(*Target);
     Report["language"] = Options->language;
     Report["object_bytes"] = Artifact.size();
     Report["object_sha256"] =
@@ -172,8 +205,9 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
                              {"size", Binding.Size}});
     Report["requested"] = std::move(RequestedReport);
     Report["bindings"] = std::move(BindingReport);
-    auto Installed = installObjectPatch(Artifact, S.Img, Requested, Bindings,
-                                        Output, PrepareReceipt);
+    auto Installed =
+        installObjectPatch(Artifact, S.Img, Requested, Bindings, Output,
+                           PrepareReceipt, DynCode ? &*DynCode : nullptr);
     if (!Installed)
       return Error(Installed.takeError());
     S.commitObfuscationCounts({});

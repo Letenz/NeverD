@@ -18,8 +18,8 @@
 /// "Nothing can change S" is the part that has to be earned.  It is earned by
 /// the slot never having its address taken -- then only the loads and stores
 /// naming it can write it, and they can be enumerated -- together with taking
-/// the *last* store in P and requiring D to load before it stores.  None of
-/// this asks whether the code is obfuscated, which is why the result is a
+/// the *last* store in P and requiring D to do only the load and switch.  None
+/// of this asks whether the code is obfuscated, which is why the result is a
 /// rewrite that is simply correct rather than one that is correct if a guess
 /// about the shape was right.
 ///
@@ -31,11 +31,11 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/Transforms/Utils/Local.h"
 
 #include <optional>
 
@@ -51,13 +51,13 @@ namespace {
 bool isPlainSlot(const llvm::AllocaInst *Slot) {
   for (const llvm::User *U : Slot->users()) {
     if (const auto *L = llvm::dyn_cast<llvm::LoadInst>(U)) {
-      if (L->isVolatile() || L->getPointerOperand() != Slot)
+      if (!L->isSimple() || L->getPointerOperand() != Slot)
         return false;
       continue;
     }
     if (const auto *S = llvm::dyn_cast<llvm::StoreInst>(U)) {
       // Storing the pointer itself is the address escaping by another name.
-      if (S->isVolatile() || S->getPointerOperand() != Slot ||
+      if (!S->isSimple() || S->getPointerOperand() != Slot ||
           S->getValueOperand() == Slot)
         return false;
       continue;
@@ -79,29 +79,20 @@ std::optional<Dispatcher> readDispatcher(llvm::BasicBlock &BB) {
     return std::nullopt;
 
   auto *Load = llvm::dyn_cast<llvm::LoadInst>(Switch->getCondition());
-  if (!Load || Load->getParent() != &BB || Load->isVolatile())
+  if (!Load || Load->getParent() != &BB || !Load->isSimple() ||
+      !Load->hasOneUse())
     return std::nullopt;
 
   auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(Load->getPointerOperand());
   if (!Slot || !isPlainSlot(Slot))
     return std::nullopt;
 
-  // A phi here would have to lose an incoming edge for every predecessor that
-  // stops arriving, and its value would have to be made available where that
-  // predecessor now jumps instead.  Nothing produces one in the shape this
-  // exists for, so it is refused rather than guessed at.
-  if (!BB.phis().empty())
-    return std::nullopt;
-
-  // The value the switch reads has to be the value a predecessor left, so
-  // nothing may write the slot between the top of the block and the load.
-  for (llvm::Instruction &I : BB) {
-    if (&I == Load)
-      break;
-    if (auto *S = llvm::dyn_cast<llvm::StoreInst>(&I))
-      if (S->getPointerOperand() == Slot)
-        return std::nullopt;
-  }
+  // Threading bypasses this entire block. Its only operations may be the
+  // private load and switch: other effects must still execute, and values
+  // defined here cannot become unavailable along the new incoming edge.
+  for (llvm::Instruction &I : BB)
+    if (&I != Load && &I != Switch)
+      return std::nullopt;
   return Dispatcher{Switch, Slot};
 }
 
@@ -185,12 +176,9 @@ bool threadThroughSlot(llvm::BasicBlock &Pred, const Dispatcher &D) {
     B.CreateBr(IfTrue);
   Br->eraseFromParent();
 
-  // The store fed nothing but the dispatcher, and the select fed nothing but
-  // the store; with the jump decided here neither has a reader left.
-  llvm::Value *Fed = Store->getValueOperand();
-  Store->eraseFromParent();
-  if (auto *I = llvm::dyn_cast<llvm::Instruction>(Fed))
-    llvm::RecursivelyDeleteTriviallyDeadInstructions(I);
+  // Other loads or another dispatcher may still read the state. Keep its
+  // defining store; ordinary promotion/DCE can remove it after proving it
+  // dead instead of assuming the bypassed load was its only reader.
   return true;
 }
 

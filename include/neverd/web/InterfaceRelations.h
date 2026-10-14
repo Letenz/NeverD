@@ -52,7 +52,10 @@ struct InterfaceSourceRelations {
 /// Failure clears these relations and never modifies request evidence.
 InterfaceSourceRelations analyzeInterfaceSourceRelations(
     const SourceAnalysis &Source, const SourceBindingAnalysis &Bindings,
+    const SourceInterfaces &Interfaces, const SourceNavigation &Navigation);
+InterfaceSourceRelations analyzeInterfaceSourceRelations(
+    const SourceAnalysis &Source, const SourceBindingAnalysis &Bindings,
     const SourceInterfaces &Interfaces, const SourceNavigation &Navigation,
-    InterfaceRelationLimits Limits = {});
+    InterfaceRelationLimits Limits);
 
 } // namespace neverd::web

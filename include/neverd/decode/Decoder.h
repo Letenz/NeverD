@@ -121,6 +121,10 @@ public:
   /// Apply the lifting settings \p Img implies beyond its architecture and
   /// mode, such as the system call convention of its platform.
   void configureFor(const BinaryImage &Img);
+  /// Whether x64 x87 instructions lift onto the function's owned x87 context
+  /// (x87ContextOwnsStack). configureFor sets it from the image; a decoder
+  /// initialized from an architecture alone keeps typed values unless told.
+  void setX87ContextOwnership(bool Owned);
   bool selectMode(const BinaryImage &Img, va_t Addr,
                   std::optional<InstructionMode> IncomingMode = {});
   InstructionMode currentMode() const { return CurrentMode; }

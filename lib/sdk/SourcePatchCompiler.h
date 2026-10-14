@@ -5,11 +5,13 @@
 #define NEVERD_SDK_SOURCEPATCHCOMPILER_H
 
 #include "neverd/Common.h"
+#include "neverd/backend/codegen/PatchObject.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,6 +27,10 @@ struct SourcePatchCompilation {
   std::string CompilerVersion;
   std::vector<std::string> Arguments;
   std::string Diagnostics;
+  std::vector<std::string> TranslationArguments;
+  std::string TranslationManifest;
+  std::string TranslationMap;
+  std::optional<DynCodePatchEvidence> DynCode;
 };
 
 llvm::Expected<SourcePatchCompilation>

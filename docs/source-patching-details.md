@@ -56,10 +56,10 @@ explicit mappings; native objects require explicit mappings.
 
 | Producer | Artifact | Target and language verified |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | Native object | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | Native object | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | Native object | ELF x64 C/C++ with a matching Itanium ABI runtime |
-| NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O ARM64 C |
+| NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
 These are fixed profiles, not compatibility promises for every compiler version,
@@ -67,6 +67,9 @@ flag or binary. The checked target, actual compiler path/version, arguments,
 artifact, requested bindings and installed addresses appear in the JSON report.
 Native objects additionally have a SHA-256 digest. An external object has an
 unknown producer; its file name does not establish compiler identity.
+The native object `target` field is selected from the loaded image ABI by
+`sourcePatchTargetTriple`, for both compiled and supplied objects. It preserves
+ARM ELF float flags and the distinct iOS/watchOS frontend contracts.
 
 The IR route uses NeverD's LLVM code generator. Native objects retain producer
 machine instructions and section contents, changing only admitted relocation
@@ -75,9 +78,18 @@ checked through this route: every non-relocation text byte, including the
 compiler's added entry padding, survived installation. Other MIR/obfuscation
 transformations need their own relocation and runtime verification.
 
-NeverC is optional. Ordinary NeverC compilation does not enable dyncode. Explicit
-`--compile-mode=dyncode` currently fails because its code-block/runtime contract
-has not been adapted. NeverC C++ is not an admitted source profile. GCC cannot
+NeverC is optional. Ordinary compilation does not enable dyncode. NeverC C++
+uses the built-in `cpp-core-v2` C++17-to-C23 translator with an explicit target,
+verified manifest/source-map hashes and a C export. Hosted
+`--compile-mode=dyncode` requires its producer's `-fdyncode-hosted` capability,
+one native code section, one explicit entry and no original bindings. It
+verifies the kept object and final payload digests and compares linked code
+bytes/entry layout before publication. The compiler retains actual unwind
+records and disables implicit runtime lowering and mutable/TLS state.
+NeverC's translator does not admit C++ EH, RTTI, virtual dispatch or cleanup
+during foreign exception propagation; select Clang for C++ exception code.
+Clang source IR admits x64/ARM64 PE FH3 with bounded compiler xdata and exact
+funclet/FuncInfo ownership. GCC cannot
 produce the LLVM IR artifact. Native ELF, COFF and Mach-O objects are accepted
 on all four native architectures under the bounded producer contracts below.
 Additional architectures are outside the runtime-verified source profiles;
@@ -536,3 +548,65 @@ host-toolchain passes. A scalar-to-vector return experiment did not resolve the
 parameter contract and was reverted. The replay is historical artifact evidence,
 not a fresh pass of the entire lift suite. The broader unresolved results above
 remain separate from the source-patch qualification.
+
+### Native PE process completion (2026-10-13)
+
+[Windows run 38350079817](https://github.com/NeverSight/NeverD/actions/runs/38350079817)
+completed successfully at `a4a5ae3cb118d561fd814e1a6b48960760081b21`.
+Its Windows x64 job passed all 16 focused PE/object/trampoline tests and all
+143 Unicorn target-matrix tests without skips. The FH3 case executed its seven
+x64 C++ runtime scenarios with Clang 22.1.6, native MSVC/SDK inputs and integrated
+LLVM.
+
+The separate process profile passed all 90 observations, 30 per architecture.
+x86 and x64 programs executed on Windows x64; ARM64 programs executed on
+`windows-11-arm`. Each architecture used one independent original and nine
+replacements, each run three times. Replacements cover nonleaf calls, mutable
+pointer state and floating-point/stack arguments through source IR, compiled
+objects and supplied objects. Downloaded artifacts were independently checked
+for the exact commit, matching manifests, file SHA-256 and PE machine values,
+successful patch receipts, expected native hosts, the complete case inventory
+and all observed exit codes. The ARM64 job consumed the same hashed images
+prepared by the x64 job.
+
+This is native Windows process evidence for the three C profiles. PE ARM32
+retains CPU-matrix coverage; the new process profile does not certify ARM64
+C++ exceptions or an ARM64 NeverD engine build. NeverC's separate 66-check
+x64/ARM64 matrix remains CPU execution evidence, rather than this Clang-produced
+native Windows process result.
+
+At the local integration `fa6d21fd18be3cd8e044217aaf84c6d590134bd9`, fresh
+binaries passed all 143 Clang matrix checks, 66 NeverC matrix checks, 234 native
+exception contracts and 37 COFF exception contracts. The source suite passed
+45 of 47 cases with two Linux-only skips; 43 of 46 focused lifting checks passed
+with three Linux-only skips. Clang IR and GCC object replacements each passed
+all seven Linux C++ runtime scenarios through the actual Linux loader. Binary
+repair passed 84 cross-architecture checks and six native Darwin runtime
+checks, without skips. Python SDK validation passed 110 of 165 cases, with 55
+explicit platform or fixture skips; ABI auditing and mypy also passed. These
+focused results do not turn the historical broader C-recovery defects above
+into passing coverage.
+
+### Native object receipt identity correction (2026-10-13)
+
+A subsequent review found that native object receipts still reported
+`x86_64-unknown-linux-gnu` regardless of the loaded architecture and format.
+The installed PE bytes, machine headers and native process observations above
+were checked independently, but this receipt field was incorrect. Both compiled
+and supplied objects now derive it from the loader-owned image ABI through
+`sourcePatchTargetTriple`.
+
+The unchanged 143-check Clang and 66-check NeverC inventories passed after the
+correction. Their compiled-object and valid supplied-object cases also verify
+receipt identity against independent expected triples for all thirteen target
+profiles. The malformed-object cases require successful installation and CPU
+execution of their unmodified object as a positive control. The PE fixture
+preparer now rejects a wrong receipt target; its thirteen evidence-rule tests
+passed, including object and versioned MSVC IR targets.
+
+The freshly built engine also reinstalled the nine supplied PE objects from
+[Windows run 38350079817](https://github.com/NeverSight/NeverD/actions/runs/38350079817).
+x86/x64/ARM64 each covered nonleaf calls, mutable pointers and FP/stack arguments.
+All nine output files matched the corresponding native-qualified images byte
+for byte, with correct new target receipts and unchanged original files.
+Windows process evidence remains attached to that exact run and its image hashes.

@@ -206,6 +206,21 @@ void splitEntryLoopHeader(MedFunc &Func) {
   Entry.EndAddr = InvalidVA;
   Entry.Succs.push_back(1);
   Func.Blocks.insert(Func.Blocks.begin(), std::move(Entry));
+  // A context begins at function entry, not on every visit to the machine
+  // entry address. Move only its owned initializer; original instruction
+  // effects stay in the loop header and run on every backedge.
+  auto &Header = Func.Blocks[1].Ops;
+  while (!Header.empty() && Header.front().Opcode == NdOp::INTRINSIC &&
+         Header.front().NumInputs && Header.front().Inputs[0].isConst() &&
+         Header.front().Inputs[0].ConstVal ==
+             unsigned(Intrinsic::X87ContextBegin)) {
+    Func.Blocks.front().Ops.push_back(std::move(Header.front()));
+    // This is synthetic initialization, not an occurrence of the machine
+    // loop header. Address-based HighIR loop recovery must not pull it back
+    // into the repeated instruction region.
+    Func.Blocks.front().Ops.back().Addr = InvalidVA;
+    Header.erase(Header.begin());
+  }
 }
 
 } // namespace

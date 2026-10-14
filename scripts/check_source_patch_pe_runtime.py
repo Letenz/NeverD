@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -91,6 +92,26 @@ def run(command: list[str], log: Path, expected: int = 0) -> subprocess.Complete
     return result
 
 
+def publication_receipt(stdout: str, arch: str, artifact: str) -> dict:
+    reports = [json.loads(line) for line in stdout.splitlines()
+               if line.startswith('{')]
+    reports = [report for report in reports
+               if report.get("schema") == "neverd.source-patch.v1"]
+    if len(reports) != 1 or reports[0].get("success") is not True:
+        raise ValueError("missing successful publication receipt")
+    report = reports[0]
+    target = report.get("target")
+    triple = PROFILES[arch][0]
+    # Clang IR may append the MSVC version. Objects report the loaded image's
+    # canonical ABI, independently of the object producer's host environment.
+    valid = (isinstance(target, str) and
+             (re.fullmatch(re.escape(triple) + r"(?:\d+(?:\.\d+)*)?", target)
+              if artifact == "ir" else target == triple))
+    if not valid:
+        raise ValueError(f"publication receipt target mismatch for {arch}/{artifact}")
+    return report
+
+
 def function_addresses(library: Path, image: Path) -> dict[str, int]:
     # Reuse the public ABI's export inventory, not a second
     # PE export parser or fixed addresses from a particular linker layout.
@@ -168,14 +189,9 @@ def prepare(args: argparse.Namespace) -> None:
                                     "--compiler-path=" + str(args.clang),
                                     "--artifact=" + artifact])
                 result = run(command, output.with_suffix(".log"))
-                reports = [json.loads(line) for line in result.stdout.splitlines()
-                           if line.startswith('{')]
-                reports = [report for report in reports
-                           if report.get("schema") == "neverd.source-patch.v1"]
-                if len(reports) != 1 or reports[0].get("success") is not True:
-                    raise RuntimeError(f"missing successful publication receipt: {output}")
+                receipt = publication_receipt(result.stdout, arch, artifact)
                 output.with_suffix(".receipt.json").write_text(
-                    json.dumps(reports[0], indent=2) + "\n", encoding="utf-8")
+                    json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
                 record(output, case, artifact, expected)
                 if digest(original) != original_hash:
                     raise RuntimeError("patching modified the original image")
@@ -201,25 +217,30 @@ def native_machine() -> int:
     return native.value
 
 
+def runtime_host(arch: str, runner: Path | None, expected_native_host: str | None) -> str:
+    if runner:
+        if expected_native_host:
+            raise ValueError("an external runner cannot claim native Windows coverage")
+        return "external-runner"
+    else:
+        if expected_native_host is None:
+            raise ValueError("--expected-native-host is required for native qualification")
+        actual = native_machine()
+        expected = PROFILES[expected_native_host][1]
+        if actual != expected:
+            raise RuntimeError(f"native machine {actual:#x} differs from {expected:#x}")
+        host = expected_native_host
+        if arch == "arm64" and host != "arm64":
+            raise ValueError("ARM64 fixtures require native Windows ARM64")
+        return host
+
+
 def execute(args: argparse.Namespace) -> None:
     root = args.root.resolve()
     report_path = root / (args.arch + "-runtime.json")
     # A failed replay must not leave an earlier success for artifact consumers.
     report_path.unlink(missing_ok=True)
-    if args.runner:
-        if args.expected_native_host:
-            raise ValueError("an external runner cannot claim native Windows coverage")
-        host = "external-runner"
-    else:
-        if args.expected_native_host is None:
-            raise ValueError("--expected-native-host is required for native qualification")
-        actual = native_machine()
-        expected = PROFILES[args.expected_native_host][1]
-        if actual != expected:
-            raise RuntimeError(f"native machine {actual:#x} differs from {expected:#x}")
-        host = args.expected_native_host
-        if args.arch == "arm64" and host != "arm64":
-            raise ValueError("ARM64 fixtures require native Windows ARM64")
+    host = runtime_host(args.arch, args.runner, args.expected_native_host)
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema") != "neverd.source-patch.pe-runtime.v1":
         raise ValueError("unknown runtime manifest schema")

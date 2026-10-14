@@ -1872,6 +1872,36 @@ TEST(SymSimplifyGuard,
   }
 }
 
+TEST(SymSimplifyGuard, SourceDefaultRunsO2WithoutSymbolicWork) {
+  llvm::LLVMContext C;
+  llvm::Module M("source_default", C);
+  buildCarrySaveAdd(M);
+  auto *Helper = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(C), false),
+      llvm::Function::InternalLinkage, "unused_helper", &M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Helper));
+  B.CreateRetVoid();
+  SourceViewOptions Basic;
+  Basic.LLVM = SourceViewOptions::LLVMOptimization::Basic;
+  const auto Cleanup = Pipeline::optimizeOrPromoteModule(M, nullptr, Basic);
+  ASSERT_NE(Cleanup.Stop, OptimizationStopReason::InputInvalid);
+  ASSERT_NE(Cleanup.Stop, OptimizationStopReason::VerificationFailed);
+  ASSERT_NE(M.getFunction("unused_helper"), nullptr);
+
+  // The default must run the module pipeline, not only scalar cleanup. Its
+  // global DCE removes the unused helper without opting into symbolic work.
+  const auto Result = Pipeline::optimizeOrPromoteModule(M);
+  EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+  EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+  EXPECT_EQ(M.getFunction("unused_helper"), nullptr);
+  EXPECT_NE(M.getFunction("f"), nullptr);
+  EXPECT_EQ(Result.Rounds, 0u);
+  EXPECT_EQ(Result.SemanticRewrites, 0u);
+  EXPECT_EQ(Result.SearchWork, 0u);
+  EXPECT_EQ(Result.ProofWork.Queries, 0u);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 TEST(SymSimplifyGuard, DeepDefaultO2InlinesAndEliminatesInternalHelper) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);

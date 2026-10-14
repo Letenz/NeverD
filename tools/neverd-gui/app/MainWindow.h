@@ -50,6 +50,10 @@ public:
   ~MainWindow() override;
 
   void openFile(const QString &path);
+  /// Whether opening a PE asks to load the PDB it names, before the load or
+  /// once it lacks one; automated runs, which nobody answers, load the PDB
+  /// discovery finds.
+  void setAsksForPdb(bool asks);
   /// Use a disposable layout file (tests and benchmarks).
   void setLayoutPath(const QString &path) { layoutPath_ = path; }
   /// Restore the saved desktop, or lay out the default one; later calls do
@@ -149,6 +153,8 @@ private:
   /// Open \p path once the user answered whether to load the PDB it names,
   /// as IDA asks when it loads a PE that names one.
   void openAskingForPdb(const QString &path, LoadOptions options);
+  /// Show the workbench and start loading \p path.
+  void openNow(const QString &path, const LoadOptions &options);
   void chooseLoader(const QString &path);
   /// File, Load file, Reload the input file: read the file again, asking
   /// again how to read a binary file.
@@ -157,6 +163,10 @@ private:
   /// last chose.
   void applyIndicator();
   void rename();
+  /// IDA's Edit function dialog for the function at \p entry.
+  void editFunction(Address entry);
+  /// The Functions window's context menu for the row at \p position.
+  void functionsMenu(const QPoint &position);
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
@@ -217,6 +227,7 @@ private:
   MicrosoftSymbols *microsoftSymbols_ = nullptr;
   /// A file to open once the worker has started, asking for its PDB then.
   std::optional<std::pair<QString, LoadOptions>> pdbPromptPending_;
+  bool asksForPdb_ = true;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   ChooserView *functions_ = nullptr;

@@ -1158,11 +1158,6 @@ private:
       line("throw " + T.Source.slice(S->Value->Begin, S->Value->End).str() +
            ";");
       return;
-    case StmtKind::PseudoBlock:
-      openBlock(S->Text);
-      body(S->Then);
-      closeBlock();
-      return;
     case StmtKind::Leave:
       line("__leave;");
       return;

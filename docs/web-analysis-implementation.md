@@ -2862,7 +2862,7 @@ original hash through 64 KiB reads, and preserves original/expanded origins and
 selected ranges. Its 32 MiB materialization/output limit is independent of
 ordinary 1 MiB / 100,000-node source admission and the 200,000-node cache.
 `SourceRecovery` remains the only formatter and same-parser-tree proof owner.
-Large models never enter interactive caches or semantic consumers. The new
+Recovery models never enter interactive caches or semantic consumers. The new
 always-declared C API and direct/Wails CLI forms are thin selection layers;
 worker/MCP exclude the raw operation. See the
 [profile](web-readable-export-profile.md).
@@ -3670,3 +3670,263 @@ Provenance scans 7,565 files, capability ownership validates 23 declarations,
 and new C++ files pass the LLVM formatter check. Web/JS/ASAR remain ON.
 Final receipts use `/tmp/neverd-passive-structure-integrated-*`, with the
 successful complete rerun in `integrated-web-tests-fixed.log`.
+
+## Explicit large-source analysis (2026-10-13)
+
+The additive `hermes-602befee-large-source-js-v1` profile addresses the four
+real Claude request-source selections refused by interactive byte/parser
+admission. `SourceLimits` owns input, AST, lexeme, decoded-string, model-storage,
+parser-allocation and work bounds. Parsing, complete lexical binding, navigation,
+features, configuration order and passive interfaces consume that profile
+without partitioning source syntax. Interactive admission stays at 1 MiB and
+100,000 nodes; readable recovery remains a separate non-semantic model.
+
+Explicit admission permits 8 MiB and 1,500,000 nodes. The session retains one
+large source independently of interactive counters and revokes both at a new
+revision. Parser-profile-bound source/node identities, complete original
+anchors, ordinary metadata pages and existing redaction apply throughout the
+C API, CLI, worker and MCP. Independent record and other consumer limits remain
+in force. Charged parser/model storage is not a whole-process RSS bound. See
+the [selection contract](web-passive-report-profile.md#explicit-large-source-selections).
+
+Pinned macOS ARM64 Claude Code 2.1.296 modules 141, 299, 415 and 1452 retain
+180,783, 185,080, 1,165,367 and 286,849 AST nodes, respectively. Their exact
+original hashes/lengths are in `LargeSourceTests.cpp`; passive reports retain
+12, 33, 141 and 31 static rows. The complete retained package has 2,364 parsed,
+navigated feature inventories with no parser/feature refusals, 418 configuration
+objects, 3,702 terms and 32 possible later overwrites. Named configuration
+loading links remain zero. These are syntax candidates, not runtime requests
+or effective configuration policy.
+
+Continuation verification against `8600156fe`:
+
+- The Release engine/CLI/SDK/worker/MCP build succeeded. The complete owning Web
+  directory passed **796 of 827** checks with **31 explicit skips** in 30.88 s,
+  including the four pinned large modules, both whole-package source-feature
+  profiles and all eight captured Claude platform packages.
+- All five explicit large-source CLI forms passed with an unusable external-tool
+  PATH, private canaries and no stderr. The initial continuation run exposed
+  reused test logs: LLVM redirection preserves old file tails. Independent logs
+  per command fix the harness; production output was unchanged.
+- Worker/MCP and availability passed six cases, with the one backend-omission
+  check explicitly skipped in the normal build. Qt Web review passed in 3.31 s.
+- Parser OFF rebuilt successfully; **21 of 22** selected SDK/report/transport/
+  availability checks passed with the same omission-only skip. The new C symbol
+  remains exported and its operation explicitly reports `capability_unavailable`.
+- Web backend OFF rebuilt successfully; six of seven availability/transport
+  checks passed with worker's positive backend case explicitly skipped. The
+  always-declared large-source C API returned the same unavailable contract.
+- The new symbol is registered in the existing separate Web public-surface
+  inventory. The 23-capability ownership check, source-provenance scan and LLVM
+  formatter check pass.
+
+Receipts use `/tmp/neverd-js-continuation-*`; the prior pinned full-client
+property receipt is `/tmp/neverd-large-source-full-client.xml`. The original
+temporary full Bun/SEA/pkg/nexe producer-container corpora are absent from this
+host, so their optional tests remain coverage omissions. No proprietary source
+or ignored `superpowers` document is included in the change.
+
+### Final large-source integration
+
+Implementation `cd62989ff` was normally merged with remote `a191a6167`, then
+`e02da11c2`, as `9cf89bcb5`. Incoming native changes require the recorded
+Capstone revision `f5fb7682d`; it was synchronized in this worktree. The Web
+owners remain unchanged apart from an incoming SEA SDK test portability fix.
+All seven owning Web test binaries, engine, CLI, worker and MCP rebuilt in
+Release. Web/JavaScript/ASAR remain ON.
+
+The final owning run passed **796 of 827 unique checks**, with **31 explicit
+skips**, in 50.15 s. Four real large selections and all 2,364 macOS ARM64 feature
+inventories pass, as do the eight fixed Claude platform-package selections.
+Two earlier concurrent CTest invocations raced on GoogleTest discovery files,
+producing duplicate registrations; that run is not counted as additional
+coverage. The generated lists were preserved for diagnosis, regenerated and
+checked for unique names before the final sequential runs. The testing guide
+now records this orchestration constraint.
+
+Final worker/MCP/availability checks passed six of seven cases with the normal
+backend-omission-only skip. Qt Web review passed in 4.06 s. The final CLI report
+for the 4.5 MiB module 415
+retains 141 static rows and is byte-identical to its pre-merge report, with
+unusable external-tool PATH and zero stderr. The 23-capability check, LLVM
+formatter and source-provenance scan of 7,675 files pass. Final receipts use
+`/tmp/neverd-js-continuation-final-*`; missing producer corpora remain the same
+explicit qualification gaps.
+
+The first push encountered newer remote `960e6a8eb`. Its only implementation
+change is native object-patch ABI metadata; no Web owner changed. Normal merge
+`c9782cfa5` and the seven-step SDK/CLI/transport rebuild succeeded. The final
+focused run passed **20 of 22** large-source/SDK/native-handoff/availability/
+transport cases in 5.50 s; the missing optional Bun producer image and the
+normal backend-omission case are explicit skips. Capability ownership remains
+valid. These receipts use `/tmp/neverd-js-continuation-push-retry-*`.
+
+### 2026-10-13: actual CEF/WebView2 packs and required producer qualification
+
+The follow-up closes the measured resource-format part of the #716 gap with
+one independent C++ validator and two explicit layouts:
+`chromium-datapack-v5-v1` (standard u16 IDs/counts) and
+`msedge-webview2-datapack-v5-u32-v1` (the observed WebView2 wide table).
+Both input headers mark v5; explicit selection prevents layout guessing.
+Complete index/payload admission, sorted unique IDs, checked aliases, original
+SHA-256 slices and revision-bound pages precede publication. Explicit bounded
+native gzip produces separately identified bytes; failures remain unselectable.
+Source/HTML/anchor consumers share `ArtifactView`, including nested ZIP and
+compressed origins. Fixed-name exclusive local export verifies original and
+already selected decoded files before completion; worker/MCP exclude raw export.
+
+The fixed CEF 120.2.7 NuGet original is 128,957,697 bytes and SHA-256
+`e7f2e0b6860d8cce3ab66d7cb50492b9e1ea601172c850e5c7595d2a45baff17`.
+Its 8,187,343-byte pack contains 2,504 canonical resources and 16 aliases.
+Resource 698's 23,108 gzip bytes at pack offset 24,660 decode to 102,823 bytes
+and 11,830 parsed module nodes. Resource 693 yields a 976-byte HTML document
+with one script candidate. Both decoded hashes independently match native
+gzip reference reads. The original NuGet deflate frame remains separate from
+the resource gzip frame in source origins.
+
+The local Teams 26261.303.5165.1465 app supplies WebView2 154.0.4258.37's
+51,851,676-byte pack, SHA-256
+`b3b4fb23fa809ac33895d6f0a87d03fdb6a2f087d6a15824d39faf48644c7b8d`.
+Its measured table contains 5,814 canonical resources and 633 aliases. Numeric
+resource 24,521 retains its exact 535 bytes at offset 621,511 and parses into
+56 script nodes with original anchors. No client/native runtime is run or
+redistributed; resource tables establish no framework identity or runtime route.
+The [profile](web-datapack-profile.md) pins sizes, hashes and limitations.
+
+All 18 new resource/policy checks pass, including both original real inputs.
+Owning Web Release regression passed **814 of 845** distinct cases with
+**31 explicit optional-input/feature skips**, in 117.00 seconds. Worker/MCP/
+availability passed six of seven with the normal backend-omission-only skip;
+Qt Web review passed in 7.20 seconds. JS omission passed all 16 applicable
+resource cases with the same real originals, plus six of seven transport/
+availability cases. Web omission passed six of seven, with the dependent
+positive worker case explicitly skipped; all four additive C symbols remain
+available as omission stubs. Enabled flags are restored before integration.
+LLVM formatting, the 23-capability ledger, source provenance and all 309
+localized Markdown entries pass. Receipts use `/tmp/neverd-js-gap-*`.
+
+For #718, eleven existing fixed full-image tests now have one required
+qualification inventory. `NEVERD_REQUIRE_WEB_PRODUCER_CORPUS=1` converts absent
+inputs and unavailable native/source consumers into failures; missing test
+registrations and empty CTest selections also fail. The release target and
+explicit/reusable workflow require an immutable corpus URL and SHA-256, then
+retain the owning C++ artifact hashes and source witnesses. A separate fixed
+CEF workflow requires its actual redistributable input.
+
+The complete old producer images were stored under erased `/tmp` directories.
+An absence probe selected all eleven required cases and failed all eleven with
+zero skips; no green full-corpus receipt is claimed. Their original manifests
+are preserved while fixed tools/inputs are prepared for reconstruction in a
+persistent directory. [Required corpus qualification](web-producer-corpus-qualification.md)
+records the release contract and remaining artifact-availability work. The
+measured #714 minified-loader/configuration-file follow-up remains separate.
+
+Integration commit `c22b3c756` and merge `46e35f050` retain upstream
+`a07acfadd`'s native function-edit/call-context changes. The resulting Release
+rebuild passed; owning Web passed **818 of 845** distinct cases with **27
+explicit skips** in 146.60 seconds. All 25 full Bun containers were rebuilt
+with the original input, compiler and template pins and individually matched
+their existing complete-file hashes. The full Linux/cross-container, six-target
+map and native-handoff cases now run from a persistent corpus. No old hash was
+changed. Worker/MCP/availability passed six of seven with its normal omission
+skip, and Qt Web review passed in 2.62 seconds. The 23-capability ledger and
+7,695-file source-provenance scan pass after the native merge. These receipts
+use `/tmp/neverd-js-gap-postmerge-*`.
+
+### Persistent full producer corpus restoration (2026-10-13)
+
+The fixed corpus has been rebuilt in a persistent local directory. All 25 Bun containers,
+six injected Node SEA images, three nexe images, six canonical pkg images and
+the BOM/shebang pkg witness match their original whole-file SHA-256 values.
+The preprocessing witness requires the original `stripped-inputs` basename;
+changing it changes the embedded virtual paths and is correctly rejected by
+the fixed hash check. Fresh nexe/pkg dependency locks are recorded separately
+instead of being passed off as the historical locks.
+
+Node's snapshot builder did not reproduce the old opaque snapshot bytes even
+with the original source, compiler path and fixed random seed. A separate
+immutable `2026-10-13` witness therefore pins its 5,644,095 bytes and SHA-256
+`9e94efe5aed0592ce0338a8c80f0e352cd154ff5849e1fe32f866a4841e2772a`.
+The old witness remains the default and unchanged; only an explicit known
+selection admits the new snapshot. Unknown selections and mismatched hashes
+fail. Both witnesses stay opaque and have no invented source selection.
+
+All eleven required producer cases pass with zero skips in 25.73 seconds;
+the receipt is `/tmp/neverd-full-producer-qualified-fixed.xml`. The invalid
+snapshot selection probe also fails as required. Production used only the
+fixed trusted builders in separate fixture preparation; no generated image
+was executed and the C++ qualification invokes no producer or runtime. Remote
+release qualification still requires an accessible immutable archive and a
+green workflow receipt. Real minified-loader/configuration navigation remains
+the next implementation gap.
+
+### Minified configuration file navigation (2026-10-13)
+
+`javascript-configuration-file-navigation-v1` now retains fixed file/layer
+literal sites, common switch-case anchors, local lexical call candidates and
+ordered arrays under the existing source navigation operation. It uses
+`SourceModel::indexSourceFunctions`, also shared by existing client callbacks,
+for authoritative function declaration/initializer cardinality. Duplicate or
+conflicting candidates, dynamic scope, imports and alias chains retain unknown
+targets. Reassignment preserves a source relationship without proving the
+runtime target. Array terms preserve unknown spreads/holes/calls and establish
+source order only. Private paths/names/values remain withheld.
+
+All 2,364 original Claude units complete the new inventory under explicit large
+admission: 973 literal sites, 592 lexical call candidates, 69 layer arrays and
+209 terms. The interactive profile keeps its ten refusals; all 2,354 admitted
+units complete with 682 sites, 341 calls, 50 arrays and 156 terms. The existing
+named loader grammar remains unchanged at zero. Direct CLI navigation of the
+original `m00086.js` retains 30 sites, 19 call candidates and a two-term array
+with an unusable external-tool PATH and empty stderr. The profiles do not
+authenticate loaders or infer enabled layers, merge behavior or file precedence.
+
+Seven new focused C++ checks pass. Owning Web regression passes 823 of 852
+distinct cases with 29 explicit optional input/feature skips in 75.35 seconds;
+all eleven strict producer cases run from the verified archive round trip.
+Worker/MCP/availability passes seven of eight, including the actual fixed
+Linux Claude MCP inventory, with only the backend-omission-only case skipped.
+The full source counts use a separate GoogleTest property receipt because
+CTest JUnit preserves labels rather than those custom measurements. Receipts
+are `/tmp/neverd-configuration-file-*`.
+
+The actual CEF distribution also passes its
+[GitHub workflow](https://github.com/NeverSight/NeverD/actions/runs/38413710185)
+at `9276ef94c`. The persistent local full-corpus archive is 1.2 GiB and has
+SHA-256 `7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+It preserves producer locks, manifests and receipts; full-corpus remote
+qualification still needs an accessible immutable input and a successful run.
+
+Parser omission passes six of eight transport/availability cases with the
+unsupplied optional Claude input and backend-omission-only case skipped. Web
+omission passes six of eight with the two dependent positive Web cases skipped;
+the complete public C ABI omission check passes. Enabled Web/parser flags are
+restored and all seven focused cases pass again. These checks establish honest
+profile discovery and omission behavior, not Windows analysis-host support.
+The restored worker/MCP/availability selection passes seven of eight again,
+including the actual fixed Linux Claude inventory, and Qt Web review passes
+in 4.11 seconds. Formatting, all 23 capability records, the 7,705-file source
+provenance scan and all 309 localized Markdown entries pass. The primary
+checkout's existing signature and diagnostic changes are preserved.
+
+### Combined Web release qualification (2026-10-13)
+
+The individual producer/CEF lanes now have a shared explicit/reusable release
+entry point. `web-release-qualification.yml` calls both workflows at the selected
+ref and exposes one final `Web release qualification gate`. The gate runs after
+the input preflight and both dependencies finish, and accepts only three
+successful results. Local execution of its exact shell condition verifies all
+64 combinations of success, failure, cancellation and skip. Input preflight
+rejects missing/invalid URL/hash/witness selections before reader builds.
+The producer and wrapper preflights use explicit failure exits: local Bash 3.2
+continued past a failing standalone `[[ ... ]]` despite `set -e`. Eighteen
+valid/invalid input cases now verify both exact preflight snippets on that shell.
+YAML parsing, documentation and provenance checks pass. No producer hash,
+consumer selection or raw-source policy changes.
+
+An immutable runner-accessible full-corpus URL remains unavailable. The local
+archive and eleven-case strict receipt are retained; a green combined remote
+release receipt cannot yet be claimed. The gate is ready to dispatch with the
+fixed archive SHA-256 and explicit `2026-10-13` snapshot witness once that input
+is supplied. This workflow does not publish fixtures or alter unrelated package
+publication. See [the release contract](web-producer-corpus-qualification.md).

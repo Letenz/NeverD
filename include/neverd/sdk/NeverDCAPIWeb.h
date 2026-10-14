@@ -482,6 +482,35 @@ neverd_web_pkg_records_json(neverd_web_session_t Session,
                             const char *RecordKind, size_t RecordKindSize,
                             uint64_t Offset, uint64_t Limit);
 
+/// Extract an explicitly selected canonical Chromium v5/u16 or the measured
+/// WebView2 v5/u32 resource pack layout, under its separate named profile.
+/// No filenames, framework/version identity or runtime routing are inferred.
+NEVERD_API const char *neverd_web_datapack_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *Profile, size_t ProfileSize);
+/// Limit is 1..512. Original stored resources and aliases expose separate
+/// selections with exact shared ranges. Compressed bytes remain opaque.
+NEVERD_API const char *neverd_web_datapack_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ExtractionID, size_t ExtractionIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Explicit gzip-rfc1952-v1 decoding of one stored resource, up to 8 MiB.
+/// ResourceID is its opaque selection_id, not the numeric pack resource_id.
+/// Validates one complete stream and its trailer; failed output is discarded.
+/// The derived selection feeds the existing source/HTML consumers
+/// independently.
+NEVERD_API const char *neverd_web_datapack_decode_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ResourceID, size_t ResourceIDSize,
+    const char *Codec, size_t CodecSize);
+/// Explicit local disclosure into a fresh private directory, using fixed
+/// filenames and verified stored/decoded hashes. Not exposed via worker/MCP.
+NEVERD_API const char *neverd_web_datapack_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ExtractionID, size_t ExtractionIDSize,
+    const char *OutputDirectory, size_t DirectorySize);
+
 /// Read the listed Wails/Go embed.FS profile from captured native bytes.
 /// All candidate tables and stored digest prefixes must validate. Declared
 /// producer versions do not authenticate the compiler or publisher; actual
@@ -545,6 +574,14 @@ NEVERD_API const char *neverd_web_artifacts_json(neverd_web_session_t Session,
 /// are never included. Results are cached within the published revision.
 /// Parse acceptance is not a claim of complete semantic validation.
 NEVERD_API const char *neverd_web_source_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize);
+
+/// Explicit large-source profile (8 MiB, 1.5M nodes), with one such source
+/// per published revision. Interactive admission remains independent.
+/// Uses the same metadata pages, navigation and source evidence consumers.
+NEVERD_API const char *neverd_web_source_analyze_large_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *SourceType, size_t SourceTypeSize);
@@ -713,8 +750,8 @@ NEVERD_API const char *neverd_web_source_bundle_records_json(
 NEVERD_API const char *neverd_web_source_navigation_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
-/// RecordKind is functions/calls/references; Limit is 1..512. Text stays
-/// private.
+/// RecordKind is functions/calls/references/features/desktop_bridges/
+/// config_merges/config_files; Limit is 1..512. Text stays private.
 NEVERD_API const char *neverd_web_source_navigation_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize,

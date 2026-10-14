@@ -17,11 +17,19 @@
 // an empty shortcut where IDA has none either.
 // NEVERD_IDA_PLANNED(IdaAction, Shortcut, Group): a command NeverD does not
 // have yet, by the group of IDA's commands it belongs to.
+// NEVERD_IDA_CHOOSER_COMMAND(IdaAction, Shortcut, QtShortcut, Command): a
+// command of IDA's list windows, the key IDA and Qt spell for it, and the
+// ChooserCommand a list window that has the command runs.  The list window's
+// key wins over a window-wide command with the same key while it has the
+// focus, as in IDA.
 #ifndef NEVERD_IDA_ACTION
 #define NEVERD_IDA_ACTION(IdaAction, Shortcut, NeverDAction)
 #endif
 #ifndef NEVERD_IDA_PLANNED
 #define NEVERD_IDA_PLANNED(IdaAction, Shortcut, Group)
+#endif
+#ifndef NEVERD_IDA_CHOOSER_COMMAND
+#define NEVERD_IDA_CHOOSER_COMMAND(IdaAction, Shortcut, QtShortcut, Command)
 #endif
 
 // File.
@@ -56,6 +64,7 @@ NEVERD_IDA_ACTION("MakeStrlit", "A", EditDefineString)
 NEVERD_IDA_ACTION("MakeUnknown", "U", EditUndefine)
 NEVERD_IDA_ACTION("MakeName", "N", EditRename)
 NEVERD_IDA_ACTION("MakeFunction", "P", EditCreateFunction)
+NEVERD_IDA_ACTION("EditFunction", "Alt-P", EditFunction)
 NEVERD_IDA_ACTION("DelFunction", "", EditDeleteFunction)
 NEVERD_IDA_ACTION("MakeComment", ":", EditComment)
 NEVERD_IDA_ACTION("MakeRptCmt", ";", EditRepeatableComment)
@@ -72,7 +81,6 @@ NEVERD_IDA_ACTION("MakeCode", "C", EditDefineCode)
 NEVERD_IDA_PLANNED("MakeArray", "*", "Edit")
 NEVERD_IDA_PLANNED("MakeAlignment", "L", "Edit")
 NEVERD_IDA_PLANNED("SetType", "Y", "Edit")
-NEVERD_IDA_PLANNED("EditFunction", "Alt-P", "Edit")
 NEVERD_IDA_PLANNED("FunctionEnd", "E", "Edit")
 NEVERD_IDA_PLANNED("OpenStackVariables", "Ctrl-K", "Edit")
 NEVERD_IDA_PLANNED("ChangeStackPointer", "Alt-K", "Edit")
@@ -187,5 +195,9 @@ NEVERD_IDA_PLANNED("FocusCLI", ".", "Windows")
 NEVERD_IDA_PLANNED("WindowActivate1", "Alt-1", "Windows")
 NEVERD_IDA_PLANNED("WindowsListNext", "Ctrl-Tab", "Windows")
 
+// List windows.
+NEVERD_IDA_CHOOSER_COMMAND("ChooserEdit", "Ctrl-E", "Ctrl+E", Edit)
+
+#undef NEVERD_IDA_CHOOSER_COMMAND
 #undef NEVERD_IDA_ACTION
 #undef NEVERD_IDA_PLANNED

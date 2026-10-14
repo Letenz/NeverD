@@ -195,6 +195,26 @@ TEST(SourceDialect, CxxProgramDefaultsIncludeCLinkageEntryPoints) {
   EXPECT_EQ(sourceDialectOfFunction("main", true, Plain), SourceDialect::C);
 }
 
+TEST(SourceDialect, AFunctionWhoseHandlersACxxRuntimeDispatchesReadsInCxx) {
+  // A `try` the C++ personality dispatches is C++ source, even under a C
+  // name in an image whose other evidence established only C.
+  LanguageRuntimeInfo Plain;
+  Plain.Runtime = SourceLanguageRuntime::C;
+  for (auto Handler :
+       {SourceLanguageRuntime::CxxItanium, SourceLanguageRuntime::CxxMSVC}) {
+    EXPECT_EQ(sourceDialectOfFunction("parse_config", true, Plain, Handler),
+              SourceDialect::Cpp);
+    EXPECT_EQ(sourceDialectOfFunction("", false, Plain, Handler),
+              SourceDialect::Cpp);
+  }
+  // SEH `__try` and C's cleanup-only `-fexceptions` tables stay C.
+  EXPECT_EQ(sourceDialectOfFunction("DriverEntry", true, Plain,
+                                    SourceLanguageRuntime::C),
+            SourceDialect::C);
+  EXPECT_EQ(sourceDialectOfFunction("DriverEntry", true, Plain),
+            SourceDialect::C);
+}
+
 TEST(SourceDialect, PlainCKeepsNativeExceptionCallsAndHandlerDefinitions) {
   HighFunc Function;
   Function.Entry = 0x1000;

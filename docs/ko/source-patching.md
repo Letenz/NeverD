@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
+<!-- i18n-source: 382939d2eb45a68de6f110b936bbf8adee2c705da454ddc07ad950447a57cd94 -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@ NeverD는 선택한 컴파일러로 대체 함수를 컴파일한 뒤 명시된 
 <!-- i18n-section: compiler -->
 ## 컴파일러 선택
 
-`--compiler=clang`, `--compiler=gcc`, `--compiler=neverc` 중에서 선택합니다. Clang과 일반 모드 NeverC는 LLVM IR을 생성할 수 있으며 `object`는 컴파일러의 기계어를 보존합니다. CLI는 GCC에 오브젝트를 기본으로 선택합니다. Python SDK에서는 GCC에 `artifact="object"`를 명시해야 합니다. 다른 컴파일러로 조용히 대체하지 않습니다.
+`--compiler=clang`, `--compiler=gcc`, `--compiler=neverc` 중에서 선택합니다. Clang과 일반 모드 NeverC는 LLVM IR을 생성할 수 있으며 `object`는 컴파일러의 기계어를 보존합니다. CLI는 GCC에 오브젝트를 기본으로 선택합니다. Python SDK도 GCC에 오브젝트를 기본 선택합니다. 다른 컴파일러로 조용히 대체하지 않습니다.
 
 포함 경로, 매크로 정의 및 지원하는 소스 옵션은 `--compiler-arg` 또는 SDK의 `compiler_args`로 전달합니다. 대상과 출력 모드 재정의 및 응답 파일 토큰(`@file`)은 별도로 전달하는 옵션 값을 포함한 모든 인수 위치에서 거부됩니다. 일반적인 `-I` 경로와 `-D` 정의는 계속 지원됩니다.
 
 예시 주소를 확인된 원래 함수 진입점으로 바꾸세요. 대체 선언은 호출 규약과 구조체 배치를 포함한 원래 기계 ABI와 일치해야 하며 주소만으로 이를 증명할 수 없습니다. C++에는 `--language=c++`와 적절한 Clang++/G++ 경로가 필요합니다. `extern "C"` 진입점을 사용하거나 정확한 맹글링 이름을 전달하세요. 추가 보조 함수는 허용됩니다. `--entry`와 `--func`가 대체 대상을 명시하며 기존 `--from-c`도 지정 주소를 따릅니다.
+
+`artifact="object"`를 명시할 수도 있습니다.
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,15 +44,38 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## 검증된 프로파일 및 제한
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++와 hosted DynCode**
+
+NeverC C++는 x64/ARM64 ELF, PE, Mach-O에서 내장 `cpp-core-v2` C++17 변환 후 NeverC C23 코드를 생성합니다. 문서화된 부분집합의 템플릿과 정상 생성·소멸 수명을 지원하며 `extern "C"` 진입점이 필요합니다. C++ 예외, RTTI, 가상 디스패치와 외부 예외 중 정리는 범위 밖이므로 예외 코드는 Clang을 사용합니다. 기록에는 두 명령, 대상 매니페스트, 소스 맵과 검증 해시가 포함됩니다.
+
+`dyncode`: `--compile-mode=dyncode`는 NeverC `-fdyncode-hosted`를 사용하며 소스, 하나의 명시적 진입점, 네이티브 객체와 기존 심볼 바인딩 없음이 필요합니다. CLI와 Python은 이 모드와 GCC에 객체를 기본 선택합니다. 객체·최종 페이로드 해시, 링크된 모든 코드 바이트와 진입점을 검사하고 실제 CFI/SEH 또는 완전한 native compact 기록으로 언와인드를 보장합니다. 가변/TLS 상태, 암시적 syscall/PEB/heap/string 변환, 미해결 참조와 재배열 코드는 거부합니다. 데이터·콜백 포인터는 인수로 전달할 수 있습니다.
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+Clang LLVM IR 경로는 Windows ARM64 C++ FH3를 지원하며 xdata, 부모 프레임 ABI와 funclet/FuncInfo 소유권을 확인합니다. 객체 언어 처리기는 지원하지 않습니다. `check_source_patch_cpp_runtime.py`는 x64/ARM64 네이티브 Windows에서 아홉 예외 시나리오를 실행하며 CPU와 OS 언와인더 증거를 구분합니다.
+
 | 컴파일러 | 산출물 | 검증된 OS 실행 프로파일 |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | 네이티브 오브젝트 | ELF x64 C/C++ |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3 |
+| Clang 22.1.6 | 네이티브 오브젝트 | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | 네이티브 오브젝트 | 호환되는 Itanium 런타임의 ELF x64 C/C++ |
 | NeverC 3389.1.5 일반 모드 | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 일반 모드 | 네이티브 오브젝트 | ELF x64 C |
+| NeverC 3389.1.5 `cpp-core-v2` | LLVM IR / 네이티브 객체 | ELF / PE / Mach-O x64/ARM64: C++17 부분집합의 일반 수명 |
+| NeverC 3389.1.5 `hosted-v1` | 네이티브 객체 + 봉인된 페이로드 | ELF / PE / Mach-O x64/ARM64: C / C++17 부분집합, 일반 수명과 C 프레임을 통한 예외 전파 |
 
-위 표는 검증된 OS 실행 구성이며 모든 컴파일러 버전이나 옵션을 보장하지 않습니다. ELF, PE, Mach-O 네이티브 설치기는 네 아키텍처를 모두 받아들입니다. `dyncode`와 NeverC C++는 지원하지 않습니다. GCC는 일치하는 ELF 드라이버가 필요하며 LLVM IR을 생성할 수 없습니다. 알 수 없는 재배치, TLS, 생성자, LTO, common/IFUNC 심볼, 미해결 가져오기는 명확히 실패합니다. JSON 기록에는 컴파일러, 인수, 바인딩, 설치 주소가 포함되며 네이티브 객체에는 SHA-256도 기록합니다.
+위 표는 검증된 OS 실행 구성이며 모든 컴파일러 버전이나 옵션을 보장하지 않습니다. ELF, PE, Mach-O 네이티브 설치기는 네 아키텍처를 모두 받아들입니다. GCC는 일치하는 ELF 드라이버가 필요하며 LLVM IR을 생성할 수 없습니다. 알 수 없는 재배치, TLS, 로드 시 전역 생성자, LTO, common/IFUNC 심볼, 미해결 가져오기는 명확히 실패합니다. JSON 기록에는 컴파일러, 인수, 바인딩, 설치 주소가 포함되며 네이티브 객체에는 SHA-256도 기록합니다.
+
+네이티브 객체 기록의 `target` 필드는 로드한 이미지의 ABI에서 결정하며 ARM ELF 부동소수점 플래그와 iOS/watchOS 플랫폼 구분도 포함합니다. 컴파일된 객체와 외부 객체에 같은 식별 규칙을 적용합니다.
 
 CPU 행렬은 열두 조합 모두에서 소스, 외부 IR, 네이티브 객체 설치 성공을 요구합니다. ARMv7k watchOS와 ARMv7 iOS, 가변／읽기 전용 상태, 원본 부동소수점 및 스택 인수 바인딩, 로드 주소 변경 후 진입점 실행도 확인합니다. CPU 실행만으로 OS 로더, C++ 언와인더 또는 임의 ABI를 인증할 수 없습니다. 위 OS 구성을 기준으로 판단해야 합니다.
 
@@ -62,7 +87,7 @@ CPU 행렬은 열두 조합 모두에서 소스, 외부 IR, 네이티브 객체 
 
 `CPU`는 소스／IR／객체 설치, 재로드, 정확한 함수 실행을 뜻합니다. ARM ELF는 이미지에서 EABI5, ARM/Thumb 상태, 부동소수점 ABI를 선택하고 완전히 정렬된 `EHABI` 색인을 등록합니다. PE는 x64/ARM 런타임 행과 `HIGHLOW`/`DIR64`/`MOV32T` 기본 주소 재배치를 유지하며 x86은 컴파일러 등록 코드를 사용합니다. Mach-O는 CPU 하위 유형에 따라 watchOS DWARF와 iOS `SjLj`를 구분합니다. 소스 ARM/Thumb 진입점은 상대 분기로 주소 변경을 견딥니다.
 
-네이티브 객체는 자체의 경계가 있는 함수 심볼, 보조／섹션 정의, 언와인드 기록으로 범위를 확인합니다. MC 소유자 ID를 만들거나 IR을 재컴파일하지 않습니다. COFF에는 정확한 보조 길이 또는 단일 함수 섹션(`-ffunction-sections`)이 필요합니다. watchOS 어댑터는 실제 기록을 얻도록 리프 함수 프레임을 유지합니다. 네이티브 COFF/Mach-O 언어 처리기는 검증된 객체 구성에 포함되지 않으며 C++ 예외에는 검증된 IR 경로를 사용해야 합니다. 고정 exidx 등록부를 가진 정적 ARM 언와인더, 등록되지 않은 Mach-O 절대 포인터와 미지원 RELRO 저장소는 거부합니다.
+네이티브 객체는 자체의 경계가 있는 함수 심볼, 보조／섹션 정의, 언와인드 기록으로 범위를 확인합니다. MC 소유자 ID를 만들거나 IR을 재컴파일하지 않습니다. COFF 함수 범위는 정확한 보조 길이, 단일 함수 섹션(`-ffunction-sections`) 또는 디코딩된 네이티브 런타임 함수 기록으로 확인합니다. 다음 심볼로 길이를 추측하지 않습니다. watchOS 어댑터는 실제 기록을 얻도록 리프 함수 프레임을 유지합니다. 네이티브 COFF/Mach-O 언어 처리기는 검증된 객체 구성에 포함되지 않으며 C++ 예외에는 검증된 IR 경로를 사용해야 합니다. 고정 exidx 등록부를 가진 정적 ARM 언와인더, 등록되지 않은 Mach-O 절대 포인터와 미지원 RELRO 저장소는 거부합니다.
 
 GCC C 객체도 ELF x86, ARM32, ARM64에 설치하고 Linux QEMU user mode에서 실행했습니다. 어댑터는 이미지에서 ARM/Thumb을 선택하며 GNU property는 ELF 포인터 너비로 정렬합니다.
 
@@ -86,7 +111,9 @@ Mach-O 언와인드 테이블 확장에는 인접한 파일 및 가상 공간의
 <!-- i18n-section: exceptions -->
 ## C++ 예외
 
-ELF는 컴파일러 FDE/LSDA, Mach-O는 compact unwind/DWARF를 사용합니다. PE x64는 컴파일러 FH3 테이블을 허용하며 원래 프로그램에 호환 MSVC 런타임과 타입 식별자가 필요합니다. type-info 데이터는 명시적 바인딩이 필요할 수 있습니다. FH4, 사용자 정의 personality, SEH 소스 및 활성 CFG/EHCont/XFG 모드는 거부하며 원래 보호 플래그는 유지합니다.
+ELF는 컴파일러 FDE/LSDA, Mach-O는 compact unwind/DWARF를 사용합니다. PE x64/ARM64는 컴파일러 FH3 테이블을 허용하며 원래 프로그램에 호환 MSVC 런타임과 타입 식별자가 필요합니다. type-info 데이터는 명시적 바인딩이 필요할 수 있습니다. FH4, 사용자 정의 personality, SEH 소스 및 활성 CFG/EHCont/XFG 모드는 거부하며 원래 보호 플래그는 유지합니다.
+
+IBT 요구가 있는 ELF x86/x64 원본은 현재 거부합니다. 소스 설치기는 아직 ENDBR을 보존하는 트램펄린을 제공하지 않습니다.
 
 실행 사례는 정상 반환, 내부 catch, 원래 호출자의 새 예외 포착, 원래 피호출 함수의 예외 전파, 정확히 한 번의 RAII 정리, 재던지기, noexcept 종료와 변경하지 않은 함수를 검증합니다. 원래 호출 지점은 예외 전파를 이미 허용해야 합니다. 원래 컴파일러가 예외를 던지지 않는 함수 주위에서 제거한 catch 경로는 패치로 복원할 수 없습니다.
 
@@ -134,3 +161,9 @@ Windows x64 네이티브 검증 [2ed7e78fc](https://github.com/NeverSight/NeverD
 Windows 워크플로는 x86, x64, ARM64용 PE 교체 바이너리 27개도 생성합니다. `scripts/check_source_patch_pe_runtime.py`는 소스 IR, 컴파일된 객체, 외부 객체 경로에서 비리프 호출, 변경 가능한 포인터 상태, 부동소수점 및 스택 인수를 검사합니다. 원본과 각 교체 결과를 세 번씩 실행하여 아키텍처마다 프로세스 실행 30회를 관측합니다. x86/x64는 Windows x64에서, ARM64는 `windows-11-arm`에서 실행합니다. 검증기는 네이티브 호스트, 커밋, 파일 해시의 일치와 전체 사례 목록을 요구하며 외부 실행기의 결과는 별도로 기록합니다. 이 프로파일은 ARM64 C++ 예외 지원을 입증하지 않습니다.
 
 행렬의 선택적 컴파일러는 `NEVERD_TEST_MATRIX_NEVERC`로 지정합니다. NeverC 3389.1.5는 x64/ARM64와 ELF, PE, Mach-O 조합의 66개 검사를 모두 통과했으며 IR 및 네이티브 객체 설치와 CPU 실행을 확인했습니다. 이 컴파일러 버전은 x86과 ARM32를 지원하지 않으므로 해당 대상에는 Clang을 사용하며 ELF에는 호환 GCC 드라이버도 사용할 수 있습니다. NeverC의 PE 컴파일 시 어댑터는 `-fno-autolink`를 추가하여 다른 CRT를 링크하지 않고 기존 이미지에서 참조를 해결합니다. `.drectve` 링크 계약이 있는 외부 객체는 계속 거부됩니다.
+
+Windows 네이티브 프로세스 검증 [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817)에서 소스 IR, 컴파일된 객체, 외부 객체 경로를 포함한 관측 90회가 모두 통과했습니다. x86, x64, ARM64 각각 30회이며, x86/x64는 Windows x64에서, ARM64는 동일한 해시 검증 이미지를 사용해 `windows-11-arm`에서 실행했습니다. 같은 실행에서 PE/객체/trampoline 전용 검사 16개와 Unicorn 대상 행렬 검사 143개도 건너뛰기 없이 모두 통과했습니다. FH3 사례는 x64 C++ 실행 시나리오 7가지도 계속 검증했습니다.
+
+네이티브 검증은 NeverC 리비전 `182fd2c5dc`, 독립적으로 컴파일한 원본과 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 아키텍처마다 Windows 네이티브 관측 36회를 요구하며 C++ IR/객체/hosted 수명과 두 hosted 프레임을 통과하는 예외 콜백을 확인합니다. `check_source_patch_elf_runtime.py`는 아키텍처마다 Linux 네이티브 관측 66회를 요구하며 C++ IR/객체/hosted, hosted 예외 전파, Clang 예외 시나리오 9개를 확인합니다. 영수증, 산출물 해시와 실제 호스트 아키텍처가 일치해야 합니다. 실제 컴파일러 산출물을 설치하는 검사이며 CI 호스트에서 NeverC 실행 파일을 실행했다고 주장하지 않습니다.
+
+네이티브 검증 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780)의 관측 204회가 모두 통과했습니다. Windows x64/ARM64는 각각 36회, Linux x64/ARM64는 각각 66회입니다. 공개 소스 API로 C++ IR, 일반 객체, C++ hosted DynCode를 생성하고 두 NeverC 프레임을 통과하는 예외도 확인했습니다. 재생 시 현재 소스와 하위 모듈 다이제스트, 원본과 최종 바이트, 설치 영수증 및 실제 네이티브 호스트를 확인합니다. macOS ARM64와 Rosetta x64에서도 세 C++ 경로와 두 프레임 전파가 통과했습니다. Clang FH3 검증 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780)도 Windows x64/ARM64의 예외 시나리오 9개와 대조군, 각각 36회를 통과했습니다.
