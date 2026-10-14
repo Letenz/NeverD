@@ -320,6 +320,10 @@ D2 حالة مستقلة وليست بديلًا عن D3. تقبل حزم native
 | `RtlInitUnicodeString` | ينشئ `UNICODE_STRING` في الضيف من مصدر محدود منتهٍ بـNUL |
 | `RtlGetVersion` | استعلام صريح للإصدار الأساسي عبر checked-x64 دون قيم افتراضية من المضيف. يتطلب الشكل 276 تصفير CSD بالكامل، والشكل الصفري الاختياري مخزنًا فعليًا من 20 بايت. تُرفض الامتدادات وتبقى تبعيات البيئة. |
 | `RtlCopyUnicodeString` و`RtlCompareUnicodeString` و`RtlEqualUnicodeString` | نسخ UTF-16 محدد الطول ومقارنة حساسة لحالة الأحرف؛ تتطلب المقارنة غير الحساسة جدول حالة أحرف Windows وتوقف التنفيذ |
+| `RtlInitAnsiString` و`RtlInitString` | ينشئ `STRING` في الضيف من مصدر بايتات منتهٍ بـNUL؛ يُحدّ الطول المعدود عند `0xFFFE`، ويتضمن `MaximumLength` حرف الإنهاء، وتُمسح بايتات الحشو في السجل |
+| `RtlAppendUnicodeToString` و`RtlAppendUnicodeStringToString` | يُلحق بوجهة UTF-16 محددة الطول؛ يترك `STATUS_BUFFER_TOO_SMALL` الوجهة دون تغيير، ولا يُكتب حرف الإنهاء إلا عند بقاء بايتين فارغين، والمصدر المنتهي بـNUL الذي يتجاوز `0x7FFE` وحدة يعيد أيضًا `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | اختبار بادئة UTF-16 محددة الطول؛ لا يتوقف الطلب غير الحساس لحالة الأحرف إلا عندما تحتاج وحدات غير متساوية إلى جدول حالة أحرف Windows |
+| `RtlIntegerToUnicodeString` و`RtlUnicodeStringToInteger` | تحويل بلا إشارة بالأساس 2 و8 و10 و16 وفق قواعد النواة للمسافات البادئة والإشارة والبادئات `0x`/`0o`/`0b` والالتفاف عند 32 بت؛ يحتاج التنسيق إلى مساحة لحرف الإنهاء ويعيد `STATUS_BUFFER_OVERFLOW` بعد تخزين الطول |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | ترفع استثناء ضيف دون عودة API عادية؛ مرشحات ومعالجات C فعلية وfinally أثناء unwind، مع استئناف محدود لاستثناءات ذاكرة المستخدم على CPU كما هو موضح أدناه |
 | `ExAllocatePool2` | تخصيصات paged/nonpaged من نوع NX، تُصفّر افتراضيًا؛ تُنمذج أعلام uninitialized وcache-aligned؛ تعيد الأعلام الإلزامية غير الصالحة NULL، وتوقف مخازن الحصص/المخازن التنفيذية ورفع استثناءات التخصيص التنفيذ |
 | `MmGetSystemRoutineAddress` | يحل اسم ضيف محدد الطول عبر سجل الصادرات المشترك |

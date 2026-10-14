@@ -325,6 +325,10 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `RtlInitUnicodeString` | 根据有界、以 NUL 结尾的源字符串构造来宾 `UNICODE_STRING` |
 | `RtlGetVersion` | 显式 checked-x64 基础版本查询，不采用宿主版本默认值。要求 `version_query`；长度 276 的记录必须预先清零整个 CSD 数组。零长度兼容行为需单独启用且具有实际 20 字节缓冲区。扩展长度及未声明查询明确停止，保留环境依赖。 |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 带长度的 UTF-16 复制及区分大小写比较；不区分大小写的比较需要 Windows 大小写表，因此会停止 |
+| `RtlInitAnsiString`、`RtlInitString` | 根据以 NUL 结尾的字节源构造来宾 `STRING`；计数长度上限为 `0xFFFE`，`MaximumLength` 包含结尾符，记录中的填充字节会被清零 |
+| `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 追加到带长度的 UTF-16 目标；返回 `STATUS_BUFFER_TOO_SMALL` 时目标保持不变，至少剩余两个空闲字节时才写入结尾符，超过 `0x7FFE` 个单元的 NUL 结尾源同样返回 `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | 带长度的 UTF-16 前缀判断；不区分大小写的请求只有在不相等的单元需要 Windows 大小写表时才会停止 |
+| `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 为基数的无符号转换，前导空白、符号、`0x`/`0o`/`0b` 前缀和 32 位回绕均遵循内核规则；格式化需要为结尾符留出空间，并在写入长度后返回 `STATUS_BUFFER_OVERFLOW` |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 抛出来宾异常，无正常 API 返回；真实 C 过滤器／处理器及展开 finally，用户 CPU 访存异常的受限恢复见下文 |
 | `ExAllocatePool2` | 分页／非分页 NX 分配，默认清零；支持未初始化与缓存行对齐标志；无效的必需标志返回 NULL，配额／可执行池以及分配失败引发异常的路径会停止 |
 | `MmGetSystemRoutineAddress` | 通过共享导出清单解析带长度的来宾名称 |
