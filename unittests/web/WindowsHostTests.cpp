@@ -27,7 +27,10 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iostream>
+#include <cstring>
 #include <winioctl.h>
+#include <winternl.h>
 
 namespace {
 using namespace neverd::web;
@@ -249,6 +252,39 @@ TEST_F(WebWindowsHost, ExportIsVerifiedPrivateAndManifestDoesNotClobber) {
     EXPECT_THROW(E.complete("{}"), Error);
   }
   EXPECT_EQ(read(Root / "other" / "manifest.json"), "foreign");
+}
+TEST_F(WebWindowsHost, RenameAPIDiagnostics) {
+  using SetInfo = decltype(&NtSetInformationFile);
+  auto Native = reinterpret_cast<SetInfo>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
+  ASSERT_NE(Native, nullptr);
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    auto Directory = win::newDirectory(path(Root / ("rename" + std::to_string(Case))),
+                                        win::DirectoryAccess::Traverse);
+    auto File = win::createFile(Directory.Directory.get(), "pending");
+    const std::wstring Name = L"manifest.json";
+    const size_t Size = (Case == 0 ? offsetof(FILE_RENAME_INFO, FileName)
+                                    : sizeof(FILE_RENAME_INFO)) +
+                        (Name.size() + 1) * sizeof(wchar_t);
+    std::vector<unsigned char> Buffer(Size, 0);
+    auto *Info = reinterpret_cast<FILE_RENAME_INFO *>(Buffer.data());
+    Info->RootDirectory = Case == 3 ? nullptr : Directory.Directory.get();
+    Info->FileNameLength = DWORD(Name.size() * sizeof(wchar_t));
+    std::memcpy(Info->FileName, Name.data(), Info->FileNameLength);
+    if (Case < 2) {
+      const bool OK = SetFileInformationByHandle(File.get(), FileRenameInfo,
+                                                  Info, DWORD(Buffer.size()));
+      const auto Error = OK ? 0 : GetLastError();
+      std::cout << "rename-probe case=" << Case << " size=" << Size
+                << " win32=" << Error << '\n';
+    } else {
+      IO_STATUS_BLOCK Status{};
+      const auto Code = Native(File.get(), &Status, Info, ULONG(Buffer.size()),
+                                FileRenameInformation);
+      std::cout << "rename-probe case=" << Case << " size=" << Size
+                << " ntstatus=" << std::hex << ULONG(Code) << std::dec << '\n';
+    }
+  }
 }
 TEST_F(WebWindowsHost, ExportRefusesReadMismatchAndCorruptHash) {
   ExportDirectory E(path(Root / "output"));
