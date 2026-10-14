@@ -25,14 +25,15 @@ BionicResult Bionic::getPageSize(const NativeCallEvent &) {
 }
 
 BionicResult Bionic::getAPILevel(const NativeCallEvent &) {
-  const auto &Properties = Options.Android->Properties;
-  auto I = Properties.find("ro.build.version.sdk");
-  if (I == Properties.end() || I->second.empty())
+  auto Property = propertyNamed("ro.build.version.sdk");
+  if (!Property)
+    return Property.takeError();
+  if (!*Property || (*Property)->Value.empty())
     return value(UINT32_MAX);
   // This query observes the device property, not the selected Bionic ABI.
   // Share atoi's defined prefix, width and overflow decisions. Inputs are
   // immutable, so repeated queries never need a separate cached identity.
-  const std::string &Text = I->second;
+  const std::string &Text = (*Property)->Value;
   auto Parsed =
       decimalValue(true, [&](uint64_t Offset) -> llvm::Expected<uint8_t> {
         return Offset < Text.size() ? static_cast<uint8_t>(Text[Offset])
@@ -76,22 +77,6 @@ BionicResult Bionic::getTime(const NativeCallEvent &Call) {
   }
   // A valid negative timestamp is not a Linux errno return.
   return value(static_cast<uint64_t>(Now->Seconds));
-}
-
-BionicResult Bionic::getProperty(const NativeCallEvent &Call) {
-  const auto &A = Call.Arguments;
-  auto Key = string(A[0]);
-  if (!Key)
-    return Key.takeError();
-  auto I = Options.Android->Properties.find(*Key);
-  std::string Text = I == Options.Android->Properties.end() ? "" : I->second;
-  if (auto E = access(A[1], Text.size() + 1, Write))
-    return std::move(E);
-  std::vector<uint8_t> Bytes(Text.begin(), Text.end());
-  Bytes.push_back(0);
-  if (auto E = CPU.write(A[1], Bytes))
-    return std::move(E);
-  return value(Text.size());
 }
 
 } // namespace neverd::emulation::android_model

@@ -196,9 +196,32 @@ The supported Bionic subset is:
   responses. Direct and dynamic calls share provider lifetime checks. Android
   9 defines [distinct selector numbers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/include/bits/sysconf.h)
   and [one page-size result](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sysconf.cpp).
-- `__system_property_get`, backed only by the explicit property dictionary.
-  Missing properties return length zero and write NUL; values must fit 91 bytes
-  plus NUL. Host properties are never inherited.
+- `__system_property_get`, `__system_property_find`,
+  `__system_property_find_nth`, `__system_property_read`,
+  `__system_property_serial`, `__system_property_read_callback` and
+  `__system_property_foreach` share the explicit immutable property dictionary.
+  Missing get values return zero and write NUL; missing find/nth entries return
+  NULL. Empty values retain a valid handle. Values fit 91 bytes plus NUL.
+  Legacy read accepts a NULL name and truncates names to 31 bytes plus NUL;
+  the read callback receives the complete name. Value output precedes name
+  output, including overlapping buffers.
+  [The API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/system_properties/system_properties.cpp)
+  defines these read and callback contracts.
+  Stable, read-only guest records use the
+  [short `prop_info` layout](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/system_properties/include/system_properties/prop_info.h).
+  The snapshot starts at generation zero: serial is value length shifted by 24.
+  This is a newly constructed model state, not a captured device serial.
+  Enumeration is deterministic name order; Android's property-area traversal
+  order is not inferred. The reserved property arena starts at `0x7010000000`,
+  is bounded by 256 MiB and the workload memory limit, and charges mapped bytes
+  to that same memory budget. Invalid handles, missing mappings and changed
+  record bytes fail clearly instead of reading cached original values.
+  Both callbacks execute guest code with full-width cookies on the suspended
+  stack. Nested enumeration, once callbacks and cooperative threads retain
+  independent continuations and share execution budgets. Callback strings are
+  const snapshot storage. No host property or callback is used. Property
+  mutation/waits, long values, SELinux property contexts and property-service
+  IPC remain unsupported.
 - `time`, `gettimeofday`, and `clock_gettime`, using the shared explicit
   [`linux_time` inputs](process-emulation.md#explicit-guest-clocks). Imports,
   named dynamic calls and raw ARM64 services read the same fixed observations.

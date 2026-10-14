@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_ANDROIDINTERNAL_H
 #define NEVERD_EMULATION_ANDROIDINTERNAL_H
 #include "../kernel/LinuxServices.h"
+#include "AndroidProperties.h"
 
 #include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/IntegerABI.h"
@@ -66,7 +67,11 @@ struct LinkedImage {
   std::map<uint64_t, std::string> Imports;
   std::map<uint64_t, std::string> DynamicProviders;
   std::map<std::string, std::map<std::string, uint64_t>> Libraries;
+  PropertyTable Properties;
 };
+llvm::Expected<PropertyTable>
+initializeProperties(AddressSpace &Space, const ProcessOptions &Options,
+                     const ExecutionBudget &Budget);
 llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
                                       const BinaryImage &Image,
                                       const ProcessOptions &Options);
@@ -81,10 +86,17 @@ struct OnceCallback {
 struct FinalizeCallback {
   uint64_t DSO;
 };
+struct PropertyCallback {
+  size_t Next;
+  uint64_t Entry, Cookie;
+};
+struct PropertyReadCallback {};
 struct GuestCallback {
   uint64_t Entry;
-  std::optional<uint64_t> Argument;
-  std::variant<OnceCallback, FinalizeCallback> Continuation;
+  std::vector<uint64_t> Arguments;
+  std::variant<OnceCallback, FinalizeCallback, PropertyCallback,
+               PropertyReadCallback>
+      Continuation;
 };
 struct GuestThreadWait {};
 struct GuestThreadExit {
@@ -176,6 +188,17 @@ private:
   BionicResult queryConfiguration(const NativeCallEvent &Call);
   BionicResult getTime(const NativeCallEvent &Call);
   BionicResult getProperty(const NativeCallEvent &Call);
+  llvm::Expected<const PropertyRecord *> propertyAt(uint64_t Address);
+  llvm::Expected<const PropertyRecord *> propertyNamed(llvm::StringRef Name);
+  llvm::Error propertyString(uint64_t Address, llvm::StringRef Text);
+  BionicResult findProperty(const NativeCallEvent &Call);
+  BionicResult findPropertyNth(const NativeCallEvent &Call);
+  BionicResult readProperty(const NativeCallEvent &Call);
+  BionicResult propertySerial(const NativeCallEvent &Call);
+  BionicResult readPropertyCallback(const NativeCallEvent &Call);
+  BionicResult forEachProperty(const NativeCallEvent &Call);
+  BionicResult nextProperty(const PropertyCallback &Callback);
+  llvm::Error propertyCallbackEntry(uint64_t Entry);
   BionicResult syscall(const NativeCallEvent &Call);
   BionicResult threadCall(const NativeCallEvent &Call);
   BionicResult finalizeCall(const NativeCallEvent &Call);

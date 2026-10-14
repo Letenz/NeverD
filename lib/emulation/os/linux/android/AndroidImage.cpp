@@ -183,6 +183,8 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
     return std::move(E);
   uint64_t ThunkSize =
       ((Out.Imports.size() + 1) * 8 + PageSize - 1) & ~(PageSize - 1);
+  if (ThunkSize > property_abi::Base - ThunkBase)
+    return failure(diagnostic::PropertyArena);
   if (auto E = Space.map(ThunkBase, ThunkSize, Read | Write))
     return std::move(E);
   std::vector<uint8_t> Bytes(ThunkSize, 0);

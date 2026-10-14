@@ -18,6 +18,60 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_property_callbacks_share_identity_and_provider_lifetime(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        names = ["__system_property_find", "__system_property_read",
+                 "__system_property_read_callback", "__system_property_foreach"]
+        options = {"backend": "unicorn", "android": {
+            "entry_symbol": "property_dynamic", "initialize": False,
+            "arguments": [0x20000000, 0],
+            "properties": {"test.alpha": "one"},
+            "memory": [{"address": 0x20000000, "size": 4096}],
+            "read_memory": [{"address": 0x20000000, "size": 80}],
+            "libraries": {"libproperties.so": names},
+        }}
+        for close in (False, True):
+            with self.subTest(close_provider=close):
+                options["android"]["arguments"][1] = int(close)
+                result = session.emulate_process(str(Path(fixtures) / "properties-O2-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"],
+                                 "unsupported_service" if close else "returned", result["diagnostic"])
+                calls = result["android"]["native_calls"]
+                if close:
+                    self.assertEqual(calls[-1]["name"], "__system_property_read")
+                    self.assertIsNone(calls[-1]["result"])
+                else:
+                    self.assertEqual(result["return_value"], "0")
+                    memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+                    self.assertEqual(struct.unpack("<10Q", memory),
+                                     (1, 0xece42d7a4bc366ee, 0x1d4996, 0x3000000, 0x3000000,
+                                      3, 0x1d4996, 1, 1, 0x3000000))
+                    for name in names:
+                        lookup = next(c for c in calls if c["name"] == "dlsym" and c["symbol"] == name)
+                        named = next(c for c in calls if c["name"] == name and
+                                     c["library"] == "libproperties.so")
+                        self.assertEqual(lookup["library"], "libproperties.so")
+                        self.assertEqual(named["pc"], lookup["result"])
+                        self.assertIsNotNone(named["result"])
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_android_explicit_device_transactions_share_native_and_raw_calls(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

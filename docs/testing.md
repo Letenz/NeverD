@@ -5144,6 +5144,22 @@ write ordering, and cumulative budgets. Control mutation or unmapping before
 waiter resumption must leave the original call incomplete. Complete reports
 from the same independent programs are compared between Unicorn and available
 native ARM64 HVF execution.
+`AndroidPropertyTests.cpp` runs independently authored O0/O2 callers with
+ordinary, APS2 and RELR linking. Full-buffer expectations cover stable handles,
+empty/missing values, maximum short values, full callback names versus legacy
+truncation, overlapping output order, page-tail names and unsigned nth indices.
+Nested foreach/read/once callbacks and cooperative threads check live stack
+locals, full-width cookies, separate errno and ordered pending call results.
+Invalid handles, callback addresses, output permissions, mapping retirement,
+changed property bytes and aggregate memory exhaustion have explicit outcomes.
+Unsupported callbacks and instruction/event exhaustion cannot complete the
+parent call. Available HVF execution is compared with Unicorn on the same
+nested/thread programs. Public C/CLI and Python checks reuse the dynamic
+property fixture and provider-lifetime controls. These are immutable API 28
+model checks; property-service updates, SELinux contexts, long values and native
+Android-device equivalence are not established. Run the full Android native,
+execution-session and process-public suites after callback-owner changes.
+
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only

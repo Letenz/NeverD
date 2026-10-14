@@ -138,6 +138,17 @@ NEVERD_ANDROID_DIAGNOSTIC(ExecutionLimits,
 NEVERD_ANDROID_DIAGNOSTIC(SnapshotLimits,
                           "invalid memory snapshot extent or output budget")
 NEVERD_ANDROID_DIAGNOSTIC(Property, "invalid Android property name or value")
+NEVERD_ANDROID_DIAGNOSTIC(PropertyArena,
+                          "Android property image exceeds its memory bound")
+NEVERD_ANDROID_DIAGNOSTIC(PropertyHandle, "invalid Android property handle")
+NEVERD_ANDROID_DIAGNOSTIC(PropertyChanged,
+                          "guest changed the immutable Android property image")
+NEVERD_ANDROID_DIAGNOSTIC(PropertyOutput,
+                          "property output aliases the immutable property image")
+NEVERD_ANDROID_DIAGNOSTIC(PropertyCallbackAlignment,
+                          "property callback address is not instruction aligned")
+NEVERD_ANDROID_DIAGNOSTIC(CallbackArguments,
+                          "guest callback exceeds the modeled register ABI")
 NEVERD_ANDROID_DIAGNOSTIC(LibraryCount, "too many modeled Android libraries")
 NEVERD_ANDROID_DIAGNOSTIC(LibraryName, "invalid modeled Android library name")
 NEVERD_ANDROID_DIAGNOSTIC(SymbolCatalogue,

@@ -5423,6 +5423,20 @@ If/else structuring visits existing child lists before rewriting their parent. A
 
 `LinuxServices` owns one workload's Linux memory service state and file descriptor table. Linux process traps and Android Bionic wrappers share this instance; thread identity is supplied at each service boundary. `LinuxMemory` retains mapping ownership, while `LinuxFiles` owns immutable catalogue descriptions, open cursors and descriptor lifetime. Bionic alone owns errno conversion. Explicit `LinuxFileOptions` and strict JSON validation share one Linux contract; neither catalogue lookup nor guest file I/O reaches the host filesystem. Unsupported inputs do not acquire default file contents.
 
+`AndroidProperties` builds one immutable guest property table from explicit
+inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
+callback strings share those records; the device API-level query uses the same
+owner. Preparation validates aggregate memory, and runtime reads reject missing
+or changed record bytes. No host property service participates. Name-order
+enumeration and generation-zero serials are explicit snapshot policies.
+
+`GuestCallback` carries scalar register arguments and a typed continuation.
+`AndroidNative` owns entry and stack-checked return, `GuestThreads` owns each
+thread's pending stack, and `AndroidCallbacks` resumes once, finalization and
+property operations. Each continuation retains its own enumeration position;
+nested calls cannot overwrite another thread or caller's progress. Parent
+events remain incomplete until guest execution actually returns.
+
 `LinuxFiles.cpp` dispatches typed file operations. Catalogue validation lives in
 `LinuxFileOptions.cpp`, path import and lookup in `LinuxFilePaths.cpp`, descriptor
 ownership and transfers in `LinuxFileIO.cpp`, and metadata serialization in
