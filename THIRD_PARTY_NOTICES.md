@@ -1,5 +1,13 @@
 # Third-Party Notices
 
+## Capstone
+
+NeverD links the Capstone fork at the exact submodule revision recorded by its
+source commit. The Windows Web product includes the original license set and
+contributor credits from `third_party/capstone/LICENSES` and `CREDITS.TXT` under
+`share/neverd/licenses/capstone`; the product receipt records that source
+revision. The fork's original license and component notices remain applicable.
+
 ## nlohmann JSON
 
 The native C++ worker and offline web MCP transport use the header-only
@@ -292,6 +300,9 @@ library when available, or builds the unchanged, hash-pinned zlib 1.3.2 source
 archive as a static dependency. Its copyright and license remain in the source
 distribution. See the [zlib license](https://zlib.net/zlib_license.html) and
 [source releases](https://zlib.net/fossils/).
+The Windows Web product includes the unchanged 1.3.2 notice under
+`share/neverd/licenses/zlib`; its exact source archive and hash are recorded
+in the product dependency manifest.
 
 ## Intel x86 approximation reference implementations
 

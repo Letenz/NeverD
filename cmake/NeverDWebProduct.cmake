@@ -47,6 +47,10 @@ install(DIRECTORY "${CMAKE_BINARY_DIR}/bin/licenses/"
   DESTINATION share/neverd/licenses COMPONENT WebProduct)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/"
   DESTINATION share/neverd/licenses COMPONENT WebProduct)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/capstone/LICENSES/"
+  DESTINATION share/neverd/licenses/capstone COMPONENT WebProduct)
+install(FILES "${CMAKE_SOURCE_DIR}/third_party/capstone/CREDITS.TXT"
+  DESTINATION share/neverd/licenses/capstone COMPONENT WebProduct)
 install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" "${CMAKE_SOURCE_DIR}/NOTICE"
   "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
   "${CMAKE_SOURCE_DIR}/docs/web-windows-product.md"
