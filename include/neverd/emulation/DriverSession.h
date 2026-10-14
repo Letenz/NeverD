@@ -104,6 +104,16 @@ struct DriverCPUID {
   std::array<uint32_t, 4> Registers{}; // EAX, EBX, ECX, EDX.
 };
 
+/// Caller-declared, read-only loader record for concrete diagnostics. Version
+/// identifies a simulated layout, not a Windows version. Evidence is a bounded
+/// printable ASCII label supplied by the caller, not authenticated provenance.
+struct DriverLoaderView {
+  uint32_t Version = 1;
+  /// Required even when zero; no loader flag value is inferred.
+  std::optional<uint32_t> Flags;
+  std::string Evidence;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
@@ -142,6 +152,10 @@ struct DriverOptions {
   /// An explicit policy permits instruction-boundary thread preemption below
   /// DISPATCH_LEVEL and advances virtual time while guest instructions run.
   std::optional<DriverScheduling> Scheduling;
+  /// Omission leaves DriverSection opaque. An enabled view retains an
+  /// unreconstructed environment dependency, including when it is not read.
+  /// Driver execution requires Contract == CheckedX64 to refuse before effects.
+  std::optional<DriverLoaderView> LoaderView;
 };
 
 enum class DriverStopReason {

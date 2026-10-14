@@ -828,6 +828,7 @@ private:
   uint64_t DriverObject = 0;
   uint64_t RegistryPath = 0;
   uint64_t DriverExtension = 0;
+  uint64_t DriverLoaderRecord = 0;
   bool EntryFinished = false;
   std::optional<std::map<uint64_t, std::vector<uint8_t>>> UnpackBaseline;
   bool UnpackOpaqueEffects = false;

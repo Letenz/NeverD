@@ -676,7 +676,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
@@ -1213,3 +1213,11 @@ Clock reads through `KeQueryPerformanceCounter`, `RDTSC`, or `RDTSCP` retain an 
 `KernelModuleImages` derives readable PE headers and export tables from `KernelExportRegistry`; static imports, dynamic lookup and module enumeration share the same addresses. Provider code remains opaque, and the inventory describes the modeled environment, not the host kernel. Both outputs are checked before writes, including pool lifetimes and overlap. Nt queries require a known kernel previous-mode; Zw queries use the kernel contract. A complete module query retains an explicit recovery dependency, even after its buffer is freed; provider-image pointers are also tracked as borrowed state. `KernelExportTests.cpp` checks PE parsing, permissions, ABI fields, refused writes and recovery dependencies; the original compiled runtime fixture walks these export tables on the CPU backends.
 
 The fixed driver profile disables CET shadow stacks. Canonical `RDSSPD` and `RDSSPQ` preserve every register bit, flags and memory, including the upper half of a 32-bit destination. Both reads consume one instruction and retain an environment dependency for UNPACK. CPUID declarations do not enable CET; other shadow-stack instructions and attempts to enable it remain unsupported.
+
+## Declared loader view
+
+Optional `loader_view` declares a concrete diagnostic environment, for example `{"version":1,"flags":0,"evidence":"fixture declaration"}`. All three fields are required; `flags` is an unsigned 32-bit integer, including explicit zero, and `evidence` is a caller label of 1–256 printable ASCII bytes, not authenticated evidence. Version 1 names the simulated layout, not a Windows release. Unknown fields or invalid declarations fail before model allocation. Omitting the option leaves `DriverSection` opaque and adds no report field; supplied declarations are retained in `configuration.loader_view`.
+
+The borrowed 160-byte record exposes only `DllBase` (offset 48, 8 bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4), and `Flags` (104, 4). The first three values come from the loaded image, including rebasing; flags have no inferred bit meanings. Partial reads within those spans are allowed. Unsupported bytes, straddling accesses and every write are rejected, including through copy services or attempted MDL aliases. `DriverObject.Flags` remains opaque. The view lasts through the modeled lifecycle and retains an unreconstructed environment dependency even when unused. It grants neither symbolic constants nor native runtime restoration authority.
+
+Execution requires the `checked-x64` contract, selected through `DriverOptions.Contract` or an execution entry that exposes it. The original C v1 scenario entry uses Legacy and cannot enable this view; UNPACK selects checked execution by default. Legacy is rejected before image loading or observation because a software write hook can stop after committing a store.

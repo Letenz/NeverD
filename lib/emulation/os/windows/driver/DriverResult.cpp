@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DriverCPUID.h"
+#include "DriverLoaderViewJSON.h"
 #include "DriverSchedulingJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
@@ -773,6 +774,9 @@ std::string driverResultJSON(const DriverResult &Result) {
   if (Result.Configuration.Scheduling)
     (*Root[field::Configuration].getAsObject())[driver_scheduling::Scheduling] =
         driverSchedulingJSON(*Result.Configuration.Scheduling);
+  if (Result.Configuration.LoaderView)
+    (*Root[field::Configuration].getAsObject())[field::LoaderView] =
+        driver_loader_view::toJSON(*Result.Configuration.LoaderView);
   if (Result.Fault) {
     const auto &Fault = *Result.Fault;
     llvm::json::Object Item{

@@ -492,7 +492,7 @@ base; l’omissione o `"0x0"` usa l’indirizzo preferito. L’immagine deve sod
 i requisiti di rilocazione. Il comando di inizializzazione e l’API C originali
 non implicano alcuno scenario.
 
-Alla radice sono accettati solo `load_address`, `requests`, `unload`,
+Alla radice sono accettati solo `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`,
 `kernel_exports`, `registry` e `pnp_devices`. Le normali richieste di file accettano `kind`, `device` o `device_id` facoltativi (esclusivi) e un `file` facoltativo. Gli IOCTL richiedono `code` e accettano `input`,
 `output_size` e `direct_input`. Un `read` accetta `output_size` e `byte_offset`;
 un `write` accetta `input` e `byte_offset`. Gli offset sono zero per impostazione
@@ -858,3 +858,11 @@ Le letture del clock tramite `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` man
 `KernelModuleImages` genera intestazioni PE leggibili e tabelle di esportazione da `KernelExportRegistry`; importazioni statiche, ricerca dinamica ed enumerazione condividono gli stessi indirizzi. Il codice dei fornitori resta opaco e l’inventario descrive l’ambiente modellato, non il kernel host. Entrambe le uscite sono verificate prima delle scritture, inclusi durata del pool e sovrapposizioni. Nt richiede un previous-mode kernel noto; Zw usa il contratto kernel. Una richiesta completa conserva una dipendenza esplicita di ripristino anche dopo la liberazione del buffer; i puntatori alle immagini dei fornitori restano stato preso in prestito. `KernelExportTests.cpp` verifica PE, permessi, campi ABI, scritture rifiutate e dipendenze; la fixture compilata originale percorre le esportazioni sui backend CPU.
 
 Il profilo fisso del driver disabilita gli shadow stack CET. Le codifiche canoniche di `RDSSPD` e `RDSSPQ` preservano tutti i bit dei registri, i flag e la memoria, inclusa la metà superiore di una destinazione a 32 bit. Ogni lettura conta come un’istruzione e mantiene una dipendenza dall’ambiente per UNPACK. Le dichiarazioni CPUID non abilitano CET; le altre istruzioni shadow stack e i tentativi di abilitazione restano non supportati.
+
+## Vista dichiarata del caricatore
+
+L’opzione `loader_view` dichiara un ambiente concreto di diagnosi, per esempio `{"version":1,"flags":0,"evidence":"fixture declaration"}`. Tutti e tre i campi sono obbligatori: `flags` è un intero senza segno a 32 bit, incluso lo zero esplicito; `evidence` è un’etichetta del chiamante di 1–256 byte ASCII stampabili, non una prova autenticata. La versione 1 identifica la disposizione simulata, non una versione di Windows. Campi sconosciuti e dichiarazioni non valide sono rifiutati prima dell’allocazione del modello. Senza l’opzione, `DriverSection` rimane opaco e il rapporto non aggiunge un campo. La dichiarazione completa è conservata in `configuration.loader_view`.
+
+Il record preso in prestito di 160 byte espone solo `DllBase` (offset 48, 8 byte), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) e `Flags` (104, 4). I primi tre valori provengono dall’immagine caricata, inclusa la rilocazione; non si deducono significati dei bit. Le letture parziali entro questi intervalli sono ammesse. Byte sconosciuti, accessi che li attraversano e tutte le scritture sono rifiutati anche tramite copie o alias MDL. `DriverObject.Flags` resta opaco. La vista dura per il ciclo simulato e mantiene una dipendenza ambientale non ricostruita anche se inutilizzata. Non autorizza costanti simboliche né ripristino nativo.
+
+L’esecuzione richiede `checked-x64`, selezionato tramite `DriverOptions.Contract` o un ingresso che consenta tale scelta. L’ingresso degli scenari C v1 usa Legacy e non può attivare questa vista; UNPACK sceglie checked per impostazione predefinita. Legacy è rifiutato prima del caricamento o dell’osservazione, perché un hook software può fermarsi dopo aver confermato una scrittura.

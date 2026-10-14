@@ -14,6 +14,7 @@
 #include "../../../core/RAMInitializationWatch.h"
 #include "../driver/DriverImage.h"
 #include "KernelException.h"
+#include "KernelLoaderView.h"
 #include "KernelModelRuntime.h"
 #include "KernelWaits.h"
 #include "WindowsKernelLayout.h"
@@ -144,6 +145,14 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
                                     const DriverOptions &Options) {
   if (DriverObject)
     return modelError("kernel model cannot be initialized twice");
+  if (Options.LoaderView) {
+    if (auto E = kernel_loader_view::validate(*Options.LoaderView))
+      return E;
+    if (!Image.Size || Image.Size > UINT32_MAX ||
+        Image.Size > UINT64_MAX - Image.Base || Image.Entry < Image.Base ||
+        Image.Entry - Image.Base >= Image.Size)
+      return modelError("driver loader_view: invalid image metadata");
+  }
   std::map<uint64_t, uint64_t> ImageRanges;
   for (const auto &Region : Image.Regions) {
     const uint64_t Size = Region.Bytes.size();
@@ -202,6 +211,27 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Extension)
     return Extension.takeError();
   DriverExtension = *Extension;
+  if (Options.LoaderView) {
+    auto Record = allocate(kernel_loader_view::RecordSize);
+    if (!Record)
+      return Record.takeError();
+    DriverLoaderRecord = *Record;
+    for (const auto &[Field, Value] :
+         std::array<std::pair<kernel_loader_view::Field, uint64_t>, 4>{
+             {{kernel_loader_view::DllBase, Image.Base},
+              {kernel_loader_view::EntryPoint, Image.Entry},
+              {kernel_loader_view::SizeOfImage, Image.Size},
+              {kernel_loader_view::Flags, *Options.LoaderView->Flags}}})
+      if (auto E = Memory.writeInteger(DriverLoaderRecord + Field.Offset, Value,
+                                       Field.Size))
+        return E;
+    if (auto E = Memory.writeInteger(DriverObject + DriverSectionOffset,
+                                     DriverLoaderRecord, profile::PointerSize))
+      return E;
+    // Even an unused declaration changes the concrete environment. It does
+    // not carry a rebinding contract for an independently loaded driver.
+    UnpackOpaqueEffects = true;
+  }
   auto Path =
       makeUnicodeString(RegistryServicesPrefix.str() + Options.ServiceName);
   if (!Path)
@@ -745,16 +775,21 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
               return (Offset >= DriverFastIOOffset &&
                       Offset < DriverInitOffset) ||
                      Offset >= DriverStartIOOffset;
-            if ((Offset >= DriverFlagsOffset &&
-                 Offset < DriverFlagsOffset + 4) ||
-                (Offset >= DriverSectionOffset &&
-                 Offset < DriverExtensionOffset))
+            if (Offset >= DriverFlagsOffset && Offset < DriverFlagsOffset + 4)
               return false;
+            if (Offset >= DriverSectionOffset && Offset < DriverExtensionOffset)
+              return DriverLoaderRecord != 0;
             if (Offset >= DriverDispatchOffset)
               return initialized(DispatchBytesWritten, DispatchInitialization,
                                  Offset - DriverDispatchOffset);
             return true;
           }))
+    return E;
+  if (auto E = CheckObject(DriverLoaderRecord, kernel_loader_view::RecordSize,
+                           [&](uint64_t Offset) {
+                             return !IsWrite &&
+                                    kernel_loader_view::readable(Offset);
+                           }))
     return E;
   if (auto E = CheckObject(
           DriverExtension, DriverExtensionSize, [&](uint64_t Offset) {

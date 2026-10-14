@@ -488,7 +488,7 @@ Basisverschiebung an; ohne dieses Feld oder mit `"0x0"` gilt die bevorzugte
 Adresse. Das Image muss die Relokationsanforderungen erfüllen. Der ursprüngliche
 Initialisierungsbefehl und die C-API implizieren kein Szenario.
 
-An der Wurzel sind nur `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
+An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
 erlaubt. Gewöhnliche Dateianforderungen akzeptieren `kind`, optional `device` oder `device_id` (gegenseitig exklusiv) und optional `file`. IOCTLs benötigen `code` und akzeptieren `input`, `output_size` und
 `direct_input`. Ein `read` akzeptiert `output_size` und `byte_offset`; ein
 `write` akzeptiert `input` und `byte_offset`. Offsets sind standardmäßig null,
@@ -864,3 +864,11 @@ Uhrabfragen über `KeQueryPerformanceCounter`, `RDTSC` oder `RDTSCP` behalten ei
 `KernelModuleImages` erzeugt lesbare PE-Header und Exporttabellen aus `KernelExportRegistry`; statische Importe, dynamische Suche und Modulauflistung teilen dieselben Adressen. Anbietercode bleibt undurchsichtig; das Inventar beschreibt die Modellumgebung und nicht den Hostkernel. Beide Ausgaben werden vor Schreibzugriffen einschließlich Pool-Lebensdauer und Überlappungen geprüft. Nt benötigt einen bekannten Kernel-previous-mode; Zw nutzt den Kernelvertrag. Eine vollständige Abfrage behält auch nach Freigabe des Puffers eine ausdrückliche Wiederherstellungsabhängigkeit; Zeiger auf Anbieterabbilder gelten ebenfalls als geliehener Zustand. `KernelExportTests.cpp` prüft PE, Berechtigungen, ABI-Felder, verweigerte Schreibzugriffe und Abhängigkeiten; die eigene kompilierte Laufzeitfixture durchläuft die Exporttabellen auf den CPU-Backends.
 
 Das feste Treiberprofil deaktiviert CET-Schattenstapel. Kanonische `RDSSPD`- und `RDSSPQ`-Kodierungen erhalten alle Registerbits, Flags und Speicherinhalte, einschließlich der oberen Hälfte eines 32-Bit-Ziels. Jeder Lesevorgang zählt als eine Instruktion und behält eine Umgebungsabhängigkeit für UNPACK bei. CPUID-Deklarationen aktivieren CET nicht; andere Schattenstapelinstruktionen und Versuche zur Aktivierung bleiben nicht unterstützt.
+
+## Deklarierte Loader-Ansicht
+
+Die Option `loader_view` deklariert eine konkrete Diagnoseumgebung, etwa `{"version":1,"flags":0,"evidence":"fixture declaration"}`. Alle drei Felder sind erforderlich: `flags` ist eine vorzeichenlose 32-Bit-Ganzzahl, auch null muss angegeben werden; `evidence` ist eine vom Aufrufer gelieferte Bezeichnung aus 1–256 druckbaren ASCII-Bytes, kein authentifizierter Nachweis. Version 1 bezeichnet das simulierte Layout, keine Windows-Version. Unbekannte Felder und ungültige Deklarationen werden vor der Modellspeicherbelegung abgewiesen. Ohne Option bleibt `DriverSection` undurchsichtig und es entsteht kein Berichtsfeld. Die vollständige Deklaration steht in `configuration.loader_view`.
+
+Der geliehene Datensatz mit 160 Bytes gibt nur `DllBase` (Offset 48, 8 Bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) und `Flags` (104, 4) frei. Die ersten drei Werte stammen aus dem geladenen, gegebenenfalls verschobenen Image; Flag-Bedeutungen werden nicht abgeleitet. Teilzugriffe innerhalb dieser Lesebereiche sind erlaubt. Unbekannte Bytes, übergreifende Zugriffe und alle Schreibzugriffe werden auch über Kopierdienste oder MDL-Aliase abgewiesen. `DriverObject.Flags` bleibt undurchsichtig. Die Ansicht gilt während des simulierten Lebenszyklus und erhält auch ungenutzt eine nicht rekonstruierte Umgebungsabhängigkeit. Sie begründet weder symbolische Konstanten noch native Laufzeitwiederherstellung.
+
+Die Ausführung verlangt `checked-x64`, gewählt über `DriverOptions.Contract` oder einen entsprechenden Ausführungseinstieg. Der ursprüngliche C-v1-Szenarioeinstieg verwendet Legacy und kann diese Ansicht nicht aktivieren; UNPACK wählt standardmäßig checked. Legacy wird vor dem Laden oder Beobachten abgewiesen, da ein Software-Schreibhook erst nach dem Schreiben stoppen kann.

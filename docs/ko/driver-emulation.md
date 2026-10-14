@@ -409,7 +409,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 선택적인 루트 필드 `"load_address": "0x190000000"`는 베이스 재배치를 요청합니다. 생략하거나 `"0x0"`을 지정하면 선호 주소를 사용합니다. 이미지는 재배치 요구 사항을 충족해야 합니다. 기존 초기화 명령이나 C API에는 암묵적인 시나리오가 없습니다.
 
-루트에서는 `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
+루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
 
 READ/WRITE/IOCTL 요청만 선택적 `cancel_after_100ns` 필드를 허용합니다. 값은 0부터 `INT64_MAX`(9223372036854775807)까지의 JSON 정수입니다. 실제 시간이 아니라 요청 제출 시점을 기준으로 한 가상 100 ns 단위로 취소를 예약합니다. KMDF에서 0은 프레임워크 라우팅 후 게스트 I/O 콜백 전에 적용하며, 라우팅이 이미 요청을 완료했다면 완료가 우선합니다. WDM에서는 디스패치 반환 후 0을 적용합니다. 양수 지연에서는 준비된 콜백이나 실행 프레임이 없을 때만 타이머, 대기 또는 취소 기한으로 시간을 진행합니다. 보류 중인 WDM IRP는 등록된 취소 루틴을 취소 스핀락을 잡은 `DISPATCH_LEVEL`에서 호출합니다. 완료 전에 `Irp->CancelIrql`로 잠금을 해제해야 합니다. 일반 큐와 PnP 취소는 여전히 지원하지 않습니다. 각 요청 보고서의 `cancel_requested_at_100ns`는 취소가 실제 발생한 절대 가상 시간이거나, 완료가 먼저 발생하는 경우를 포함해 취소가 발생하지 않았다면 null입니다. 취소 요청만으로 IRP가 완료되거나 최종 상태가 정해지지는 않습니다.
 `IoSetCancelRoutine`, `IoAcquireCancelSpinLock`, `IoReleaseCancelSpinLock`, `IoCancelIrp`는 같은 IRP 상태와 취소 스핀락을 사용합니다. `IoCancelIrp`는 등록된 루틴을 동기적으로 호출하고 호출 여부를 반환합니다.
@@ -599,3 +599,11 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 `KernelModuleImages`는 `KernelExportRegistry`에서 읽을 수 있는 PE 헤더와 내보내기 테이블을 생성하며, 정적 가져오기·동적 조회·모듈 열거가 같은 주소를 공유합니다. 제공자 코드는 불투명하게 유지되고 목록은 호스트 커널이 아닌 모델 환경을 설명합니다. 두 출력은 쓰기 전에 풀 수명과 겹침까지 검사합니다. Nt 조회에는 알려진 커널 previous-mode가 필요하며 Zw 조회는 커널 계약을 사용합니다. 완전한 조회는 버퍼가 해제된 뒤에도 명시적인 복원 의존성을 유지하고 제공자 이미지 포인터도 빌린 상태로 추적합니다. `KernelExportTests.cpp`는 PE 파싱, 권한, ABI 필드, 쓰기 거부, 복원 의존성을 검사하며 자체 작성한 컴파일 런타임 픽스처는 CPU 백엔드에서 내보내기 테이블을 순회합니다.
 
 고정 드라이버 프로필은 CET 섀도 스택을 비활성화합니다. 정규 인코딩의 `RDSSPD`와 `RDSSPQ`는 32비트 대상의 상위 절반을 포함한 모든 레지스터 비트, 플래그 및 메모리를 보존합니다. 각 읽기는 명령 하나로 계산하며 UNPACK 환경 의존성을 남깁니다. CPUID 선언은 CET를 활성화하지 않습니다. 다른 섀도 스택 명령과 CET 활성화 작업은 여전히 지원하지 않습니다.
+
+## 선언된 로더 보기
+
+선택적인 `loader_view`는 구체적인 진단 환경을 선언합니다. 예: `{"version":1,"flags":0,"evidence":"fixture declaration"}`. 세 필드는 모두 필수입니다. `flags`는 0도 명시해야 하는 부호 없는 32비트 정수이며, `evidence`는 호출자가 제공하는 1–256바이트의 인쇄 가능한 ASCII 레이블입니다. 레이블은 인증된 증거가 아닙니다. 버전 1은 Windows 릴리스가 아닌 시뮬레이션 레이아웃입니다. 알 수 없는 필드나 잘못된 선언은 모델 할당 전에 거부합니다. 생략하면 `DriverSection`은 불투명하며 보고서 필드도 추가하지 않습니다. 선언은 `configuration.loader_view`에 보존합니다.
+
+빌린 160바이트 레코드에서는 `DllBase`(오프셋 48, 8바이트), `EntryPoint`(56, 8), `SizeOfImage`(64, 4), `Flags`(104, 4)만 읽을 수 있습니다. 처음 세 값은 재배치를 포함한 실제 로드 이미지에서 가져오며 플래그 의미를 추측하지 않습니다. 허용 범위 안의 부분 읽기는 가능하지만 알 수 없는 바이트에 걸친 접근과 모든 쓰기는 복사 서비스나 MDL 별칭을 통한 시도에서도 거부합니다. `DriverObject.Flags`는 불투명합니다. 보기는 모델 수명 주기 동안 유지되며 사용하지 않아도 재구성되지 않은 환경 의존성을 남깁니다. 기호 상수나 네이티브 런타임 복원 권한을 부여하지 않습니다.
+
+실행하려면 `DriverOptions.Contract` 또는 계약 선택을 지원하는 진입점에서 `checked-x64`를 지정해야 합니다. 기존 C v1 시나리오 진입점은 Legacy를 사용하므로 이 보기를 활성화할 수 없습니다. UNPACK은 기본적으로 checked를 선택합니다. 소프트웨어 쓰기 훅은 저장을 반영한 뒤 멈출 수 있으므로 Legacy는 이미지 로드나 관찰 시작 전에 거부됩니다.
