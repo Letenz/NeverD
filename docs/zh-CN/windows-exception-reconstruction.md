@@ -128,6 +128,13 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 保护区的入口。原函数和保留的直接被调函数必须证明 caller-cleanup 栈行为；间接调用
 或无法证明的栈清理约定仍被拒绝。
 
+搜索 filter 可以读取当前 `EXCEPTION_POINTERS`、其中的 record 指针，以及 32 位
+`ExceptionCode` 和 `ExceptionFlags`。每个源 LOAD 都绑定到所属 filter；安装器独立
+核对 LLVM 的实际指针链、字段偏移、访问宽度，以及支配读取的运行时初始化。
+异常指针必须留在私有存储中；写入异常记录、覆盖 filter 的指针槽、增加无来源读取或
+让指针逸出都会拒绝安装。该契约覆盖经过检查的 EH3、EH4 和 EH4+GS 栈帧；其他
+exception/context 字段和非局部续接仍需各自的原生契约。
+
 cdecl 的传入栈槽在原内存操作发生处映射到真实调用者栈帧，独立 callback 中的读写也
 使用这一映射。保留 callee 的整个调用图必须证明栈帧私有：读取已初始化的栈字节，
 访问限于当前已分配区域，并恢复 callee-saved 寄存器和 SP。flags、vector 别名、spill

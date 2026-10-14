@@ -183,6 +183,15 @@ nested handler entry into its outer scope. Original functions and preserved
 direct callees must have checked caller-cleanup stack behavior. Indirect or
 unproved cleanup conventions remain rejected.
 
+Search filters may read their current `EXCEPTION_POINTERS`, its record link,
+and the 32-bit `ExceptionCode` and `ExceptionFlags` fields. Each source load is
+bound to its filter invocation. Independent installation replay checks the
+actual LLVM pointer chain, field offset and width, and the dominating runtime
+bridge. Runtime pointers remain private; writes to the exception record or the
+filter's pointer slot, unindexed reads and pointer escapes refuse installation.
+This applies to checked EH3, EH4 and EH4+GS frames. Other exception/context
+fields and nonlocal continuations still require separate native contracts.
+
 Incoming cdecl stack slots are projected onto the real caller frame at their
 original memory-operation occurrences, including reads and writes in outlined
 callbacks. Preserved callees need a closed, frame-private call graph: stack

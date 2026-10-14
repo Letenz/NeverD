@@ -156,7 +156,7 @@ struct RegistrationRuntimeObjectAccess {
   bool operator==(const RegistrationRuntimeObjectAccess &) const = default;
 };
 
-/// One source LOAD whose runtime storage belongs to an EH3 search filter.
+/// One source LOAD whose runtime storage belongs to an EH3/EH4 search filter.
 /// The slot names its current EXCEPTION_POINTERS; the remaining fields are
 /// the record link and read-only scalar exception code/flags. This evidence
 /// does not authorize a replacement runtime object in native code.

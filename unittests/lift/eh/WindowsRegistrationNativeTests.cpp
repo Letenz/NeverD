@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -1872,6 +1873,9 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (Error)
     Module->print(llvm::errs(), nullptr);
   ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
+    registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
+                                              *Low.RegistrationStates);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
                             llvm::StringRef Diagnostic) {
     SCOPED_TRACE(Label.str());

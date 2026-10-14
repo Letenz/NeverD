@@ -34,6 +34,8 @@ struct BinaryImage;
 
 namespace neverd::coff_registration {
 
+struct RegistrationSEHExceptionContract;
+
 struct RegistrationFrameBorrow {
   int64_t Offset = 0;
   std::vector<RegistrationObjectExtent> Reads;
@@ -94,7 +96,8 @@ llvm::Error validateFramePrivacy(
     const std::set<const llvm::Instruction *> &ChainProtocolReads = {},
     va_t SecurityCookieVA = 0,
     llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges = {},
-    const RegistrationCxxFrameContract *Cxx = nullptr);
+    const RegistrationCxxFrameContract *Cxx = nullptr,
+    const RegistrationSEHExceptionContract *SEH = nullptr);
 
 } // namespace neverd::coff_registration
 

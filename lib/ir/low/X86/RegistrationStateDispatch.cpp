@@ -167,7 +167,7 @@ void RegistrationStateSolver::dispatch(
   if ((Chain.hasCxxCallbackStack() && CxxCatch) || (!KnownCxx && Callback)) {
     if (!charge(Root.Frame.cellCount() + 8))
       return;
-    if (!KnownCxx && SearchFilter && !EH4 && !Chain.RealignedFrame &&
+    if (!KnownCxx && SearchFilter && !Chain.RealignedFrame &&
         Chain.RegistrationOffset == -16 && Chain.TryLevelOffset == -4)
       Root.Frame.enterSEHFilter(Address, *Chain.RegistrationOffset - 4);
     else

@@ -30,13 +30,19 @@ unsigned registration_trace;
 #define EXPECTED_TRACE 7
 #elif REGISTRATION_CASE == 6
 #define EXPECTED_TRACE 177
+#elif REGISTRATION_CASE == 7 || REGISTRATION_CASE == 8
+#define EXPECTED_TRACE 7u
 #else
 #define EXPECTED_TRACE 0
 #endif
 
 void registration_raise(void) {
   observed_caller = (unsigned)_ReturnAddress();
+#if REGISTRATION_CASE == 8
+  RaiseException(0xe0420042, 1, 0, 0);
+#else
   RaiseException(0xe0420042, 0, 0, 0);
+#endif
 }
 
 void registration_no_raise(void) {
