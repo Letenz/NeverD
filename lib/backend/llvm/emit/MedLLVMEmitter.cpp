@@ -687,9 +687,9 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     unsigned LastBank = 0;
     bool Canonical = ParamTypes.size() == Func.Params.size();
     for (const auto &P : Func.Params) {
-      unsigned Bank = P.RegOff == kNoParamReg                  ? 2
-                      : TRI.isFPArgReg(P.RegOff, TargetFormat) ? 1
-                                                               : 0;
+      unsigned Bank = 2;
+      if (P.RegOff != kNoParamReg)
+        Bank = TRI.isFPArgReg(P.RegOff, TargetFormat) ? 1 : 0;
       Canonical &= Bank >= LastBank;
       // Dedicated result/context registers use a separate reconstructed ABI;
       // they are not another ordinary integer argument-bank slot.

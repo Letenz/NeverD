@@ -105,6 +105,8 @@ importedMemoryCopyRead(const BinaryImage &Image, const InstructionMap &Insns,
       return std::nullopt;
     Next = Record.Addr;
     for (auto Op = Record.Ops.rbegin(); Op != Record.Ops.rend(); ++Op) {
+      if (Op->Output.isReg() && Op->Output.Offset > InvalidVA - Op->Output.Size)
+        return std::nullopt;
       if (!Op->Output.isReg() || Op->Output.Size == 0 ||
           Op->Output.Offset >= Length.Offset + Length.Size ||
           Length.Offset >= Op->Output.Offset + Op->Output.Size)
