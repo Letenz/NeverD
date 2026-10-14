@@ -17,6 +17,7 @@ EXPORTS
   NtQuerySystemInformation
   ZwQuerySystemInformation
   ExAllocatePoolWithTag
+  ExFreePool
   ExFreePoolWithTag
   IoCreateDevice
   IoCreateSymbolicLink
@@ -101,3 +102,4 @@ EXPORTS
   RtlUnicodeStringToAnsiString
   RtlFreeUnicodeString
   RtlFreeAnsiString
+  MmGetPhysicalMemoryRanges

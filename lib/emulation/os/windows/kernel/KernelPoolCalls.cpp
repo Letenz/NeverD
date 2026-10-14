@@ -21,7 +21,8 @@ llvm::Error modelError(const llvm::Twine &Message) {
 } // namespace
 
 llvm::Expected<uint64_t> KernelModel::allocatePool(llvm::ArrayRef<uint64_t> A,
-                                                   bool Modern) {
+                                                   bool Modern,
+                                                   PoolSource Source) {
   // Dispatch validates each API's exact arity. The original two-argument
   // ExAllocatePool has no caller-supplied tag; keep that absence explicit.
   const bool Tagged = A.size() == 3;
@@ -94,9 +95,11 @@ llvm::Expected<uint64_t> KernelModel::allocatePool(llvm::ArrayRef<uint64_t> A,
             runtime::writeBytes(Memory, *Pointer, A[1], UninitializedPoolByte))
       return E;
   using PoolAPI = WindowsDriverState::PoolAPI;
-  const auto API = Modern   ? PoolAPI::ExAllocatePool2
-                   : Tagged ? PoolAPI::ExAllocatePoolWithTag
-                            : PoolAPI::ExAllocatePool;
+  std::optional<PoolAPI> API;
+  if (Source == PoolSource::GuestAllocation)
+    API = Modern   ? PoolAPI::ExAllocatePool2
+          : Tagged ? PoolAPI::ExAllocatePoolWithTag
+                   : PoolAPI::ExAllocatePool;
   Allocations.emplace(*Pointer,
                       PoolAllocation{A[1], Tag, NonPaged, API,
                                      Modern ? Flags : uint32_t(A[0])});

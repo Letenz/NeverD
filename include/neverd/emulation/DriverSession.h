@@ -129,6 +129,19 @@ struct DriverVersionQuery {
   bool AllowZeroSize = false;
 };
 
+/// Explicit simulated RAM inventory for concrete checked-x64 diagnostics.
+/// Selecting the model identity window does not infer installed host RAM or
+/// grant access to unbacked physical pages. No native reconstruction is
+/// implied.
+struct DriverPhysicalMemoryInventory {
+  enum class SourceKind { ModelIdentityWindow };
+  uint32_t Version = 1;
+  /// Required selection; omission leaves system RAM inventory unspecified.
+  std::optional<SourceKind> Source;
+  /// Caller-supplied printable label, never authenticated provenance.
+  std::string Evidence;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
@@ -174,6 +187,9 @@ struct DriverOptions {
   /// Optional checked-x64 diagnostic environment. No host version is inferred;
   /// even an unused declaration retains an unreconstructed dependency.
   std::optional<DriverVersionQuery> VersionQuery;
+  /// Optional simulated inventory; even an unused declaration retains an
+  /// unreconstructed environment dependency. Requires checked-x64 execution.
+  std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
 };
 
 enum class DriverStopReason {

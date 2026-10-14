@@ -266,6 +266,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Registry.call(*this, Name, A);
   case KernelAPIKind::MmGetSystemRoutineAddress:
     return resolveRoutine(A[0]);
+  case KernelAPIKind::MmGetPhysicalMemoryRanges:
+    return queryPhysicalMemoryRanges();
   case KernelAPIKind::MmIsAddressValid:
     return isResidentKernelAddress(A[0]);
   case KernelAPIKind::KeRegisterBugCheckReasonCallback:

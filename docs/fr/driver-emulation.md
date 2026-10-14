@@ -502,7 +502,7 @@ de base ; son absence ou `"0x0"` utilise l’adresse préférée. L’image doit
 satisfaire les exigences de relocalisation. La commande d’initialisation et
 l’API C d’origine n’impliquent aucun scénario.
 
-Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` et `pnp_devices` sont acceptés
+Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` et `pnp_devices` sont acceptés
 à la racine. Les requêtes ordinaires de fichier acceptent `kind`, ainsi que `device` ou `device_id` (exclusifs) et `file`, facultatifs. Les IOCTL exigent `code` et acceptent `input`,
 `output_size` et `direct_input`. Un `read` accepte `output_size` et `byte_offset` ;
 un `write` accepte `input` et `byte_offset`. Les offsets valent zéro par défaut,
@@ -892,3 +892,10 @@ Le tampon doit appartenir à la plage d’adresses noyau du profil. Pendant cet 
 L’enregistrement emprunté de 160 octets expose seulement `DllBase` (décalage 48, 8 octets), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) et `Flags` (104, 4). Les trois premières valeurs proviennent de l’image chargée, relocalisation comprise ; aucun sens des bits de drapeau n’est déduit. Les lectures partielles dans ces plages sont permises. Les octets inconnus, accès débordants et toutes les écritures sont refusés, y compris via les copies et alias MDL. `DriverObject.Flags` reste opaque. La vue dure pendant le cycle simulé et conserve une dépendance environnementale non reconstruite même inutilisée. Elle n’autorise ni constantes symboliques ni restauration native.
 
 L’exécution exige `checked-x64`, sélectionné via `DriverOptions.Contract` ou une entrée permettant ce choix. L’entrée de scénario C v1 utilise Legacy et ne peut pas activer cette vue ; UNPACK choisit checked par défaut. Legacy est refusé avant le chargement ou l’observation, car un hook logiciel peut arrêter l’exécution après la validation d’une écriture.
+
+
+## Inventaire explicite de mémoire physique
+
+Le champ facultatif `physical_memory_inventory` choisit explicitement la RAM simulée : `{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`. Tous les champs sont requis ; evidence contient 1–256 octets ASCII imprimables. Champs inconnus, versions/sources non prises en charge et contrats autres que `checked-x64` échouent avant le chargement. La source choisit la fenêtre commune d’identité physique : 64 MiB à partir de 64 GiB. Elle ne déduit pas la RAM hôte et ne donne ni contenu ni accès aux pages sans stockage sous-jacent.
+
+À PASSIVE_LEVEL, `MmGetPhysicalMemoryRanges` renvoie un nouveau tampon de pool non paginé de 32 octets : base et longueur en octets sur 64 bits, puis terminaison zéro/zéro. Les résultats simultanés sont indépendants ; chacun est libéré par `ExFreePool` ou `ExFreePoolWithTag(...,0)`. Une pénurie renvoie NULL. Déclaration absente, IRQL élevé ou durée de vie invalide arrêtent l’exécution ; les pages épinglées empêchent une libération prématurée. Ex/Ex2, inventaires arbitraires et changements dynamiques de RAM restent non pris en charge. Le rapport conserve `configuration.physical_memory_inventory`. Même inutilisée, la déclaration conserve une dépendance environnementale. Les résultats appartenant à l’API restent des états empruntés et des dépendances de pool actif, sans API de recréation inventée. Leur libération ne prouve aucune restauration symbolique ou native.

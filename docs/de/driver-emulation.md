@@ -498,7 +498,7 @@ Basisverschiebung an; ohne dieses Feld oder mit `"0x0"` gilt die bevorzugte
 Adresse. Das Image muss die Relokationsanforderungen erfüllen. Der ursprüngliche
 Initialisierungsbefehl und die C-API implizieren kein Szenario.
 
-An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
+An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
 erlaubt. Gewöhnliche Dateianforderungen akzeptieren `kind`, optional `device` oder `device_id` (gegenseitig exklusiv) und optional `file`. IOCTLs benötigen `code` und akzeptieren `input`, `output_size` und
 `direct_input`. Ein `read` akzeptiert `output_size` und `byte_offset`; ein
 `write` akzeptiert `input` und `byte_offset`. Offsets sind standardmäßig null,
@@ -888,3 +888,10 @@ Der Abfragepuffer muss im Kerneladressbereich des Profils liegen. Während diese
 Der geliehene Datensatz mit 160 Bytes gibt nur `DllBase` (Offset 48, 8 Bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) und `Flags` (104, 4) frei. Die ersten drei Werte stammen aus dem geladenen, gegebenenfalls verschobenen Image; Flag-Bedeutungen werden nicht abgeleitet. Teilzugriffe innerhalb dieser Lesebereiche sind erlaubt. Unbekannte Bytes, übergreifende Zugriffe und alle Schreibzugriffe werden auch über Kopierdienste oder MDL-Aliase abgewiesen. `DriverObject.Flags` bleibt undurchsichtig. Die Ansicht gilt während des simulierten Lebenszyklus und erhält auch ungenutzt eine nicht rekonstruierte Umgebungsabhängigkeit. Sie begründet weder symbolische Konstanten noch native Laufzeitwiederherstellung.
 
 Die Ausführung verlangt `checked-x64`, gewählt über `DriverOptions.Contract` oder einen entsprechenden Ausführungseinstieg. Der ursprüngliche C-v1-Szenarioeinstieg verwendet Legacy und kann diese Ansicht nicht aktivieren; UNPACK wählt standardmäßig checked. Legacy wird vor dem Laden oder Beobachten abgewiesen, da ein Software-Schreibhook erst nach dem Schreiben stoppen kann.
+
+
+## Deklariertes physisches Speicherinventar
+
+Das optionale `physical_memory_inventory` wählt simulierten RAM explizit: `{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`. Alle Felder sind Pflicht; evidence umfasst 1–256 druckbare ASCII-Bytes. Unbekannte Felder, nicht unterstützte Versionen/Quellen und andere Verträge als `checked-x64` scheitern vor dem Laden. Die Quelle wählt das gemeinsame physische Identitätsfenster: 64 MiB ab 64 GiB. Sie leitet keinen Host-RAM ab und gewährt unbelegten Seiten weder Inhalt noch Zugriff.
+
+Bei PASSIVE_LEVEL liefert `MmGetPhysicalMemoryRanges` einen neuen 32-Byte-Puffer aus nicht auslagerbarem Pool: 64-Bit-Basis und Byte-Länge, gefolgt von einem Null/Null-Endeintrag. Gleichzeitig gültige Ergebnisse sind unabhängig und werden einzeln mit `ExFreePool` oder `ExFreePoolWithTag(...,0)` freigegeben; Ressourcenmangel liefert NULL. Fehlende Deklaration, erhöhtes IRQL und ungültige Lebensdauer stoppen; gepinnte Seiten verhindern vorzeitige Freigabe. Ex/Ex2, beliebige Inventare und dynamische RAM-Änderungen bleiben ungestützt. Der Bericht enthält `configuration.physical_memory_inventory`. Selbst ungenutzte Deklarationen behalten eine Umgebungsabhängigkeit. API-eigene Puffer bleiben geliehene Zustände und aktive Pool-Abhängigkeiten ohne erfundene rekonstruierbare Pool-API. Freigabe liefert keinen symbolischen oder nativen Wiederherstellungsbeweis.

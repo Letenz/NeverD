@@ -422,7 +422,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 可选根字段 `"load_address": "0x190000000"` 请求更改加载基址；省略该字段或指定 `"0x0"` 时使用首选地址。映像必须满足重定位要求。原有的初始化命令或 C API 不会隐式执行任何请求场景。
 
-根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
+根对象仅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。普通文件请求接受 `kind`、可选且互斥的 `device` 或 `device_id`，以及可选的 `file`。IOCTL 必须提供 `code`，并接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。偏移默认为零，接受整数或十六进制字符串，且必须位于有符号 64 位整数的非负范围内。生命周期请求拒绝传输字段。未知或重复字段会被拒绝。`code` 接受无符号 32 位 JSON 整数或 `0x` 十六进制字符串。`input` 是长度为偶数且不带前缀或空格的十六进制字节字符串；省略表示空输入。`output_size` 为无符号 JSON 整数，省略表示零。不接受小数以及浮点数写法。
 
 仅 READ／WRITE／IOCTL 请求接受可选字段 `cancel_after_100ns`，它必须是 0 到 `INT64_MAX`（9223372036854775807）之间的 JSON 整数。该值相对于请求提交时刻，以虚拟 100 ns 为单位，并非墙钟时间。对 KMDF，零表示框架路由后、来宾 I/O 回调前触发取消；若路由已直接完成请求，则完成优先。对 WDM，零在派发返回后生效。正数延迟仅在没有就绪回调或执行帧时，随时间推进至定时器、等待或取消期限而触发。挂起的 WDM IRP 会在持有取消自旋锁的 `DISPATCH_LEVEL` 调用已注册的取消例程；例程必须使用 `Irp->CancelIrql` 释放锁后再完成请求。通用队列与 PnP 取消仍不支持。每个请求报告都包含 `cancel_requested_at_100ns`，值为取消实际发生时的绝对虚拟时间；若未发生取消，包括完成先发生的情况，则为 null。请求取消本身不会完成 IRP，也不规定最终状态。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 和 `IoCancelIrp` 共用同一 IRP 状态与取消自旋锁；`IoCancelIrp` 同步调用已注册例程，并返回是否实际调用。
@@ -628,3 +628,10 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 借用的 160 字节记录仅开放 `DllBase`（偏移 48，8 字节）、`EntryPoint`（56，8）、`SizeOfImage`（64，4）及 `Flags`（104，4）。前三项来自实际加载映像，包含重定位后的值；不推断标志位含义。允许这些范围内的部分读取；未知字节、跨越未知范围的访问和所有写入均拒绝，复制服务和尝试建立 MDL 别名也不能绕过。`DriverObject.Flags` 仍不透明。视图贯穿模拟生命周期，即使未读取也保留未重建的环境依赖，不授予符号常量或原生运行时恢复权限。
 
 执行要求通过 `DriverOptions.Contract` 或支持选择合约的入口启用 `checked-x64`。原 C v1 场景入口使用 Legacy，不能启用该视图；UNPACK 默认采用受检查执行。Legacy 在映像加载或观察器启动前即被拒绝，因为软件写入钩子可能在提交存储后才停止。
+
+
+## 显式物理内存清单
+
+可选 `physical_memory_inventory` 显式选择模拟 RAM：`{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`。三个字段均必填，evidence 为 1–256 字节可打印 ASCII。未知字段、不支持的版本或来源、非 `checked-x64` 声明在加载前拒绝。此来源选择统一物理身份窗口，即从 64 GiB 开始的一个 64 MiB 范围；不推断宿主机安装内存，也不为尚无后备存储的页面赋予字节或访问权限。
+
+在 PASSIVE_LEVEL，`MmGetPhysicalMemoryRanges` 返回新分配的 32 字节非分页池缓冲区：两个 64 位字段（基址和字节长度），随后是零/零终止项。并存结果相互独立，调用者通过 `ExFreePool` 或 `ExFreePoolWithTag(...,0)` 分别释放；资源不足返回 NULL。缺少声明、IRQL 过高或生命周期非法均明确停止，固定的页面阻止提前释放。Ex/Ex2、任意清单和内存热增删尚不支持。报告保留 `configuration.physical_memory_inventory`。即使未使用声明，也保留环境依赖。API 所有的结果缓冲区仍属于借用状态和活跃池依赖，不会捏造可重建的池分配 API；释放它们也不构成符号证明或原生还原证明。

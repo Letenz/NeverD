@@ -422,7 +422,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 省略可能なルートフィールド `"load_address": "0x190000000"` はベースアドレスの変更を要求します。省略または `"0x0"` なら優先アドレスを使用します。イメージは再配置の要件を満たす必要があります。元の初期化コマンドや C API が暗黙にシナリオを実行することはありません。
 
-ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
+ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
 
 READ／WRITE／IOCTL 要求だけが省略可能な `cancel_after_100ns` を受け付けます。値は 0 から `INT64_MAX`（9223372036854775807）までの JSON 整数です。要求の提出時点を基準に、実時間ではなく仮想時間の 100 ns 単位でキャンセルを予約します。KMDF ではゼロをフレームワークのルーティング後、ゲスト I/O コールバックの前に適用します。ルーティングが既に要求を完了していれば、完了が優先されます。WDM ではディスパッチの復帰後にゼロを適用します。正の遅延では、実行可能なコールバックやフレームがないときだけ、タイマー、待機、キャンセルの期限へ時間を進めます。保留中の WDM IRP は、登録されたキャンセルルーチンをキャンセルスピンロック保持下の `DISPATCH_LEVEL` で呼び出します。完了前に `Irp->CancelIrql` を使ってロックを解放する必要があります。一般のキューや PnP のキャンセルは未対応です。各要求レポートの `cancel_requested_at_100ns` は、キャンセルが実際に発生した絶対仮想時刻、または発生しなかった場合の null です。先に完了した場合も null のままです。キャンセル要求だけでは IRP は完了せず、最終ステータスも決まりません。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock`、`IoCancelIrp` は同じ IRP 状態とキャンセルスピンロックを使います。`IoCancelIrp` は登録済みルーチンを同期的に呼び出し、呼び出したかどうかを返します。
@@ -628,3 +628,10 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 借用する 160 バイトのレコードで読めるのは `DllBase`（オフセット 48、8 バイト）、`EntryPoint`（56、8）、`SizeOfImage`（64、4）、`Flags`（104、4）のみです。最初の三つは再配置を含む実際のロード済みイメージから取得し、フラグの意味は推測しません。許可範囲内の部分読み取りは可能ですが、不明なバイトにまたがるアクセスと全書き込みは、コピーサービスや MDL 別名経由でも拒否されます。`DriverObject.Flags` は不透明です。ビューは模擬ライフサイクル全体で有効で、未使用でも未再構築の環境依存を残します。記号定数やネイティブ実行状態の復元権限は与えません。
 
 実行には `DriverOptions.Contract` または契約を選択できる入口で `checked-x64` を指定する必要があります。元の C v1 シナリオ入口は Legacy を使うため、このビューを有効化できません。UNPACK は既定で checked を選択します。ソフトウェアの書き込みフックはストアの確定後に停止する場合があるため、Legacy はイメージ読み込みや観測の開始前に拒否されます。
+
+
+## 明示的な物理メモリ一覧
+
+任意の `physical_memory_inventory` は模擬 RAM を明示的に選択します：`{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`。全フィールドが必須で、evidence は印字可能な ASCII 1–256 バイトです。未知のフィールド、未対応の版・ソース、`checked-x64` 以外の宣言はロード前に拒否します。このソースは共通の物理識別ウィンドウ（64 GiB からの 64 MiB）を選びます。ホストの搭載 RAM を推定せず、裏付けのないページに内容やアクセス権を与えません。
+
+PASSIVE_LEVEL の `MmGetPhysicalMemoryRanges` は新しい 32 バイトの非ページプールを返します。基底とバイト長の 64 ビット値にゼロ/ゼロ終端が続きます。同時に有効な結果は独立し、呼び出し側が各結果を `ExFreePool` または `ExFreePoolWithTag(...,0)` で解放します。不足時は NULL です。未宣言、高い IRQL、不正な寿命では停止し、固定ページは早期解放を阻止します。Ex/Ex2、任意の一覧、メモリの動的追加・削除は未対応です。報告は `configuration.physical_memory_inventory` を保持します。未使用の宣言も環境依存を残し、API 所有の結果は借用状態と有効なプールの依存として残ります。再作成可能なプール API を捏造せず、解放してもシンボリック証明やネイティブ復元証明にはなりません。

@@ -504,7 +504,7 @@ su omisión o `"0x0"` utiliza la dirección preferida. La imagen debe cumplir lo
 requisitos de reubicación. El comando de inicialización y la API C originales
 no implican ningún escenario.
 
-En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`,
+En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `load_address`, `requests`, `unload`,
 `kernel_exports`, `registry` y `pnp_devices`. Las solicitudes ordinarias de archivo aceptan `kind`, `device` o `device_id` opcionales (excluyentes) y un `file` opcional. Los IOCTL requieren `code` y aceptan `input`, `output_size`
 y `direct_input`. Un `read` acepta `output_size` y `byte_offset`; un `write`
 acepta `input` y `byte_offset`. Los desplazamientos valen cero por defecto,
@@ -895,3 +895,10 @@ El búfer debe estar en el intervalo de direcciones del núcleo del perfil. Dura
 El registro prestado de 160 bytes solo expone `DllBase` (desplazamiento 48, 8 bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) y `Flags` (104, 4). Los tres primeros valores proceden de la imagen cargada, incluida la reubicación; no se deducen significados de los bits. Se permiten lecturas parciales dentro de esos intervalos. Los bytes desconocidos, accesos que los cruzan y todas las escrituras se rechazan, incluso mediante copias o alias MDL. `DriverObject.Flags` sigue opaco. La vista dura durante el ciclo simulado y conserva una dependencia ambiental no reconstruida aunque no se lea. No autoriza constantes simbólicas ni restauración nativa.
 
 La ejecución exige `checked-x64`, elegido mediante `DriverOptions.Contract` o una entrada que permita seleccionarlo. La entrada de escenarios C v1 usa Legacy y no puede activar esta vista; UNPACK elige checked por defecto. Legacy se rechaza antes de cargar u observar la imagen porque un hook de escritura puede detenerse después de confirmar el almacenamiento.
+
+
+## Inventario explícito de memoria física
+
+El campo opcional `physical_memory_inventory` selecciona RAM simulada: `{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`. Todos los campos son obligatorios; evidence contiene 1–256 bytes ASCII imprimibles. Campos desconocidos, versiones/fuentes no admitidas y contratos distintos de `checked-x64` se rechazan antes de cargar. La fuente elige la ventana común de identidad física: 64 MiB desde 64 GiB. No infiere RAM del anfitrión ni concede contenido o acceso a páginas sin respaldo.
+
+En PASSIVE_LEVEL, `MmGetPhysicalMemoryRanges` devuelve un nuevo búfer de pool no paginado de 32 bytes: base y longitud en bytes de 64 bits, más terminador cero/cero. Los resultados simultáneos son independientes y se liberan individualmente con `ExFreePool` o `ExFreePoolWithTag(...,0)`; la escasez devuelve NULL. Declaración ausente, IRQL elevado o vida útil inválida detienen la ejecución; las páginas fijadas impiden liberar antes de tiempo. Ex/Ex2, inventarios arbitrarios y cambios dinámicos de RAM no se admiten. El informe conserva `configuration.physical_memory_inventory`. Incluso una declaración sin usar retiene dependencia ambiental. Los resultados propiedad de la API siguen siendo estado prestado y dependencias de pool activo, sin inventar una API de recreación. Liberarlos no demuestra recuperación simbólica ni nativa.

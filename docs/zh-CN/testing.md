@@ -1198,7 +1198,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 26 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 56 driver environment checks = 5566`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 27 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 68 driver environment checks = 5579`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1851,3 +1851,8 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 `member-arguments` 样本为引用 catch 中的普通成员传入非零 32 位栈参数，分别认证源码、类型和参数证明。`RegistrationMemberCallee.*` 验证普通成员与 CRT 回调的策略边界；`RegistrationMemberArgumentState.*` 覆盖父函数、值 catch 和引用 catch 中一至三个参数字，以及缺失、部分、指针来源、不平衡和已弹栈存储。LLVM 帧检查与真实源码变异用例拒绝指针、undef 和 poison 参数。O0/O1、负向控制、两种 patch 模式、重定位及两代重建使用同一析构次数、顺序和对象内容校验。
 
 `RegistrationStackCopy.*` 验证两个回调前驱的相同位移副本，拒绝不同位移、未知或未定义来源、缺失路径、外部定义、先读后写、volatile 写入和未初始化的自复制。
+
+
+### 显式物理内存清单
+
+`KernelPhysicalInventoryTests` 检查字节单位、终止项、独立分配、拒绝时无副作用、声明复制、捕获依赖、固定页面、物理身份和资源不足。`DriverPhysicalInventoryTests` 检查严格传输，以及 Unicorn/KVM/WHP 上首选和重定位地址的完整生命周期、动态查询和释放后读取。未使用声明的 UNPACK 对照仍拒绝还原。每个原生后端的 13 项均为必跑；本地不可用的平台执行仍记为跳过。

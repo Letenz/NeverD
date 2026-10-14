@@ -302,8 +302,10 @@ private:
   llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
-  llvm::Expected<uint64_t> allocatePool(llvm::ArrayRef<uint64_t> A,
-                                        bool Modern);
+  enum class PoolSource { GuestAllocation, KernelResult };
+  llvm::Expected<uint64_t>
+  allocatePool(llvm::ArrayRef<uint64_t> A, bool Modern,
+               PoolSource Source = PoolSource::GuestAllocation);
   llvm::Expected<uint64_t> freePool(llvm::ArrayRef<uint64_t> A, bool Tagged);
   llvm::Expected<uint64_t>
   deleteSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
@@ -863,6 +865,8 @@ private:
   bool UnpackOpaqueEffects = false;
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
+  std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
+  llvm::Expected<uint64_t> queryPhysicalMemoryRanges();
   // Admission conservatively records reads that can expose model PFNs,
   // including reads performed by modeled copy/compare services.
   mutable bool UnpackMDLIdentityRead = false;
@@ -872,7 +876,9 @@ private:
     uint64_t Size;
     uint32_t Tag;
     bool NonPaged;
-    WindowsDriverState::PoolAPI API;
+    // Kernel-returned buffers need pool lifetime checks but may have no
+    // supported external allocation recipe for native reconstruction.
+    std::optional<WindowsDriverState::PoolAPI> API;
     uint64_t TypeOrFlags;
   };
   std::map<uint64_t, PoolAllocation> Allocations;

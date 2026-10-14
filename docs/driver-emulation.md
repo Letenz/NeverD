@@ -686,7 +686,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
@@ -1237,3 +1237,10 @@ The query buffer must lie in the profile’s kernel address range. Every accesse
 The borrowed 160-byte record exposes only `DllBase` (offset 48, 8 bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4), and `Flags` (104, 4). The first three values come from the loaded image, including rebasing; flags have no inferred bit meanings. Partial reads within those spans are allowed. Unsupported bytes, straddling accesses and every write are rejected, including through copy services or attempted MDL aliases. `DriverObject.Flags` remains opaque. The view lasts through the modeled lifecycle and retains an unreconstructed environment dependency even when unused. It grants neither symbolic constants nor native runtime restoration authority.
 
 Execution requires the `checked-x64` contract, selected through `DriverOptions.Contract` or an execution entry that exposes it. The original C v1 scenario entry uses Legacy and cannot enable this view; UNPACK selects checked execution by default. Legacy is rejected before image loading or observation because a software write hook can stop after committing a store.
+
+
+## Declared physical memory inventory
+
+Optional `physical_memory_inventory` explicitly selects simulated RAM: `{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`. All three fields are required; evidence is 1–256 printable ASCII bytes. Unknown fields, unsupported versions/sources and non-`checked-x64` declarations fail before loading. This source selects the canonical physical identity window, one 64 MiB range starting at 64 GiB. It does not infer installed host RAM or assign bytes/access rights to unbacked pages.
+
+At PASSIVE_LEVEL, `MmGetPhysicalMemoryRanges` returns a fresh 32-byte nonpaged pool buffer: two 64-bit fields (base and byte length), followed by a zero/zero terminator. Concurrent results are independent and callers free each with `ExFreePool` or `ExFreePoolWithTag(...,0)`; shortage returns NULL. Missing declarations, elevated IRQL and invalid lifetimes stop clearly. Pins prevent premature release. Ex/Ex2, arbitrary inventories and hot-add/remove are unsupported. The report retains `configuration.physical_memory_inventory`. Even unused declarations retain an environment dependency. API-owned result buffers remain borrowed/live-pool dependencies and never acquire an invented recreatable pool API; freeing them supplies no symbolic or native recovery proof.
