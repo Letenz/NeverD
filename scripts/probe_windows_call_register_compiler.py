@@ -2,11 +2,42 @@
 """Isolate the MSVC 19.44 CallRegisterEffects C1001 on disposable CI source."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+
+
+def variants(text, newline):
+    mapped = "std::map<size_t, llvm::ArrayRef<uint64_t>>"
+    marker = mapped + newline + "unreadSyscallArguments"
+    begin = text.index(marker)
+    end = text.index("/// The scalar writes", begin)
+    prefix = text[:text.index("namespace neverd {")]
+    rest = ("const llvm::ArrayRef<uint64_t> Rest =\n"
+            "        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);").replace("\n", newline)
+    if text.count(mapped) != 3 or text.count(rest) != 1:
+        raise ValueError("Expected the three original map sites and exact register slice")
+    span = text.replace("#include <optional>", "#include <optional>" + newline + "#include <span>")
+    span = span.replace(mapped, "std::map<size_t, std::span<const uint64_t>>")
+    span = span.replace(rest, ("const std::span<const uint64_t> Rest =\n"
+        "        std::span<const uint64_t>(kLinuxX64SyscallArgumentRegisters).subspan(*Count);").replace("\n", newline))
+    counts = text.replace(mapped, "std::map<size_t, unsigned>").replace(rest, "")
+    counts = counts.replace("Unread[I] = Rest;", "Unread[I] = *Count;")
+    counts = counts.replace("llvm::any_of(Unread->second,", "llvm::any_of(llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(Unread->second),")
+    array_map = prefix + newline + "namespace neverd {" + newline + mapped + " minimalArrayMap() { return {}; }" + newline + "}" + newline
+    span_map = array_map.replace("#include <optional>", "#include <optional>" + newline + "#include <span>").replace(mapped, "std::map<size_t, std::span<const uint64_t>>")
+    isolated = prefix + newline + "namespace neverd {" + newline + text[begin:end] + newline + "}" + newline
+    return [
+        ("original-o2", text, ""),
+        ("minimal-arrayref-map", array_map, ""),
+        ("minimal-span-map", span_map, ""),
+        ("isolated-function", isolated, ""),
+        ("span-whole-file", span, ""),
+        ("count-index-whole-file", counts, ""),
+    ]
 
 
 def main():
@@ -22,52 +53,15 @@ def main():
     command = commands.strip().splitlines()[-1]
     if "cl.exe" not in command or "CallRegisterEffects.cpp" not in command:
         raise ValueError("Expected the configured production MSVC command")
-    source = Path("lib/ir/low/CallRegisterEffects.cpp")
+    source = Path("lib/ir/low/CallRegisterEffects.cpp").resolve()
+    if str(source).replace("\\", "/").lower() not in command.replace("\\", "/").lower():
+        raise ValueError("Compiler command does not consume the isolated source path")
     original = source.read_bytes()
     text = original.decode("utf-8")
     newline = "\r\n" if b"\r\n" in original else "\n"
-    ctad = "llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters)"
-    count = ("const std::optional<unsigned> Count =\n"
-             "        Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;").replace("\n", newline)
-    if text.count(ctad) != 1 or text.count(count) != 1:
-        raise ValueError("The isolated source no longer matches the reported failure")
-    any_of = ("const bool Syscall =\n"
-        "        std::any_of(Block.Ops.begin() + First, Block.Ops.begin() + End,\n"
-        "                    [](const LowOp &Op) {\n"
-        "                      return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&\n"
-        "                             Op.Inputs[0].isConst() &&\n"
-        "                             static_cast<Intrinsic>(Op.Inputs[0].Offset) ==\n"
-        "                                 Intrinsic::X64Syscall;\n"
-        "                    });").replace("\n", newline)
-    loop = ("bool Syscall = false;\n"
-        "    for (size_t I = First; I < End; ++I) {\n"
-        "      const LowOp &Op = Block.Ops[I];\n"
-        "      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&\n"
-        "          Op.Inputs[0].isConst() &&\n"
-        "          static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X64Syscall) {\n"
-        "        Syscall = true;\n"
-        "        break;\n"
-        "      }\n"
-        "    }").replace("\n", newline)
-    result_type = "std::map<size_t, llvm::ArrayRef<uint64_t>>" + newline + "unreadSyscallArguments"
-    alias_type = ("using SyscallRegisterSlices = std::map<size_t, llvm::ArrayRef<uint64_t>>;\n"
-                  "SyscallRegisterSlices\nunreadSyscallArguments").replace("\n", newline)
-    if text.count(any_of) != 1 or text.count(result_type) != 1:
-        raise ValueError("Expected the original independent loop and result-type sites")
-    begin = text.index(result_type)
-    end = text.index("/// The scalar writes", begin)
-    moved = text[:begin] + text[begin:end].replace("return Unread;", "return std::move(Unread);") + text[end:]
-    variants = [
-        ("original-o2", text, ""),
-        ("original-no-nrvo", text, " /Zc:nrvo-"),
-        ("explicit-loop-o2", text.replace(any_of, loop), ""),
-        ("named-result-type-o2", text.replace(result_type, alias_type), ""),
-        ("runtime-arch-count-o2", text.replace("linuxX64SyscallArgumentCount(*Number)", "linuxSyscallArgumentCount(Img.Arch, *Number)"), ""),
-        ("explicit-move-o2", moved, ""),
-    ]
     results = []
     try:
-        for name, body, options in variants:
+        for name, body, options in variants(text, newline):
             source.write_bytes(body.encode("utf-8"))
             compile_command, replacements = re.subn(
                 r'/Fo(?:"[^"]*"|\S+)', "/Fo" + name + ".obj", command, count=1)
@@ -79,6 +73,7 @@ def main():
             (build / (name + ".log")).write_bytes(output)
             row = {"variant": name, "returncode": process.returncode,
                    "c1001": b"C1001" in output,
+                   "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                    "object_written": (build / (name + ".obj")).is_file()}
             results.append(row)
             print(json.dumps(row), flush=True)
