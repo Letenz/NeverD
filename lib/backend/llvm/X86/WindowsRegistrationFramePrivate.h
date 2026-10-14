@@ -62,7 +62,8 @@ llvm::Error checkPrivateStack(
     X86RegistrationCallbackFrame &Frame,
     std::set<llvm::AllocaInst *> &PrivateSlots, size_t &WorkUsed,
     const std::set<llvm::StoreInst *> *SourceStores = nullptr,
-    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes = {});
+    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes = {},
+    std::set<const llvm::StoreInst *> *PrivateStores = nullptr);
 llvm::Expected<CallbackPlan>
 prepareCallback(llvm::Function &Parent,
                 const X86RegistrationCallbackRequest &Request,

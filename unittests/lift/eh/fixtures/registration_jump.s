@@ -31,7 +31,12 @@ _registration_entry:
   jnz .Lresumed
   mov dword ptr [ebp-4],1
   mov ebx,9
-#if REGISTRATION_CASE == 10
+#if REGISTRATION_CASE == 13 || REGISTRATION_CASE == 15
+  mov dword ptr [ebp-4],0
+  call .Lfinally
+  jmp .Lbad
+#else
+#if REGISTRATION_CASE == 10 || REGISTRATION_CASE == 15
   push 0
 #else
   push 42
@@ -40,6 +45,7 @@ _registration_entry:
   push eax
   call __longjmpex
   ud2
+#endif
 .Lresumed:
 #if REGISTRATION_CASE == 12
   cmp dword ptr [ebp+8],7
@@ -49,7 +55,7 @@ _registration_entry:
   jne .Lbad
   cmp ebx,6
   jne .Lbad
-#if REGISTRATION_CASE == 10
+#if REGISTRATION_CASE == 10 || REGISTRATION_CASE == 15
   cmp eax,1
 #else
   cmp eax,42
@@ -77,7 +83,19 @@ _registration_entry:
   imul eax,eax,10
   add eax,2
   mov [ebp-100],eax
+#if REGISTRATION_CASE >= 13
+#if REGISTRATION_CASE == 15
+  push 0
+#else
+  push 42
+#endif
+  lea eax,[ebp-96]
+  push eax
+  call __longjmpex
+  ud2
+#else
   ret
+#endif
 .Lhandler:
   mov eax,7
 .Lfinish:

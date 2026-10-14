@@ -236,11 +236,14 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
                                     Saved.StackOffset,
                                     CalleeVA,
                                     ResumeVA};
-  const auto SP =
-      After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
+  const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
   if (!Receipt.EntryVA && !Receipt.OrdinaryCall && !CalleeVA && !ResumeVA &&
-      SP && *SP <= INT32_MAX - 4)
-    Receipt.ValueOffset = *SP + 4;
+      SP.Offset && *SP.Offset <= INT32_MAX - 4)
+    Receipt.ValueOffset = *SP.Offset + 4;
+  if (Receipt.EntryVA && !CalleeVA && !ResumeVA && After.Callback &&
+      SP.CallbackAddress && SP.CallbackAddress->Entry == Receipt.EntryVA &&
+      SP.CallbackAddress->Offset <= -8)
+    Receipt.ValueOffset = SP.CallbackAddress->Offset + 4;
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
   const auto [It, New] = JumpResumptions.emplace(Identity, Receipt);

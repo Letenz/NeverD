@@ -252,6 +252,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Call->getCalledFunction() != CallbackMap->at({*Target, true}) ||
           Call->arg_size() != 2 || integer(Call->getArgOperand(0), 8) != 0 ||
           !ParentFrame ||
+          (Call->doesNotReturn() &&
+           llvm::any_of(*Call->getCalledFunction(),
+                        [](const llvm::BasicBlock &Block) {
+                          return llvm::isa<llvm::ReturnInst>(
+                              Block.getTerminator());
+                        })) ||
           ParentFrame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
           ParentFrame->arg_size() || ParentFrame->getFunction() != &Function ||
           Call->getNumOperandBundles())
@@ -277,7 +283,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                                       IncomingAccesses, IncomingSetup))
     return Error;
   auto Jumps = coff_registration::bindSEHJumps(ReplayMed, Function, *Frame,
-                                               IncomingSetup);
+                                               IncomingSetup, *CallbackMap);
   if (!Jumps)
     return Jumps.takeError();
   const auto &States = *Replay.RegistrationStates;

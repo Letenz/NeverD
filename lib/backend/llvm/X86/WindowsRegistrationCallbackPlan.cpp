@@ -7,6 +7,7 @@
 #include "WindowsRegistrationFramePrivate.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
@@ -322,7 +323,26 @@ prepareCallback(llvm::Function &Parent,
     Recipes.push_back(Instruction);
   };
 
-  bool HasReturn = false;
+  std::set<const llvm::CallInst *> NonReturningCalls;
+  for (auto *Call : Request.NonReturningCalls) {
+    if (++WorkUsed > limits::kMaxRegistrationEHStateWork || !Call ||
+        !Body.count(Call->getParent()) || !Call->doesNotReturn() ||
+        !NonReturningCalls.insert(Call).second ||
+        !llvm::isa<llvm::UnreachableInst>(Call->getParent()->getTerminator()))
+      return reject("callback nonlocal exit has no exact terminal call");
+    for (auto *Next = Call->getNextNode(); Next && !Next->isTerminator();
+         Next = Next->getNextNode()) {
+      if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
+        return reject("callback nonlocal exits exceed the work budget");
+      const auto *Anchor = llvm::dyn_cast<llvm::IntrinsicInst>(Next);
+      if (!Anchor || Anchor->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
+          Anchor->arg_size() ||
+          !Anchor->getMetadata(windows_eh_md::RegistrationBlockAttachment))
+        return reject(
+            "callback executes source operations after a nonlocal exit");
+    }
+  }
+  bool HasExit = !NonReturningCalls.empty();
   for (llvm::BasicBlock *Block : Blocks)
     for (llvm::Instruction &Instruction : *Block) {
       if (++WorkUsed > limits::kMaxRegistrationEHStateWork)
@@ -359,7 +379,7 @@ prepareCallback(llvm::Function &Parent,
           break;
         }
       if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Instruction)) {
-        HasReturn = true;
+        HasExit = true;
         if (Kind == X86RegistrationCallbackKind::Filter &&
             !filterResult(*Return))
           return reject("filter does not return an exact i32 result");
@@ -371,7 +391,7 @@ prepareCallback(llvm::Function &Parent,
         Inspect(Operand.get(), 0);
       }
     }
-  if (!HasReturn || InvalidDependency)
+  if (!HasExit || InvalidDependency)
     return reject("callback return or parent-value dependencies are unproven");
   if (Frame.SyntheticFrame)
     Needed.insert(Frame.SyntheticFrame);

@@ -2077,13 +2077,16 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
       },
       "stack cleanup ABI");
   bool HasNormalFinally = false;
+  bool HasReturningFinally = false;
   for (const auto &Block : *Parent)
     for (const auto &I : Block)
-      HasNormalFinally |=
-          I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment) !=
-          nullptr;
+      if (I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment)) {
+        HasNormalFinally = true;
+        HasReturningFinally |= !llvm::cast<llvm::CallBase>(I).doesNotReturn();
+      }
   if (HasNormalFinally)
-    for (unsigned Mutation = 0; Mutation != 3; ++Mutation)
+    for (unsigned Mutation = 0; Mutation != (HasReturningFinally ? 4 : 3);
+         ++Mutation)
       RejectMutation(
           "changed ordinary finally entry protocol",
           [Mutation](llvm::Function &F) {
@@ -2092,6 +2095,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                 if (I.getMetadata(
                         windows_eh_md::RegistrationFinallyCallAttachment)) {
                   auto *Call = llvm::cast<llvm::CallBase>(&I);
+                  if (Mutation == 3 && Call->doesNotReturn())
+                    continue;
                   if (Mutation == 0)
                     I.setMetadata(
                         windows_eh_md::RegistrationFinallyCallAttachment,
@@ -2100,10 +2105,12 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                     Call->setArgOperand(
                         0, llvm::ConstantInt::get(
                                llvm::Type::getInt8Ty(F.getContext()), 1));
-                  else
+                  else if (Mutation == 2)
                     Call->setArgOperand(
                         1, llvm::ConstantPointerNull::get(
                                llvm::PointerType::get(F.getContext(), 0)));
+                  else
+                    Call->addFnAttr(llvm::Attribute::NoReturn);
                   return true;
                 }
             return false;

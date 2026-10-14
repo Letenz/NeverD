@@ -106,8 +106,8 @@ bool hasRegistrationCallFrameABI(
             });
         const auto Resume =
             llvm::find_if(States->SEHJumpResumptions, [&](const auto &R) {
-              return R.Address == Op.Addr && R.OpSeq == Op.Seq && !R.EntryVA &&
-                     !R.OrdinaryCall && !R.CalleeVA && !R.ResumeVA;
+              return R.Address == Op.Addr && R.OpSeq == Op.Seq &&
+                     R.ValueOffset && !R.CalleeVA && !R.ResumeVA;
             });
         if (Capture != States->SEHJumpCaptures.end() ||
             Resume != States->SEHJumpResumptions.end()) {

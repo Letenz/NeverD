@@ -24,7 +24,19 @@ struct RegistrationSEHJumpContract {
 llvm::Expected<RegistrationSEHJumpContract>
 bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
              const RegistrationFrame &Frame,
-             const std::set<const llvm::Instruction *> &IncomingSetup);
+             const std::set<const llvm::Instruction *> &IncomingSetup,
+             const std::map<CallbackKey, const llvm::Function *> &Callbacks);
+
+llvm::Error validateSEHJumpArguments(
+    const llvm::CallBase &Call, const llvm::LoadInst *Value,
+    const RegistrationSEHJumpResume *Resume, const llvm::Function &Parent,
+    const RegistrationFrame &Frame, const llvm::AllocaInst &Buffer,
+    const std::map<CallbackKey, const llvm::Function *> &Callbacks);
+
+llvm::Error validateSEHJumpBufferUses(
+    const llvm::Function &Parent, const llvm::AllocaInst &Buffer,
+    const std::set<const llvm::CallBase *> &Calls,
+    const std::map<CallbackKey, const llvm::Function *> &Callbacks);
 
 llvm::Error validateSEHJumpUnwindBridge(const llvm::Function &Parent,
                                         va_t SourceUnwind);

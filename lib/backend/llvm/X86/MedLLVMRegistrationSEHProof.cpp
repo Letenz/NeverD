@@ -6,6 +6,8 @@
 
 #include "MedLLVMRegistrationSEHProof.h"
 
+#include "WindowsRegistrationFramePrivate.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/X86RegistrationSEHControl.h"
 #include "neverd/backend/llvm/X86RegistrationSEHException.h"
@@ -13,12 +15,13 @@
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 
 namespace neverd::x86_registration {
 
 std::optional<SEHFrameValues> getPrivateSEHFrameValues(
     const MedFunc &Func, const RegistrationStateAnalysis &States,
-    llvm::function_ref<bool(const MedVar &, uint16_t)> IsPrivateStore) {
+    llvm::function_ref<bool(const MedOp &)> IsPrivateStore) {
   // A synthetic source frame must stay private. Otherwise an unknown callee
   // can modify a source registration field without changing LLVM's live node.
   // Consume the shared LowIR frame domain, including spill/reload provenance,
@@ -165,12 +168,38 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           IsFrame(Op.Inputs[1]) &&
           Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS) {
-        if (!IsPrivateStore(Op.Inputs[0], Op.Inputs[1].Size))
+        if (!IsPrivateStore(Op))
           return std::nullopt;
       }
     }
 
   return Result;
+}
+
+std::optional<std::set<const llvm::StoreInst *>> getCheckedSEHCallbackStores(
+    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests) {
+  std::set<const llvm::StoreInst *> Stores;
+  size_t Work = 0;
+  for (const auto &Request : Requests) {
+    if (!Request.Frame.InferStackBounds)
+      continue;
+    auto Frame = Request.Frame;
+    Frame.StackBytes = limits::kMaxRegistrationEHStateWork;
+    Frame.StackPointerOffset = Frame.StackBytes;
+    std::set<llvm::BasicBlock *> Body(Request.Blocks.begin(),
+                                      Request.Blocks.end());
+    std::map<llvm::StoreInst *, X86RegistrationRootKind> Seeds;
+    for (const auto &Seed : Frame.RootSeeds)
+      Seeds.emplace(Seed.Definition, Seed.Kind);
+    std::set<llvm::AllocaInst *> Slots;
+    if (auto Error = checkPrivateStack(
+            Request.Entry->getModule()->getDataLayout(), *Request.Entry, Body,
+            Seeds, Frame, Slots, Work, nullptr, {}, &Stores)) {
+      llvm::consumeError(std::move(Error));
+      return std::nullopt;
+    }
+  }
+  return Stores;
 }
 
 std::optional<std::set<llvm::Instruction *>> getCheckedSEHChainInstructions(

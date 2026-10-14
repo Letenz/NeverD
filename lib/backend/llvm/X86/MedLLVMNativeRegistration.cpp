@@ -118,18 +118,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       FrameEntrySPOffset > FrameBytes->getFixedValue())
     return false;
 
-  auto FrameValues = x86_registration::getPrivateSEHFrameValues(
-      Func, States, [&](const MedVar &Address, uint16_t Width) {
-        const auto Slot = canonicalFrameSlotKey(Address, true);
-        return Slot && Slot->second >= -int64_t(FrameEntrySPOffset) &&
-               Width <= FrameBytes->getFixedValue() &&
-               Slot->second <= int64_t(FrameBytes->getFixedValue() - Width) -
-                                   int64_t(FrameEntrySPOffset);
-      });
-  if (!FrameValues)
-    return false;
-  auto IsFrame = [&](const MedVar &V) { return FrameValues->contains(V); };
-
   std::map<va_t, const MedBlock *> BlocksAt;
   std::map<int, const RegistrationBlockState *> BlockStates;
   for (const RegistrationBlockState &State : States.Blocks)
@@ -287,6 +275,28 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     Regions.push_back(R);
   }
 
+  const auto CallbackStores =
+      x86_registration::getCheckedSEHCallbackStores(Requests);
+  if (!CallbackStores)
+    return false;
+  auto FrameValues = x86_registration::getPrivateSEHFrameValues(
+      Func, States, [&](const MedOp &Op) {
+        const auto Emitted = RegistrationMemoryIR.find({Op.Addr, Op.OriginSeq});
+        if (Emitted != RegistrationMemoryIR.end())
+          if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(Emitted->second);
+              Store && CallbackStores->count(Store))
+            return true;
+        const auto Slot = canonicalFrameSlotKey(Op.Inputs[0], true);
+        const auto Width = Op.Inputs[1].Size;
+        return Slot && Slot->second >= -int64_t(FrameEntrySPOffset) &&
+               Width <= FrameBytes->getFixedValue() &&
+               Slot->second <= int64_t(FrameBytes->getFixedValue() - Width) -
+                                   int64_t(FrameEntrySPOffset);
+      });
+  if (!FrameValues)
+    return false;
+  auto IsFrame = [&](const MedVar &V) { return FrameValues->contains(V); };
+
   const auto Incoming = x86_registration::prepareIncomingFrame(
       Func, Parent, RegistrationIncomingIR);
   if (!Incoming)
@@ -303,6 +313,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       Func, Parent, *FrameAlloca, FrameEntrySPOffset, CallSiteAddrs);
   if (!JumpPlan)
     return false;
+  for (const auto &[Call, Source] : JumpPlan->Calls)
+    if (Source.Resume && Source.Resume->EntryVA) {
+      const auto Callback =
+          CallbackIndices.find({Source.Resume->EntryVA, true});
+      if (Callback == CallbackIndices.end() ||
+          !llvm::is_contained(Requests[Callback->second].Blocks,
+                              Call->getParent()))
+        return false;
+      Requests[Callback->second].NonReturningCalls.push_back(Call);
+    }
   auto &SourceOperations = SourceProof->Operations;
   auto &CookieCheckCalls = SourceProof->CookieCheckCalls;
 
@@ -320,6 +340,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     va_t Address;
     int32_t State;
     std::optional<size_t> Finally;
+    bool NoReturn;
   };
   std::map<va_t, va_t> DirectCalls;
   for (const MedBlock &Block : Func.Blocks)
@@ -356,12 +377,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       if (auto Callback = CallbackIndices.find({Direct->second, true});
           Callback != CallbackIndices.end())
         Finally = Callback->second;
-    if (Finally && !x86_registration::collectDeadFinallyResult(
-                       *const_cast<llvm::CallInst *>(Call), DeadFinallyResults))
+    const bool NoReturn =
+        Finally &&
+        llvm::none_of(
+            Requests[*Finally].Blocks, [](const llvm::BasicBlock *Block) {
+              return llvm::isa<llvm::ReturnInst>(Block->getTerminator());
+            });
+    if (Finally && !NoReturn &&
+        !x86_registration::collectDeadFinallyResult(
+            *const_cast<llvm::CallInst *>(Call), DeadFinallyResults))
       return false;
     if ((State->second >= 0 && mayUnwind(*Call)) || Finally)
       Calls.push_back({const_cast<llvm::CallInst *>(Call), Address,
-                       State->second, Finally});
+                       State->second, Finally, NoReturn});
   }
   for (llvm::BasicBlock &Block : Parent)
     for (llvm::Instruction &Instruction : Block)
@@ -587,11 +615,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   for (auto *Instruction : llvm::reverse(DeadFinallyResults))
     Instruction->eraseFromParent();
 
+  std::map<va_t, llvm::Function *> JumpCallbacks;
+  for (const auto &[Identity, Index] : CallbackIndices)
+    if (Identity.second)
+      JumpCallbacks.emplace(Identity.first, (*Outlined)[Index]);
   auto JumpCalls = x86_registration::emitSEHJumps(
-      *JumpPlan, Parent, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin);
+      *JumpPlan, Parent, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
+      JumpCallbacks);
   for (const auto &[Original, Replacement] : JumpCalls) {
-    CallSiteAddrs.emplace(Replacement, CallSiteAddrs.at(Original));
-    CallSiteAddrs.erase(Original);
+    if (const auto Site = CallSiteAddrs.find(Original);
+        Site != CallSiteAddrs.end()) {
+      CallSiteAddrs.emplace(Replacement, Site->second);
+      CallSiteAddrs.erase(Site);
+    }
     Original->replaceAllUsesWith(Replacement);
     Original->eraseFromParent();
   }
@@ -608,6 +644,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       auto *Replacement =
           B.CreateCall((*Outlined)[*Plan.Finally], {B.getInt8(0), Frame});
       Replacement->copyMetadata(*Call);
+      // The batch outliner has now proved every callback exit. A nonlocal
+      // finally has no ordinary result, including the lifted register copies
+      // on its unreachable fallthrough. Keep source boundaries for replay.
+      // Keep this attribute on the ordinary invocation: the cleanup dispatch
+      // still needs its cleanupret edge to preserve the source scope nesting.
+      if (Plan.NoReturn) {
+        Replacement->addFnAttr(llvm::Attribute::NoReturn);
+        if (!Call->getType()->isVoidTy())
+          Call->replaceAllUsesWith(llvm::PoisonValue::get(Call->getType()));
+      }
       va_t FinallyVA = 0;
       for (const auto &[Identity, Index] : CallbackIndices)
         if (Identity.second && Index == *Plan.Finally)

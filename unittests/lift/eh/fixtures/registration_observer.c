@@ -33,7 +33,7 @@ unsigned registration_trace;
 #elif REGISTRATION_CASE == 7 || REGISTRATION_CASE == 8
 #define EXPECTED_TRACE 7u
 #elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10 ||                     \
-    REGISTRATION_CASE == 12
+    REGISTRATION_CASE == 12 || REGISTRATION_CASE >= 13
 #define EXPECTED_TRACE 23u
 #elif REGISTRATION_CASE == 11
 #define EXPECTED_TRACE 3u
