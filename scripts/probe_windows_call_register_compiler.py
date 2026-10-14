@@ -31,14 +31,39 @@ def main():
              "        Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;").replace("\n", newline)
     if text.count(ctad) != 1 or text.count(count) != 1:
         raise ValueError("The isolated source no longer matches the reported failure")
+    any_of = ("const bool Syscall =\n"
+        "        std::any_of(Block.Ops.begin() + First, Block.Ops.begin() + End,\n"
+        "                    [](const LowOp &Op) {\n"
+        "                      return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&\n"
+        "                             Op.Inputs[0].isConst() &&\n"
+        "                             static_cast<Intrinsic>(Op.Inputs[0].Offset) ==\n"
+        "                                 Intrinsic::X64Syscall;\n"
+        "                    });").replace("\n", newline)
+    loop = ("bool Syscall = false;\n"
+        "    for (size_t I = First; I < End; ++I) {\n"
+        "      const LowOp &Op = Block.Ops[I];\n"
+        "      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&\n"
+        "          Op.Inputs[0].isConst() &&\n"
+        "          static_cast<Intrinsic>(Op.Inputs[0].Offset) == Intrinsic::X64Syscall) {\n"
+        "        Syscall = true;\n"
+        "        break;\n"
+        "      }\n"
+        "    }").replace("\n", newline)
+    result_type = "std::map<size_t, llvm::ArrayRef<uint64_t>>" + newline + "unreadSyscallArguments"
+    alias_type = ("using SyscallRegisterSlices = std::map<size_t, llvm::ArrayRef<uint64_t>>;\n"
+                  "SyscallRegisterSlices\nunreadSyscallArguments").replace("\n", newline)
+    if text.count(any_of) != 1 or text.count(result_type) != 1:
+        raise ValueError("Expected the original independent loop and result-type sites")
+    begin = text.index(result_type)
+    end = text.index("/// The scalar writes", begin)
+    moved = text[:begin] + text[begin:end].replace("return Unread;", "return std::move(Unread);") + text[end:]
     variants = [
         ("original-o2", text, ""),
-        ("original-od", text, " /Od"),
-        ("explicit-arrayref-o2", text.replace(ctad, "llvm::ArrayRef<uint64_t>(kLinuxX64SyscallArgumentRegisters)"), ""),
-        ("explicit-optional-o2", text.replace(count, (
-            "std::optional<unsigned> Count;\n"
-            "    if (Number)\n"
-            "      Count = linuxX64SyscallArgumentCount(*Number);").replace("\n", newline)), ""),
+        ("original-no-nrvo", text, " /Zc:nrvo-"),
+        ("explicit-loop-o2", text.replace(any_of, loop), ""),
+        ("named-result-type-o2", text.replace(result_type, alias_type), ""),
+        ("runtime-arch-count-o2", text.replace("linuxX64SyscallArgumentCount(*Number)", "linuxSyscallArgumentCount(Img.Arch, *Number)"), ""),
+        ("explicit-move-o2", moved, ""),
     ]
     results = []
     try:
@@ -61,7 +86,7 @@ def main():
         source.write_bytes(original)
         (build / "compiler-probe.json").write_text(
             json.dumps(results, indent=2) + "\n", encoding="utf-8")
-    if not results or not any(row["returncode"] == 0 for row in results):
+    if not results or not any(row["returncode"] == 0 and row["object_written"] for row in results):
         raise SystemExit("No successful compilation; inspect the independent variant logs")
 
 
