@@ -74,6 +74,50 @@ TEST_F(ELFSourceSymbols, CallsAndGOTLoadsResolveToDifferentAddresses) {
   EXPECT_EQ(resolve(), 0x2008u);
 }
 
+TEST_F(ELFSourceSymbols, AArch64PageAndOffsetUseTheAuthenticatedGOTSlot) {
+  Image.Arch = Arch::AArch64;
+  Image.Relocations.front().Type = llvm::ELF::R_AARCH64_GLOB_DAT;
+  for (auto [Name, Value] :
+       {std::pair{"GOT_PAGE", 0x014u}, {"GOT_LO12", 0x124u}}) {
+    Request.SpecifierName = Name;
+    Request.Specifier = Value;
+    EXPECT_EQ(resolve(), 0x2008u);
+  }
+  Image.Relocations.front().Type = llvm::ELF::R_AARCH64_JUMP_SLOT;
+  EXPECT_EQ(resolve(), std::nullopt);
+  Request.Specifier = 0x034; // TLS is not an ordinary GOT slot.
+  Request.SpecifierName = "GOTTPREL_PAGE";
+  auto TLS = resolveELFSourceSymbol(Image, Module, Request);
+  ASSERT_FALSE(bool(TLS));
+  EXPECT_NE(llvm::toString(TLS.takeError()).find("unsupported relocation"),
+            std::string::npos);
+}
+
+TEST_F(ELFSourceSymbols, AArch64AbsoluteFormsRequireAnExplicitDataBinding) {
+  Image.Arch = Arch::AArch64;
+  Request.Symbol = "__nd_data_2000";
+  auto *Data = new llvm::GlobalVariable(
+      Module, llvm::Type::getInt32Ty(Context), false,
+      llvm::GlobalValue::ExternalLinkage, nullptr, Request.Symbol);
+  Data->setDSOLocal(true);
+  for (auto [Name, Value] :
+       {std::pair{"ABS", 0x001u}, {"ABS_PAGE", 0x011u}, {"ABS_LO12", 0x121u}}) {
+    Request.SpecifierName = Name;
+    Request.Specifier = Value;
+    EXPECT_EQ(resolve(), 0x2000u);
+  }
+  Request.Specifier = 0x999;
+  auto Unknown = resolveELFSourceSymbol(Image, Module, Request);
+  ASSERT_FALSE(bool(Unknown));
+  EXPECT_NE(llvm::toString(Unknown.takeError()).find("unsupported relocation"),
+            std::string::npos);
+  Request.Specifier = 0x121;
+  Data->setDSOLocal(false);
+  auto Unbound = resolveELFSourceSymbol(Image, Module, Request);
+  ASSERT_FALSE(bool(Unbound));
+  llvm::consumeError(Unbound.takeError());
+}
+
 TEST_F(ELFSourceSymbols, MissingPLTDoesNotReturnTheGOTDataSlot) {
   Image.ImportStubIndices.clear();
   EXPECT_EQ(resolve(), std::nullopt);

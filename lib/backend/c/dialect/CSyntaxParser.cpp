@@ -1134,15 +1134,6 @@ private:
           return nullptr;
         return finish(S);
       }
-      if ((W == "__unwind" || W == "__wind") && isPunct("{", 1)) {
-        Stmt *S = T.newStmt(StmtKind::PseudoBlock, Begin);
-        S->Text = W;
-        ++Pos;
-        if (!(S->Then = parseCompound()))
-          return nullptr;
-        S->End = lastEnd();
-        return S;
-      }
       if ((W == "__asm__" || W == "__asm" || W == "asm") &&
           (isPunct("(", 1) || isIdent("volatile", 1) ||
            isIdent("__volatile__", 1))) {

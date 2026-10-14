@@ -875,8 +875,6 @@ private:
     case StmtKind::Throw:
       // C++ thrown objects and their constructors stay as written.
       return true;
-    case StmtKind::PseudoBlock:
-      return stmt(S->Then);
     case StmtKind::Default:
     case StmtKind::Break:
     case StmtKind::Continue:

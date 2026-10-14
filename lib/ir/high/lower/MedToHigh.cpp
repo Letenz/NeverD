@@ -27,6 +27,7 @@
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -288,24 +289,6 @@ public:
   }
 };
 
-bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff) {
-  if (Func.Blocks.empty())
-    return false;
-  // An entry seed copies the incoming register.  SSA may give the copy a new
-  // version (`COPY RCX.1 = RCX` when CL is seeded too) while later reads
-  // still name the incoming one; both sides are the incoming value.
-  for (const MedOp &Op : Func.Blocks.front().Ops) {
-    if (Op.Opcode != NdOp::COPY)
-      break;
-    if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
-        Op.NumInputs >= 1 && Op.Inputs[0].Kind == MedVar::Reg &&
-        Op.Inputs[0].Id == Op.Output.Id && Op.Inputs[0].SSAVer == 0 &&
-        (Op.Output == V || Op.Inputs[0] == V))
-      return true;
-  }
-  return false;
-}
-
 const MedCallClobber *findCallClobber(const MedFunc &Func, const MedVar &V) {
   auto It = std::find_if(
       Func.CallClobbers.begin(), Func.CallClobbers.end(),
@@ -559,7 +542,11 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
         // A COPY from a Temp is also a computed def: `mov eax, edx` then
         // `mov rax, [bins+i]` must not remap RAX.3 onto arg1.  That deleted
         // Typed map bucket walks.
-        if (Fallback < 0 && regToArgIdx(V.RegOff) < 0) {
+        // The value a callee-save holds at entry is the caller's, which the
+        // prologue saves: no copy inside this function made it a parameter
+        // (`push rbx` before `mov bl, r9b` saves the caller's rbx).
+        if (Fallback < 0 && regToArgIdx(V.RegOff) < 0 &&
+            !isEntryLiveInValue(*CurMed, V, V.RegOff)) {
           const bool Computed = PhiOutputVars.count(varKey(V)) ||
                                 ComputedVersions.count({V.Id, V.SSAVer});
           if (!Computed)

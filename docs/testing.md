@@ -4109,7 +4109,9 @@ tested function first, where emulation starts. A case whose C calls a routine
 the freestanding image cannot link (a rounding instruction printed as
 `nearbyint`), or does not define the tested function, is skipped with that
 reason. Every round-trip test runs this way, so compare the failing names of
-two such runs to judge a HighC or HighIR change.
+two such runs to judge a HighC or HighIR change. `NEVERD_SEMANTIC_LLVMC=1`
+does the same with the LLVM-C route's C, the check for an LLVM-C printer
+change.
 The patch-full fixture uses `Codegen::compileForRewrite`, the same rewrite
 backend as patch operations, then compares baseline and transformed code across
 the full 4 x 3 ISA/format grid.
@@ -5578,6 +5580,16 @@ widths, overflowing decimal fields, pointer conversions and multibyte formats
 must not. Both segment and section extents cover each fixture's actual bytes,
 so rejection tests syntax rather than an accidentally truncated mapping.
 
+`SourceFrameFormatBytesOwnTheRuntimeContract`,
+`MissingOrChangedFrameBytesWithdrawFormatAuthority` and
+`FrameFormatsRequireLiveStorageAndEveryReachingByte` in the same target decode
+source stores and calls. Byte/DWORD initialization, matching branch stores and
+an inspected helper filling a missing byte preserve saved-frame evidence.
+Changed or unknown bytes, missing NUL, conflicting branches, released storage,
+runtime home/scratch areas and active return PCs refuse. The same Windows
+grammar applies to image and frame formats. These tests do not establish
+mutable-image formats, handler-memory restoration or native execution.
+
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC
 controls. Wrong providers, delay imports, missing or conflicting import storage,
@@ -5626,7 +5638,7 @@ See the [source patch matrix](source-patching.md).
 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` selects the optional ordinary NeverC
 producer while originals remain compiled by Clang as independent ABI oracles.
 For NeverC 3389.1.5 use
-`--gtest_filter=*/*.*/*_X64:*/*.*/*_ARM64`: its 66 checks cover six supported
+`--gtest_filter=AllTargets/*.*/*_X64:AllTargets/*.*/*_ARM64`: its 66 checks cover six supported
 profiles. This compiler does not implement x86/ARM32; an unfiltered run must
 fail those source cases rather than silently use Clang. The adapter disables
 NeverC's automatic PE default libraries with `-fno-autolink`. The same matrix
@@ -5715,3 +5727,13 @@ Driver write-watch controls independently encode changed-value and repeated same
 `KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.
 
 Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
+
+The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C++ IR, C++ objects, C++ hosted DynCode, noninline helpers/recursion and unsupported C++ rejection. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` runs actual lifetimes and a throwing callback through two hosted frames. The Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.
+
+Native qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) passed all 204 process observations: 36 each on Windows x64/ARM64 and 66 each on Linux x64/ARM64. The public source API produced C++ IR, ordinary objects and C++ hosted DynCode, plus a throwing callback through two NeverC frames. Replay verified the current engine source/submodule digest, original and final bytes, publication receipts and actual native host. macOS ARM64 and Rosetta x64 passed the same three C++ routes and two-frame propagation locally. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) separately passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64.

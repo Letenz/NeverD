@@ -14,6 +14,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <cstdlib>
+#include <set>
 
 namespace {
 
@@ -161,6 +162,54 @@ TEST(ReplacementNativeCode, ExternalPLTReferenceMustBeExactBeforePublication) {
                 TargetVA + Fixup.Addend);
     }
   EXPECT_EQ(Calls, 1u);
+}
+
+TEST(ReplacementNativeCode,
+     AArch64ColonSpecifiersReachLiveAndCapturedResolvers) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("aarch64-source-references", Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "replacement", Module);
+  llvm::IRBuilder<>(llvm::BasicBlock::Create(Context, "entry", Function))
+      .CreateRetVoid();
+  Module.appendModuleInlineAsm(
+      ".text\nadrp x0, :got:external_type\n"
+      "ldr x0, [x0, :got_lo12:external_type]\n"
+      "adrp x1, external_data\nadd x1, x1, :lo12:external_data\n");
+  auto *Personality = llvm::Function::Create(Function->getFunctionType(),
+                                             llvm::GlobalValue::ExternalLinkage,
+                                             "external_personality", Module);
+  new llvm::GlobalVariable(Module, Personality->getType(), false,
+                           llvm::GlobalValue::ExternalLinkage, Personality,
+                           "personality_slot");
+  llvm::IRBuilder<>(Function->getEntryBlock().getTerminator())
+      .CreateCall(Personality);
+  std::set<std::string> Live;
+  auto Compiled = neverd::compileImageForPatch(
+      Module, neverd::Arch::AArch64, neverd::BinaryFormat::ELF, 0x10000,
+      [&](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request)
+          -> std::optional<uint64_t> {
+        Live.insert(Request.SpecifierName.str());
+        if (Request.Symbol == "external_type")
+          return 0x204000;
+        if (Request.Symbol == "external_data")
+          return 0x208007;
+        if (Request.Symbol == "external_personality")
+          return 0x210000;
+        return std::nullopt;
+      },
+      0, {}, neverd::RewriteInputKind::ReplacementIR);
+  ASSERT_TRUE(Compiled.Success);
+  std::set<std::string> Captured;
+  for (const auto &Section : Compiled.Sections)
+    for (const auto &Fixup : Section.FixupReferences)
+      if (llvm::StringRef(Fixup.Symbol).starts_with("external_"))
+        Captured.insert(Fixup.SpecifierName);
+  const std::set<std::string> Expected{"",         "ABS",      "ABS_PAGE",
+                                       "ABS_LO12", "GOT_PAGE", "GOT_LO12"};
+  EXPECT_EQ(Live, Expected);
+  EXPECT_EQ(Captured, Expected);
 }
 
 TEST(ReplacementNativeCode, MachOGOTDataReferenceMustUseTheEndOfItsWord) {

@@ -1793,3 +1793,13 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 يشغّل سير Windows لرقع المصدر أيضًا `scripts/check_source_patch_pe_runtime.py`: ثلاثة أصول و27 بديلًا لـx86/x64/ARM64، ثم 30 ملاحظة تنفيذ لكل معمارية. يعمل x86/x64 على Windows x64 وARM64 على `windows-11-arm`. يجب تطابق الإيداع ومعمارية PE وبصمات الملفات وجميع الحالات. لا يتحقق ملف C هذا من استثناءات C++ على ARM64. يختار `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` وضع NeverC العادي. تغطي فحوص الإصدار 3389.1.5 الـ66 معمارية x64/ARM64 مع ELF وPE وMach-O؛ لا يدعم x86/ARM32 ولا يستبدل المترجم تلقائيًا. يستخدم محوّل PE الخيار `-fno-autolink` وتظل كائنات `.drectve` الخارجية مرفوضة.
 
 تقارن المصفوفة أيضًا إيصالات `target` للكائنات الأصلية المترجمة والمقدمة بقائمة ABI مستقلة. بعد اختبار المدخلات غير السليمة، يجب تثبيت الكائن غير المعدّل وتنفيذه بوصفه حالة ضابطة صالحة.
+
+يضيف `NeverCProfiles/*` ثلاثين اختبارًا لستة ملفات x64/ARM64: C++ IR والكائنات وhosted DynCode والدوال غير المضمنة والتكرار ورفض C++ غير المدعوم. يرفض `NeverDSourcePatchDynCodeTests` البصمات والمداخل والأهداف والحالة والتحقق المزيف. يتحقق `SourcePatchException.NeverC*` من عمليات حقيقية واستثناء يمر بإطارين. يتطلب فاحص Windows تسعة سيناريوهات معدلة وضوابط أصلية وثلاث محاولات وتطابق الجهاز والالتزام والبصمات ومضيف x64/ARM64 أصلي.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+يثبت التحقق الأصلي مراجعة NeverC على `182fd2c5dc` ويستخدم برامج أصلية مترجمة بصورة مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 ملاحظة Windows أصلية لكل معمارية لأعمار كائنات C++ عبر IR والكائنات وhosted، واستثناء يعبر إطارين hosted. ويتطلب `check_source_patch_elf_runtime.py` عدد 66 ملاحظة Linux أصلية لكل معمارية لـ C++ عبر IR والكائنات وhosted وانتقال استثناءات hosted وتسعة سيناريوهات Clang. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية. تثبت هذه الفحوص مخرجات مترجم حقيقية ولا تدعي تشغيل برنامج NeverC التنفيذي على مضيف CI.
+
+نجح التحقق الأصلي [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) في الملاحظات الـ204 كلها: 36 لكل معمارية Windows x64/ARM64 و66 لكل معمارية Linux x64/ARM64. أنتجت واجهة المصدر العامة C++ IR وكائنات عادية وC++ hosted DynCode، واستثناء يعبر إطارين NeverC. يتحقق الإعادة من بصمات المصدر والوحدات الفرعية الحالية والبايتات الأصلية والنهائية والإيصالات والمضيف الأصلي الفعلي. نجحت أيضًا مسارات C++ الثلاثة والانتقال المحلي على macOS ARM64 وRosetta x64. ونجح Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) بصورة منفصلة في تسعة سيناريوهات وضوابطها، بمجموع 36 ملاحظة لكل معمارية Windows x64/ARM64.

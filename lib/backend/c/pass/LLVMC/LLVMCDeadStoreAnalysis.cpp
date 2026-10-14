@@ -14,6 +14,8 @@
 
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
@@ -81,6 +83,7 @@ void analyzeDeadFrameStores(LLVMCAnalysisState &State, llvm::Function &Fn) {
   State.FramePointerLocations.clear();
   State.RawFrameLocations.clear();
   State.RawFrameAllocas.clear();
+  State.FrameEscapes.clear();
 
   const llvm::Module *Mod = Fn.getParent();
   if (!Mod)
@@ -93,6 +96,83 @@ void analyzeDeadFrameStores(LLVMCAnalysisState &State, llvm::Function &Fn) {
       if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
         if (const llvm::AllocaInst *Slot = asAlloca(SI->getPointerOperand()))
           Stores[Slot].push_back(SI->getValueOperand());
+
+  // A frame address passed to a call or stored to memory lets its consumer
+  // read and write past every slot this function accesses. A returned one
+  // outlives the frame, so nobody reads the bytes through it.
+  auto NoteEscape = [&](const llvm::Value *V, const llvm::Instruction &User,
+                        unsigned Operand) {
+    const FrameAliases Aliases = peelSyntheticFrames(V, Stores, DL);
+    if (Aliases.Frames.empty())
+      return;
+    LLVMCAnalysisState::FrameAddressEscape Escape;
+    Escape.User = &User;
+    Escape.Operand = Operand;
+    Escape.Locations = Aliases.Locations;
+    if (Aliases.Incomplete)
+      Escape.UnresolvedFrames = Aliases.Frames;
+    State.FrameEscapes.push_back(std::move(Escape));
+  };
+  // The last call in each block that may read memory: one that never got a
+  // frame address can still read through a pointer an earlier callee kept.
+  std::map<const llvm::BasicBlock *, const llvm::Instruction *> LastReadingCall;
+  for (auto &BB : Fn) {
+    for (auto &Inst : BB) {
+      if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+        if (llvm::isa<llvm::DbgInfoIntrinsic>(CB) || CB->isLifetimeStartOrEnd())
+          continue;
+        if (CB->mayReadFromMemory())
+          LastReadingCall[&BB] = CB;
+        for (unsigned I = 0; I < CB->arg_size(); ++I)
+          NoteEscape(CB->getArgOperand(I), *CB, I);
+      } else if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
+        // A scalar carrier hands the address to its reloads, which the alias
+        // walk follows to their uses.
+        const llvm::AllocaInst *Slot = asAlloca(SI->getPointerOperand());
+        if (!Slot || isSyntheticFrameAlloca(Slot))
+          NoteEscape(SI->getValueOperand(), *SI, 0);
+      } else if (const auto *RMW = llvm::dyn_cast<llvm::AtomicRMWInst>(&Inst)) {
+        NoteEscape(RMW->getValOperand(), *RMW, 0);
+      } else if (const auto *CX =
+                     llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&Inst)) {
+        NoteEscape(CX->getNewValOperand(), *CX, 0);
+      }
+    }
+  }
+  std::set<const llvm::AllocaInst *> AddressedFrames;
+  for (const auto &Escape : State.FrameEscapes) {
+    for (const FrameLocation &Loc : Escape.Locations)
+      AddressedFrames.insert(Loc.first);
+    AddressedFrames.insert(Escape.UnresolvedFrames.begin(),
+                           Escape.UnresolvedFrames.end());
+  }
+  // Blocks from which a reading call may still run.
+  std::set<const llvm::BasicBlock *> ReachCalls;
+  {
+    std::vector<const llvm::BasicBlock *> Work;
+    for (const auto &[Block, Call] : LastReadingCall) {
+      (void)Call;
+      ReachCalls.insert(Block);
+      Work.push_back(Block);
+    }
+    while (!Work.empty()) {
+      const llvm::BasicBlock *Block = Work.back();
+      Work.pop_back();
+      for (const llvm::BasicBlock *Pred : llvm::predecessors(Block))
+        if (ReachCalls.insert(Pred).second)
+          Work.push_back(Pred);
+    }
+  }
+  auto CallMayReadAfter = [&](const llvm::Instruction &Store) {
+    const llvm::BasicBlock *Block = Store.getParent();
+    if (const auto Last = LastReadingCall.find(Block);
+        Last != LastReadingCall.end() && Store.comesBefore(Last->second))
+      return true;
+    return llvm::any_of(llvm::successors(Block),
+                        [&](const llvm::BasicBlock *Next) {
+                          return ReachCalls.count(Next) != 0;
+                        });
+  };
 
   std::set<std::pair<const llvm::AllocaInst *, int64_t>> LiveSlots;
   std::set<std::pair<const llvm::AllocaInst *, int64_t>> DirectLive;
@@ -344,6 +424,11 @@ void analyzeDeadFrameStores(LLVMCAnalysisState &State, llvm::Function &Fn) {
           Dead = AllDead || AllZeroSpillsDead;
         }
       }
+      // A callee given the frame's address may read the bytes later.
+      if (Dead && llvm::any_of(Dest.Locations, [&](const FrameLocation &Loc) {
+            return AddressedFrames.count(Loc.first) != 0;
+          }))
+        Dead = !CallMayReadAfter(*SI);
       if (Dead)
         State.DeadFrameStores.insert(SI);
     }

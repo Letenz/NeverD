@@ -21,6 +21,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd {
 
@@ -38,6 +39,18 @@ struct LLVMCAnalysisState {
   /// Memory inline asm can observe a span beyond a single argument offset.
   /// Keep the complete allocation as one object, including indexed accesses.
   std::set<const llvm::AllocaInst *> RawFrameAllocas;
+  /// A frame address passed to a call or stored to memory. Its consumer may
+  /// reach bytes beyond any access the function makes itself.
+  struct FrameAddressEscape {
+    /// The call, store or atomic operation that passes it on.
+    const llvm::Instruction *User = nullptr;
+    /// The call argument it is, for a call.
+    unsigned Operand = 0;
+    std::set<std::pair<const llvm::AllocaInst *, int64_t>> Locations;
+    /// Frames it may point into at an offset no proof resolves.
+    std::set<const llvm::AllocaInst *> UnresolvedFrames;
+  };
+  std::vector<FrameAddressEscape> FrameEscapes;
   std::set<const llvm::Value *> Inlinable;
   std::map<const llvm::Value *, const llvm::Value *> ForwardedLoads;
 

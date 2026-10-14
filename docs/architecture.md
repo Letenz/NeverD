@@ -22,7 +22,7 @@ See [source patches](source-patching.md).
 `COFFSourceImage` owns installation of compiler-produced PE output on x86,
 x64, ARM32 and ARM64: separate code/state/metadata permissions, retained
 original runtime rows, new base relocations, exact compiler function/funclet
-ranges and bounded x64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
+ranges and bounded x64/ARM64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
 evidence and native base-relocation fields. `MachOPatchObject` authenticates
 native linker atoms and unwind records; format-owned native installers register
 DWARF/compact records without inventing MC tokens. `sourcePatchTargetTriple`
@@ -30,6 +30,10 @@ selects ARM mode, ELF float ABI and Mach-O CPU subtype from the loaded image. Th
 publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
+
+`SourcePatchCompiler` composes NeverC `cpp-core-v2` translation and C23 generation; `validateDynCodePatchImage` binds the hosted audit to actual object/payload hashes and exact linked code/entry layout. Format installers register real compiler unwind records. ARM64 source FH3 uses loader-owned xdata extents and MC-owned funclet/FuncInfo groups. Native compact records may cover every Mach-O function when the original has no DWARF section.
+
+`CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
 
 ## Manual PDB presentation boundary
 
@@ -183,15 +187,32 @@ entry; an unmapped instruction reports the missing source mapping.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
-exception runtime. The C++ printer uses the shared symbol spelling rules for
-namespaces, STL aliases and qualified ATL types; non-default template arguments
-and explicit ABI arguments remain visible. DWARF record identities supply type
-spellings, not guessed layouts or implicit member-call conventions. The GUI
-offers a separate C choice for non-C images and omits it when only C is offered.
+exception runtime, and a function whose own exception personality is a C++
+runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
+spelling rules for namespaces, STL aliases and qualified ATL types; non-default
+template arguments and explicit ABI arguments remain visible. DWARF record
+identities supply type spellings, not guessed layouts or implicit member-call
+conventions. The GUI offers a separate C choice for non-C images and omits it
+when only C is offered.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
 tables; it is not a portable implementation of that unwinder.
+
+C++ spells every exception construct in standard syntax. An object's unwind
+action (an MSVC state's cleanup, an Itanium pad's destructors) is a
+`try { … } catch (...) { cleanup; throw; }` scope over the IPs where the
+object is live, nested by the state tree, so a handler runs after the cleanups
+of the objects its try contained and only for objects that were constructed.
+This differs from the runtime only where no handler exists at all: the runtime
+may then terminate without running the cleanups. An Itanium region's clauses
+take their bodies from the landing pad, as the pad runs for each clause's
+selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
+parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
+cannot follow exactly, or that also dispatches an enclosing try's clause,
+keeps the region in its commented form with the pad in place. In C, every
+landing pad of the call-site table keeps its label, so a pad that only runs
+cleanups is not read as dead code after a return.
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
@@ -1322,6 +1343,22 @@ exact offset only when an authenticated entry-SP definition and the target
 ABI's guaranteed alignment prove every discarded bit. Binary lift and patch
 keep the original operation. The LLVM-to-C route explicitly requests this
 source projection even though it otherwise uses the direct LLVM pipeline.
+
+The same source projection marks prologue saves: a store of a callee-saved
+register's entry value (`push rbx`, an AArch64 `stp`, MSVC's `mov [rsp+8],
+rbx` into a Win64 home slot) whose bytes nothing reads but that register's
+unused restore, and no other store writes. Both source routes leave a marked
+store out, as a C function leaves its caller's registers alone, so the
+prologue neither prints the caller's register as a stale value nor keeps a
+frame in byte storage. The MedIR text view shows the mark. Operations keep
+their positions, because call records index them. A save read for anything
+else stays a store, and binary lift and patch never mark one. On x86 the
+projection also marks a pointer-width load of the slot at the entry stack
+pointer, in a called function whose stores never write that slot: it reads
+the return address the call pushed. HighC prints it as
+`__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
+Neither view gives the frame a slot holding that address, so the read would
+otherwise print as an unassigned local or a zero.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -5399,12 +5436,22 @@ Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
 rechecks the same dependencies. Writable formats and opaque calls retain their
 refusal, so this contract does not yet close the x64 xcpt4 case.
 
-`pipeline/Windows/SEHRuntimeFormat` owns a scalar subset of the
+`low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
 for this memory proof. Positional syntax, foreign length/flag extensions, dynamic
 widths, overflowing numeric fields and multibyte formats supply no authority.
 This bounded ASCII subset is independent of Darwin/Objective-C source type
 hints; immutable bytes and current runtime arguments are still required.
+
+`pipeline/Windows/SEHRuntimeFormat` authenticates image storage;
+`low/X86/SEHFrameFormat` additionally accepts live frame formats whose complete
+bytes through NUL come from decoded scalar stores. The common frame state
+intersects these byte facts across every predecessor and inspected callee
+return. Partial or unknown writes, released storage and opaque calls withdraw
+them. Runtime home/scratch areas and active return PCs cannot supply format
+storage. No initial stack contents or writable image bytes receive authority
+from their file values. These byte facts do not restore memory at a language
+handler entry or complete the x64 xcpt4 exception-activation proof.
 
 Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
 UCRT import binding, an unescaped frame and a constant exception-mask subset
