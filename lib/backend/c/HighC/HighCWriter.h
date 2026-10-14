@@ -963,6 +963,11 @@ public:
     unsigned MinStoreSize = 0;
   };
   std::map<int64_t, NamedFrameSlot> FrameSlots;
+  /// A frame address escapes: it is a value the function computes with,
+  /// stores or passes, or a run-time choice picks frame bytes.  The frame is
+  /// then one object, and a pointer derived from that address may reach
+  /// every slot, not only the one whose address it took.
+  bool FrameAddressEscapes = false;
   /// Slot identity retained for value forwarding and catch-object recovery
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;
