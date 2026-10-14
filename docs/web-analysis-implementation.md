@@ -3985,3 +3985,29 @@ The task's fixture server and tunnel are stopped. Its temporary repository
 Secret is confirmed absent, and the local token/header files are removed.
 The immutable archive and qualification reports remain in persistent storage;
 no permanent public fixture endpoint is claimed.
+
+### Permanent corpus Release and automatic qualification (2026-10-14)
+
+The [fixed corpus Release](https://github.com/NeverSight/NeverD/releases/tag/web-producer-corpus-2026-10-13)
+now publishes the unchanged 1,251,173,226-byte archive. GitHub's uploaded asset
+digest equals the qualified SHA-256
+`7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+Its matching source companion is 241,067,203 bytes with SHA-256
+`48dd3c177dcae0fcdb9378d38beb70ecc1813b0dd3de7fb3126b2c69d6233048`.
+It includes full Bun application source, the 7,990 original corresponding
+JSCOnly library/build/license files, 21 native source archives, all 181 Cargo
+registry archives checked against the original lock, ICU source and original
+runtime/dependency/recorder notices. Source archive hashes, a rebuild guide,
+the exact earlier qualified-ref receipt and both JUnit reports are independent
+Release assets. Historical corpus bytes/manifests remain unchanged.
+
+The combined lane defaults to this public URL, digest and fixed snapshot
+witness. `web-qualification-ci.yml` calls the same complete gate automatically
+for affected Web/transport/build changes on `dev` and pull requests. Explicit
+invalid overrides still fail preflight; the public default requires no corpus
+Secret. The producer lane retains the correct owning CTest `LastTest.log` path.
+Corpus releases skip the unrelated Python SDK publication lane. Actionlint and
+the SDK delivery-policy audit pass. This change establishes permanent public
+fixture distribution and the automatic caller; a new remote receipt still
+needs to qualify its selected integrated ref before extending the earlier
+`8c1f4ac03` test result.
