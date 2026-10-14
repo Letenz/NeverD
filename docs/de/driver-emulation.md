@@ -363,6 +363,7 @@ Das anfängliche API-Modell besitzt bewusst einen begrenzten Vertrag:
 | APIs | Modelliertes Verhalten und Einschränkungen |
 |------|-------------------------------------------|
 | `RtlInitUnicodeString` | Erstellt eine Gast-`UNICODE_STRING` für eine begrenzte NUL-terminierte Quelle |
+| `RtlGetVersion` | Explizite checked-x64-Abfrage der Basisversion ohne Host-Standardwerte. Format 276 verlangt ein vollständig genulltes CSD; das optionale Nullformat benötigt einen echten 20-Byte-Puffer. Erweiterungen werden abgelehnt, Abhängigkeiten bleiben erhalten. |
 | `RtlCopyUnicodeString`, `RtlCompareUnicodeString`, `RtlEqualUnicodeString` | Längengezähltes UTF-16-Kopieren und Vergleich unter Beachtung der Groß-/Kleinschreibung; Vergleich ohne Beachtung der Groß-/Kleinschreibung benötigt eine Windows-Tabelle zur Groß-/Kleinschreibung und stoppt |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | Gast-C-`__except`, echte Filter und Unwind-`__finally`; keine normale API-Rückkehr |
 | `ExAllocatePool2` | Auslagerbare/nicht auslagerbare NX-Allokationen, standardmäßig genullt; Flags für nicht initialisierte und cacheausgerichtete Allokationen modelliert; ungültige erforderliche Flags liefern NULL, Quota-/ausführbare Pools und ausgelöste Allokationsausnahmen stoppen |
@@ -490,7 +491,7 @@ Basisverschiebung an; ohne dieses Feld oder mit `"0x0"` gilt die bevorzugte
 Adresse. Das Image muss die Relokationsanforderungen erfüllen. Der ursprüngliche
 Initialisierungsbefehl und die C-API implizieren kein Szenario.
 
-An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
+An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
 erlaubt. Gewöhnliche Dateianforderungen akzeptieren `kind`, optional `device` oder `device_id` (gegenseitig exklusiv) und optional `file`. IOCTLs benötigen `code` und akzeptieren `input`, `output_size` und
 `direct_input`. Ein `read` akzeptiert `output_size` und `byte_offset`; ein
 `write` akzeptiert `input` und `byte_offset`. Offsets sind standardmäßig null,
@@ -870,6 +871,12 @@ Das feste Treiberprofil deaktiviert CET-Schattenstapel. Kanonische `RDSSPD`- und
 ## Deklarierte Loader-Ansicht
 
 Die Option `loader_view` deklariert eine konkrete Diagnoseumgebung, etwa `{"version":1,"flags":0,"evidence":"fixture declaration"}`. Alle drei Felder sind erforderlich: `flags` ist eine vorzeichenlose 32-Bit-Ganzzahl, auch null muss angegeben werden; `evidence` ist eine vom Aufrufer gelieferte Bezeichnung aus 1–256 druckbaren ASCII-Bytes, kein authentifizierter Nachweis. Version 1 bezeichnet das simulierte Layout, keine Windows-Version. Unbekannte Felder und ungültige Deklarationen werden vor der Modellspeicherbelegung abgewiesen. Ohne Option bleibt `DriverSection` undurchsichtig und es entsteht kein Berichtsfeld. Die vollständige Deklaration steht in `configuration.loader_view`.
+
+`version_query`: `{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`. erforderliche Deklaration: `version`, `build_number` (0–65535), `evidence` (1–256 ASCII). `allow_zero_size`: false. Schreibt nur major=10, minor=0, den deklarierten Build und platform=2 nach [4,20); alle anderen Bytes bleiben erhalten. Version 1 bezeichnet diesen Algorithmus, keine authentifizierte Windows-Implementierung. Es werden keine Hostwerte abgeleitet.
+
+Erfordert checked-x64 und PASSIVE_LEVEL. Größe 276 verlangt ein vollständig genulltes CSD. Das separat aktivierte Nullformat greift nur auf 20 Bytes zu und ist nicht portable Kompatibilität. Größen 284/292 und andere, nicht null gesetztes CSD, ungültiges RAM oder Rechte werden vor Ausgaben abgelehnt; gemeinsame Objektschutzprüfungen gelten weiter. Auch ungenutzte Deklarationen behalten eine nicht rekonstruierte Umgebungsabhängigkeit und liefern keine symbolische Annahme, Zeigeranordnung oder native Wiederherstellungsprüfung. `configuration.version_query`. [RtlGetVersion](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion), [CSD](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow).
+
+Der Abfragepuffer muss im Kerneladressbereich des Profils liegen. Während dieses API-Aufrufs bei angehaltener CPU darf jedes verwendete RAM-Byte im aktuellen Adressraum genau eine virtuelle Abbildung besitzen. Benutzerpuffer und jede zweite Abbildung, auch schreibgeschützte oder unzugängliche Aliase, werden vor der Ausgabe abgelehnt. Diese konservative Zulassungsregel leitet aus hohen Adressen keine Eigentümerschaft ab; gemeinsame Objektprüfungen gelten weiterhin.
 
 Der geliehene Datensatz mit 160 Bytes gibt nur `DllBase` (Offset 48, 8 Bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) und `Flags` (104, 4) frei. Die ersten drei Werte stammen aus dem geladenen, gegebenenfalls verschobenen Image; Flag-Bedeutungen werden nicht abgeleitet. Teilzugriffe innerhalb dieser Lesebereiche sind erlaubt. Unbekannte Bytes, übergreifende Zugriffe und alle Schreibzugriffe werden auch über Kopierdienste oder MDL-Aliase abgewiesen. `DriverObject.Flags` bleibt undurchsichtig. Die Ansicht gilt während des simulierten Lebenszyklus und erhält auch ungenutzt eine nicht rekonstruierte Umgebungsabhängigkeit. Sie begründet weder symbolische Konstanten noch native Laufzeitwiederherstellung.
 

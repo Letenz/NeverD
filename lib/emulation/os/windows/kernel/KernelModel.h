@@ -851,6 +851,8 @@ private:
   bool EntryFinished = false;
   std::optional<std::map<uint64_t, std::vector<uint8_t>>> UnpackBaseline;
   bool UnpackOpaqueEffects = false;
+  std::optional<DriverVersionQuery> VersionQuery;
+  llvm::Expected<uint64_t> queryVersion(uint64_t Address);
   // Admission conservatively records reads that can expose model PFNs,
   // including reads performed by modeled copy/compare services.
   mutable bool UnpackMDLIdentityRead = false;

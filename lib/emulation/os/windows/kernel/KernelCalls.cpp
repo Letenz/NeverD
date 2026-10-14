@@ -147,6 +147,8 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::ZwQuerySystemInformation:
     return querySystemInformation(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
+  case KernelAPIKind::RtlGetVersion:
+    return queryVersion(A[0]);
   case KernelAPIKind::PsGetCurrentProcessId:
     if (auto Context = executionProcessContext())
       return uint64_t(Context->CreatingProcessID);

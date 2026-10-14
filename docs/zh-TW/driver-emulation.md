@@ -323,6 +323,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | API | 建模行為與限制 |
 |-----|----------------|
 | `RtlInitUnicodeString` | 根據有界且以 NUL 結尾的來源字串建立客體 `UNICODE_STRING` |
+| `RtlGetVersion` | 明確的 checked-x64 基礎版本查詢，不採用主機版本預設值。需要 `version_query`；長度 276 的記錄必須預先清零整個 CSD 陣列。零長度相容行為需單獨啟用並提供實際 20 位元組緩衝區。擴充長度與未宣告查詢明確停止，保留環境相依。 |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 計數式 UTF-16 複製及區分大小寫的比較；不區分大小寫的比較需要 Windows 大小寫對照表，因此會停止 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
@@ -414,7 +415,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 選用根欄位 `"load_address": "0x190000000"` 請求變更載入基底位址；省略此欄位或指定 `"0x0"` 時使用慣用位址。映像必須滿足重新定位需求。原有的初始化命令或 C API 不會隱含執行任何請求情境。
 
-根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
+根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
 
 僅 READ／WRITE／IOCTL 請求接受選用欄位 `cancel_after_100ns`，它必須是 0 到 `INT64_MAX`（9223372036854775807）之間的 JSON 整數。此值相對於請求提交時刻，以虛擬 100 ns 為單位，並非實際時間。對 KMDF，零表示框架路由後、客體 I/O 回呼前觸發取消；若路由已直接完成請求，則完成優先。對 WDM，零在派送傳回後生效。正數延遲僅在沒有就緒回呼或執行框架時，隨時間推進至計時器、等待或取消期限而觸發。掛起的 WDM IRP 會在持有取消自旋鎖的 `DISPATCH_LEVEL` 呼叫已註冊的取消常式；常式必須使用 `Irp->CancelIrql` 釋放鎖後再完成請求。一般佇列與 PnP 取消仍不支援。每個請求報告都包含 `cancel_requested_at_100ns`，值為取消實際發生時的絕對虛擬時間；若未發生取消，包括完成先發生的情況，則為 null。請求取消本身不會完成 IRP，也不規定最終狀態。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 與 `IoCancelIrp` 共用相同的 IRP 狀態及取消自旋鎖；`IoCancelIrp` 同步呼叫已註冊常式，並傳回是否實際呼叫。
@@ -610,6 +611,12 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 ## 宣告的載入記錄檢視
 
 可選的 `loader_view` 宣告具體診斷環境，例如 `{"version":1,"flags":0,"evidence":"fixture declaration"}`。三個欄位皆必填；`flags` 為無號 32 位元整數，零也必須明確提供；`evidence` 是呼叫方提供的 1–256 位元組可列印 ASCII 標籤，並非經過認證的證據。版本 1 指模擬配置，不代表 Windows 版本。未知欄位或無效宣告會在模型配置記憶體前拒絕。省略時 `DriverSection` 保持不透明，報告不增加該欄位；提供時完整保留於 `configuration.loader_view`。
+
+可選 `version_query` 選擇具體診斷演算法：`{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`。`version`、`build_number`（0–65535，包含明確的零）及 `evidence`（1–256 個可列印 ASCII 位元組）必填；`allow_zero_size` 預設為 false。版本 1 僅在 [4,20) 寫入主版本 10、次版本 0、宣告的組建號及平台 2，其餘位元組不變。此版本識別演算法，不認證 Windows 實作，也不從主機推斷數值。
+
+`RtlGetVersion` 需要 `checked-x64` 與 PASSIVE_LEVEL。基礎記錄長度必須為 276，整個 CSD 陣列已清零；另行啟用的零長度形式只存取 20 位元組，屬非通用相容行為。長度 284/292、其他長度、非零 CSD、無效 RAM 或權限均在寫入前拒絕，共用物件守衛同樣適用。未使用的宣告也保留尚未重建的環境相依，不提供符號假設、指標配置或原生恢復證明。報告保留 `configuration.version_query`。參見 [API 契約](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion) 與[基礎記錄初始化](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow)。
+
+查詢緩衝區必須位於此執行設定的核心位址範圍；在本次停止 CPU 執行的 API 操作期間，每個存取的 RAM 位元組在目前位址空間只能有一個虛擬對映。使用者緩衝區及任何第二對映（包括唯讀或不可存取別名）均在輸出前拒絕。這是保守的准入限制，不依高位址推斷所有權，共用物件存取檢查仍然適用。
 
 借用的 160 位元組記錄僅開放 `DllBase`（位移 48，8 位元組）、`EntryPoint`（56，8）、`SizeOfImage`（64，4）及 `Flags`（104，4）。前三項來自實際載入映像，包含重定位後的值；不推斷旗標位元意義。允許這些範圍內的部分讀取；未知位元組、跨越未知範圍的存取與所有寫入皆遭拒絕，複製服務或 MDL 別名也無法繞過。`DriverObject.Flags` 仍不透明。檢視貫穿模擬生命週期，即使未讀取也保留未重建的環境相依性，不授予符號常數或原生執行階段還原權限。
 
