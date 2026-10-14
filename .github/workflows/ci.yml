@@ -2497,7 +2497,6 @@ jobs:
             --output build-windows-eh/evidence/eh4-gs-cookie-runtime \
             --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Execute reconstructed SEH3 and EH4 source through both CLI modes and rebasing
-        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         run: |
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*:RegistrationEntryABI.InputPE32*:RegistrationRelift.InputPE32* \

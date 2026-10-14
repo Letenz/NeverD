@@ -5608,16 +5608,21 @@ cycle, far jump or unavailable source bytes supply no continuation authority.
 A CALL and its tail jump may occupy the same LowIR block; that tail must contain
 only the matching authenticated branch, without additional register or memory
 effects. The physical return PC remains before the jump.
+CFG formation partitions the physical return PC of an owned finally CALL for
+both EH3 and EH4, including GS-protected EH4. The EH3 jump-runtime matcher
+remains separate from this common near-CALL rule.
 `RegistrationStateSEHExit` distinguishes each ordinary call from runtime
 activations. An inspected near return restores its caller's stack; an inspected
 parent jump must restore the actual SavedESP and reach ordinary parent code or a
 checked except body. A load into a temporary followed by a copy into ESP binds
 the exact adjacent producer in the same instruction, including the source slot,
 width and micro-operation identity. Budget exhaustion withdraws invocation-exit
-completeness and any previously published exits. These are source-analysis
-receipts. CFG/SSA continuation
-consumers and native replacement receipts remain required; the native emitter
-refuses the new physical invocation exits until those obligations are complete.
+completeness and any previously published exits. Native lowering and independent
+source replay share `X86RegistrationSEHControl` to bind ordinary near returns
+to their exact callback, CALL and continuation block. Outlining replaces these
+with the callback's C return ABI; source-segment validation requires an actual
+return at that generated exit. Nonlocal parent jumps and jump-buffer resumptions
+still require their own CFG/SSA projection and native replacement receipts.
 The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
 effects.
 

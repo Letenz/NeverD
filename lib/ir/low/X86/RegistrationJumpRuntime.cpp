@@ -135,31 +135,4 @@ bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
              Binding->Target;
 }
 
-bool isEH3FinallyCallInstruction(const BinaryImage &Image,
-                                 const RegistrationChainInfo &Chain,
-                                 va_t Address, uint16_t Size,
-                                 llvm::ArrayRef<LowOp> Ops) {
-  if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
-      Image.Format != BinaryFormat::COFF || Size != 5 ||
-      Address > UINT32_MAX - Size)
-    return false;
-  const LowOp *Call = nullptr;
-  for (const auto &Op : Ops)
-    if (Op.Opcode == NdOp::CALL) {
-      if (Call || Op.Addr != Address || Op.NumInputs != 1 ||
-          !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
-        return false;
-      Call = &Op;
-    }
-  if (!Call || !llvm::any_of(Chain.Scopes, [&](const auto &Scope) {
-        return Scope.IsFinally && Scope.HandlerVA == Call->Inputs[0].Offset;
-      }))
-    return false;
-  const auto Bytes = readImmutableCodeBytes(Image, Address, Size);
-  return Bytes && (*Bytes)[0] == 0xe8 &&
-         uint32_t(Address + Size +
-                  int64_t(readLE<int32_t>(Bytes->data() + 1))) ==
-             Call->Inputs[0].Offset;
-}
-
 } // namespace neverd::registration_state
