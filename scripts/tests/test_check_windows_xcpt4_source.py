@@ -23,6 +23,25 @@ class XCPT4SourceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_runtime({"exit_code": 1, "stdout": output})
 
+    def test_runtime_rejects_wine_crashes_even_after_all_cases_pass(self):
+        output = ("Start of exception test\n"
+                  + "".join(f"    test{i}...succeeded\n" for i in range(1, 91))
+                  + "End of exception test\n")
+        for stream in ("stdout", "stderr"):
+            for diagnostic in (
+                    "wine: Unhandled exception 0xc0000091, starting debugger...",
+                    "Unhandled exception: floating point overflow in 32-bit code",
+                    "Unhandled page fault on read access at address 00000000"):
+                result = {"exit_code": 0, "stdout": output, "stderr": ""}
+                result[stream] += diagnostic + "\n"
+                with self.subTest(stream=stream, diagnostic=diagnostic), \
+                        self.assertRaises(ValueError):
+                    check_runtime(result)
+        self.assertEqual(check_runtime({
+            "exit_code": 0, "stdout": output,
+            "stderr": "wine: configuration has been updated.\n"}),
+            {"passed": 90, "skipped": []})
+
     def test_source_needs_the_main_body_and_explicit_frame_limitation(self):
         source = """/* neverd.analysis-only: recovered Windows SEH/C++ */
 /* code=[0x140001500, 0x14000392D), seh.scope[0], gs.cookie_offset=8

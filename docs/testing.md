@@ -5699,7 +5699,10 @@ python scripts/check_windows_xcpt4_source.py --neverd build-release/bin/neverd \
 
 The script accepts `wine`, `wine64` or `wine64-stable` (or `--wine`), uses an
 isolated 64-bit prefix and checks all 90 reported cases even when the EXE exits
-zero. The x64 fixture reports 89 successes and one explicit skip: test 29's
+zero. An unhandled exception or page fault on either output stream rejects the
+observation, including when Wine's debugger returns zero after all cases print
+success. Routine Wine prefix diagnostics are allowed. The x64 fixture reports
+89 successes and one explicit skip: test 29's
 alignment check is compiled only for ARM. Unexpected skips fail. It then runs
 the original source CLI and checks main's body, language/GS
 metadata and explicit unresolved-frame annotation. JSON keeps original runtime
@@ -5707,6 +5710,20 @@ and source-analysis results separate. Neither successful original execution
 nor readable source is evidence that a replacement PE can execute. The Windows
 EH CI lane runs this check and the full analysis matrix; source/patch refusal
 and saved-slot overwrite controls remain required independently.
+
+The pinned VS2019 PE32 GS/O2 xcpt4 fixture has five compile-time skips: test 29
+requires ARM alignment handling, tests 58/61 require x64 nested-finally support,
+and tests 87/89 exclude i386. Its original-runtime baseline therefore requires
+85 successes, those five skips and no unhandled exception. Wine 9's built-in
+UCRT can report a floating-point overflow while restoring `_controlfp_s` state
+even though all 90 case reports appear and the launcher returns zero. For a
+local comparison, use a dedicated `WINEARCH=win32` prefix with the Windows SDK's
+x86 redistributable `ucrtbase.dll` in that prefix's `drive_c/windows/system32`,
+and `WINEDLLOVERRIDES='ucrtbase=n'`. A `WINEDEBUG=-all,+loaddll` observation must
+show that UCRT loaded as native. Preserve the original image hash, SDK version,
+DLL hash, all case results and both output streams. This setup passes the
+original PE32 fixture with Wine 9; it does not establish reconstructed-image
+equivalence or replace native Windows replay.
 
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC
@@ -5717,7 +5734,8 @@ frame identities, while malformed effects and GPR outputs (including R8 and
 APX R16) do not. The shared PE32 floating-state tests cover the same policy.
 Adding unproved language callbacks withdraws the Win64 FP preservation result.
 These contracts leave the PE64 xcpt4 writable-format and runtime-activation
-proofs open; passing these tests alone does not satisfy issue #858.
+proofs open. Their native reconstruction coverage is separate from #858's
+source-analysis acceptance above.
 
 `RegistrationState.OrdinaryFinallyReturnsItsCheckedFrameEffects` checks actual
 ordinary finally returns, private push/pop storage, incoming register values,
