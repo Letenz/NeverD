@@ -188,7 +188,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$arch Windows process execution failed" }
           }
 
-      - name: Prepare NeverC and Clang ELF images for native Linux execution
+      - name: Prepare NeverC C and Clang/GCC C++ ELF images for native Linux execution
         shell: pwsh
         run: |
           python scripts/check_source_patch_elf_runtime.py prepare `
