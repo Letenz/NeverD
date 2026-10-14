@@ -88,8 +88,25 @@ protected:
             Entry + "(Values[I]) != ref_" + Entry +
             "(Values[I]))\n      return 1;\n  return 0;\n}\n";
     const auto HostSource = tmpFile("host.c");
+    const auto ReferenceSource = tmpFile("reference.c");
+    const auto ReferenceObject = tmpFile("reference.o");
     const auto Program = tmpFile("host.exe");
-    std::ofstream(HostSource) << C << "\n" << Reference << "\n" << Main;
+    std::ofstream(ReferenceSource) << Reference;
+    std::ofstream(HostSource) << C << "\nextern int ref_" << Entry << "(int);\n"
+                              << Main;
+    // Keep the source oracle independent of optimized generated C. Besides
+    // preventing cross-copy optimization, this avoids making both sides
+    // depend on host optimizer defects (e.g. a mis-reassociated, unrolled
+    // subtraction recurrence). The actual target kernel still uses the
+    // requested optimization level above.
+    std::vector<std::string> ReferenceArgs = {"-std=gnu11", "-O0",
+                                              "-fno-strict-aliasing"};
+    ReferenceArgs.insert(ReferenceArgs.end(), HostFlags.begin(),
+                         HostFlags.end());
+    ReferenceArgs.insert(ReferenceArgs.end(), {"-c", ReferenceSource.string(),
+                                               "-o", ReferenceObject.string()});
+    const auto ReferenceBuilt = exec(NEVERD_TEST_CLANG, ReferenceArgs);
+    ASSERT_EQ(ReferenceBuilt.exitCode, 0) << ReferenceBuilt.err;
     // The C reads and writes scalars through plain pointer casts, which its
     // header says to build with -fno-strict-aliasing, as the semantic grid
     // does.
@@ -97,7 +114,8 @@ protected:
                                          "-fno-strict-aliasing"};
     HostArgs.insert(HostArgs.end(), HostFlags.begin(), HostFlags.end());
     HostArgs.insert(HostArgs.end(),
-                    {HostSource.string(), "-o", Program.string()});
+                    {HostSource.string(), ReferenceObject.string(), "-o",
+                     Program.string()});
     const auto Built = exec(NEVERD_TEST_CLANG, HostArgs);
     ASSERT_EQ(Built.exitCode, 0) << Built.err << "\n" << C;
     EXPECT_EQ(exec(Program.string(), {}).exitCode, 0) << C;
