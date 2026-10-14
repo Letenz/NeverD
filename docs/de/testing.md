@@ -1909,3 +1909,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+Das native Profil verlangt außerdem die LLVM-C-Prüfungen breiter Ganzzahlkonstanten und ihrer Speicherzugriffe sowie die native Ausführung synthetisierter i386-Tabellen. Swift-Signalbeobachter verwenden unabhängigen Rohspeicher und prüfen bei beiden Optimierungsstufen positive Kontrollen sowie getrennte negative Kontrollen für vorzeitige Zustands- und Ergebnisschreibzugriffe. Das Lesen einer aktiven Swift-`inout`-Variablen im Signalhandler würde eine Exklusivitätsverletzung auslösen und die Ausnahmebeobachtung ungültig machen.

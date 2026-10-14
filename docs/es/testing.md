@@ -1894,3 +1894,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+El perfil nativo también exige las pruebas LLVM-C de constantes y escrituras de enteros anchos y la ejecución nativa de tablas sintetizadas i386. Los observadores de señales Swift usan almacenamiento bruto independiente, con controles positivos y negativos separados para las escrituras prematuras del estado y del resultado en ambos niveles de optimización. Leer una variable Swift `inout` activa desde el manejador provocaría una infracción de exclusividad e invalidaría la observación de la excepción.

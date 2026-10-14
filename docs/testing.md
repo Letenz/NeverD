@@ -5771,3 +5771,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+The native profile also requires the LLVM-C wide-integer constant/store checks and native i386 synthesized-table execution. Swift signal observers use independent raw storage, with positive controls and separate negative controls for premature state and result writes at both optimization levels. Observing an active Swift `inout` variable from the signal handler would instead trigger an exclusivity failure and invalidate the exception observation.

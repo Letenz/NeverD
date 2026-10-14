@@ -1793,3 +1793,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+ネイティブ構成では LLVM-C の広幅整数定数・格納検証と、i386 合成テーブルのネイティブ実行も必須です。Swift のシグナル観測には独立した生メモリを使い、両最適化レベルで未書き込みの正常例と、状態・結果を早期に書き込む別々の異常例を検証します。シグナルハンドラから使用中の Swift `inout` 変数を読むと排他的アクセス違反が発生し、例外の観測が無効になります。

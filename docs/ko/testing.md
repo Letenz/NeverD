@@ -1783,3 +1783,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+네이티브 구성은 LLVM-C 넓은 정수 상수·저장 검사와 i386 합성 테이블의 네이티브 실행도 요구합니다. Swift 신호 관찰기는 독립적인 원시 저장 공간을 사용하며, 두 최적화 수준에서 미기록 정상 대조와 상태·결과의 조기 기록을 각각 검출하는 음성 대조를 검증합니다. 신호 처리기가 활성 Swift `inout` 변수를 읽으면 배타적 접근 오류가 발생하여 예외 관찰이 무효가 됩니다.

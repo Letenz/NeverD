@@ -1701,3 +1701,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+原生配置还要求通过 LLVM-C 宽整数常量与存储检查，以及 i386 合成表的原生执行。Swift 信号观察器使用独立的原始存储，在两种优化级别下分别验证未写入的正例、提前写入状态与结果的反例。信号处理器读取仍处于 Swift `inout` 访问期的变量会触发排他访问错误，使异常观察失效。

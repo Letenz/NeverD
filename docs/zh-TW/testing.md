@@ -1739,3 +1739,5 @@ python3 scripts/run_lift_qualification.py \
   --neverd build-release/bin/neverd \
   --output build-release/lift-qualification
 ```
+
+原生設定也要求通過 LLVM-C 寬整數常數與儲存檢查，以及 i386 合成表的原生執行。Swift 訊號觀察器使用獨立的原始儲存，在兩種最佳化層級下分別驗證未寫入的正例、提前寫入狀態與結果的反例。訊號處理器讀取仍處於 Swift `inout` 存取期間的變數會觸發獨佔存取錯誤，使例外觀察失效。
