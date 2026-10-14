@@ -314,6 +314,8 @@ private:
   std::map<SEHExitKey, RegistrationSEHInvocationExit> SEHExits;
   std::set<SEHExitKey> InvalidSEHExits;
   std::map<SEHExitKey, RegistrationSEHJumpResume> JumpResumptions;
+  std::map<std::pair<va_t, int>, RegistrationSEHJumpCapture>
+      JumpCaptureOccurrences;
   std::set<va_t> ModifiedCallbackCaptures;
   std::map<uint32_t, uint32_t> CleanupIndices;
   bool CompleteCalls;

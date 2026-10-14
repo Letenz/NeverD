@@ -5,10 +5,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "COFFNativeEHProvenance.h"
+#include "COFFRegistrationCopyEdges.h"
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
 #include "COFFRegistrationSEHException.h"
+#include "COFFRegistrationSEHJump.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -269,6 +271,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       ReplayMed, *Frame, *CallbackMap, ExceptionBridges, NativeFunctions);
   if (!ExceptionFields)
     return ExceptionFields.takeError();
+  auto Jumps = coff_registration::bindSEHJumps(ReplayMed, Function, *Frame);
+  if (!Jumps)
+    return Jumps.takeError();
   std::set<const llvm::Instruction *> IncomingAccesses, IncomingSetup;
   if (llvm::Error Error =
           validateIncomingCallerFrame(Function, ReplayMed, NativeFunctions,
@@ -529,7 +534,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
           States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-          &*ExceptionFields))
+          &*ExceptionFields, &*Jumps))
     return Error;
   auto SourceSegments = validateSourceSegments(Function, ReplayMed,
                                                *CallbackMap, NativeFunctions);
@@ -670,6 +675,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     if (Dispatches.at(I).Handler != Entry || HandlerTargets.at(I) != Body)
       return rejectIR("scope handler target bypasses its checked source entry");
   }
+  size_t CopyWork = 0;
   for (const auto &Block : Replay.Blocks) {
     auto Entry = SourceEntries.find(Block.Id);
     if (Entry == SourceEntries.end())
@@ -709,8 +715,16 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     }
     const auto *Terminator = SourceExits.at(Block.Id)->getTerminator();
     std::set<const llvm::BasicBlock *> Actual;
-    for (unsigned I = 0; I < Terminator->getNumSuccessors(); ++I)
-      Actual.insert(Terminator->getSuccessor(I));
+    for (unsigned I = 0; I < Terminator->getNumSuccessors(); ++I) {
+      const auto *Next = Terminator->getSuccessor(I);
+      if (!Expected.count(Next)) {
+        Next = coff_registration::registrationCopyDestination(
+            *Terminator->getParent(), *Next, Expected, CopyWork, true);
+        if (!Next)
+          return rejectIR("SEH source edge gained unproved copy instructions");
+      }
+      Actual.insert(Next);
+    }
     if (Actual != Expected)
       return rejectIR(
           "native normal control flow bypasses a source registration boundary");
@@ -752,6 +766,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         if (!Call)
           continue;
         const auto *Callee = Call->getCalledFunction();
+        if (Jumps->Calls.count(Call))
+          continue;
         if (Callee && Callee->isIntrinsic())
           continue;
         if (!Callee || Call->getCallingConv() != llvm::CallingConv::C ||
@@ -792,7 +808,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
             IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
             States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-            &*ExceptionFields))
+            &*ExceptionFields, &*Jumps))
       return Error;
   return llvm::Error::success();
 #endif

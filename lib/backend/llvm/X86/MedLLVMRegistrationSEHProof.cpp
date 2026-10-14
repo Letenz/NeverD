@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/X86RegistrationSEHControl.h"
 #include "neverd/backend/llvm/X86RegistrationSEHException.h"
+#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -116,9 +117,20 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
   }
   for (const auto &Value : RuntimeScalars)
     FrameValues.erase(Value);
-  for (const MedCallInfo &Call : Func.CallInfos)
-    if (llvm::any_of(Call.Args, IsFrame))
-      return std::nullopt;
+  const auto Jumps = getX86RegistrationSEHJumpCalls(Func);
+  if (!Jumps)
+    return std::nullopt;
+  for (const MedCallInfo &Call : Func.CallInfos) {
+    const auto Block = llvm::find_if(
+        Func.Blocks, [&](const auto &B) { return B.Id == Call.BlockId; });
+    const auto Jump = Block != Func.Blocks.end() && Call.OpIdx >= 0 &&
+                              size_t(Call.OpIdx) < Block->Ops.size()
+                          ? Jumps->find(Block->Ops[Call.OpIdx].Addr)
+                          : Jumps->end();
+    for (size_t I = 0; I < Call.Args.size(); ++I)
+      if (IsFrame(Call.Args[I]) && (I != 0 || Jump == Jumps->end()))
+        return std::nullopt;
+  }
   for (const MedBlock &Block : Func.Blocks)
     for (const MedOp &Op : Block.Ops) {
       // Indexed source-memory receipts currently describe ordinary loads and
@@ -213,8 +225,7 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
   const auto &States = *Func.RegistrationStates;
   // Ordinary near returns use the outlined callback's C return ABI. Other
   // nonlocal exits still require their own replacement continuation contract.
-  if (States.HasBoundSEHCallees || States.HasEH3JumpCaptures ||
-      !States.SEHJumpResumptionsComplete || !States.SEHJumpResumptions.empty())
+  if (States.HasBoundSEHCallees || !getX86RegistrationSEHJumpCalls(Func))
     return std::nullopt;
   const auto ExceptionAccesses = getX86RegistrationSEHExceptionAccesses(Func);
   if (!ExceptionAccesses)

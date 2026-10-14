@@ -157,6 +157,16 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
       EXPECT_TRUE(Result.Complete);
       EXPECT_TRUE(Result.RegistrationLifetimeComplete);
       EXPECT_TRUE(Result.HasEH3JumpCaptures);
+      EXPECT_TRUE(Result.SEHJumpCapturesComplete);
+      ASSERT_EQ(Result.SEHJumpCaptures.size(), 1u);
+      const auto &Capture = Result.SEHJumpCaptures.front();
+      EXPECT_EQ(Capture.Address, 0x1100u);
+      EXPECT_EQ(Capture.EndAddress, 0x1105u);
+      EXPECT_EQ(Capture.TargetVA, 0x3000u);
+      EXPECT_EQ(Capture.UnwindVA, 0x3300u);
+      EXPECT_EQ(Capture.BufferOffset, -144);
+      EXPECT_EQ(Capture.StackOffset, -192);
+      EXPECT_EQ(Capture.Level, -1);
       EXPECT_TRUE(Result.SEHJumpResumptionsComplete);
       ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
       const auto &Resume = Result.SEHJumpResumptions.front();
@@ -164,7 +174,10 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
       EXPECT_EQ(Resume.CaptureCall, 0x1100u);
       EXPECT_EQ(Resume.TargetVA, 0x1105u);
       EXPECT_EQ(Resume.StackOffset, -192);
+      EXPECT_EQ(Resume.ValueOffset, -196);
     } else {
+      EXPECT_FALSE(Result.SEHJumpCapturesComplete);
+      EXPECT_TRUE(Result.SEHJumpCaptures.empty());
       EXPECT_FALSE(Result.SEHJumpResumptionsComplete);
       EXPECT_TRUE(Result.SEHJumpResumptions.empty());
     }

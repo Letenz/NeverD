@@ -6,6 +6,7 @@
 
 #include "../eh/MedLLVMEHHelpers.h"
 #include "MedLLVMRegistrationIncoming.h"
+#include "MedLLVMRegistrationSEHJump.h"
 #include "MedLLVMRegistrationSEHProof.h"
 
 #include "neverd/Limits.h"
@@ -298,6 +299,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       Func, OriginalBlockMap, RegistrationMemoryIR, CallSiteAddrs);
   if (!SourceProof)
     return false;
+  auto JumpPlan = x86_registration::prepareSEHJumps(
+      Func, Parent, *FrameAlloca, FrameEntrySPOffset, CallSiteAddrs);
+  if (!JumpPlan)
+    return false;
   auto &SourceOperations = SourceProof->Operations;
   auto &CookieCheckCalls = SourceProof->CookieCheckCalls;
 
@@ -582,9 +587,20 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   for (auto *Instruction : llvm::reverse(DeadFinallyResults))
     Instruction->eraseFromParent();
 
+  auto JumpCalls = x86_registration::emitSEHJumps(
+      *JumpPlan, Parent, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin);
+  for (const auto &[Original, Replacement] : JumpCalls) {
+    CallSiteAddrs.emplace(Replacement, CallSiteAddrs.at(Original));
+    CallSiteAddrs.erase(Original);
+    Original->replaceAllUsesWith(Replacement);
+    Original->eraseFromParent();
+  }
+
   uint64_t ProtectedCalls = 0;
   for (const CallPlan &Plan : Calls) {
     llvm::CallInst *Call = Plan.Call;
+    if (const auto Jump = JumpCalls.find(Call); Jump != JumpCalls.end())
+      Call = Jump->second;
     if (Plan.Finally) {
       llvm::IRBuilder<> B(Call);
       auto *Frame = B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(

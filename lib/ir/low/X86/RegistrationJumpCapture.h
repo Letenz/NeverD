@@ -11,6 +11,8 @@
 
 #include "RegistrationFrame.h"
 
+#include "neverd/ir/RegistrationState.h"
+
 #include <array>
 #include <functional>
 #include <optional>
@@ -23,7 +25,8 @@ struct LowFunc;
 namespace registration_state {
 
 struct EH3JumpCapture {
-  static constexpr uint16_t BufferBytes = 64;
+  static constexpr uint16_t BufferBytes =
+      RegistrationSEHJumpCapture::BufferBytes;
   va_t Call = InvalidVA;
   va_t ReturnPC = InvalidVA;
   va_t UnwindTarget = InvalidVA;

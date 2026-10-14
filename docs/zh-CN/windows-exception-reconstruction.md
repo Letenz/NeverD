@@ -135,11 +135,20 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 让指针逸出都会拒绝安装。该契约覆盖经过检查的 EH3、EH4 和 EH4+GS 栈帧；其他
 exception/context 字段和非局部续接仍需各自的原生契约。
 
+经过检查的 EH3 父函数可用 `_setjmp3` 捕获私有的 64 字节跳转缓冲区，并在同一父函数内
+通过 `_longjmpex` 恢复。源证明绑定捕获点、缓冲区生命周期、unwind import、续接点、
+参数槽和 scope 状态。LLVM 生成新的续接地址及 registration 状态；原生 lowering 另外
+恢复逻辑寄存器 spill 和捕获时的源 try level，并保留 finally 对源栈帧的写入。
+经过检查的 unwind 适配函数复制原生缓冲区，仅为 cleanup 分发替换运行时 registration
+对应的虚拟 EBP；用于恢复执行的原始物理 EBP 保持有效。安装器独立核对适配函数、完整
+寄存器快照及每个捕获/恢复调用。读取原始物理缓冲区表示仍被拒绝。callback 内或跨被调
+函数的恢复，以及 EH4 跳转缓冲区，还需要补充各自的原生契约。
+
 cdecl 的传入栈槽在原内存操作发生处映射到真实调用者栈帧，独立 callback 中的读写也
 使用这一映射。保留 callee 的整个调用图必须证明栈帧私有：读取已初始化的栈字节，
 访问限于当前已分配区域，并恢复 callee-saved 寄存器和 SP。flags、vector 别名、spill
 和调用不会清洗栈帧来源。返回地址探针可以记录真实生成调用点供外部观察，但源函数或
-保留调用图内不能重新读取该值。除经过认证的 `RaiseException` 外，未知 import 和没有
+保留调用图内不能重新读取该值。除经过认证的 `RaiseException` 和上述跳转例程外，未知 import 和没有
 已检查内存访问契约的 intrinsic 不属于这一原生子集。
 
 编译器为 scope 行发射索引、精确表范围、外层状态、filter/handler 目标及源语义凭据。

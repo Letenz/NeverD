@@ -42,6 +42,8 @@ CASES.update({"eh4-gs-" + name: CASES[name] for name in
               ("filter", "nested-finally", "continue-search", "continue-execution",
                "normal-finally", "cdecl-parameter", "cdecl-parameter-write",
                "exception-code", "exception-flags")})
+CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
+              "longjmp-filter": (11, 3)})
 
 
 class PE32:
@@ -195,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
     gs = args.case.startswith("eh4-gs-")
+    jump = args.case.startswith("longjmp-")
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
@@ -214,13 +217,14 @@ def main(argv: list[str] | None = None) -> int:
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
         definitions = (("kernel32", KERNEL32),
-                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "")))
+                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "") +
+                        ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else "")))
         for name, definition in definitions:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_seh3.s"])
+                   else ["registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",

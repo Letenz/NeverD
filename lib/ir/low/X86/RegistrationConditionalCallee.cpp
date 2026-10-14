@@ -221,6 +221,8 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     States.SEHInvocationExits.clear();
     States.SEHJumpResumptionsComplete = false;
     States.SEHJumpResumptions.clear();
+    States.SEHJumpCapturesComplete = false;
+    States.SEHJumpCaptures.clear();
     States.SEHExceptionAccesses.clear();
     States.Diagnostics.push_back("SEH callee state proof budget exhausted");
   }
