@@ -220,7 +220,7 @@ struct DarwinModeMutationOptions {
 /// leases, AppleDouble/fallback, FSEvents/notifications/cache or other setattr
 /// lifecycle effects. Data, namespace and VM contracts remain independent.
 struct DarwinOwnershipMutationOptions {
-  /// Initial regular-object provider grants. Active UID/GID requests supply
+  /// Initial ordinary regular/directory grants. Active UID/GID requests supply
   /// fixed resulting ctime, including equal IDs. Both UINT32_MAX IDs declare
   /// successful provider execution with no effects, including unchanged ctime.
   /// Empty declares only the environment for initial objects. Shared objects
@@ -232,6 +232,11 @@ struct DarwinOwnershipMutationOptions {
   /// as resulting ctime. Existing objects and directory/link creation receive
   /// no grant from this. False preserves the initial-only default.
   bool CreatedRegularObjects = false;
+  /// Independent new-directory grant. True requires complete CreationPolicy
+  /// with Namespace and uses Mutation.Time as fixed ctime. No child or
+  /// namespace authority is supplied; actual parent GID updates govern
+  /// creation.
+  bool CreatedDirectoryObjects = false;
 };
 
 /// Explicit ordinary regular/directory-vnode timestamp provider on a writable

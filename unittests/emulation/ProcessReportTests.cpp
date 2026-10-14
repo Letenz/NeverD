@@ -558,7 +558,8 @@ TEST(ProcessReport, DarwinFullBarrierRejectMalformedObjectsFlagsAndPolicy) {
   }
 }
 
-TEST(ProcessReport, DarwinDirectoryFlagIsStrictAndExclusiveToModeAndTimestamp) {
+TEST(ProcessReport,
+     DarwinDirectoryFlagIsStrictAndExclusiveToAttributeProviders) {
   for (const char *Purpose : {"mode_mutations", "ownership_mutations",
                               "timestamp_mutations", "synchronization"})
     for (bool Enabled : {false, true}) {
@@ -573,7 +574,8 @@ TEST(ProcessReport, DarwinDirectoryFlagIsStrictAndExclusiveToModeAndTimestamp) {
               .str());
       const bool Accepted =
           (llvm::StringRef(Purpose) == "mode_mutations" ||
-           llvm::StringRef(Purpose) == "timestamp_mutations") &&
+           llvm::StringRef(Purpose) == "timestamp_mutations" ||
+           llvm::StringRef(Purpose) == "ownership_mutations") &&
           !Enabled;
       EXPECT_EQ(bool(Parsed), Accepted);
       if (Parsed && llvm::StringRef(Purpose) == "timestamp_mutations") {
@@ -581,6 +583,11 @@ TEST(ProcessReport, DarwinDirectoryFlagIsStrictAndExclusiveToModeAndTimestamp) {
             Parsed->DarwinFiles->TimestampMutations->CreatedDirectoryObjects);
         EXPECT_FALSE(
             Parsed->DarwinFiles->TimestampMutations->CreatedRegularObjects);
+      } else if (Parsed && llvm::StringRef(Purpose) == "ownership_mutations") {
+        EXPECT_FALSE(
+            Parsed->DarwinFiles->OwnershipMutations->CreatedDirectoryObjects);
+        EXPECT_FALSE(
+            Parsed->DarwinFiles->OwnershipMutations->CreatedRegularObjects);
       } else if (Parsed) {
         EXPECT_FALSE(
             Parsed->DarwinFiles->ModeMutations->CreatedDirectoryObjects);
@@ -594,7 +601,8 @@ TEST(ProcessReport, DarwinDirectoryFlagIsStrictAndExclusiveToModeAndTimestamp) {
         R"({"objects":[],"created_directory_objects":"false"})",
         R"({"created_directory_objects":false})",
         R"({"objects":[],"created_directory_objects":false,"extra":false})"}) {
-    for (const char *Purpose : {"mode_mutations", "timestamp_mutations"}) {
+    for (const char *Purpose :
+         {"mode_mutations", "timestamp_mutations", "ownership_mutations"}) {
       auto Files =
           llvm::cantFail(llvm::json::parse(darwin_test::ModeFilesJSON));
       (*Files.getAsObject())[Purpose] = llvm::cantFail(llvm::json::parse(Bad));
@@ -624,6 +632,26 @@ TEST(ProcessReport, DarwinInitialDirectoryModeNeedsNoCreationOrNamespaceGrant) {
           .str());
   ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
   EXPECT_EQ(Parsed->DarwinFiles->ModeMutations->Objects.at("/").Seconds, 71);
+  EXPECT_FALSE(Parsed->DarwinFiles->CreationPolicy);
+  EXPECT_TRUE(Parsed->DarwinFiles->MutableDirectories.empty());
+}
+TEST(ProcessReport,
+     DarwinInitialDirectoryOwnershipNeedsNoCreationOrNamespaceGrant) {
+  auto Files = llvm::cantFail(llvm::json::parse(darwin_test::ModeFilesJSON));
+  (*Files.getAsObject())["ownership_mutations"] = llvm::json::Object{
+      {"objects", llvm::json::Array{llvm::json::Object{
+                      {"path", "/"},
+                      {"time", llvm::json::Object{{"seconds", 71},
+                                                  {"nanoseconds", 72}}}}}},
+      {"created_directory_objects", false},
+      {"created_regular_objects", false}};
+  auto Parsed = processOptionsFromJSON(
+      llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                               {"darwin_files", std::move(Files)}}))
+          .str());
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_EQ(Parsed->DarwinFiles->OwnershipMutations->Objects.at("/").Seconds,
+            71);
   EXPECT_FALSE(Parsed->DarwinFiles->CreationPolicy);
   EXPECT_TRUE(Parsed->DarwinFiles->MutableDirectories.empty());
 }
@@ -686,6 +714,40 @@ TEST(ProcessReport,
           Parsed->DarwinFiles->TimestampMutations->CreatedDirectoryObjects,
           Directory);
       EXPECT_FALSE(Parsed->DarwinFiles->OwnershipMutations);
+      F.getObject("creation_policy")->erase("namespace_policy");
+      Parsed = Parse();
+      EXPECT_EQ(bool(Parsed), !Directory);
+      if (!Parsed)
+        llvm::consumeError(Parsed.takeError());
+    }
+}
+TEST(ProcessReport,
+     DarwinCreatedDirectoryOwnershipRequiresItsOwnCompletePolicy) {
+  for (bool Regular : {false, true})
+    for (bool Directory : {false, true}) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedAttributeFilesJSON));
+      auto &F = *Files.getAsObject();
+      F.erase("ownership_mutations");
+      F.erase("mode_mutations");
+      F["ownership_mutations"] =
+          llvm::json::Object{{"objects", llvm::json::Array{}},
+                             {"created_regular_objects", Regular},
+                             {"created_directory_objects", Directory}};
+      const auto Parse = [&] {
+        return processOptionsFromJSON(
+            llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                     {"darwin_files", Files}}))
+                .str());
+      };
+      auto Parsed = Parse();
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      EXPECT_EQ(Parsed->DarwinFiles->OwnershipMutations->CreatedRegularObjects,
+                Regular);
+      EXPECT_EQ(
+          Parsed->DarwinFiles->OwnershipMutations->CreatedDirectoryObjects,
+          Directory);
+      EXPECT_FALSE(Parsed->DarwinFiles->ModeMutations);
       F.getObject("creation_policy")->erase("namespace_policy");
       Parsed = Parse();
       EXPECT_EQ(bool(Parsed), !Directory);

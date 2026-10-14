@@ -329,11 +329,13 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         Environment
             ? Environment->get(field::FileSynchronizationCreatedRegularObjects)
             : nullptr;
+    using ProviderType = std::remove_cvref_t<decltype(*Options)>;
+    constexpr bool DirectoryProvider =
+        std::is_same_v<ProviderType, DarwinModeMutationOptions> ||
+        std::is_same_v<ProviderType, DarwinOwnershipMutationOptions> ||
+        std::is_same_v<ProviderType, DarwinFileTimestampMutationOptions>;
     const llvm::json::Value *CreatedDirectories = nullptr;
-    if constexpr ((std::is_same_v<std::remove_cvref_t<decltype(*Options)>,
-                                  DarwinModeMutationOptions> ||
-                   std::is_same_v<std::remove_cvref_t<decltype(*Options)>,
-                                  DarwinFileTimestampMutationOptions>)) {
+    if constexpr (DirectoryProvider) {
       if (Environment)
         CreatedDirectories =
             Environment->get(field::FileModeCreatedDirectoryObjects);
@@ -350,10 +352,7 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       Provider.CreatedRegularObjects = *Enabled;
     }
-    if constexpr ((std::is_same_v<std::remove_cvref_t<decltype(Provider)>,
-                                  DarwinModeMutationOptions> ||
-                   std::is_same_v<std::remove_cvref_t<decltype(Provider)>,
-                                  DarwinFileTimestampMutationOptions>)) {
+    if constexpr (DirectoryProvider) {
       if (CreatedDirectories) {
         const auto Enabled = CreatedDirectories->getAsBoolean();
         if (!Enabled)

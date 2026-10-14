@@ -605,7 +605,8 @@ TEST_P(DarwinCreatedAttributeTest,
             FD == D ? diagnostic::FileModeProvider
                     : diagnostic::FileModeTarget);
     refused(ServiceKind::Fchown, {FD, UINT32_MAX, UINT32_MAX},
-            diagnostic::FileOwnershipTarget);
+            FD == D ? diagnostic::FileOwnershipProvider
+                    : diagnostic::FileOwnershipTarget);
   }
   EXPECT_EQ(status(D), DirectoryBefore);
   refused(ServiceKind::FchmodAt, {UINT64_MAX, path("/link"), 0600, 0x20},

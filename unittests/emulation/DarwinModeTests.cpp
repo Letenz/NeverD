@@ -702,9 +702,7 @@ TEST(DarwinModeOptions,
   O.Metadata["/alias"].Device = 8;
   EXPECT_FALSE(bool(validateFileOptions(O)));
   O.OwnershipMutations.emplace().Objects["/dir"] = {71, 72};
-  Error = validateFileOptions(O);
-  EXPECT_TRUE(bool(Error));
-  llvm::consumeError(std::move(Error));
+  EXPECT_FALSE(bool(validateFileOptions(O)));
 }
 
 TEST_P(DarwinModeTest, DirectoryDescriptionsKeepCursorsAndChildGrantsSeparate) {

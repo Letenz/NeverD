@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "DarwinOwnershipTestData.h"
+#include "DarwinDirectoryOwnershipTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
@@ -34,11 +34,11 @@ protected:
     Credentials = darwin_test::modeCredentials();
     reset();
   }
-  void reset() {
+  void reset(uint32_t ObservedUID = 777) {
     if (Options)
       ASSERT_FALSE(bool(validateFileOptions(*Options)));
     Files = std::make_unique<DarwinFiles>(
-        *Space, Options, process_defaults::Output, 777, Credentials);
+        *Space, Options, process_defaults::Output, ObservedUID, Credentials);
   }
   uint64_t path(llvm::StringRef Text, uint64_t Address = Base) {
     const auto Bytes = Text.str() + '\0';
@@ -134,7 +134,8 @@ TEST(DarwinOwnershipOptions,
       O.OwnershipMutations->Objects["/missing"] = {1, 2};
       break;
     case 1:
-      O.OwnershipMutations->Objects["/"] = {1, 2};
+      O.SymbolicLinks["/symbolic"] = {100, 97, 116, 97};
+      O.OwnershipMutations->Objects["/symbolic"] = {1, 2};
       break;
     case 2:
       O.Metadata.erase("/data");
@@ -447,9 +448,9 @@ TEST_P(DarwinOwnershipTest, LinksFollowActualSearchAndFinalKindsStayUnknown) {
       ok(ServiceKind::FchownAt, {UINT64_MAX, path("/via/data"), 501, 20, 0x20}),
       0u);
   refused(ServiceKind::Chown, {path("/"), 501, 20},
-          diagnostic::FileOwnershipTarget);
+          diagnostic::FileOwnershipProvider);
   refused(ServiceKind::Fchown, {open("/"), 501, 20},
-          diagnostic::FileOwnershipTarget);
+          diagnostic::FileOwnershipProvider);
   refused(ServiceKind::Fchown, {1, 501, 20}, diagnostic::FileOwnershipTarget);
 }
 TEST_P(DarwinOwnershipTest, ReadonlyDupAndSeparateOpensShareMetadataOnly) {
@@ -612,6 +613,468 @@ TEST_P(DarwinOwnershipTest, QueryClosuresPrecedeEveryOwnershipPreflight) {
                   : diagnostic::FileOrdinaryAuthorizationScope);
   }
 }
+TEST(DarwinOwnershipOptions,
+     DirectoryAdmissionKeepsAliasesAndCreationIndependent) {
+  auto O = darwin_test::directoryOwnershipOptions();
+  EXPECT_FALSE(O.OwnershipMutations->CreatedDirectoryObjects);
+  O.Metadata["/dir"].LinkCount = 7;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Directories.insert("/alias");
+  O.Metadata["/alias"] = O.Metadata["/dir"];
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.Metadata["/alias"].Device = 8;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    auto Bad = O;
+    if (Case == 0)
+      Bad.Metadata.erase("/dir");
+    if (Case == 1)
+      Bad.Metadata["/dir"].Flags = 1;
+    if (Case == 2)
+      Bad.Metadata["/dir"].Mode |= 04000;
+    E = validateFileOptions(Bad);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+  O.OwnershipMutations->CreatedDirectoryObjects = true;
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.CreationPolicy =
+      darwin_test::directoryOwnershipOptions(true).CreationPolicy;
+  O.InitialUmask = 022;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.CreationPolicy->Namespace.reset();
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.OwnershipMutations->CreatedDirectoryObjects = false;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+TEST_P(DarwinOwnershipTest,
+       DirectoryRoutesUseLiteralRecordsAndIndependentProviders) {
+  for (auto K : Routes)
+    for (uint64_t High : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL}) {
+      Options = darwin_test::directoryOwnershipOptions();
+      reset();
+      const auto A = open("/dir"), D = ok(ServiceKind::Dup, {A}),
+                 B = open("/dir");
+      const auto Before = darwin_test::directoryOwnershipRecord();
+      EXPECT_EQ(status(A), Before);
+      EXPECT_EQ(ok(K, operands(K, High | D, High | UINT32_MAX,
+                               High | UINT32_MAX, "/dir")),
+                0u);
+      EXPECT_EQ(status(B), Before);
+      EXPECT_EQ(
+          ok(K, operands(K, High | D, High | 501, High | UINT32_MAX, "/dir")),
+          0u);
+      EXPECT_EQ(status(A), changed(Before, 501, 31));
+      EXPECT_EQ(
+          ok(K, operands(K, High | D, High | UINT32_MAX, High | 20, "/dir")),
+          0u);
+      EXPECT_EQ(status(A), changed(Before));
+      EXPECT_EQ(ok(K, operands(K, High | D, High | 501, High | 20, "/dir")),
+                0u);
+      EXPECT_EQ(status(B), changed(Before));
+      EXPECT_EQ(ok(K, operands(K, High | D, High | UINT32_MAX,
+                               High | UINT32_MAX, "/dir")),
+                0u);
+      EXPECT_EQ(status(D), changed(Before));
+      refused(ServiceKind::Fchown, {open("/data"), 501, 20},
+              diagnostic::FileOwnershipProvider);
+      refused(ServiceKind::Fchmod, {D, 0750}, diagnostic::FileModeEnvironment);
+      EXPECT_EQ(status(A), changed(Before));
+      error(ServiceKind::Fchown, {UINT64_MAX, 501, 20}, 9);
+      error(ServiceKind::FchownAt, {UINT64_MAX, 1, 501, 20, High | 8}, 22);
+      error(ServiceKind::Chown, {1, 501, 20}, 14);
+      EXPECT_EQ(status(D), changed(Before));
+    }
+}
+TEST_P(DarwinOwnershipTest,
+       CreatedDirectoryAndRegularOwnershipFlagsAreSeparate) {
+  for (bool Regular : {false, true})
+    for (bool Directory : {false, true}) {
+      Options = darwin_test::directoryOwnershipOptions(true);
+      Options->OwnershipMutations->CreatedRegularObjects = Regular;
+      Options->OwnershipMutations->CreatedDirectoryObjects = Directory;
+      reset(501);
+      EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/child"), 0700}), 0u);
+      const auto D = open("/child");
+      const auto Before = darwin_test::directoryOwnershipRecord(true);
+      EXPECT_EQ(status(D), Before);
+      if (Directory) {
+        EXPECT_EQ(ok(ServiceKind::Fchown, {D, 501, 20}), 0u);
+        EXPECT_EQ(status(D), changed(Before, 501, 20, 101, 102));
+      } else {
+        refused(ServiceKind::Fchown, {D, UINT32_MAX, UINT32_MAX},
+                diagnostic::FileOwnershipProvider);
+        EXPECT_EQ(status(D), Before);
+      }
+      const auto F = open("/fresh", 0x202);
+      const auto FileBefore = status(F);
+      if (Regular) {
+        EXPECT_EQ(ok(ServiceKind::Fchown, {F, 501, 20}), 0u);
+        EXPECT_EQ(status(F), changed(FileBefore, 501, 20, 101, 102));
+      } else {
+        refused(ServiceKind::Fchown, {F, UINT32_MAX, UINT32_MAX},
+                diagnostic::FileOwnershipProvider);
+        EXPECT_EQ(status(F), FileBefore);
+      }
+      const auto Root = open("/");
+      const auto ParentBefore = status(Root);
+      refused(ServiceKind::Fchown, {Root, UINT32_MAX, UINT32_MAX},
+              diagnostic::FileOwnershipProvider);
+      EXPECT_EQ(status(Root), ParentBefore);
+    }
+}
+TEST_P(DarwinOwnershipTest,
+       ChangedParentGroupIsInheritedByEveryCreatedKindAndRoute) {
+  for (auto K : Routes) {
+    Options = darwin_test::directoryOwnershipOptions();
+    Options->MutableDirectories.insert("/dir");
+    Options->CreationPolicy =
+        darwin_test::directoryOwnershipOptions(true).CreationPolicy;
+    Options->InitialUmask = 022;
+    reset(501);
+    const auto D = open("/dir");
+    EXPECT_EQ(status(D), darwin_test::directoryOwnershipRecord());
+    EXPECT_EQ(ok(K, operands(K, D, UINT32_MAX, 20, "/dir")), 0u);
+    const auto F = ok(ServiceKind::Open, {path("/dir/leaf"), 0x202, 0600});
+    EXPECT_EQ(status(F), darwin_test::directoryOwnershipChildRecord(0));
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700}), 0u);
+    const auto Sub = open("/dir/sub");
+    EXPECT_EQ(status(Sub), darwin_test::directoryOwnershipChildRecord(1));
+    EXPECT_EQ(
+        ok(ServiceKind::Symlink, {path("leaf"), path("/dir/link", Base + 128)}),
+        0u);
+    const auto Link = open("/dir/link", 0x200000);
+    EXPECT_EQ(status(Link), darwin_test::directoryOwnershipChildRecord(2));
+    for (auto Child : {F, Sub}) {
+      const auto Before = status(Child);
+      refused(ServiceKind::Fchown, {Child, UINT32_MAX, UINT32_MAX},
+              diagnostic::FileOwnershipProvider);
+      EXPECT_EQ(status(Child), Before);
+    }
+    refused(ServiceKind::Fchown, {Link, UINT32_MAX, UINT32_MAX},
+            diagnostic::FileOwnershipTarget);
+    auto Parent = changed(darwin_test::directoryOwnershipRecord());
+    llvm::support::endian::write16le(Parent.data() + 14, 5);
+    llvm::support::endian::write64le(Parent.data() + 104, 80);
+    llvm::support::endian::write64le(Parent.data() + 56, 81);
+    llvm::support::endian::write64le(Parent.data() + 64, 82);
+    EXPECT_EQ(status(D), Parent);
+    // The changed group belongs to the actual directory after a direct move.
+    EXPECT_EQ(
+        ok(ServiceKind::Rename, {path("/dir"), path("/moved", Base + 128)}),
+        0u);
+    const auto Extra = open("/moved/extra", 0x202);
+    EXPECT_EQ(llvm::support::endian::read32le(status(Extra).data() + 28), 20u);
+    EXPECT_EQ(Options->Metadata.at("/dir").GID, 31u);
+  }
+}
+TEST_P(DarwinOwnershipTest, DirectoryNamespaceNeverBorrowsOwnershipAuthority) {
+  for (bool NamespaceTime : {false, true})
+    for (bool OwnershipFirst : {false, true}) {
+      Options = darwin_test::directoryOwnershipOptions();
+      Options->MutableDirectories.insert("/dir");
+      Options->CreationPolicy =
+          darwin_test::directoryOwnershipOptions(true).CreationPolicy;
+      Options->InitialUmask = 022;
+      if (!NamespaceTime)
+        Options->DirectoryMutationPolicies.erase("/dir");
+      reset(501);
+      const auto D = open("/dir");
+      auto Expected = darwin_test::directoryOwnershipRecord();
+      if (OwnershipFirst) {
+        EXPECT_EQ(ok(ServiceKind::Fchown, {D, UINT32_MAX, 20}), 0u);
+        Expected = changed(Expected);
+      }
+      EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700}), 0u);
+      if (!NamespaceTime) {
+        Record Buffer;
+        Buffer.fill(0xa5);
+        llvm::cantFail(Space->write(Base + Page, Buffer));
+        refused(ServiceKind::Fstat64, {D, Base + Page + 8},
+                diagnostic::DirectoryMutated);
+        refused(ServiceKind::Fchown, {D, 501, 20},
+                diagnostic::DirectoryMutated);
+        Record After;
+        llvm::cantFail(Space->read(Base + Page, After));
+        EXPECT_EQ(After, Buffer);
+        if (OwnershipFirst) {
+          const auto Extra = open("/dir/extra", 0x202);
+          EXPECT_EQ(llvm::support::endian::read32le(status(Extra).data() + 28),
+                    20u);
+        }
+        continue;
+      }
+      llvm::support::endian::write16le(Expected.data() + 14, 3);
+      llvm::support::endian::write64le(Expected.data() + 104, 48);
+      for (auto Offset : {56u, 72u}) {
+        llvm::support::endian::write64le(Expected.data() + Offset, 81);
+        llvm::support::endian::write64le(Expected.data() + Offset + 8, 82);
+      }
+      EXPECT_EQ(status(D), Expected);
+      EXPECT_EQ(ok(ServiceKind::Fchown, {D, 501, 20}), 0u);
+      EXPECT_EQ(status(D), changed(Expected));
+    }
+}
+TEST_P(DarwinOwnershipTest,
+       DirectoryNonownerInactiveEqualAndGroupKnowledgeStayDistinct) {
+  for (auto K : Routes) {
+    Options = darwin_test::directoryOwnershipOptions();
+    Options->Metadata["/dir"].UID = 700;
+    reset();
+    const auto D = open("/dir");
+    auto Expected = status(D);
+    error(K, operands(K, D, 501, UINT32_MAX, "/dir"), 1);
+    error(K, operands(K, D, UINT32_MAX, 20, "/dir"), 1);
+    EXPECT_EQ(status(D), Expected);
+    EXPECT_EQ(ok(K, operands(K, D, UINT32_MAX, UINT32_MAX, "/dir")), 0u);
+    EXPECT_EQ(status(D), Expected);
+    EXPECT_EQ(ok(K, operands(K, D, 700, 31, "/dir")), 0u);
+    Expected = changed(Expected, 700, 31);
+    EXPECT_EQ(status(D), Expected);
+    Options->OwnershipMutations->Objects.clear();
+    reset();
+    const auto Ungranted = open("/dir");
+    refused(K, operands(K, Ungranted, UINT32_MAX, UINT32_MAX, "/dir"),
+            diagnostic::FileOwnershipProvider);
+    refused(K, operands(K, Ungranted, 700, 31, "/dir"),
+            diagnostic::FileOwnershipProvider);
+    Options = darwin_test::directoryOwnershipOptions();
+    Credentials = darwin_test::modeCredentials();
+    reset();
+    const auto Known = open("/dir");
+    const auto Before = status(Known);
+    refused(K, operands(K, Known, UINT32_MAX, 12, "/dir"),
+            diagnostic::FileOrdinaryAuthorizationGroups);
+    EXPECT_EQ(status(Known), Before);
+    Credentials->GroupAccessList = {20, 12};
+    reset();
+    const auto Positive = open("/dir");
+    EXPECT_EQ(ok(K, operands(K, Positive, UINT32_MAX, 12, "/dir")), 0u);
+    EXPECT_EQ(status(Positive), changed(Before, 501, 12));
+    // Negative membership requires an explicit list plus authoritative UID.
+    Credentials->GroupAccessList = {20};
+    Credentials->GroupMembershipUID = 4294967195u;
+    reset();
+    const auto Negative = open("/dir");
+    error(K, operands(K, Negative, UINT32_MAX, 12, "/dir"), 1);
+    EXPECT_EQ(status(Negative), Before);
+  }
+}
+TEST_P(DarwinOwnershipTest,
+       DirectoryMovesAndExchangesKeepActualOwnershipGrants) {
+  for (bool Swap : {false, true})
+    for (bool NamespaceTime : {false, true})
+      for (bool First : {false, true}) {
+        Options = darwin_test::directoryOwnershipOptions();
+        Options->Directories = {"/", "/a", "/b"};
+        Options->Metadata.erase("/dir");
+        Options->DirectoryMutationPolicies.erase("/dir");
+        Options->MovableDirectories.erase("/dir");
+        Options->Metadata["/a"] = darwin_test::modeMetadata(0040700, 3);
+        Options->Metadata["/a"].GID = 31;
+        Options->Metadata["/b"] = darwin_test::modeMetadata(0040700, 4);
+        Options->MovableDirectories.insert("/a");
+        Options->ExchangeableDirectories = {"/a", "/b"};
+        Options->SwapRenameDirectories.insert("/");
+        Options->OwnershipMutations->Objects.clear();
+        Options->OwnershipMutations->Objects["/a"] = {81, 82};
+        if (NamespaceTime) {
+          Options->DirectoryMutationPolicies["/a"] = {16, {91, 92}};
+          Options->DirectoryMutationPolicies["/b"] = {16, {101, 102}};
+        }
+        reset();
+        const auto A = open("/a"), D = ok(ServiceKind::Dup, {A}),
+                   B = open("/b");
+        auto Expected = status(A), Other = status(B);
+        if (First) {
+          EXPECT_EQ(ok(ServiceKind::Fchown, {A, UINT32_MAX, 20}), 0u);
+          Expected = changed(Expected);
+        }
+        const auto From = path("/a"),
+                   To = path(Swap ? "/b" : "/moved", Base + 128);
+        if (Swap)
+          EXPECT_EQ(
+              ok(ServiceKind::RenameAtX, {UINT64_MAX, From, UINT64_MAX, To, 2}),
+              0u);
+        else
+          EXPECT_EQ(ok(ServiceKind::Rename, {From, To}), 0u);
+        if (!NamespaceTime) {
+          refused(ServiceKind::Fstat64, {D, Base + Page + 8},
+                  diagnostic::DirectoryMutated);
+          refused(ServiceKind::Fchown, {D, 501, 20},
+                  diagnostic::DirectoryMutated);
+          continue;
+        }
+        Expected = changed(Expected, 501, First ? 20 : 31, 91, 92);
+        EXPECT_EQ(status(D), Expected);
+        EXPECT_EQ(ok(ServiceKind::Fchown, {D, 501, 20}), 0u);
+        Expected = changed(Expected);
+        EXPECT_EQ(status(open(Swap ? "/b" : "/moved")), Expected);
+        EXPECT_EQ(status(A), Expected);
+        if (Swap)
+          Other = changed(Other, 501, 20, 101, 102);
+        EXPECT_EQ(status(B), Other);
+        refused(ServiceKind::Fchown, {B, UINT32_MAX, UINT32_MAX},
+                diagnostic::FileOwnershipProvider);
+        EXPECT_EQ(status(B), Other);
+      }
+}
+TEST_P(DarwinOwnershipTest,
+       HeldRemovedDirectoryAndReplacementNeverShareOwnershipGrants) {
+  Options = darwin_test::directoryOwnershipOptions();
+  Options->RemovableDirectories.insert("/dir");
+  Options->CreationPolicy =
+      darwin_test::directoryOwnershipOptions(true).CreationPolicy;
+  Options->InitialUmask = 022;
+  reset(501);
+  const auto A = open("/dir"), D = ok(ServiceKind::Dup, {A});
+  auto Expected = darwin_test::directoryOwnershipRecord();
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {path("/dir")}), 0u);
+  Expected = changed(Expected, 501, 31);
+  EXPECT_EQ(status(D), Expected);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir"), 0700}), 0u);
+  const auto New = open("/dir");
+  const auto Before = status(New);
+  refused(ServiceKind::Fchown, {New, UINT32_MAX, UINT32_MAX},
+          diagnostic::FileOwnershipProvider);
+  EXPECT_EQ(status(New), Before);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {D, UINT32_MAX, 20}), 0u);
+  EXPECT_EQ(status(A), changed(Expected));
+  EXPECT_EQ(status(New), Before);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  error(ServiceKind::Fchown, {A, 501, 20}, 9);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {D, UINT32_MAX, UINT32_MAX}), 0u);
+}
+TEST_P(DarwinOwnershipTest, DirectoryEnumerationAndChildrenKeepTheirOwnState) {
+  Options = darwin_test::directoryOwnershipOptions();
+  Options->Files["/dir/leaf"] = {'x'};
+  Options->Metadata["/dir/leaf"] = darwin_test::modeMetadata(0100600, 4, 1);
+  Options->Directories.insert("/dir/sub");
+  Options->Metadata["/dir/sub"] = darwin_test::modeMetadata(0040700, 5);
+  Options->Metadata["/dir"].Size = 96;
+  Options->DirectoryContents["/dir"] = {{{".", 3, 4, 11, 0},
+                                         {"..", 1, 4, 22, 0},
+                                         {"leaf", 4, 8, 33, 0},
+                                         {"sub", 5, 4, 44, 0}},
+                                        1};
+  reset();
+  const auto A = open("/dir"), D = ok(ServiceKind::Dup, {A}), B = open("/dir");
+  const auto Before = status(A);
+  const auto Flags = ok(ServiceKind::Fcntl, {A, 3});
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {A, Base + Page * 2, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {D, UINT32_MAX, 20}), 0u);
+  EXPECT_EQ(status(B), changed(Before));
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 3}), Flags);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 11u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {D}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Chown, {path("."), 501, 20}), 0u);
+  for (auto F : {open("leaf"), open("sub")}) {
+    const auto Child = status(F);
+    refused(ServiceKind::Fchown, {F, UINT32_MAX, UINT32_MAX},
+            diagnostic::FileOwnershipProvider);
+    EXPECT_EQ(status(F), Child);
+  }
+}
+
+TEST_P(DarwinOwnershipTest, CreatedDirectoryGroupChangesGovernEveryChildKind) {
+  for (auto K : Routes) {
+    Options = darwin_test::directoryOwnershipOptions(true);
+    Credentials = darwin_test::modeCredentials();
+    Credentials->GroupAccessList = {20, 31};
+    reset(501);
+    error(ServiceKind::Mkdir, {path("/"), 0700}, 17);
+    error(ServiceKind::Mkdir, {1, 0700}, 14);
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir"), 0700}), 0u);
+    const auto D = open("/dir");
+    const auto Before = darwin_test::directoryOwnershipRecord(true);
+    EXPECT_EQ(status(D), Before);
+    EXPECT_EQ(ok(K, operands(K, D, UINT32_MAX, 31, "/dir")), 0u);
+    EXPECT_EQ(status(D), changed(Before, 501, 31, 101, 102));
+    const auto F = ok(ServiceKind::Open, {path("/dir/leaf"), 0x202, 0600});
+    auto File = darwin_test::directoryOwnershipChildRecord(0);
+    llvm::support::endian::write64le(File.data() + 16, 101);
+    llvm::support::endian::write32le(File.data() + 28, 31);
+    EXPECT_EQ(status(F), File);
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700}), 0u);
+    const auto Sub = open("/dir/sub");
+    auto Directory = darwin_test::directoryOwnershipChildRecord(1);
+    llvm::support::endian::write64le(Directory.data() + 16, 102);
+    llvm::support::endian::write32le(Directory.data() + 28, 31);
+    EXPECT_EQ(status(Sub), Directory);
+    EXPECT_EQ(
+        ok(ServiceKind::Symlink, {path("leaf"), path("/dir/link", Base + 128)}),
+        0u);
+    const auto L = open("/dir/link", 0x200000);
+    auto Link = darwin_test::directoryOwnershipChildRecord(2);
+    llvm::support::endian::write64le(Link.data() + 16, 103);
+    llvm::support::endian::write32le(Link.data() + 28, 31);
+    EXPECT_EQ(status(L), Link);
+    // Only the independent global created-directory flag grants this child.
+    EXPECT_EQ(ok(ServiceKind::Fchown, {Sub, UINT32_MAX, UINT32_MAX}), 0u);
+    EXPECT_EQ(status(Sub), Directory);
+    refused(ServiceKind::Fchown, {F, UINT32_MAX, UINT32_MAX},
+            diagnostic::FileOwnershipProvider);
+    EXPECT_EQ(status(F), File);
+    refused(ServiceKind::Fchown, {L, UINT32_MAX, UINT32_MAX},
+            diagnostic::FileOwnershipTarget);
+    EXPECT_EQ(status(L), Link);
+  }
+}
+
+TEST_P(DarwinOwnershipTest,
+       DirectoryAttributeAndNamespaceTimesRemainIndependent) {
+  Options = darwin_test::directoryOwnershipOptions();
+  Options->MutableDirectories.insert("/dir");
+  Options->DirectoryMutationPolicies["/dir"].Time = {91, 92};
+  Options->ModeMutations.emplace().Objects["/dir"] = {71, 72};
+  Options->TimestampMutations.emplace().Objects["/dir"] = {111, 112};
+  reset();
+  const auto D = open("/dir");
+  const auto Before = darwin_test::directoryOwnershipRecord();
+  EXPECT_EQ(status(D), Before);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {D, 501, 31}), 0u);
+  EXPECT_EQ(status(D), changed(Before, 501, 31));
+  EXPECT_EQ(ok(ServiceKind::Fchmod, {D, 0750}), 0u);
+  auto Expected = changed(Before, 501, 31, 71, 72);
+  llvm::support::endian::write16le(Expected.data() + 12, 0040750);
+  EXPECT_EQ(status(D), Expected);
+  std::array<uint8_t, 32> Input;
+  Input.fill(0xa5);
+  llvm::support::endian::write64le(Input.data(), 11);
+  llvm::support::endian::write32le(Input.data() + 8, 12);
+  llvm::support::endian::write64le(Input.data() + 16, 13);
+  llvm::support::endian::write32le(Input.data() + 24, 14);
+  llvm::cantFail(Space->write(Base + 256, Input));
+  EXPECT_EQ(ok(ServiceKind::Futimes, {D, Base + 256}), 0u);
+  Expected = changed(Expected, 501, 31, 111, 112);
+  llvm::support::endian::write64le(Expected.data() + 40, 11);
+  llvm::support::endian::write64le(Expected.data() + 48, 12000);
+  llvm::support::endian::write64le(Expected.data() + 56, 13);
+  llvm::support::endian::write64le(Expected.data() + 64, 14000);
+  EXPECT_EQ(status(D), Expected);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700}), 0u);
+  Expected = changed(Expected, 501, 31, 91, 92);
+  llvm::support::endian::write16le(Expected.data() + 14, 3);
+  llvm::support::endian::write64le(Expected.data() + 104, 48);
+  llvm::support::endian::write64le(Expected.data() + 56, 91);
+  llvm::support::endian::write64le(Expected.data() + 64, 92);
+  EXPECT_EQ(status(D), Expected);
+  EXPECT_EQ(ok(ServiceKind::Fchown, {D, UINT32_MAX, 20}), 0u);
+  EXPECT_EQ(status(D), changed(Expected));
+  std::array<uint8_t, 32> After;
+  llvm::cantFail(Space->read(Base + 256, After));
+  EXPECT_EQ(After, Input);
+}
+
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinOwnershipTest,
                          testing::Values(4096ULL, 16384ULL));
 } // namespace

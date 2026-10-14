@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 7ab601ddd340aa803531a67755df51f9186fc32dc2d77a8f6a7870c265ed1e4c -->
+<!-- i18n-source: 15a333abcb55d367c26a3597ec97a1a28a8a4167a4956f4cf762d16abd27e8c9 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1631,7 +1631,7 @@ directory mode: chmod15 fchmod124 fchmodat467 / ordinary initial regular or dire
 CreatedDirectoryObjects=false / created_directory_objects exact Boolean / separate CreatedRegularObjects
 created directory mode requires complete CreationPolicy.Namespace / resulting ctime uses Mutation.Time
 DirectoryNode ModeTime separate from MutationTime / CurrentMetadata never supplies namespace authority
-directory nlink greater than1 valid / equal known Device-Inode aliases rejected / ownership regular-only / timestamps require a separate provider
+directory nlink greater than1 valid / equal known Device-Inode aliases rejected / ownership and timestamps require separate providers
 mode changes only permissions and ctime / independent namespace time preserves mode / missing namespace time permanently invalidates stat
 dup independent opens chdir fchdir direct rename exchange held rmdir and reused names / no child grant inference
 directory-mode-mutations59 services / created-directory-mode60 services / 33 full guarded stat144 records / main53 stdout Q
@@ -1653,7 +1653,7 @@ The implementation and original probes use [pinned XNU chmod ordering](https://g
 
 ## Explicit ordinary directory timestamps
 
-明示的なディレクトリ時刻プロバイダーは、個別に許可された初期ディレクトリと新規ディレクトリの utimes/futimes をサポートします。名前空間、モード、所有権の権限は独立しています。ディレクトリ所有権、完全な Apple ランタイムとフレームワーク、実機 iOS 検証は未完了です。
+明示的なディレクトリ時刻プロバイダーは、個別に許可された初期ディレクトリと新規ディレクトリの utimes/futimes をサポートします。名前空間、モード、所有権の権限は独立しています。完全な Apple ランタイムとフレームワーク、実機 iOS 検証は未完了です。
 
 ```text
 directory timestamps: utimes138 futimes139 / ordinary initial regular or directory objects
@@ -1680,3 +1680,33 @@ Direct moves/exchanges and held rmdir retain actual object grants, while reused 
 Original owned ARM64 macOS O0/O1/O2 probes retain141 guarded directory observations, including low/high syscall/FD carriers, read-only/dup descriptors, errors, link following, direct moves, held removal and name reuse. Native secondary results were zero in these observations. The common SDK-free directory-timestamp-mutations workload checks46 authored calls and24 complete guarded stat144 records, returning54/T; it captures no native service trace. Initial and created virtual variants independently check every stat byte and separately declared times; creation adds mkdir for47 calls. Native nonowner/special-security effects, Intel hardware and physical iOS remain unqualified.
 
 The original implementation and probes use [pinned XNU utimes/futimes ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [timestamp authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No implementation was copied.
+
+## Explicit ordinary directory ownership
+
+明示的な所有権プロバイダーは、個別に許可された初期および新規の通常ディレクトリの chown/fchown/fchownat をサポートします。グループ変更は子オブジェクト作成に使う実際の親ディレクトリの識別情報も更新します。名前空間、モード、時刻の権限は独立しています。完全な Apple ランタイムとフレームワーク、実機 iOS 検証は未完了です。
+
+```text
+directory ownership: chown16 fchown123 fchownat468 / ordinary initial regular or directory objects
+OwnershipMutations CreatedDirectoryObjects=false / created_directory_objects strict Boolean / separate CreatedRegularObjects
+created directory ownership provider requires complete CreationPolicy.Namespace / fixed ctime Mutation.Time
+DirectoryNode OwnershipTime independent of ModeTime TimestampTime MutationTime DirectoryEntrySize / unknown metadata never restored
+active low32 UID GID including equal values set fixed ctime / both UINT32_MAX inactive require provider and preserve all observations
+actual DirectoryIdentity.GID and CurrentMetadata.GID commit together / newly created regular directory symbolic objects inherit current actual parent group
+directory-ownership-mutations61 services / created-directory-ownership62 services / 29 complete guarded stat144 records / main55 stdout O
+five software profiles C CLI Python / three matching ARM64 HVF required / native common76 mandatory91 ARM64273
+219 owned native directory ownership observations / ARM64 O0 O1 O2 / native5s compiler120s build1200s parallel2 guest5000000us quantum1024 public30s
+```
+
+Raw BSD chown16, fchown123 and fchownat468 now support explicitly granted ordinary directories through ownership_mutations.objects: [{path,time}]. Initial directory grants require complete ordinary metadata, flags0, no special mode bits and no known Device/Inode alias, without requiring mutable namespace authority. Ordinary directory nlink may exceed1; regular nlink1 remains required.
+
+The optional strict created_directory_objects Boolean defaultsfalse. True requires complete creation_policy with namespace_policy; only successful mkdir/mkdirat attaches the independent new-directory provider. Its fixed virtual ctime comes from creation_policy.mutation_policy.mutation_time. created_regular_objects remains separate. Child ownership authority comes only from a child's own initial grant or the independently selected creation flag.
+
+Existing effective ordinary authorization and error order are unchanged: FD lookup precedes object checks; pathname routes authorize actual ancestor SEARCH; fchownat admits only low32 NOFOLLOW0x20 before pathname/FD lookup. Low32 UINT32_MAX is inactive independently for each ID. Both inactive IDs require a provider and preserve the whole record. Equal active IDs require a provider and set declared ctime. Changed third-party UID is denied before group lookup; changed GID needs known membership and current-owner WRITE_SECURITY. Unknown credentials/security/group information remains unsupported. Readonly descriptions and duplicates retain actual-object authority.
+
+Directory GID changes also update the actual parent's retained group identity before any child can be published. New regular files, directories and symbolic links inherit this current GID, including after a direct parent move. A later namespace invalidation preserves only this independently known identity; stat and subsequent ownership mutations remain unsupported and cannot restore complete metadata. Ownership supplies no mode, timestamp, data, namespace or filesystem-observation grant.
+
+Original owned nonroot ARM64 macOS O0/O1/O2 probes retain219 observations, including high syscall/FD/ID/flags carriers, active equal and inactive IDs, errors, final-link following, NOFOLLOW directory requests, dup/readonly descriptions, moves, held removal/reuse and positively observed alternate-group changes. Created regular, directory and symbolic objects inherited that actual group. Complete144-byte stat records include8-byte guards on both sides. Native secondary results were zero in these observations. These owner-operated probes do not establish native nonowner, special-security, Intel or physical iOS behavior.
+
+The SDK-free directory-ownership-mutations workload checks61 authored calls and29 guarded whole stat records, returning55/O. Virtual initial and created variants independently check every stat byte and fixed times; creation adds mkdir for62 calls. The common native workload captures no native service trace and compares actual native ctime rather than inventing its value. All four ID patterns use the base carrier per route, while upper carriers repeat active-both requests. The independent native219 observations and private model checks retain full Cartesian typing. Namespace shape uses the separately declared virtual all-child policy, not inferred native filesystem link counts.
+
+Original implementation and probes use [pinned XNU ownership ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No implementation was copied.

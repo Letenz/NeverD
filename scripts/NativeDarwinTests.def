@@ -162,3 +162,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     DirectoryModesPreserveIndependentObjectAndNamespaceState)
 NEVERD_NATIVE_DARWIN_CASE(
     DirectoryTimestampMutationsPreserveIndependentObjectAndNamespaceState)
+NEVERD_NATIVE_DARWIN_CASE(
+    DirectoryOwnershipMutationsPreserveIndependentObjectAndNamespaceState)

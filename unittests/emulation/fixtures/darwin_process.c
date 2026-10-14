@@ -8036,6 +8036,193 @@ directory_timestamp_mutations(const char *path, unsigned kind) {
   return 0;
 }
 
+/* Original ordinary directory ownership workload. Fixed metadata is virtual;
+ * native controls preserve complete observations outside UID/GID and ctime. */
+static int directory_ownership_result(u64 number, u64 object, u64 a1, u64 a2,
+                                      u64 a3, u64 a4, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, a1, a2, a3, a4, 0, &error);
+  if (value != expected || error != !!expected)
+    return 254;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? a2 : 0))
+#endif
+    return 255;
+  return 0;
+}
+static int directory_ownership_status(u64 number, u64 object,
+                                      union mode_stat_guard *record,
+                                      const union mode_stat_guard *before,
+                                      unsigned kind, unsigned gid,
+                                      unsigned phase) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 231;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(record->bytes + 12, 2) & 0170000u) != 0040000u)
+    return 232;
+  if (before) {
+    if (little_integer(record->bytes + 24, 4) !=
+            little_integer(before->bytes + 24, 4) ||
+        little_integer(record->bytes + 28, 4) != gid)
+      return 233;
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i)
+      if (i != 3 && i != 9 && i != 10 && record->words[i] != before->words[i])
+        return 234;
+  }
+  if (kind) {
+    u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
+                        7UL | (0040700UL << 32) | (2UL << 48),
+                        kind == 2 ? 100UL : 3UL,
+                        501UL | ((u64)gid << 32),
+                        0,
+                        kind == 2 ? 41UL : 1UL,
+                        kind == 2 ? 42UL : 2UL,
+                        kind == 2 ? 41UL : 3UL,
+                        kind == 2 ? 42UL : 4UL,
+                        kind == 2 ? 41UL : 5UL,
+                        kind == 2 ? 42UL : 6UL,
+                        kind == 2 ? 41UL : 7UL,
+                        kind == 2 ? 42UL : 8UL,
+                        kind == 2 ? 64UL : 32UL,
+                        7,
+                        512,
+                        9,
+                        0,
+                        0,
+                        0xa5a5a5a5a5a5a5a5UL};
+    if (phase) {
+      expected[9] = kind == 2 ? 101 : 81;
+      expected[10] = kind == 2 ? 102 : 82;
+    }
+#pragma clang loop unroll(full)
+    for (unsigned i = 0; i != 20; ++i)
+      if (record->words[i] != expected[i])
+        return 235;
+  }
+  return 0;
+}
+static __attribute__((noinline)) int
+directory_ownership_mutations(const char *path, unsigned kind) {
+  char moved[1024];
+  unsigned n = 0, error;
+  while (path[n] && n < 1017) {
+    moved[n] = path[n];
+    ++n;
+  }
+  if (path[n])
+    return 236;
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[n + i] = suffix[i];
+  if (kind == 2 && mode_result(136, (u64)path, 0700, 0, 0, 0))
+    return 237;
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 238;
+  u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd)
+    return 239;
+  u64 other = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || other == fd || other == copy)
+    return 240;
+  union mode_stat_guard initial, a, b, c;
+  if (directory_ownership_status(339, fd, &initial, 0, kind,
+                                 kind == 1 ? 31 : 20, 0))
+    return 241;
+  unsigned uid = (unsigned)little_integer(initial.bytes + 24, 4),
+           gid = (unsigned)little_integer(initial.bytes + 28, 4),
+           target = kind ? 20 : gid;
+  unsigned phase = 0;
+  const u64 high[3] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      u64 number = high[h] | (api == 0   ? 16
+                              : api == 1 ? 123
+                                         : 468),
+          object = api == 0   ? (u64)path
+                   : api == 1 ? (high[h] | copy)
+                              : -1UL;
+      u64 ids[4][2] = {{0xffffffffUL, 0xffffffffUL},
+                       {uid, 0xffffffffUL},
+                       {0xffffffffUL, target},
+                       {uid, target}};
+      for (unsigned pattern = h ? 3 : 0; pattern != 4; ++pattern) {
+        // All ID patterns use the base carrier. Upper carriers repeat the
+        // active-both request; full Cartesian typing is covered independently.
+        if (pattern == 0) {
+#pragma clang loop unroll(full)
+          for (unsigned i = 0; i != 20; ++i)
+            b.words[i] = phase ? a.words[i] : initial.words[i];
+        }
+        u64 u = high[h] | ids[pattern][0], g = high[h] | ids[pattern][1];
+        if (api == 2) {
+          if (directory_ownership_result(number, object, (u64)path, u, g,
+                                         high[h], 0))
+            return 242;
+        } else if (mode_result(number, object, u, g, 0, 0))
+          return 243;
+        if (pattern)
+          phase = 1;
+        if (pattern >= 2)
+          gid = target;
+        if (directory_ownership_status(339, copy, &a, &initial, kind, gid,
+                                       phase))
+          return 244;
+        if (pattern == 2) {
+          if (directory_ownership_status(338, (u64)path, &b, &initial, kind,
+                                         gid, phase) ||
+              directory_ownership_status(339, other, &c, &initial, kind, gid,
+                                         phase))
+            return 245;
+#pragma clang loop unroll(full)
+          for (unsigned i = 0; i != 20; ++i)
+            if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+              return 246;
+        }
+        if (pattern == 0) {
+#pragma clang loop unroll(full)
+          for (unsigned i = 0; i != 20; ++i)
+            if (a.words[i] != b.words[i])
+              return 247;
+        }
+      }
+    }
+  if (mode_result(123, -1UL, uid, gid, 0, 9) ||
+      directory_ownership_result(468, -1UL, 1, uid, gid, 8, 22) ||
+      mode_result(16, (u64)moved, uid, gid, 0, 2) ||
+      directory_ownership_status(339, copy, &b, &initial, kind, gid, phase))
+    return 248;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != b.words[i])
+      return 249;
+  if (mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_ownership_status(339, copy, &b, &initial, kind, gid, 2) ||
+      mode_result(123, copy, 0xffffffffUL, 0xffffffffUL, 0, 0) ||
+      directory_ownership_status(338, (u64)moved, &c, &initial, kind, gid, 2))
+    return 250;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (b.words[i] != c.words[i])
+      return 251;
+  if (mode_result(6, fd, 0, 0, 0, 0) || mode_result(123, fd, uid, gid, 0, 9) ||
+      mode_result(123, copy, uid, gid, 0, 0) ||
+      directory_ownership_status(339, other, &b, &initial, kind, gid, 1) ||
+      mode_result(6, copy, 0, 0, 0, 0) || mode_result(6, other, 0, 0, 0, 0))
+    return 252;
+  const char mark = 'O';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 253;
+  return 0;
+}
+
 /* Original SDK-free ordinary ownership controls. Native ctime remains a
  * captured provider result; both-inactive calls compare the complete record. */
 union ownership_stat_guard {
@@ -9449,6 +9636,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
     const int status =
         argc < 3 ? 209 : directory_timestamp_mutations(argv[2], kind);
     return status ? status : 54;
+  }
+  if (equal(argv[1], "directory-ownership-mutations") ||
+      equal(argv[1], "virtual-directory-ownership") ||
+      equal(argv[1], "created-directory-ownership")) {
+    const unsigned kind = equal(argv[1], "created-directory-ownership")   ? 2
+                          : equal(argv[1], "virtual-directory-ownership") ? 1
+                                                                          : 0;
+    const int status =
+        argc < 3 ? 209 : directory_ownership_mutations(argv[2], kind);
+    return status ? status : 55;
   }
   if (equal(argv[1], "directory-mode-mutations") ||
       equal(argv[1], "virtual-directory-mode") ||

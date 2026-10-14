@@ -9,6 +9,7 @@
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinDirectoryModeTestData.h"
+#include "DarwinDirectoryOwnershipTestData.h"
 #include "DarwinDirectoryTimestampTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileSystemTestData.h"
@@ -2816,6 +2817,58 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
 }
 
 TEST_P(DarwinProcess,
+       DirectoryOwnershipMutationsPreserveIndependentObjectAndNamespaceState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (const char *Mode :
+       {"directory-ownership-mutations", "virtual-directory-ownership",
+        "created-directory-ownership"}) {
+    const bool Created = llvm::StringRef(Mode) == "created-directory-ownership";
+    Options.Arguments[2] = Created ? "/child" : "/dir";
+    Options.DarwinFiles = darwin_test::directoryOwnershipOptions(Created);
+    const auto Wanted = darwin_test::directoryOwnershipServices(Created);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 55);
+      EXPECT_EQ(R->StandardOutput, "O");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+      }
+      EXPECT_EQ(R->ReturnValue, 55u);
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").Mode, 0040700);
+      EXPECT_EQ(Options.DarwinFiles->OwnershipMutations->CreatedRegularObjects,
+                false);
+    }
+    Options.DarwinFiles->OwnershipMutations->Objects.clear();
+    Options.DarwinFiles->OwnershipMutations->CreatedDirectoryObjects = false;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic,
+              "Darwin object ownership provider is not configured");
+    ASSERT_EQ(R->Services.size(), Created ? 6u : 5u);
+    EXPECT_EQ(R->Services.back().Number, Class | 16);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
        DirectoryTimestampMutationsPreserveIndependentObjectAndNamespaceState) {
   Options.InstructionQuantum = 1024;
   Options.Limits.TimeoutMicroseconds = 5000000;
@@ -3410,7 +3463,7 @@ TEST_P(DarwinProcess,
         EXPECT_EQ(R->Diagnostic,
                   Owner ? (Variant == 1 ? "Darwin ordinary ownership "
                                           "environment is not configured"
-                                        : "Darwin regular-object ownership "
+                                        : "Darwin object ownership "
                                           "provider is not configured")
                         : (Variant == 1 ? "Darwin ordinary mode mutation "
                                           "environment is not configured"
@@ -3798,7 +3851,7 @@ TEST_P(DarwinProcess, OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState) {
   ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
   EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
   EXPECT_EQ(Unknown->Diagnostic,
-            "Darwin regular-object ownership provider is not configured");
+            "Darwin object ownership provider is not configured");
   ASSERT_EQ(Unknown->Services.size(), 7u);
   EXPECT_EQ(Unknown->Services.back().Number, Class | 16);
   EXPECT_FALSE(Unknown->Services.back().Result);

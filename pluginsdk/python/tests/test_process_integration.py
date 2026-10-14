@@ -644,6 +644,101 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_directory_ownership_preserves_independent_authority(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+
+        def metadata(inode: int, size: int = 0, blocks: int = 0) -> dict:
+            return {"device": 7, "inode": inode, "mode": 0o40700, "link_count": 2,
+                    "uid": 501, "gid": 20, "size": size, "blocks": blocks,
+                    "block_size": 512, "flags": 0, "generation": 9,
+                    "access_time": {"seconds": 1, "nanoseconds": 2},
+                    "modification_time": {"seconds": 3, "nanoseconds": 4},
+                    "change_time": {"seconds": 5, "nanoseconds": 6},
+                    "birth_time": {"seconds": 7, "nanoseconds": 8}}
+
+        profiles = (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"),
+                    ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"),
+                    ("ios-simulator-x86_64", "ios-simulator-macho64-v1"))
+        for file, profile in profiles:
+            cls = 0x2000000 if file.endswith("x86_64") else 0
+            for variant in range(5):
+                created, missing = variant in (2, 4), variant >= 3
+                mode = "created-directory-ownership" if created else "directory-ownership-mutations" if variant == 0 else "virtual-directory-ownership"
+                files = {"files": [], "working_directory": "/",
+                         "directories": [{"path": "/", "metadata": metadata(1), "mutable": True,
+                                          "mutation_policy": {"directory_entry_size": 16,
+                                                              "mutation_time": {"seconds": 91, "nanoseconds": 92}}}],
+                         "ownership_mutations": {"objects": [], "created_regular_objects": created and missing,
+                                            "created_directory_objects": created and not missing}}
+                if created:
+                    files["umask"] = 0o22
+                    files["creation_policy"] = {"first_inode": 100, "block_size": 512, "generation": 9,
+                                                "creation_time": {"seconds": 41, "nanoseconds": 42},
+                                                "mutation_policy": {"allocation_unit": 512,
+                                                                    "mutation_time": {"seconds": 101, "nanoseconds": 102}},
+                                                "namespace_policy": {"symbolic_link_allocation_unit": 512,
+                                                                     "directory_entry_size": 32, "directory_blocks": 7}}
+                else:
+                    files["directories"].append({"path": "/dir", "metadata": metadata(3, 32, 7), "movable": True,
+                                                  "mutation_policy": {"directory_entry_size": 16,
+                                                                      "mutation_time": {"seconds": 81, "nanoseconds": 82}}})
+                    files["directories"][-1]["metadata"]["gid"] = 31
+                    if not missing:
+                        files["ownership_mutations"]["objects"] = [{"path": "/dir", "time": {"seconds": 81, "nanoseconds": 82}}]
+                options = {"backend": "unicorn", "instruction_quantum": 1024, "timeout_microseconds": 5000000,
+                           "arguments": ["guest", mode, "/child" if created else "/dir"], "darwin_files": files,
+                           "darwin_system": {"credentials": {"real_uid": 700, "effective_uid": 501,
+                                                             "real_gid": 31, "effective_gid": 20}}}
+                original = json.dumps(options, sort_keys=True)
+                wanted = [(136, 0, False)] if created else []
+                wanted += [(5, 3, False), (41, 4, False), (5, 5, False), (339, 0, False)]
+                for number in (16,123,468):
+                    for high in (0,0x1234567800000000,0xffffffff00000000):
+                        for pattern in range(3 if high else 0, 4):
+                            wanted += [(high | number,0,False),(339,0,False)]
+                            if pattern == 2:
+                                wanted += [(338,0,False),(339,0,False)]
+                wanted += [(123,9,True),(468,22,True),(16,2,True),(339,0,False),(128,0,False),
+                           (339,0,False),(123,0,False),(338,0,False),(6,0,False),(123,9,True),
+                           (123,0,False),(339,0,False),(6,0,False),(6,0,False),(4,1,False)]
+                for repeat in range(2):
+                    with self.subTest(file=file, variant=variant, repeat=repeat):
+                        result = session.emulate_process(str(Path(fixtures) / file), profile, original)
+                        self.assertEqual(result["stop_reason"], "unsupported_service" if missing else "exited", result["diagnostic"])
+                        self.assertEqual(result["stderr_hex"], "")
+                        self.assertEqual(result["stdout_hex"], "" if missing else "4f")
+                        if missing:
+                            self.assertEqual(result["diagnostic"], "Darwin object ownership provider is not configured")
+                            self.assertEqual(len(result["services"]), 6 if created else 5)
+                            self.assertEqual(result["services"][-1]["number"], format(cls | 16, "x"))
+                            self.assertIsNone(result["services"][-1]["result"])
+                            self.assertNotIn("error", result["services"][-1])
+                        else:
+                            self.assertEqual(result["exit_status"], 55)
+                            actual = [(c["number"], c["result"], c["error"]) for c in result["services"]]
+                            self.assertEqual(actual, [(format(cls | n, "x"), format(v, "x"), e) for n, v, e in wanted])
+                        self.assertEqual(json.dumps(options, sort_keys=True), original)
+                        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                malformed = json.loads(original)
+                malformed["darwin_files"]["ownership_mutations"]["created_directory_objects"] = 1
+                with self.assertRaises(NeverDError):
+                    session.emulate_process(str(Path(fixtures) / file), profile, json.dumps(malformed))
+
     def test_darwin_directory_timestamps_preserve_independent_authority(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
@@ -897,7 +992,7 @@ class ProcessIntegrationTests(unittest.TestCase):
             request["darwin_files"]["ownership_mutations"]["objects"] = []
             result = session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(result["stop_reason"], "unsupported_service")
-            self.assertEqual(result["diagnostic"], "Darwin regular-object ownership provider is not configured")
+            self.assertEqual(result["diagnostic"], "Darwin object ownership provider is not configured")
             self.assertEqual(len(result["services"]), 7)
             self.assertIsNone(result["services"][-1]["result"])
             self.assertNotIn("error", result["services"][-1])
@@ -1854,7 +1949,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                 if fd is not None:
                                     self.assertEqual(call["arguments"][0], format(fd, "x"))
                         if variant:
-                            expected_reason = ("Darwin ordinary ownership environment is not configured" if change == 3 else "Darwin regular-object ownership provider is not configured") if owner else ("Darwin ordinary mode mutation environment is not configured" if change == 3 else "Darwin object mode provider is not configured")
+                            expected_reason = ("Darwin ordinary ownership environment is not configured" if change == 3 else "Darwin object ownership provider is not configured") if owner else ("Darwin ordinary mode mutation environment is not configured" if change == 3 else "Darwin object mode provider is not configured")
                             self.assertEqual(result["diagnostic"], expected_reason)
                         else:
                             self.assertEqual(result["exit_status"], 45 if virtual else 44)

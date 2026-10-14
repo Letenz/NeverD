@@ -52,7 +52,7 @@ DarwinFiles::changeOwnership(ServiceKind Service,
       return unsupported(Result, *Reason);
     File = std::get<Description>(std::move(*Resolved));
   }
-  if (File.Type != Kind::File)
+  if (File.Type != Kind::File && File.Type != Kind::Directory)
     return unsupported(Result, diagnostic::FileOwnershipTarget);
   auto Current = statusMetadata(File);
   if (auto *Reason = std::get_if<const char *>(&Current))
@@ -64,16 +64,31 @@ DarwinFiles::changeOwnership(ServiceKind Service,
     return returned(*Error, true);
   if (auto *Reason = std::get_if<const char *>(&Authority))
     return unsupported(Result, *Reason);
-  auto &Node = *File.File;
-  if (!Node.OwnershipTime)
+  const auto *ProviderTime = File.Type == Kind::File
+                                 ? File.File->OwnershipTime
+                                 : File.Directory->OwnershipTime;
+  if (!ProviderTime)
     return unsupported(Result, diagnostic::FileOwnershipProvider);
   if (Requested.UID != UINT32_MAX || Requested.GID != UINT32_MAX) {
-    Node.CurrentMetadata = *Metadata;
+    // Complete ordinary directory metadata implies its independently retained
+    // creation identity. Check before committing either observation.
+    if (File.Type == Kind::Directory && Requested.GID != UINT32_MAX &&
+        !File.Directory->Identity)
+      return unsupported(Result, diagnostic::FileCreationParent);
+    auto &CurrentMetadata = File.Type == Kind::File
+                                ? File.File->CurrentMetadata
+                                : File.Directory->CurrentMetadata;
+    CurrentMetadata = *Metadata;
     if (Requested.UID != UINT32_MAX)
-      Node.CurrentMetadata->UID = Requested.UID;
-    if (Requested.GID != UINT32_MAX)
-      Node.CurrentMetadata->GID = Requested.GID;
-    Node.CurrentMetadata->ChangeTime = *Node.OwnershipTime;
+      CurrentMetadata->UID = Requested.UID;
+    if (Requested.GID != UINT32_MAX) {
+      CurrentMetadata->GID = Requested.GID;
+      // All child creation uses this actual object, including after moves or
+      // later namespace invalidation. Names never supply an old group again.
+      if (File.Type == Kind::Directory)
+        File.Directory->Identity->GID = Requested.GID;
+    }
+    CurrentMetadata->ChangeTime = *ProviderTime;
   }
   return returned(0);
 }

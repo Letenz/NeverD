@@ -400,7 +400,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
                                    diagnostic::FileModeOption, true))
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations,
-                                   diagnostic::FileOwnershipOption))
+                                   diagnostic::FileOwnershipOption, true))
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.TimestampMutations,
                                    diagnostic::FileTimestampOption, true))
@@ -874,6 +874,11 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
     const auto I = Options->ModeMutations->Objects.find(Path);
     if (I != Options->ModeMutations->Objects.end())
       Node->ModeTime = &I->second;
+  }
+  if (Options->OwnershipMutations) {
+    const auto I = Options->OwnershipMutations->Objects.find(Path);
+    if (I != Options->OwnershipMutations->Objects.end())
+      Node->OwnershipTime = &I->second;
   }
   if (Options->TimestampMutations) {
     const auto I = Options->TimestampMutations->Objects.find(Path);
@@ -1859,6 +1864,9 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
     if (Options->ModeMutations &&
         Options->ModeMutations->CreatedDirectoryObjects)
       Node->ModeTime = &Policy->Mutation.Time;
+    if (Options->OwnershipMutations &&
+        Options->OwnershipMutations->CreatedDirectoryObjects)
+      Node->OwnershipTime = &Policy->Mutation.Time;
     if (Options->TimestampMutations &&
         Options->TimestampMutations->CreatedDirectoryObjects)
       Node->TimestampTime = &Policy->Mutation.Time;
@@ -2122,9 +2130,10 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
   // observed record. Copying its scalar fields allocates nothing after commit.
   if (Node.MetadataInvalidated)
     return;
-  // Mode-created current metadata supplies no namespace update authority.
+  // Attribute-created current metadata supplies no namespace update authority.
   // A complete namespace policy must keep this record independently; otherwise
-  // invalidate it permanently, including a record published by chmod.
+  // invalidate it permanently, including a record published by an attribute
+  // call.
   if (!Node.MutationTime || !Node.DirectoryEntrySize ||
       (!Node.CurrentMetadata && !Node.Metadata)) {
     Node.MetadataInvalidated = true;

@@ -618,7 +618,8 @@ TEST_P(DarwinTimestampMutationTest,
   refused(ServiceKind::Futimes, {open("/data"), P},
           diagnostic::FileTimestampProvider);
   refused(ServiceKind::Fchmod, {D, 0750}, diagnostic::FileModeEnvironment);
-  refused(ServiceKind::Fchown, {D, 501, 20}, diagnostic::FileOwnershipTarget);
+  refused(ServiceKind::Fchown, {D, 501, 20},
+          diagnostic::FileOwnershipEnvironment);
   EXPECT_EQ(status(D), Wanted);
   // Earlier nonnegative mtime updates only the declared birth observation.
   EXPECT_EQ(ok(ServiceKind::Futimes, {D, input(1, 2, 2, 3)}), 0u);
