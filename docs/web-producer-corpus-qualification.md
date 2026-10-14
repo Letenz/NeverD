@@ -95,6 +95,15 @@ complete-file hashes. Node's opaque snapshot uses the separately pinned
 their complete output hashes match the old witnesses despite those lock changes.
 All eleven required C++ cases pass with zero skips (25.73 seconds, Release,
 macOS ARM64). A missing-input probe fails all eleven cases with zero skips.
-These are local qualification receipts. The immutable archive still needs an
-accessible URL and a successful workflow receipt before claiming remote release
-qualification. Original manifests have not been relaxed or replaced.
+These local receipts are complemented by the
+[complete combined GitHub qualification](https://github.com/NeverSight/NeverD/actions/runs/38502323427)
+on 2026-10-14 at `8c1f4ac03875cec8711568b692bc0c76843b40ed`.
+Its eleven producer cases and fifteen fixed CEF/resource cases pass with zero
+skips; the input preflight and final combined gate also succeed. The supplied
+archive has SHA-256
+`7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`
+and uses the explicit `2026-10-13` snapshot witness. Original manifests have
+not been relaxed or replaced. This receipt qualifies the selected commit and
+fixed inputs on the macOS ARM64 reader. Future invocations must supply a
+reachable pinned archive; the qualification does not establish permanent
+public fixture hosting or additional analysis-host platforms.

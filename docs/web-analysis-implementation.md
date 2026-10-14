@@ -3946,11 +3946,13 @@ finished with failed input validation, skipped producer/resource jobs and a
 failed final gate. The [full combined run](https://github.com/NeverSight/NeverD/actions/runs/38500156926)
 has been dispatched at `70f433ae49cc25841f0bda92bdcb649b0a847a3f` with the fixed
 archive SHA-256 recorded above and the explicit `2026-10-13` snapshot witness.
-The input preflight passes. A temporary authenticated HTTPS transfer serves
-only that archive; its token and endpoint will be retired after qualification.
+The input preflight passes. A temporary authenticated HTTPS transfer supplies
+only that archive during qualification.
 The first producer job stops before consumer tests: its HTTP/2 stream resets
 after approximately 405 MB, and curl exits 92 without using the existing retry
 count. This is a failed remote receipt.
+Its fixed CEF job succeeds, and the final combined gate fails because the
+producer job failed; a successful resource job cannot mask that failure.
 
 The download now retries all errors within the existing two-retry/time bounds.
 A task-local C++ transfer probe serves the unchanged full archive and cuts the
@@ -3959,4 +3961,27 @@ the revised policy retries into its explicit output file and recovers all
 1,251,173,226 bytes with SHA-256
 `7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
 HTTPS restrictions, bearer authentication and both hash checks remain required.
-The corrected combined run still needs a successful remote receipt.
+The [corrected combined run](https://github.com/NeverSight/NeverD/actions/runs/38502323427)
+now succeeds at `8c1f4ac03875cec8711568b692bc0c76843b40ed`. Download and envelope
+verification complete before the native consumers build. Retained JUnit reports
+confirm eleven producer cases (48 seconds) and fifteen CEF/resource cases
+(6 seconds), both with zero failures and zero skips. Input preflight, both
+called jobs and the final combined gate all report success. This is a full
+fixed-corpus release qualification receipt on the macOS ARM64 reader.
+
+After integration, the owning local selection discovers 852 cases: 822 pass,
+29 retain explicit optional/omission skips, and the required CEF consumer fails
+because its selected `/tmp` input is absent. The unchanged NuGet bytes are
+downloaded to persistent storage and verified against the original hash; the
+affected CEF case passes in 9.79 seconds. All eleven required producer cases
+already pass without skips, and no unresolved test failure remains. The
+worker/MCP/availability selection passes seven cases with one backend-omission
+skip (14.16 seconds); Qt Web review passes (3.37 seconds). All 23 capabilities,
+the 7,823-file provenance scan and 309 localized Markdown entries pass.
+Machine-local receipts and both remote JUnit reports are retained beside the
+persistent corpus. The qualified ref is explicit; later unrelated native
+integration does not acquire a Web receipt from it automatically.
+The task's fixture server and tunnel are stopped. Its temporary repository
+Secret is confirmed absent, and the local token/header files are removed.
+The immutable archive and qualification reports remain in persistent storage;
+no permanent public fixture endpoint is claimed.
