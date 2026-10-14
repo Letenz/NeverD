@@ -344,6 +344,15 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   }
   std::vector<bool> Reachable(N, false);
   Work = Sources;
+  // Source projection seeds only published ordinary entries. An unrelated
+  // disconnected component has no entry-state contract and still refuses.
+  if (Use == LowSEHFrameUse::SourceProjection)
+    for (size_t B = 1; B < N; ++B) {
+      if (!Charge())
+        return Fail("frame propagation budget exhausted");
+      if (Low.OrdinaryModuleAnalysisRoots.count(Low.Blocks[B].StartAddr))
+        Work.push_back(static_cast<int>(B));
+    }
   while (!Work.empty()) {
     if (!Charge())
       return Fail("frame propagation budget exhausted");
@@ -365,8 +374,8 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
           Low.OrdinaryModuleAnalysisRoots.count(Low.Blocks[B].StartAddr) &&
           !LocalUnwindSources.count(static_cast<int>(B)) &&
           !(CxxContinuation && IsCxxContinuation(Low.Blocks[B].StartAddr))))) {
-      if (Use != LowSEHFrameUse::SourceProjection || CxxContinuation ||
-          HasFrameRegister || IsLocalUnwindTarget)
+      if (!Reachable[B] || Use != LowSEHFrameUse::SourceProjection ||
+          CxxContinuation || HasFrameRegister || IsLocalUnwindTarget)
         return Fail("protected scope has an independent ordinary entry at " +
                     std::to_string(Low.Blocks[B].StartAddr));
       IndependentSP = true;

@@ -472,6 +472,46 @@ TEST(MedSEHEstablisherFrame, SourceSwitchRequiresEveryResolvedTarget) {
   }
 }
 
+TEST(MedSEHEstablisherFrame, SourceRequiresExplicitIndependentEntry) {
+  auto Img = makeFixedSEHFrameImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto *Protected = Low.blockFor(Img.Entry + 0x10);
+  auto *Join = Low.blockFor(Img.Entry + 0x30);
+  ASSERT_NE(Protected, nullptr);
+  ASSERT_NE(Join, nullptr);
+  // Redirect the post-prologue instruction to the epilogue. The protected
+  // scope is now disconnected, so it needs its own published entry state.
+  auto &Prefix = Low.Blocks.front();
+  auto &Boundary = Prefix.InstructionBoundaries.back();
+  Prefix.Ops.resize(Boundary.FirstOp);
+  LowOp Branch;
+  Branch.Opcode = NdOp::BRANCH;
+  Branch.Addr = Boundary.Address;
+  Branch.addInput(NdVar::cst(Join->StartAddr, 8));
+  Prefix.Ops.push_back(Branch);
+  Boundary.OpCount = 1;
+  Boundary.Control = LowInstructionControl::Branch;
+  Boundary.ControlFlags = LowInstructionControlFlag::Branch;
+  Boundary.Immediate = Join->StartAddr;
+  Prefix.Succs = {Join->Id};
+  Protected->Preds.clear();
+  Join->Preds.push_back(Prefix.Id);
+  Low.OrdinaryModuleAnalysisRoots.clear();
+  for (bool Published : {false, true}) {
+    SCOPED_TRACE(Published);
+    if (Published)
+      Low.OrdinaryModuleAnalysisRoots.insert(Protected->StartAddr);
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Proof = proveLowSEHEstablisherFrame(
+        Low, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
+        false, LowSEHFrameUse::SourceProjection);
+    std::string Failure = Proof ? "" : llvm::toString(Proof.takeError());
+    EXPECT_EQ(bool(Proof), Published) << Failure;
+    if (Proof)
+      EXPECT_TRUE(Proof->HasIndependentEntries);
+  }
+}
+
 LowFunc makeFixedCxxContinuationFrame(
     const BinaryImage &Image = makeFixedSEHFrameImage()) {
   auto Low = decodeFixedSEHFrame(Image);

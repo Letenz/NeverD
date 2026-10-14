@@ -5520,6 +5520,7 @@ It checks the decoded unwind/prologue and SP stability throughout each
 protected range, but can retain an unknown runtime SP when independent entries
 prevent an entry-relative identity. Live register values at those entries are
 explicitly unknown, including on an ordinary path reaching the same block.
+Disconnected protected paths without a published ordinary entry still refuse.
 Shared ordinary/exceptional handlers merge their SP inputs separately. No
 saved memory or local-unwind receipt is created by this projection.
 `med/X86/SEHSourceRoots` owns these abstract entry definitions. MedIR and HighIR

@@ -5658,6 +5658,9 @@ stack cells. Strict conversion still refuses, source conversion retains
 unknown memory operands, and direct LLVM emission rejects the result.
 `SourceSwitchRequiresEveryResolvedTarget` checks the resolver-to-frame CFG
 boundary, including absent, duplicated, changed and unsafe target sets.
+`SourceRequiresExplicitIndependentEntry` rejects disconnected protected paths
+without a published source entry and accepts the same graph once that entry
+can receive explicit unknown values.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
