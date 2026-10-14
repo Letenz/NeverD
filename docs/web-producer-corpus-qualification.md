@@ -143,3 +143,14 @@ and original evidence are unchanged; these publication attachments accompany
 it. No proprietary client input or recovered client source is included.
 Only the corpus is downloaded by qualification; source/rebuild attachments
 remain independently available in the same Release.
+
+The [automatic public Release download run](https://github.com/NeverSight/NeverD/actions/runs/38539252447)
+passes at `e669ac89e189285b6cfda77bf76fc38a0d90780a`, with all eleven producer
+and fifteen CEF/resource cases passing and zero errors/failures/skips. Both
+preflight and the combined gate succeed. The
+[explicit invalid HTTP override probe](https://github.com/NeverSight/NeverD/actions/runs/38541715306)
+fails preflight and the gate; both readers are skipped before downloading or
+building. The published source companion also passes a complete public
+download hash check and all 205 nested source archive hash checks.
+The new receipt/JUnit attachments record the exact integrated ref separately
+from the earlier `8c1f4ac03` qualification.
