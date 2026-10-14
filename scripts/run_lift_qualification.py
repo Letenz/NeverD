@@ -118,7 +118,7 @@ def main() -> int:
     # Decode its actual .text rather than supplying synthetic parity words.
     parity = output / "aarch64-rust-runtime.text"
     subprocess.run([tools["llvm-objcopy"]["path"], "--dump-section", f".text={parity}",
-                    str(ROOT / PARITY_IMAGE)], check=True)
+                    str(ROOT / PARITY_IMAGE), str(output / "parity-image.so")], check=True)
     if parity.stat().st_size < 4096:
         raise ValueError("AArch64 parity text is missing or unexpectedly small")
     report = {

@@ -49,7 +49,7 @@ jobs:
           curl --fail --silent --show-error --retry 3 https://apt.llvm.org/llvm-snapshot.gpg.key -o /tmp/llvm-signing-key.asc
           gpg --show-keys --with-colons /tmp/llvm-signing-key.asc | grep '^fpr:.*6084F3CF814B57C1CF12EFD515CF4D18AF4F7421:'
           sudo install -m 0644 /tmp/llvm-signing-key.asc /usr/share/keyrings/neverd-llvm.asc
-          echo 'deb [signed-by=/usr/share/keyrings/neverd-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble main' | sudo tee /etc/apt/sources.list.d/neverd-llvm.list
+          echo 'deb [signed-by=/usr/share/keyrings/neverd-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main' | sudo tee /etc/apt/sources.list.d/neverd-llvm.list
           sudo apt-get update
           sudo apt-get install --yes clang-23 lld-23 llvm-23 ninja-build gcc-multilib g++-multilib
           echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
