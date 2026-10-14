@@ -1253,11 +1253,15 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // object as arg0; the convention may also pass a result buffer after
       // it.  Do not invent further arguments.
       if (CI.IsIndirect && RegArgsApply && Op.NumInputs >= 1) {
-        if (auto Obj =
-                vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
-          Found[0] = *Obj;
-          FoundMask[0] = true;
-        }
+        // A C callback table can have exactly the same two-load shape as a
+        // C++ vtable. Its address does not override an actual first argument
+        // already reaching the call (including a literal such as f(8)).
+        if (!FoundMask[0])
+          if (auto Obj =
+                  vtableCallObject(Blk, static_cast<int>(OI), Op.Inputs[0])) {
+            Found[0] = *Obj;
+            FoundMask[0] = true;
+          }
         if (Policy && Policy->TakeVirtualCallResultBuffer)
           Policy->TakeVirtualCallResultBuffer(Ctx);
       }
@@ -2151,6 +2155,11 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                               : static_cast<uint16_t>(TRI.VecRegStride);
         while (static_cast<int>(FoundFP.size()) < Vectors)
           FoundFP.push_back(MedVar::makeConst(0, VectorBytes));
+      }
+      if (!PositionalSlots) {
+        CI.IntegerRegisterArgCount = static_cast<int>(IntPart.size());
+        CI.FloatingRegisterArgCount =
+            static_cast<int>(std::min(FoundFP.size(), FPParamRegs.size()));
       }
       for (auto &A : IntPart)
         CI.Args.push_back(A);

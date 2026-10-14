@@ -392,6 +392,11 @@ struct MedCallInfo {
   /// Args passes the register arguments in the callee's own register order
   /// (MedFunc::IntegerArgumentRegisters), not the convention's.
   bool ArgumentsInCalleeRegisterOrder = false;
+  /// Counts of the independent integer and floating register runs in Args;
+  /// remaining arguments are stack-passed. -1 means no bank proof (explicit
+  /// source ABI or a convention with positional argument slots).
+  int IntegerRegisterArgCount = -1;
+  int FloatingRegisterArgCount = -1;
   /// The bytes the callee reads of each argument, by position, where it reads
   /// only the scalar in the low lane of a floating-point argument register
   /// (MedFunc::FPParamScalarBytes); 0, or no entry, for a whole argument.
