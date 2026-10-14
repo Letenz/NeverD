@@ -111,6 +111,83 @@ __attribute__((noreturn)) void _start(void) {
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
 }
 
+TEST(LLVMCValues, RepeatedParameterFieldAddressesPreserveMemoryObservations) {
+  const char *IR = R"ir(
+target datalayout = "e-p:64:64"
+declare void @observe_field(ptr, ptr)
+define i64 @field_addresses(ptr %base, ptr %alias, i1 %choose) {
+entry:
+  %forward_field_address = getelementptr i8, ptr %base, i64 11
+  %backward_field_address = getelementptr i8, ptr %base, i64 -7
+  %before = load i64, ptr %forward_field_address, align 1
+  call void @observe_field(ptr %forward_field_address, ptr %alias)
+  br i1 %choose, label %left, label %right
+left:
+  %changed = load i64, ptr %forward_field_address, align 1
+  store i64 %changed, ptr %backward_field_address, align 1
+  br label %join
+right:
+  %other = load i64, ptr %backward_field_address, align 1
+  store i64 %other, ptr %forward_field_address, align 1
+  br label %join
+join:
+  %after = load i64, ptr %forward_field_address, align 1
+  %result = xor i64 %before, %after
+  ret i64 %result
+}
+)ir";
+  for (auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(IR, Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    neverd::CEmitterOptions Options;
+    Options.TheArch = Arch;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = true;
+    Options.ScalarPointers =
+        neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+    EXPECT_EQ(Source.find("forward_field_address"), std::string::npos);
+    EXPECT_EQ(Source.find("backward_field_address"), std::string::npos);
+    Module->getFunction("field_addresses")->setName("reference_fields");
+    std::string Reference;
+    llvm::raw_string_ostream ReferenceOut(Reference);
+    Module->print(ReferenceOut, nullptr);
+    const std::string Main = R"(
+#include <string.h>
+static unsigned observations;
+void observe_field(void *field, void *alias) {
+  uint64_t value;
+  memcpy(&value, field, 8);
+  value ^= UINT64_C(0x8765432101020304);
+  memcpy(alias, &value, 8);
+  ++observations;
+}
+extern uint64_t reference_fields(void *, void *, _Bool);
+int main(void) {
+  unsigned char actual[96], expected[96];
+  for (unsigned input = 0; input < 2048; ++input) {
+    for (unsigned i = 0; i < sizeof(actual); ++i)
+      actual[i] = expected[i] = (unsigned char)(input * 31 + i * 17);
+    unsigned base = 16 + (input % 8);
+    unsigned alias = base + ((input & 8) ? 11 : 3);
+    observations = 0;
+    uint64_t want = reference_fields(expected + base, expected + alias, input & 1);
+    uint64_t got = field_addresses(actual + base, actual + alias, input & 1);
+    if (got != want || memcmp(actual, expected, sizeof(actual)) || observations != 2)
+      return 1;
+  }
+  return 0;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source + Main, Level, Reference, true);
+  }
+}
+
 TEST(LLVMCValues, DeepForwardedBitAssemblyRetainsEveryDefinition) {
   llvm::LLVMContext Context;
   llvm::Module Module("forwarded-packed-bits", Context);

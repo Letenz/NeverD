@@ -1089,6 +1089,12 @@ while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
 
+LLVMC can repeat a constant field-address expression rooted directly in a
+pointer parameter instead of materializing a shared address temporary. The
+existing expression budget still applies. This changes presentation only:
+loads, stores, captured pointer values and calls retain their original sites.
+Loaded bases and dynamic indices do not acquire this multi-use permission.
+
 `pipeline/StateSourceRecovery` owns explicit isolated-bank source contracts,
 independently of instruction language, OS and API names. It validates bounded
 bank addressing, attaches scoped alias facts without relocating the bank, and

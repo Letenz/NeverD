@@ -514,6 +514,18 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
         Analysis.Inlinable.insert(&Inst);
         continue;
       }
+      // A constant field address rooted directly in an SSA pointer argument
+      // has no observation to capture. Repeating its existing expression does
+      // not repeat a load, move a memory access or assume that the field is
+      // unchanged across calls. Keep dynamic indices and loaded bases under
+      // the ordinary single-use/materialization rules.
+      if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&Inst);
+          GEP && !GEP->getType()->isVectorTy() && GEP->getNumIndices() <= 16 &&
+          GEP->hasAllConstantIndices() &&
+          llvm::isa<llvm::Argument>(GEP->getPointerOperand())) {
+        Analysis.Inlinable.insert(&Inst);
+        continue;
+      }
       // Each use spells a frame byte address from the frame itself, never by
       // this name, so a statement for it would be a dead assignment.
       if (llvm::isa<llvm::BinaryOperator, llvm::GetElementPtrInst,

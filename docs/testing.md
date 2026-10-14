@@ -1836,6 +1836,13 @@ poison, multi-bit masks and overly deep graphs; shared DAGs remain bounded.
 
 ## Interpreter recovery checks
 
+`LLVMCValues.RepeatedParameterFieldAddressesPreserveMemoryObservations`
+compares x64 and ARM64 C projections against independently compiled LLVM at
+O0/O2. Each projection checks 2,048 complete-buffer cases with unaligned and
+overlapping accesses, negative field offsets, branch-dependent stores and an
+opaque call that changes the observed memory. Undefined-behavior traps remain
+enabled; repeating an address must not reuse the value previously read there.
+
 `NeverDBytecodeObservation` covers input-bound call-site source evidence through
 HighC, LLVMC and optimized LLVMC, compiling and executing successful and failed
 state gateway calls. It rejects stale reports and mismatched call occurrences.
