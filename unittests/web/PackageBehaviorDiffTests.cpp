@@ -65,9 +65,6 @@ protected:
       "require('fs').writeFileSync('CANARY_PATH','CANARY_DATA');";
 
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture profile required";
-#endif
     llvm::SmallString<128> Dir;
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory("neverd-behavior-diff", Dir));

@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDWebArtifactTests
   ArtifactTests.cpp
+  WindowsHostTests.cpp
   PackageTests.cpp
   PackageArchiveTests.cpp
   ZipTests.cpp
@@ -32,6 +33,7 @@ add_neverd_unittest(NeverDWebArtifactTests
 )
 target_include_directories(NeverDWebArtifactTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
 target_compile_definitions(NeverDWebArtifactTests PRIVATE
+  NEVERD_TEST_WEB_JAVASCRIPT=$<BOOL:${NEVERD_ENABLE_WEB_JAVASCRIPT}>
   NEVERD_WEB_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 # Compile the owning payload translation unit without its private zlib macro.
 # The archive reader and model are shared; no product omission flag is invented.

@@ -445,7 +445,10 @@ most 1 GiB of original bytes. This is per session and excludes derived models;
 it is not a whole-process memory or disk quota. Storage creation/read/write
 failures return fixed codes and preserve a previously published revision.
 The snapshot is ephemeral, not an export or a persistent evidence archive.
-Windows admission remains unavailable pending a handle-based reader.
+Windows implements the `windows-ntfs-handle-v1` reader and private unlinked
+spool for local fixed NTFS, with native qualification tracked by the
+[Windows product lane](web-windows-product.md). Reparse points, named streams,
+hard links and remote or unsupported filesystems fail explicitly.
 
 ## Lexical bindings
 

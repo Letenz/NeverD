@@ -67,9 +67,6 @@ struct NativeHandle {
 };
 
 TEST(WebAsarAvailability, MissingPolicyRefusesExtractionWithoutFallback) {
-#ifdef _WIN32
-  GTEST_SKIP() << "Windows web input capture is not implemented";
-#endif
   const auto Caps = take(neverd_web_capabilities_json());
   for (const auto &A : *Caps.getAsObject()->getArray("analysis"))
     if (A.getAsObject()->getString("kind") == "asar_extraction" &&
@@ -122,9 +119,6 @@ protected:
   fs::path Root, Input;
   std::string Revision;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "Windows web input capture is not implemented";
-#endif
     const auto Caps = take(neverd_web_capabilities_json());
     bool Available = false;
     for (const auto &A : *Caps.getAsObject()->getArray("analysis"))

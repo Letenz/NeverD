@@ -40,9 +40,6 @@ protected:
   std::vector<PackageInstallInput> Input;
 
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture profile required";
-#endif
     llvm::SmallString<128> Dir;
     ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-install", Dir));
     Root = Dir.str().str();

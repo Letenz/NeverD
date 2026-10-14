@@ -53,9 +53,6 @@ protected:
   std::filesystem::path Root;
   std::string Path, Revision, Artifact;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture required";
-#endif
     llvm::SmallString<128> D;
     ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-pak-sdk", D));
     Root = D.str().str();

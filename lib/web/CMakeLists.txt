@@ -140,6 +140,10 @@ add_neverd_component_library(NeverDWeb
   LLVM_COMPONENTS Support
 )
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+if(WIN32)
+  target_sources(NeverDWeb PRIVATE platform/WindowsFile.cpp)
+  target_link_libraries(NeverDWeb PRIVATE advapi32 bcrypt)
+endif()
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebBrotli.cmake")
 neverd_add_web_brotli()
 find_package(ZLIB QUIET)

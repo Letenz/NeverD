@@ -50,9 +50,6 @@ protected:
   static constexpr const char *SRI =
       "sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=";
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture required";
-#endif
     llvm::SmallString<128> Dir;
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory("neverd-integrity-sdk", Dir));

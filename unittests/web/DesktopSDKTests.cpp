@@ -70,9 +70,6 @@ protected:
   fs::path Root, Input;
   std::string Revision;
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture qualification required";
-#endif
     S = neverd_web_session_create();
     ASSERT_NE(S, nullptr);
     llvm::SmallString<128> P;

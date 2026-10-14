@@ -65,9 +65,6 @@ protected:
     Out << Text;
   }
   void SetUp() override {
-#ifdef _WIN32
-    GTEST_SKIP() << "POSIX capture required";
-#endif
     llvm::SmallString<128> Dir;
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory("neverd-attestation-sdk", Dir));

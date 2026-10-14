@@ -70,7 +70,6 @@ TEST(WebIdentity, LengthFramingAndDomainSeparation) {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
-#ifndef _WIN32
 TEST_F(WebArtifacts, RelocationAndDirectoryOrderPreserveIdentity) {
   write(Root / "one/z.js", "same");
   write(Root / "one/a.js", "same");
@@ -147,6 +146,7 @@ TEST_F(WebArtifacts, AggregateBudgetsApplyToManySmallFiles) {
       Error);
 }
 
+#ifndef _WIN32
 TEST_F(WebArtifacts, RejectsLinksSpecialFilesAndPortableCollisions) {
   write(Root / "outside", "sensitive");
   fs::create_directory(Root / "input");
@@ -165,6 +165,8 @@ TEST_F(WebArtifacts, RejectsLinksSpecialFilesAndPortableCollisions) {
     EXPECT_THROW(S.preview((Root / "input").string(), ""), Error);
 }
 
+#endif
+
 TEST_F(WebArtifacts, MetadataPolicyDoesNotExposeNamesOrContent) {
   const std::string Canary = "SECRET_CANARY_6fd90";
   write(Root / Canary / (Canary + ".js"), Canary);
@@ -178,6 +180,7 @@ TEST_F(WebArtifacts, MetadataPolicyDoesNotExposeNamesOrContent) {
   EXPECT_EQ(S.metadata().find(Canary), std::string::npos);
 }
 
+#ifndef _WIN32
 TEST_F(WebArtifacts, RootLinkCannotBypassNoFollowWithTrailingComponents) {
   write(Root / "real/a", "private");
   fs::create_directory_symlink(Root / "real", Root / "alias");
@@ -186,6 +189,8 @@ TEST_F(WebArtifacts, RootLinkCannotBypassNoFollowWithTrailingComponents) {
     EXPECT_THROW(S.preview((Root / "alias").string() + Suffix, ""), Error);
   EXPECT_NO_THROW(S.preview((Root / "real").string() + "/", ""));
 }
+
+#endif
 
 TEST_F(WebArtifacts, HardLinksCannotAliasFilesOutsideTheSelectedRoot) {
   write(Root / "outside", "private");
@@ -216,10 +221,4 @@ TEST_F(WebArtifacts, RejectsDuplicateUnknownAndUnboundedOptions) {
         R"({"schema_version":1,"max_input_bytes":9223372036854775807})"})
     EXPECT_THROW(S.preview((Root / "a").string(), Options), Error) << Options;
 }
-#else
-TEST_F(WebArtifacts, UnsupportedReaderFailsExplicitly) {
-  Session S;
-  EXPECT_THROW(S.preview(Root.string(), ""), Error);
-}
-#endif
 } // namespace
