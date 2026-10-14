@@ -30,6 +30,12 @@ FIXTURE = ROOT / (
 
 def check_runtime(result: dict) -> dict:
     output = result.get("stdout", "")
+    # Wine's debugger can return zero after the process faults. Keep crash
+    # diagnostics authoritative even if every case printed a passing result.
+    diagnostics = output + "\n" + result.get("stderr", "")
+    if re.search(r"\bunhandled (?:exception|page fault)\b", diagnostics,
+                 re.IGNORECASE):
+        raise ValueError("original xcpt4 reported an unhandled Wine exception")
     cases = re.findall(r"^\s*test(\d+)\.\.\.(.*)$", output, re.MULTILINE)
     # xcpt4 can print a failure and still return zero. Check every result.
     if (result.get("exit_code") != 0
