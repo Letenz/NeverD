@@ -1598,8 +1598,10 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     Slot.Off = SlotOff;
     Slot.Name = Var.Name;
     if (Var.Type && (!Slot.Type || Var.Type->FieldDisplayNames.size() >
-                                       Slot.Type->FieldDisplayNames.size()))
+                                       Slot.Type->FieldDisplayNames.size())) {
       Slot.Type = Var.Type;
+      Slot.DebugType = true;
+    }
     if (FrameRecord)
       Slot.MemberType = Var.Type;
     return true;
@@ -1621,6 +1623,10 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       Rel = 0;
     }
   }
+  // A debug symbol's object that holds the access without a field naming
+  // it: the access stays a view of that object, never a local of its own.
+  const NamedFrameSlot *Container = nullptr;
+  uint64_t ContainerRel = 0;
   if (!Owner) {
     for (const auto &[SlotOff, Slot] : FrameSlots) {
       if (SlotOff > Off)
@@ -1632,19 +1638,27 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (Cover && Candidate >= Cover)
         continue;
       completeDisplayRecord(Dbg, Slot.Type);
+      // An array's display fields name its first element only.
+      const bool Array = Slot.Type && Slot.Type->Kind == NdTypeKind::Array;
       const bool Hit =
           Candidate == 0 ||
-          argListStandardField(Slot.Type, Candidate, AccessSize) ||
-          (Slot.Type && Slot.Type->displayFieldPathAt(Candidate, AccessSize));
-      if (!Hit)
+          (!Array && (argListStandardField(Slot.Type, Candidate, AccessSize) ||
+                      (Slot.Type &&
+                       Slot.Type->displayFieldPathAt(Candidate, AccessSize))));
+      if (!Hit) {
+        if (Slot.DebugType && Cover && !Slot.Name.empty() && !Container) {
+          Container = &Slot;
+          ContainerRel = Candidate;
+        }
         continue;
+      }
       if (Owner && Owner->Off != SlotOff)
         return std::nullopt;
       Owner = &Slot;
       Rel = Candidate;
     }
   }
-  if (!Owner) {
+  if (!Owner && !Container) {
     constexpr uint64_t kMaxInterior = 256;
     for (uint64_t Candidate = 1; Candidate <= kMaxInterior; ++Candidate) {
       auto Var = debugFrameVariable(Disp - static_cast<int64_t>(Candidate));
@@ -1653,15 +1667,40 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       completeDisplayRecord(Dbg, Var->Type);
       if (!Var->Type || (Var->Type->Size && Candidate >= Var->Type->Size))
         continue;
-      if (!Var->Type->displayFieldPathAt(Candidate, AccessSize) &&
-          !(AccessSize == 0 && Var->Type->displayFieldPathAt(Candidate)))
-        continue;
+      if (Var->Type->Kind == NdTypeKind::Array ||
+          (!Var->Type->displayFieldPathAt(Candidate, AccessSize) &&
+           !(AccessSize == 0 && Var->Type->displayFieldPathAt(Candidate)))) {
+        if (Var->Type->Size && Remember(Off - Candidate, *Var)) {
+          Container = &FrameSlots[Off - Candidate];
+          ContainerRel = Candidate;
+        }
+        break;
+      }
       if (!Remember(Off - Candidate, *Var))
         return std::nullopt;
       Owner = &FrameSlots[Off - Candidate];
       Rel = Candidate;
       break;
     }
+  }
+  if (!Owner && Container) {
+    // A frame record keeps such bytes raw; a separate local holds them.
+    if (FrameRecord || Container->Name.empty())
+      return std::nullopt;
+    const std::string Bytes = "((char *)&" + Container->Name + " + " +
+                              std::to_string(ContainerRel) + ")";
+    TypedAccess Out;
+    if (AddressOf) {
+      Out.Text = Bytes;
+      Out.Type = NdType::makePtr(NdType::makeInt(1, false));
+      return Out;
+    }
+    if (AccessSize != 1 && AccessSize != 2 && AccessSize != 4 &&
+        AccessSize != 8 && AccessSize != 16)
+      return std::nullopt;
+    Out.Type = NdType::makeInt(AccessSize, false);
+    Out.Text = "*(" + typeToC(Out.Type) + " *)" + Bytes;
+    return Out;
   }
   if (!Owner && Synthesize && FrameBaseOffset != 0) {
     if (OverlappingFrameAccessOffsets.count(Off))
@@ -1752,6 +1791,15 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     if (AddressOf) {
       Out.Text = "&" + OwnerText;
       Out.Type = Owner->Type ? NdType::makePtr(Owner->Type) : nullptr;
+      return Out;
+    }
+    // A value access to an array reads its leading bytes.
+    if (Owner->Type && Owner->Type->Kind == NdTypeKind::Array) {
+      if (AccessSize != 1 && AccessSize != 2 && AccessSize != 4 &&
+          AccessSize != 8 && AccessSize != 16)
+        return std::nullopt;
+      Out.Type = NdType::makeInt(AccessSize, false);
+      Out.Text = "*(" + typeToC(Out.Type) + " *)&" + OwnerText;
       return Out;
     }
     if (AccessSize && Owner->Type && Owner->Type->Size &&

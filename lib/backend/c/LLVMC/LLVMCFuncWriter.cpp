@@ -3048,8 +3048,11 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         Next->FieldDisplayNames.size() >=
             It->second.CallType->FieldDisplayNames.size())
       It->second.CallType = Next;
-    if (It->second.Type && It->second.Type->FieldDisplayNames.size() >
-                               Next->FieldDisplayNames.size())
+    // A debug symbol's type states the object's extent; the prototype's
+    // pointee may be one element of it.
+    if (It->second.DebugType ||
+        (It->second.Type && It->second.Type->FieldDisplayNames.size() >
+                                Next->FieldDisplayNames.size()))
       return;
     It->second.Type = std::move(Next);
   };
@@ -3105,7 +3108,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
     if (!Slot->CallType || Next->FieldDisplayNames.size() >=
                                Slot->CallType->FieldDisplayNames.size())
       Slot->CallType = Next;
-    if (!isNamedRecordDisplay(Slot->Type))
+    if (!Slot->DebugType && !isNamedRecordDisplay(Slot->Type))
       Slot->Type = Next;
   };
   auto argListOf = [&](const NamedFrameSlot &Slot) -> TypeRef {
@@ -3382,7 +3385,8 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
                           : SrcIt->second.CallType;
       if (!isNamedRecordDisplay(SrcTy))
         continue;
-      if (!isNamedRecordDisplay(DestIt->second.Type))
+      if (!DestIt->second.DebugType &&
+          !isNamedRecordDisplay(DestIt->second.Type))
         DestIt->second.Type = SrcTy;
       TypeRef SrcCall = argListOf(SrcIt->second);
       if (!SrcCall && isArgListRecord(SrcTy))
@@ -3410,9 +3414,10 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
     if (SibIt == FrameSlots.end() || SibIt->second.Name.empty() ||
         SibIt->second.AddressTaken)
       continue;
-    if (!isNamedRecordDisplay(SibIt->second.Type) ||
-        (SibIt->second.Type->SourceName != Src->SourceName &&
-         SibIt->second.Type->Size == Src->Size)) {
+    if (!SibIt->second.DebugType &&
+        (!isNamedRecordDisplay(SibIt->second.Type) ||
+         (SibIt->second.Type->SourceName != Src->SourceName &&
+          SibIt->second.Type->Size == Src->Size))) {
       SibIt->second.Type = Src;
       SibIt->second.CallType = Src;
     }
