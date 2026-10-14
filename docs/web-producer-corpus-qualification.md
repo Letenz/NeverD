@@ -47,11 +47,24 @@ Its final `Web release qualification gate` requires both called jobs to report
 The input preflight must also succeed, and rejects missing/invalid URL, SHA-256
 or witness selections before scheduling either expensive reader build.
 It is available both by explicit dispatch and as a reusable release prerequisite.
+The combined lane defaults to the fixed public corpus in the
+[NeverD corpus Release](https://github.com/NeverSight/NeverD/releases/tag/web-producer-corpus-2026-10-13).
+`.github/workflows/web-qualification-ci.yml` calls it automatically for changes
+to the owning Web, C API, CLI, worker/MCP and build boundaries on `dev` or a pull
+request. The automatic caller uses the same pinned defaults and needs no
+corpus credentials. Missing/invalid explicit overrides still fail preflight.
 A publishing workflow must depend on this gate before claiming complete Web
 release qualification. Ordinary CI and unrelated package publication are not
 represented as substitutes for the combined gate.
 
-Dispatch the combined gate after supplying the immutable archive location:
+Dispatch the combined gate with its fixed public archive:
+
+```sh
+gh workflow run web-release-qualification.yml --ref dev
+```
+
+Reusable callers can omit the inputs to select the same pin. For a different
+explicit immutable corpus, supply all selections together:
 
 ```sh
 gh workflow run web-release-qualification.yml --ref dev \
@@ -73,8 +86,9 @@ Interrupted downloads receive at most two retries, including partial-file and
 HTTP/2 stream errors. Curl resets its explicit output file before retrying;
 no archive is unpacked until the complete-file SHA-256 passes.
 
-The optional explicit `snapshot_witness` input selects `original` by default
-or the independently recorded `2026-10-13` witness. The latter requires
+The producer lane's reusable `snapshot_witness` input defaults to `original`;
+the combined lane defaults to the independently recorded `2026-10-13` witness.
+The latter requires
 `sea-cases/snapshot-2026-10-13.blob` and its separate fixed manifest; repeat
 generation is not assumed deterministic. Original snapshot metadata and byte
 pins remain unchanged. An unknown witness or mismatched byte hash fails.
@@ -104,6 +118,28 @@ archive has SHA-256
 `7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`
 and uses the explicit `2026-10-13` snapshot witness. Original manifests have
 not been relaxed or replaced. This receipt qualifies the selected commit and
-fixed inputs on the macOS ARM64 reader. Future invocations must supply a
-reachable pinned archive; the qualification does not establish permanent
-public fixture hosting or additional analysis-host platforms.
+fixed inputs on the macOS ARM64 reader. Additional analysis-host support is
+not established by this receipt.
+
+## Published fixed corpus and corresponding source
+
+The public corpus asset contains the exact 1,251,173,226 bytes qualified above:
+
+- [Corpus archive](https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13.tar.gz)
+- [SHA-256 sidecar](https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13.tar.gz.sha256)
+- [Corresponding source companion](https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-sources-2026-10-13.tar.gz)
+- [Rebuild and notice guide](https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-corpus-2026-10-13-REBUILD.md)
+- [Source archive manifest](https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-source-manifest-2026-10-13.json)
+- [Fixed qualification receipt](https://github.com/NeverSight/NeverD/releases/download/web-producer-corpus-2026-10-13/neverd-web-producer-qualification-2026-10-14.json)
+
+The 241,067,203-byte source companion has SHA-256
+`48dd3c177dcae0fcdb9378d38beb70ecc1813b0dd3de7fb3126b2c69d6233048`.
+It retains full Bun application source, corresponding JSCOnly library/build
+source, 21 pinned native dependency archives including TinyCC, all 181
+checksum-verified Cargo registry sources, ICU source and original notices.
+The rebuild guide describes the included source boundaries and preserves
+upstream static-link/relink terms. The corpus's historical local-only README
+and original evidence are unchanged; these publication attachments accompany
+it. No proprietary client input or recovered client source is included.
+Only the corpus is downloaded by qualification; source/rebuild attachments
+remain independently available in the same Release.

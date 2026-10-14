@@ -75,6 +75,8 @@ private:
 
 /// Address of frame byte storage at \p Displacement from the entry SP.
 std::string frameStorageAddress(int64_t Displacement);
+/// The local that holds a function's frame bytes.
+inline constexpr llvm::StringLiteral kFrameStorageName = "stack_storage";
 
 /// The bytes of a pointer, and of an integer argument register, on \p A.
 uint16_t pointerBytes(Arch A);
@@ -964,6 +966,21 @@ public:
   /// Slot identity retained for value forwarding and catch-object recovery
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;
+  /// Frame storage prints as one record laid out like its bytes. A member is
+  /// an integer every access at its displacement reads or writes alike, at
+  /// an aligned offset, clear of other accesses: `stack_storage.var_mA0`.
+  struct FrameRecordMember {
+    std::string Name;
+    TypeRef Type;
+  };
+  std::map<int64_t, FrameRecordMember> FrameRecordMembers;
+  /// What each slot was named before frame storage replaced it.
+  std::map<int64_t, std::string> FrameSlotNamesBeforeStorage;
+  void collectFrameRecordMembers(const HighFunc &Func, uint64_t FrameBaseOffset,
+                                 uint64_t StorageSize);
+  /// The member an integer access of type \p Ty at \p Addr names.
+  std::optional<std::string> frameRecordMember(const HighExpr &Addr,
+                                               const TypeRef &Ty) const;
   std::map<std::string, int64_t> FrameAliases;
   /// Bounds nested alignment-to-base certification as well as flat offsets.
   mutable unsigned FrameDisplacementDepth = 0;

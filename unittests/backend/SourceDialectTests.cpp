@@ -880,6 +880,80 @@ int main(void) {
 /// both on the same inputs and compares what they print: the Rust view must
 /// compute what the C computes.  NEVERD_TEST_RUSTC or a `rustc` on PATH runs
 /// it; without one the check is skipped, as the SBF source suite is.
+TEST(SourceDialect, KeepsEveryDeclaratorOfADeclarationOnce) {
+  // Every declarator of `float a, b;` begins at the shared specifiers. The C
+  // and C++ views printed the first declarator again before the second.
+  constexpr const char *Source = R"C(#include <stdint.h>
+uint32_t bits(uint32_t x) {
+    float a, b;
+    uint32_t *p = &x, *q, y = 2;
+    __builtin_memcpy(&a, &x, 4);
+    b = a;
+    __builtin_memcpy(&x, &b, 4);
+    q = p;
+    return *q + y;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source)) << C.Text;
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("float a, b;"), std::string::npos) << Cpp.Text;
+  EXPECT_EQ(Cpp.Text.find("float a;"), std::string::npos) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("uint32_t *p = &x, *q, y = 2;"), std::string::npos)
+      << Cpp.Text;
+}
+
+TEST(SourceDialect, AFrameRecordPrintsItsTypeWhereItIsDeclared) {
+  // HighC declares a kept frame as one record laid out like its bytes. C
+  // and C++ define the record in the declaration; Go and Rust declare an
+  // object of a named type, so they print the type's definition first.
+  constexpr const char *Source = R"C(#include <stdint.h>
+int64_t frame_record(int64_t arg0) {
+    _Alignas(16) struct frame_401000 {
+        uint8_t gap0[24];
+        int64_t var_m10;
+        int64_t var_m8;
+    } stack_storage;
+    const uintptr_t frame_base = (uintptr_t)((uint8_t *)&stack_storage + 40);
+    stack_storage.var_m10 = arg0;
+    *(int64_t *)(frame_base - 8) = 5;
+    return stack_storage.var_m10 + stack_storage.var_m8;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("alignas(16) struct frame_401000 {"),
+            std::string::npos)
+      << Cpp.Text;
+  for (SourceDialect Dialect : {SourceDialect::Go, SourceDialect::Rust}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    ASSERT_TRUE(View.Unread.empty()) << View.Text;
+    const auto Type = View.Text.find(Go ? "type frame_401000 struct {"
+                                        : "struct frame_401000 {");
+    const auto Object =
+        View.Text.find(Go ? "var stack_storage frame_401000"
+                          : "let mut stack_storage: frame_401000;");
+    ASSERT_NE(Type, std::string::npos) << View.Text;
+    ASSERT_NE(Object, std::string::npos) << View.Text;
+    EXPECT_LT(Type, Object) << View.Text;
+    EXPECT_NE(View.Text.find(Go ? "var_m10 int64" : "var_m10: i64,"),
+              std::string::npos)
+        << View.Text;
+    // One definition, though the record is named again at every member.
+    EXPECT_EQ(View.Text.find(Go ? "type frame_401000 struct {"
+                                : "struct frame_401000 {",
+                             Type + 1),
+              std::string::npos)
+        << View.Text;
+  }
+}
+
 TEST(SourceDialect, RustViewComputesWhatCComputes) {
   std::string Rustc;
   if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))

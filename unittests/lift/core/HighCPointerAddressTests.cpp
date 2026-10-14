@@ -62,6 +62,7 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -513,6 +514,100 @@ bool hasPortableStore(std::string_view Source, std::string_view Type,
 void expectPortableStore(std::string_view Source, std::string_view Type,
                          std::string_view Address, std::string_view Value) {
   EXPECT_TRUE(hasPortableStore(Source, Type, Address, Value)) << Source;
+}
+
+/// HighC prints a frame's integer slots as members of one record laid out
+/// like the frame bytes. The member at a frame address (`frame_base`,
+/// `(frame_base - 16)`) of type \p Type, or of any type when \p Type is
+/// empty, as `stack_storage.var_m10`.
+std::optional<std::string> frameRecordMemberAt(std::string_view Source,
+                                               std::string_view Address,
+                                               std::string_view Type) {
+  int64_t Disp = 0;
+  llvm::StringRef Text(Address.data(), Address.size());
+  Text = Text.trim().trim("()").trim();
+  // `- 8` is short for `frame_base - 8`.
+  Text.consume_front("frame_base");
+  Text = Text.trim();
+  if (!Text.empty()) {
+    const bool Minus = Text.consume_front("-");
+    if (!Minus && !Text.consume_front("+"))
+      return std::nullopt;
+    if (Text.trim().getAsInteger(10, Disp))
+      return std::nullopt;
+    if (Minus)
+      Disp = -Disp;
+  }
+  static const std::map<std::string, int64_t> Sizes = {
+      {"int8_t", 1},  {"uint8_t", 1},  {"int16_t", 2}, {"uint16_t", 2},
+      {"int32_t", 4}, {"uint32_t", 4}, {"int64_t", 8}, {"uint64_t", 8}};
+  const std::regex Record(
+      R"(struct frame_[0-9A-F]+ \{\n([^}]*)\} stack_storage;)"
+      R"(\s*const uintptr_t frame_base = \(uintptr_t\))"
+      R"(\(\(uint8_t \*\)&stack_storage \+ ([0-9]+)\);)");
+  const std::string All(Source);
+  for (std::sregex_iterator It(All.begin(), All.end(), Record), End; It != End;
+       ++It) {
+    const int64_t Base = std::stoll((*It)[2].str());
+    int64_t At = 0;
+    std::istringstream Members((*It)[1].str());
+    for (std::string Line; std::getline(Members, Line);) {
+      std::smatch Member;
+      if (!std::regex_search(Line, Member,
+                             std::regex(R"((\w+) (\w+)(\[([0-9]+)\])?;)")))
+        continue;
+      const std::string MemberType = Member[1].str();
+      const auto Size = Sizes.find(MemberType);
+      if (Size == Sizes.end())
+        break;
+      const int64_t Bytes = Member[4].matched
+                                ? std::stoll(Member[4].str()) * Size->second
+                                : Size->second;
+      if (!Member[3].matched && At - Base == Disp &&
+          (Type.empty() || MemberType == Type))
+        return "stack_storage." + Member[2].str();
+      At += Bytes;
+    }
+  }
+  return std::nullopt;
+}
+
+/// Whether the source stores \p Value of \p Type at a frame address: a
+/// portable store, or the assignment of the frame record member there.
+bool hasFrameStore(std::string_view Source, std::string_view Type,
+                   std::string_view Address, std::string_view Value) {
+  if (hasPortableStore(Source, Type, Address, Value))
+    return true;
+  const auto Member = frameRecordMemberAt(Source, Address, Type);
+  if (!Member)
+    return false;
+  const std::string Assign = *Member + " = ";
+  for (size_t At = Source.find(Assign); At != std::string_view::npos;
+       At = Source.find(Assign, At + 1)) {
+    const size_t End = Source.find(';', At);
+    if (Source.substr(At + Assign.size(), End - At - Assign.size())
+            .find(Value) != std::string_view::npos)
+      return true;
+  }
+  return false;
+}
+
+void expectFrameStore(std::string_view Source, std::string_view Type,
+                      std::string_view Address, std::string_view Value) {
+  EXPECT_TRUE(hasFrameStore(Source, Type, Address, Value)) << Source;
+}
+
+/// Whether the function keeps its frame as one storage object.
+bool declaresFrameStorage(std::string_view Source) {
+  return Source.find("stack_storage[") != std::string_view::npos ||
+         Source.find("} stack_storage;") != std::string_view::npos;
+}
+
+/// Whether \p Name is declared as a local of its own, not as a member of
+/// the frame record.
+bool declaresLocal(const std::string &Source, const std::string &Name) {
+  return std::regex_search(Source, std::regex("\n    [A-Za-z_][^\n;=]*[ *]" +
+                                              Name + "(\\[[0-9]+\\])?;"));
 }
 
 TEST(HighCPointerAddresses, DebugTypedParametersOffsetInBytes) {
@@ -6454,7 +6549,7 @@ TEST(HighCPointerAddresses, FramePtrBoxInteriorLoadPrintsArrow) {
       std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("pAuxData"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m10"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m10")) << Source;
   EXPECT_EQ(Source.find("+ (uint64_t)(24)"), std::string::npos) << Source;
 }
 
@@ -21989,9 +22084,9 @@ TEST(HighCPointerAddresses, CtorHomeSlotUsesTypedFrameAddress) {
   ASSERT_EQ(Args->size(), 2u) << Source;
   EXPECT_NE((*Args)[0].find("CStringT*"), std::string::npos) << Source;
   EXPECT_NE((*Args)[0].find("frame_base - 8"), std::string::npos) << Source;
-  expectPortableStore(Source, "uint64_t", "frame_base - 8", "0");
+  expectFrameStore(Source, "uint64_t", "frame_base - 8", "0");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("int64_t var_m8"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m8")) << Source;
 }
 
 TEST(HighCPointerAddresses, WrapperRecordSameWidthPointerStoreKeepsByteWidth) {
@@ -23414,7 +23509,7 @@ TEST(HighCPointerAddresses, UnusedIntermediateFrameSlotIsNotDeclared) {
   returnValue(Func, parameter(1, NdType::makeInt(8)));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("CRecord_GetRecordName("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m8"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m8")) << Source;
 }
 
 TEST(HighCPointerAddresses, CatchFuncletParentFrameStoreBecomesReturn) {
@@ -23507,6 +23602,83 @@ TEST(HighCPointerAddresses, DynamicIndexOnRealSecondArgumentStaysArgument) {
   EXPECT_NE(Source.find("arg1", Body), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, EscapedFrameNamesIntegerSlotsAsRecordMembers) {
+  // `fill` takes the frame's address and changes three of its words, so the
+  // frame stays one object. The slots every access reads or writes as one
+  // integer are members of it; the word written narrower than it is read
+  // stays a raw access to the same bytes.
+  HighFunc Func;
+  Func.Name = "frame_record";
+  Func.Entry = 0x401000;
+  Func.FrameSize = 32;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.Size = 8;
+  SP.TheArch = Arch::X64;
+  SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  auto Slot = [&](int64_t Offset) {
+    return HighExpr::makeBinop(NdOp::INT_SUB,
+                               HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+                               HighExpr::makeConst(Offset, 8));
+  };
+  const auto I64 = NdType::makeInt(8);
+  HighStmt Narrow;
+  Narrow.Kind = StmtKind::Store;
+  Narrow.StoreAddr = Slot(32);
+  Narrow.StoreVal = HighExpr::makeConst(7, 4);
+  Func.Body.push_back(std::move(Narrow));
+  HighStmt Home;
+  Home.Kind = StmtKind::Store;
+  Home.StoreAddr = Slot(16);
+  Home.StoreVal = parameter(0, I64);
+  Func.Body.push_back(std::move(Home));
+  HighStmt Fill;
+  Fill.Kind = StmtKind::Call;
+  Fill.CallExpr = HighExpr::makeCall("fill", 0x402000, {Slot(32)});
+  Func.Body.push_back(std::move(Fill));
+  auto Sum =
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeLoad(Slot(16), I64),
+                          HighExpr::makeLoad(Slot(8), I64));
+  Sum->Type = I64;
+  auto Total = HighExpr::makeBinop(NdOp::INT_ADD, std::move(Sum),
+                                   HighExpr::makeLoad(Slot(32), I64));
+  Total->Type = I64;
+  returnValue(Func, std::move(Total));
+
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("_Alignas(16) struct frame_401000 {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("        int64_t var_m10;\n        int64_t var_m8;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("stack_storage.var_m10 = arg0;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uint64_t)(stack_storage.var_m10) + "
+                        "(uint64_t)(stack_storage.var_m8)"),
+            std::string::npos)
+      << Source;
+  // Written as four bytes and read as eight: raw bytes of the same object.
+  EXPECT_EQ(Source.find("var_m20"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("*(int64_t *)(frame_base - 32)"), std::string::npos)
+      << Source;
+  compileAndRunCallOrdering(Source + R"c(
+#include <string.h>
+int fill(uint64_t frame) {
+  int64_t *p = (int64_t *)(uintptr_t)frame;
+  uint32_t low;
+  memcpy(&low, p, sizeof low);
+  p[0] = (int64_t)low * 3;
+  p[2] += 1;
+  p[3] = 5;
+  return 0;
+}
+int main(void) { return frame_record(100) == 21 + 101 + 5 ? 0 : 1; }
+)c");
+}
+
 TEST(HighCPointerAddresses, DynamicFrameReadKeepsAliasedFixedStore) {
   HighFunc Func;
   Func.Name = "indexed_frame_read";
@@ -23536,9 +23708,9 @@ TEST(HighCPointerAddresses, DynamicFrameReadKeepsAliasedFixedStore) {
   Func.Body.push_back(std::move(Ret));
 
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  expectPortableStore(Source, "uint8_t", "frame_base - 16", "7");
-  EXPECT_EQ(Source.find("var_m10"), std::string::npos) << Source;
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
+  expectFrameStore(Source, "uint8_t", "frame_base - 16", "7");
+  EXPECT_FALSE(declaresLocal(Source, "var_m10")) << Source;
 }
 
 TEST(HighCPointerAddresses, AttachCxxFuncletBodiesDoesNotRecurseOnCyclicCatch) {
@@ -24354,9 +24526,9 @@ TEST(HighCPointerAddresses, PtrBoxInteriorStoreSurvivesUnusedHomeHide) {
   Options.TheArch = Arch::X64;
   EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  expectPortableStore(Source, "uint64_t", "- 8", "0");
+  expectFrameStore(Source, "uint64_t", "- 8", "0");
 }
 
 TEST(HighCPointerAddresses, UnusedEpilogueReloadDoesNotKeepPrologueHome) {
@@ -29329,7 +29501,7 @@ TEST(HighCPointerAddresses, InteriorPartialStoreKeepsMachineWidth) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  expectPortableStore(Source, "uint32_t", "- 120", "42");
+  expectFrameStore(Source, "uint32_t", "- 120", "42");
   EXPECT_EQ(Source.find("var_m80.p = 42;"), std::string::npos) << Source;
 }
 
@@ -33499,9 +33671,9 @@ TEST(HighCPointerAddresses, FrameAddressValueDeclaresSlot) {
   Ret.RetVal = SlotAddr;
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
   EXPECT_NE(Source.find("return frame_base - 8;"), std::string::npos) << Source;
-  expectPortableStore(Source, "int64_t", "- 8", "arg0");
+  expectFrameStore(Source, "int64_t", "- 8", "arg0");
 }
 
 TEST(HighCPointerAddresses, OverwrittenCopyForwardDestIsDeclared) {
@@ -33627,10 +33799,10 @@ TEST(HighCPointerAddresses, UnusedFrameAliasIsNotDeclared) {
   Ret.RetVal = LiveAddr;
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  expectPortableStore(Source, "int64_t", "- 8", "t7");
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
+  expectFrameStore(Source, "int64_t", "- 8", "t7");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m38"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m38")) << Source;
 }
 
 TEST(HighCPointerAddresses, FrameBaseVarUsedAsMemoryPrintsSlotAddress) {
@@ -34941,8 +35113,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
       << Source;
   // Escaping constructor objects and parameter homes share byte storage.
   // The prologue's -104 and the reload's +112 address the arg0 home at +8.
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  expectPortableStore(Source, "int32_t", "frame_base + 8", "arg0");
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
+  expectFrameStore(Source, "int32_t", "frame_base + 8", "arg0");
   EXPECT_NE(Source.find("frame_base - 104"), std::string::npos) << Source;
   const auto Condition = sourceLineContaining(Source, "if ((__builtin_memcpy(");
   EXPECT_NE(Condition.find("v0 + 112"), std::string_view::npos) << Source;
@@ -34978,8 +35150,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   EXPECT_EQ(Source.find("t26"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t29 = arg0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t29_1 ="), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m38"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("var_m34"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m38")) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m34")) << Source;
   EXPECT_EQ(Source.find("v2;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(uint32_t)1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("throw (uintptr_t)"), std::string::npos) << Source;
@@ -35284,7 +35456,7 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
   EXPECT_NE(Clear.find("frame_base"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base"), std::string_view::npos) << Source;
   EXPECT_EQ(Home.find("unknown register"), std::string_view::npos) << Source;
@@ -35301,7 +35473,7 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
       << Source;
   EXPECT_NE(Clear.find("frame_base - 72"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base + 8"), std::string_view::npos) << Source;
-  EXPECT_EQ(Source.find("var_m48"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m48")) << Source;
   EXPECT_EQ(Source.find("var_8"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("arg1"), std::string::npos) << Source;
@@ -35346,13 +35518,13 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
   ASSERT_FALSE(ExceptStore.empty()) << Source;
-  EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
+  EXPECT_TRUE(declaresFrameStorage(Source)) << Source;
   EXPECT_NE(Clear.find("frame_base"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base"), std::string_view::npos) << Source;
   EXPECT_EQ(Home.find("unknown register"), std::string_view::npos) << Source;
   EXPECT_NE(ExceptStore.find("frame_base - 100"), std::string_view::npos)
       << Source;
-  expectPortableStore(Source, "uint32_t", "frame_base - 100", "1");
+  expectFrameStore(Source, "uint32_t", "frame_base - 100", "1");
   EXPECT_EQ(ExceptStore.find("unknown register"), std::string_view::npos)
       << Source;
   EXPECT_NE(Store->Address.find("frame_base"), std::string_view::npos)
@@ -35376,7 +35548,7 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   EXPECT_TRUE(SameAddress) << Source;
   EXPECT_NE(Clear.find("frame_base - 72"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base + 8"), std::string_view::npos) << Source;
-  EXPECT_EQ(Source.find("var_m48"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m48")) << Source;
   EXPECT_EQ(Source.find("var_8"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v2"), std::string::npos) << Source;
@@ -41021,7 +41193,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
       << Source;
   for (unsigned I = 1; I != 4; ++I)
     EXPECT_EQ(llvm::StringRef((*Raise)[I]).trim(), "0") << Source;
-  EXPECT_EQ(Source.find("var_m14"), std::string::npos) << Source;
+  EXPECT_FALSE(declaresLocal(Source, "var_m14")) << Source;
 }
 
 TEST(HighCPointerAddresses, CorpusRustFormatKeepsTheEntryStackPointer) {
@@ -41050,8 +41222,11 @@ TEST(HighCPointerAddresses, CorpusRustFormatKeepsTheEntryStackPointer) {
       Source.find("core_slice_raw_from_raw_parts_precondition_check(");
   ASSERT_NE(Call, std::string::npos) << Source;
   // What follows the call reads the frame, not the dropped result.
-  EXPECT_NE(Source.find("= *(int64_t *)(frame_base - 72);", Call),
-            std::string::npos)
+  const auto Member = frameRecordMemberAt(Source, "frame_base - 72", "int64_t");
+  EXPECT_NE(
+      Source.find("= " + Member.value_or("*(int64_t *)(frame_base - 72)") + ";",
+                  Call),
+      std::string::npos)
       << Source;
 }
 
@@ -44899,7 +45074,10 @@ TEST(HighCPointerAddresses, AHomeSlotSaveReadForAnythingElseStays) {
        0xc3});
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
+  const auto Member = frameRecordMemberAt(HighC, "frame_base + 8", "");
+  EXPECT_NE(HighC.find(Member ? *Member + " =" : "(frame_base + 8) ="),
+            std::string::npos)
+      << HighC;
 }
 
 TEST(LLVMCPointerAddresses, AFrameRecordPassedToACallStaysOneObject) {

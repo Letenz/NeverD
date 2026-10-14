@@ -5591,6 +5591,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   FrameStorageActive = false;
   ProjectFrameAliasesIntoStorage = false;
   FrameStorageSlots.clear();
+  FrameRecordMembers.clear();
+  FrameSlotNamesBeforeStorage.clear();
   CopyForward.clear();
   JoinPhiNames.clear();
   FieldForward.clear();
@@ -5931,6 +5933,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     }
     if (ProjectFrameAliasesIntoStorage)
       FrameStorageSlots = FrameSlots;
+    for (const auto &[Disp, Slot] : FrameSlots)
+      if (!Slot.Name.empty() && Slot.Outer.empty() && !Slot.RegionBytes)
+        FrameSlotNamesBeforeStorage[Disp] = Slot.Name;
     FrameSlots.clear();
     if (!ProjectFrameAliasesIntoStorage)
       FrameAliases.clear();
@@ -6143,12 +6148,43 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         syntheticEntryStackResidue(Opts.TheArch, Opts.Format, Func.EntryKind);
     uint64_t FrameBaseOffset = checkedStackAdd(LowerSize, EntryResidue);
     uint64_t StorageSize = checkedStackAdd(FrameBaseOffset, UpperSize);
+    collectFrameRecordMembers(Func, FrameBaseOffset, StorageSize);
     emitIndent(1);
-    OS << "_Alignas(" << kSyntheticStackAlignment << ") uint8_t stack_storage["
-       << StorageSize << "];\n";
-    emitIndent(1);
-    OS << "const uintptr_t frame_base = (uintptr_t)(stack_storage + "
-       << FrameBaseOffset << ");\n";
+    if (FrameRecordMembers.empty()) {
+      OS << "_Alignas(" << kSyntheticStackAlignment << ") uint8_t "
+         << kFrameStorageName << "[" << StorageSize << "];\n";
+      emitIndent(1);
+      OS << "const uintptr_t frame_base = (uintptr_t)(" << kFrameStorageName
+         << " + " << FrameBaseOffset << ");\n";
+    } else {
+      // The members at their byte offsets, the gaps named by offset as IDA
+      // names a structure's gaps. The tag is the function's own: the C++,
+      // Go and Rust views read every record into one namespace.
+      OS << "_Alignas(" << kSyntheticStackAlignment << ") struct frame_"
+         << llvm::utohexstr(Func.Entry) << " {\n";
+      uint64_t At = 0;
+      auto Gap = [&](uint64_t End) {
+        if (End <= At)
+          return;
+        emitIndent(2);
+        OS << "uint8_t gap" << llvm::utohexstr(At) << "[" << End - At << "];\n";
+        At = End;
+      };
+      for (const auto &[Disp, Member] : FrameRecordMembers) {
+        const uint64_t Offset =
+            static_cast<uint64_t>(static_cast<int64_t>(FrameBaseOffset) + Disp);
+        Gap(Offset);
+        emitIndent(2);
+        OS << declarationToC(Member.Type, Member.Name) << ";\n";
+        At = Offset + Member.Type->Size;
+      }
+      Gap(StorageSize);
+      emitIndent(1);
+      OS << "} " << kFrameStorageName << ";\n";
+      emitIndent(1);
+      OS << "const uintptr_t frame_base = (uintptr_t)((uint8_t *)&"
+         << kFrameStorageName << " + " << FrameBaseOffset << ");\n";
+    }
     // The rebuilt storage has the host's pointer width, which a 64-bit
     // target's source is compiled with: frame arithmetic is uint64_t already.
     const uint16_t PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
