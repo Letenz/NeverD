@@ -1,10 +1,12 @@
 """Behavioral probes for the required product publication boundary."""
 
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -14,6 +16,10 @@ import web_product_release as release
 
 class ProductReceiptTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com",
+                                              "GITHUB_REPOSITORY": "NeverSight/NeverD"})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

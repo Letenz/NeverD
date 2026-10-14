@@ -5,10 +5,17 @@ if(NOT NEVERD_BUILD_WEB_PRODUCT)
 endif()
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
    NOT NEVERD_ENABLE_WEB_ANALYSIS OR NOT NEVERD_ENABLE_WEB_JAVASCRIPT OR
-   NOT NEVERD_ENABLE_WEB_ASAR OR NOT TARGET ICU::uc OR
+   NOT NEVERD_ENABLE_WEB_ASAR OR
    NOT TARGET neverd OR NOT TARGET neverd_shared OR
    NOT TARGET neverd-worker OR NOT TARGET neverd-web-mcp)
   message(FATAL_ERROR "Web product requires Windows x64, parser/ICU and all four product targets")
+endif()
+# ICU::uc is an imported target owned by lib/web's directory scope. Query the
+# authoritative component's detection result instead of rediscovering it or
+# treating its lack of visibility here as a missing runtime.
+get_target_property(_neverd_product_icu NeverDWeb NEVERD_WEB_ICU_AVAILABLE)
+if(NOT _neverd_product_icu)
+  message(FATAL_ERROR "Web product requires the Web component's pinned ICU 77.1 provider")
 endif()
 if(CMAKE_VERSION VERSION_LESS 3.21)
   message(FATAL_ERROR "Web runtime dependency packaging requires CMake 3.21 or newer")

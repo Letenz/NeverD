@@ -34,6 +34,10 @@ jobs:
           if grep -Fxq "$PRODUCT_TAG" releases.txt; then
             exit 1
           fi
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$PRODUCT_TAG" --jq '.[].ref' > tags.txt
+          if grep -Fxq "refs/tags/$PRODUCT_TAG" tags.txt; then
+            exit 1
+          fi
   windows:
     needs: inputs
     uses: ./.github/workflows/web-windows-qualification.yml
@@ -93,4 +97,5 @@ jobs:
           materials are attached. See REBUILD.md for commands and support limits.
           NOTES
           printf '\nSource: `%s`\n\n[Qualification run](%s/%s/actions/runs/%s)\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
-          gh release create "$PRODUCT_TAG" release-assets/* --target "$GITHUB_SHA" --title "NeverD Windows Web product ($PRODUCT_TAG)" --notes-file release-notes.md --latest=false
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$PRODUCT_TAG" -f "sha=$GITHUB_SHA"
+          gh release create "$PRODUCT_TAG" release-assets/* --verify-tag --title "NeverD Windows Web product ($PRODUCT_TAG)" --notes-file release-notes.md --latest=false

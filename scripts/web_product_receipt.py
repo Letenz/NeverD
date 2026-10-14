@@ -122,6 +122,9 @@ def main():
         "bin/neverd-web-mcp.exe", "bin/icuuc77.dll", "bin/icudt77.dll",
         "bin/msvcp140.dll", "bin/vcruntime140.dll", "LICENSE", "NOTICE",
         "web-windows-product.md", "web-product-dependencies.json",
+        "lib/neverd.lib", "sdk/neverd/sdk/NeverDCAPIWeb.h",
+        "share/neverd/licenses/LLVM-LICENSE.TXT",
+        "share/neverd/licenses/icu/ICU-77.1-LICENSE",
     } <= members:
         raise ValueError("Incomplete or duplicate product members")
     repository = os.environ.get("GITHUB_REPOSITORY", "NeverSight/NeverD")

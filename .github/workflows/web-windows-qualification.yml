@@ -129,4 +129,6 @@ jobs:
           path: |
             dist/
             build-web-windows/unittests/web/Testing/Temporary/LastTest.log
+            build-web-windows/CMakeCache.txt
+            build-web-windows/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: error
