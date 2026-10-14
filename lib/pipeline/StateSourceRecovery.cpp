@@ -8,6 +8,8 @@
 
 #include "neverd/pipeline/StateSourceRecovery.h"
 
+#include "StateSourceBank.h"
+
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -33,6 +35,9 @@
 
 namespace neverd {
 namespace {
+using state_source::bankOffsets;
+using state_source::displacement;
+using state_source::validateBank;
 constexpr llvm::StringLiteral ProbePrefix = "__neverd_state_probe_";
 llvm::Error invalid(llvm::StringRef Message) {
   return llvm::createStringError(llvm::errc::invalid_argument,
@@ -136,100 +141,6 @@ llvm::StringRef sourceScalarSpelling(StateSourceType T) {
     llvm_unreachable("void variadic operand");
   }
   llvm_unreachable("invalid source type");
-}
-
-// Exact pointer-sized arithmetic only. Loading a pointer from the bank is a
-// guest access, not an address of the bank. Never chase that load as a base.
-struct Offsets {
-  std::vector<int64_t> Bank;
-  bool Guest = false;
-};
-std::optional<Offsets> bankOffsets(llvm::Value *V, llvm::Value *Base,
-                                   const llvm::DataLayout &DL,
-                                   unsigned &Budget) {
-  if (!Budget)
-    return {};
-  --Budget;
-  if (V == Base)
-    return Offsets{{0}, false};
-  if (llvm::isa<llvm::LoadInst, llvm::Argument, llvm::Constant>(V))
-    return Offsets{{}, true};
-  auto Next = [&](llvm::Value *X) { return bankOffsets(X, Base, DL, Budget); };
-  if (auto *C = llvm::dyn_cast<llvm::CastInst>(V)) {
-    if (C->getOpcode() == llvm::Instruction::BitCast)
-      return Next(C->getOperand(0));
-    if (C->getOpcode() == llvm::Instruction::PtrToInt &&
-        C->getType()->getIntegerBitWidth() == DL.getPointerSizeInBits(0))
-      return Next(C->getOperand(0));
-    if (C->getOpcode() == llvm::Instruction::IntToPtr &&
-        C->getType()->getPointerAddressSpace() == 0 &&
-        C->getOperand(0)->getType()->getIntegerBitWidth() ==
-            DL.getPointerSizeInBits(0))
-      return Next(C->getOperand(0));
-    return {};
-  }
-  auto Shift = [](std::optional<Offsets> Values, int64_t Amount) {
-    if (Values)
-      for (auto &O : Values->Bank)
-        O += Amount;
-    return Values;
-  };
-  if (auto *G = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
-    llvm::APInt Offset(DL.getIndexSizeInBits(0), 0);
-    if (G->getAddressSpace() == 0 && G->accumulateConstantOffset(DL, Offset) &&
-        Offset.getSignificantBits() <= 32)
-      return Shift(Next(G->getPointerOperand()), Offset.getSExtValue());
-    return {};
-  }
-  if (auto *B = llvm::dyn_cast<llvm::BinaryOperator>(V)) {
-    if (B->getOpcode() != llvm::Instruction::Add &&
-        B->getOpcode() != llvm::Instruction::Sub)
-      return {};
-    auto *K = llvm::dyn_cast<llvm::ConstantInt>(B->getOperand(1));
-    auto *Source = B->getOperand(0);
-    if (!K && B->getOpcode() == llvm::Instruction::Add) {
-      K = llvm::dyn_cast<llvm::ConstantInt>(B->getOperand(0));
-      Source = B->getOperand(1);
-    }
-    if (K && K->getValue().getSignificantBits() <= 32)
-      return Shift(Next(Source), B->getOpcode() == llvm::Instruction::Sub
-                                     ? -K->getSExtValue()
-                                     : K->getSExtValue());
-    return {};
-  }
-  std::vector<llvm::Value *> Arms;
-  if (auto *P = llvm::dyn_cast<llvm::PHINode>(V))
-    for (auto &A : P->incoming_values())
-      Arms.push_back(A.get());
-  if (auto *S = llvm::dyn_cast<llvm::SelectInst>(V))
-    Arms = {S->getTrueValue(), S->getFalseValue()};
-  if (Arms.empty())
-    return {};
-  Offsets Result;
-  for (auto *A : Arms) {
-    auto Values = Next(A);
-    if (!Values)
-      return {};
-    Result.Guest |= Values->Guest;
-    for (auto O : Values->Bank)
-      if (!llvm::is_contained(Result.Bank, O))
-        Result.Bank.push_back(O);
-    if (Result.Bank.size() > 32)
-      return {};
-  }
-  return Result;
-}
-std::optional<Offsets> bankOffsets(llvm::Value *V, llvm::Value *Base,
-                                   const llvm::DataLayout &DL) {
-  unsigned Budget = 128;
-  return bankOffsets(V, Base, DL, Budget);
-}
-std::optional<int64_t> displacement(llvm::Value *V, llvm::Value *Base,
-                                    const llvm::DataLayout &DL) {
-  auto Values = bankOffsets(V, Base, DL);
-  if (Values && !Values->Guest && Values->Bank.size() == 1)
-    return Values->Bank.front();
-  return {};
 }
 
 // Only the successful imported arm has zero gateway status. Fold its pure
@@ -624,65 +535,6 @@ llvm::MDNode *bankScope(llvm::Function &F) {
   return llvm::MDNode::get(F.getContext(), B.createAnonymousAliasScope(Domain));
 }
 
-// Admit bounded bank accesses before attaching isolation facts. Address
-// observation or escape must not turn an ambiguous access into guest memory.
-llvm::Error validateBank(llvm::Function &F, unsigned Bytes) {
-  auto *Base = F.getArg(0);
-  const auto &DL = F.getParent()->getDataLayout();
-  std::vector<llvm::Value *> Work{Base};
-  std::set<llvm::Value *> Seen{Base};
-  while (!Work.empty()) {
-    auto *V = Work.back();
-    Work.pop_back();
-    for (auto &Use : V->uses()) {
-      auto *I = llvm::dyn_cast<llvm::Instruction>(Use.getUser());
-      if (!I)
-        return invalid("bank address escapes the function");
-      llvm::Type *T = nullptr;
-      if (auto *L = llvm::dyn_cast<llvm::LoadInst>(I)) {
-        if (L->isVolatile() || L->isAtomic())
-          return invalid("ordered bank access");
-        T = L->getType();
-      } else if (auto *S = llvm::dyn_cast<llvm::StoreInst>(I)) {
-        if (Use.getOperandNo() != 1 || S->isVolatile() || S->isAtomic())
-          return invalid("bank address escapes or has ordered access");
-        T = S->getValueOperand()->getType();
-      } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(I)) {
-        auto Offset = displacement(V, Base, DL);
-        if (Use.getOperandNo() != 0 || Offset != 0 ||
-            !V->getType()->isPointerTy() || !Call->getType()->isIntegerTy(64) ||
-            Call->isMustTailCall() || Call->hasOperandBundles() ||
-            Call->getCallingConv() != llvm::CallingConv::C ||
-            Call->getFunctionType()->isVarArg())
-          return invalid("unsupported bank call boundary");
-        if (auto *Callee = Call->getCalledFunction())
-          if (Callee->getFunctionType() != Call->getFunctionType())
-            return invalid("inconsistent gateway ABI");
-        continue;
-      } else if (bankOffsets(I, Base, DL)) {
-        if (Seen.insert(I).second)
-          Work.push_back(I);
-        continue;
-      } else {
-        std::string Detail;
-        llvm::raw_string_ostream OS(Detail);
-        OS << "bank address is observed or has a dynamic offset in "
-           << F.getName() << ": ";
-        I->print(OS);
-        return invalid(Detail);
-      }
-      auto Offsets = bankOffsets(V, Base, DL);
-      if (!Offsets || DL.getTypeStoreSize(T).isScalable())
-        return invalid("bank access has an unbounded address or width");
-      for (auto Offset : Offsets->Bank)
-        if (Offset < 0 || uint64_t(Offset) > Bytes ||
-            DL.getTypeStoreSize(T).getFixedValue() > Bytes - Offset)
-          return invalid("bank access outside declared storage");
-    }
-  }
-  return llvm::Error::success();
-}
-
 // A wide load may preserve unknown upper bytes for another state store, while
 // an import selector uses only its low word. GVN cannot discard the wide use.
 // Expose a separate narrow load at the ORIGINAL read, never at its later use:
@@ -993,6 +845,12 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
   std::map<std::string, size_t> Gateways;
   for (size_t Index = 0; Index < C.Gateways.size(); ++Index) {
     const auto &G = C.Gateways[Index];
+    if (G.FallbackWrites && G.FallbackWrites->ResultBytes &&
+        *G.FallbackWrites->ResultBytes != 1 &&
+        *G.FallbackWrites->ResultBytes != 2 &&
+        *G.FallbackWrites->ResultBytes != 4 &&
+        *G.FallbackWrites->ResultBytes != 8)
+      return invalid("invalid fixed fallback result width");
     if (!Gateways.emplace(G.Name, Index).second || !identifier(G.Name) ||
         G.Arguments.size() > 16 || G.Imports.size() > 4096 ||
         !ValidSlot(G.ResultOffset) || !ValidSlot(G.ResultBytes) ||
@@ -1242,6 +1100,7 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
 }
 
 llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
+  state_source::CallWrites GatewayWrites;
   // Resolve indirect bank slots only after ordinary propagation has proved
   // their complete offsets. No unchecked pointer arithmetic or speculative
   // bank load is introduced for an unresolved layout.
@@ -1490,7 +1349,25 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         // its exact original parameter types, including an optional context.
         auto Original = M.getOrInsertFunction(
             G.Name, llvm::FunctionType::get(Call->getType(), Types, false));
-        return B.CreateCall(Original, Args, "unresolved_state_call");
+        auto *Fallback = B.CreateCall(Original, Args, "unresolved_state_call");
+        // This stronger fallback assertion is optional and independent of
+        // successful import reconstruction. Default unknown paths still
+        // clobber the entire bank, including nonzero-status returns.
+        auto Width =
+            G.FallbackWrites && G.FallbackWrites->ResultBytes
+                ? std::optional<uint64_t>(*G.FallbackWrites->ResultBytes)
+                : Bytes;
+        if (G.FallbackWrites && Offset && Width &&
+            (*Width == 1 || *Width == 2 || *Width == 4 || *Width == 8) &&
+            *Offset <= R.Contract.StateBytes &&
+            *Width <= R.Contract.StateBytes - *Offset) {
+          llvm::BitVector Mask(R.Contract.StateBytes);
+          Mask.set(*Offset, *Offset + *Width);
+          for (auto W : G.Writes)
+            Mask.set(W.Slot.Offset, W.Slot.Offset + W.Slot.Bytes);
+          GatewayWrites.emplace(Fallback, std::move(Mask));
+        }
+        return Fallback;
       };
       auto NativeCall = [&](llvm::IRBuilder<> &B) {
         std::vector<llvm::Value *> Args;
@@ -1659,6 +1536,7 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
     }
     Probe->eraseFromParent();
   }
+  state_source::refineBankAccesses(M, R, GatewayWrites);
   if (R.Contract.LocalizeBank)
     if (auto E = localizeProfitableBanks(M, R))
       return E;

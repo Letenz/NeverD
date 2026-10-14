@@ -96,7 +96,7 @@ TEST(StateSource, RejectsMissingAssertionsAndConflictingImportsBeforeMutation) {
   auto M = cell_test::parse(C, program());
   ASSERT_TRUE(M);
   auto Before = cell_test::print(*M);
-  for (unsigned Case = 0; Case != 14; ++Case) {
+  for (unsigned Case = 0; Case != 15; ++Case) {
     auto Contract = contract();
     if (Case == 0)
       Contract.IsolatedBank = false;
@@ -143,6 +143,10 @@ TEST(StateSource, RejectsMissingAssertionsAndConflictingImportsBeforeMutation) {
       G.Arguments.push_back({8, 8});
       G.Imports[0].Parameters = {StateSourceType::I32, StateSourceType::I16};
       G.Imports[0].VariadicFixedParameters = 1;
+    }
+    if (Case == 14) {
+      Contract.Gateways[0].FallbackWrites = StateSourceFallbackWrites{};
+      Contract.Gateways[0].FallbackWrites->ResultBytes = 3;
     }
     auto R = prepareStateSourceRecovery(*M, Contract);
     EXPECT_FALSE(bool(R));
@@ -2213,4 +2217,229 @@ entry:
     EXPECT_EQ(cell_test::print(*M), Before);
   }
 }
+
+TEST_F(StateSourceCompiled, BankEffectsPreserveCallsLoopsAndCompleteState) {
+  // Three contracts: an unconstrained fallback, a bounded partial result,
+  // and a fixed-width fallback different from the captured descriptor.
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    llvm::LLVMContext C;
+    auto M = cell_test::parse(C, R"(
+declare i64 @gateway(ptr, ptr)
+declare i64 @opaque(ptr, ptr)
+define i64 @step(ptr %state, ptr %context, i32 %depth) {
+entry:
+  %old = load i64, ptr %state, align 1
+  %cell = getelementptr i8, ptr %state, i64 24
+  %small = trunc i32 %depth to i16
+  store i16 %small, ptr %cell, align 1
+  %more = icmp ne i32 %depth, 0
+  br i1 %more, label %recurse, label %done
+recurse:
+  %next = sub i32 %depth, 1
+  %ignored = call i64 @step(ptr %state, ptr %context, i32 %next)
+  br label %done
+done:
+  %again = load i64, ptr %state, align 1
+  %delta = xor i64 %again, %old
+  ret i64 %delta
+}
+define i64 @work(ptr %state, ptr %context) {
+entry:
+  %arg = getelementptr i8, ptr %state, i64 8
+  %result = getelementptr i8, ptr %state, i64 16
+  %sel = getelementptr i8, ptr %state, i64 32
+  %off = getelementptr i8, ptr %state, i64 40
+  %width = getelementptr i8, ptr %state, i64 48
+  %count = getelementptr i8, ptr %state, i64 56
+  %seed = load i64, ptr %state, align 1
+  store i64 %seed, ptr %arg, align 1
+  %n = load i8, ptr %context, align 1
+  %short = and i8 %n, 3
+  %depth = zext i8 %short to i32
+  %d = call i64 @step(ptr %state, ptr %context, i32 %depth)
+  %stable = load i64, ptr %state, align 1
+  %copy = load i64, ptr %arg, align 1
+  store i64 %copy, ptr %arg, align 1
+  store i64 99, ptr %sel, align 1
+  store i64 16, ptr %off, align 1
+  store i64 4, ptr %width, align 1
+  store i64 1, ptr %count, align 1
+  %oldresult = load i64, ptr %result, align 1
+  %status = call i64 @gateway(ptr %state, ptr %context)
+  %newresult = load i64, ptr %result, align 1
+  %after = load i64, ptr %state, align 1
+  store i64 %seed, ptr %state, align 1
+  %guest = getelementptr i8, ptr %context, i64 8
+  %v0 = xor i64 %oldresult, %newresult
+  %v1 = xor i64 %stable, %after
+  %v2 = xor i64 %v0, %v1
+  %v3 = xor i64 %v2, %d
+  store i64 %v3, ptr %guest, align 1
+  %bad = icmp ne i64 %status, 0
+  br i1 %bad, label %failed, label %loop
+failed:
+  ret i64 %status
+loop:
+  %i = phi i8 [0, %entry], [%next, %join]
+  %value = load i64, ptr %state, align 1
+  %flag = and i8 %n, 4
+  %choose = icmp ne i8 %flag, 0
+  br i1 %choose, label %left, label %right
+left:
+  %incremented = add i64 %value, 17
+  store i64 %incremented, ptr %state, align 1
+  br label %join
+right:
+  %part = getelementptr i8, ptr %state, i64 4
+  %word = zext i8 %n to i32
+  store i32 %word, ptr %part, align 1
+  br label %join
+join:
+  %joined = load i64, ptr %state, align 1
+  store i64 %joined, ptr %arg, align 1
+  %next = add i8 %i, 1
+  %more = icmp ult i8 %next, %short
+  br i1 %more, label %loop, label %boundary
+boundary:
+  %o = call i64 @opaque(ptr %state, ptr %context)
+  %last = load i64, ptr %state, align 1
+  %combined = xor i64 %last, %o
+  ret i64 %combined
+})");
+    ASSERT_TRUE(M);
+    M->getFunction("work")->setName("before");
+    M->getFunction("step")->setName("before_step");
+    auto Original = tmpFile("bank-effects-before.ll");
+    std::ofstream(Original) << test::printHostCompilerFixture(*M);
+    M->getFunction("before")->setName("after");
+    M->getFunction("before_step")->setName("after_step");
+    auto Contract = contract();
+    Contract.LocalizeBank = true;
+    Contract.Gateways[0].Selector->Bytes = 8;
+    Contract.Gateways[0].ArgumentCount->Bytes = 8;
+    if (Mode)
+      Contract.Gateways[0].FallbackWrites = StateSourceFallbackWrites{};
+    if (Mode == 2)
+      Contract.Gateways[0].FallbackWrites->ResultBytes = 8;
+    auto R = prepareStateSourceRecovery(*M, Contract);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    optimize(*M);
+    auto E = finishStateSourceRecovery(*M, *R);
+    ASSERT_FALSE(E) << llvm::toString(std::move(E));
+    EXPECT_GE(R->ForwardedStateLoads, 3u);
+    if (Mode)
+      EXPECT_GE(R->RedundantStateStores, 1u);
+    EXPECT_GE(R->BoundedStateCalls, Mode ? 3u : 2u);
+    optimize(*M);
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = true;
+    Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+    ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+    auto After = tmpFile("bank-effects-after.c");
+    std::ofstream(After) << Source;
+    auto Harness = tmpFile("bank-effects-oracle.c");
+    std::ofstream(Harness) << "#define MODE " << Mode << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t before(void *,void *), after(void *,void *);
+static uint64_t trace[8];
+static unsigned calls;
+static void *expected_bank;
+static int bad_identity;
+uint64_t gateway(void *s, void *ctx) {
+ unsigned char *p=s, *c=ctx;
+ if(s!=expected_bank) bad_identity=1;
+ uint64_t hash=17, value=UINT64_C(0xfedcba9876543210), zero=0;
+ /* Even a write-bounded gateway may observe every bank byte. */
+ for(unsigned j=0;j<64;j++) hash=(hash*131)^p[j];
+ trace[calls++]=hash;
+ value^=hash;
+ memcpy(p+16,&value,MODE==2?8:4);memcpy(p+56,&zero,8);
+ if(MODE==0) { p[0]^=c[0];p[63]^=91; }
+ c[1]^=(unsigned char)hash;
+ return c[0]&8 ? UINT64_C(0x8000000000000017) : 0;
+}
+uint64_t opaque(void *s, void *ctx) {
+ unsigned char *p=s, *c=ctx;
+ if(s!=expected_bank) bad_identity=1;
+ uint64_t hash=19;
+ for(unsigned j=0;j<64;j++) hash=(hash*131)^p[j];
+ trace[calls++]=hash;
+ for(unsigned j=0;j<64;j++) p[j]^=(unsigned char)(j*13+c[1]);
+ c[2]++;
+ return hash;
+}
+int main(void) {
+ uint64_t rng=UINT64_C(0xb46f295347cd01e3);
+ for(unsigned k=0;k<2048;k++) {
+  unsigned char a[96],b[96],ca[24],cb[24];
+  for(unsigned j=0;j<96;j++) {
+   rng^=rng<<13;rng^=rng>>7;rng^=rng<<17;
+   a[j]=(unsigned char)rng;
+  }
+  for(unsigned j=0;j<24;j++) ca[j]=(unsigned char)(k*7+j);
+  ca[0]=k&15;
+  memcpy(b,a,96);memcpy(cb,ca,24);
+  unsigned off=1+(k&15);uint64_t saved[8];
+  calls=0;expected_bank=a+off;
+  uint64_t ra=before(a+off,ca);unsigned n=calls;
+  memcpy(saved,trace,n*8);
+  calls=0;expected_bank=b+off;
+  uint64_t rb=after(b+off,cb);
+  if(bad_identity || ra!=rb || calls!=n || memcmp(saved,trace,n*8) ||
+     memcmp(a,b,96) || memcmp(ca,cb,24)) return 1;
+ }
+ return 0;
+})";
+    for (const char *Level : {"-O0", "-O2"}) {
+      auto Executable = tmpFile(std::string("bank-effects-oracle") + Level +
+                                test::executableSuffix());
+      auto Built =
+          exec(NEVERD_TEST_CLANG,
+               {"-std=c11", Level, "-fsanitize=undefined",
+                "-fsanitize-trap=all", Original.string(), After.string(),
+                Harness.string(), "-o", Executable.string()});
+      ASSERT_TRUE(Built.ok()) << Built.err << '\n' << Source;
+      auto Ran = exec(Executable.string(), {});
+      EXPECT_TRUE(Ran.ok())
+          << "mode=" << Mode << " " << Ran.exitCode << " " << Ran.err << '\n'
+          << Source;
+    }
+  }
+}
+
+TEST(StateSource, BankEffectsDoNotTrustInterposableOrIndirectCallees) {
+  for (bool Indirect : {false, true}) {
+    llvm::LLVMContext C;
+    std::string IR = R"(
+define weak i64 @replaceable(ptr %state, ptr %context) {
+  ret i64 0
+}
+define i64 @work(ptr %state, ptr %context, ptr %callback) {
+  %old = load i64, ptr %state, align 1
+  %status = call i64 CALLEE(ptr %state, ptr %context)
+  %new = load i64, ptr %state, align 1
+  %delta = xor i64 %old, %new
+  ret i64 %delta
+})";
+    IR.replace(IR.find("CALLEE"), 6, Indirect ? "%callback" : "@replaceable");
+    auto M = cell_test::parse(C, IR);
+    ASSERT_TRUE(M);
+    StateSourceContract Contract;
+    Contract.StateBytes = 64;
+    Contract.IsolatedBank = true;
+    Contract.LocalizeBank = true;
+    auto R = prepareStateSourceRecovery(*M, Contract);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    auto E = finishStateSourceRecovery(*M, *R);
+    ASSERT_FALSE(E) << llvm::toString(std::move(E));
+    EXPECT_EQ(R->ForwardedStateLoads, 0u);
+    EXPECT_EQ(R->RedundantStateStores, 0u);
+    EXPECT_EQ(R->BoundedStateCalls, 0u);
+  }
+}
+
 } // namespace

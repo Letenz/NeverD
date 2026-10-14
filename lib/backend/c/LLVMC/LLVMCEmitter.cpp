@@ -26,6 +26,7 @@
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCSourceStrings.h"
 #include "LLVMCStackAllocation.h"
@@ -274,6 +275,13 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
         IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
       Name = IntrinsicHelper;
     }
+    if (const char *Kind = integerSaturationSpelling(Fn.getIntrinsicID())) {
+      IntrinsicHelper = std::string("neverd_llvm_") + Kind;
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
     if (const char *Kind = scalarUnarySpelling(Fn.getIntrinsicID())) {
       IntrinsicHelper = std::string("neverd_llvm_") + Kind;
       if (const auto *Integer =
@@ -499,6 +507,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   NeedsUnalignedTypes = false;
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
+  std::map<std::string, ScalarIntegerSaturation> IntegerSaturations;
   std::map<std::string, ScalarUnary> ScalarUnaries;
   FPStateHelperNames.clear();
   SyscallHelperNames.clear();
@@ -513,6 +522,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                  Inst.getOpcode() == llvm::Instruction::FMul ||
                                  Inst.getOpcode() == llvm::Instruction::FDiv;
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          if (auto Shape = scalarIntegerSaturation(*Call))
+            IntegerSaturations.emplace(
+                functionIdentifier(*Call->getCalledFunction()), *Shape);
           if (auto Shape = scalarIntegerMinMax(*Call))
             IntegerMinMax.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
@@ -686,6 +698,24 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Id, Name] : SyscallHelperNames)
     if (const SyscallConvention *Syscall = modeledSyscallConvention(Id))
       OS << linuxSyscallHelperDefinition(*Syscall, Name);
+  for (const auto &[Name, Shape] : IntegerSaturations) {
+    const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
+    const std::string Type = CarrierBits == 128
+                                 ? "unsigned __int128"
+                                 : "uint" + std::to_string(CarrierBits) + "_t";
+    OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
+       << Type << " b) {\n";
+    if (Shape.Bits == 1)
+      OS << "    a &= 1;\n    b &= 1;\n";
+    if (Shape.Add) {
+      OS << "    const " << Type << " maximum = (" << Type << ")"
+         << (Shape.Bits == 1 ? "1" : "-1") << ";\n"
+         << "    return a > maximum - b ? maximum : (" << Type << ")(a + b);\n";
+    } else {
+      OS << "    return a < b ? 0 : (" << Type << ")(a - b);\n";
+    }
+    OS << "}\n\n";
+  }
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
@@ -1728,6 +1758,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         // contract.
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
           (void)scalarIntegerMinMax(*Call);
+          (void)scalarIntegerSaturation(*Call);
           (void)scalarUnary(*Call);
         }
         if (const auto *Allocation =

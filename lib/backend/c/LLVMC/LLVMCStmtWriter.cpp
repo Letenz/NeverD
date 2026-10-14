@@ -14,6 +14,7 @@
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCSourceStrings.h"
 #include "LLVMCStackAllocation.h"
@@ -4794,7 +4795,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
     return Expr;
   }
 
-  if (scalarIntegerMinMax(Call)) {
+  if (scalarIntegerMinMax(Call) || scalarIntegerSaturation(Call)) {
     // An actual function captures each argument once, including when the
     // intrinsic itself is inlined into another rendered expression.
     const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +

@@ -355,6 +355,12 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
              << StateRecovery->LocalizedFunctions
              << " functions localized; complete state retained at boundaries. "
                 "*/\n";
+        if (StateRecovery->ForwardedStateLoads ||
+            StateRecovery->RedundantStateStores)
+          OS << "/* Proven bank effects: " << StateRecovery->BoundedStateCalls
+             << " bounded call sites; " << StateRecovery->ForwardedStateLoads
+             << " loads forwarded, " << StateRecovery->RedundantStateStores
+             << " unchanged stores removed. */\n";
       }
     } else {
       Pipeline::promoteScaffoldingAllocas(*Module);

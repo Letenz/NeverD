@@ -113,13 +113,26 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
         !keys(*O, {"name", "selector", "function_pointer", "argument_count",
                    "arguments", "result_offset", "result_bytes", "writes",
                    "imports", "indirect_arguments", "strings",
-                   "excluded_arguments"}) ||
+                   "excluded_arguments", "fallback_writes"}) ||
         !O->getString("name") || !O->getArray("arguments") ||
         !O->getArray("writes") || !O->getArray("imports") ||
         !O->get("result_offset") || !O->get("result_bytes"))
       return invalid("incomplete gateway contract");
     StateSourceGateway G;
     G.Name = O->getString("name")->str();
+    if (auto *Value = O->get("fallback_writes")) {
+      auto *Effects = Value->getAsObject();
+      if (!Effects || !keys(*Effects, {"result_bytes"}))
+        return invalid("invalid fallback write assertion");
+      G.FallbackWrites.emplace();
+      if (auto *Width = Effects->get("result_bytes")) {
+        auto Bytes = Width->getAsUINT64();
+        if (!Bytes ||
+            (*Bytes != 1 && *Bytes != 2 && *Bytes != 4 && *Bytes != 8))
+          return invalid("invalid fixed fallback result width");
+        G.FallbackWrites->ResultBytes = unsigned(*Bytes);
+      }
+    }
     for (auto [Name, Destination] :
          {std::pair{"selector", &G.Selector},
           std::pair{"function_pointer", &G.FunctionPointer},

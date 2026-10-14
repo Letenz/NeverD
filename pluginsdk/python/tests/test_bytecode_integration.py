@@ -111,7 +111,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
                                                 lambda data, pc: recipes[data[0]], **options)
         self.assertEqual(static, dynamic)
         self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls), (1, 0))
-        self.assertIn("example_query((uint64_t)(99))", static.source)
+        self.assertRegex(static.source, r"example_query\(\(uint64_t\)\(99(?:ull)?\)\)")
         self.assertNotIn("__neverd_state_probe", static.source)
         for change in ({"isolated_bank": False}, {"state_bytes": 47}, {"unknown": 1}):
             with self.assertRaisesRegex(NeverDError, "source_contracts"):
@@ -256,7 +256,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual(static, dynamic)
         self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls), (1, 0))
         self.assertIn("int16_t receiver_query(void*, int16_t)", static.source)
-        self.assertIn("receiver_query(context, (int16_t)(-1))", static.source)
+        self.assertRegex(static.source, r"receiver_query\(context, \(int16_t\)\((?:-1|65535)\)\)")
         with self.assertRaisesRegex(NeverDError, "context forwarding"):
             recover_bytecode(b"A\xfe", profile, functions, **dict(options, with_context=False))
         for invalid in (0, 1, "true", None, [], {}):
@@ -306,7 +306,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual(static, dynamic)
         self.assertEqual((static.reconstructed_calls, static.guarded_contract_calls,
                           static.unresolved_contract_calls), (1, 1, 0))
-        self.assertIn("example_query((uint64_t)(99))", static.source)
+        self.assertRegex(static.source, r"example_query\(\(uint64_t\)\(99(?:ull)?\)\)")
         self.assertIn("runtime_service(state)", static.source)
         self.assertRegex(static.source, r"== 7")
 
@@ -346,7 +346,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
             self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls),
                              (int(overwrite), int(not overwrite)))
             if overwrite:
-                self.assertIn("example_release((uint64_t)(99))", static.source)
+                self.assertRegex(static.source, r"example_release\(\(uint64_t\)\(99(?:ull)?\)\)")
             else:
                 legacy = copy.deepcopy(contract)
                 legacy["gateways"][0]["imports"][0].pop("void_result")
@@ -402,7 +402,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual(static, dynamic)
         self.assertEqual((static.reconstructed_calls, static.guarded_contract_calls,
                           static.unresolved_contract_calls), (1, 1, 0))
-        self.assertIn("_synthetic_query((int32_t)(999))", static.source)
+        self.assertRegex(static.source, r"_synthetic_query\(\(int32_t\)\(999u?\)\)")
         self.assertIn("runtime_service(state)", static.source)
         variadic = copy.deepcopy(contract)
         variadic["gateways"][0]["arguments"].append(slot(64))
@@ -412,7 +412,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
         variadic_result = recover_bytecode(b"A\xfe", profile, functions,
                                           **dict(options, source_contracts=variadic))
         self.assertIn("_synthetic_query(int32_t, ...)", variadic_result.source)
-        self.assertIn("(uint64_t)(999)", variadic_result.source)
+        self.assertRegex(variadic_result.source, r"\(uint64_t\)\(999(?:ull)?\)")
         for path, value in [(("gateways", 0, "selector"), slot(32)),
                             (("gateways", 0, "function_pointer", "bytes"), 4),
                             (("gateways", 0, "imports", 0, "selector"), 0),
@@ -475,8 +475,23 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertIn('"example.dll"', static.source)
         self.assertIn("lookup_item(", static.source)
         self.assertIn("runtime_service(state)", static.source)
+        for assertion in ({}, {"result_bytes": 8}):
+            bounded = copy.deepcopy(contract)
+            bounded["localize_bank"] = True
+            bounded["gateways"][0]["fallback_writes"] = assertion
+            opts = dict(options, source_contracts=bounded)
+            self.assertEqual(
+                recover_bytecode(b"A\xfe", profile, functions, **opts),
+                recover_bytecode_with_decoder(
+                    b"A\xfe", layout, functions, lambda data, pc: recipes[data[0]], **opts))
         for path, value in [(("images",), {}), (("images", 0, "bytes"), "not-hex"),
                             (("images", 0, "readable"), False),
+                            (("gateways", 0, "fallback_writes"), False),
+                            (("gateways", 0, "fallback_writes"), None),
+                            (("gateways", 0, "fallback_writes"), {"unknown": 8}),
+                            (("gateways", 0, "fallback_writes"), {"result_bytes": 3}),
+                            (("gateways", 0, "fallback_writes"), {"result_bytes": True}),
+                            (("gateways", 0, "fallback_writes"), {"result_bytes": -8}),
                             (("gateways", 0, "strings"), {}),
                             (("gateways", 0, "strings", 0, "by_value"), False),
                             (("gateways", 0, "strings", 0, "image"), 1),

@@ -277,6 +277,31 @@ a declared candidate, the gateway remains unchanged. PHI and select arms can
 supply an advisory candidate, including a loop's initial service number; this
 does not establish agreement of the arms or stability across iterations.
 
+With `localize_bank: true`, NeverD also computes conservative byte write sets
+for exact in-module state callees, including recursive call cycles. A bounded
+CFG analysis forwards unchanged, exactly typed state loads and removes a store
+only when the same value already occupies the complete destination. Partial
+writes invalidate every overlapping cached value; conflicting predecessors,
+unknown callbacks and interposable callees prevent propagation. Complete bank
+contents remain observable at calls and returns. This is not dead-return-state
+elimination or recovery of an ordinary parameter ABI.
+
+A gateway may additionally declare `"fallback_writes": {}`. This is a stronger
+producer assertion covering **every fallback path**, including unrecognized
+selectors, arity failures and nonzero statuses: only the fixed `writes` slots
+and the result channel captured on entry may change in the bank. Reads may
+still observe every bank byte, and guest-memory effects remain unrestricted.
+NeverD uses this bound only where the captured result offset and width are
+statically proven within the bank. Without the assertion, or without that
+proof, a fallback can clobber every bank byte.
+
+For gateways whose fallback always writes a fixed result width, use
+`"fallback_writes": {"result_bytes": 8}`. The width must be 1, 2, 4 or 8;
+it overrides only the fallback's captured width descriptor. It neither changes
+the imported operation's result behavior nor manufactures a result value.
+Unknown keys and malformed assertions are rejected. Successful trace samples
+or ordinary import contracts do not establish this stronger fallback bound.
+
 A void import may declare `"void_result": "unspecified"` when its gateway
 captures physical return-register bits that the native void operation does not
 define. NeverD omits that capture only after proving that every destination byte

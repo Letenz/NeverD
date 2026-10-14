@@ -1867,6 +1867,15 @@ mutations, pointer identity, guest effects, call traces and full-width failure
 returns. Unsupported selected bank addresses retain the original body. These
 checks cover the implementation under the explicit private-bank assertion;
 they do not prove that arbitrary callers satisfy that assertion.
+`BankEffectsPreserveCallsLoopsAndCompleteState` adds three independent
+LLVM-versus-C cases at O0/O2 with UBSan traps (2,048 inputs per configuration):
+recursive callees, conflicting loop/backedge writes, partial result overlap,
+full-bank gateway reads, bounded and unbounded fallback writes, fixed fallback
+widths, arbitrary opaque mutation, guest effects and nonzero statuses. Separate
+refusal tests cover weak/interposable and indirect callees. Schema checks reject
+malformed fallback assertions before mutation. LLVMC unsigned saturation tests
+cover 1/8/16/32/64/128-bit add/subtract, boundaries, operand evaluation, assigned
+and inline expressions, name collisions and malformed shapes.
 The Python native integration suite checks static/callback producer parity,
 strict schema admission and reconstruction counts; the CLI retains existing
 output after a rejected source contract.

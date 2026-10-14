@@ -104,6 +104,14 @@ struct StateSourceArgumentExclusion {
   unsigned Argument = 0;
   uint64_t Value = 0;
 };
+struct StateSourceFallbackWrites {
+  /// An additional producer assertion, including unknown targets/arguments
+  /// and nonzero statuses: only the fixed Writes and result channel can change
+  /// bank bytes. Reads and guest/context effects remain unrestricted. Without
+  /// this assertion fallback calls may change every byte. Omit ResultBytes to
+  /// use the captured result-width descriptor; otherwise supply a fixed width.
+  std::optional<unsigned> ResultBytes;
+};
 struct StateSourceGateway {
   std::string Name;
   std::optional<StateSourceSlot> Selector;
@@ -122,6 +130,7 @@ struct StateSourceGateway {
   std::vector<StateSourceString> Strings;
   /// Values with additional gateway behavior retain the original call.
   std::vector<StateSourceArgumentExclusion> ExcludedArguments;
+  std::optional<StateSourceFallbackWrites> FallbackWrites;
 };
 struct StateSourceContract {
   unsigned StateBytes = 0;
@@ -151,6 +160,9 @@ struct StateSourceRecovery {
   unsigned GuardedCalls = 0;
   unsigned UnresolvedCalls = 0;
   unsigned LocalizedFunctions = 0;
+  unsigned ForwardedStateLoads = 0;
+  unsigned RedundantStateStores = 0;
+  unsigned BoundedStateCalls = 0;
 };
 
 /// Validate the entire contract/module before mutation. Scoped alias facts

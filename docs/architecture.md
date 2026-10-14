@@ -1116,6 +1116,16 @@ branch cost must decrease before a localized body is retained. Unsupported
 addresses, ordered accesses, exceptional/re-entrant calls or construction
 limits preserve the original implementation. This does not discard return-state
 bytes, recover an ordinary parameter ABI or establish a producer's assertion.
+The internal `StateSourceBank` owner shares bank-address admission with source
+reconstruction. Under that same ownership assertion it computes monotone
+interprocedural may-write summaries for exact definitions, then a bounded CFG
+must-value fixed point. Only exact typed loads and unchanged stores are removed;
+partial overlaps, unknown calls, interposable definitions and unsupported
+boundaries invalidate affected facts. Recursive summaries use the union of all
+reachable writes. All return bytes remain observable. Optional `fallback_writes`
+assertions bound original gateway writes only at statically bounded result
+channels, including failure paths; absent assertions retain full clobbers.
+These facts are internal call-site data, not trusted arbitrary IR metadata.
 Explicit context forwarding prepends the captured gateway receiver to a native
 call. The same owner validates the two-pointer gateway ABI and maps physical
 parameter types, signed hints, variadic prefixes and string indices after
