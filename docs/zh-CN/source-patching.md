@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
+<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
 
 [← Documentation Index](README.md)
 
@@ -175,3 +175,5 @@ AArch64 指令重定位要求显式 RELA 加数。隐式 REL 指令加数会在�
 重新构建安装器的验证 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) 已通过 19 项 PE/对象专项检查、全部 143 项 CPU 矩阵和 474 次 Windows/Linux 原生进程观测。Windows x86 进程在 Windows x64 主机运行；x64、ARM64 使用匹配主机。独立的 [Linux 验收](https://github.com/NeverSight/NeverD/actions/runs/38585759996) 已通过原来的 108 项及额外 3 项 LLVM-C、3 项 Clang/GCC C++ 检查，零失败、零跳过。
 
 [合并后验收 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) 已在 Windows/Linux 的 x64 与 ARM64 原生主机上重新通过全部 312 次进程验证。30 个最终映像与之前验证的字节完全一致；源代码摘要及纯 C 发布回执已更新并独立核验。
+
+[0a6f6d768 的扩展 Linux 验收](https://github.com/NeverSight/NeverD/actions/runs/38626866257) 执行了 429 项检查，零失败、零跳过：原始 108 项、完整 Swift 55 项、CPU 目标矩阵 143 项、原生 Session 117 项、LLVM-C 3 项及 Clang/GCC C++ 3 项。该合并版本的本地完整二进制 patch 回归也通过全部 22,961 项。原生进程次数与 CPU 模拟验证范围分别统计。

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
+<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
 
 [← Documentation Index](README.md)
 
@@ -175,3 +175,5 @@ C 専用の生成元検証 [cc91afb3b](https://github.com/NeverSight/NeverD/acti
 インストーラを再ビルドした検証 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) は、19 件の PE/オブジェクト検査、143 件すべての CPU マトリックス、Windows/Linux の 474 回のネイティブプロセス観測に合格しました。Windows x86 プロセスは Windows x64 ホストで、x64 と ARM64 は対応するホストで実行しました。別の [Linux 検証](https://github.com/NeverSight/NeverD/actions/runs/38585759996) は元の 108 件と追加の LLVM-C 三件、Clang/GCC C++ 三件すべてに合格し、失敗もスキップもありません。
 
 [統合検証 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) は、Windows/Linux の x64 と ARM64 ネイティブ環境で 312 回すべてのプロセス観測を再検証しました。最終的な 30 イメージは以前に検証したバイト列と一致し、ソースのハッシュと C 専用の出力レシートを更新して独立に確認しました。
+
+[0a6f6d768 の拡張 Linux 検証](https://github.com/NeverSight/NeverD/actions/runs/38626866257) は、元の 108 件、Swift 全体 55 件、CPU ターゲット 143 件、ネイティブセッション 117 件、LLVM-C 3 件、Clang/GCC C++ 3 件の計 429 件を、失敗・スキップなしで実行しました。この統合版ではローカルの全バイナリパッチ回帰 22,961 件もすべて成功しました。ネイティブプロセス数と CPU エミュレーションの検証範囲は区別して記録します。

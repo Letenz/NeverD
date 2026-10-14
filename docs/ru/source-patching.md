@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
+<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
 
 [← Documentation Index](README.md)
 
@@ -175,3 +175,5 @@ ctest --test-dir build-source -L \
 Проверка пересобранного установщика [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) прошла 19 проверок PE/объектов, все 143 случая CPU-матрицы и 474 наблюдения нативных процессов Windows/Linux. Процессы Windows x86 выполнялись на Windows x64; x64 и ARM64 использовали соответствующие хосты. Отдельная [проверка Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) прошла исходные 108 случаев, ещё три проверки LLVM-C и три Clang/GCC C++, без ошибок и пропусков.
 
 [Интеграционная проверка 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) повторно подтвердила все 312 наблюдений процессов на нативных Windows/Linux x64 и ARM64. Все 30 итоговых образов побайтно совпадают с ранее проверенными; хеши исходников и квитанции публикации только C обновлены и независимо проверены.
+
+[Расширенная проверка Linux на 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) выполнила 429 проверок без ошибок и пропусков: исходные 108 случаев, 55 полных проверок Swift, 143 проверки целей CPU, 117 нативных сессионных проверок, три LLVM-C и три Clang/GCC C++. Полный локальный набор бинарных патчей на этой интеграции также прошёл все 22 961 случаев. Число нативных процессов и покрытие эмуляцией CPU учитываются отдельно.

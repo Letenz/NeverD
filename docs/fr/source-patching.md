@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
+<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
 
 [← Documentation Index](README.md)
 
@@ -175,3 +175,5 @@ La qualification du producteur C [cc91afb3b](https://github.com/NeverSight/Never
 La qualification de l’installateur reconstruit [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) a réussi 19 vérifications PE/objet, les 143 cas de la matrice CPU et 474 observations de processus natifs Windows/Linux. Les processus Windows x86 ont tourné sur Windows x64 ; x64 et ARM64 ont utilisé des hôtes correspondants. La [qualification Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) séparée a réussi les 108 cas initiaux, plus trois vérifications LLVM-C et trois Clang/GCC C++, sans échec ni saut.
 
 La [qualification d’intégration 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) a revérifié les 312 observations de processus sur Windows/Linux natifs x64 et ARM64. Les 30 images finales correspondent aux octets déjà qualifiés ; les empreintes source et les justificatifs de publication C uniquement ont été actualisés et vérifiés indépendamment.
+
+La [qualification Linux étendue à 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) a réussi 429 contrôles exécutés, sans échec ni omission : les 108 cas initiaux, 55 contrôles Swift complets, 143 de cibles CPU, 117 de sessions natives, trois LLVM-C et trois C++ Clang/GCC. La suite locale complète de correctifs binaires a également réussi ses 22 961 cas pour cette intégration. Les processus natifs et la couverture par émulation CPU restent comptabilisés séparément.

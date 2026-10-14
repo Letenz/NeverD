@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
+<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
 
 [← Documentation Index](README.md)
 
@@ -175,3 +175,5 @@ ctest --test-dir build-source -L \
 اجتاز تحقق المثبت المعاد بناؤه [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) عدد 19 فحصا لـPE والكائنات، وجميع حالات مصفوفة CPU البالغ عددها 143، و474 مشاهدة لعمليات Windows/Linux الأصلية. نفذت عمليات Windows x86 على مضيف Windows x64، واستخدم x64 وARM64 مضيفين مطابقين. واجتاز [تحقق Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) المنفصل الحالات الأصلية الـ108 وثلاثة فحوص LLVM-C وثلاثة فحوص Clang/GCC C++ إضافية، دون إخفاق أو تخط.
 
 أعاد [تأهيل الدمج 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) التحقق من جميع ملاحظات العمليات الـ312 على Windows وLinux الأصليين بمعماريتي x64 وARM64. تطابق الصور النهائية الثلاثون البايتات المؤهلة سابقاً؛ حُدّثت بصمات المصدر وإيصالات النشر الخاصة بـ C فقط وتحقّق منها بصورة مستقلة.
+
+نجح [تأهيل Linux الموسع عند 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) في 429 فحصاً منفذاً دون فشل أو تجاوز: الحالات الأصلية الـ108، و55 فحص Swift كاملاً، و143 فحصاً لأهداف المعالج، و117 فحص جلسة أصلياً، وثلاثة فحوص LLVM-C وثلاثة فحوص Clang/GCC C++. كما نجحت مجموعة الترقيع الثنائي المحلية الكاملة في الحالات الـ22,961 عند هذا الدمج. تبقى أعداد العمليات الأصلية منفصلة عن تغطية محاكاة المعالج.

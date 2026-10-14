@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 4ca977e02b7f2da4b1e682abb4e9fc64b913472da2255441e536021fb7638f47 -->
+<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
 
 [← Documentation Index](README.md)
 
@@ -175,3 +175,5 @@ La verifica del produttore C [cc91afb3b](https://github.com/NeverSight/NeverD/ac
 La verifica dell’installatore ricompilato [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) ha superato 19 controlli PE/oggetto, tutti i 143 casi della matrice CPU e 474 osservazioni di processi nativi Windows/Linux. I processi Windows x86 sono stati eseguiti su Windows x64; x64 e ARM64 hanno usato host corrispondenti. La [verifica Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) separata ha superato i 108 casi originali più tre controlli LLVM-C e tre Clang/GCC C++, senza errori né casi saltati.
 
 La [verifica di integrazione 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) ha riconfermato tutte le 312 osservazioni di processo su Windows/Linux nativi x64 e ARM64. Le 30 immagini finali corrispondono ai byte già verificati; gli hash dei sorgenti e le ricevute di pubblicazione solo C sono stati aggiornati e controllati indipendentemente.
+
+La [verifica Linux estesa su 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) ha superato 429 controlli eseguiti, senza errori né casi saltati: i 108 originali, 55 controlli Swift completi, 143 dei target CPU, 117 delle sessioni native, tre LLVM-C e tre C++ Clang/GCC. Anche l’intera suite locale di patch binarie ha superato tutti i 22.961 casi su questa integrazione. I processi nativi e la copertura con emulazione CPU restano conteggiati separatamente.
