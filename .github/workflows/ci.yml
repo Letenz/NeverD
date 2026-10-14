@@ -2336,7 +2336,8 @@ jobs:
             NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationRealignedTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
             NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests \
-            NeverDPipelineOutcomeTests NeverDNativeFinallyInputTests neverd
+            NeverDPipelineOutcomeTests NeverDNativeFinallyInputTests \
+            NeverDSEHRuntimeMemoryTests neverd
       - name: Verify registration state and canonical LLVM metadata
         env:
           NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
@@ -2346,6 +2347,7 @@ jobs:
         run: |
           build-windows-eh/bin/NeverDRegistrationStateTests --gtest_output=xml:build-windows-eh/evidence/state.xml
           build-windows-eh/bin/NeverDRegistrationEHTests --gtest_output=xml:build-windows-eh/evidence/registration.xml
+          build-windows-eh/bin/NeverDSEHRuntimeMemoryTests --gtest_output=xml:build-windows-eh/evidence/runtime-memory.xml
           build-windows-eh/bin/NeverDMedStackAlignmentTests --gtest_output=xml:build-windows-eh/evidence/stack.xml
           build-windows-eh/bin/NeverDMedLLVMDeadSlotsTests --gtest_output=xml:build-windows-eh/evidence/dead-slots.xml
           build-windows-eh/bin/NeverDNoReturnTests --gtest_output=xml:build-windows-eh/evidence/noreturn.xml

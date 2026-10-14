@@ -5598,7 +5598,7 @@ checks also run in the Windows EH CI lane.
 `NeverDSEHRuntimeMemoryTests` checks nested authenticated UCRT calls, actual
 home-area writes, immutable formats and receipt freshness. Wrong providers,
 delay imports, incomplete or conflicting PE32/PE64 storage, `%n` variants,
-writable formats, saved-slot overwrites, IAT rebinding, forged import veneers,
+unproved writable formats, saved-slot overwrites, IAT rebinding, forged import veneers,
 parent-return-PC overlaps with either CALL's push or the home area, saved cells
 below SP and encoded frame escape
 must refuse. These focused contracts do not establish xcpt4 support; retain the
@@ -5619,7 +5619,15 @@ an inspected helper filling a missing byte preserve saved-frame evidence.
 Changed or unknown bytes, missing NUL, conflicting branches, released storage,
 runtime home/scratch areas and active return PCs refuse. The same Windows
 grammar applies to image and frame formats. These tests do not establish
-mutable-image formats, handler-memory restoration or native execution.
+initial mutable-image bytes, handler-memory restoration or native execution.
+
+`SEHImageFormat.*` in the same target decodes stores into writable PE image
+storage. Complete stores, agreeing branch arms and an inspected callee filling
+one byte preserve the saved frame across authenticated UCRT calls. File-only
+bytes, missing bytes/NUL, conflicting branches, unknown byte writes, `%n`,
+callee changes and saved-frame overwrites refuse. Truncated and ambiguous image
+storage supplies no destination authority. The original xcpt4 matrix remains
+the acceptance check for initial writable literals and exception activations.
 
 `X64CRTFrame` in that target and `NeverDLiftTests` checks `_controlfp_s` output
 extents with adjacent, partial-overlap, home-area, released-storage and return-PC
