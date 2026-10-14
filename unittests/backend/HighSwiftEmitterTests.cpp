@@ -446,18 +446,35 @@ func nativeMarker(_ text: Swift.StaticString) {
     _ = write(2, text.utf8Start, text.utf8CodeUnitCount)
 }
 nativeMarker("native-start\n")
-var trappedState: Swift.UInt32 = 0x76543210
-var trappedResult: Swift.UInt64 = 0x0123456789abcdef
+// Signal observers must not reenter a Swift inout access during the operation.
+let trappedState = Swift.UnsafeMutablePointer<Swift.UInt32>.allocate(capacity: 1)
+let trappedResult = Swift.UnsafeMutablePointer<Swift.UInt64>.allocate(capacity: 1)
+trappedState.initialize(to: 0x76543210)
+trappedResult.initialize(to: 0x0123456789abcdef)
+defer {
+    trappedState.deinitialize(count: 1)
+    trappedState.deallocate()
+    trappedResult.deinitialize(count: 1)
+    trappedResult.deallocate()
+}
 if Swift.CommandLine.arguments.count == 2 {
     let mode = Swift.CommandLine.arguments[1]
     signal(SIGFPE) { _ in
-        _exit(trappedState == 0x76543210 &&
-                     trappedResult == 0x0123456789abcdef ? 0 : 43)
+        _exit(trappedState.pointee == 0x76543210 &&
+                     trappedResult.pointee == 0x0123456789abcdef ? 0 : 43)
     }
-    if mode == "trap32" {
-        trappedResult = sse_div32(0x3f800000,0,0x1d80,&trappedState)
+    if mode == "observe" {
+        _ = raise(SIGFPE)
+    } else if mode == "stateWritten" {
+        trappedState.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "resultWritten" {
+        trappedResult.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "trap32" {
+        trappedResult.pointee = sse_div32(0x3f800000,0,0x1d80,trappedState)
     } else if mode == "trap64" {
-        trappedResult = sse_div64(0x3ff0000000000000,0,0x1d80,&trappedState)
+        trappedResult.pointee = sse_div64(0x3ff0000000000000,0,0x1d80,trappedState)
     } else {
         _exit(44)
     }
@@ -547,7 +564,7 @@ nativeMarker("native-end\n")
     const std::string Diagnostics((std::istreambuf_iterator<char>(Log)),
                                   std::istreambuf_iterator<char>());
     ASSERT_EQ(Status, 0) << Error << "\n" << Diagnostics << "\n" << Source;
-    auto Run = [&](llvm::StringRef Mode) {
+    auto Run = [&](llvm::StringRef Mode, int ExpectedStatus = 0) {
       const std::string Prefix = Executable + "-" + Mode.str();
       const std::string StandardOutput = Prefix + ".stdout";
       const std::string StandardError = Prefix + ".stderr";
@@ -568,7 +585,7 @@ nativeMarker("native-end\n")
       const std::string NativeDiagnostics(
           (std::istreambuf_iterator<char>(NativeLog)),
           std::istreambuf_iterator<char>());
-      EXPECT_EQ(NativeStatus, 0)
+      EXPECT_EQ(NativeStatus, ExpectedStatus)
           << Optimization.str() << " " << Mode.str() << ": " << Error << "\n"
           << "Native execution elapsed " << Milliseconds << " ms\n"
           << NativeDiagnostics;
@@ -577,6 +594,11 @@ nativeMarker("native-end\n")
                      << Mode << " status=" << NativeStatus
                      << " elapsed_ms=" << Milliseconds << "\n";
     };
+    // Prove the signal observer accepts untouched storage and rejects either
+    // premature write independently, before testing the hardware exception.
+    Run("observe");
+    Run("stateWritten", 43);
+    Run("resultWritten", 43);
     if (!TrapsOnly) {
       Run({});
       continue;
