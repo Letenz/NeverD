@@ -5390,7 +5390,9 @@ Intermediate writes to an FP return register remain transport; possible return
 reads use the definitions reaching each RETURN through the current CFG. Unknown
 paths retain conservative demand. Values forwarded through FP return registers
 also remain possible reads at CALL before ABI recovery supplies explicit
-operands.
+operands. A vector register widened from its own low bytes (`vzeroupper`) keeps
+only its own incoming bytes in place; bytes moved in from another register
+reach the return as any other write does.
 ARM32's register owner describes the
 complete D0-D31 bank independently of its D0-D7 argument bank.
 
