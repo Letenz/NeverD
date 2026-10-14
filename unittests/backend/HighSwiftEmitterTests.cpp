@@ -397,9 +397,9 @@ TEST(HighSwiftEmitter, CompilerPreamblesUseEveryMembersStorageNamespace) {
 
 namespace {
 void executeGeneratedSSESource(bool TrapsOnly) {
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !(defined(__linux__) && defined(__x86_64__))
   GTEST_SKIP()
-      << "This execution control requires macOS and an x86 Swift target";
+      << "This execution control requires macOS or native Linux x86-64 Swift";
 #else
 #if !defined(__x86_64__)
   if (TrapsOnly)
@@ -435,17 +435,23 @@ void executeGeneratedSSESource(bool TrapsOnly) {
   Body += Read.MemberSource;
   ASSERT_EQ(Preambles.size(), 1U);
   std::string Source = *Preambles.begin() + Body + R"swift(
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("SSE execution controls require POSIX signals")
+#endif
 func nativeMarker(_ text: Swift.StaticString) {
-    _ = Darwin.write(2, text.utf8Start, text.utf8CodeUnitCount)
+    _ = write(2, text.utf8Start, text.utf8CodeUnitCount)
 }
 nativeMarker("native-start\n")
 var trappedState: Swift.UInt32 = 0x76543210
 var trappedResult: Swift.UInt64 = 0x0123456789abcdef
 if Swift.CommandLine.arguments.count == 2 {
     let mode = Swift.CommandLine.arguments[1]
-    Darwin.signal(SIGFPE) { _ in
-        Darwin._exit(trappedState == 0x76543210 &&
+    signal(SIGFPE) { _ in
+        _exit(trappedState == 0x76543210 &&
                      trappedResult == 0x0123456789abcdef ? 0 : 43)
     }
     if mode == "trap32" {
@@ -453,9 +459,9 @@ if Swift.CommandLine.arguments.count == 2 {
     } else if mode == "trap64" {
         trappedResult = sse_div64(0x3ff0000000000000,0,0x1d80,&trappedState)
     } else {
-        Darwin._exit(44)
+        _exit(44)
     }
-    Darwin._exit(42)
+    _exit(42)
 }
 func check(_ fn: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
                   Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
@@ -529,11 +535,14 @@ nativeMarker("native-end\n")
     const std::optional<llvm::StringRef> Redirects[] = {
         std::nullopt, std::nullopt, CompilerLog};
     std::string Error;
+    llvm::SmallVector<llvm::StringRef, 12> CompilerArguments{*Compiler};
+#if defined(__APPLE__)
+    CompilerArguments.append({"-target", "x86_64-apple-macosx13.0"});
+#endif
+    CompilerArguments.append(
+        {Optimization, "-module-cache-path", Cache, Path, "-o", Executable});
     const int Status = llvm::sys::ExecuteAndWait(
-        *Compiler,
-        {*Compiler, "-target", "x86_64-apple-macosx13.0", Optimization,
-         "-module-cache-path", Cache, Path, "-o", Executable},
-        std::nullopt, Redirects, 120, 0, &Error);
+        *Compiler, CompilerArguments, std::nullopt, Redirects, 120, 0, &Error);
     std::ifstream Log(CompilerLog);
     const std::string Diagnostics((std::istreambuf_iterator<char>(Log)),
                                   std::istreambuf_iterator<char>());
