@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ Las 204 observaciones del antiguo perfil de traducción son históricas y no pru
 Las reubicaciones de instrucciones AArch64 requieren sumandos RELA explícitos. Los sumandos REL implícitos de instrucciones se rechazan antes de publicar; sus campos de bits no se interpretan como datos ordinarios. Las reubicaciones de datos PREL64 admitidas conservan los sumandos completos con signo tanto en REL como en RELA.
 
 La validación del productor C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) superó las 312 observaciones de procesos nativos: 36 en cada arquitectura Windows x64 y ARM64, y 120 en cada arquitectura Linux x64 y ARM64. Linux verifica por separado nueve escenarios de excepciones para Clang IR, objetos nativos Clang y objetos nativos GCC; las entradas NeverC de IR, objetos y hosted DynCode son todas C.
+
+La validación del instalador recompilado [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) superó 19 comprobaciones PE/objeto, los 143 casos de la matriz CPU y 474 observaciones de procesos nativos Windows/Linux. Los procesos Windows x86 se ejecutaron en Windows x64; x64 y ARM64 usaron hosts correspondientes. La [validación Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) separada superó los 108 casos originales más tres comprobaciones LLVM-C y tres Clang/GCC C++, sin fallos ni omisiones.

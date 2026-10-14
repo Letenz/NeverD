@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ Die 204 Beobachtungen des früheren Übersetzungsprofils sind historische Belege
 AArch64-Instruktionsrelokationen benötigen explizite RELA-Addenden. Implizite REL-Instruktionsaddenden werden vor der Veröffentlichung abgelehnt; ihre Befehlsbitfelder werden nicht als gewöhnliche Daten interpretiert. Unterstützte PREL64-Datenrelokationen behalten bei REL und RELA die vollständigen vorzeichenbehafteten Addenden.
 
 Die C-Produzentenqualifizierung [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) bestand alle 312 nativen Prozessbeobachtungen: je 36 unter Windows x64 und ARM64 sowie je 120 unter Linux x64 und ARM64. Linux prüft neun Ausnahmeszenarien getrennt für Clang IR, native Clang-Objekte und native GCC-Objekte; alle NeverC-Eingaben für IR, Objekte und hosted DynCode sind C.
+
+Die Qualifizierung des neu gebauten Installers [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) bestand 19 PE-/Objektprüfungen, alle 143 CPU-Matrixfälle und 474 native Prozessbeobachtungen unter Windows/Linux. Windows-x86-Prozesse liefen auf Windows x64; x64 und ARM64 verwendeten passende Hosts. Die separate [Linux-Qualifizierung](https://github.com/NeverSight/NeverD/actions/runs/38585759996) bestand die ursprünglichen 108 Fälle sowie drei LLVM-C- und drei Clang/GCC-C++-Prüfungen ohne Fehler oder übersprungene Fälle.

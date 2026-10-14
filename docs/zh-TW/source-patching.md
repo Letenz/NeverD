@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ Windows 原生程序驗收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/acti
 AArch64 指令重定位要求顯式 RELA 加數。隱式 REL 指令加數會在發布前遭到拒絕，不會把指令位元欄位當成一般資料。支援的 PREL64 資料重定位在 REL、RELA 下都保留完整有號加數。
 
 純 C 生產端驗證 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) 已通過全部 312 次原生程序觀測：Windows x64、ARM64 各 36 次，Linux x64、ARM64 各 120 次。Linux 分別驗證 Clang IR、Clang 原生物件及 GCC 原生物件的九種例外情境；NeverC 的 IR、物件及 hosted DynCode 輸入皆為 C。
+
+重新建置安裝器的驗證 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) 已通過 19 項 PE/物件專項檢查、全部 143 項 CPU 矩陣及 474 次 Windows/Linux 原生程序觀測。Windows x86 程序在 Windows x64 主機執行；x64、ARM64 使用相符主機。獨立的 [Linux 驗收](https://github.com/NeverSight/NeverD/actions/runs/38585759996) 已通過原有 108 項及額外 3 項 LLVM-C、3 項 Clang/GCC C++ 檢查，零失敗、零略過。

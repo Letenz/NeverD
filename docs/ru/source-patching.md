@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ ctest --test-dir build-source -L \
 Перемещения инструкций AArch64 требуют явных слагаемых RELA. Неявные слагаемые REL для инструкций отклоняются до публикации; битовые поля инструкций не трактуются как обычные данные. Поддерживаемые перемещения данных PREL64 сохраняют полные знаковые слагаемые и в REL, и в RELA.
 
 Проверка производителя C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) прошла все 312 наблюдений нативных процессов: по 36 на Windows x64 и ARM64 и по 120 на Linux x64 и ARM64. Linux отдельно проверяет девять сценариев исключений для IR Clang, нативных объектов Clang и нативных объектов GCC; все входы NeverC для IR, объектов и hosted DynCode написаны на C.
+
+Проверка пересобранного установщика [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) прошла 19 проверок PE/объектов, все 143 случая CPU-матрицы и 474 наблюдения нативных процессов Windows/Linux. Процессы Windows x86 выполнялись на Windows x64; x64 и ARM64 использовали соответствующие хосты. Отдельная [проверка Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) прошла исходные 108 случаев, ещё три проверки LLVM-C и три Clang/GCC C++, без ошибок и пропусков.

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ Windows 네이티브 프로세스 검증 [a4a5ae3cb](https://github.com/NeverSig
 AArch64 명령어 재배치에는 명시적인 RELA 가수가 필요합니다. 암시적 REL 명령어 가수는 게시 전에 거부되며 명령어 비트 필드를 일반 데이터로 해석하지 않습니다. 지원되는 PREL64 데이터 재배치는 REL과 RELA 모두에서 전체 부호 있는 가수를 유지합니다.
 
 C 전용 생성기 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213)은 네이티브 프로세스 관측 312회를 모두 통과했습니다. Windows x64와 ARM64는 각각 36회, Linux x64와 ARM64는 각각 120회입니다. Linux는 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체의 아홉 예외 시나리오를 각각 검증하며 NeverC의 IR, 객체, hosted DynCode 입력은 모두 C입니다.
+
+설치기를 다시 빌드한 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600)은 PE/객체 검사 19개, CPU 매트릭스 143개 전체, Windows/Linux 네이티브 프로세스 관측 474회를 통과했습니다. Windows x86 프로세스는 Windows x64 호스트에서, x64와 ARM64는 일치하는 호스트에서 실행했습니다. 별도 [Linux 검증](https://github.com/NeverSight/NeverD/actions/runs/38585759996)은 기존 108개와 추가 LLVM-C 3개, Clang/GCC C++ 3개를 모두 통과했으며 실패와 건너뛰기는 없습니다.

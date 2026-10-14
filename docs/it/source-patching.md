@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ Le 204 osservazioni del vecchio profilo di traduzione sono storiche e non provan
 Le rilocazioni delle istruzioni AArch64 richiedono addendi RELA espliciti. Gli addendi REL impliciti delle istruzioni vengono rifiutati prima della pubblicazione; i campi di bit non vengono interpretati come dati ordinari. Le rilocazioni dati PREL64 supportate mantengono gli addendi completi con segno sia in REL sia in RELA.
 
 La verifica del produttore C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) ha superato tutte le 312 osservazioni di processi nativi: 36 per ciascuna architettura Windows x64 e ARM64 e 120 per ciascuna architettura Linux x64 e ARM64. Linux verifica separatamente nove scenari di eccezioni per Clang IR, oggetti nativi Clang e oggetti nativi GCC; tutti gli ingressi NeverC per IR, oggetti e hosted DynCode sono C.
+
+La verifica dell’installatore ricompilato [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) ha superato 19 controlli PE/oggetto, tutti i 143 casi della matrice CPU e 474 osservazioni di processi nativi Windows/Linux. I processi Windows x86 sono stati eseguiti su Windows x64; x64 e ARM64 hanno usato host corrispondenti. La [verifica Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) separata ha superato i 108 casi originali più tre controlli LLVM-C e tre Clang/GCC C++, senza errori né casi saltati.

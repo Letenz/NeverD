@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: a64b77cbab1f63403b41547792b067946e136fbcee92805377c30d3719cfc787 -->
+<!-- i18n-source: 5755e01080e20359d4cdcd068ce17c6d1247bd0e7a280be5bf5c440b79cf4ed2 -->
 
 [← Documentation Index](README.md)
 
@@ -171,3 +171,5 @@ ctest --test-dir build-source -L \
 تتطلب إعادة تموضع تعليمات AArch64 قيما مضافة صريحة من RELA. ترفض القيم المضافة الضمنية لتعليمات REL قبل النشر، ولا تفسر حقول بتات التعليمات كبيانات عادية. تحتفظ إعادة تموضع بيانات PREL64 المدعومة بالقيم المضافة الموقعة كاملة في REL وRELA.
 
 اجتاز تحقق منتج C [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591930213) جميع مشاهدات العمليات الأصلية البالغ عددها 312:‏ 36 لكل من Windows x64 وARM64، و120 لكل من Linux x64 وARM64. يتحقق Linux بصورة منفصلة من تسعة سيناريوهات استثناءات لكل من وسيط Clang وكائنات Clang الأصلية وكائنات GCC الأصلية؛ وجميع مدخلات NeverC لوسيط IR والكائنات وhosted DynCode مكتوبة بلغة C.
+
+اجتاز تحقق المثبت المعاد بناؤه [cc91afb3b](https://github.com/NeverSight/NeverD/actions/runs/38591928600) عدد 19 فحصا لـPE والكائنات، وجميع حالات مصفوفة CPU البالغ عددها 143، و474 مشاهدة لعمليات Windows/Linux الأصلية. نفذت عمليات Windows x86 على مضيف Windows x64، واستخدم x64 وARM64 مضيفين مطابقين. واجتاز [تحقق Linux](https://github.com/NeverSight/NeverD/actions/runs/38585759996) المنفصل الحالات الأصلية الـ108 وثلاثة فحوص LLVM-C وثلاثة فحوص Clang/GCC C++ إضافية، دون إخفاق أو تخط.
