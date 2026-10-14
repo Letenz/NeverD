@@ -11,11 +11,13 @@ EXPORTS
   ZwDeleteValueKey
   ZwDeleteKey
   ZwClose
+  RtlGetVersion
   RtlInitUnicodeString
   ExAllocatePool
   NtQuerySystemInformation
   ZwQuerySystemInformation
   ExAllocatePoolWithTag
+  ExFreePool
   ExFreePoolWithTag
   IoCreateDevice
   IoCreateSymbolicLink
@@ -82,3 +84,22 @@ EXPORTS
   IoGetCurrentProcess
   KeStackAttachProcess
   KeUnstackDetachProcess
+  RtlInitAnsiString
+  RtlInitString
+  RtlAppendUnicodeToString
+  RtlAppendUnicodeStringToString
+  RtlPrefixUnicodeString
+  RtlIntegerToUnicodeString
+  RtlUnicodeStringToInteger
+  PsGetCurrentProcessId
+  PsGetProcessId
+  PsGetCurrentProcess
+  PsGetCurrentThread
+  KeGetCurrentThread
+  PsGetCurrentThreadId
+  PsGetThreadId
+  RtlAnsiStringToUnicodeString
+  RtlUnicodeStringToAnsiString
+  RtlFreeUnicodeString
+  RtlFreeAnsiString
+  MmGetPhysicalMemoryRanges

@@ -23,18 +23,27 @@ namespace neverd {
 struct BinaryImage;
 struct RegistrationCalleeFrameContract;
 struct RegistrationCallFrameEffect;
+struct RegistrationBlockState;
+struct RegistrationStateAnalysis;
 namespace med_llvm_eh {
 struct RegistrationCxxCallABI {
   llvm::FunctionType *Type = nullptr;
   llvm::CallingConv::ID Convention = llvm::CallingConv::C;
   bool BorrowsECX = false;
   bool RuntimeThrow = false;
+  bool Initializer = false;
+  bool DiscardResult = false;
   uint64_t ThrowInfoVA = 0;
 };
+bool hasLiveRegistrationCxxRuntimeReceiver(
+    const RegistrationStateAnalysis &States,
+    const RegistrationBlockState &Block,
+    const RegistrationCalleeFrameContract &Contract,
+    const RegistrationCallFrameEffect &Effect, size_t &Work);
 std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const BinaryImage &Image, const RegistrationCalleeFrameContract &Contract,
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,
-    size_t &Work);
+    size_t &Work, bool ResultUnused);
 } // namespace med_llvm_eh
 } // namespace neverd
 #endif

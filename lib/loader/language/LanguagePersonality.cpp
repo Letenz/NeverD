@@ -26,6 +26,8 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 
+#include <optional>
+
 namespace neverd {
 
 llvm::SmallVector<llvm::StringRef, 4>
@@ -269,38 +271,61 @@ bool namesARoutine(llvm::StringRef Name) {
          !isArmMappingSymbol(Name);
 }
 
+namespace {
+
+struct RoutineSlotBinding {
+  std::optional<llvm::StringRef> Name;
+  bool HasRelocation = false;
+
+  bool hasAuthority() const { return Name.has_value() || HasRelocation; }
+};
+
+RoutineSlotBinding routineSlotBinding(const BinaryImage &Img, va_t SlotVA) {
+  if (!SlotVA)
+    return {};
+  if (auto It = Img.ImportPtrSlots.find(SlotVA); It != Img.ImportPtrSlots.end())
+    return {It->second, false};
+  for (const Import &Imp : Img.Imports)
+    if (Imp.IATAddr == SlotVA && !Imp.Name.empty())
+      return {Imp.Name, false};
+  for (const RelocationEntry &Rel : Img.Relocations)
+    if (Rel.Address == SlotVA && !Rel.SymbolName.empty())
+      return {Rel.SymbolName, true};
+  // An unnamed relative relocation can still supply the dispatch target.
+  // Keep its slot identity even when that target has no usable name.
+  bool HasRelocation = false;
+  for (const RelocationEntry &Rel : Img.Relocations) {
+    if (Rel.Address != SlotVA)
+      continue;
+    HasRelocation = true;
+    if (!Rel.SymbolName.empty() || Rel.Addend <= 0)
+      continue;
+    const va_t Target = static_cast<va_t>(Rel.Addend);
+    for (va_t Candidate : {Target, Img.Base + Target})
+      for (const Symbol &Sym : Img.Symbols)
+        if (Sym.Addr == Candidate && namesARoutine(Sym.Name))
+          return {Sym.Name, true};
+  }
+  return {std::nullopt, HasRelocation};
+}
+
+} // namespace
+
+bool sameRoutineProvider(const BinaryImage &Img, va_t AddressA, va_t SlotA,
+                         va_t AddressB, va_t SlotB) {
+  if (routineSlotBinding(Img, SlotA).hasAuthority() ||
+      routineSlotBinding(Img, SlotB).hasAuthority())
+    return SlotA && SlotA == SlotB;
+  return AddressA && AddressA == AddressB;
+}
+
 std::string resolveRoutineName(const BinaryImage &Img, va_t Address,
                                va_t SlotVA) {
   // A dynamically bound slot is authoritative when present: the value it holds
   // in the file image is a placeholder, but the binding names the routine.
   if (SlotVA != 0) {
-    if (auto It = Img.ImportPtrSlots.find(SlotVA);
-        It != Img.ImportPtrSlots.end())
-      return It->second;
-    for (const Import &Imp : Img.Imports)
-      if (Imp.IATAddr == SlotVA && !Imp.Name.empty())
-        return Imp.Name;
-    for (const RelocationEntry &Rel : Img.Relocations)
-      if (Rel.Address == SlotVA && !Rel.SymbolName.empty())
-        return Rel.SymbolName;
-    // A relative relocation names no symbol because it needs none: the routine
-    // is defined in this image, so the loader only has to add the load bias to
-    // an addend that already holds the address.  That addend is the one thing
-    // in the file that says where the slot will point, and without reading it
-    // a position-independent image resolves every personality to nothing --
-    // the slot's own contents are zero until the loader writes them.
-    for (const RelocationEntry &Rel : Img.Relocations) {
-      if (Rel.Address != SlotVA || !Rel.SymbolName.empty() || Rel.Addend <= 0)
-        continue;
-      // The addend is a link-time address, which is the loaded one only when
-      // the image was linked at the base it is being read at.  Both readings
-      // are tried because only one of them can name a routine.
-      const va_t Target = static_cast<va_t>(Rel.Addend);
-      for (va_t Candidate : {Target, Img.Base + Target})
-        for (const Symbol &Sym : Img.Symbols)
-          if (Sym.Addr == Candidate && namesARoutine(Sym.Name))
-            return Sym.Name;
-    }
+    if (const auto Binding = routineSlotBinding(Img, SlotVA); Binding.Name)
+      return Binding.Name->str();
   }
 
   if (Address == 0)

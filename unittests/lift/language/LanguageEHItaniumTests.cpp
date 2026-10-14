@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/loader/SourceUnwind.h"
 
 #include <limits>
 
@@ -503,6 +504,121 @@ TEST(ItaniumEHDriver, NormalizesFrameSectionIntoExceptionMetadata) {
       Img.ExceptionMetadata.findFunction(FuncVA + 0x10);
   ASSERT_NE(Found, nullptr);
   EXPECT_EQ(Found->CodeRange.Begin, FuncVA);
+}
+
+TEST(ItaniumEHDriver, IncompleteFrameSectionsRemainStructuralAtEveryEntry) {
+  for (Arch A : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (unsigned Damage : {0u, 1u, 2u})
+      for (bool BadFirst : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(Damage);
+        SCOPED_TRACE(BadFirst);
+        BinaryImage Img = makeImage();
+        Img.Arch = A;
+        Img.Bits = A == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
+        std::vector<uint8_t> Bytes;
+        for (unsigned I = 0; I < 2; ++I) {
+          const bool Bad = (I == 0) == BadFirst;
+          auto Frame = buildSimpleFrame(kDataVA + Bytes.size(),
+                                        kTextVA + 0x100 + I * 0x100, 0x80,
+                                        Bad && Damage == 0   ? "zRX"
+                                        : Bad && Damage == 1 ? "zRL"
+                                                             : "zR",
+                                        0, Bad && Damage == 1 ? 0xdead000 : 0,
+                                        Bad && Damage == 1 ? 0x9b : 0x1b);
+          Frame.Bytes.resize(Frame.Bytes.size() - sizeof(uint32_t));
+          Bytes.insert(Bytes.end(), Frame.Bytes.begin(), Frame.Bytes.end());
+        }
+        if (Damage == 2) {
+          ByteBuilder Truncated;
+          Truncated.u32(0x1000);
+          Truncated.u32(0);
+          Bytes.insert(Bytes.end(), Truncated.data().begin(),
+                       Truncated.data().end());
+        } else
+          Bytes.resize(Bytes.size() + sizeof(uint32_t));
+        Section Frames;
+        Frames.Name = ".eh_frame";
+        Frames.VA = kDataVA;
+        Frames.Size = Bytes.size();
+        Frames.Data = Bytes;
+        writeData(Img, kDataVA, Bytes);
+        Img.Sections.push_back(std::move(Frames));
+        parseItaniumExceptions(Img);
+        ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 2u);
+        const auto Status = Damage == 2 ? ExceptionParseStatus::Malformed
+                                        : ExceptionParseStatus::Partial;
+        EXPECT_EQ(Img.ExceptionMetadata.ParseStatus, Status);
+        for (const auto &F : Img.ExceptionMetadata.Functions) {
+          ASSERT_TRUE(F.Dwarf);
+          EXPECT_EQ(F.Dwarf->LSDAVA, 0u);
+          EXPECT_EQ(F.ParseStatus, Status);
+          ASSERT_TRUE(F.DecodeProvenance);
+          EXPECT_EQ(F.DecodeProvenance->Structural.ParseStatus, Status);
+          EXPECT_FALSE(isPlainSourceUnwind(F));
+          EXPECT_FALSE(F.DecodeProvenance->Structural.Diagnostics.empty());
+        }
+      }
+}
+
+TEST(ItaniumEHDriver, InvalidRangeRetainsItsIdentifiableFrameEntry) {
+  for (Arch A : {Arch::X86, Arch::X64, Arch::AArch64}) {
+    auto Img = makeImage();
+    Img.Arch = A;
+    Img.Bits = A == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
+    const va_t Entry = kTextVA + 0x100;
+    Img.Symbols.push_back({"sized_function", Entry, 0x80, true});
+    const auto Frame = buildSimpleFrame(kDataVA, Entry, 0, "zR", 0, 0);
+    writeData(Img, kDataVA, Frame.Bytes);
+    Section Frames;
+    Frames.Name = ".eh_frame";
+    Frames.VA = kDataVA;
+    Frames.Size = Frame.Bytes.size();
+    Frames.Data = Frame.Bytes;
+    Img.Sections.push_back(std::move(Frames));
+    parseItaniumExceptions(Img);
+    ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+    const auto &F = Img.ExceptionMetadata.Functions.front();
+    ASSERT_TRUE(F.Dwarf);
+    EXPECT_EQ(F.Dwarf->InitialLocation, Entry);
+    EXPECT_FALSE(F.CodeRange.isValid());
+    EXPECT_EQ(F.ParseStatus, ExceptionParseStatus::Malformed);
+    ASSERT_TRUE(F.DecodeProvenance);
+    EXPECT_EQ(F.DecodeProvenance->Structural.ParseStatus,
+              ExceptionParseStatus::Malformed);
+    EXPECT_FALSE(isPlainSourceUnwind(F));
+  }
+}
+
+TEST(ItaniumEHDriver, LanguageRefreshPreservesIncompleteFrameDecoding) {
+  BinaryImage Img = makeImage();
+  const va_t FuncVA = kTextVA + 0x100;
+  const va_t LSDAVA = kDataVA + 0x400;
+  const va_t PersonalityVA = kTextVA + 0x800;
+  Img.Symbols.push_back({"__gxx_personality_v0", PersonalityVA, 0, true});
+  auto Frame =
+      buildSimpleFrame(kDataVA, FuncVA, 0x80, "zPLRX", PersonalityVA, LSDAVA);
+  writeData(Img, kDataVA, Frame.Bytes);
+  Section Frames;
+  Frames.Name = ".eh_frame";
+  Frames.VA = kDataVA;
+  Frames.Size = Frame.Bytes.size();
+  Frames.Data = Frame.Bytes;
+  Img.Sections.push_back(std::move(Frames));
+  writeData(Img, LSDAVA, buildCatchLSDA(LSDAVA, FuncVA, 0).Bytes);
+  parseItaniumExceptions(Img);
+  ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+  auto &F = Img.ExceptionMetadata.Functions.front();
+  ASSERT_TRUE(F.DecodeProvenance);
+  ASSERT_EQ(F.DecodeProvenance->Structural.ParseStatus,
+            ExceptionParseStatus::Partial);
+  ASSERT_EQ(F.DecodeProvenance->Language.ParseStatus,
+            ExceptionParseStatus::Complete);
+  const auto Diagnostics = F.DecodeProvenance->Structural.Diagnostics;
+  EXPECT_TRUE(refreshItaniumLanguageData(Img, F));
+  EXPECT_EQ(F.DecodeProvenance->Structural.Diagnostics, Diagnostics);
+  EXPECT_EQ(F.ParseStatus, ExceptionParseStatus::Partial);
+  EXPECT_FALSE(isPlainSourceUnwind(F));
 }
 
 /// An AArch64 image whose `.eh_frame` holds one frame for \p FrameVA, with

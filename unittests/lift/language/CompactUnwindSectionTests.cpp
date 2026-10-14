@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/MachO/MachOExceptions.h"
+#include "neverd/loader/SourceUnwind.h"
 
 #include <cstring>
 
@@ -475,6 +476,333 @@ TEST(DarwinUnwindSymbols, KeepsNonExecutableRangesWithoutChangingSymbols) {
       }
     }
   }
+}
+
+TEST(DarwinUnwindSymbols,
+     IncompleteFrameSectionsCoverConsumedAndStandaloneFDEs) {
+  for (Arch A : {Arch::X64, Arch::AArch64})
+    for (unsigned Binding : {0u, 1u, 2u})
+      for (unsigned Damage : {0u, 1u, 2u})
+        for (bool BadFirst : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(Binding);
+          SCOPED_TRACE(Damage);
+          SCOPED_TRACE(BadFirst);
+          auto Img = makeImage(A);
+          const va_t FrameVA = kImageBase + 0x2800;
+          std::vector<uint8_t> Bytes;
+          std::vector<uint32_t> Offsets;
+          for (unsigned I = 0; I < 2; ++I) {
+            const bool Bad = (I == 0) == BadFirst;
+            auto Frame = language_eh_test::buildSimpleFrame(
+                FrameVA + Bytes.size(), kImageBase + 0x100 + I * 0x100, 0x80,
+                Bad && Damage == 0   ? "zRX"
+                : Bad && Damage == 1 ? "zRL"
+                                     : "zR",
+                0, Bad && Damage == 1 ? kImageBase + 0xdead000 : 0,
+                Bad && Damage == 1 ? 0x9b : 0x1b);
+            Offsets.push_back(Bytes.size() + Frame.FDEOffset);
+            Frame.Bytes.resize(Frame.Bytes.size() - sizeof(uint32_t));
+            Bytes.insert(Bytes.end(), Frame.Bytes.begin(), Frame.Bytes.end());
+          }
+          if (Damage == 2) {
+            language_eh_test::ByteBuilder Truncated;
+            Truncated.u32(0x1000);
+            Truncated.u32(0);
+            Bytes.insert(Bytes.end(), Truncated.data().begin(),
+                         Truncated.data().end());
+          } else
+            Bytes.resize(Bytes.size() + sizeof(uint32_t));
+          Section Frames;
+          Frames.Name = "__eh_frame";
+          Frames.VA = FrameVA;
+          Frames.Size = Bytes.size();
+          Frames.Data = Bytes;
+          Img.Sections.push_back(std::move(Frames));
+          const uint32_t PlainMode =
+              A == Arch::X64 ? kX86_64ModeRBPFrame : kARM64ModeFrame;
+          const uint32_t DwarfMode =
+              A == Arch::X64 ? kX86_64ModeDwarf : kARM64ModeDwarf;
+          if (Binding)
+            attachUnwindInfo(
+                Img,
+                buildUnwindInfo(
+                    {{0x100, Binding == 1 ? PlainMode : DwarfMode | Offsets[0]},
+                     {0x200, Binding == 1 ? PlainMode : DwarfMode | Offsets[1]},
+                     {0x300, PlainMode}},
+                    0x380));
+          parseDarwinExceptions(Img);
+          ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), Binding ? 3u : 2u);
+          const auto Status = Damage == 2 ? ExceptionParseStatus::Malformed
+                                          : ExceptionParseStatus::Partial;
+          EXPECT_EQ(Img.ExceptionMetadata.ParseStatus, Status);
+          for (const auto &F : Img.ExceptionMetadata.Functions) {
+            if (!F.Dwarf) {
+              ASSERT_TRUE(F.Compact);
+              EXPECT_EQ(F.ParseStatus, ExceptionParseStatus::Complete);
+              EXPECT_FALSE(F.DecodeProvenance);
+              EXPECT_TRUE(isPlainSourceUnwind(F));
+              continue;
+            }
+            EXPECT_EQ(F.ParseStatus, Status);
+            ASSERT_TRUE(F.DecodeProvenance);
+            EXPECT_EQ(F.DecodeProvenance->Structural.ParseStatus, Status);
+            EXPECT_FALSE(isPlainSourceUnwind(F));
+          }
+        }
+}
+
+TEST(DarwinUnwindSymbols, ConsumedFDEKeepsItsCIEPersonality) {
+  for (bool DwarfMode : {false, true})
+    for (bool Known : {false, true}) {
+      auto Img = makeImage();
+      const va_t FuncVA = kImageBase + 0x100;
+      const va_t PersonalityVA = kImageBase + 0x500;
+      if (Known)
+        Img.Symbols.push_back(
+            {"___gxx_personality_v0", PersonalityVA, 0, true});
+      const auto Frame = language_eh_test::buildSimpleFrame(
+          kImageBase + 0x2800, FuncVA, 0x80, "zPR", PersonalityVA, 0);
+      Section Frames;
+      Frames.Name = "__eh_frame";
+      Frames.VA = kImageBase + 0x2800;
+      Frames.Size = Frame.Bytes.size();
+      Frames.Data = Frame.Bytes;
+      Img.Sections.push_back(std::move(Frames));
+      attachUnwindInfo(
+          Img,
+          buildUnwindInfo(
+              {{0x100, DwarfMode ? kX86_64ModeDwarf | uint32_t(Frame.FDEOffset)
+                                 : kX86_64ModeRBPFrame}},
+              0x180));
+      parseDarwinExceptions(Img);
+      ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+      const auto &F = Img.ExceptionMetadata.Functions.front();
+      ASSERT_TRUE(F.Dwarf);
+      ASSERT_TRUE(F.Compact);
+      EXPECT_EQ(F.PersonalityVA, PersonalityVA);
+      EXPECT_NE(F.Personality, ExceptionPersonality::None);
+      EXPECT_EQ(F.ParseStatus, Known ? ExceptionParseStatus::Complete
+                                     : ExceptionParseStatus::Partial);
+      EXPECT_FALSE(isPlainSourceUnwind(F));
+      // A complete section must not introduce language-refresh authority.
+      EXPECT_FALSE(F.DecodeProvenance);
+    }
+}
+
+TEST(DarwinUnwindSymbols, CompactAndDwarfLanguageDescriptionsMustAgree) {
+  for (bool Personality : {false, true})
+    for (bool Agree : {false, true}) {
+      SCOPED_TRACE(Personality);
+      SCOPED_TRACE(Agree);
+      auto Img = makeImage();
+      const va_t FrameVA = kImageBase + 0x2800;
+      const va_t PersonalityVA = kImageBase + 0x500;
+      std::vector<uint8_t> CompactBytes;
+      if (Personality) {
+        Img.Symbols.push_back(
+            {"___gxx_personality_v0", PersonalityVA, 0, true});
+        Img.Symbols.push_back(
+            {"___objc_personality_v0", PersonalityVA + 0x100, 0, true});
+        ASSERT_TRUE(Img.patchPtr(kImageBase + 0x1800,
+                                 PersonalityVA + (Agree ? 0 : 0x100)));
+        CompactBytes = buildUnwindInfo(
+            {{0x100, kX86_64ModeRBPFrame | (1u << kPersonalityShift)}}, 0x180);
+        const uint32_t PersonalityOffset = CompactBytes.size();
+        CompactBytes.resize(CompactBytes.size() + 4);
+        putU32(CompactBytes, 12, PersonalityOffset);
+        putU32(CompactBytes, 16, 1);
+        putU32(CompactBytes, PersonalityOffset, 0x1800);
+      } else {
+        CompactBytes = buildRawRegularWithLSDAs();
+        const std::vector<uint8_t> EmptyLSDA = {0xff, 0xff, 0x01, 0};
+        ASSERT_TRUE(Img.writeVA(kImageBase + 0x800, EmptyLSDA.data(),
+                                EmptyLSDA.size()));
+        ASSERT_TRUE(Img.writeVA(kImageBase + 0x900, EmptyLSDA.data(),
+                                EmptyLSDA.size()));
+      }
+      attachUnwindInfo(Img, std::move(CompactBytes));
+      const auto Frame = language_eh_test::buildSimpleFrame(
+          FrameVA, kImageBase + 0x100, Personality ? 0x80 : 0x100,
+          Personality ? "zPR" : "zLR", Personality ? PersonalityVA : 0,
+          Personality ? 0 : kImageBase + (Agree ? 0x800 : 0x900));
+      Section Frames;
+      Frames.Name = "__eh_frame";
+      Frames.VA = FrameVA;
+      Frames.Size = Frame.Bytes.size();
+      Frames.Data = Frame.Bytes;
+      Img.Sections.push_back(std::move(Frames));
+      parseDarwinExceptions(Img);
+      const auto *F =
+          Img.ExceptionMetadata.findFunctionEntry(kImageBase + 0x100);
+      ASSERT_TRUE(F);
+      ASSERT_TRUE(F->Dwarf);
+      ASSERT_TRUE(F->Compact);
+      EXPECT_EQ(F->ParseStatus, Agree ? ExceptionParseStatus::Complete
+                                      : ExceptionParseStatus::Partial);
+      EXPECT_FALSE(isPlainSourceUnwind(*F));
+      if (!Agree)
+        EXPECT_TRUE(std::any_of(
+            F->Diagnostics.begin(), F->Diagnostics.end(), [](const auto &D) {
+              return D.find("disagree") != std::string::npos;
+            }));
+    }
+}
+
+TEST(DarwinUnwindSymbols, MissingDeclaredPersonalityCannotBecomePlain) {
+  for (bool Declared : {false, true}) {
+    auto Img = makeImage();
+    attachUnwindInfo(
+        Img, buildUnwindInfo(
+                 {{0x100, kX86_64ModeRBPFrame |
+                              (Declared ? 1u << kPersonalityShift : 0u)}},
+                 0x180));
+    parseDarwinExceptions(Img);
+    ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+    const auto &F = Img.ExceptionMetadata.Functions.front();
+    ASSERT_TRUE(F.Compact);
+    EXPECT_EQ(F.ParseStatus, Declared ? ExceptionParseStatus::Partial
+                                      : ExceptionParseStatus::Complete);
+    EXPECT_EQ(F.Personality, Declared ? ExceptionPersonality::Unknown
+                                      : ExceptionPersonality::None);
+    EXPECT_EQ(isPlainSourceUnwind(F), !Declared);
+  }
+}
+
+TEST(DarwinUnwindSymbols, EqualFileValuesDoNotEquateDifferentBoundProviders) {
+  for (unsigned Binding : {0u, 1u, 2u, 3u})
+    for (bool SameSlot : {false, true})
+      for (bool SameName : {false, true}) {
+        SCOPED_TRACE(Binding);
+        SCOPED_TRACE(SameSlot);
+        SCOPED_TRACE(SameName);
+        auto Img = makeImage();
+        const va_t ProviderVA = kImageBase + 0x500;
+        const va_t CompactSlot = kImageBase + 0x1800;
+        const va_t CIESlot = SameSlot ? CompactSlot : CompactSlot + 8;
+        ASSERT_TRUE(Img.patchPtr(CompactSlot, ProviderVA));
+        ASSERT_TRUE(Img.patchPtr(CIESlot, ProviderVA));
+        const std::string OtherName = SameSlot || SameName
+                                          ? "___gxx_personality_v0"
+                                          : "___objc_personality_v0";
+        for (auto [Slot, Name] :
+             {std::pair{CompactSlot, std::string("___gxx_personality_v0")},
+              std::pair{CIESlot, OtherName}}) {
+          if (Binding == 0)
+            Img.ImportPtrSlots[Slot] = Name;
+          else if (Binding == 1) {
+            Import Imp;
+            Imp.IATAddr = Slot;
+            Imp.Name = Name;
+            Img.Imports.push_back(std::move(Imp));
+          } else {
+            RelocationEntry Rel;
+            Rel.Address = Slot;
+            if (Binding == 2)
+              Rel.SymbolName = Name;
+            else {
+              Rel.Addend = ProviderVA + (Slot == CompactSlot ? 0x10 : 0x20);
+              Img.Symbols.push_back({Name, va_t(Rel.Addend), 0, true});
+            }
+            Img.Relocations.push_back(std::move(Rel));
+          }
+        }
+        auto CompactBytes = buildUnwindInfo(
+            {{0x100, kX86_64ModeRBPFrame | (1u << kPersonalityShift)}}, 0x180);
+        const uint32_t ArrayOffset = CompactBytes.size();
+        CompactBytes.resize(ArrayOffset + 4);
+        putU32(CompactBytes, 12, ArrayOffset);
+        putU32(CompactBytes, 16, 1);
+        putU32(CompactBytes, ArrayOffset, 0x1800);
+        attachUnwindInfo(Img, std::move(CompactBytes));
+        auto Frame = language_eh_test::buildSimpleFrame(
+            kImageBase + 0x2800, kImageBase + 0x100, 0x80, "zPR", CIESlot, 0);
+        const std::vector<uint8_t> Augmentation = {'z', 'P', 'R', 0};
+        const auto Aug = std::search(Frame.Bytes.begin(), Frame.Bytes.end(),
+                                     Augmentation.begin(), Augmentation.end());
+        ASSERT_NE(Aug, Frame.Bytes.end());
+        const size_t Encoding = Aug - Frame.Bytes.begin() + 8;
+        ASSERT_EQ(Frame.Bytes[Encoding], 0u);
+        Frame.Bytes[Encoding] = 0x80; // absptr | indirect, same encoded width.
+        Section Frames;
+        Frames.Name = "__eh_frame";
+        Frames.VA = kImageBase + 0x2800;
+        Frames.Size = Frame.Bytes.size();
+        Frames.Data = Frame.Bytes;
+        Img.Sections.push_back(std::move(Frames));
+        parseDarwinExceptions(Img);
+        ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+        const auto &F = Img.ExceptionMetadata.Functions.front();
+        ASSERT_TRUE(F.Dwarf);
+        ASSERT_TRUE(F.Compact);
+        EXPECT_EQ(F.ParseStatus, SameSlot ? ExceptionParseStatus::Complete
+                                          : ExceptionParseStatus::Partial);
+        EXPECT_EQ(F.Personality, ExceptionPersonality::GxxPersonalityV0);
+        EXPECT_FALSE(isPlainSourceUnwind(F));
+      }
+}
+
+TEST(DarwinUnwindSymbols, ForeignOrOversizedFDEKeepsItsOwnRecord) {
+  for (bool Foreign : {false, true}) {
+    auto Img = makeImage();
+    const va_t FrameVA = kImageBase + 0x2800;
+    const va_t FunctionVA = kImageBase + (Foreign ? 0x200 : 0x100);
+    Img.Symbols.push_back(
+        {"___gxx_personality_v0", kImageBase + 0x500, 0, true});
+    const auto Frame = language_eh_test::buildSimpleFrame(
+        FrameVA, FunctionVA, Foreign ? 0x80 : 0x100, "zPR", kImageBase + 0x500,
+        0);
+    Section Frames;
+    Frames.Name = "__eh_frame";
+    Frames.VA = FrameVA;
+    Frames.Size = Frame.Bytes.size();
+    Frames.Data = Frame.Bytes;
+    Img.Sections.push_back(std::move(Frames));
+    attachUnwindInfo(
+        Img,
+        buildUnwindInfo({{0x100, kX86_64ModeDwarf | uint32_t(Frame.FDEOffset)}},
+                        0x180));
+    parseDarwinExceptions(Img);
+    ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 2u);
+    unsigned CompactCount = 0, DwarfCount = 0;
+    for (const auto &F : Img.ExceptionMetadata.Functions) {
+      if (F.Compact) {
+        ++CompactCount;
+        EXPECT_FALSE(F.Dwarf);
+        EXPECT_EQ(F.ParseStatus, ExceptionParseStatus::Partial);
+      } else {
+        ++DwarfCount;
+        ASSERT_TRUE(F.Dwarf);
+        EXPECT_EQ(F.CodeRange.Begin, FunctionVA);
+        EXPECT_EQ(F.Personality, ExceptionPersonality::GxxPersonalityV0);
+        EXPECT_FALSE(isPlainSourceUnwind(F));
+      }
+    }
+    EXPECT_EQ(CompactCount, 1u);
+    EXPECT_EQ(DwarfCount, 1u);
+  }
+}
+
+TEST(DarwinUnwindSymbols, InvalidRangeRetainsItsIdentifiableFrameEntry) {
+  auto Img = makeImage();
+  const va_t Entry = kImageBase + 0x100;
+  Img.Symbols.push_back({"_sized_function", Entry, 0x80, true});
+  const auto Frame = language_eh_test::buildSimpleFrame(kImageBase + 0x2800,
+                                                        Entry, 0, "zR", 0, 0);
+  Section Frames;
+  Frames.Name = "__eh_frame";
+  Frames.VA = kImageBase + 0x2800;
+  Frames.Size = Frame.Bytes.size();
+  Frames.Data = Frame.Bytes;
+  Img.Sections.push_back(std::move(Frames));
+  parseDarwinExceptions(Img);
+  ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+  const auto &F = Img.ExceptionMetadata.Functions.front();
+  ASSERT_TRUE(F.Dwarf);
+  EXPECT_EQ(F.Dwarf->InitialLocation, Entry);
+  EXPECT_FALSE(F.CodeRange.isValid());
+  EXPECT_EQ(F.ParseStatus, ExceptionParseStatus::Malformed);
+  EXPECT_FALSE(isPlainSourceUnwind(F));
 }
 
 //===----------------------------------------------------------------------===//

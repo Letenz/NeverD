@@ -10,6 +10,166 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.ExactByteRangesAndTerminatorInOwnedPool")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.LiveResultsAreIndependentAndFreeExactlyOnce")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.AdmissionFailureDoesNotAllocateOrChangeBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.InvalidDeclarationFailsBeforeKernelAllocation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.CopiedDeclarationRetainsOpaqueLifetimeDependencies")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.PinnedResultCannotBeFreedAndIdentityIsInRange")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.ShortageReturnsNullWithoutPublishingAnotherObject")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelPhysicalInventory.InventoryDoesNotGrantPhysicalReadOrMappingAuthority")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverPhysicalInventoryDeclaration.RoundTripsAndInheritsExplicitSource")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverPhysicalInventoryDeclaration.RejectsMalformedAndLegacyBeforeLoading")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverPhysicalInventoryExecution.IndependentResultsSurviveRebasedLifecycle/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverPhysicalInventoryExecution.MissingDeclarationAndFreedReadsStop/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.UnusedPhysicalInventoryCannotAuthorizeRuntimeRecovery/{backend_title}")
+// Shared driver environment and recovery guards are mandatory on both transports.
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.DefaultSectionAndFlagsStayOpaque")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.EveryByteAndStraddlingFootprintAreChecked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.ImageMetadataAndExplicitFlagsStaySessionLocal")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.CopyServicesAndMDLsCannotBypassBorrowedReadOnlyState")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.UnusedDeclarationRetainsDependencyAndBorrowedLifetime")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.InvalidDirectDeclarationsFailBeforeAllocation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelLoaderView.InvalidImageMetadataCannotBeTruncatedIntoTheView")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.NullRequiresAnActuallyUnmappedZeroPage")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.ResidencyDoesNotExposeOpaqueObjectFields")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.ExactLivePoolBytesDoNotReviveFreedNeighbors")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.PagedPoolAndUnownedMappingsHaveNoGuessedResult")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.MissingOrProtectedBackingCannotReturnTrue")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.DispatchCeilingIsCheckedBeforeTheNullResult")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelResidentQuery.QueryBeforeOrAfterBaselineRetainsDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.RegistrationDuplicatesRemovalAndReusePreserveIRQL")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.OpaqueBytesAndAllWritesStayGuardedAfterRemoval")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.PreconditionsRejectWithoutRecordEffects")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.UnknownOrAlteredStateIsNotAFalseResult")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.LegacyCannotActivateOpaqueRecords")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.DuplicateAndRemovalDoNotRereadExpiredComponent")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.EitherPinnedPageOfCrossPageRecordExcludesRegistration")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.FuturePageLocksCannotExposeLiveOrRetiredOpaqueBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.UnloadCanRemoveCallbacksButCannotLeaveThemLive")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.EnvironmentDependencySurvivesBaselineAndRemoval")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelBugCheck.RetiredIdentitiesCountAgainstTheBound")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.DeclaredBuildAndOnlyBaseFieldsChange")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.ZeroShapeNeverReadsPastTwentyBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.ShapesAndCSDRejectWithoutPartialOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.MissingPermissionsAndExtentsPreserveAllBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.SharedOwnedRecordGuardsApplyBeforeOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.CrossPageWriteAndBorrowedFieldsKeepAllOriginalBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.UserObjectAndItsSystemAliasCannotBecomeOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.UserAliasObjectAlsoProtectsOriginalPoolBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.AliasedBytesRefuseUntilTheOtherMappingIsRetired")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.UniqueCrossPageBufferAllowsUnrelatedAliases")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.CSDOnlyAliasIsCheckedBeforeBaseOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.IRQLAndUndeclaredQueriesCannotPublishOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.DeclarationIsCopiedAndBaselineCannotEraseDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVersionQuery.InvalidDeclarationsFailBeforeKernelAllocation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverLoaderViewDeclaration.LegacyFailsBeforeLoadOrObservation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverLoaderViewExecution."
+    "DeclaredFieldsSurviveRebasedLifecycle/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverLoaderViewExecution."
+    "DefaultAndForbiddenFootprintsStop/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverLoaderViewExecution."
+    "RejectedCPUStorePreservesTheWholeRecord/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverBugCheckExecution."
+    "RegistrationSurvivesRequestsAndRetiresInUnload/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverBugCheckExecution."
+    "OpaqueAccessAndLeakedRegistrationRefuse/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverBugCheckExecution."
+    "RejectedStorePreservesRegisteredRecord/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverVersionQueryDeclaration.RoundTripsAndPreservesExplicitZero")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverVersionQueryDeclaration.RejectsMalformedAndLegacyBeforeLoading")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverVersionQueryExecution."
+    "ImportsAndDynamicQueriesSurviveRebasedLifecycle/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverVersionQueryExecution."
+    "MissingDeclarationAndUnsupportedShapesStop/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverShadowStack."
+    "PreservesAllRegistersFlagsAndMemory/{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverShadowStack."
+    "PreservesAllRegistersFlagsAndMemory/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverShadowStack."
+    "BudgetAndObserverStopBeforeUnadmittedEffects/{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverShadowStack."
+    "BudgetAndObserverStopBeforeUnadmittedEffects/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverShadowStack."
+    "UnsupportedControlWritesRemainRejected/{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverShadowStack."
+    "UnsupportedControlWritesRemainRejected/{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver."
+    "UnusedLoaderDeclarationCannotAuthorizeRuntimeRecovery/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver."
+    "UnusedVersionQueryCannotAuthorizeRuntimeRecovery/{backend_title}")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/DriverEntryCaller."
     "NonzeroFreshCallersCannotBeReplacedByZeroSeedValues/{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

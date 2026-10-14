@@ -256,6 +256,9 @@ add_neverd_unittest(NeverDDarwinProcessTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(MSVC)
+  target_compile_options(NeverDDarwinProcessTests PRIVATE /bigobj)
+endif()
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
@@ -670,7 +673,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_strings driver_identity)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -1332,6 +1335,8 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverCPUIDTests.cpp
   DriverLoaderViewTests.cpp
   DriverBugCheckTests.cpp
+  DriverVersionQueryTests.cpp
+  DriverPhysicalInventoryTests.cpp
   DriverShadowStackTests.cpp
   DriverImageMemoryTests.cpp
   DriverSchedulingTests.cpp
@@ -1356,6 +1361,8 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp
   KernelBugCheckTests.cpp
+  KernelVersionQueryTests.cpp
+  KernelPhysicalInventoryTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)
 target_include_directories(NeverDKernelSnapshotTests PRIVATE

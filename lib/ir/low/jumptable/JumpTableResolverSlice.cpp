@@ -196,6 +196,79 @@ bool intrinsicMayClobberFrameMemory(const LowOp &Op) {
   }
 }
 
+// Required shapes for scalar records retained by the resolver. Unknown
+// opcodes acquire no shape or numerical semantics from this table.
+static std::optional<unsigned> resolverExplicitInputCount(NdOp Opcode) {
+  unsigned Required = 0;
+  switch (Opcode) {
+  case NdOp::COPY:
+  case NdOp::INT_ZEXT:
+  case NdOp::INT_SEXT:
+  case NdOp::INT_NEGATE:
+  case NdOp::INT_NOT:
+  case NdOp::BOOL_NOT:
+  case NdOp::INT_NEG2:
+  case NdOp::POPCOUNT:
+  case NdOp::LZCOUNT:
+  case NdOp::CAST:
+    Required = 1;
+    break;
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+  case NdOp::INT_LEFT:
+  case NdOp::INT_RIGHT:
+  case NdOp::INT_ASHR:
+  case NdOp::INT_MULT:
+  case NdOp::INT_DIV:
+  case NdOp::INT_SDIV:
+  case NdOp::INT_REM:
+  case NdOp::INT_SREM:
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR:
+  case NdOp::CONCAT:
+  case NdOp::SUBBYTES:
+    Required = 2;
+    break;
+  case NdOp::SELECT:
+  case NdOp::EXTRACT:
+    Required = 3;
+    break;
+  case NdOp::INSERT:
+    Required = 4;
+    break;
+  default:
+    return std::nullopt;
+  }
+  return Required;
+}
+
+static bool resolverHasCompleteExplicitInputs(const LowOp &Op) {
+  const std::optional<unsigned> Required =
+      resolverExplicitInputCount(Op.Opcode);
+  if (!Required || Op.Output.Size == 0 || Op.NumInputs > std::size(Op.Inputs) ||
+      Op.NumInputs != *Required)
+    return false;
+  for (unsigned I = 0; I < *Required; ++I)
+    if (Op.Inputs[I].Size == 0 ||
+        (!Op.Inputs[I].isReg() && !Op.Inputs[I].isTemp() &&
+         !Op.Inputs[I].isConst()))
+      return false;
+  return true;
+}
+
 /// Architecture-neutral snapshot of the instruction facts needed by the
 /// jump-table provenance proof.  Keeping this separate from CFGBuilder's
 /// private InsnRecord lets the graph/data-flow implementation stay local to
@@ -531,6 +604,10 @@ static ResolverFlowGraph buildResolverFlowGraph(
                                              Insn->Addr);
       }
       for (const LowOp &Op : Insn->Ops) {
+        if (!consumeWork(10) || Op.NumInputs > std::size(Op.Inputs) ||
+            (resolverExplicitInputCount(Op.Opcode) &&
+             !resolverHasCompleteExplicitInputs(Op)))
+          return failIncomplete();
         if (!consumeWork())
           return failIncomplete();
         if (Block.Ops.size() >=
@@ -6643,12 +6720,18 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
 
     if (!Found) {
       std::vector<ResolverResult> Incoming;
-      if (!consumeEvidenceProduct(B.Preds.size(), 2) || !consumeEvidence(2)) {
+      const size_t IncomingCount = B.Preds.size() + size_t(IsRootBlock[Block]);
+      if (!consumeEvidenceProduct(IncomingCount, 2) || !consumeEvidence(2)) {
         MemoryMemo.erase(MemoIt);
         ++ResolverMemoGeneration;
         return resolverInvalid();
       }
-      Incoming.reserve(B.Preds.size());
+      Incoming.reserve(IncomingCount);
+      // A proof root also has an invocation-entry arm, even with back edges.
+      // Its incoming memory is unknown until a writer before this use defines
+      // it. A later iteration's STORE cannot initialize the first iteration.
+      if (IsRootBlock[Block])
+        Incoming.push_back(resolverInvalid());
       for (int Pred : B.Preds) {
         if (!consumeEvidence(2)) {
           Incoming.clear();
@@ -9311,7 +9394,10 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
     const InsnRecord &Rec, const JumpTableInfo &Info,
     size_t *AggregateEvidenceBudget, bool *AnalysisComplete,
     bool UseDefinedAlternativesAsRoots,
-    const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides) const {
+    const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
+    bool UseGroupContext) const {
+  if (UseGroupContext && GuardedGroupProofContext)
+    CertifiedEdgeOverrides = &GuardedGroupProofContext->Edges;
   if (AnalysisComplete)
     *AnalysisComplete = false;
   RequestedCompleteJumpTableProof = true;
@@ -9755,7 +9841,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
         RestrictToLexicalTargetRegion
             ? limits::kMaxJumpTableLargeExpressionRoleResolverDepth
             : limits::kMaxJumpTableExpandedResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!TransformQueriesComplete || QueryResults.size() != Queries.size()) {
       Complete = false;
       return false;
@@ -9851,7 +9937,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       FinalQueries, &FinalQueryComplete, nullptr, InvalidVA, nullptr,
       AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
       nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
-      CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+      CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
   if (!FinalQueryComplete || Final.size() != FinalQueries.size()) {
     Complete = false;
     return false;
@@ -9863,7 +9949,9 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     JumpTableInfo &Info, size_t *AggregateEvidenceBudget,
     bool *AnalysisComplete, bool UseDefinedAlternativesAsRoots,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool *DomainInputsChanged) const {
+    bool *DomainInputsChanged, bool UseGroupContext) const {
+  if (UseGroupContext && GuardedGroupProofContext)
+    CertifiedEdgeOverrides = &GuardedGroupProofContext->Edges;
   if (AnalysisComplete)
     *AnalysisComplete = false;
   if (DomainInputsChanged)
@@ -10044,9 +10132,11 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             },
             [&](size_t Amount) { return consumeWork(Amount); }))
       return false;
-    const std::set<va_t> &ProofRoots = ActiveJumpTableProofRoots
-                                           ? *ActiveJumpTableProofRoots
-                                           : PersistentCFGRoots;
+    const std::set<va_t> &ProofRoots =
+        UseGroupContext && GuardedGroupProofContext
+            ? GuardedGroupProofContext->Roots
+            : (ActiveJumpTableProofRoots ? *ActiveJumpTableProofRoots
+                                         : PersistentCFGRoots);
     bool GraphComplete = false;
     const ResolverFlowGraph Graph = buildResolverFlowGraph(
         Snapshot, BlockStarts, ProofRoots, DiscoveredCodeRefSources,
@@ -10342,7 +10432,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
           Queries, &QueriesComplete, nullptr, InvalidVA, nullptr,
           AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
           nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
-          CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+          CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
       if (!QueriesComplete || Results.size() != Queries.size()) {
         Complete = false;
         return false;
@@ -10740,7 +10830,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         ScaleQueries, &ScaleQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!ScaleQueriesComplete || Results.size() != ScaleQueries.size()) {
       Complete = false;
       return false;
@@ -12052,7 +12142,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
             nullptr, nullptr,
             limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-            CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+            CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
         if (LocalComplete && LocalResults.size() == LocalQueries.size()) {
           for (AddressProof &Proof : LocalProofs) {
             if (!consumeWork() || !consumeWork(Proof.QueryIndices.size()))
@@ -12105,7 +12195,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         AddressQueries, &AddressQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!AddressQueriesComplete ||
         AddressResults.size() != AddressQueries.size()) {
       Complete = false;
@@ -12246,7 +12336,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         LoadQueries, &LoadQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!LoadQueriesComplete || LoadResults.size() != LoadQueries.size()) {
       Complete = false;
       return false;
@@ -12337,7 +12427,8 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
     const std::vector<JumpTableStorageRange> &CandidateStorage,
     size_t *GraphWorkBudget, bool *AnalysisComplete,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool *ClosedWorldControlFlow, bool UseGroupContext) const {
+    bool *ClosedWorldControlFlow, bool UseGroupContext,
+    bool RequireCompleteFiniteMembers) const {
   if (UseGroupContext && GuardedGroupProofContext)
     CertifiedEdgeOverrides = CandidateTargets.empty()
                                  ? &GuardedGroupProofContext->EmptyEdges
@@ -12346,6 +12437,9 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
     *AnalysisComplete = false;
   if (ClosedWorldControlFlow)
     *ClosedWorldControlFlow = false;
+  if (RequireCompleteFiniteMembers &&
+      (!ClosedWorldControlFlow || !CertifiedEdgeOverrides))
+    return {};
   if (CertifiedEdgeOverrides) {
     const size_t LookupWork =
         orderedSetLookupWork(CertifiedEdgeOverrides->size());
@@ -12400,10 +12494,62 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
   if (!GraphComplete)
     return {};
 
+  bool Closed = false;
   if (ClosedWorldControlFlow) {
     if (!consumeResolverGraphWork(GraphWorkBudget, Graph.Blocks.size()))
       return {};
-    bool Closed = true;
+    Closed = true;
+    if (RequireCompleteFiniteMembers) {
+      auto Product = [&](size_t Count, size_t Unit) {
+        if (Count && Unit > std::numeric_limits<size_t>::max() / Count) {
+          if (GraphWorkBudget)
+            *GraphWorkBudget = 0;
+          return false;
+        }
+        return consumeResolverGraphWork(GraphWorkBudget, Count * Unit);
+      };
+      const size_t RootWork = 16 +
+                              orderedSetLookupWork(Graph.InsnToBlock.size()) +
+                              orderedSetLookupWork(Insns.size());
+      const size_t MemberWork =
+          16 + orderedSetLookupWork(CertifiedEdgeOverrides->size()) +
+          orderedSetLookupWork(Graph.InsnToBlock.size());
+      if (!Product(Roots.size(), RootWork) ||
+          !Product(Snapshot.size(), MemberWork) ||
+          !Product(CandidateTargets.size(), 2))
+        return {};
+      const auto CandidateEdges = CertifiedEdgeOverrides->find(Candidate.Addr);
+      // The narrow finite owner has no conditional code-root admission yet.
+      // The ordinary graph may omit a conditional target with no modeled
+      // block; that omission cannot establish a complete joint owner.
+      Closed = DiscoveredCodeRefSources.empty() &&
+               CandidateEdges != CertifiedEdgeOverrides->end() &&
+               CandidateEdges->second == CandidateTargets;
+      for (va_t Root : Roots) {
+        const auto Position = Graph.InsnToBlock.find(Root);
+        const auto Record = Insns.find(Root);
+        if (Position == Graph.InsnToBlock.end() || Position->second < 0 ||
+            size_t(Position->second) >= Graph.Blocks.size() ||
+            Graph.Blocks[Position->second].Start != Root ||
+            Record == Insns.end() || Record->second.Addr != Root ||
+            Record->second.Size == 0 || Record->second.IsInstructionGuard)
+          Closed = false;
+      }
+      // Check all retained instructions, including a malformed branch hidden
+      // before a block's last instruction. Ordinary RET is an allowed exit.
+      for (const ResolverInsnSnapshot &Record : Snapshot) {
+        const auto Position = Graph.InsnToBlock.find(Record.Addr);
+        if (Position == Graph.InsnToBlock.end() || !Record.IsBranch ||
+            !Record.IsIndirect || Record.IsCall || Record.IsRet)
+          continue;
+        if (!CertifiedEdgeOverrides->count(Record.Addr) ||
+            Position->second < 0 ||
+            size_t(Position->second) >= Graph.Blocks.size() ||
+            !Graph.Blocks[Position->second].LastInsn ||
+            Graph.Blocks[Position->second].LastInsn->Addr != Record.Addr)
+          Closed = false;
+      }
+    }
     for (const ResolverFlowBlock &Block : Graph.Blocks) {
       const ResolverInsnSnapshot *Last = Block.LastInsn;
       const bool NeedsModeledFallthrough =
@@ -12420,7 +12566,6 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
         break;
       }
     }
-    *ClosedWorldControlFlow = Closed;
   }
 
   std::set<va_t> Reachable;
@@ -12443,6 +12588,8 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
     (void)Block;
     Reachable.insert(Addr);
   }
+  if (ClosedWorldControlFlow)
+    *ClosedWorldControlFlow = Closed;
   if (AnalysisComplete)
     *AnalysisComplete = true;
   return Reachable;

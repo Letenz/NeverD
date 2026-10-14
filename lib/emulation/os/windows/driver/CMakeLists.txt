@@ -2,6 +2,8 @@ target_sources(NeverDEmulation PRIVATE
   DriverResult.cpp
   DriverCPUID.cpp
   DriverLoaderViewJSON.cpp
+  DriverVersionQueryJSON.cpp
+  DriverPhysicalInventoryJSON.cpp
   DriverScenario.cpp
   DriverSchedulingJSON.cpp
   DriverSession.cpp

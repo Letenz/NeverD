@@ -47,6 +47,9 @@ namespace physical {
 class KernelPhysicalMemory {
 public:
   enum class CacheType { Cached, NonCached, WriteCombined };
+  /// The allocation domain, not an inferred installed-RAM inventory. A caller
+  /// must explicitly select this simulated domain before publishing it as RAM.
+  static std::pair<uint64_t, uint64_t> identityWindow();
   explicit KernelPhysicalMemory(GuestMemory &Memory) : Memory(Memory) {}
   KernelPhysicalMemory(const KernelPhysicalMemory &) = delete;
   KernelPhysicalMemory &operator=(const KernelPhysicalMemory &) = delete;

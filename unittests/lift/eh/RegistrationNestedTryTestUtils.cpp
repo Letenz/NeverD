@@ -157,17 +157,17 @@ void checkNestedTryEdits(const llvm::Function &Parent,
                 &*(*Inner->handler_begin())->getFirstNonPHIIt());
     }
     if (Mutation == 0) {
-      if (NestedCall) {
-        std::vector<llvm::InvokeInst *> CallbackCalls;
-        for (auto &Block : *Function)
-          if (auto *Invoke =
-                  llvm::dyn_cast<llvm::InvokeInst>(Block.getTerminator());
-              Invoke && Invoke->getOperandBundle(llvm::LLVMContext::OB_funclet))
-            CallbackCalls.push_back(Invoke);
-        for (auto *Invoke : CallbackCalls)
-          llvm::changeToCall(Invoke);
-        NestedCall = nullptr;
-      }
+      // Returning members also carry the catch's unwind destination. Removing
+      // the parent search must keep those edited calls verifier-clean.
+      std::vector<llvm::InvokeInst *> CallbackCalls;
+      for (auto &Block : *Function)
+        if (auto *Invoke =
+                llvm::dyn_cast<llvm::InvokeInst>(Block.getTerminator());
+            Invoke && Invoke->getOperandBundle(llvm::LLVMContext::OB_funclet))
+          CallbackCalls.push_back(Invoke);
+      for (auto *Invoke : CallbackCalls)
+        llvm::changeToCall(Invoke);
+      NestedCall = nullptr;
       auto *Replacement =
           llvm::CatchSwitchInst::Create(Inner->getParentPad(), nullptr, 1,
                                         "changed.search", Inner->getIterator());

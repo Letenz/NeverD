@@ -58,12 +58,21 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
       Immutable.push_back({Segment.VA, Segment.VA + Segment.Size});
   }
   for (const auto &[Call, Checked] : Proof->Calls) {
-    if (Checked.ObjectFrameOffset)
-      Contract.Borrows.emplace(
+    if (Checked.RuntimeObject)
+      if (auto Error = coff_registration::bindCxxRuntimeObjectBorrow(
+              *Proof, *Call, Checked, Contract))
+        return Error;
+    if (Checked.ObjectFrameOffset) {
+      auto [It, Inserted] = Contract.Borrows.emplace(
           Call,
           coff_registration::RegistrationFrameBorrow{
               int64_t(Proof->Frame.Establisher) + *Checked.ObjectFrameOffset,
               Checked.Contract.ECXReads, Checked.Contract.ECXWrites});
+      auto &Borrow = It->second;
+      Borrow.Initializer = Checked.Contract.isInitializer();
+      Borrow.ScalarStackWords = Checked.Contract.StackPopBytes / 4;
+      Borrow.Initialized = Checked.Contract.ECXInitialized;
+    }
     if (Checked.Contract.isRuntimeThrow()) {
       if (auto Error = coff_registration::bindCxxRuntimeThrow(
               *Proof, *Call, Checked, Image, Contract, Immutable, Work))

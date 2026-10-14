@@ -20,6 +20,7 @@ struct CxxIRCall {
   std::optional<int32_t> ObjectFrameOffset;
   bool Cleanup = false;
   std::optional<RegistrationRuntimeThrow> RuntimeThrow;
+  std::optional<RegistrationRuntimeObjectBorrow> RuntimeObject;
 };
 bool hasExactCxxCallAttributes(const llvm::CallBase &Call,
                                const CxxIRCall &Receipt);
@@ -54,6 +55,10 @@ llvm::Error bindCxxRuntimeThrow(const CxxIRControlProof &Proof,
                                 RegistrationCxxFrameContract &Contract,
                                 std::vector<ExceptionAddressRange> &Immutable,
                                 size_t &Work);
+llvm::Error bindCxxRuntimeObjectBorrow(const CxxIRControlProof &Proof,
+                                       const llvm::CallBase &Call,
+                                       const CxxIRCall &Checked,
+                                       RegistrationCxxFrameContract &Contract);
 
 llvm::Expected<const llvm::CatchReturnInst *> validateCxxContinuationRestore(
     const llvm::Instruction &Anchor, const RegistrationFrame &Frame,

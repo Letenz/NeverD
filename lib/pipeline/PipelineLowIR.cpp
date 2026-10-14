@@ -592,7 +592,11 @@ bool collectLowAddressUses(
     for (const auto &Func : Funcs)
       if (!SEHCallees.emplace(Func.Entry, &Func).second)
         return false;
-  constexpr size_t kMaxModuleAddressScanOps =
+  // Input capacity is distinct from retained evidence and fixed-point work.
+  // Permit an inventory at the existing single-function SSA admission scale;
+  // this does not certify its address flow or enlarge the queue allowance.
+  constexpr size_t kMaxModuleAddressInputOps = limits::kMaxSSAFunctionOps;
+  constexpr size_t kMaxModuleAddressFixpointWork =
       size_t{limits::kMaxJumpTableEvidenceWork} *
       size_t{limits::kMaxMultiStageRetries};
   // Address-use receipts and complete-CFG frame dataflow count different
@@ -600,15 +604,20 @@ bool collectLowAddressUses(
   // would reject a straight-line function before its first continuation and
   // would also discard unrelated module ownership evidence. Keep a separate,
   // cumulative cap for frame transfers, joins and dependency hashing.
-  constexpr size_t kMaxSEHFrameWork = kMaxModuleAddressScanOps * 16;
+  constexpr size_t kMaxSEHFrameWork = kMaxModuleAddressFixpointWork * 16;
   size_t SEHFrameWorkRemaining =
       std::min(TestBudget.value_or(kMaxSEHFrameWork), kMaxSEHFrameWork);
   size_t ScanOps = 0;
   auto failCollect = [](const char *, size_t = 0, va_t = InvalidVA) {
     return false;
   };
-  size_t FixpointWorkRemaining = std::min(
-      TestBudget.value_or(kMaxModuleAddressScanOps), kMaxModuleAddressScanOps);
+  size_t FixpointWorkRemaining =
+      std::min(TestBudget.value_or(kMaxModuleAddressFixpointWork),
+               kMaxModuleAddressFixpointWork);
+  // A queue debit alone does not bound repeatedly visiting a long block.
+  // Charge every operation in both the fixed point and final recording pass.
+  constexpr size_t kMaxAddressTransferWork = kMaxModuleAddressFixpointWork * 16;
+  size_t TransferWorkRemaining = kMaxAddressTransferWork;
   auto consumeFixpointWork = [&]() {
     if (FixpointWorkRemaining == 0)
       return false;
@@ -617,7 +626,7 @@ bool collectLowAddressUses(
   };
   for (const LowFunc &Func : Funcs)
     for (const LowBlock &Block : Func.Blocks) {
-      if (Block.Ops.size() > kMaxModuleAddressScanOps - ScanOps)
+      if (Block.Ops.size() > kMaxModuleAddressInputOps - ScanOps)
         return failCollect("scan-cap", 0, Block.StartAddr);
       ScanOps += Block.Ops.size();
     }
@@ -952,6 +961,9 @@ bool collectLowAddressUses(
     auto transfer = [&](const LowBlock &Block, ModuleAddressState State,
                         std::vector<ModuleAddressUse> *RecordedUses,
                         ModuleAddressState &Result) {
+      if (Block.Ops.size() > TransferWorkRemaining)
+        return false;
+      TransferWorkRemaining -= Block.Ops.size();
       // The architectural stack epoch is a durable fact only at the real
       // function entry.  A disconnected relocation root, or a path after an
       // opaque/pivoting SP definition, must never manufacture a fresh epoch 0
@@ -2483,10 +2495,15 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
   ModuleEvidenceBudget Budget(TestBudget);
   size_t PairScanRemaining = size_t{limits::kMaxJumpTableEvidenceWork} *
                              size_t{limits::kMaxMultiStageRetries};
-  auto scanPair = [&]() {
-    if (PairScanRemaining == 0)
+  // Final-graph replay is proof work, distinct from retaining a source-index
+  // node or screening a pair. Every replay shares this one finite balance.
+  size_t SourceProofRemaining =
+      std::min(TestBudget.value_or(limits::kMaxJumpTableCandidateEvidenceWork),
+               size_t{limits::kMaxJumpTableCandidateEvidenceWork});
+  auto scanPair = [&](size_t Amount = 1) {
+    if (Amount > PairScanRemaining)
       return false;
-    --PairScanRemaining;
+    PairScanRemaining -= Amount;
     return true;
   };
   std::vector<ModuleJumpTableOwner> Owners;
@@ -2548,16 +2565,18 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
     for (const RelocatedInstructionAddressOccurrence &Occurrence :
          Func.RelocatedInstructionAddressOccurrences) {
       constexpr size_t PredicateFixedWork = 4;
-      if (!Budget.consume(PredicateFixedWork + RelCodeRelocationLookupWork))
+      if (!scanPair(PredicateFixedWork))
         return abandonAnalysis();
       if (Occurrence.OutputMayDepend || Occurrence.TargetVA == InvalidVA ||
           Occurrence.Provenance != ConstantAddressProvenance::DataAddress)
         continue;
+      if (!scanPair(RelCodeRelocationLookupWork))
+        return abandonAnalysis();
       const bool IsRelativeAnchor =
           Img.RelCodeRelocSlots.count(Occurrence.TargetVA) != 0;
       bool IsCodePointerAnchor = false;
       if (!IsRelativeAnchor) {
-        if (!Budget.consume(CodePointerRelocationLookupWork))
+        if (!scanPair(CodePointerRelocationLookupWork))
           return abandonAnalysis();
         IsCodePointerAnchor =
             Img.CodePtrRelocSlots.count(Occurrence.TargetVA) != 0;
@@ -2737,18 +2756,65 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
                                 TargetOwnerVA;
                        });
   };
+  struct ExactSource {
+    size_t FuncIndex = 0;
+    const RelocatedInstructionAddressOccurrence *Occurrence = nullptr;
+  };
+  // Index the frozen public inventory once instead of scanning every source
+  // for every loader field. Preserve all sources, including conflicting and
+  // imprecise ones; anchor eligibility is not source eligibility.
+  std::map<va_t, std::vector<ExactSource>> SourcesByField;
+  for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex)
+    for (const auto &Occurrence :
+         Funcs[FuncIndex].RelocatedInstructionAddressOccurrences) {
+      if (!scanPair())
+        return abandonAnalysis();
+      if (Occurrence.FieldVA == InvalidVA)
+        continue;
+      if (!scanPair(detail::orderedContainerLookupWork(
+              Img.DataAddressRelocOperands.size())))
+        return abandonAnalysis();
+      bool HasLoaderField =
+          Img.DataAddressRelocOperands.count(Occurrence.FieldVA) != 0;
+      if (!HasLoaderField) {
+        if (!scanPair(detail::orderedContainerLookupWork(
+                Img.CodeAddressRelocOperands.size())))
+          return abandonAnalysis();
+        HasLoaderField =
+            Img.CodeAddressRelocOperands.count(Occurrence.FieldVA) != 0;
+      }
+      if (!HasLoaderField)
+        continue;
+      if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
+        return abandonAnalysis();
+      auto It = SourcesByField.lower_bound(Occurrence.FieldVA);
+      if (It == SourcesByField.end() || It->first != Occurrence.FieldVA) {
+        if (!Budget.consume())
+          return abandonAnalysis();
+        It = SourcesByField.emplace_hint(It, Occurrence.FieldVA,
+                                         std::vector<ExactSource>{});
+      }
+      if (!Budget.consume())
+        return abandonAnalysis();
+      It->second.push_back({FuncIndex, &Occurrence});
+    }
+
+  // An occurrence's address is a unique identity within this immutable input
+  // inventory. Equal fields in the same function still receive independent
+  // bindings; an imprecise duplicate cannot borrow a successful source proof.
+  std::map<const RelocatedInstructionAddressOccurrence *,
+           std::optional<JumpTableStorageRange>>
+      FinalSourceAccesses;
+
   auto protectRelocationUse = [&](va_t FieldVA,
                                   const RelocatedAddressField &Field) {
-    struct ExactSource {
-      size_t FuncIndex = 0;
-      const RelocatedInstructionAddressOccurrence *Occurrence = nullptr;
-    };
-    std::vector<ExactSource> ExactSources;
-    for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex)
-      for (const RelocatedInstructionAddressOccurrence &Occurrence :
-           Funcs[FuncIndex].RelocatedInstructionAddressOccurrences)
-        if (Occurrence.FieldVA == FieldVA)
-          ExactSources.push_back({FuncIndex, &Occurrence});
+    if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
+      return false;
+    const auto Sources = SourcesByField.find(FieldVA);
+    const llvm::ArrayRef<ExactSource> ExactSources =
+        Sources == SourcesByField.end()
+            ? llvm::ArrayRef<ExactSource>()
+            : llvm::ArrayRef<ExactSource>(Sources->second);
 
     // A loader-side PC-relative TargetVA is only an approximation until
     // the containing instruction end is known.  Published exact
@@ -2772,6 +2838,8 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
             Img, Owner, Target, &OccurrenceRelativeTableAnchors);
       } else {
         for (const ExactSource &Source : ExactSources) {
+          if (!scanPair())
+            return false;
           const RelocatedInstructionAddressOccurrence &Occurrence =
               *Source.Occurrence;
           const ModuleAddressAnchor Target{
@@ -2809,12 +2877,44 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
         continue;
       }
       for (const ExactSource &Source : ExactSources) {
+        if (!scanPair())
+          return false;
         const size_t FuncIndex = Source.FuncIndex;
         const va_t InsnAddr = Source.Occurrence->InstructionAddr;
         if (FuncIndex == Owner.FuncIndex)
           continue; // candidate-local audit already handled it
         if (isUniquelyAuthenticatedTableLoad(Funcs[FuncIndex], InsnAddr, Owner))
           continue;
+        if (!scanPair(
+                detail::orderedContainerLookupWork(FinalSourceAccesses.size())))
+          return false;
+        auto Access = FinalSourceAccesses.find(Source.Occurrence);
+        if (Access == FinalSourceAccesses.end()) {
+          if (!Budget.consume())
+            return false;
+          const auto Range = CFGBuilder::proveInstructionLocalTableSource(
+              Img, Funcs[FuncIndex], *Source.Occurrence, SourceProofRemaining);
+          if (SourceProofRemaining == 0)
+            return false;
+          Access = FinalSourceAccesses.emplace(Source.Occurrence, Range).first;
+        }
+        if (Access->second) {
+          const auto End = Access->second->storageEnd();
+          bool Disjoint =
+              End.has_value() && !Owner.PhysicalIdentityRanges.empty();
+          for (const JumpTableStorageRange &Old :
+               Owner.PhysicalIdentityRanges) {
+            if (!scanPair())
+              return false;
+            const auto OldEnd = Old.storageEnd();
+            // Whole envelopes also preserve sparse filler/gap identities.
+            Disjoint &=
+                End && OldEnd &&
+                (*End <= Old.BaseAddr || *OldEnd <= Access->second->BaseAddr);
+          }
+          if (Disjoint)
+            continue;
+        }
         // A loader record has no LowOp sequence identity.  Unless this
         // machine instruction contains exactly one LOAD and that exact
         // occurrence is an authenticated table role, its address shape is
@@ -2935,7 +3035,8 @@ arbitrateModuleJumpTablesForTesting(const BinaryImage &Img,
                                     std::optional<size_t> TestBudget) {
   ModuleJumpTableArbitration Result =
       collectModuleJumpTableArbitration(Img, Funcs, TestBudget);
-  return {std::move(Result.UnsafeBranches), Result.AnalysisComplete};
+  return {std::move(Result.UnsafeBranches), Result.AnalysisComplete,
+          std::move(Result.ProtectedRelocationSlots)};
 }
 
 ReturnedCodeEvidenceTestResult collectReturnedCodeEvidenceForTesting(

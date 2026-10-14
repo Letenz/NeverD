@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(NeverDWindowsLLVMRuntime LANGUAGES C CXX)
+find_package(LLVM REQUIRED CONFIG)
+add_executable(neverd-llvm-runtime-probe Probe.cpp)
+target_compile_features(neverd-llvm-runtime-probe PRIVATE cxx_std_20)
+target_include_directories(neverd-llvm-runtime-probe PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(neverd-llvm-runtime-probe PRIVATE LLVMObject LLVMCore LLVMSupport)

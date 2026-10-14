@@ -104,6 +104,12 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
   // This view promises refusal before effects and needs checked admission.
   if (Options.LoaderView && Options.Contract != ExecutionContract::CheckedX64)
     return failure(session_diagnostic::LoaderViewContract);
+  if (Options.VersionQuery && Options.Contract != ExecutionContract::CheckedX64)
+    return failure("driver version_query requires checked-x64 execution");
+  if (Options.PhysicalMemoryInventory &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return failure(
+        "driver physical_memory_inventory requires checked-x64 execution");
   KernelExportRegistry Exports;
   if (auto E = Exports.initialize(Options))
     return std::move(E);

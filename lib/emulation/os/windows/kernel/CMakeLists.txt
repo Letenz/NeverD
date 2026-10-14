@@ -49,6 +49,8 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelExports.cpp
   KernelModel.cpp
   KernelLoaderView.cpp
+  KernelVersionQuery.cpp
+  KernelModelVersion.cpp
   KernelUnpackState.cpp
   KernelCalls.cpp
   KernelIRPCalls.cpp
@@ -78,6 +80,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelInterruptEvents.cpp
   KernelResources.cpp
   KernelPhysicalMemory.cpp
+  KernelPhysicalInventory.cpp
   KernelDMA.cpp
   KernelDMAChannels.cpp
   KernelDMAEvents.cpp

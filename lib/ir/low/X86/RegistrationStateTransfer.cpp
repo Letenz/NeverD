@@ -428,6 +428,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       }
     }
     std::optional<FrameValue> CallSP;
+    std::optional<FrameValue> CallResult;
     bool CheckedCall = false;
     const bool JumpCapture = transferJumpCapture(I, After, Op, Facts, CallSP);
     const bool JumpResume = transferJumpResume(I, After, Op, Facts);
@@ -436,6 +437,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       if (auto Call = transferCall(I, After, Op, Facts)) {
         CheckedCall = true;
         CallSP = Call->StackPointer;
+        CallResult = Call->Result;
         NoReturnAtExit = Call->DoesNotReturn;
         if (NoReturnAtExit)
           NoReturnEnd = Call->EndAddress;
@@ -552,6 +554,16 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     }
     if (CallSP)
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] = *CallSP;
+    if (CallResult) {
+      After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
+          *CallResult;
+      LowOp Returned;
+      Returned.Opcode = NdOp::COPY;
+      Returned.Output = Op.Output;
+      Transfer.write(Returned, *CallResult);
+      if (CheckRuntimeObjects)
+        RuntimeTransfer.write(Returned, {});
+    }
     if (const auto SP = parentStackOffset(After))
       std::erase_if(After.JumpCaptures,
                     [&](const auto &Capture) { return *SP > Capture.first; });

@@ -869,7 +869,13 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   if (llvm::isa<llvm::ConstantAggregateZero>(C))
     return "{0}";
 
-  return "0";
+  // In particular, a BlockAddress is a control destination that portable C
+  // cannot carry without a separately proved continuation model. An unknown
+  // constant is never authority to substitute a null pointer or integer zero.
+  std::string Detail;
+  llvm::raw_string_ostream Stream(Detail);
+  Stream << "LLVM C constant is not supported: " << *C;
+  throw std::runtime_error(Stream.str());
 }
 
 std::optional<std::string>

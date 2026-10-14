@@ -131,6 +131,35 @@ void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
   removeUnreachedBlocks(Func);
 }
 
+std::optional<bool> RegistrationRoots::sehEntry(const MedBlock &Block) const {
+  if (!HasSEHFrame || !Direct || !Low.ExceptionMetadata ||
+      Low.Entry != Low.ExceptionMetadata->CodeRange.Begin ||
+      Block.StartAddr == Low.Entry || !Block.Preds.empty() ||
+      Low.OrdinaryModuleAnalysisRoots.count(Block.StartAddr))
+    return std::nullopt;
+  const auto &EH = *Low.ExceptionMetadata;
+  const auto &Chain = *EH.Registration;
+  if (!EH.ownsCode(Block.StartAddr) || !EH.ownsCode(Chain.ChainInstallVA) ||
+      Chain.Scopes.size() > limits::kMaxRegistrationEHRecords ||
+      !((EH.Encoding == ExceptionEncoding::X86ScopeTableEH3 &&
+         EH.Personality == ExceptionPersonality::ExceptHandler3) ||
+        (EH.Encoding == ExceptionEncoding::X86ScopeTableEH4 &&
+         EH.Personality == ExceptionPersonality::ExceptHandler4)))
+    return std::nullopt;
+  std::optional<bool> Callback;
+  for (const auto &Scope : Chain.Scopes) {
+    const bool Filter = !Scope.IsFinally && Scope.FilterVA == Block.StartAddr;
+    const bool Handler = Scope.HandlerVA == Block.StartAddr;
+    if (!Filter && !Handler)
+      continue;
+    const bool IsCallback = Filter || Scope.IsFinally;
+    if (Callback && *Callback != IsCallback)
+      return std::nullopt;
+    Callback = IsCallback;
+  }
+  return Callback;
+}
+
 bool RegistrationRoots::isCxxHandler(const MedBlock &Block) const {
   return HasCxxFrame && Block.StartAddr != Low.Entry &&
          !Low.OrdinaryModuleAnalysisRoots.count(Block.StartAddr) &&

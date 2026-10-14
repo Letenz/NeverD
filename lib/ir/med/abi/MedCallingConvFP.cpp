@@ -389,9 +389,13 @@ void detectFPParams(
         // A vector register widened from its own low bytes (`vzeroupper`,
         // a VEX upper clear) keeps its value in place, which hands a caller
         // back nothing new, as a register the code leaves alone does not.
+        // Only the incoming register's own bytes stay in place: bytes moved
+        // in from another register (`fmov d0, d1`, which widens d0) are
+        // handed back as any other write of a return register is.
         if (Op.Opcode == NdOp::INT_ZEXT && Op.Output.Kind == MedVar::Reg &&
             Op.Inputs[0].Kind == MedVar::Reg &&
             Op.Output.RegOff == Op.Inputs[0].RegOff &&
+            Op.Output.RegOff == LiveIn.RegOff &&
             TRI.isVectorReg(Op.Output.RegOff) && Op.Output.Size <= MaskBytes) {
           record(Op.Output, In[0] & byteMask(Op.Inputs[0].Size));
           return false;

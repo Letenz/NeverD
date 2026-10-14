@@ -16,6 +16,7 @@
 #include "os/windows/kernel/KernelModel.h"
 
 #include <initializer_list>
+#include <map>
 #include <string_view>
 
 namespace neverd::emulation {
@@ -91,6 +92,66 @@ protected:
     check(Memory->writeInteger(Record, Bytes.size(), 2));
     check(Memory->writeInteger(Record + 2, Bytes.size(), 2));
     check(Memory->writeInteger(Record + 8, Record + 32, 8));
+  }
+
+  // Fills spare capacity with '!' so tests observe every written unit.
+  void counted(uint64_t Record, uint64_t Buffer, std::u16string_view Text,
+               uint16_t Maximum) {
+    std::vector<uint8_t> Bytes(Maximum);
+    for (size_t I = 0; I < Maximum / 2; ++I) {
+      const char16_t Unit = I < Text.size() ? Text[I] : u'!';
+      Bytes[I * 2] = static_cast<uint8_t>(Unit);
+      Bytes[I * 2 + 1] = static_cast<uint8_t>(Unit >> 8);
+    }
+    check(Memory->write(Buffer, Bytes));
+    check(Memory->writeInteger(Record, Text.size() * 2, 2));
+    check(Memory->writeInteger(Record + 2, Maximum, 2));
+    check(Memory->writeInteger(Record + 8, Buffer, 8));
+  }
+
+  void wide(uint64_t Address, std::u16string_view Text) {
+    std::vector<uint8_t> Bytes((Text.size() + 1) * 2);
+    for (size_t I = 0; I < Text.size(); ++I) {
+      Bytes[I * 2] = static_cast<uint8_t>(Text[I]);
+      Bytes[I * 2 + 1] = static_cast<uint8_t>(Text[I] >> 8);
+    }
+    check(Memory->write(Address, Bytes));
+  }
+
+  // A counted 8-bit record whose spare capacity holds '!'.
+  void ansi(uint64_t Record, uint64_t Buffer, std::string_view Text,
+            uint16_t Maximum) {
+    std::vector<uint8_t> Bytes(Maximum, '!');
+    std::copy(Text.begin(), Text.end(), Bytes.begin());
+    if (!Bytes.empty())
+      check(Memory->write(Buffer, Bytes));
+    check(Memory->writeInteger(Record, Text.size(), 2));
+    check(Memory->writeInteger(Record + 2, Maximum, 2));
+    check(Memory->writeInteger(Record + 8, Buffer, 8));
+  }
+
+  std::string bytesText(uint64_t Address, size_t Count) {
+    std::string Text;
+    for (size_t I = 0; I < Count; ++I)
+      Text.push_back(static_cast<char>(integer(Address + I, 1)));
+    return Text;
+  }
+
+  std::u16string units(uint64_t Address, size_t Count) {
+    std::u16string Text;
+    for (size_t I = 0; I < Count; ++I)
+      Text.push_back(static_cast<char16_t>(integer(Address + I * 2, 2)));
+    return Text;
+  }
+
+  // RtlUnicodeStringToInteger over Text; the output starts non-zero so every
+  // path must store it.
+  std::pair<uint64_t, uint32_t> parse(std::u16string_view Text, uint64_t Base) {
+    unicode(Scratch + 0x400, Text);
+    check(Memory->writeInteger(Scratch + 0x800, 0xa5a5a5a5, 4));
+    const uint64_t Status = invoke("RtlUnicodeStringToInteger",
+                                   {Scratch + 0x400, Base, Scratch + 0x800});
+    return {Status, static_cast<uint32_t>(integer(Scratch + 0x800, 4))};
   }
 
   llvm::Expected<uint64_t> debug(std::string_view Format,
@@ -421,6 +482,502 @@ TEST_F(KernelRuntime, CountedStringOperationsHonorFreedAndReadOnlyMemory) {
             std::string::npos);
 }
 
+TEST_F(KernelRuntime, AnsiInitializationCountsTerminatorAndClearsPadding) {
+  // Independently checked against the Windows 10.0.19041.6456 kernel export
+  // at RVA 0x24fb00, which both names share.
+  ascii(Scratch + 0x100, "driver");
+  for (const char *Name : {"RtlInitAnsiString", "RtlInitString"}) {
+    SCOPED_TRACE(Name);
+    check(Memory->write(Scratch, std::vector<uint8_t>(16, 0xff)));
+    EXPECT_EQ(invoke(Name, {Scratch, Scratch + 0x100}), 0u);
+    EXPECT_EQ(integer(Scratch, 2), 6u);
+    EXPECT_EQ(integer(Scratch + 2, 2), 7u);
+    EXPECT_EQ(integer(Scratch + 4, 4), 0u);
+    EXPECT_EQ(integer(Scratch + 8), Scratch + 0x100);
+  }
+  ascii(Scratch + 0x200, "");
+  invoke("RtlInitAnsiString", {Scratch, Scratch + 0x200});
+  EXPECT_EQ(integer(Scratch, 2), 0u);
+  EXPECT_EQ(integer(Scratch + 2, 2), 1u);
+  EXPECT_EQ(integer(Scratch + 8), Scratch + 0x200);
+  check(Memory->write(Scratch, std::vector<uint8_t>(16, 0xff)));
+  invoke("RtlInitAnsiString", {Scratch, 0});
+  EXPECT_EQ(integer(Scratch), 0u);
+  EXPECT_EQ(integer(Scratch + 8), 0u);
+}
+
+TEST_F(KernelRuntime, AnsiInitializationTruncatesLongSourcesLikeTheKernel) {
+  check(Memory->map(Scratch + 0x10000, 0x10000, Read | Write));
+  // 0xFFFD and 0xFFFE bytes are exact; longer sources report 0xFFFE.
+  for (uint64_t Size : {0xfffdull, 0xfffeull, 0xffffull, 0x10010ull}) {
+    SCOPED_TRACE(Size);
+    std::vector<uint8_t> Text(Size, 'a');
+    Text.push_back(0);
+    check(Memory->write(Scratch + 0x100, Text));
+    invoke("RtlInitAnsiString", {Scratch, Scratch + 0x100});
+    const uint64_t Expected = std::min<uint64_t>(Size, 0xfffe);
+    EXPECT_EQ(integer(Scratch, 2), Expected);
+    EXPECT_EQ(integer(Scratch + 2, 2), Expected + 1);
+  }
+}
+
+TEST_F(KernelRuntime, CountedAppendHonorsCapacityAndTerminatorRules) {
+  // RtlAppendUnicodeStringToString at RVA 0x3480c0: the terminator needs two
+  // spare bytes, and failure or an empty source leaves the destination as is.
+  const uint64_t Destination = Scratch;
+  const uint64_t Buffer = Scratch + 0x100;
+  const uint64_t Source = Scratch + 0x200;
+  unicode(Source, u"cd");
+  counted(Destination, Buffer, u"ab", 12);
+  EXPECT_EQ(invoke("RtlAppendUnicodeStringToString", {Destination, Source}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 8u);
+  EXPECT_EQ(units(Buffer, 6), std::u16string(u"abcd\0!", 6));
+
+  counted(Destination, Buffer, u"ab", 8);
+  check(Memory->writeInteger(Buffer + 8, u'?', 2));
+  EXPECT_EQ(invoke("RtlAppendUnicodeStringToString", {Destination, Source}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 8u);
+  EXPECT_EQ(units(Buffer, 5), u"abcd?");
+
+  counted(Destination, Buffer, u"ab", 10);
+  invoke("RtlAppendUnicodeStringToString", {Destination, Source});
+  EXPECT_EQ(units(Buffer, 5), std::u16string(u"abcd\0", 5));
+
+  counted(Destination, Buffer, u"ab", 6);
+  EXPECT_EQ(invoke("RtlAppendUnicodeStringToString", {Destination, Source}),
+            0xc0000023u);
+  EXPECT_EQ(integer(Destination, 2), 4u);
+  EXPECT_EQ(units(Buffer, 3), u"ab!");
+
+  unicode(Source, u"");
+  counted(Destination, Buffer, u"ab", 12);
+  EXPECT_EQ(invoke("RtlAppendUnicodeStringToString", {Destination, Source}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 4u);
+  EXPECT_EQ(units(Buffer, 3), u"ab!");
+}
+
+TEST_F(KernelRuntime, NullTerminatedAppendTreatsNullAsEmptyAndStillTerminates) {
+  // RtlAppendUnicodeToString at RVA 0x32ead0 returns early only for a null
+  // source; an empty string still terminates when two spare bytes remain.
+  const uint64_t Destination = Scratch;
+  const uint64_t Buffer = Scratch + 0x100;
+  const uint64_t Source = Scratch + 0x200;
+  wide(Source, u"cd");
+  counted(Destination, Buffer, u"ab", 12);
+  EXPECT_EQ(invoke("RtlAppendUnicodeToString", {Destination, Source}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 8u);
+  EXPECT_EQ(units(Buffer, 6), std::u16string(u"abcd\0!", 6));
+
+  counted(Destination, Buffer, u"ab", 12);
+  EXPECT_EQ(invoke("RtlAppendUnicodeToString", {Destination, 0}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 4u);
+  EXPECT_EQ(units(Buffer, 3), u"ab!");
+
+  wide(Source, u"");
+  EXPECT_EQ(invoke("RtlAppendUnicodeToString", {Destination, Source}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 4u);
+  EXPECT_EQ(units(Buffer, 3), std::u16string(u"ab\0", 3));
+
+  wide(Source, u"cdef");
+  counted(Destination, Buffer, u"ab", 10);
+  EXPECT_EQ(invoke("RtlAppendUnicodeToString", {Destination, Source}),
+            0xc0000023u);
+  EXPECT_EQ(integer(Destination, 2), 4u);
+  EXPECT_EQ(units(Buffer, 3), u"ab!");
+}
+
+TEST_F(KernelRuntime, NullTerminatedAppendRejectsSourcesLongerThanInitEx) {
+  // RtlInitUnicodeStringEx at RVA 0x32eb60 accepts 0x7FFE units. One more
+  // fails the append even though the destination capacity would hold it.
+  check(Memory->map(Scratch + 0x10000, 0x30000, Read | Write));
+  const uint64_t Destination = Scratch;
+  const uint64_t Buffer = Scratch + 0x10000;
+  const uint64_t Source = Scratch + 0x20000;
+  for (size_t Count : {size_t(0x7ffe), size_t(0x7fff)}) {
+    SCOPED_TRACE(Count);
+    wide(Source, std::u16string(Count, u'x'));
+    counted(Destination, Buffer, u"", 0xfffe);
+    const uint64_t Status =
+        invoke("RtlAppendUnicodeToString", {Destination, Source});
+    if (Count == 0x7ffe) {
+      EXPECT_EQ(Status, 0u);
+      EXPECT_EQ(integer(Destination, 2), 0xfffcu);
+      EXPECT_EQ(integer(Buffer + 0xfffc, 2), 0u);
+    } else {
+      EXPECT_EQ(Status, 0xc0000023u);
+      EXPECT_EQ(integer(Destination, 2), 0u);
+    }
+  }
+}
+
+TEST_F(KernelRuntime, PrefixFoldsCaseOnlyWhenCountedUnitsDiffer) {
+  // RVA 0x5edbe0 consults the NLS upcase table only for unequal units.
+  unicode(Scratch, u"Dev");
+  unicode(Scratch + 0x100, u"Device");
+  unicode(Scratch + 0x200, u"dev");
+  unicode(Scratch + 0x300, u"");
+  EXPECT_EQ(invoke("RtlPrefixUnicodeString", {Scratch, Scratch + 0x100, 0}),
+            1u);
+  EXPECT_EQ(invoke("RtlPrefixUnicodeString", {Scratch + 0x100, Scratch, 0}),
+            0u);
+  EXPECT_EQ(
+      invoke("RtlPrefixUnicodeString", {Scratch + 0x200, Scratch + 0x100, 0}),
+      0u);
+  EXPECT_EQ(invoke("RtlPrefixUnicodeString", {Scratch + 0x300, Scratch, 0}),
+            1u);
+  // BOOLEAN arguments use only their low byte.
+  EXPECT_EQ(invoke("RtlPrefixUnicodeString",
+                   {Scratch + 0x200, Scratch + 0x100, 0x100}),
+            0u);
+  EXPECT_EQ(invoke("RtlPrefixUnicodeString", {Scratch, Scratch + 0x100, 1}),
+            1u);
+  EXPECT_EQ(invoke("RtlPrefixUnicodeString", {Scratch + 0x100, Scratch, 1}),
+            0u);
+  EXPECT_NE(
+      failure("RtlPrefixUnicodeString", {Scratch + 0x200, Scratch + 0x100, 1})
+          .find("case table"),
+      std::string::npos);
+}
+
+TEST_F(KernelRuntime, IntegerFormattingUsesUnsignedRadicesAndTerminator) {
+  // RtlIntegerToUnicodeString at RVA 0x6f6280 formats through
+  // RtlIntegerToChar (0x6f7000) and RtlAnsiStringToUnicodeString (0x6f6840).
+  const uint64_t Record = Scratch;
+  const uint64_t Buffer = Scratch + 0x100;
+  auto Format = [&](uint64_t Value, uint64_t Base) {
+    counted(Record, Buffer, u"", 66);
+    EXPECT_EQ(invoke("RtlIntegerToUnicodeString", {Value, Base, Record}), 0u);
+    const uint64_t Length = integer(Record, 2);
+    EXPECT_EQ(integer(Buffer + Length, 2), 0u);
+    return units(Buffer, Length / 2);
+  };
+  EXPECT_EQ(Format(1234, 10), u"1234");
+  EXPECT_EQ(Format(1234, 0), u"1234");
+  EXPECT_EQ(Format(0xbeef, 16), u"BEEF");
+  EXPECT_EQ(Format(8, 8), u"10");
+  EXPECT_EQ(Format(5, 2), u"101");
+  EXPECT_EQ(Format(0, 10), u"0");
+  EXPECT_EQ(Format(0xffffffff, 10), u"4294967295");
+  EXPECT_EQ(Format(0xffffffff, 2), std::u16string(32, u'1'));
+  // ULONG arguments occupy the low 32 bits of their Win64 slots.
+  EXPECT_EQ(Format(0xdeadbeef00000007ULL, 0x100000010ULL), u"7");
+}
+
+TEST_F(KernelRuntime,
+       IntegerFormattingRejectsRadicesAndStoresLengthOnOverflow) {
+  const uint64_t Record = Scratch;
+  const uint64_t Buffer = Scratch + 0x100;
+  counted(Record, Buffer, u"xy", 66);
+  EXPECT_EQ(invoke("RtlIntegerToUnicodeString", {1, 3, Record}), 0xc000000du);
+  EXPECT_EQ(integer(Record, 2), 4u);
+  // The terminator must fit too. Length is already stored on overflow.
+  counted(Record, Buffer, u"xy", 8);
+  EXPECT_EQ(invoke("RtlIntegerToUnicodeString", {1234, 10, Record}),
+            0x80000005u);
+  EXPECT_EQ(integer(Record, 2), 8u);
+  EXPECT_EQ(units(Buffer, 4), u"xy!!");
+  counted(Record, Buffer, u"xy", 10);
+  EXPECT_EQ(invoke("RtlIntegerToUnicodeString", {1234, 10, Record}), 0u);
+  EXPECT_EQ(units(Buffer, 5), std::u16string(u"1234\0", 5));
+}
+
+TEST_F(KernelRuntime, IntegerParsingFollowsTheDocumentedExamples) {
+  // Microsoft Learn's RtlUnicodeStringToInteger table, independently checked
+  // against the Windows 10.0.19041.6456 export at RVA 0x6638e0.
+  using Result = std::pair<uint64_t, uint32_t>;
+  EXPECT_EQ(parse(u"123", 10), Result(0, 123));
+  EXPECT_EQ(parse(u"-345", 10), Result(0, uint32_t(-345)));
+  EXPECT_EQ(parse(u"xyz", 10), Result(0, 0));
+  EXPECT_EQ(parse(u"+678abc", 10), Result(0, 678));
+  EXPECT_EQ(parse(u"+678abc", 16), Result(0, 6785724));
+  EXPECT_EQ(parse(u"007", 10), Result(0, 7));
+  EXPECT_EQ(parse(u"789", 8), Result(0, 7));
+  EXPECT_EQ(parse(u"FGH", 16), Result(0, 15));
+  EXPECT_EQ(parse(u" ", 10), Result(0, 0));
+}
+
+TEST_F(KernelRuntime, IntegerParsingMatchesKernelPrefixWhitespaceAndWrapRules) {
+  using Result = std::pair<uint64_t, uint32_t>;
+  // Only a zero radix recognizes the lowercase 0x, 0o and 0b prefixes.
+  EXPECT_EQ(parse(u"0x1F", 0), Result(0, 31));
+  EXPECT_EQ(parse(u"0o17", 0), Result(0, 15));
+  EXPECT_EQ(parse(u"0b101", 0), Result(0, 5));
+  EXPECT_EQ(parse(u"0X1F", 0), Result(0, 0));
+  EXPECT_EQ(parse(u"012", 0), Result(0, 12));
+  EXPECT_EQ(parse(u"0", 0), Result(0, 0));
+  EXPECT_EQ(parse(u"0x1F", 16), Result(0, 0));
+  // Every unit up to U+0020 is whitespace; the sign precedes the prefix.
+  EXPECT_EQ(parse(u"\t\r\n -0x10", 0), Result(0, uint32_t(-16)));
+  EXPECT_EQ(parse(u"- 5", 10), Result(0, 0));
+  // Accumulation wraps in 32 bits, and a zero unit ends the digits.
+  EXPECT_EQ(parse(u"4294967297", 10), Result(0, 1));
+  EXPECT_EQ(parse(std::u16string_view(u"12\0"
+                                      u"3",
+                                      4),
+                  10),
+            Result(0, 12));
+  // ULONG radices occupy the low 32 bits of their Win64 slots.
+  EXPECT_EQ(parse(u"ff", 0x100000010ULL), Result(0, 255));
+}
+
+TEST_F(KernelRuntime, IntegerParsingStoresZeroForInvalidLengthsAndRadices) {
+  using Result = std::pair<uint64_t, uint32_t>;
+  EXPECT_EQ(parse(u"", 10), Result(0xc000000d, 0));
+  EXPECT_EQ(parse(u"12", 7), Result(0xc000000d, 0));
+  unicode(Scratch + 0x400, u"12");
+  check(Memory->writeInteger(Scratch + 0x400, 3, 2));
+  check(Memory->writeInteger(Scratch + 0x800, 0xa5a5a5a5, 4));
+  EXPECT_EQ(invoke("RtlUnicodeStringToInteger",
+                   {Scratch + 0x400, 10, Scratch + 0x800}),
+            0xc000000du);
+  EXPECT_EQ(integer(Scratch + 0x800, 4), 0u);
+}
+
+TEST_F(KernelRuntime, CountedStringHelpersEnforceArityAndIRQLContracts) {
+  unicode(Scratch, u"12");
+  unicode(Scratch + 0x300, u"");
+  ascii(Scratch + 0x100, "a");
+  EXPECT_NE(failure("RtlPrefixUnicodeString", {Scratch, Scratch})
+                .find("argument count"),
+            std::string::npos);
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("RtlUnicodeStringToInteger", {Scratch, 10, Scratch + 0x800})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  EXPECT_NE(failure("RtlIntegerToUnicodeString", {1, 10, Scratch})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  EXPECT_NE(failure("RtlPrefixUnicodeString", {Scratch, Scratch, 0})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  // DISPATCH_LEVEL still permits initialization and resident appends.
+  EXPECT_EQ(invoke("RtlInitAnsiString", {Scratch + 0x200, Scratch + 0x100}),
+            0u);
+  EXPECT_EQ(
+      invoke("RtlAppendUnicodeStringToString", {Scratch, Scratch + 0x300}), 0u);
+  invoke("KeLowerIrql", {Previous});
+  const auto Lowered = invoke("KfRaiseIrql", {3});
+  EXPECT_NE(failure("RtlInitAnsiString", {Scratch + 0x200, Scratch + 0x100})
+                .find("IRQL"),
+            std::string::npos);
+  EXPECT_EQ(
+      invoke("RtlAppendUnicodeStringToString", {Scratch, Scratch + 0x300}), 0u);
+  invoke("KeLowerIrql", {Lowered});
+}
+
+TEST_F(KernelRuntime, CurrentThreadAndProcessQueriesMatchTheirKernelAliases) {
+  // The 19041.6456 kernel exports PsGetCurrentThread and KeGetCurrentThread as
+  // one routine (RVA 0x2c9210), and PsGetCurrentProcess as IoGetCurrentProcess
+  // (0x2bbc90).
+  EXPECT_NE(failure("PsGetCurrentThread", {}).find("active execution"),
+            std::string::npos);
+  EXPECT_NE(failure("PsGetCurrentProcess", {}).find("thread"),
+            std::string::npos);
+  Model->enterExecution(profile::StackBase, 0x42);
+  const uint64_t Thread = invoke("PsGetCurrentThread", {});
+  ASSERT_NE(Thread, 0u);
+  EXPECT_EQ(invoke("KeGetCurrentThread", {}), Thread);
+  auto Inline = Model->currentThreadObject();
+  ASSERT_TRUE(bool(Inline)) << llvm::toString(Inline.takeError());
+  EXPECT_EQ(*Inline, Thread);
+  const uint64_t Process = invoke("IoGetCurrentProcess", {});
+  ASSERT_NE(Process, 0u);
+  EXPECT_EQ(invoke("PsGetCurrentProcess", {}), Process);
+  EXPECT_EQ(invoke("PsGetProcessId", {Process}), 4u);
+  // Both identities are available at any IRQL.
+  const auto Previous = invoke("KfRaiseIrql", {15});
+  EXPECT_EQ(invoke("PsGetCurrentThread", {}), Thread);
+  EXPECT_EQ(invoke("PsGetCurrentProcess", {}), Process);
+  invoke("KeLowerIrql", {Previous});
+  // Each logical thread keeps its own identity.
+  Model->enterExecution(profile::StackBase, 0x43);
+  const uint64_t Other = invoke("PsGetCurrentThread", {});
+  EXPECT_NE(Other, Thread);
+  EXPECT_EQ(invoke("PsGetCurrentProcess", {}), Process);
+  Model->enterExecution(profile::StackBase, 0x42);
+  EXPECT_EQ(invoke("PsGetCurrentThread", {}), Thread);
+}
+
+TEST_F(KernelRuntime, ThreadClientIDsBelongToTheirThreadObjects) {
+  EXPECT_NE(failure("PsGetCurrentThreadId", {}).find("active execution"),
+            std::string::npos);
+  Model->enterExecution(profile::StackBase, 0x42);
+  const uint64_t Thread = invoke("PsGetCurrentThread", {});
+  // IDs are assigned on first observation from the profile base in steps of 4.
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2000u);
+  EXPECT_EQ(invoke("PsGetThreadId", {Thread}), 0x2000u);
+  Model->enterExecution(profile::StackBase, 0x43);
+  const uint64_t Other = invoke("PsGetCurrentThread", {});
+  EXPECT_EQ(invoke("PsGetThreadId", {Other}), 0x2004u);
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2004u);
+  EXPECT_EQ(invoke("PsGetThreadId", {Thread}), 0x2000u);
+  EXPECT_NE(failure("PsGetThreadId", {Scratch}).find("known thread object"),
+            std::string::npos);
+  // The current ID is available at any IRQL, a lookup only to DISPATCH_LEVEL.
+  const auto Previous = invoke("KfRaiseIrql", {3});
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2004u);
+  EXPECT_NE(failure("PsGetThreadId", {Thread}).find("IRQL"), std::string::npos);
+  invoke("KeLowerIrql", {Previous});
+}
+
+TEST_F(KernelRuntime, ThreadClientIDsSkipModeledProcessIDs) {
+  // Thread and process IDs share one namespace, so the requesting process's
+  // ID is never issued to a thread.
+  Model->enterExecution(profile::StackBase);
+  check(Model->setUserRequestContext(true, 0x2000));
+  EXPECT_EQ(invoke("PsGetCurrentProcessId", {}), 0x2000u);
+  EXPECT_EQ(invoke("PsGetCurrentThreadId", {}), 0x2004u);
+  check(Model->setUserRequestContext(false));
+}
+
+TEST_F(KernelRuntime, AnsiToUnicodeConversionAllocatesTaggedPagedPool) {
+  // RtlAnsiStringToUnicodeString (RVA 0x6f6840) allocates through
+  // ExpAllocateStringRoutine; RtlFreeUnicodeString and RtlFreeAnsiString share
+  // RVA 0x602cb0.
+  const uint64_t Source = Scratch;
+  const uint64_t Destination = Scratch + 0x40;
+  ansi(Source, Scratch + 0x100, "Ab\\9", 8);
+  check(Memory->write(Destination, std::vector<uint8_t>(16, 0xff)));
+  EXPECT_EQ(invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 1}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 8u);
+  EXPECT_EQ(integer(Destination + 2, 2), 10u);
+  const uint64_t Buffer = integer(Destination + 8);
+  ASSERT_NE(Buffer, 0u);
+  EXPECT_EQ(units(Buffer, 5), std::u16string(u"Ab\\9\0", 5));
+  // The buffer is paged pool tagged 'Strg'.
+  EXPECT_NE(failure("ExFreePoolWithTag", {Buffer, Tag}).find("tag"),
+            std::string::npos);
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("ExFreePool", {Buffer}).find("APC_LEVEL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {Previous});
+  invoke("RtlFreeUnicodeString", {Destination});
+  EXPECT_EQ(integer(Destination), 0u);
+  EXPECT_EQ(integer(Destination + 8), 0u);
+  auto Freed = Model->validateGuestAccess(Buffer, 1, false);
+  ASSERT_TRUE(bool(Freed));
+  EXPECT_NE(llvm::toString(std::move(Freed)).find("freed"), std::string::npos);
+  // The exact tag frees a second conversion.
+  invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 1});
+  invoke("ExFreePoolWithTag", {integer(Destination + 8), 0x67727453});
+  // A null buffer leaves the record untouched under both names.
+  check(Memory->writeInteger(Destination, 0x12345678, 4));
+  check(Memory->writeInteger(Destination + 8, 0, 8));
+  invoke("RtlFreeAnsiString", {Destination});
+  invoke("RtlFreeUnicodeString", {Destination});
+  EXPECT_EQ(integer(Destination, 4), 0x12345678u);
+}
+
+TEST_F(KernelRuntime, AnsiToUnicodeConversionNeedsRoomForTheTerminator) {
+  const uint64_t Source = Scratch;
+  const uint64_t Destination = Scratch + 0x40;
+  const uint64_t Buffer = Scratch + 0x200;
+  ansi(Source, Scratch + 0x100, "abc", 4);
+  counted(Destination, Buffer, u"", 8);
+  // BOOLEAN arguments use only their low byte.
+  EXPECT_EQ(
+      invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 0x100}), 0u);
+  EXPECT_EQ(integer(Destination, 2), 6u);
+  EXPECT_EQ(integer(Destination + 8), Buffer);
+  EXPECT_EQ(units(Buffer, 4), std::u16string(u"abc\0", 4));
+  // Length is stored before the capacity check fails.
+  counted(Destination, Buffer, u"", 6);
+  EXPECT_EQ(invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 6u);
+  EXPECT_EQ(units(Buffer, 3), u"!!!");
+  // A source longer than a counted UTF-16 string fails before any effect.
+  check(Memory->map(Scratch + 0x10000, 0x10000, Read | Write));
+  ansi(Source, Scratch + 0x10000, std::string(0x7fff, 'x'), 0x7fff);
+  counted(Destination, Buffer, u"", 8);
+  EXPECT_EQ(invoke("RtlAnsiStringToUnicodeString", {Destination, Source, 1}),
+            0xc00000f0u);
+  EXPECT_EQ(integer(Destination, 2), 0u);
+  EXPECT_EQ(integer(Destination + 8), Buffer);
+  ansi(Source, Scratch + 0x100, "\xe9", 1);
+  EXPECT_NE(failure("RtlAnsiStringToUnicodeString", {Destination, Source, 0})
+                .find("code page"),
+            std::string::npos);
+  EXPECT_EQ(integer(Destination, 2), 0u);
+}
+
+TEST_F(KernelRuntime, UnicodeToAnsiConversionTruncatesIntoShortBuffers) {
+  // RtlUnicodeStringToAnsiString (RVA 0x5edb00) converts what fits.
+  const uint64_t Source = Scratch;
+  const uint64_t Destination = Scratch + 0x100;
+  const uint64_t Buffer = Scratch + 0x200;
+  unicode(Source, u"Hello");
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 1}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(integer(Destination + 2, 2), 6u);
+  const uint64_t Allocated = integer(Destination + 8);
+  ASSERT_NE(Allocated, 0u);
+  EXPECT_EQ(bytesText(Allocated, 6), std::string("Hello\0", 6));
+  invoke("RtlFreeAnsiString", {Destination});
+  EXPECT_EQ(integer(Destination), 0u);
+  EXPECT_EQ(integer(Destination + 8), 0u);
+
+  ansi(Destination, Buffer, "", 6);
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(bytesText(Buffer, 6), std::string("Hello\0", 6));
+  ansi(Destination, Buffer, "", 8);
+  check(Memory->writeInteger(Destination + 2, 4, 2));
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 3u);
+  EXPECT_EQ(bytesText(Buffer, 5), std::string("Hel\0!", 5));
+  // A zero-capacity record stores the full length and writes nothing.
+  ansi(Destination, Buffer, "", 0);
+  check(Memory->write(Buffer, std::vector<uint8_t>{'?'}));
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0x80000005u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  EXPECT_EQ(integer(Buffer, 1), '?');
+  // A trailing odd byte is not a UTF-16 unit.
+  check(Memory->writeInteger(Source, 11, 2));
+  check(Memory->writeInteger(Source + 2, 12, 2));
+  ansi(Destination, Buffer, "", 8);
+  EXPECT_EQ(invoke("RtlUnicodeStringToAnsiString", {Destination, Source, 0}),
+            0u);
+  EXPECT_EQ(integer(Destination, 2), 5u);
+  unicode(Source, u"é");
+  EXPECT_NE(failure("RtlUnicodeStringToAnsiString", {Destination, Source, 0})
+                .find("code page"),
+            std::string::npos);
+}
+
+TEST_F(KernelRuntime, StringConversionAndReleaseFollowTheirIRQLContracts) {
+  unicode(Scratch, u"a");
+  ansi(Scratch + 0x100, Scratch + 0x200, "", 4);
+  check(Memory->write(Scratch + 0x300, std::vector<uint8_t>(16, 0)));
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {1});
+  EXPECT_NE(
+      failure("RtlUnicodeStringToAnsiString", {Scratch + 0x100, Scratch, 0})
+          .find("PASSIVE_LEVEL"),
+      std::string::npos);
+  EXPECT_NE(failure("RtlAnsiStringToUnicodeString",
+                    {Scratch + 0x300, Scratch + 0x100, 0})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  // Releasing a string is permitted at APC_LEVEL.
+  invoke("RtlFreeUnicodeString", {Scratch + 0x300});
+  invoke("KeLowerIrql", {Previous});
+  const auto Dispatch = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("RtlFreeAnsiString", {Scratch + 0x300}).find("IRQL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {Dispatch});
+}
+
 TEST_F(KernelRuntime, DebugIntegersUseWindowsWidthsAndFormattingRules) {
   EXPECT_EQ(
       formatted(
@@ -556,6 +1113,54 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
   EXPECT_EQ(LegacyCalls, 3u);
   EXPECT_EQ(ModuleQueries, 3u);
   EXPECT_EQ(CounterCalls, 3u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_strings.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 3u);
+  EXPECT_EQ(Result->Messages[0], "strings \\Device\\Sample42 42 -42 driver 32");
+  // The overflow still stores the formatted length in the short record.
+  EXPECT_EQ(Result->Messages[1], "status c0000023 80000005 10");
+  // A short ANSI conversion keeps the terminated prefix that fits.
+  EXPECT_EQ(Result->Messages[2], "convert 80000005 3 \\De");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["RtlInitAnsiString"], 1u);
+  EXPECT_EQ(Calls["RtlInitString"], 1u);
+  EXPECT_EQ(Calls["RtlAppendUnicodeToString"], 2u);
+  EXPECT_EQ(Calls["RtlAppendUnicodeStringToString"], 2u);
+  EXPECT_EQ(Calls["RtlPrefixUnicodeString"], 2u);
+  EXPECT_EQ(Calls["RtlIntegerToUnicodeString"], 2u);
+  EXPECT_EQ(Calls["RtlUnicodeStringToInteger"], 2u);
+  EXPECT_EQ(Calls["RtlUnicodeStringToAnsiString"], 2u);
+  EXPECT_EQ(Calls["RtlAnsiStringToUnicodeString"], 1u);
+  EXPECT_EQ(Calls["RtlFreeAnsiString"], 1u);
+  EXPECT_EQ(Calls["RtlFreeUnicodeString"], 1u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_identity.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // The first thread ID comes from the profile base, 0x2000.
+  EXPECT_EQ(Result->Messages[0], "identity 4 8192");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name :
+       {"PsGetCurrentProcess", "IoGetCurrentProcess", "PsGetCurrentThread",
+        "KeGetCurrentThread", "PsGetCurrentThreadId", "PsGetThreadId"})
+    EXPECT_EQ(Calls[Name], 1u) << Name;
 }
 } // namespace
 } // namespace neverd::emulation

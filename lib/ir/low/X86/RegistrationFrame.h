@@ -109,6 +109,10 @@ struct FrameValue {
 
 FrameValue join(FrameValue Left, const FrameValue &Right);
 
+/// A checked PE32 scalar call defines either its instruction-local result or
+/// the complete physical EAX. Other register outputs carry no return authority.
+bool hasX86ScalarCallOutput(const LowOp &Op);
+
 struct FrameState {
   std::array<FrameValue, 8> Registers;
   /// Flags and vector registers carry conservative byte taint. They cannot
@@ -134,6 +138,9 @@ struct FrameState {
 
   bool merge(const FrameState &Other);
   void forgetCellValues();
+  /// A possible write drops exact values but retains pointer provenance from
+  /// paths on which the store does not execute. Definite stores use store().
+  void forgetCellValues(int32_t Offset, uint32_t Width);
 
   void store(int32_t Offset, uint16_t Width, const FrameValue &Value);
 

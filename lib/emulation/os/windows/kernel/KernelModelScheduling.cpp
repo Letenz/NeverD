@@ -44,6 +44,36 @@ llvm::Expected<uint64_t> KernelModel::currentThreadObject() {
   return *Object;
 }
 
+llvm::Expected<uint64_t> KernelModel::threadClientID(uint64_t Object) {
+  const bool Known =
+      SystemThreads.count(Object) ||
+      std::any_of(CurrentThreadObjects.begin(), CurrentThreadObjects.end(),
+                  [&](const auto &Entry) { return Entry.second == Object; });
+  if (!Known)
+    return schedulingError("thread client ID requires a known thread object");
+  if (const auto Found = ThreadClientIDs.find(Object);
+      Found != ThreadClientIDs.end())
+    return uint64_t(Found->second);
+  // Thread and process IDs share one client-ID namespace.
+  auto ProcessID = [&](uint64_t ID) {
+    return ID == windows::SystemProcessID ||
+           ID == DriverRequest::DefaultRequestorProcessID ||
+           ProcessObjects.count(uint32_t(ID)) ||
+           RequestorProcessIDs.count(uint32_t(ID)) ||
+           (UserRequestContext && ID == CurrentUserProcessID);
+  };
+  while (NextThreadClientID <= profile::ThreadIDLimit &&
+         ProcessID(NextThreadClientID))
+    NextThreadClientID += profile::ThreadIDStride;
+  if (NextThreadClientID > profile::ThreadIDLimit)
+    return schedulingError("thread client IDs are exhausted");
+  const auto ID = uint32_t(NextThreadClientID);
+  NextThreadClientID += profile::ThreadIDStride;
+  ThreadClientIDs.emplace(Object, ID);
+  IssuedThreadClientIDs.insert(ID);
+  return uint64_t(ID);
+}
+
 llvm::Expected<uint64_t> KernelModel::allocateWorkItem(uint64_t Device) {
   if (CurrentIRQL > scheduler::DispatchLevel)
     return schedulingError(
@@ -66,9 +96,9 @@ llvm::Expected<uint64_t>
 KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
   if (!A[0] || !A[5])
     return windows::StatusInvalidParameter;
-  if (A[3] || A[4])
-    return schedulingError("non-system process handles and client IDs are "
-                           "unsupported for system threads");
+  if (A[3])
+    return schedulingError("non-system process handles are unsupported for "
+                           "system threads");
   if (uint32_t(A[1]) & ~windows::ThreadAllAccess)
     return schedulingError("unsupported system-thread access mask");
   uint32_t Attributes = 0;
@@ -109,6 +139,9 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
                            "requires OBJ_KERNEL_HANDLE");
   if (auto E = validateGuestAccess(A[0], 8, true))
     return E;
+  if (A[4])
+    if (auto E = validateGuestAccess(A[4], windows::ClientIDSize, true))
+      return E;
   if (SystemThreads.size() >= profile::MaxConcurrentCallbacks ||
       NextThreadHandle > profile::SystemThreadHandleLimit)
     return windows::StatusInsufficientResources;
@@ -140,6 +173,17 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
   ThreadHandles.emplace(NextThreadHandle, *Object);
   SystemThreads.emplace(*Object, SystemThread{NextThreadHandle, *ID});
   NextThreadHandle += profile::SystemThreadHandleStride;
+  if (A[4]) {
+    // CLIENT_ID{UniqueProcess, UniqueThread} for the new system-process thread.
+    auto Thread = threadClientID(*Object);
+    if (!Thread)
+      return Thread.takeError();
+    if (auto E = Memory.writeInteger(A[4], windows::SystemProcessID, 8))
+      return E;
+    if (auto E = Memory.writeInteger(A[4] + windows::ClientIDThreadOffset,
+                                     *Thread, 8))
+      return E;
+  }
   return uint64_t(0);
 }
 
@@ -226,6 +270,7 @@ void KernelModel::retireThreadIfUnreferenced(uint64_t Object) {
       !WaitReferences.contains(Object)) {
     FreedRanges.emplace(Object, profile::ProcessTokenSize);
     Scheduler.forgetThreadPriority(Thread->second.CallbackID);
+    ThreadClientIDs.erase(Object);
     SystemThreads.erase(Thread);
   }
 }
@@ -237,6 +282,7 @@ void KernelModel::retireBorrowedThread(uint64_t Key) {
   if (const auto Object = CurrentThreadObjects.find(Key);
       Object != CurrentThreadObjects.end()) {
     FreedRanges.emplace(Object->second, profile::ProcessTokenSize);
+    ThreadClientIDs.erase(Object->second);
     CurrentThreadObjects.erase(Object);
   }
 }

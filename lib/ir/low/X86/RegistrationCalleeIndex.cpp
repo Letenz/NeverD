@@ -42,10 +42,27 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
         Contract->Target = Target;
         Contract->DoesNotReturn = true;
         Contract->CodeRanges.push_back({Target, Target + 6});
-      } else if (auto Leaf = getCheckedX86RegistrationLeafCalleeABI(
-                     Image, Target, &Work)) {
+      } else if (auto Initializer =
+                     getCheckedX86RegistrationInitializerCalleeABI(
+                         Image, Target, &Work)) {
+        auto &Object = Initializer->Object;
+        Contract.emplace();
+        Contract->CalleeKind =
+            RegistrationCalleeFrameContract::Kind::Initializer;
+        Contract->Target = Target;
+        Contract->StackPopBytes = Object.StackPopBytes;
+        Contract->ECXReads = std::move(Object.ECXReads);
+        Contract->ECXWrites = std::move(Object.ECXWrites);
+        Contract->ECXInitialized = std::move(Initializer->Initialized);
+        Contract->ImageReads = std::move(Object.ImageReads);
+        Contract->ImageWrites = std::move(Object.ImageWrites);
+        Contract->CodeRanges = std::move(Object.CodeRanges);
+      } else if (auto Leaf = getCheckedX86RegistrationMemberCalleeABI(
+                     Image, Target, &Work, RegistrationLeafResult::Discarded)) {
         Contract.emplace();
         Contract->Target = Target;
+        Contract->StackPopBytes = Leaf->StackPopBytes;
+        Contract->HasIndependentScalarReturn = Leaf->HasIndependentScalarReturn;
         Contract->ECXReads = std::move(Leaf->ECXReads);
         Contract->ECXWrites = std::move(Leaf->ECXWrites);
         Contract->ImageReads = std::move(Leaf->ImageReads);
@@ -76,26 +93,38 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
     }
     if (Existing->second) {
       const auto &Contract = *Existing->second;
-      if (!chargeCalleeWork(Work, Contract.ECXReads.size() +
-                                      Contract.ECXWrites.size() +
-                                      Contract.ImageReads.size() +
-                                      Contract.ImageWrites.size() +
-                                      Contract.CallerPCWrites.size() +
-                                      Contract.CodeRanges.size() + 1))
+      if (!chargeCalleeWork(
+              Work,
+              Contract.ECXReads.size() + Contract.ECXWrites.size() +
+                  Contract.ECXInitialized.size() + Contract.ImageReads.size() +
+                  Contract.ImageWrites.size() + Contract.CallerPCWrites.size() +
+                  Contract.CodeRanges.size() + 1))
         return std::nullopt;
       Result.push_back(Contract);
     }
   }
   if (llvm::any_of(Result, [](const auto &C) { return C.isRuntimeThrow(); })) {
+    registration_abi::ImageFrameEffects Effects;
+    std::set<std::pair<va_t, va_t>> RuntimeCode;
     auto Infos = registration_abi::collectRegistrationRuntimeThrowInfos(
-        Function, Image, Work);
+        Function, Image, Work, Effects, RuntimeCode);
     if (!Infos)
       return std::nullopt;
     for (auto &Contract : Result)
       if (Contract.isRuntimeThrow()) {
-        if (!chargeCalleeWork(Work, Infos->size()))
+        if (!chargeCalleeWork(Work, Infos->size() + Effects.Reads.size() +
+                                        Effects.Writes.size() +
+                                        RuntimeCode.size() +
+                                        Contract.CodeRanges.size()))
           return std::nullopt;
         Contract.RuntimeThrowInfos = *Infos;
+        registration_abi::copyExtents(Effects.Reads, Contract.ImageReads);
+        registration_abi::copyExtents(Effects.Writes, Contract.ImageWrites);
+        auto Code = RuntimeCode;
+        for (const auto &Range : Contract.CodeRanges)
+          Code.emplace(Range.Begin, Range.End);
+        Contract.CodeRanges.clear();
+        registration_abi::copyExtents(Code, Contract.CodeRanges);
       }
   }
   return Result;

@@ -233,6 +233,9 @@ public:
   void writeFunctionProjection(const HighFunc &Func);
   void runAnalysisPasses(const HighFunc &Func);
   void writeExceptionAnnotation(const HighFunc &Func);
+  void writeSEHScopeAnnotation(const HighFunc &Func, int Indent = 0);
+  void writeCxxScopeAnnotation(const HighFunc &Func, int Indent = 0);
+  void writeRegistrationAnnotation(const HighFunc &Func, int Indent = 0);
   void emitLocalDecls(const HighFunc &Func,
                       const std::set<std::string> &ParamNames);
   void collectNamedFrameSlots(const HighFunc &Func);
@@ -244,8 +247,15 @@ public:
   void writeStmt(const HighStmt &Stmt, int Indent);
   void writeStmtImpl(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
+  bool cxxThrowUsesRuntimeCall(const HighExpr &ThrowCall) const;
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
+  void writeUnstructuredSEHRegion(const HighStmt &Stmt, int Indent);
+  /// The blocks the exception runtime enters for except clauses \p Entries of
+  /// an unstructured region: each runs its handler's entry copies, then jumps
+  /// to the handler's label.  Ordinary flow skips them.
+  void writeSEHHandlerEntries(const HighStmt &Stmt,
+                              llvm::ArrayRef<size_t> Entries, int Indent);
   /// A C++ `try` around the body \p WriteBody prints at the indent it is
   /// given, then its handlers.  A cleanup clause is an object's unwind
   /// action, which standard C++ spells as `catch (...)` that runs it and
@@ -963,6 +973,11 @@ public:
     unsigned MinStoreSize = 0;
   };
   std::map<int64_t, NamedFrameSlot> FrameSlots;
+  /// A frame address escapes: it is a value the function computes with,
+  /// stores or passes, or a run-time choice picks frame bytes.  The frame is
+  /// then one object, and a pointer derived from that address may reach
+  /// every slot, not only the one whose address it took.
+  bool FrameAddressEscapes = false;
   /// Slot identity retained for value forwarding and catch-object recovery
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;

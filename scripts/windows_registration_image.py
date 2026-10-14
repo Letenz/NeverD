@@ -25,6 +25,31 @@ def code_owner(image: PE32, begin: int, end: int, name: str) -> None:
         raise ValueError("C++ code section lost read/execute permissions")
 
 
+def code_chunks(image, receipt, owner, section):
+    """Keep each table-owned callback separate from intervening code."""
+    primary = [receipt[owner + "_begin"], receipt[owner + "_end"]]
+    fragments = receipt.get(owner + "_fragments", [])
+    if type(fragments) is not list or len(fragments) > 1024:
+        raise ValueError("C++ code fragments are not a bounded list")
+    chunks = [primary, *fragments]
+    for chunk in chunks:
+        if type(chunk) is not list or len(chunk) != 2 or \
+                any(type(value) is not int for value in chunk):
+            raise ValueError("C++ code fragment has no exact range")
+        code_owner(image, *chunk, section)
+    primary_owner = next(s for s in image.sections
+                         if s[1] <= primary[0] and primary[1] <= s[1] + s[2])
+    if any(not primary_owner[1] <= begin < end <= primary_owner[1] + primary_owner[2]
+           for begin, end in fragments):
+        raise ValueError("C++ code fragment belongs to a different executable owner")
+    if fragments != sorted(fragments):
+        raise ValueError("C++ code fragments are not in address order")
+    ordered = sorted(chunks)
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("C++ code fragments overlap another owner chunk")
+    return ordered
+
+
 def safe_handlers(image: PE32) -> tuple[int, list[int]]:
     rva, size = image.directory(10)
     if not rva or size < 4:
@@ -77,5 +102,7 @@ def validate_generation(original, product, receipt, first, export):
             jump_target(product, receipt["source_begin"]) != receipt["generated_begin"] or \
             receipt["generated_begin"] < receipt["source_end"]:
         raise ValueError("two-generation trampoline chain changed its source or destination")
-    code_owner(original, receipt["source_begin"], receipt["source_end"], ".ndtext")
-    code_owner(product, receipt["generated_begin"], receipt["generated_end"], ".ndtext")
+    if receipt.get("source_fragments", []) != first.get("generated_fragments", []):
+        raise ValueError("re-lifted source fragments changed the first generation")
+    code_chunks(original, receipt, "source", ".ndtext")
+    code_chunks(product, receipt, "generated", ".ndtext")

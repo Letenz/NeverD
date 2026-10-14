@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   compile:
-    runs-on: windows-2022
+    runs-on: windows-2025-vs2026
     timeout-minutes: 30
     defaults:
       run:
@@ -25,7 +25,16 @@ jobs:
           git submodule update --init --depth 1 third_party/capstone
           cmake -S . -B build-compiler-probe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF -DNEVERD_ENABLE_Z3=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF -DNEVERD_ENABLE_WEB_ANALYSIS=OFF -DNEVERD_BUILD_GUI=OFF -DNEVERD_BUILD_WORKER=OFF -DNEVERD_BUILD_WEB_MCP=OFF
       - name: Compare isolated compiler inputs without rebuilding the engine
-        run: python scripts/probe_windows_call_register_compiler.py --build build-compiler-probe
+        run: python scripts/probe_windows_call_register_compiler.py --build build-compiler-probe --compiler-compatibility
+      - name: Link and execute the pinned LLVM with the selected C++ runtime
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $Cache = Get-Content build-compiler-probe/CMakeCache.txt
+          $LLVM = ($Cache | Select-String '^LLVM_DIR:PATH=').Line.Substring(14)
+          cmake -S scripts/fixtures/windows_llvm_runtime -B build-llvm-runtime -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl "-DLLVM_DIR=$LLVM"
+          cmake --build build-llvm-runtime --parallel 2
+          & "$PWD/build-llvm-runtime/neverd-llvm-runtime-probe.exe"
       - name: Retain exact compiler results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

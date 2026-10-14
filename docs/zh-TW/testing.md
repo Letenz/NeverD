@@ -1220,7 +1220,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5508`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 27 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 68 driver environment checks = 5579`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1650,6 +1650,8 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `scripts/check_windows_native_seh_resume.py` 單獨測試 Windows x64 LLVM/CRT 的實驗性續接協定，涵蓋 O0/O2。`_local_unwind` 接收捕獲的實體 SP 與取址的父函式續接點，與逸出的來源框架單元分開。MASM 呼叫端檢查八個保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路徑執行呼叫後的操作，非局部路徑跳過這些操作，所有路徑隨後再次拋出例外。報告保留工具鏈與雜湊。原生成功不授予 NeverD 重建憑據，也未解決 PE32 出口、逸出記憶體的存取權限、任意巢狀或兩條 C 路線。請在原生 x64 MSVC 環境中指定 `--output`。 工作流程參數 `windows_eh_protocol_only` 直接執行這些原生實驗，不重新建置 NeverD；它與引擎迴歸涵蓋範圍分開。
 
+`scripts/check_windows_native_seh_bridge.py` 獨立 x64 固定框架橋由組合語言擁有续接標籤和展開中繼資料，以一般 ABI 入口呼叫最佳化 LLVM。O0/O2 各測八路徑、256 次呼叫；逐次保留原始異常旗標、代碼、事件數及永久錯誤，並執行六個損壞反例。保存實際來源雜湊、unwind/load-config 與 CRT 提供者。來源記憶體權限、任意巢狀、並行、EHCONT/CET 和正式重建仍未證明。
+
 `RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 檢查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的最佳化與未最佳化原始碼投影。單函式和分片 LLVM 發射保留相同的不完整原生 EH 明確契約；二進位重寫仍拒絕該契約。
@@ -1861,3 +1863,12 @@ Initial private/strict JSON checks passed166 identities before route addition. F
 Owned nonroot ARM64 O0/O1/O2 native probes passed114 observations, full2168 payloads/guards, raw primary/secondary/carry, high carriers, readonly/dup, target errors, parent moves, held deletion/name reuse and unchanged stat/flags/cursor. The common initial32 and created33 authored services pass main57/Y natively; virtual35 emits6600 independent literal bytes plus Y, separating link owner17 from target/replacement owner4294967294. Native comparisons mask only five dynamic uint64 counters and capture no native service trace. Five software process/C API/CLI/Python profiles and three matching ARM64 HVF profiles pass fresh executions; C API successes reuse sessions and CLI reports compare completely.
 
 Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailable, zero remaining failures; all279 required matching ARM64 identities actually pass in four disjoint serial bounded shards plus1 fresh isolated replay of the original resource-usage HVF guest-time-limit failure. The initial full round and all failures remain retained. Identical source/products and unchanged limits qualify the composite only; no clean full-round or unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1866 C++ cases. All20 products rebuilt; common native79/mandatory93 per matching platform independently asserted. Earlier compile enum typo, mutable-parent fixture omissions and failed repair matching/controller syntax attempts remain immutable; no production semantics were weakened to pass them. Native5s/compiler120s/component1200s parallel2/guest5000000us quantum1024/public30s and original method bounds are unchanged. Intel native, physical iOS and complete Apple runtimes/frameworks remain unqualified.
+
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` 檢查完整模組及單函式輸出中的基本區塊位址回傳、整數轉換、位址運算與巢狀表初始化。矩陣涵蓋 32/64 位元、兩種位元組序及 ELF/COFF/Mach-O 設定。不支援的符號常數也明確拒絕，不能變成空指標。這驗證輸出拒絕規則，尚未實作可攜的原生續接。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模組和單函式 CLI 檢查涵蓋兩種最佳化，拒絕內部程式碼位址並保留既有輸出；其他原子指令函式仍须輸出 C。位址低位觀察未支援，LLVM 驗證不能證明其語義。
+
+
+### 明確宣告物理記憶體清單
+
+`KernelPhysicalInventoryTests` 檢查位元組單位、終止項、獨立配置、拒絕時無副作用、宣告複製、擷取依賴、固定頁面、物理識別和資源不足。`DriverPhysicalInventoryTests` 檢查嚴格傳輸，以及 Unicorn/KVM/WHP 上偏好和重定位位址的完整生命週期、動態查詢和釋放後讀取。未使用宣告的 UNPACK 對照仍拒絕還原。每個原生後端的 13 項皆為必跑；本機無法使用的平台執行仍記為略過。

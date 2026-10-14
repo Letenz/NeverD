@@ -591,6 +591,59 @@ TEST_P(UnpackDriver, UnusedLoaderDeclarationCannotAuthorizeRuntimeRecovery) {
   }
 }
 
+TEST_P(UnpackDriver, UnusedVersionQueryCannotAuthorizeRuntimeRecovery) {
+  const auto Input = packed(); // Its decoder never calls the version query.
+  Options.Driver.emplace();
+  Options.Driver->VersionQuery =
+      DriverVersionQuery{1, 42, "unused query", true};
+  std::vector<std::string> Reasons;
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    auto Current = Options;
+    Current.SnapshotOnly = Mode == 1;
+    Current.RestoreRuntime = Mode == 2;
+    auto Result = unpackFile(Input, Current);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Outcome, Mode == 1 ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState)
+        << Result->Diagnostic;
+    EXPECT_EQ(Result->Image.empty(), Mode != 1);
+    EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+    if (!Mode)
+      Reasons = Result->RuntimeState.AdditionalDependencyReasons;
+    EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons, Reasons);
+    EXPECT_NE(std::find(Reasons.begin(), Reasons.end(),
+                        "unreconstructed kernel or environment effects"),
+              Reasons.end());
+  }
+}
+
+TEST_P(UnpackDriver, UnusedPhysicalInventoryCannotAuthorizeRuntimeRecovery) {
+  const auto Input = packed(); // Its decoder never queries physical ranges.
+  Options.Driver.emplace();
+  Options.Driver->PhysicalMemoryInventory = DriverPhysicalMemoryInventory{
+      1, DriverPhysicalMemoryInventory::SourceKind::ModelIdentityWindow,
+      "unused inventory"};
+  std::vector<std::string> Reasons;
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    auto Current = Options;
+    Current.SnapshotOnly = Mode == 1;
+    Current.RestoreRuntime = Mode == 2;
+    auto Result = unpackFile(Input, Current);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Outcome, Mode == 1 ? UnpackOutcome::Snapshot
+                                         : UnpackOutcome::UnsupportedState)
+        << Result->Diagnostic;
+    EXPECT_EQ(Result->Image.empty(), Mode != 1);
+    EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+    if (!Mode)
+      Reasons = Result->RuntimeState.AdditionalDependencyReasons;
+    EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons, Reasons);
+    EXPECT_NE(std::find(Reasons.begin(), Reasons.end(),
+                        "unreconstructed kernel or environment effects"),
+              Reasons.end());
+  }
+}
+
 TEST_P(UnpackDriver, MalformedExportMetadataFailsBeforeExecution) {
   const auto Directory = Original.directory(llvm::COFF::EXPORT_TABLE);
   auto Offset = [&](uint32_t RVA) -> uint64_t {

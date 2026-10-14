@@ -10,6 +10,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/ARMRegs.h"
 
 namespace neverd {
@@ -180,4 +181,60 @@ TEST(FPParameterMask, APreparedFloatingCallArgumentRemainsObserved) {
                    {{{armreg::D(4), 8}, 10}}, Arch::ARM, BinaryFormat::ELF);
     EXPECT_EQ(F.Params.size(), 1u);
   }
+}
+
+TEST(FPParameterMask, SwappedArgumentsReachTheirOtherReturnRegisters) {
+  // `fmov d2, d0; fmov d0, d1; fmov d1, d2; ret` returns {b, a} for
+  // `struct { double a, b; } swap(double a, double b)`. Each scalar move
+  // widens its destination from the bytes it just wrote, as AArch64 clears
+  // the upper lanes; those bytes came from the other incoming register, and
+  // the widened register is returned. Both registers are parameters.
+  MedFunc F;
+  F.Blocks.emplace_back();
+  auto &B = F.Blocks.front();
+  B.Id = 0;
+  auto Reg = [](int Id, int Version, uint16_t Size, uint64_t Register) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.Id = Id;
+    V.SSAVer = Version;
+    V.Size = Size;
+    V.RegOff = Register;
+    V.TheArch = Arch::AArch64;
+    return V;
+  };
+  auto Add = [&](NdOp Opcode, MedVar Output,
+                 std::initializer_list<MedVar> Inputs) {
+    MedOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    B.Ops.push_back(Op);
+  };
+  const auto D0 = Reg(1, 0, 8, a64reg::V(0));
+  const auto D1 = Reg(2, 0, 8, a64reg::V(1));
+  const auto LR = Reg(3, 0, 8, a64reg::X30);
+  const auto D2 = Reg(4, 0, 8, a64reg::V(2));
+  const auto Q2 = Reg(5, 0, 16, a64reg::V(2));
+  const auto NewD0 = Reg(1, 1, 8, a64reg::V(0));
+  const auto D2Low = Reg(4, 1, 8, a64reg::V(2));
+  const auto NewD1 = Reg(2, 1, 8, a64reg::V(1));
+  Add(NdOp::COPY, D0, {D0});
+  Add(NdOp::COPY, D1, {D1});
+  Add(NdOp::COPY, LR, {LR});
+  Add(NdOp::COPY, D2, {D0});
+  Add(NdOp::INT_ZEXT, Q2, {D2});
+  Add(NdOp::COPY, NewD0, {D1});
+  Add(NdOp::INT_ZEXT, Reg(6, 0, 16, a64reg::V(0)), {NewD0});
+  Add(NdOp::SUBBYTES, D2Low, {Q2, MedVar::makeConst(0, 4)});
+  Add(NdOp::COPY, NewD1, {D2Low});
+  Add(NdOp::INT_ZEXT, Reg(7, 0, 16, a64reg::V(1)), {NewD1});
+  Add(NdOp::RETURN, {}, {LR});
+  detectFPParams(F, B, getTargetRegInfo(Arch::AArch64),
+                 {{{a64reg::V(0), 8}, D0.Id}, {{a64reg::V(1), 8}, D1.Id}},
+                 Arch::AArch64, BinaryFormat::ELF);
+  ASSERT_EQ(F.Params.size(), 2u);
+  EXPECT_EQ(F.Params[0].RegOff, a64reg::V(0));
+  EXPECT_EQ(F.Params[1].RegOff, a64reg::V(1));
 }
