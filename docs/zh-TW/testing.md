@@ -8,7 +8,7 @@ NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完�
 處理二進位 fixture，以及產生的程式碼是否維持行為。先選擇能回答本次變更問題的
 最小套件；對高風險提取請求，再執行較廣的彙總測試。
 
-`PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分，以及缺少位元組時的拒絕。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
+`PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分、窄值留在各自的堆疊槽，以及缺少位元組時的拒絕。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 檢查記錄的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
 
 ## 設定測試建置
 

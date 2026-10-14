@@ -10,6 +10,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -19,7 +20,7 @@ class Function;
 class IRBuilderBase;
 class Module;
 class Value;
-}
+} // namespace llvm
 
 namespace neverd {
 class LLVMSourceMap;
@@ -27,8 +28,13 @@ class LLVMSourceMap;
 /// physical register identities to propagation or LLVM optimization.
 void setLLVMArgumentBanks(llvm::Function &Function, unsigned Integers,
                           unsigned Floating);
+/// A call also records where its stack values were stored: each one's byte
+/// offset from the first stack argument, with the ABI's stack slot size.
+/// Without offsets its stack values are one contiguous run of bytes.
 void setLLVMArgumentBanks(llvm::CallBase &Call, unsigned Integers,
-                          unsigned Floating);
+                          unsigned Floating,
+                          llvm::ArrayRef<int64_t> StackOffsets = {},
+                          unsigned SlotBytes = 0);
 /// Bind each recovered callee parameter to its register bank or stack slot.
 /// A missing bank value fails; surplus values never shift another bank.
 struct LLVMArgumentBinding {
@@ -37,9 +43,12 @@ struct LLVMArgumentBinding {
   /// source pointer interpretation and parameter attributes cannot be reused.
   std::vector<int> SourceIndices;
 };
+/// A stack value placed by \p StackOffsets owns the bytes up to the end of
+/// its last slot, or to the next value: padding a narrower store leaves.
 std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
     const llvm::Function &Target, llvm::ArrayRef<llvm::Value *> Values,
-    unsigned Integers, unsigned Floating, llvm::IRBuilderBase &Builder);
+    unsigned Integers, unsigned Floating, llvm::IRBuilderBase &Builder,
+    llvm::ArrayRef<int64_t> StackOffsets = {}, unsigned SlotBytes = 0);
 /// Reconcile calls whose exact immutable target becomes known after emission.
 /// Drop surplus fixed arguments and adapt scalar integer/pointer carriers.
 /// Missing arguments, incompatible carriers and musttail changes fail clearly.
