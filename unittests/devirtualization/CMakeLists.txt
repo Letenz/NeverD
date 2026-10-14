@@ -155,11 +155,17 @@ target_compile_definitions(NeverDInterpreterLLVMRefinementTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
 
+add_neverd_unittest(NeverDRawEnvironmentRequirementTests
+  RawEnvironmentRequirementTests.cpp
+  LINK_COMPONENTS BinaryInterpreterSpecialization BackendC BackendLLVM
+)
+
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   InterpreterTransferChainTests.cpp
   NativeStackSpecializationTests.cpp
   NativeStackControlTests.cpp
+  TerminalImportSpecializationTests.cpp
   NativeUndefinedIndependenceTests.cpp
   MemoryCallSpecializationTests.cpp
   ControlStateRecoveryTests.cpp

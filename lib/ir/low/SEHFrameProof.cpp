@@ -189,7 +189,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
   va_t Instruction = InvalidVA;
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
     if (!consume(Remaining, S.Values.size() + S.Spills.size() +
-                                S.FrameBytes.size() +
+                                S.FrameBytes.size() + S.ImageBytes.size() +
                                 S.InvalidatedImportSlots.size() + 1))
       return false;
     const LowOp &Op = Block.Ops[I];
@@ -234,7 +234,8 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
       }
       std::optional<State> Returned;
       if (Calls && Calls->Callees && CurrentSP &&
-          (ReturnSlot || !S.Spills.empty() || !S.FrameBytes.empty()) &&
+          (ReturnSlot || !S.Spills.empty() || !S.FrameBytes.empty() ||
+           !S.ImageBytes.empty()) &&
           Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
           Op.Inputs[0].isConst() && Op.Inputs[0].Size == 8) {
         const auto It = Calls->Callees->find(Op.Inputs[0].Offset);
@@ -267,6 +268,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
             Returned->InvalidatedImportSlots.end());
         Preserved.Spills = std::move(Returned->Spills);
         Preserved.FrameBytes = std::move(Returned->FrameBytes);
+        Preserved.ImageBytes = std::move(Returned->ImageBytes);
         const auto ReturnKey = key(NdVar::reg(TRI.IntReturnReg, 8));
         if (auto It = Returned->Values.find(ReturnKey);
             It != Returned->Values.end())
@@ -311,6 +313,16 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
             if (*ImageAddress < Binding.IATAddress + 8 &&
                 Binding.IATAddress < *ImageAddress + Op.Inputs[1].Size)
               S.InvalidatedImportSlots.insert(Binding.IATAddress);
+          if (!consume(Remaining, S.ImageBytes.size() + Op.Inputs[1].Size))
+            return false;
+          std::erase_if(S.ImageBytes, [&](const auto &Byte) {
+            return *ImageAddress <= Byte.first &&
+                   Byte.first < *ImageAddress + Op.Inputs[1].Size;
+          });
+          if (StoredValue && StoredValue->Identity == Value::Kind::Constant)
+            for (unsigned Byte = 0; Byte != Op.Inputs[1].Size; ++Byte)
+              S.ImageBytes[*ImageAddress + Byte] =
+                  uint8_t(StoredValue->Bits >> (Byte * 8));
           // Unsupported arithmetic or a partial pointer carrier loses the
           // exact value, not its possible alias. Exporting unknown bits must
           // not restore privacy merely because no Frame fact remains.
@@ -436,7 +448,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
        (F.ExceptionMetadata->SEH || F.ExceptionMetadata->Cxx ||
         F.ExceptionMetadata->Registration)) ||
       !consume(Remaining, Caller.Values.size() + Caller.Spills.size() +
-                              Caller.FrameBytes.size() + 1))
+                              Caller.FrameBytes.size() +
+                              Caller.ImageBytes.size() + 1))
     return std::nullopt;
   Calls.ActiveFunctions.insert(F.Entry);
   Calls.ReturnSlots.insert(Slot);
@@ -486,7 +499,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
     const auto &B = F.Blocks[I];
     if (!consume(Remaining, Inputs[I]->Values.size() +
                                 Inputs[I]->Spills.size() +
-                                Inputs[I]->FrameBytes.size() + 1) ||
+                                Inputs[I]->FrameBytes.size() +
+                                Inputs[I]->ImageBytes.size() + 1) ||
         B.Ops.empty())
       return std::nullopt;
     State Out = *Inputs[I];
@@ -516,7 +530,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
       else {
         if (!consume(Remaining, Returned->Values.size() +
                                     Returned->Spills.size() +
-                                    Returned->FrameBytes.size()))
+                                    Returned->FrameBytes.size() +
+                                    Returned->ImageBytes.size()))
           return std::nullopt;
         Returned->intersect(Out);
       }
@@ -526,12 +541,15 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
       return std::nullopt;
     for (int Id : B.Succs) {
       const size_t Next = Positions.at(Id);
-      const size_t OldFacts = Inputs[Next] ? Inputs[Next]->Values.size() +
-                                                 Inputs[Next]->Spills.size() +
-                                                 Inputs[Next]->FrameBytes.size()
-                                           : 0;
+      const size_t OldFacts = Inputs[Next]
+                                  ? Inputs[Next]->Values.size() +
+                                        Inputs[Next]->Spills.size() +
+                                        Inputs[Next]->FrameBytes.size() +
+                                        Inputs[Next]->ImageBytes.size()
+                                  : 0;
       if (!consume(Remaining, Out.Values.size() + Out.Spills.size() +
-                                  Out.FrameBytes.size() + OldFacts + 1))
+                                  Out.FrameBytes.size() +
+                                  Out.ImageBytes.size() + OldFacts + 1))
         return std::nullopt;
       bool Changed = !Inputs[Next];
       if (Changed)
@@ -564,7 +582,7 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
 
 std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-low-seh-frame-cfg-v4");
+  Hash.update("neverd-low-seh-frame-cfg-v5");
   const auto Word = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -864,7 +882,8 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
       const size_t P = Positions.at(Id);
       if (!consume(Remaining, Outputs[P].Values.size() +
                                   Outputs[P].Spills.size() +
-                                  Outputs[P].FrameBytes.size() + 1))
+                                  Outputs[P].FrameBytes.size() +
+                                  Outputs[P].ImageBytes.size() + 1))
         return {};
       if (!Visited[P])
         continue;

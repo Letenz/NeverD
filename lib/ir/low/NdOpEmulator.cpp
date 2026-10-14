@@ -19,6 +19,7 @@
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
@@ -475,6 +476,8 @@ void NdOpEmulator::clobberVolatileRegisters() {
 }
 
 bool NdOpEmulator::step(const LowOp &Op) {
+  if (isLowRawEnvironmentRequirement(Op))
+    return false;
   if (X87ContextKnown && Op.Output.isReg() &&
       ((Op.Output.Size == 10 && Op.Output.Offset >= x86reg::ST0 &&
         Op.Output.Offset <= x86reg::ST7) ||

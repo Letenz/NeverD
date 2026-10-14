@@ -16,6 +16,7 @@
 #include "neverd/emulation/DriverSession.h"
 
 #include <algorithm>
+#include <iterator>
 #include <utility>
 
 namespace neverd::emulation {
@@ -26,6 +27,13 @@ enum class KernelRoutineAvailability { Export, Helper };
   constexpr llvm::StringLiteral Name = Value;
 #include "KernelNames.def"
 #undef NEVERD_KERNEL_NAME
+
+// Recognition establishes an import identity, not an implementation of the
+// provider's routines. Preserve the existing module indices when extending it.
+constexpr llvm::StringLiteral ImportModules[] = {
+    KernelProvider,        HALProvider,           FrameworkLoaderProvider,
+    FilterManagerProvider, NetworkDriverProvider, NetworkIOProvider};
+static_assert(std::size(ImportModules) == profile::KernelModuleCount);
 
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
@@ -49,13 +57,11 @@ llvm::StringRef defaultProvider(llvm::StringRef Name) {
 
 std::optional<llvm::StringRef>
 KernelExportRegistry::canonicalImportModule(llvm::StringRef Module) {
-  if (Module.equals_insensitive(KernelProvider) ||
-      Module.equals_insensitive(KernelAliasProvider))
+  if (Module.equals_insensitive(KernelAliasProvider))
     return KernelProvider;
-  if (Module.equals_insensitive(FrameworkLoaderProvider))
-    return FrameworkLoaderProvider;
-  if (Module.equals_insensitive(HALProvider))
-    return HALProvider;
+  for (const auto Provider : ImportModules)
+    if (Module.equals_insensitive(Provider))
+      return Provider;
   return std::nullopt;
 }
 
@@ -64,10 +70,10 @@ KernelExportRegistry::moduleBase(llvm::StringRef Module) {
   const auto Canonical = canonicalImportModule(Module);
   if (!Canonical)
     return std::nullopt;
-  unsigned Index = *Canonical == KernelProvider ? 0
-                   : *Canonical == HALProvider  ? 1
-                                                : 2;
-  return profile::KernelModuleBase + Index * profile::KernelModuleStride;
+  for (unsigned Index = 0; Index < std::size(ImportModules); ++Index)
+    if (*Canonical == ImportModules[Index])
+      return profile::KernelModuleBase + Index * profile::KernelModuleStride;
+  return std::nullopt;
 }
 
 bool KernelExportRegistry::overlapsThunk(uint64_t Address, uint64_t Size) {

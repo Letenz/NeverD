@@ -34,12 +34,14 @@
 #ifndef NEVERD_SYMBOLIC_SYMSTATE_H
 #define NEVERD_SYMBOLIC_SYMSTATE_H
 
+#include "neverd/ir/NdOps.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -78,12 +80,19 @@ enum class SymStorePreservationStatus : uint8_t {
   BudgetExceeded,
 };
 
-/// Caller-supplied nonalias contract for one STORE: its complete byte extent
-/// is disjoint from [Base + Begin, Base + End), with nonwrapping physical
-/// bounds. This is an assumption, not a pointer-separation proof. Only already
-/// materialised bytes of this exact symbolic base can survive invalidation.
-/// Work counts inspecting, saving and restoring bytes; budget failure applies
-/// no store or preservation. Never reuse this descriptor as a global policy.
+struct SymStorePreservationRange {
+  int64_t Begin = 0;
+  int64_t End = 0;
+};
+
+/// Caller-established separation for one STORE: none of its accessed bytes
+/// can equal a byte in the union of the primary and additional root-relative
+/// ranges. Addresses use modulo-2^64 arithmetic. This interface does not prove
+/// separation or grant accessibility; callers supply a proof or an explicit
+/// domain contract. Only already materialised bytes of this exact symbolic
+/// base survive. Work counts validation, membership checks, saving and
+/// restoring; budget failure applies no store or preservation. Never reuse
+/// this descriptor as a global policy.
 struct SymStorePreservation {
   SymRef Base;
   int64_t Begin = 0;
@@ -91,6 +100,9 @@ struct SymStorePreservation {
   uint64_t MaxWork = 0;
   uint64_t WorkUsed = 0;
   SymStorePreservationStatus Status = SymStorePreservationStatus::Invalid;
+  /// Borrowed for this single store. Empty retains the original single-range
+  /// accounting; every additional range must independently have Begin < End.
+  llvm::ArrayRef<SymStorePreservationRange> AdditionalRanges;
 };
 
 /// The state is a regular value: copying one is what forking a path is, so it
@@ -122,6 +134,18 @@ public:
   //===--------------------------------------------------------------------===//
   // Memory
   //===--------------------------------------------------------------------===//
+
+  /// Bind an x64 FS/GS linear-address base. Base must belong to this context;
+  /// SymRef indices cannot authenticate ownership across contexts. Invalid,
+  /// out-of-range and non-64-bit references, Default and unknown spaces are
+  /// rejected without mutation. No base is supplied implicitly, including zero.
+  /// These are machine-state inputs, not separate memory regions or evidence
+  /// of accessibility, nonaliasing, canonical addresses or exception behavior.
+  bool setX64MemoryAddressSpaceBase(NdMemoryAddressSpace Space, SymRef Base);
+  SymRef x64MemoryAddressSpaceBase(NdMemoryAddressSpace Space) const;
+  /// Calls and unmodelled operations may change segment state. A caller must
+  /// authenticate new bases before continuing exact segmented accesses.
+  void clearX64MemoryAddressSpaceBases();
 
   /// Read \p Bytes at \p Addr.  An address that is a base plus a constant is
   /// read out of that base's region; anything else is its own region, read as
@@ -316,6 +340,7 @@ private:
 
   SymContext *Ctx;
   llvm::endianness Order;
+  std::array<SymRef, 2> X64MemoryAddressSpaceBases;
 
   Bank Registers{{}, nullptr, "reg", SymInputKind::Register, 0, {}};
   Bank Temporaries{{}, nullptr, "tmp", SymInputKind::Temporary, 0, {}};

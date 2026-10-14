@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | 執行期觀察 |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | 執行期觀察 |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v103`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLibraryA`、`FreeLibrary`，沿用一般相依、TLS 與 `DllMain` 生命週期。DLL 預設入口是其程序附加呼叫；不替任意匯出猜測參數。重建保留匯出名稱、序號、別名、資料及轉送器；指向自身匯出的指標保持為內部指標，不產生自身匯入。輔助常式傳回的位址也遵循此規則：內部結果會撤銷該位置先前的匯入修復證據。
 
@@ -149,3 +149,5 @@ checked x64 執行在 DriverEntry 返回時重新驗證本次載入器呼叫：R
 驅動執行斷點交接僅在前一次安裝的 RAM 寫入監視未被觸及时重用既有程式碼快照。已提交寫入即使寫回相同值，也會使此保證失效。核心服務、排程邊界與新呼叫要求重新整理；新增監視範圍仍須先建立初始快照。
 
 存活核心集區在位址與精確範圍和集區所有者一致時，保留具型別的配置相依性，不再重複歸類為未知 arena 物件。集區與其他物件共存或被釋放時，其他物件仍是相依項目。此分類不建立指標來源，也不啟用原生執行階段還原。
+
+驅動設定固定關閉 CET 影子堆疊。標準編碼的 `RDSSPD` 和 `RDSSPQ` 保留全部暫存器位元、旗標和記憶體，包括 32 位元目的暫存器的高半部分。兩種讀取都計為一條指令，並為 UNPACK 保留環境相依性。CPUID 宣告不會啟用 CET；其他影子堆疊指令及啟用 CET 的操作仍不受支援。

@@ -1771,6 +1771,17 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 네이티브 검증 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780)의 관측 204회가 모두 통과했습니다. Windows x64/ARM64는 각각 36회, Linux x64/ARM64는 각각 66회입니다. 공개 소스 API로 C++ IR, 일반 객체, C++ hosted DynCode를 생성하고 두 NeverC 프레임을 통과하는 예외도 확인했습니다. 재생 시 현재 소스와 하위 모듈 다이제스트, 원본과 최종 바이트, 설치 영수증 및 실제 네이티브 호스트를 확인합니다. macOS ARM64와 Rosetta x64에서도 세 C++ 경로와 두 프레임 전파가 통과했습니다. Clang FH3 검증 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780)도 Windows x64/ARM64의 예외 시나리오 9개와 대조군, 각각 36회를 통과했습니다.
 
+`InterpreterSpecialization.HighAddress*` 및 `BinaryLowIRRefinement.HighAddress*`는 상위 주소, 겹치는 명령 범위, CALL 반환 바이트, 스택 복원, 레이블과 같은 값의 데이터, 잘못되거나 누락된 코드, 정확하거나 부족한 예산을 검사합니다. 독립 바이트 실행기와 반환 워드를 바꾼 음성 대조로 실행 값과 CFG 레이블을 구별합니다.
+
+
+`NeverDRawEnvironmentRequirementTests`는 LowIR 복사, 정상 및 잘못된 형식, 엄격/비엄격 에뮬레이션, 기호 step/run, Low-to-Med 변환, 직접 C/LLVM 출력, 머신 상태 래퍼 및 재특수화를 검사합니다. 일반 성공 대조와 도달 불가능한 마커의 거부 사례로 정적 독립성, 정제 관계 양쪽, 원본 바이너리에서 후보로의 정제를 검증하며 거부 시 인증서를 발행하지 않아야 합니다.
+
+`PEFixedImageTest.RawCode*`는 두 주소 영역의 외부 반환 함수, 실제 반환 주소, 전체 레지스터와 바이트 메모리, 미지의 가변 데이터, 전체 슬롯 읽기, 누락 코드, 이미지 배제, 잘못되거나 미사용인 선언, 정밀화, 명시적 별칭 계약 및 증거 변조를 검사합니다. 정확한 한도와 한 단위 부족 테스트에는 다수 매핑, 여러 바인딩과 종단 출구가 포함됩니다. `PipelineRefusesUnusedRawEnvironmentDomains`는 복원 전 소스 거부를 검사합니다.
+
+`RawCodeNativeReturn*`은 두 물리적 반환 주소, 별칭이 가능한 틈, 버려지는 미증명 셀, 좁은 주소 거부, 전체 레지스터·메모리 효과 및 정확한 증명 예산을 검사합니다. `SymStorePreservation.Additional*`과 `SymStorePreservation.AbsentAdditional*`은 두 바이트 순서의 범위 합집합, 쓰기 후 메모리 세대, 없는 바이트, 잘못된 범위 및 예산 부족 시 상태 불변을 검사합니다.
+
+`FrameOffsets.*Normalization*`은 정확한 항등식, 추가 입력, 루트 식별, 증인을 캐시하지 않는 도달 불가능 조건, 기본 동작, 구조 및 측정 비용, 호출 후 노드 한도 거부를 검사합니다. `FrameNormalizationPreservesStoresAndNativeReturns`와 `RawCodeFrameNormalization*`은 독립 바이트 판정기로 원래 메모리 효과와 실제 반환 주소, 해당되는 양쪽 바이트 순서, 정확하거나 부족한 연산 예산 및 영수증 변조를 확인합니다. `FrameNormalizationStrategyBindsIndependentProof`는 두 바이너리 증명 식별을 검사합니다.
+
 ## 네이티브 Lift 검증
 
 `Lift native qualification` 워크플로는 이전에 검증하지 못한 108개 사례(실패 62개, 건너뜀 46개)를 담당합니다. 네이티브 Linux x86-64 실행기에 Clang 23 이상, GNU GCC, i386 개발 라이브러리를 설치하고 고정된 바이너리 코퍼스를 초기화합니다. `unittests/Inputs/lift-qualification.json`은 원래 테스트 식별자를 모두 유지합니다. `scripts/run_lift_qualification.py`는 누락, 중복, 비활성화, 건너뜀, 실패와 0이 아닌 프로세스 종료를 거부합니다. `qualification.json`은 개별 통과 결과, 소스 및 코퍼스 리비전, 컴파일러 버전과 바이너리 해시를 기록합니다.

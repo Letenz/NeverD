@@ -135,6 +135,8 @@ Ladekonfigurationsfelder, TLS, verzögerte/gebundene Importe, Ordinalimporte und
 verwaltete Images werden abgewiesen. Images müssen außerdem strikte Bereichs-
 und Ausrichtungsprüfungen bestehen.
 
+Die zusätzlichen Anbieter `FLTMGR.SYS`, `NDIS.SYS` und `NETIO.SYS` erhalten modulgebundene Identitäten für verzögert geprüfte Importe. Ihre Routinen sind nicht modelliert: Ungenutzte Importe können geladen werden, ein Aufruf stoppt jedoch mit der kanonischen Diagnose `module!symbol`. Die Suche über `MmGetSystemRoutineAddress` bleibt auf Kernel und HAL beschränkt.
+
 Aktives Control Flow Guard (CFG) validiert PE-Flags, Zeigerplätze und sortierte ausführbare Ziele. Check-/Dispatch-Helfer erlauben nur deklarierte Image-Einstiege oder registrierte API-Thunks, erhalten den Win64-Aufrufzustand und weisen andere Ziele ab. Instrumentierung ohne aktives CFG erhält die ursprünglichen Gast-Fallback-Zeiger. Aktives XFG, Exportunterdrückung und weitere unmodellierte Richtlinien bleiben abgewiesen; ausführbarer Speicher allein macht eine Adresse nicht zum gültigen Ziel.
 
 WDM-Stapel können mehrere Geräteobjekte desselben Gasttreibers enthalten. `IoAttachDeviceToDeviceStack` hängt eine isolierte Quelle über das aktuelle oberste Zielgerät und gibt dieses bisherige oberste Gerät zurück. Dabei werden `StackSize` und `AlignmentRequirement` gesetzt; `NextDevice` und Pufferflags werden nicht übernommen. `IoDetachDevice` erhält das gespeicherte untere Gerät und erfordert `PASSIVE_LEVEL`; Anbinden ist bis `DISPATCH_LEVEL` zulässig. Öffnen eines benannten unteren Geräts dispatcht zum aktuellen obersten Gerät, während `FILE_OBJECT.DeviceObject` und Bericht die benannte Identität behalten. READ/WRITE verwendet dessen obere Pufferflags. Die gespeicherte Anforderungsroute hält alle Geräte bis zur Dispatch-Rückkehr auch nach Trennen/Löschen am Leben; interne Referenzen erhöhen nicht den Zähler offener Handles `ReferenceCount`.
@@ -679,7 +681,7 @@ einschließlich Geräteobjekten und Callback-Adressen des Treibers. Gastadressen
 sind Hexadezimalzeichenfolgen, damit JSON-Verbraucher keine 64-Bit-Präzision
 verlieren. Das Objekt `configuration` protokolliert Limits, Dienstnamen und
 `kernel_exports`-Überschreibungen sowie die `registry`-Eingabe des Laufs. Das
-Profil lautet `wdm-x64-scheduled-v101`. `nt_status` bleibt das
+Profil lautet `wdm-x64-scheduled-v103`. `nt_status` bleibt das
 DriverEntry-Ergebnis, während `scenario_success` Initialisierung und
 abgeschlossene Anforderungen gemeinsam beschreibt. `phase`, `requests` und
 `unload_completed` kennzeichnen die ausgeführten Teile des angeforderten
@@ -860,3 +862,5 @@ Das optionale `cpuid` deklariert höchstens 64 CPU-Abfrageergebnisse. Jeder Eint
 Uhrabfragen über `KeQueryPerformanceCounter`, `RDTSC` oder `RDTSCP` behalten eine explizite Abhängigkeit der Treiberwiederherstellung. Für erfasste Zähler- und Frequenzwerte besteht kein Vertrag zur Neubindung an eine frische Kernelumgebung. Die Standardwiederherstellung meldet `unsupported_state`; `snapshot_only` behält die Diagnose bei.
 
 `KernelModuleImages` erzeugt lesbare PE-Header und Exporttabellen aus `KernelExportRegistry`; statische Importe, dynamische Suche und Modulauflistung teilen dieselben Adressen. Anbietercode bleibt undurchsichtig; das Inventar beschreibt die Modellumgebung und nicht den Hostkernel. Beide Ausgaben werden vor Schreibzugriffen einschließlich Pool-Lebensdauer und Überlappungen geprüft. Nt benötigt einen bekannten Kernel-previous-mode; Zw nutzt den Kernelvertrag. Eine vollständige Abfrage behält auch nach Freigabe des Puffers eine ausdrückliche Wiederherstellungsabhängigkeit; Zeiger auf Anbieterabbilder gelten ebenfalls als geliehener Zustand. `KernelExportTests.cpp` prüft PE, Berechtigungen, ABI-Felder, verweigerte Schreibzugriffe und Abhängigkeiten; die eigene kompilierte Laufzeitfixture durchläuft die Exporttabellen auf den CPU-Backends.
+
+Das feste Treiberprofil deaktiviert CET-Schattenstapel. Kanonische `RDSSPD`- und `RDSSPQ`-Kodierungen erhalten alle Registerbits, Flags und Speicherinhalte, einschließlich der oberen Hälfte eines 32-Bit-Ziels. Jeder Lesevorgang zählt als eine Instruktion und behält eine Umgebungsabhängigkeit für UNPACK bei. CPUID-Deklarationen aktivieren CET nicht; andere Schattenstapelinstruktionen und Versuche zur Aktivierung bleiben nicht unterstützt.

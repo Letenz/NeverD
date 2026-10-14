@@ -1781,6 +1781,17 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 ネイティブ検証 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) は全 204 回の観測に成功しました。Windows x64/ARM64 は各 36 回、Linux x64/ARM64 は各 66 回です。公開ソース API で C++ IR、通常オブジェクト、C++ hosted DynCode を生成し、二つの NeverC フレームを通る例外も確認しました。再生時に現在のソースとサブモジュールのダイジェスト、元と最終のバイト、発行レシート、実際のネイティブホストを確認します。macOS ARM64 と Rosetta x64 でも三つの C++ 経路と二フレームの伝播が成功しました。Clang FH3 の検証 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) は Windows x64/ARM64 の九つの例外シナリオと対照、各 36 回にも成功しました。
 
+`InterpreterSpecialization.HighAddress*` と `BinaryLowIRRefinement.HighAddress*` は高位アドレス、重複命令範囲、CALL の戻りバイト、スタック復元、ラベルと同じ値のデータ、不正・欠落コード、正確・不足予算を検証します。独立したバイト実行器と戻り値を改変する負例により、実行時の値と CFG ラベルを区別します。
+
+
+`NeverDRawEnvironmentRequirementTests` は LowIR のコピー、正しい形状と不正形状、厳密／非厳密エミュレーション、シンボリックな step/run、Low-to-Med 変換、直接の C/LLVM 出力、マシン状態ラッパー、再特殊化を検査します。通常入力の成功対照と到達不能マーカーの拒否例で、静的独立性、精緻化の両側、元バイナリから候補への精緻化を確認し、拒否時に証明書を公開しないことを検証します。
+
+`PEFixedImageTest.RawCode*` は両アドレス領域の外部関数、戻り先、全レジスタとバイトメモリ、未知の可変データ、完全なスロット読み取り、欠落コード、イメージ除外、不正・未使用宣言、精度改善、明示的エイリアス契約、記録変更を検証します。予算の境界テストには多数のマッピング、複数のバインドと終端出口を含みます。`PipelineRefusesUnusedRawEnvironmentDomains` は復元前のソース拒否を確認します。
+
+`RawCodeNativeReturn*` は 2 つの物理的な戻り先、別名になり得る隙間、破棄される未証明セル、狭いアドレスの拒否、全レジスタ・メモリ効果、正確な証明予算を検査します。`SymStorePreservation.Additional*` と `SymStorePreservation.AbsentAdditional*` は両バイト順序の範囲和集合、書き込み後のメモリ世代、欠落バイト、不正範囲、予算不足時の状態不変性を検査します。
+
+`FrameOffsets.*Normalization*` は正確な恒等式、追加入力、ルートの同一性、証人をキャッシュしない到達不能述語、既定動作、構造准入と測定の課金、呼び出し後のノード超過拒否を検査します。`FrameNormalizationPreservesStoresAndNativeReturns` と `RawCodeFrameNormalization*` は独立したバイト評価器で元のメモリ効果と実際の戻り先を検査し、適用可能な両バイト順序、過不足のない予算と不足予算、レシート改変を扱います。`FrameNormalizationStrategyBindsIndependentProof` は両方のバイナリ証明の識別を検査します。
+
 ## ネイティブ Lift 検証
 
 `Lift native qualification` ワークフローは、以前検証できなかった 108 件（失敗 62 件、スキップ 46 件）を担当します。ネイティブ Linux x86-64 ランナーに Clang 23 以降、GNU GCC、i386 開発ライブラリを導入し、固定リビジョンのバイナリコーパスを初期化します。`unittests/Inputs/lift-qualification.json` は元の全テスト識別子を保持します。`scripts/run_lift_qualification.py` は欠落、重複、無効化、スキップ、失敗、非ゼロ終了を拒否します。`qualification.json` は個別の成功、ソースとコーパスのリビジョン、コンパイラのバージョン、バイナリハッシュを記録します。

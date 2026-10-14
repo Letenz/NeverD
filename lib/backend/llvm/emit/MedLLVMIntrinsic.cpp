@@ -23,6 +23,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
+#include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -93,8 +94,11 @@ MedLLVMEmitter::atomicIntrinsicAddressInput(const MedOp &Op) const {
 
 llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
                                            llvm::IRBuilder<> &Builder) {
-  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
-    llvm::report_fatal_error("intrinsic has no constant intrinsic ID");
+  if (isMedRawEnvironmentRequirement(Op))
+    llvm::report_fatal_error(
+        "raw environment requirement has no LLVM runtime contract");
+  if (!hasValidMedIntrinsicId(Op))
+    llvm::report_fatal_error("intrinsic has an invalid intrinsic ID shape");
   const auto IntrCode = static_cast<uint16_t>(Op.Inputs[0].ConstVal);
 
   using I = Intrinsic;

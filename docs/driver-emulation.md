@@ -192,6 +192,8 @@ with a deterministic guest cookie. Other unmodeled load-configuration
 fields, TLS, delayed/bound imports, ordinal imports, and managed images are
 rejected. Images must also pass strict range and alignment checks.
 
+The additional `FLTMGR.SYS`, `NDIS.SYS` and `NETIO.SYS` providers have module-qualified lazy import identities. Their routines are not modeled: unused imports may load, but an executed import stops with its canonical `module!symbol` diagnostic. They do not participate in `MmGetSystemRoutineAddress` lookup, which remains limited to the kernel and HAL.
+
 Active Control Flow Guard (CFG) validates PE flags, pointer slots and sorted executable target entries. Check and dispatch helpers admit only declared image entries or registered API thunks, preserve the Win64 call state and reject undeclared targets. Instrumentation without active CFG preserves the original guest fallback pointers. Active XFG, export suppression and other unmodeled guard policies remain rejected; executable memory alone does not make an address a valid target.
 
 WDM stacks can contain several device objects owned by the same guest driver. `IoAttachDeviceToDeviceStack` attaches an isolated source above the target's current top and returns that previous top; it sets `StackSize` and `AlignmentRequirement` without changing the driver's `NextDevice` list or copying buffer flags. `IoDetachDevice` takes the saved lower device and requires `PASSIVE_LEVEL`; attachment permits IRQL up to `DISPATCH_LEVEL`. Opening a named lower device dispatches to the current top, while `FILE_OBJECT.DeviceObject` and the report retain the named device identity. READ/WRITE buffering uses the selected top's flags. Captured request routes retain every device through dispatch return, including after detach/delete; internal holds do not increase the open-handle `ReferenceCount`.
@@ -1000,7 +1002,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v101`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v103`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records
@@ -1209,3 +1211,5 @@ Optional `cpuid` declares up to 64 CPU query results. Each record requires unsig
 Clock reads through `KeQueryPerformanceCounter`, `RDTSC`, or `RDTSCP` retain an explicit driver recovery dependency. Captured counter and frequency values have no rebinding contract for a fresh kernel environment. Default recovery reports `unsupported_state`; `snapshot_only` retains the diagnostic.
 
 `KernelModuleImages` derives readable PE headers and export tables from `KernelExportRegistry`; static imports, dynamic lookup and module enumeration share the same addresses. Provider code remains opaque, and the inventory describes the modeled environment, not the host kernel. Both outputs are checked before writes, including pool lifetimes and overlap. Nt queries require a known kernel previous-mode; Zw queries use the kernel contract. A complete module query retains an explicit recovery dependency, even after its buffer is freed; provider-image pointers are also tracked as borrowed state. `KernelExportTests.cpp` checks PE parsing, permissions, ABI fields, refused writes and recovery dependencies; the original compiled runtime fixture walks these export tables on the CPU backends.
+
+The fixed driver profile disables CET shadow stacks. Canonical `RDSSPD` and `RDSSPQ` preserve every register bit, flags and memory, including the upper half of a 32-bit destination. Both reads consume one instruction and retain an environment dependency for UNPACK. CPUID declarations do not enable CET; other shadow-stack instructions and attempts to enable it remain unsupported.

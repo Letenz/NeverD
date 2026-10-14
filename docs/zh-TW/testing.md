@@ -1727,6 +1727,17 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 原生驗證 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次進程觀測全部通過：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公開原始碼介面產生 C++ IR、普通物件與 C++ hosted DynCode，並驗證例外穿過兩層 NeverC 框架。重放核對目前引擎原始碼和子模組摘要、原件與最終位元組、安裝回執及實際原生主機。macOS ARM64 與 Rosetta x64 在本機通過相同三條 C++ 路徑及兩層例外傳播。Clang FH3 原生驗證 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通過九種例外情境和對照，共各 36 次觀測。
 
+`InterpreterSpecialization.HighAddress*` 與 `BinaryLowIRRefinement.HighAddress*` 涵蓋高位址入口與轉移、重疊指令範圍、原始返回位元組、堆疊還原、與標籤數值相同的資料、無效或缺失程式碼及精確／不足預算。獨立位元組執行器與修改返回值的反例區分執行時數值和 CFG 標籤。
+
+
+`NeverDRawEnvironmentRequirementTests` 檢查 LowIR 複製、完整及格式錯誤的標記、嚴格與非嚴格模擬、符號單步及序列執行、Low-to-Med 轉換、直接 C/LLVM 產生、機器狀態包裝及再次特化。一般成功對照和不可達標記負例涵蓋靜態獨立性、精化關係兩側及原始二進位至候選的精化；拒絕時不得發布憑證。
+
+`PEFixedImageTest.RawCode*` 涵蓋高低位址的外部返回函式、原始返回位址、完整暫存器與位元組記憶體、未知可寫全域資料、完整槽讀取、缺失程式碼、完整映像排除、異常及未使用宣告、精度細化、明確別名契約與回執變更。恰好及少一單位的準備、結果與操作預算測試包含多映射、多繫結和混合終止退出。`PipelineRefusesUnusedRawEnvironmentDomains` 驗證在恢復前拒絕原始碼輸出。
+
+`RawCodeNativeReturn*` 檢查兩個實際儲存的返回位址、可別名的間隙、被捨棄的未證明單元、窄位址拒絕、完整暫存器與記憶體效果，以及精確證明預算。`SymStorePreservation.Additional*` 與 `SymStorePreservation.AbsentAdditional*` 檢查兩種位元組順序下的範圍聯集、寫入後的記憶體版本、缺失位元組、無效範圍，以及預算不足時不修改狀態。
+
+`FrameOffsets.*Normalization*` 涵蓋精確恆等式、額外輸入、根身分、無快取見證的不可達述詞、預設行為、結構准入與測量計費，以及呼叫後的節點超限拒絕。`FrameNormalizationPreservesStoresAndNativeReturns` 與 `RawCodeFrameNormalization*` 使用獨立位元組檢查器驗證原始記憶體效果與實際返回位址，並涵蓋適用的兩種位元組順序、精確及不足的操作預算與回執竄改。`FrameNormalizationStrategyBindsIndependentProof` 檢查兩種二進位證明身分。
+
 ## 原生 Lift 驗收
 
 `Lift native qualification` 工作流程負責先前未完成驗證的 108 項（62 項失敗與 46 項略過）。它在原生 Linux x86-64 執行器上安裝 Clang 23 或更新版本、GNU GCC 與 i386 開發函式庫，並初始化固定版本的二進位語料。`unittests/Inputs/lift-qualification.json` 保留所有原始測試識別碼。`scripts/run_lift_qualification.py` 拒絕遺漏、重複、停用、略過、失敗與非零程序結束狀態；`qualification.json` 記錄逐項通過結果、原始碼與語料版本、編譯器版本和二進位雜湊。

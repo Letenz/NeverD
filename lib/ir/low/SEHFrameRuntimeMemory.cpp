@@ -8,6 +8,7 @@
 
 #include "SEHFrameRuntimeMemory.h"
 
+#include "Windows/SEHImageFormat.h"
 #include "X86/SEHFrameCRTControl.h"
 #include "X86/SEHFrameFormat.h"
 
@@ -73,7 +74,8 @@ std::optional<State> transferRuntimeMemory(const LowOp &Op, const State &Caller,
         VAList->second.Identity != Value::Kind::Frame)
       return std::nullopt;
     if (Format->Identity == Value::Kind::Constant) {
-      if (!Memory.scalarFormats().count(Format->Bits))
+      if (!Memory.scalarFormats().count(Format->Bits) &&
+          !checkedImageFormat(Caller, Format->Bits, Remaining))
         return std::nullopt;
     } else if (Format->Identity != Value::Kind::Frame ||
                !checkedX64FrameFormat(Caller, int64_t(Format->Bits), HomeEnd,
@@ -90,6 +92,7 @@ std::optional<State> transferRuntimeMemory(const LowOp &Op, const State &Caller,
   State Result;
   Result.Spills = Caller.Spills;
   Result.FrameBytes = Caller.FrameBytes;
+  Result.ImageBytes = Caller.ImageBytes;
   Result.InvalidatedImportSlots = Caller.InvalidatedImportSlots;
   // CALL writes its own PC below SP, and the runtime may allocate private
   // storage farther below it. No saved-byte identity there survives a call.

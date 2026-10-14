@@ -21,6 +21,13 @@
 
 namespace neverd {
 
+/// Structural admission before inspecting an intrinsic ID, including during
+/// module preflight for bodies which will not be emitted.
+inline bool hasValidMedIntrinsicId(const MedOp &Op) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+         Op.NumInputs <= Op.Inputs.size() && Op.Inputs.front().isConst();
+}
+
 inline bool x87ContextMedShapeIsValid(const MedOp &Op, Arch A) {
   if (Op.NumInputs > Op.Inputs.size() || Op.NumInputs > 6 ||
       !Op.IntrinsicOutputs.empty())

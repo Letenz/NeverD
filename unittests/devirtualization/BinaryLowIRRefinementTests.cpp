@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
+#include "neverd/analysis/InterpreterMachineState.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -3104,6 +3105,254 @@ TEST(BinaryLowIRRefinement, StaticAPIsCannotAuthorizeOpaqueArchitecturalState) {
   EXPECT_EQ(Relation.Status, Status::Unsupported);
   EXPECT_FALSE(Relation.Certificate);
   EXPECT_NE(Relation.Diagnostic.find("native preservation"), std::string::npos);
+}
+
+TEST(BinaryLowIRRefinement,
+     SegmentedBinaryReadsKeepTheirEnvironmentDependency) {
+  for (uint8_t Prefix : {0x64, 0x65}) {
+    Program P({Prefix, 0x48, 0x8b, 0x04, 0x25, 0x10, 0, 0, 0, 0xc3});
+    EXPECT_EQ(P.recover().Status, SpecializationStatus::Unsupported);
+    P.Options.X64SegmentedReads = true;
+    const auto R = P.recover();
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_TRUE(R.Reads.empty());
+    unsigned Segmented = 0;
+    for (const auto &Block : R.Residual.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+          EXPECT_EQ(Op.Opcode, NdOp::LOAD);
+          EXPECT_EQ(Op.MemoryAddressSpace, Prefix == 0x64
+                                               ? NdMemoryAddressSpace::X86FS
+                                               : NdMemoryAddressSpace::X86GS);
+          ++Segmented;
+        }
+    EXPECT_EQ(Segmented, 1u);
+    const auto Proof = P.check(R.Residual);
+    refused(Proof, Status::Unsupported);
+    EXPECT_NE(Proof.Proof.Diagnostic.find("FS/GS base inputs"),
+              std::string::npos);
+    P.Options.NormalNonfaultingExecution = false;
+    EXPECT_EQ(P.recover().Status, SpecializationStatus::InvalidInput);
+    P.Options.NormalNonfaultingExecution = true;
+    P.Options.ExplicitMachineState = false;
+    EXPECT_EQ(P.recover().Status, SpecializationStatus::InvalidInput);
+  }
+}
+
+TEST(BinaryLowIRRefinement, SegmentedContractCannotCertifyEvenAnUnusedBase) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  ASSERT_TRUE(P.check(R.Residual).proved());
+  P.Options.X64SegmentedReads = true;
+  EXPECT_TRUE(P.recover().complete());
+  refused(P.check(R.Residual), Status::Unsupported);
+  const auto Independence =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Independence.Certificate);
+}
+
+TEST(BinaryLowIRRefinement, TaskPriorityBinaryTransitionsRetainKernelEffects) {
+  // mov rax,cr8; mov ecx,3; mov cr8,rcx; mov rax,cr8; ret.
+  Program P({0x44, 0x0f, 0x20, 0xc0, 0xb9, 3, 0, 0, 0, 0x44, 0x0f, 0x22, 0xc1,
+             0x44, 0x0f, 0x20, 0xc0, 0xc3});
+  EXPECT_EQ(P.recover().Status, SpecializationStatus::Unsupported);
+  P.Options.X64CR8State = true;
+  EXPECT_EQ(P.recover().Status, SpecializationStatus::InvalidInput);
+  P.Options.X64FlagsProfile =
+      InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Intrinsics = 0;
+  for (const auto &B : R.Residual.Blocks)
+    for (const auto &Op : B.Ops)
+      Intrinsics += Op.Opcode == NdOp::INTRINSIC;
+  EXPECT_EQ(Intrinsics, 3u);
+  refused(P.check(R.Residual), Status::Unsupported);
+  P.Image.Segments.front().Data[5] = 16;
+  const auto Invalid = P.recover();
+  EXPECT_EQ(Invalid.Status, SpecializationStatus::Unsupported);
+  EXPECT_NE(Invalid.Diagnostic.find("reserved bits"), std::string::npos);
+  EXPECT_TRUE(Invalid.Residual.Blocks.empty());
+}
+
+TEST(BinaryLowIRRefinement, TaskPriorityContractCannotCertifyUnusedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64CR8State = true;
+  P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile =
+      InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  const auto Proof = P.check(R.Residual);
+  refused(Proof, Status::Unsupported);
+  EXPECT_NE(Proof.Proof.Diagnostic.find("task-priority state"),
+            std::string::npos);
+  const auto Independence =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Independence.Certificate);
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options, R.Residual,
+                                         P.Contract, {}),
+          Status::Unsupported);
+}
+
+TEST(BinaryLowIRRefinement, StoreSeparationUsesExplicitEntryAlignment) {
+  // MOV RAX,[RCX]; AND RAX,-16; MOV qword ptr [RAX],7; RET.
+  Program P({0x48, 0x8b, 0x01, 0x48, 0x83, 0xe0, 0xf0,
+             0x48, 0xc7, 0x00, 7, 0, 0, 0, 0xc3});
+  EXPECT_EQ(P.recover().Status, SpecializationStatus::Unsupported);
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
+  P.Options.ProveStoreReturnSlotSeparation = true;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Stores = 0;
+  for (const auto &B : R.Residual.Blocks)
+    for (const auto &Op : B.Ops)
+      Stores += Op.Opcode == NdOp::STORE;
+  EXPECT_EQ(Stores, 1u);
+  // The same write can hit the slot with a different entry residue.
+  P.Options.EntryFrameAlignment->Residue = 0;
+  const auto Bad = P.recover();
+  EXPECT_EQ(Bad.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Bad.Residual.Blocks.empty());
+}
+
+TEST(BinaryLowIRRefinement, StoreSeparationPolicyBindsIndependentProof) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto Default = P.check(R.Residual);
+  ASSERT_TRUE(Default.proved()) << Default.Proof.Diagnostic;
+  P.Options.ProveStoreReturnSlotSeparation = true;
+  const auto Enabled = P.check(R.Residual);
+  ASSERT_TRUE(Enabled.proved()) << Enabled.Proof.Diagnostic;
+  EXPECT_NE(Default.Certificate->InputDigest,
+            Enabled.Certificate->InputDigest);
+}
+
+TEST(BinaryLowIRRefinement, FrameNormalizationStrategyBindsIndependentProof) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  const auto Default = P.check(R.Residual);
+  const auto Independent =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  ASSERT_TRUE(Default.proved()) << Default.Proof.Diagnostic;
+  ASSERT_TRUE(Independent.proved()) << Independent.Proof.Diagnostic;
+  P.Options.MaxFrameOffsetNormalizationWorkPerProof = 4096;
+  const auto Enabled = P.check(R.Residual);
+  const auto EnabledIndependent =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  ASSERT_TRUE(Enabled.proved()) << Enabled.Proof.Diagnostic;
+  ASSERT_TRUE(EnabledIndependent.proved())
+      << EnabledIndependent.Proof.Diagnostic;
+  EXPECT_NE(Default.Certificate->InputDigest, Enabled.Certificate->InputDigest);
+  EXPECT_NE(Independent.Certificate->InputDigest,
+            EnabledIndependent.Certificate->InputDigest);
+  EXPECT_EQ(Default.Proof.Certificate->InputDigest,
+            Enabled.Proof.Certificate->InputDigest);
+}
+
+TEST(BinaryLowIRRefinement, WideVectorSpillRemainsWholeInRawResidual) {
+  for (bool Unaligned : {false, true}) {
+    Program P({0x48, 0x83, 0xec, 0x28,       // sub rsp,40
+               0x0f, 0x29, 0x74, 0x24, 0x10, // movaps [rsp+16],xmm6
+               0x66, 0x0f, 0xef, 0xf6,       // pxor xmm6,xmm6
+               0x0f, 0x28, 0x74, 0x24, 0x10, // movaps xmm6,[rsp+16]
+               0x48, 0x8b, 0x44, 0x24, 0x10, // mov rax,[rsp+16]
+               0x48, 0x8b, 0x54, 0x24, 0x18, // mov rdx,[rsp+24]
+               0x48, 0x83, 0xc4, 0x28, 0xc3});
+    if (Unaligned) {
+      // MOVDQU carries the same whole-width value without an aligned-access
+      // requirement. Preserve both scalar observations after the round trip.
+      auto &Code = P.Image.Segments.front();
+      Code.Data = {0x48, 0x83, 0xec, 0x28, 0xf3, 0x0f, 0x7f, 0x74, 0x24,
+                   0x10, 0x66, 0x0f, 0xef, 0xf6, 0xf3, 0x0f, 0x6f, 0x74,
+                   0x24, 0x10, 0x48, 0x8b, 0x44, 0x24, 0x10, 0x48, 0x8b,
+                   0x54, 0x24, 0x18, 0x48, 0x83, 0xc4, 0x28, 0xc3};
+      Code.Size = Code.FileSz = Code.Data.size();
+    }
+    P.Options.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+    const auto R = P.recover();
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    unsigned WideLoads = 0, WideStores = 0;
+    for (const auto &B : R.Residual.Blocks)
+      for (const auto &Op : B.Ops) {
+        const auto M = lowMemoryOperands(Op);
+        if (M.Complete && M.AccessSize == 16) {
+          WideLoads += Op.Opcode == NdOp::LOAD;
+          WideStores += Op.Opcode == NdOp::STORE;
+        }
+      }
+    EXPECT_EQ(WideLoads, 1u);
+    EXPECT_EQ(WideStores, 1u);
+    // The raw API's wider transport does not extend the scalar proof interface.
+    const auto Proof = P.check(R.Residual);
+    EXPECT_FALSE(Proof.proved());
+    EXPECT_FALSE(Proof.Certificate);
+  }
+}
+
+TEST(BinaryLowIRRefinement, WideIntegerProductCompletesOnlyRawRecovery) {
+  for (bool Signed : {false, true}) {
+    Program P({0x48, 0xf7, uint8_t(Signed ? 0xe9 : 0xe1), 0xc3});
+    const auto R = P.recover(); // [i]mul rcx; ret
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    unsigned Products = 0, Slices = 0;
+    for (const auto &B : R.Residual.Blocks)
+      for (const auto &O : B.Ops) {
+        Products += O.Opcode == NdOp::INT_MULT && O.Output.Size == 16;
+        Slices += O.Opcode == NdOp::SUBBYTES && O.Inputs[0].Size == 16;
+      }
+    EXPECT_EQ(Products, 1U);
+    EXPECT_EQ(Slices, 2U);
+    const auto Checked = P.check(R.Residual);
+    EXPECT_FALSE(Checked.proved());
+    EXPECT_FALSE(Checked.Certificate);
+    for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                        InterpreterMachineStateLayout::SharedGPRExit}) {
+      auto Source = wrapInterpreterMachineStateX64(
+          R.Residual, BinaryFormat::ELF,
+          InterpreterMachineStateProfile::UserX64NoFaultV1, {}, Layout);
+      ASSERT_FALSE(bool(Source));
+      llvm::consumeError(Source.takeError());
+    }
+    P.Options.ExplicitMachineState = false;
+    EXPECT_FALSE(P.recover().complete());
+  }
+}
+
+TEST(BinaryLowIRRefinement, HighAddressDecodedCallRetainsPhysicalReturnWord) {
+  for (va_t Base : {va_t{0xffff800000001000}, InvalidVA - 32}) {
+    // CALL callee; RET; callee: MOV RAX,[RSP]; RET.
+    Program P({0xe8, 1, 0, 0, 0, 0xc3, 0x48, 0x8b, 0x04, 0x24, 0xc3});
+    P.Image.Segments.front().VA = Base;
+    P.Contract.ObserveWrittenFrameBytes = true;
+    const auto R = specializeBinaryInterpreter(P.Image, Base, P.Options);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    ASSERT_EQ(R.Origins.size(), 4U);
+    for (const auto &Origin : R.Origins)
+      EXPECT_GE(Origin.NativeInstruction.Address, Base);
+    const auto Good = checkBinaryLowIRRefinement(
+        P.Image, Base, P.Options, R.Residual, P.Contract, Witness::LiftedBits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    LowFunc Changed = R.Residual;
+    unsigned Stores = 0;
+    for (auto &B : Changed.Blocks)
+      for (auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::STORE) {
+          auto &Value = Op.Inputs[Op.NumInputs - 1];
+          ASSERT_TRUE(Value.isConst());
+          EXPECT_EQ(Value.Offset, Base + 5);
+          Value = NdVar::scalar(Value.Offset ^ 1, Value.Size);
+          ++Stores;
+        }
+    ASSERT_EQ(Stores, 1U);
+    const auto Bad = checkBinaryLowIRRefinement(
+        P.Image, Base, P.Options, Changed, P.Contract, Witness::LiftedBits);
+    refused(Bad, Status::Different);
+  }
 }
 
 } // namespace

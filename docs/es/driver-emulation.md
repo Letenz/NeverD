@@ -138,6 +138,8 @@ carga, TLS, importaciones diferidas/vinculadas, importaciones por ordinal e
 imágenes administradas. Las imágenes también deben superar controles estrictos
 de rangos y alineación.
 
+Los proveedores adicionales `FLTMGR.SYS`, `NDIS.SYS` y `NETIO.SYS` tienen identidades de importación diferida calificadas por módulo. Sus rutinas no están modeladas: las importaciones sin usar pueden cargarse, pero una llamada detiene la ejecución con el diagnóstico canónico `module!symbol`. No participan en la búsqueda de `MmGetSystemRoutineAddress`, que sigue limitada al núcleo y HAL.
+
 Control Flow Guard (CFG) activo valida indicadores PE, posiciones de punteros y destinos ejecutables ordenados. Los helpers check/dispatch solo admiten entradas declaradas de la imagen o thunks API registrados, conservan el estado Win64 y rechazan destinos no declarados. La instrumentación sin CFG activo mantiene los punteros alternativos originales del invitado. XFG activo, supresión de exportaciones y otras políticas no modeladas siguen rechazados; pertenecer a memoria ejecutable no basta para ser un destino válido.
 
 Una pila WDM puede contener varios dispositivos del mismo controlador invitado. `IoAttachDeviceToDeviceStack` conecta una fuente aislada sobre el extremo superior actual del destino y devuelve ese extremo anterior. Establece `StackSize` y `AlignmentRequirement` sin modificar la lista `NextDevice` ni copiar los indicadores de búfer. `IoDetachDevice` recibe el dispositivo inferior guardado y exige `PASSIVE_LEVEL`; conectar permite IRQL hasta `DISPATCH_LEVEL`. Abrir un dispositivo inferior con nombre despacha al extremo superior actual, mientras `FILE_OBJECT.DeviceObject` y el informe conservan la identidad con nombre. READ/WRITE usa los indicadores del extremo superior seleccionado. La ruta retenida conserva todos los dispositivos hasta el retorno del despacho, incluso tras desconectar/eliminar; las referencias internas no aumentan `ReferenceCount`, que cuenta handles abiertos.
@@ -686,7 +688,7 @@ Las direcciones del invitado son cadenas hexadecimales para que los consumidores
 de JSON no pierdan precisión de 64 bits. El objeto `configuration` registra los
 límites, el nombre de servicio, las sustituciones de `kernel_exports` y la
 entrada `registry` de la ejecución. El perfil es
-`wdm-x64-scheduled-v101`. `nt_status` sigue siendo el resultado de DriverEntry,
+`wdm-x64-scheduled-v103`. `nt_status` sigue siendo el resultado de DriverEntry,
 mientras que `scenario_success` describe conjuntamente la inicialización y las
 solicitudes completadas. `phase`, `requests` y `unload_completed` identifican
 las partes ejecutadas del ciclo de vida solicitado. Cada llamada de API y
@@ -867,3 +869,5 @@ La opción `cpuid` declara hasta 64 resultados de consultas CPU. Cada registro r
 Las lecturas del reloj mediante `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` conservan una dependencia explícita de recuperación del controlador. No existe un contrato para revincular los valores capturados del contador y su frecuencia a un nuevo entorno del núcleo. La recuperación predeterminada devuelve `unsupported_state`; `snapshot_only` conserva el diagnóstico.
 
 `KernelModuleImages` genera cabeceras PE legibles y tablas de exportación desde `KernelExportRegistry`; las importaciones estáticas, la búsqueda dinámica y la enumeración comparten direcciones. El código de los proveedores permanece opaco y el inventario describe el entorno modelado, no el núcleo anfitrión. Ambas salidas se validan antes de escribir, incluidos vida útil del pool y solapamientos. Nt requiere un previous-mode de núcleo conocido; Zw usa el contrato del núcleo. Una consulta completa conserva una dependencia explícita de restauración incluso tras liberar el búfer; también se rastrean los punteros a imágenes de proveedores como estado prestado. `KernelExportTests.cpp` comprueba PE, permisos, campos ABI, escrituras rechazadas y dependencias; la fixture compilada original recorre las exportaciones en los motores CPU.
+
+El perfil fijo del controlador desactiva las pilas de sombra CET. Las codificaciones canónicas de `RDSSPD` y `RDSSPQ` conservan todos los bits de registros, indicadores y memoria, incluida la mitad superior de un destino de 32 bits. Cada lectura cuenta como una instrucción y conserva una dependencia del entorno para UNPACK. Las declaraciones CPUID no activan CET; las demás instrucciones de pila de sombra y los intentos de activación siguen sin admitirse.

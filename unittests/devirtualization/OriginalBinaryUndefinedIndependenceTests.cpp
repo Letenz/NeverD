@@ -1892,6 +1892,27 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
+     DisabledShadowStackRejectsNoncanonicalProjections) {
+  for (const std::vector<uint8_t> Bytes : {
+           std::vector<uint8_t>{0xf0, 0xf3, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0xf0, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0xf3, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0x66, 0xf3, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0x44, 0x0f, 0x1e, 0xc8},
+           std::vector<uint8_t>{0xf3, 0xf3, 0x48, 0x0f, 0xae, 0xe8}}) {
+    Program P({});
+    for (uint8_t Byte : Bytes)
+      P.append({Byte});
+    P.append({0xc3});
+    P.flagsProfile();
+    const auto Raw = specializeBinaryInterpreter(P.Image, Entry, P.Options);
+    EXPECT_FALSE(Raw.complete());
+    EXPECT_TRUE(Raw.Residual.Blocks.empty());
+    expectRefusal(P, Status::Unsupported);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      DisabledShadowStackIncrementMustStayUnreachable) {
   for (unsigned Width : {4u, 8u})
     for (unsigned Index = 0; Index != 16; ++Index) {

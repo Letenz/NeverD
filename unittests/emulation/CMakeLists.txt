@@ -1330,6 +1330,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
   DriverTimestampTests.cpp
   DriverCPUIDTests.cpp
+  DriverShadowStackTests.cpp
   DriverImageMemoryTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp

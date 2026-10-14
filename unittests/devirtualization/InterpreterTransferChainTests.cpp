@@ -419,15 +419,46 @@ TEST(InterpreterTransferChain, ProvesTrueAndFalseAndKeepsBothDynamicArms) {
   }
 }
 
-TEST(InterpreterTransferChain, ChainedDestinationsKeepReservedLabelAdmission) {
-  Program P;
-  P.add(Entry, {jump(uint64_t{1} << 63)});
-  SpecializationOptions O;
-  O.MaxChainedTransfers = 2;
-  const auto R = specializeInterpreter(P, {Entry}, O);
-  EXPECT_EQ(R.Status, SpecializationStatus::UnresolvedControl);
-  EXPECT_NE(R.Diagnostic.find("reserved residual labels"), std::string::npos);
-  EXPECT_TRUE(R.Residual.Blocks.empty());
+TEST(InterpreterTransferChain,
+     HighAddressChainedDestinationsKeepMappingAdmission) {
+  constexpr va_t Target = uint64_t{1} << 63;
+  for (uint32_t Chained : {0, 4}) {
+    Program P;
+    P.add(Entry, {jump(Target)});
+    SpecializationOptions O;
+    O.MaxChainedTransfers = Chained;
+    const auto Missing = specializeInterpreter(P, {Entry}, O);
+    EXPECT_EQ(Missing.Status, SpecializationStatus::Unsupported);
+    EXPECT_NE(Missing.Diagnostic.find("missing independently authored block"),
+              std::string::npos);
+    EXPECT_TRUE(Missing.Residual.Blocks.empty());
+
+    P.add(Target, {op(NdOp::COPY, r(0), {r(8)}), ret()});
+    const auto R = specializeInterpreter(P, {Entry}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    for (uint64_t Input : {uint64_t{0}, Target, UINT64_MAX})
+      EXPECT_EQ(execute(R.Residual, Input), Input);
+    for (size_t I = 1; I < R.Residual.Blocks.size(); ++I) {
+      const auto &B = R.Residual.Blocks[I];
+      EXPECT_TRUE(B.EndAddr <= Target || B.StartAddr > Target);
+    }
+
+    P.Code.at(Entry).Ops[0].Inputs[0] = NdVar::cst(InvalidVA, 8);
+    P.Code.at(Entry).Origin.Immediate = InvalidVA;
+    const auto Malformed = specializeInterpreter(P, {Entry}, O);
+    EXPECT_EQ(Malformed.Status, SpecializationStatus::InvalidInput);
+    EXPECT_NE(Malformed.Diagnostic.find("invalid address"),
+              std::string::npos);
+    EXPECT_TRUE(Malformed.Residual.Blocks.empty());
+
+    Program Runtime;
+    Runtime.add(Entry, {op(NdOp::COPY, r(16), {c(InvalidVA)}),
+                        op(NdOp::INDIR_BR, {}, {r(16)})});
+    const auto Invalid = specializeInterpreter(Runtime, {Entry}, O);
+    EXPECT_EQ(Invalid.Status, SpecializationStatus::UnresolvedControl);
+    EXPECT_NE(Invalid.Diagnostic.find("invalid address"), std::string::npos);
+    EXPECT_TRUE(Invalid.Residual.Blocks.empty());
+  }
 }
 
 TEST(InterpreterTransferChain, LaterPredecessorRebuildsAPreviouslyUniqueChain) {

@@ -8,6 +8,10 @@
 
 #include "ControlDiscovery.h"
 
+#include "neverd/symbolic/SymMBA.h"
+
+#include <algorithm>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -27,6 +31,43 @@ constantOperand(const SymContext &Ctx, SymRef Value, SymOp Op) {
       return std::pair{Ctx.operand(Value, 1 - I), *Number};
   }
   return std::nullopt;
+}
+
+std::optional<SymRef>
+normalizeFrameExpression(SymContext &Ctx, SymRef Value,
+                         uint64_t MaxSymbolicNodes,
+                         FrameOffsetNormalization &Budget) {
+  // Charge the context prefix that readability inspection can visit. Counts
+  // are fixed-width metadata: obtain the price without walking operand lists
+  // or inspecting constant payloads. These are admission/measurement units,
+  // not an upper bound on rebuilding, sorting or default sample defect guards.
+  for (uint64_t I = 0, N = Ctx.numNodes(); I != N; ++I) {
+    const SymRef R(static_cast<uint32_t>(I));
+    // Operand counts and bit widths are 32-bit, so this sum cannot overflow.
+    const uint64_t Cost =
+        1 + uint64_t{Ctx.numOperands(R)} +
+        (Ctx.op(R) == SymOp::Const ? (uint64_t{Ctx.width(R)} + 63) / 64 : 0);
+    if (Cost > Budget.MaxWork - Budget.WorkUsed) {
+      Budget.WorkUsed = Budget.MaxWork;
+      return std::nullopt;
+    }
+    Budget.WorkUsed += Cost;
+  }
+  const auto Remaining = Budget.MaxWork - Budget.WorkUsed;
+  if (!Remaining)
+    return std::nullopt;
+  MBAOptions Options;
+  // Never interpret a large caller budget as MBA's unlimited sentinel.
+  Options.MaxWork = static_cast<size_t>(
+      std::min<uint64_t>(Remaining, std::numeric_limits<size_t>::max() - 1));
+  const auto Result = simplifyMBADeep(Ctx, Value, Options);
+  Budget.WorkUsed += Result.Work;
+  // The context bound gates publication, not peak allocation inside MBA.
+  if (Ctx.numNodes() > MaxSymbolicNodes || !Result.Expr ||
+      Result.Expr.index() >= Ctx.numNodes() || Ctx.width(Result.Expr) != 64 ||
+      Result.Evidence != MBAEvidence::Derivation)
+    return std::nullopt;
+  return Result.Expr;
 }
 
 // Derive Value - Root without subtracting two full-width copies of Root.
@@ -101,12 +142,13 @@ std::optional<SymRef> relativeRemainder(SymContext &Ctx, SymRef Value,
 
 } // namespace
 
-static FrameOffset
-proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
-                     SymRef Root, solver::SolverOptions Settings,
-                     uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
-                     uint64_t &Queries, FiniteQueryCache *Cache,
-                     FiniteDomainEncoding *Encoding) {
+static FrameOffset proveFrameOffsetImpl(
+    SymContext &Ctx, SymRef Predicate, SymRef Value, SymRef Root,
+    solver::SolverOptions Settings, uint64_t MaxQueries,
+    uint64_t MaxSymbolicNodes, uint64_t &Queries, FiniteQueryCache *Cache,
+    FiniteDomainEncoding *Encoding, FrameOffsetNormalization *Normalization) {
+  if (Normalization)
+    Normalization->WorkUsed = 0;
   const auto Valid = [&](SymRef R, unsigned Width) {
     return R && R.index() < Ctx.numNodes() && Ctx.width(R) == Width;
   };
@@ -185,6 +227,21 @@ proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
     return {FrameOffsetStatus::Invalid};
   case FiniteValueStatus::Unknown:
   case FiniteValueStatus::QueryBudgetExceeded:
+    if (!Cached && Normalization && Normalization->MaxWork)
+      if (const auto Normalized = normalizeFrameExpression(
+              Ctx, Value, MaxSymbolicNodes, *Normalization)) {
+        // Algebra proves the offset independently of Predicate. It provides
+        // no satisfiability witness and must not cache a nonempty domain.
+        if (const auto Offset = frameRelativeOffset(Ctx, *Normalized, Root))
+          return {FrameOffsetStatus::Exact, *Offset};
+        // An exact derivation may still need the ordinary predicate-dependent
+        // proof. Retry once with a fresh encoding and the original limits and
+        // cumulative query count. Do not normalize again or reset WorkUsed.
+        // Neither outcome of this fallback enters the finite-domain cache.
+        if (*Normalized != Value)
+          return proveFrameOffset(Ctx, Predicate, *Normalized, Root, Settings,
+                                  MaxQueries, MaxSymbolicNodes, Queries);
+      }
     return {FrameOffsetStatus::BudgetExceeded};
   }
   llvm_unreachable("invalid finite value status");
@@ -193,23 +250,27 @@ proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
 FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
                              SymRef Root, solver::SolverOptions Settings,
                              uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
-                             uint64_t &Queries, FiniteQueryCache *Cache) {
+                             uint64_t &Queries, FiniteQueryCache *Cache,
+                             FrameOffsetNormalization *Normalization) {
   return proveFrameOffsetImpl(Ctx, Predicate, Value, Root, Settings, MaxQueries,
-                              MaxSymbolicNodes, Queries, Cache, nullptr);
+                              MaxSymbolicNodes, Queries, Cache, nullptr,
+                              Normalization);
 }
 
 FrameOffset proveFrameOffset(FiniteDomainEncoding &Encoding, SymRef Predicate,
                              SymRef Value, SymRef Root, uint64_t MaxQueries,
                              uint64_t MaxSymbolicNodes, uint64_t &Queries,
-                             FiniteQueryCache *Cache) {
+                             FiniteQueryCache *Cache,
+                             FrameOffsetNormalization *Normalization) {
   return proveFrameOffsetImpl(Encoding.context(), Predicate, Value, Root,
                               Encoding.settings(), MaxQueries, MaxSymbolicNodes,
-                              Queries, Cache, &Encoding);
+                              Queries, Cache, &Encoding, Normalization);
 }
 
 FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
                              SymRef Root, const SpecializationOptions &Options,
-                             uint64_t &Queries, FiniteQueryCache *Cache) {
+                             uint64_t &Queries, FiniteQueryCache *Cache,
+                             FrameOffsetNormalization *Normalization) {
   solver::SolverOptions Settings;
   Settings.Blast.MaxGates = Options.MaxSolverGates;
   Settings.Sat.MaxConflicts = Options.MaxSolverConflicts;
@@ -217,7 +278,7 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
   Settings.Sat.MaxWatchVisits = Options.MaxSolverWatchVisits;
   return proveFrameOffset(Ctx, Predicate, Value, Root, Settings,
                           Options.MaxSolverQueries, Options.MaxSymbolicNodes,
-                          Queries, Cache);
+                          Queries, Cache, Normalization);
 }
 
 } // namespace neverd::analysis::detail

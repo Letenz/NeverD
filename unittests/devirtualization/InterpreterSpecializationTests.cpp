@@ -5,9 +5,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../lib/analysis/arch/x86_64/X64TaskPriority.h"
 #include "gtest/gtest.h"
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
@@ -48,7 +50,7 @@ public:
   bool MalformedRead = false;
   uint16_t MalformedReadSize = 0;
 
-  void add(va_t Address, std::initializer_list<LowOp> Ops,
+  void add(va_t Address, std::vector<LowOp> Ops,
            va_t Fallthrough = InvalidVA) {
     SpecializationInstruction Instruction;
     Instruction.Ops = Ops;
@@ -132,10 +134,11 @@ size_t count(const LowFunc &Function, NdOp Opcode) {
 /// Independent concrete oracle for the small integer corpus. It intentionally
 /// does not use SymExec: it executes residual operands, branches and byte
 /// lanes.
-std::optional<uint64_t> execute(const LowFunc &Function,
-                                std::map<uint64_t, uint64_t> Inputs = {},
-                                std::map<uint64_t, uint8_t> Memory = {},
-                                uint64_t Flags = 0) {
+std::optional<uint64_t>
+execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
+        std::map<uint64_t, uint8_t> Memory = {}, uint64_t Flags = 0,
+        std::map<NdMemoryAddressSpace, uint64_t> SegmentBases = {},
+        std::optional<uint64_t> TaskPriority = std::nullopt) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
   bool Defined = true;
@@ -215,7 +218,15 @@ std::optional<uint64_t> execute(const LowFunc &Function,
         break;
       case NdOp::LOAD: {
         const auto Access = lowMemoryOperands(Op);
-        const uint64_t Address = read(*Access.Address);
+        uint64_t Address = read(*Access.Address);
+        if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+          const auto Base = SegmentBases.find(Op.MemoryAddressSpace);
+          if (Base == SegmentBases.end())
+            return std::nullopt;
+          Address += Base->second;
+        }
+        if (Address > UINT64_MAX - (Access.AccessSize - 1))
+          return std::nullopt;
         uint64_t Value = 0;
         for (unsigned I = 0; I < Access.AccessSize; ++I) {
           const auto Found = Memory.find(Address + I);
@@ -261,7 +272,18 @@ std::optional<uint64_t> execute(const LowFunc &Function,
           write(Op.Output, Flags);
         else if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Popf))
           Flags = read(Op.Inputs[1]);
-        else {
+        else if (Op.Inputs[0].Offset ==
+                 static_cast<uint64_t>(Intrinsic::ReadCr8)) {
+          if (!TaskPriority || *TaskPriority > 15)
+            return std::nullopt;
+          write(Op.Output, *TaskPriority);
+        } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::WriteCr8)) {
+          const auto Value = read(Op.Inputs[1]);
+          if (!TaskPriority || Value > 15)
+            return std::nullopt;
+          TaskPriority = Value;
+        } else {
           ADD_FAILURE() << "oracle received an unsupported intrinsic";
           return std::nullopt;
         }
@@ -1697,6 +1719,1673 @@ TEST(InterpreterSpecialization, NarrowGuardDoesNotEnumerateWideRuntimePayload) {
       EXPECT_EQ(execute(Result.Residual, {{8, Input}}),
                 (Low & 1) ? Input + 7 : Input ^ 17);
     }
+}
+
+SpecializationOptions segmentedReadOptions() {
+  SpecializationOptions Options;
+  Options.ExplicitMachineState = true;
+  Options.NormalNonfaultingExecution = true;
+  Options.X64SegmentedReads = true;
+  return Options;
+}
+
+LowOp segmentedLoad(NdMemoryAddressSpace Space, NdVar Output, NdVar Offset) {
+  auto Load = op(NdOp::LOAD, Output, {Offset});
+  Load.MemoryAddressSpace = Space;
+  return Load;
+}
+
+TEST(InterpreterSpecialization, SegmentedReadRequiresExplicitContract) {
+  for (auto Space :
+       {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
+    Provider P;
+    P.add(0x100, {segmentedLoad(Space, reg(0), constant(16)), ret()});
+    auto Options = segmentedReadOptions();
+    Options.X64SegmentedReads = false;
+    EXPECT_EQ(specializeInterpreter(P, {0x100}, Options).Status,
+              SpecializationStatus::Unsupported);
+    for (bool Explicit : {false, true}) {
+      Options = segmentedReadOptions();
+      Options.ExplicitMachineState = Explicit;
+      Options.NormalNonfaultingExecution = !Explicit;
+      const auto R = specializeInterpreter(P, {0x100}, Options);
+      EXPECT_EQ(R.Status, SpecializationStatus::InvalidInput);
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+    }
+    const auto R = specializeInterpreter(P, {0x100}, segmentedReadOptions());
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::LOAD), 1u);
+    EXPECT_TRUE(R.Reads.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, SegmentedOffsetsCannotCertifyImageReads) {
+  for (auto Space :
+       {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
+    Provider P;
+    imageWord(P, 0x300, 7);
+    P.add(0x100, {op(NdOp::INT_ADD, reg(16), {constant(0x280), constant(0x80)}),
+                  segmentedLoad(Space, reg(0), reg(16)), ret()});
+    const auto R = specializeInterpreter(P, {0x100}, segmentedReadOptions());
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_TRUE(R.Reads.empty());
+    ASSERT_EQ(count(R.Residual, NdOp::LOAD), 1u);
+    for (const auto &Block : R.Residual.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::LOAD) {
+          EXPECT_EQ(Op.MemoryAddressSpace, Space);
+          ASSERT_TRUE(lowMemoryOperands(Op).Address->isConst());
+          EXPECT_EQ(lowMemoryOperands(Op).Address->Offset, 0x300u);
+        }
+    for (uint64_t Base :
+         std::initializer_list<uint64_t>{0, 0x1000, UINT64_MAX - 0x1ff}) {
+      auto Memory = P.Image;
+      const uint64_t Address = Base + 0x300;
+      const uint64_t Value = Base ? 29 : 7;
+      for (unsigned I = 0; I != 8; ++I)
+        Memory[Address + I] = static_cast<uint8_t>(Value >> (8 * I));
+      EXPECT_EQ(execute(R.Residual, {}, Memory, 0, {{Space, Base}}), Value);
+    }
+  }
+}
+
+TEST(InterpreterSpecialization, SegmentedOffsetCannotReuseFrameValue) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_ADD, reg(40), {reg(32), constant(16)}),
+         op(NdOp::STORE, {}, {reg(40), constant(9)}),
+         segmentedLoad(NdMemoryAddressSpace::X86GS, reg(0), reg(40)), ret()});
+  auto Options = segmentedReadOptions();
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  const auto R = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_TRUE(R.Reads.empty());
+  ASSERT_EQ(count(R.Residual, NdOp::LOAD), 1u);
+  std::map<uint64_t, uint8_t> Memory;
+  for (unsigned I = 0; I != 8; ++I)
+    Memory[0x2110 + I] = I ? 0 : 27;
+  EXPECT_EQ(execute(R.Residual, {{32, 0x2000}}, Memory, 0,
+                    {{NdMemoryAddressSpace::X86GS, 0}}),
+            9u);
+  EXPECT_EQ(execute(R.Residual, {{32, 0x2000}}, Memory, 0,
+                    {{NdMemoryAddressSpace::X86GS, 0x100}}),
+            27u);
+}
+
+TEST(InterpreterSpecialization,
+     SegmentedBasesMayAliasEachOtherAndOrdinaryStores) {
+  Provider P;
+  P.add(0x100,
+        {segmentedLoad(NdMemoryAddressSpace::X86FS, reg(16, 1), constant(8)),
+         op(NdOp::STORE, {}, {reg(8), constant(19, 1)}),
+         segmentedLoad(NdMemoryAddressSpace::X86FS, reg(24, 1), constant(8)),
+         segmentedLoad(NdMemoryAddressSpace::X86GS, reg(40, 1), constant(8)),
+         op(NdOp::INT_ADD, reg(0), {reg(16, 1), reg(24, 1)}),
+         op(NdOp::INT_ADD, reg(0), {reg(0), reg(40, 1)}), ret()});
+  const auto R = specializeInterpreter(P, {0x100}, segmentedReadOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::LOAD), 3u);
+  for (uint64_t FS : {0ULL, 0x2000ULL})
+    for (uint64_t GS : {0ULL, 0x2000ULL})
+      for (uint64_t Address : {8ULL, 0x2008ULL, 0x4000ULL}) {
+        const uint64_t Before = FS ? 5 : 3;
+        const uint64_t AfterFS = Address == FS + 8 ? 19 : Before;
+        const uint64_t AfterGS = Address == GS + 8 ? 19 : (GS ? 5 : 3);
+        EXPECT_EQ(execute(R.Residual, {{8, Address}}, {{8, 3}, {0x2008, 5}}, 0,
+                          {{NdMemoryAddressSpace::X86FS, FS},
+                           {NdMemoryAddressSpace::X86GS, GS}}),
+                  Before + AfterFS + AfterGS);
+      }
+}
+
+TEST(InterpreterSpecialization, SegmentedPointerStaysUnsafeAcrossSpillAndJoin) {
+  for (auto Space : {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS})
+    for (bool Reverse : {false, true})
+      for (bool Partial : {false, true}) {
+        Provider P;
+        P.add(0x100, {op(NdOp::COND_BR, {}, {constant(0x110), reg(16, 1)})},
+              0x120);
+        P.add(Reverse ? 0x120 : 0x110,
+              {segmentedLoad(Space, reg(40), constant(16)), jump(0x130)});
+        P.add(Reverse ? 0x110 : 0x120,
+              {op(NdOp::COPY, reg(40), {reg(8)}), jump(0x130)});
+        P.add(0x130, {op(NdOp::COPY, reg(48), {reg(40)})});
+        P.add(0x131, {Partial ? op(NdOp::COPY, reg(48, 1), {constant(1, 1)})
+                              : op(NdOp::NOP, {}, {}),
+                      op(NdOp::INT_ADD, reg(56), {reg(32), constant(16)}),
+                      op(NdOp::STORE, {}, {reg(56), reg(48)}), jump(0x140)});
+        P.add(0x140, {op(NdOp::LOAD, reg(64), {reg(56)}), jump(0x150)});
+        P.add(0x150, {op(NdOp::STORE, {}, {reg(64), constant(7)}), ret()});
+        auto Options = segmentedReadOptions();
+        Options.FrameBaseRegister = SymRegisterRange{32, 8};
+        Options.RequireRestoredFrameAtReturn = true;
+        Options.ExternalStoresPreserveEntryReturnSlot = true;
+        const auto R = specializeInterpreter(P, {0x100}, Options);
+        EXPECT_EQ(R.Status, SpecializationStatus::Unsupported) << R.Diagnostic;
+        EXPECT_NE(R.Diagnostic.find("address origin"), std::string::npos);
+        EXPECT_TRUE(R.Residual.Blocks.empty());
+      }
+}
+
+TEST(InterpreterSpecialization,
+     SegmentedReadRetainsFeasibleBranchesAcrossNodes) {
+  Provider P;
+  P.add(0x100,
+        {segmentedLoad(NdMemoryAddressSpace::X86FS, reg(16, 1), constant(0)),
+         op(NdOp::INT_EQUAL, reg(24, 1), {reg(16, 1), constant(5, 1)}),
+         op(NdOp::COND_BR, {}, {constant(0x110), reg(24, 1)})},
+        0x120);
+  P.add(0x110,
+        {segmentedLoad(NdMemoryAddressSpace::X86GS, reg(40, 1), constant(0)),
+         op(NdOp::INT_EQUAL, reg(24, 1), {reg(16, 1), reg(40, 1)}),
+         op(NdOp::COND_BR, {}, {constant(0x130), reg(24, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::COPY, reg(0), {constant(2)}), ret()});
+  P.add(0x130, {op(NdOp::COPY, reg(0), {constant(1)}), ret()});
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(0)}), ret()});
+  auto Options = segmentedReadOptions();
+  Options.ControlRegisters = {{16, 1}};
+  for (uint32_t Chain : {0, 16}) {
+    Options.MaxChainedTransfers = Chain;
+    const auto R = specializeInterpreter(P, {0x100}, Options);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_GT(R.SolverQueries, 0u);
+    for (uint8_t A : {5, 9})
+      for (uint8_t B : {5, 11})
+        EXPECT_EQ(execute(R.Residual, {}, {{0x2000, A}, {0x3000, B}}, 0,
+                          {{NdMemoryAddressSpace::X86FS, 0x2000},
+                           {NdMemoryAddressSpace::X86GS, 0x3000}}),
+                  A == 5 ? uint64_t(A == B) : 2u);
+    auto Exact = Options;
+    Exact.MaxOperations = R.EvaluatedOperations;
+    Exact.MaxSolverQueries = R.SolverQueries;
+    EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
+    ASSERT_GT(R.EvaluatedOperations, 1u);
+    --Exact.MaxOperations;
+    const auto ShortOps = specializeInterpreter(P, {0x100}, Exact);
+    EXPECT_EQ(ShortOps.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(ShortOps.Residual.Blocks.empty());
+    Exact.MaxOperations = R.EvaluatedOperations;
+    ASSERT_GT(Exact.MaxSolverQueries, 1u);
+    --Exact.MaxSolverQueries;
+    const auto ShortQueries = specializeInterpreter(P, {0x100}, Exact);
+    EXPECT_EQ(ShortQueries.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(ShortQueries.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
+     SegmentedAdmissionRejectsMalformedAndOtherEffects) {
+  const auto Space = NdMemoryAddressSpace::X86GS;
+  std::vector<LowOp> Invalid{
+      op(NdOp::LOAD, reg(0), {}),
+      op(NdOp::LOAD, reg(0), {constant(0), constant(0), constant(0)}),
+      op(NdOp::LOAD, reg(0), {reg(8), constant(0)}),
+      op(NdOp::LOAD, constant(0), {constant(0)}),
+      op(NdOp::LOAD, reg(0, 16), {constant(0)}),
+      op(NdOp::LOAD, reg(0), {reg(8, 16)}),
+      op(NdOp::STORE, {}, {constant(0), constant(7)}),
+      op(NdOp::ATOMIC_XCHG, reg(0), {constant(0), constant(7)}),
+      op(NdOp::COPY, reg(0), {constant(7)})};
+  for (auto &Op : Invalid)
+    Op.MemoryAddressSpace = Space;
+  auto Ordered = segmentedLoad(Space, reg(0), constant(0));
+  Ordered.MemoryOrdering = NdMemoryOrdering::Acquire;
+  Invalid.push_back(Ordered);
+  auto Unknown = segmentedLoad(static_cast<NdMemoryAddressSpace>(255), reg(0),
+                               constant(0));
+  Invalid.push_back(Unknown);
+  for (auto Op : Invalid) {
+    Provider P;
+    P.add(0x100, {Op, ret()});
+    const auto R = specializeInterpreter(P, {0x100}, segmentedReadOptions());
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  Provider P;
+  auto Valid = op(NdOp::LOAD, reg(0), {constant(0, 1), constant(16, 4)});
+  Valid.MemoryAddressSpace = Space;
+  P.add(0x100, {Valid, ret()});
+  EXPECT_TRUE(
+      specializeInterpreter(P, {0x100}, segmentedReadOptions()).complete());
+}
+
+SpecializationOptions taskPriorityOptions() {
+  SpecializationOptions O;
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = O.X64CR8State = true;
+  O.X64FlagsProfile = InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  return O;
+}
+LowOp readPriority(NdVar Output) {
+  return op(NdOp::INTRINSIC, Output,
+            {constant(static_cast<uint64_t>(Intrinsic::ReadCr8), 2)});
+}
+LowOp writePriority(NdVar Input) {
+  return op(NdOp::INTRINSIC, {},
+            {constant(static_cast<uint64_t>(Intrinsic::WriteCr8), 2), Input});
+}
+
+TEST(InterpreterSpecialization, TaskPriorityRequiresExplicitKernelDomain) {
+  Provider P;
+  P.add(0x100, {readPriority(reg(0)), ret()});
+  EXPECT_EQ(specializeInterpreter(P, {0x100}).Status,
+            SpecializationStatus::Unsupported);
+  for (unsigned Missing = 0; Missing != 4; ++Missing) {
+    auto O = taskPriorityOptions();
+    if (Missing == 0)
+      O.ExplicitMachineState = false;
+    if (Missing == 1)
+      O.NormalNonfaultingExecution = false;
+    if (Missing == 2)
+      O.X64FlagsProfile.reset();
+    if (Missing == 3)
+      O.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(R.Status, SpecializationStatus::InvalidInput);
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  auto O = taskPriorityOptions();
+  O.X64CR8State = false;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::Unsupported);
+}
+
+TEST(InterpreterSpecialization, TaskPriorityReadIsBoundedButNeverAssumedZero) {
+  Provider P;
+  P.add(0x100,
+        {readPriority(reg(0)),
+         op(NdOp::INT_LESS, reg(16, 1), {constant(15), reg(0)}),
+         op(NdOp::COND_BR, {}, {constant(0x200), reg(16, 1)})},
+        0x110);
+  P.add(0x110, {ret()}); // Out-of-domain destination deliberately absent.
+  const auto R = specializeInterpreter(P, {0x100}, taskPriorityOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::INTRINSIC), 1u);
+  for (uint64_t Priority = 0; Priority != 16; ++Priority)
+    EXPECT_EQ(execute(R.Residual, {}, {}, 0, {}, Priority), Priority);
+}
+
+TEST(InterpreterSpecialization,
+     TaskPriorityRepeatedReadsAndWritesRemainEffects) {
+  for (uint64_t Value = 0; Value != 16; ++Value) {
+    Provider P;
+    P.add(0x100, {writePriority(constant(Value))});
+    P.add(0x101, {readPriority(reg(16))});
+    P.add(0x102,
+          {readPriority(reg(24)),
+           op(NdOp::INT_EQUAL, reg(40, 1), {reg(16), reg(24)}),
+           op(NdOp::COND_BR, {}, {constant(0x110), reg(40, 1)})},
+          0x200);
+    P.add(0x110, {op(NdOp::COPY, reg(0), {reg(24)}), ret()});
+    const auto R = specializeInterpreter(P, {0x100}, taskPriorityOptions());
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::INTRINSIC), 3u);
+    for (uint64_t Entry : {0u, 3u, 15u})
+      EXPECT_EQ(execute(R.Residual, {}, {}, 0, {}, Entry), Value);
+  }
+}
+
+TEST(InterpreterSpecialization,
+     TaskPriorityWritesNeedACompleteReservedBitProof) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_AND, reg(40), {reg(8), constant(15)}),
+                writePriority(reg(40)), readPriority(reg(0)), ret()});
+  const auto R = specializeInterpreter(P, {0x100}, taskPriorityOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::INTRINSIC), 2u);
+  for (uint64_t Input :
+       std::initializer_list<uint64_t>{0, 1, 15, 16, 255, UINT64_MAX})
+    EXPECT_EQ(execute(R.Residual, {{8, Input}}, {}, 0, {}, 7), Input & 15);
+  auto Exact = taskPriorityOptions();
+  Exact.MaxOperations = R.EvaluatedOperations;
+  Exact.MaxSolverQueries = R.SolverQueries;
+  ASSERT_GT(Exact.MaxSolverQueries, 1u);
+  EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
+  --Exact.MaxOperations;
+  const auto ShortOps = specializeInterpreter(P, {0x100}, Exact);
+  EXPECT_EQ(ShortOps.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(ShortOps.Residual.Blocks.empty());
+  Exact.MaxOperations = R.EvaluatedOperations;
+  --Exact.MaxSolverQueries;
+  const auto ShortQueries = specializeInterpreter(P, {0x100}, Exact);
+  EXPECT_EQ(ShortQueries.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(ShortQueries.Residual.Blocks.empty());
+  for (auto Invalid :
+       {reg(8), constant(16), constant(255), constant(UINT64_MAX)}) {
+    P = {};
+    P.add(0x100, {writePriority(Invalid), ret()});
+    const auto Bad = specializeInterpreter(P, {0x100}, taskPriorityOptions());
+    EXPECT_EQ(Bad.Status, SpecializationStatus::Unsupported);
+    EXPECT_NE(Bad.Diagnostic.find("reserved bits"), std::string::npos);
+    EXPECT_TRUE(Bad.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, TaskPriorityWriteCanUseAProvedBranchDomain) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_LESS, reg(16, 1), {reg(8), constant(16)}),
+         op(NdOp::COND_BR, {}, {constant(0x110), reg(16, 1)})},
+        0x120);
+  P.add(0x110, {writePriority(reg(8)), readPriority(reg(0)), ret()});
+  P.add(0x120, {op(NdOp::COPY, reg(0), {constant(99)}), ret()});
+  auto O = taskPriorityOptions();
+  O.ControlRegisters = {{8, 8}};
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Input :
+       std::initializer_list<uint64_t>{0, 4, 15, 16, 255, UINT64_MAX})
+    EXPECT_EQ(execute(R.Residual, {{8, Input}}, {}, 0, {}, 3),
+              Input < 16 ? Input : 99);
+}
+
+TEST(InterpreterSpecialization,
+     TaskPriorityProvenanceAndNodeRebuildStayConservative) {
+  Provider P;
+  P.add(0x100, {readPriority(reg(40)), jump(0x110)});
+  P.add(0x110, {op(NdOp::STORE, {}, {reg(40), constant(7)}), ret()});
+  auto O = taskPriorityOptions();
+  O.FrameBaseRegister = SymRegisterRange{32, 8};
+  O.RequireRestoredFrameAtReturn = true;
+  O.ExternalStoresPreserveEntryReturnSlot = true;
+  const auto Refused = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Refused.Status, SpecializationStatus::Unsupported);
+  EXPECT_NE(Refused.Diagnostic.find("address origin"), std::string::npos);
+  P = {};
+  P.add(0x100, {writePriority(constant(5)), jump(0x110)});
+  P.add(0x110,
+        {readPriority(reg(16)),
+         op(NdOp::INT_EQUAL, reg(24, 1), {reg(16), constant(5)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(24, 1)})},
+        0x130);
+  P.add(0x120, {op(NdOp::COPY, reg(0), {constant(1)}), ret()});
+  P.add(0x130, {op(NdOp::COPY, reg(0), {constant(2)}), ret()});
+  for (uint32_t Chain : {0, 8}) {
+    O = taskPriorityOptions();
+    O.MaxChainedTransfers = Chain;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    for (uint64_t Entry = 0; Entry != 16; ++Entry)
+      EXPECT_EQ(execute(R.Residual, {}, {}, 0, {}, Entry), 1u);
+  }
+}
+
+TEST(InterpreterSpecialization,
+     TaskPriorityRejectsMalformedAndUnmodeledControls) {
+  std::vector<LowOp> Invalid{
+      readPriority(reg(0, 4)), readPriority(constant(0)),
+      writePriority(reg(0, 4)), writePriority(reg(UINT64_MAX)),
+      op(NdOp::INTRINSIC, reg(0),
+         {constant(static_cast<uint64_t>(Intrinsic::ReadCr0), 2)})};
+  auto Op = readPriority(reg(0));
+  Op.Inputs[0].Size = 8;
+  Invalid.push_back(Op);
+  Op = readPriority(reg(0));
+  Op.addInput(constant(0));
+  Invalid.push_back(Op);
+  Op = writePriority(reg(8));
+  Op.Output = reg(0);
+  Invalid.push_back(Op);
+  Op = readPriority(reg(0));
+  Op.MemoryOrdering = NdMemoryOrdering::Acquire;
+  Invalid.push_back(Op);
+  Op = readPriority(reg(0));
+  Op.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  Invalid.push_back(Op);
+  for (auto InvalidOp : Invalid) {
+    Provider P;
+    P.add(0x100, {InvalidOp, ret()});
+    const auto R = specializeInterpreter(P, {0x100}, taskPriorityOptions());
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
+     TaskPriorityLoweringPreservesInvalidWriteState) {
+  for (uint64_t Old = 0; Old != 16; ++Old)
+    for (uint64_t New :
+         std::initializer_list<uint64_t>{0, 4, 15, 16, UINT64_MAX}) {
+      SymContext Ctx;
+      SymState State(Ctx);
+      SymExec Exec(Ctx, State);
+      const auto Slot = reg(0);
+      State.write(SymSpace::Register, Slot.Offset, Ctx.mkConst(64, Old));
+      const auto T = analysis::detail::lowerX64TaskPriority(
+          writePriority(constant(New)), Slot,
+          [](uint16_t Bytes) { return NdVar::tmp(0x1000, Bytes); });
+      ASSERT_TRUE(T);
+      ASSERT_TRUE(T->Rejected);
+      for (const auto &Scalar : T->Ops)
+        ASSERT_EQ(Exec.step(Scalar), StepResult::Continue);
+      const auto Value = Ctx.asConst(Exec.operandValue(Slot));
+      const auto Bad = Ctx.asConst(Exec.operandValue(*T->Rejected));
+      ASSERT_TRUE(Value);
+      ASSERT_TRUE(Bad);
+      EXPECT_EQ(Value->getZExtValue(), New < 16 ? New : Old);
+      EXPECT_EQ(Bad->getZExtValue(), New >= 16);
+    }
+}
+
+SpecializationOptions separatedStoreOptions() {
+  auto O = ordinaryReturnOptions();
+  O.ProveStoreReturnSlotSeparation = true;
+  O.ExplicitMachineState = true;
+  O.NormalNonfaultingExecution = true;
+  O.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+  return O;
+}
+
+TEST(InterpreterSpecialization, StoreSeparationProvesCompleteAlignedExtent) {
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::LOAD, reg(40), {reg(8)}),
+           op(NdOp::INT_AND, reg(40), {reg(40), constant(~uint64_t{15})}),
+           op(NdOp::STORE, {}, {reg(40), constant(37, Width)}),
+           op(NdOp::COPY, reg(0), {constant(37)}), ret()});
+    auto O = separatedStoreOptions();
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::STORE), 1u);
+    auto Default = O;
+    Default.ProveStoreReturnSlotSeparation = false;
+    EXPECT_EQ(specializeInterpreter(P, {0x100}, Default).Status,
+              SpecializationStatus::Unsupported);
+    for (uint64_t Root : {0x1008u, 0x2008u})
+      for (uint64_t Pointer : {0x1000u, 0x2000u, 0x3000u}) {
+        std::map<uint64_t, uint8_t> Memory;
+        for (unsigned I = 0; I != 8; ++I)
+          Memory[0x4000 + I] = static_cast<uint8_t>(Pointer >> (8 * I));
+        EXPECT_EQ(execute(R.Residual, {{8, 0x4000}, {32, Root}}, Memory), 37u);
+      }
+    O.EntryFrameAlignment.reset();
+    const auto NoDomain = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(NoDomain.Status, SpecializationStatus::Unsupported);
+    EXPECT_TRUE(NoDomain.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, StoreSeparationChecksBothStraddlingEdges) {
+  for (uint16_t Width : {1, 2, 4, 8})
+    for (uint64_t Bias = 0; Bias != 16; ++Bias) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Bias);
+      Provider P;
+      P.add(0x100,
+            {op(NdOp::LOAD, reg(40), {reg(8)}),
+             op(NdOp::INT_AND, reg(40), {reg(40), constant(~uint64_t{15})}),
+             op(NdOp::INT_ADD, reg(40), {reg(40), constant(Bias)}),
+             op(NdOp::STORE, {}, {reg(40), constant(11, Width)}), ret()});
+      const auto R = specializeInterpreter(P, {0x100}, separatedStoreOptions());
+      // [aligned+Bias, +Width) must miss every possible [aligned+8, +16).
+      const bool Disjoint = Bias + Width <= 8;
+      EXPECT_EQ(R.complete(), Disjoint) << R.Diagnostic;
+      if (!Disjoint) {
+        EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+        EXPECT_TRUE(R.Residual.Blocks.empty());
+      }
+    }
+}
+
+TEST(InterpreterSpecialization, StoreSeparationKeepsOrdinaryAliasHavoc) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_ADD, reg(48), {reg(32), constant(8)}),
+         op(NdOp::STORE, {}, {reg(48), constant(1)}),
+         op(NdOp::LOAD, reg(40), {reg(8)}),
+         op(NdOp::INT_AND, reg(40), {reg(40), constant(~uint64_t{15})}),
+         op(NdOp::STORE, {}, {reg(40), constant(2)}),
+         op(NdOp::LOAD, reg(0), {reg(48)}),
+         op(NdOp::INT_EQUAL, reg(56, 1), {reg(0), constant(2)}),
+         op(NdOp::COND_BR, {}, {constant(0x110), reg(56, 1)})},
+        0x120);
+  P.add(0x110, {op(NdOp::COPY, reg(0), {constant(17)}), ret()});
+  P.add(0x120, {op(NdOp::COPY, reg(0), {constant(19)}), ret()});
+  const auto R = specializeInterpreter(P, {0x100}, separatedStoreOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::COND_BR), 1u);
+  for (uint64_t Pointer : {0x1010u, 0x2000u}) {
+    std::map<uint64_t, uint8_t> Memory;
+    for (unsigned I = 0; I != 8; ++I)
+      Memory[0x4000 + I] = static_cast<uint8_t>(Pointer >> (8 * I));
+    EXPECT_EQ(execute(R.Residual, {{8, 0x4000}, {32, 0x1008}}, Memory),
+              Pointer == 0x1010 ? 17u : 19u);
+  }
+  // No proof of a preceding occurrence can bless the pointer's next use.
+  P.add(0x110, {op(NdOp::INT_ADD, reg(40), {reg(40), constant(8)}),
+                op(NdOp::STORE, {}, {reg(40), constant(3)}), ret()});
+  const auto Refused =
+      specializeInterpreter(P, {0x100}, separatedStoreOptions());
+  EXPECT_EQ(Refused.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Refused.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, StoreSeparationUsesCurrentSymbolicRelation) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_AND, reg(40), {reg(8), constant(7)}),
+                op(NdOp::INT_ADD, reg(40), {reg(40), constant(8)}),
+                op(NdOp::INT_ADD, reg(40), {reg(40), reg(32)}),
+                op(NdOp::STORE, {}, {reg(40), constant(23)}),
+                op(NdOp::LOAD, reg(0), {reg(40)}), ret()});
+  auto O = ordinaryReturnOptions();
+  O.ProveStoreReturnSlotSeparation = true;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Root :
+       {uint64_t{0x1000}, uint64_t{0x8000000000000000}, UINT64_MAX - 31})
+    for (uint64_t Index = 0; Index != 8; ++Index)
+      EXPECT_EQ(execute(R.Residual, {{8, Index}, {32, Root}}), 23u);
+  // A one-byte wider backward offset can touch the first control-slot byte.
+  P.add(0x100, {op(NdOp::INT_AND, reg(40), {reg(8), constant(7)}),
+                op(NdOp::INT_SUB, reg(40), {reg(40), constant(8)}),
+                op(NdOp::INT_ADD, reg(40), {reg(40), reg(32)}),
+                op(NdOp::STORE, {}, {reg(40), constant(23, 2)}), ret()});
+  const auto Bad = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Bad.Status, SpecializationStatus::Unsupported);
+}
+
+TEST(InterpreterSpecialization, StoreSeparationNormalizesNarrowAddresses) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::LOAD, reg(40, 4), {reg(8)}),
+         op(NdOp::INT_AND, reg(40, 4), {reg(40, 4), constant(0xfffffff0, 4)}),
+         op(NdOp::STORE, {}, {reg(40, 4), constant(29)}),
+         op(NdOp::COPY, reg(0), {constant(29)}), ret()});
+  const auto R = specializeInterpreter(P, {0x100}, separatedStoreOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Root : {uint64_t{0x1008}, UINT64_MAX - 7}) {
+    std::map<uint64_t, uint8_t> Memory{
+        {0x3000, 0xf0}, {0x3001, 0xff}, {0x3002, 0xff}, {0x3003, 0xff}};
+    EXPECT_EQ(execute(R.Residual, {{8, 0x3000}, {32, Root}}, Memory), 29u);
+  }
+}
+
+TEST(InterpreterSpecialization, StoreSeparationChargesProofBudgets) {
+  Provider P;
+  P.add(0x100, {op(NdOp::LOAD, reg(40), {reg(8)}),
+                op(NdOp::INT_AND, reg(40), {reg(40), constant(~uint64_t{15})}),
+                op(NdOp::STORE, {}, {reg(40), constant(37)}), ret()});
+  auto O = separatedStoreOptions();
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  ASSERT_GT(R.SolverQueries, 1u);
+  O.MaxSolverQueries = R.SolverQueries;
+  EXPECT_TRUE(specializeInterpreter(P, {0x100}, O).complete());
+  --O.MaxSolverQueries;
+  auto Bad = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Bad.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(Bad.Residual.Blocks.empty());
+  O = separatedStoreOptions();
+  O.MaxSolverGates = 1;
+  Bad = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Bad.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(Bad.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization,
+     StoreSeparationHonorsBranchDomainAndZeroExtension) {
+  for (bool HighRoot : {false, true}) {
+    const uint64_t Root =
+        HighRoot ? UINT64_C(0xffffffff80000000) : UINT64_C(0x80000000);
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::COPY, reg(0), {constant(31)}),
+           op(NdOp::INT_EQUAL, reg(56, 1), {reg(32), constant(Root)}),
+           op(NdOp::COND_BR, {}, {constant(0x110), reg(56, 1)})},
+          0x120);
+    P.add(0x110,
+          {op(NdOp::LOAD, reg(40, 4), {reg(8)}),
+           op(NdOp::INT_AND, reg(40, 4), {reg(40, 4), constant(0xfffffff0, 4)}),
+           op(NdOp::INT_OR, reg(40, 4), {reg(40, 4), constant(0x80000000, 4)}),
+           op(NdOp::STORE, {}, {reg(40, 4), constant(9)}), ret()});
+    P.add(0x120, {ret()});
+    auto O = ordinaryReturnOptions();
+    O.ProveStoreReturnSlotSeparation = true;
+    O.ControlRegisters = {{32, 8}};
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    if (!HighRoot) {
+      // Zero extension can hit this low root. Sign extension would falsely
+      // prove separation, since the destination's sign bit is set.
+      EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+      continue;
+    }
+    // The branch bounds the frame root to the high address. Every zero-
+    // extended 32-bit STORE is separated, even with its sign bit set.
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    for (uint64_t EntryRoot : {Root, uint64_t{0x1000}}) {
+      std::map<uint64_t, uint8_t> Memory{
+          {0x3000, 0}, {0x3001, 0}, {0x3002, 0}, {0x3003, 0x80}};
+      EXPECT_EQ(execute(R.Residual, {{8, 0x3000}, {32, EntryRoot}}, Memory),
+                31u);
+    }
+  }
+}
+
+// Byte-vector oracle independent of the symbolic expression implementation.
+// The earlier scalar oracle intentionally remains limited to uint64 values.
+struct WideByteOracle {
+  using Key = std::pair<VnodeSpace, uint64_t>;
+  std::map<Key, uint8_t> Registers;
+  std::map<uint64_t, uint8_t> Memory;
+  llvm::endianness Order;
+  bool Valid = true;
+  std::string Diagnostic;
+
+  explicit WideByteOracle(llvm::endianness Order) : Order(Order) {}
+
+  std::vector<uint8_t> read(NdVar V) {
+    std::vector<uint8_t> Bytes(V.Size);
+    for (unsigned I = 0; I < V.Size; ++I) {
+      if (V.isConst()) {
+        const unsigned Byte =
+            Order == llvm::endianness::little ? I : V.Size - I - 1;
+        Bytes[I] = Byte < 8 ? uint8_t(V.Offset >> (8 * Byte)) : 0;
+      } else {
+        const auto It = Registers.find({V.Space, V.Offset + I});
+        if (It == Registers.end())
+          Valid = false;
+        else
+          Bytes[I] = It->second;
+      }
+    }
+    return Bytes;
+  }
+  uint64_t number(NdVar V) {
+    if (!V.Size || V.Size > 8) {
+      Valid = false;
+      return 0;
+    }
+    const auto Bytes = read(V);
+    uint64_t N = 0;
+    for (unsigned I = 0; I < V.Size; ++I)
+      N |= uint64_t(Bytes[I])
+           << (8 * (Order == llvm::endianness::little ? I : V.Size - I - 1));
+    return N;
+  }
+  void write(NdVar V, const std::vector<uint8_t> &Bytes) {
+    if (V.Size != Bytes.size()) {
+      Valid = false;
+      return;
+    }
+    for (unsigned I = 0; I < V.Size; ++I)
+      Registers[{V.Space, V.Offset + I}] = Bytes[I];
+  }
+  void word(NdVar V, uint64_t N) { write(V, read(constant(N, V.Size))); }
+
+  bool run(const LowFunc &F) {
+    int Block = 0;
+    for (unsigned Step = 0; Step != 256; ++Step) {
+      const auto &B = F.Blocks.at(Block);
+      int Next = -1;
+      std::optional<va_t> Instruction;
+      for (const auto &O : B.Ops) {
+        if (Instruction != O.Addr) {
+          std::erase_if(Registers, [&](const auto &Entry) {
+            return Entry.first.first == VnodeSpace::TEMP &&
+                   !F.isFunctionTemporaryByte(Entry.first.second);
+          });
+          Instruction = O.Addr;
+        }
+        Diagnostic = "block " + std::to_string(Block) + ", " +
+                     std::string(ndOpName(O.Opcode));
+        switch (O.Opcode) {
+        case NdOp::COPY:
+          write(O.Output, read(O.Inputs[0]));
+          break;
+        case NdOp::INT_ZEXT:
+        case NdOp::INT_SEXT: {
+          auto A = read(O.Inputs[0]);
+          if (A.empty() || A.size() >= O.Output.Size)
+            return false;
+          if (Order == llvm::endianness::big)
+            std::reverse(A.begin(), A.end());
+          const uint8_t Fill =
+              O.Opcode == NdOp::INT_SEXT && (A.back() & 0x80) ? 0xff : 0;
+          A.resize(O.Output.Size, Fill);
+          if (Order == llvm::endianness::big)
+            std::reverse(A.begin(), A.end());
+          write(O.Output, A);
+          break;
+        }
+        case NdOp::INT_MULT: {
+          auto A = read(O.Inputs[0]), B = read(O.Inputs[1]);
+          if (A.size() != B.size() || A.size() != O.Output.Size)
+            return false;
+          if (Order == llvm::endianness::big) {
+            std::reverse(A.begin(), A.end());
+            std::reverse(B.begin(), B.end());
+          }
+          std::vector<uint8_t> Product(O.Output.Size, 0);
+          for (unsigned I = 0; I < A.size(); ++I) {
+            unsigned Carry = 0;
+            for (unsigned J = 0; I + J < Product.size(); ++J) {
+              const unsigned Digit =
+                  Product[I + J] + unsigned(A[I]) * B[J] + Carry;
+              Product[I + J] = uint8_t(Digit);
+              Carry = Digit >> 8;
+            }
+          }
+          if (Order == llvm::endianness::big)
+            std::reverse(Product.begin(), Product.end());
+          write(O.Output, Product);
+          break;
+        }
+        case NdOp::SUBBYTES: {
+          auto A = read(O.Inputs[0]);
+          const auto Offset = number(O.Inputs[1]);
+          if (Offset > A.size() || O.Output.Size > A.size() - Offset)
+            return false;
+          if (Order == llvm::endianness::big)
+            std::reverse(A.begin(), A.end());
+          std::vector<uint8_t> Part(A.begin() + Offset,
+                                    A.begin() + Offset + O.Output.Size);
+          if (Order == llvm::endianness::big)
+            std::reverse(Part.begin(), Part.end());
+          write(O.Output, Part);
+          break;
+        }
+        case NdOp::INT_NOT: {
+          auto A = read(O.Inputs[0]);
+          for (auto &Byte : A)
+            Byte = ~Byte;
+          write(O.Output, A);
+          break;
+        }
+        case NdOp::INT_AND:
+        case NdOp::INT_OR:
+        case NdOp::INT_XOR: {
+          auto A = read(O.Inputs[0]);
+          const auto V = read(O.Inputs[1]);
+          if (A.size() != V.size())
+            return false;
+          for (unsigned I = 0; I < A.size(); ++I)
+            A[I] = O.Opcode == NdOp::INT_AND  ? A[I] & V[I]
+                   : O.Opcode == NdOp::INT_OR ? A[I] | V[I]
+                                              : A[I] ^ V[I];
+          write(O.Output, A);
+          break;
+        }
+        case NdOp::INT_ADD:
+          word(O.Output, number(O.Inputs[0]) + number(O.Inputs[1]));
+          break;
+        case NdOp::INT_SUB:
+          word(O.Output, number(O.Inputs[0]) - number(O.Inputs[1]));
+          break;
+        case NdOp::INT_EQUAL:
+        case NdOp::INT_NOTEQUAL:
+          word(O.Output, (read(O.Inputs[0]) == read(O.Inputs[1])) ==
+                             (O.Opcode == NdOp::INT_EQUAL));
+          break;
+        case NdOp::INT_SLESS: {
+          const auto Bytes = O.Inputs[0].Size;
+          if (!Bytes || Bytes > 8 || O.Inputs[1].Size != Bytes)
+            return false;
+          const uint64_t Sign = uint64_t{1} << (Bytes * 8 - 1);
+          word(O.Output,
+               (number(O.Inputs[0]) ^ Sign) < (number(O.Inputs[1]) ^ Sign));
+          break;
+        }
+        case NdOp::LOAD:
+        case NdOp::STORE: {
+          const auto M = lowMemoryOperands(O);
+          const auto Address = number(*M.Address);
+          if (O.Opcode == NdOp::STORE) {
+            const auto V = read(*M.StoredValue);
+            for (unsigned I = 0; I < V.size(); ++I)
+              Memory[Address + I] = V[I];
+          } else {
+            std::vector<uint8_t> V(M.AccessSize);
+            for (unsigned I = 0; I < V.size(); ++I) {
+              const auto It = Memory.find(Address + I);
+              if (It == Memory.end())
+                return false;
+              V[I] = It->second;
+            }
+            write(O.Output, V);
+          }
+          break;
+        }
+        case NdOp::BRANCH:
+        case NdOp::COND_BR:
+        case NdOp::INDIR_BR: {
+          const auto Address = number(O.Inputs[0]);
+          const bool Taken = O.Opcode != NdOp::COND_BR || number(O.Inputs[1]);
+          for (int S : B.Succs)
+            if ((F.Blocks[S].StartAddr == Address) == Taken)
+              Next = S;
+          if (Next < 0 && B.Succs.size() == 1)
+            Next = B.Succs.front();
+          break;
+        }
+        case NdOp::RETURN:
+          return Valid;
+        case NdOp::NOP:
+          break;
+        default:
+          return false;
+        }
+        if (!Valid)
+          return false;
+      }
+      if (Next < 0) {
+        if (B.Succs.size() != 1)
+          return false;
+        Next = B.Succs.front();
+      }
+      Block = Next;
+    }
+    return false;
+  }
+};
+
+SpecializationOptions wideOptions() {
+  SpecializationOptions O;
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = true;
+  return O;
+}
+
+TEST(InterpreterSpecialization, WideTransportPreservesEveryByte) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    const auto A = reg(x86reg::XMM0, 16), B = reg(x86reg::XMM1, 16);
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::COPY, B, {A}), op(NdOp::STORE, {}, {constant(0x4000), B}),
+           op(NdOp::INT_NOT, B, {B}),
+           op(NdOp::INT_AND, B, {B, constant(0x8040201008040201, 16)}),
+           op(NdOp::INT_OR, B, {B, A}),
+           op(NdOp::INT_XOR, B, {B, constant(0x00ff00ff00ff00ff, 16)}),
+           op(NdOp::STORE, {}, {constant(0x5000), B}),
+           op(NdOp::LOAD, B, {constant(0x4000)}), ret()});
+    auto O = wideOptions();
+    O.ByteOrder = Order;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::STORE), 2u);
+    EXPECT_EQ(count(R.Residual, NdOp::LOAD), 1u);
+    for (unsigned Seed : {0U, 17U, 255U}) {
+      WideByteOracle Oracle(Order);
+      std::vector<uint8_t> Bytes(16), Expected(16);
+      for (unsigned I = 0; I < 16; ++I)
+        Bytes[I] = uint8_t(Seed + 29 * I);
+      Oracle.write(A, Bytes);
+      ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+      EXPECT_EQ(Oracle.read(B), Bytes);
+      for (unsigned I = 0; I < 16; ++I) {
+        const unsigned Byte = Order == llvm::endianness::little ? I : 15 - I;
+        const uint8_t Mask =
+            Byte < 8 ? uint8_t(uint64_t{0x8040201008040201} >> (Byte * 8)) : 0;
+        const uint8_t Xor =
+            Byte < 8 ? uint8_t(uint64_t{0x00ff00ff00ff00ff} >> (Byte * 8)) : 0;
+        Expected[I] = ((uint8_t(~Bytes[I]) & Mask) | Bytes[I]) ^ Xor;
+        EXPECT_EQ(Oracle.Memory[0x4000 + I], Bytes[I]);
+        EXPECT_EQ(Oracle.Memory[0x5000 + I], Expected[I]);
+      }
+    }
+  }
+}
+
+TEST(InterpreterSpecialization, WideImmutableLoadRemainsRuntime) {
+  Provider P;
+  const auto Vector = reg(x86reg::XMM0, 16);
+  for (unsigned I = 0; I < 16; ++I)
+    P.Image[0x4000 + I] = uint8_t(7 + 31 * I);
+  P.add(0x100, {op(NdOp::LOAD, Vector, {constant(0x4000)}),
+                op(NdOp::STORE, {}, {constant(0x5000), Vector}), ret()});
+  const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::LOAD), 1u);
+  WideByteOracle Oracle(llvm::endianness::little);
+  Oracle.Memory = P.Image;
+  ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+  for (unsigned I = 0; I < 16; ++I)
+    EXPECT_EQ(Oracle.Memory[0x5000 + I], P.Image[0x4000 + I]);
+}
+
+TEST(InterpreterSpecialization, WideMemoryAcceptsConstantSpaceToken) {
+  const auto A = reg(x86reg::XMM0, 16), B = reg(x86reg::XMM1, 16);
+  Provider P;
+  P.add(0x100, {op(NdOp::STORE, {}, {constant(0, 1), reg(0), A}),
+                op(NdOp::LOAD, B, {constant(0, 1), reg(0)}), ret()});
+  const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  std::vector<uint8_t> Bytes(16);
+  for (unsigned I = 0; I < 16; ++I)
+    Bytes[I] = uint8_t(19 + 37 * I);
+  WideByteOracle Oracle(llvm::endianness::little);
+  Oracle.write(A, Bytes);
+  Oracle.word(reg(0), 0x4000);
+  ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+  EXPECT_EQ(Oracle.read(B), Bytes);
+  // An independent executor must detect loss of only the upper half.
+  auto Truncated = R.Residual;
+  for (auto &Block : Truncated.Blocks)
+    for (auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::STORE)
+        Op.Inputs[2].Size = 8;
+  WideByteOracle Negative(llvm::endianness::little);
+  Negative.write(A, Bytes);
+  Negative.word(reg(0), 0x4000);
+  EXPECT_FALSE(Negative.run(Truncated));
+}
+
+TEST(InterpreterSpecialization, WideTransportRefinesHighHalfAcrossJoin) {
+  const auto Vector = reg(x86reg::XMM0, 16), Reload = reg(x86reg::XMM1, 16);
+  Provider P;
+  P.add(0x100, {op(NdOp::COND_BR, {}, {constant(0x110), reg(8)})}, 0x101);
+  for (auto [Address, Target] :
+       {std::pair{0x101u, 0x200u}, std::pair{0x110u, 0x210u}})
+    P.add(Address,
+          {op(NdOp::COPY, reg(Vector.Offset, 8), {reg(16)}),
+           op(NdOp::COPY, reg(Vector.Offset + 8, 8), {constant(Target)}),
+           op(NdOp::INT_SUB, reg(40), {reg(32), constant(32)}),
+           op(NdOp::STORE, {}, {reg(40), Vector}), jump(0x120)});
+  P.add(0x120, {op(NdOp::INT_SUB, reg(40), {reg(32), constant(32)}),
+                op(NdOp::LOAD, Reload, {reg(40)}),
+                op(NdOp::INDIR_BR, {}, {reg(Reload.Offset + 8, 8)})});
+  P.add(0x200, {op(NdOp::COPY, reg(0), {constant(17)}), ret()});
+  P.add(0x210, {op(NdOp::COPY, reg(0), {constant(31)}), ret()});
+  auto O = wideOptions();
+  O.FrameBaseRegister = SymRegisterRange{32, 8};
+  O.DiscoverControlState = true;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_GT(R.DiscoveredControlFields, 0u);
+  ASSERT_GT(R.SolverQueries, 1u);
+  O.MaxSolverQueries = R.SolverQueries;
+  EXPECT_TRUE(specializeInterpreter(P, {0x100}, O).complete());
+  --O.MaxSolverQueries;
+  const auto Limited = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Limited.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(Limited.Residual.Blocks.empty());
+  for (unsigned Choice : {0U, 1U}) {
+    WideByteOracle Oracle(llvm::endianness::little);
+    Oracle.word(reg(8), Choice);
+    Oracle.word(reg(16), 0xfedcba9876543210);
+    Oracle.word(reg(32), 0x4000);
+    ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+    EXPECT_EQ(Oracle.number(reg(0)), Choice ? 31u : 17u);
+  }
+}
+
+TEST(InterpreterSpecialization, WideBitwiseHighHalfDrivesControl) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (auto Opcode :
+         {NdOp::INT_NOT, NdOp::INT_AND, NdOp::INT_OR, NdOp::INT_XOR}) {
+      const auto A = reg(x86reg::XMM0, 16), B = reg(x86reg::XMM1, 16);
+      const unsigned High = Order == llvm::endianness::little ? 8 : 0;
+      const unsigned Low = 8 - High;
+      uint64_t First = 0xfedcba987654f240, Second = 0xfff;
+      if (Opcode == NdOp::INT_NOT)
+        First = ~uint64_t{0x240};
+      if (Opcode == NdOp::INT_OR) {
+        First = 0x200;
+        Second = 0x40;
+      }
+      if (Opcode == NdOp::INT_XOR)
+        Second = First ^ 0x240;
+      const auto Compute =
+          Opcode == NdOp::INT_NOT ? op(Opcode, A, {A}) : op(Opcode, A, {A, B});
+      Provider P;
+      P.add(0x100, {op(NdOp::COPY, reg(A.Offset + Low), {reg(16)}),
+                    op(NdOp::COPY, reg(A.Offset + High), {constant(First)}),
+                    op(NdOp::COPY, reg(B.Offset + Low), {reg(24)}),
+                    op(NdOp::COPY, reg(B.Offset + High), {constant(Second)}),
+                    Compute, op(NdOp::INDIR_BR, {}, {reg(A.Offset + High)})});
+      P.add(0x240, {op(NdOp::COPY, reg(0), {constant(55)}), ret()});
+      auto O = wideOptions();
+      O.ByteOrder = Order;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      ASSERT_TRUE(R.complete()) << ndOpName(Opcode) << ": " << R.Diagnostic;
+      for (uint64_t Input : {uint64_t{0}, UINT64_MAX}) {
+        WideByteOracle Oracle(Order);
+        Oracle.word(reg(16), Input);
+        Oracle.word(reg(24), ~Input);
+        ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+        EXPECT_EQ(Oracle.number(reg(0)), 55u);
+      }
+    }
+}
+
+TEST(InterpreterSpecialization, WideStoreChecksCompleteReturnExtent) {
+  for (int Offset : {-32, -16, -15, -8, 0, 7, 8}) {
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::INT_ADD, reg(40), {reg(32), constant(uint64_t(Offset))}),
+           op(NdOp::STORE, {}, {reg(40), reg(x86reg::XMM0, 16)}), ret()});
+    auto O = ordinaryReturnOptions();
+    O.ExplicitMachineState = O.NormalNonfaultingExecution = true;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    const bool Overlap = Offset < 8 && Offset + 16 > 0;
+    EXPECT_EQ(R.complete(), !Overlap) << Offset << ": " << R.Diagnostic;
+    if (Overlap)
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, WideUnknownStoreKeepsFrameAliasHavoc) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_SUB, reg(40), {reg(32), constant(16)}),
+         op(NdOp::STORE, {}, {reg(40), constant(0x200)}),
+         op(NdOp::STORE, {}, {reg(8), reg(x86reg::XMM0, 16)}),
+         op(NdOp::LOAD, reg(0), {reg(40)}), op(NdOp::INDIR_BR, {}, {reg(0)})});
+  P.add(0x200, {ret()});
+  auto O = wideOptions();
+  O.FrameBaseRegister = SymRegisterRange{32, 8};
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  EXPECT_FALSE(R.complete());
+  EXPECT_TRUE(R.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, WideAdmissionRejectsOtherShapes) {
+  const auto A = reg(x86reg::XMM0, 16), B = reg(x86reg::XMM1, 16);
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    Provider P;
+    P.add(0x100, {op(NdOp::COPY, B, {A}), ret()});
+    auto O = wideOptions();
+    O.ExplicitMachineState = Mode == 1;
+    O.NormalNonfaultingExecution = Mode == 2;
+    EXPECT_FALSE(specializeInterpreter(P, {0x100}, O).complete());
+  }
+  std::vector<LowOp> Bad = {
+      op(NdOp::COPY, B, {reg(A.Offset, 8)}),
+      op(NdOp::COPY, B, {}),
+      op(NdOp::COPY, B, {A, A}),
+      op(NdOp::INT_XOR, B, {A, constant(7, 8)}),
+      op(NdOp::INT_ADD, B, {A, A}),
+      op(NdOp::INT_LESS, reg(0, 1), {A, B}),
+      op(NdOp::LOAD, B, {A}),
+      op(NdOp::STORE, {}, {A, B}),
+      op(NdOp::COPY, reg(UINT64_MAX - 7, 16), {A}),
+      op(NdOp::LOAD, B, {}),
+      op(NdOp::LOAD, B, {reg(0), reg(8)}),
+      op(NdOp::LOAD, B, {constant(0), reg(8), reg(16)}),
+      op(NdOp::STORE, {}, {A}),
+      op(NdOp::STORE, {}, {reg(0), reg(8), A}),
+      op(NdOp::STORE, {}, {constant(0), reg(8), A, reg(16)}),
+      op(NdOp::STORE, reg(0), {reg(8), A}),
+      op(NdOp::INDIR_BR, {}, {A}),
+      op(NdOp::RETURN, {}, {A})};
+  for (uint16_t Width : {9, 15, 17, 32})
+    Bad.push_back(op(NdOp::COPY, reg(B.Offset, Width), {reg(A.Offset, Width)}));
+  auto Segmented = op(NdOp::LOAD, B, {constant(0x188)});
+  Segmented.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  Bad.push_back(Segmented);
+  auto Ordered = op(NdOp::STORE, {}, {reg(0), A});
+  Ordered.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  Bad.push_back(Ordered);
+  for (const auto &Instruction : Bad) {
+    Provider P;
+    P.add(0x100, {Instruction, ret()});
+    auto O = wideOptions();
+    O.X64SegmentedReads = true;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete()) << ndOpName(Instruction.Opcode);
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, WideTransportHonorsBudgets) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_NOT, reg(x86reg::XMM1, 16), {reg(x86reg::XMM0, 16)}),
+         op(NdOp::STORE, {}, {constant(0x4000), reg(x86reg::XMM1, 16)}),
+         ret()});
+  for (bool Nodes : {false, true}) {
+    auto O = wideOptions();
+    if (Nodes)
+      O.MaxSymbolicNodes = 2;
+    else
+      O.MaxOperations = 1;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(R.Status, SpecializationStatus::BudgetExceeded) << R.Diagnostic;
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
+     WideIntegerProductsPreserveHighHalfAndOverflow) {
+  struct Case {
+    uint64_t A, B, Low, High;
+    bool Signed, Overflow;
+  };
+  const Case Cases[] = {
+      {2, 3, 6, 0, true, false},
+      {UINT64_MAX, 2, UINT64_MAX - 1, UINT64_MAX, true, false},
+      {uint64_t{1} << 63, 1, uint64_t{1} << 63, UINT64_MAX, true, false},
+      {uint64_t{1} << 63, UINT64_MAX, uint64_t{1} << 63, 0, true, true},
+      {(uint64_t{1} << 63) - 1, 2, UINT64_MAX - 1, 0, true, true},
+      {uint64_t{1} << 32, uint64_t{1} << 32, 0, 1, true, true},
+      {2, 3, 6, 0, false, false},
+      {UINT64_MAX, UINT64_MAX, 1, UINT64_MAX - 1, false, true},
+      {UINT64_MAX, 2, UINT64_MAX - 1, 1, false, true},
+      {uint64_t{1} << 63, 2, 0, 1, false, true}};
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (bool Signed : {false, true}) {
+      Provider P;
+      const auto A = NdVar::tmp(0x10000, 16), B = NdVar::tmp(0x10020, 16);
+      const auto Full = NdVar::tmp(0x10040, 16);
+      const auto Back = NdVar::tmp(0x10060, 16);
+      const auto Extend = Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT;
+      P.add(0x100, {op(Extend, A, {reg(0)}), op(Extend, B, {reg(8)}),
+                    op(NdOp::INT_MULT, Full, {A, B}),
+                    op(NdOp::SUBBYTES, reg(16), {Full, constant(0, 4)}),
+                    op(NdOp::SUBBYTES, reg(24), {Full, constant(8, 4)}),
+                    op(Extend, Back, {reg(16)}),
+                    op(NdOp::INT_NOTEQUAL, reg(40, 1), {Full, Back}),
+                    op(NdOp::INT_EQUAL, reg(41, 1), {Full, Back}), ret()});
+      auto O = wideOptions();
+      O.ByteOrder = Order;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      EXPECT_EQ(count(R.Residual, NdOp::INT_MULT), 1U);
+      EXPECT_EQ(count(R.Residual, NdOp::SUBBYTES), 2U);
+      for (const auto &C : Cases) {
+        if (C.Signed != Signed)
+          continue;
+        SCOPED_TRACE(::testing::Message()
+                     << Signed << ": " << C.A << " * " << C.B);
+        WideByteOracle Oracle(Order);
+        Oracle.word(reg(0), C.A);
+        Oracle.word(reg(8), C.B);
+        ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+        EXPECT_EQ(Oracle.number(reg(16)), C.Low);
+        EXPECT_EQ(Oracle.number(reg(24)), C.High);
+        EXPECT_EQ(Oracle.number(reg(40, 1)), C.Overflow);
+        EXPECT_EQ(Oracle.number(reg(41, 1)), !C.Overflow);
+      }
+    }
+}
+
+TEST(InterpreterSpecialization, WideIntegerUnknownHighHalfControlsBothPaths) {
+  const auto A = reg(0x400, 16), B = reg(0x440, 16);
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (auto Compare : {NdOp::INT_EQUAL, NdOp::INT_NOTEQUAL}) {
+      Provider P;
+      P.add(0x100, {op(Compare, reg(32, 1), {A, B}),
+                    op(NdOp::COND_BR, {}, {constant(0x200), reg(32, 1)})});
+      P.add(0x101, {op(NdOp::COPY, reg(0), {constant(17)}), ret()});
+      P.add(0x200, {op(NdOp::COPY, reg(0), {constant(31)}), ret()});
+      auto O = wideOptions();
+      O.ByteOrder = Order;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      ASSERT_GT(R.SolverQueries, 0U);
+      EXPECT_EQ(count(R.Residual, NdOp::RETURN), 2U);
+      O.MaxOperations = R.EvaluatedOperations;
+      O.MaxSolverQueries = R.SolverQueries;
+      EXPECT_TRUE(specializeInterpreter(P, {0x100}, O).complete());
+      for (bool Queries : {false, true}) {
+        auto Limited = O;
+        if (Queries)
+          --Limited.MaxSolverQueries;
+        else
+          --Limited.MaxOperations;
+        const auto Failure = specializeInterpreter(P, {0x100}, Limited);
+        EXPECT_EQ(Failure.Status, SpecializationStatus::BudgetExceeded);
+        EXPECT_TRUE(Failure.Residual.Blocks.empty());
+      }
+      for (bool HighDiffers : {false, true}) {
+        WideByteOracle Oracle(Order);
+        std::vector<uint8_t> Left(16, 0x5a), Right = Left;
+        if (HighDiffers)
+          Right[Order == llvm::endianness::little ? 15 : 0] ^= 0x80;
+        Oracle.write(A, Left);
+        Oracle.write(B, Right);
+        ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+        EXPECT_EQ(Oracle.number(reg(0)),
+                  (HighDiffers == (Compare == NdOp::INT_NOTEQUAL)) ? 31U : 17U);
+      }
+    }
+}
+
+TEST(InterpreterSpecialization, WideIntegerExtensionsAndNumericSlices) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint16_t Width = 1; Width <= 8; ++Width)
+      for (bool Signed : {false, true}) {
+        const auto Input = reg(0, Width), Wide = NdVar::tmp(0x10000, 16);
+        Provider P;
+        P.add(0x100,
+              {op(Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT, Wide, {Input}),
+               op(NdOp::SUBBYTES, reg(16), {Wide, constant(8, 1)}),
+               op(NdOp::SUBBYTES, reg(24, 1), {Wide, constant(15, 4)}),
+               op(NdOp::SUBBYTES, reg(32, Width), {Wide, constant(0, 8)}),
+               ret()});
+        auto O = wideOptions();
+        O.ByteOrder = Order;
+        const auto R = specializeInterpreter(P, {0x100}, O);
+        ASSERT_TRUE(R.complete()) << R.Diagnostic;
+        for (uint64_t Value : {uint64_t{0}, UINT64_MAX}) {
+          WideByteOracle Oracle(Order);
+          Oracle.word(Input, Value);
+          ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+          EXPECT_EQ(Oracle.number(reg(16)), Signed && Value ? UINT64_MAX : 0);
+          EXPECT_EQ(Oracle.number(reg(24, 1)), Signed && Value ? 255U : 0);
+          EXPECT_EQ(Oracle.read(reg(32, Width)), Oracle.read(Input));
+        }
+      }
+}
+
+TEST(InterpreterSpecialization, WideIntegerDecodedOverflowControlsResidual) {
+  for (uint8_t Branch : {0x70, 0x72}) { // JO and JC
+    const std::vector<uint8_t> Bytes{
+        0x48,   0x0f, 0xaf, 0xc1,           // imul rax, rcx
+        Branch, 6,                          // jo/jc overflow
+        0xba,   17,   0,    0,    0, 0xc3,  // mov edx,17; ret
+        0xba,   31,   0,    0,    0, 0xc3}; // overflow: mov edx,31; ret
+    Decoder D;
+    ASSERT_TRUE(D.init(Arch::X64));
+    D.setStrict(true);
+    Provider P;
+    for (size_t Offset = 0; Offset < Bytes.size();) {
+      DecodedInsn I{};
+      ASSERT_GT(D.decodeOneForLift(Bytes.data() + Offset, Bytes.size() - Offset,
+                                   0x100 + Offset, I),
+                0);
+      std::vector<LowOp> Ops;
+      D.liftToLow(I, Ops);
+      P.add(I.Addr, Ops, I.Addr + I.Size);
+      P.Code[I.Addr].Origin.Size = I.Size;
+      Offset += I.Size;
+    }
+    const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::RETURN), 2U);
+    // These have identical low products. Only the real signed overflow can
+    // distinguish the residual outcomes; checking the low word is insufficient.
+    for (bool Overflow : {false, true}) {
+      WideByteOracle Oracle(llvm::endianness::little);
+      Oracle.word(reg(x86reg::RAX),
+                  Overflow ? (uint64_t{1} << 63) - 1 : UINT64_MAX);
+      Oracle.word(reg(x86reg::RCX), 2);
+      ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+      EXPECT_EQ(Oracle.number(reg(x86reg::RAX)), UINT64_MAX - 1);
+      EXPECT_EQ(Oracle.number(reg(x86reg::RDX)), Overflow ? 31U : 17U);
+      EXPECT_EQ(Oracle.number(reg(x86reg::CF, 1)), Overflow);
+      EXPECT_EQ(Oracle.number(reg(x86reg::OF, 1)), Overflow);
+    }
+  }
+}
+
+TEST(InterpreterSpecialization, WideIntegerAdmissionRefusesMalformedShapes) {
+  const auto A = reg(0x400, 16), B = reg(0x440, 16), C = reg(0x480, 16);
+  std::vector<LowOp> Bad{
+      op(NdOp::INT_SEXT, A, {}),
+      op(NdOp::INT_SEXT, A, {reg(0), reg(8)}),
+      op(NdOp::INT_SEXT, A, {reg(0, 0)}),
+      op(NdOp::INT_ZEXT, A, {B}),
+      op(NdOp::INT_SEXT, constant(0, 16), {reg(0)}),
+      op(NdOp::INT_SEXT, reg(UINT64_MAX - 7, 16), {reg(0)}),
+      op(NdOp::INT_MULT, C, {A, reg(B.Offset, 8)}),
+      op(NdOp::INT_MULT, C, {A}),
+      op(NdOp::INT_MULT, reg(C.Offset, 8), {A, B}),
+      op(NdOp::INT_EQUAL, reg(0, 8), {A, B}),
+      op(NdOp::INT_NOTEQUAL, reg(0, 1), {A, reg(B.Offset, 8)}),
+      op(NdOp::INT_NOTEQUAL, reg(0, 1), {A, B, B}),
+      op(NdOp::SUBBYTES, reg(0), {A, reg(16)}),
+      op(NdOp::SUBBYTES, reg(0), {A, constant(9)}),
+      op(NdOp::SUBBYTES, reg(0, 1), {A, constant(16)}),
+      op(NdOp::SUBBYTES, reg(0), {A, constant(UINT64_MAX)}),
+      op(NdOp::SUBBYTES, reg(0, 0), {A, constant(0)}),
+      op(NdOp::SUBBYTES, C, {A, constant(0)}),
+      op(NdOp::SUBBYTES, reg(0), {A, constant(0, 16)}),
+      op(NdOp::INT_ADD, C, {A, B}),
+      op(NdOp::INT_DIV, C, {A, B}),
+      op(NdOp::INT_LEFT, C, {A, constant(1)}),
+      op(NdOp::INDIR_BR, {}, {A})};
+  for (uint16_t Width : {9, 15, 17, 32}) {
+    Bad.push_back(op(NdOp::INT_SEXT, reg(A.Offset, Width), {reg(0)}));
+    Bad.push_back(op(NdOp::INT_ZEXT, A, {reg(0, Width)}));
+  }
+  auto Segmented = op(NdOp::INT_MULT, C, {A, B});
+  Segmented.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  Bad.push_back(Segmented);
+  auto Ordered = op(NdOp::INT_MULT, C, {A, B});
+  Ordered.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  Bad.push_back(Ordered);
+  for (const auto &Operation : Bad) {
+    Provider P;
+    P.add(0x100, {Operation, ret()});
+    const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+    EXPECT_FALSE(R.complete()) << ndOpName(Operation.Opcode);
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  for (unsigned Mode = 0; Mode != 4; ++Mode) {
+    Provider P;
+    P.add(0x100, {op(NdOp::INT_SEXT, A, {reg(0)}), ret()});
+    auto O = wideOptions();
+    O.ExplicitMachineState = Mode & 1;
+    O.NormalNonfaultingExecution = Mode & 2;
+    O.MaxSymbolicNodes = Mode == 3 ? 2 : O.MaxSymbolicNodes;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+    if (Mode == 3)
+      EXPECT_EQ(R.Status, SpecializationStatus::BudgetExceeded);
+  }
+}
+
+TEST(InterpreterSpecialization, HighAddressEntriesKeepDisjointControlLabels) {
+  constexpr va_t Half = uint64_t{1} << 63;
+  for (va_t Entry : {va_t{0}, Half - 1, Half, Half + 1, InvalidVA - 2}) {
+    Provider P;
+    P.add(Entry, {op(NdOp::COPY, reg(0), {constant(Entry)}), ret()});
+    const auto R = specializeInterpreter(P, {Entry});
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    ASSERT_FALSE(R.Residual.Blocks.empty());
+    EXPECT_EQ(R.Residual.Entry, Entry);
+    EXPECT_EQ(execute(R.Residual), Entry);
+    for (size_t I = 1; I < R.Residual.Blocks.size(); ++I) {
+      const auto &B = R.Residual.Blocks[I];
+      EXPECT_TRUE(B.EndAddr <= Entry || B.StartAddr > Entry);
+      EXPECT_LT(B.StartAddr, B.EndAddr);
+      EXPECT_NE(B.StartAddr, InvalidVA);
+      for (size_t J = I + 1; J < R.Residual.Blocks.size(); ++J) {
+        const auto &Other = R.Residual.Blocks[J];
+        EXPECT_TRUE(B.EndAddr <= Other.StartAddr ||
+                    Other.EndAddr <= B.StartAddr);
+      }
+    }
+  }
+}
+
+TEST(InterpreterSpecialization, HighAddressNativeExtentExcludesInteriorLabels) {
+  constexpr va_t Half = uint64_t{1} << 63;
+  Provider P;
+  P.add(Half - 4, {op(NdOp::COPY, reg(0), {constant(Half)}), ret()}, Half + 4);
+  P.Code.at(Half - 4).Origin.Size = 8;
+  const auto R = specializeInterpreter(P, {Half - 4});
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(execute(R.Residual), Half);
+  for (size_t I = 1; I < R.Residual.Blocks.size(); ++I) {
+    const auto &B = R.Residual.Blocks[I];
+    EXPECT_TRUE(B.EndAddr <= Half - 4 || B.StartAddr >= Half + 4);
+  }
+}
+
+TEST(InterpreterSpecialization, HighAddressCallsPreserveNativeWordsAndStack) {
+  constexpr va_t Half = uint64_t{1} << 63;
+  for (const auto &[Entry, Callee] :
+       {std::pair{va_t{0x100}, Half}, std::pair{Half - 1, va_t{0x200}},
+        std::pair{Half, Half + 0x100}, std::pair{InvalidVA - 16, Half}}) {
+    Provider P;
+    P.add(Entry, {op(NdOp::CALL, reg(0), {constant(Callee)})});
+    P.Code.at(Entry).NativeStackControl =
+        SpecializationNativeStackControl::Call;
+    P.add(Entry + 1, {ret()});
+    P.Code.at(Entry + 1).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    P.add(Callee, {op(NdOp::LOAD, reg(0), {reg(32)}),
+                   op(NdOp::INT_ADD, reg(0), {reg(0), reg(8)})});
+    P.add(Callee + 1, {ret()});
+    P.Code.at(Callee + 1).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    SpecializationOptions O;
+    O.FrameBaseRegister = SymRegisterRange{32, 8};
+    O.RequireRestoredFrameAtReturn = true;
+    const auto R = specializeInterpreter(P, {Entry}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    for (uint64_t Input : {uint64_t{0}, uint64_t{37}, UINT64_MAX})
+      for (va_t Stack : {va_t{0x10000}, va_t{0xffff800012341000}}) {
+        WideByteOracle Oracle(llvm::endianness::little);
+        Oracle.word(reg(8), Input);
+        Oracle.word(reg(32), Stack);
+        for (unsigned I = 0; I < 8; ++I)
+          Oracle.Memory[Stack + I] = 0xa0 + I;
+        ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+        EXPECT_EQ(Oracle.number(reg(0)), Entry + 1 + Input);
+        EXPECT_EQ(Oracle.number(reg(32)), Stack);
+        for (unsigned I = 0; I < 8; ++I) {
+          EXPECT_EQ(Oracle.Memory.at(Stack - 8 + I),
+                    static_cast<uint8_t>((Entry + 1) >> (8 * I)));
+          EXPECT_EQ(Oracle.Memory.at(Stack + I), 0xa0 + I);
+        }
+      }
+    O.MaxOperations = R.EvaluatedOperations;
+    EXPECT_TRUE(specializeInterpreter(P, {Entry}, O).complete());
+    --O.MaxOperations;
+    const auto Short = specializeInterpreter(P, {Entry}, O);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
+     NativeReturnCellProofKeepsNarrowLowIRAddressConservative) {
+  for (uint16_t AddressBytes : {4, 8}) {
+    SCOPED_TRACE(AddressBytes);
+    Provider P;
+    P.add(0x100, {op(NdOp::INT_SUB, reg(x86reg::RSP),
+                     {reg(x86reg::RSP), constant(8)})});
+    P.add(0x101, {op(NdOp::CALL, reg(0), {constant(0x200)})});
+    P.Code.at(0x101).NativeStackControl =
+        SpecializationNativeStackControl::Call;
+    P.add(0x102, {op(NdOp::INT_ADD, reg(x86reg::RSP),
+                     {reg(x86reg::RSP), constant(8)})});
+    P.add(0x103, {ret()});
+    P.Code.at(0x103).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    // Unlike a decoded x64 addr32 instruction, this provider leaves the
+    // executed address narrow. It cannot use the 64-bit preservation API.
+    P.add(0x200, {op(NdOp::STORE, {},
+                     {constant(0x8000, AddressBytes), reg(x86reg::RCX, 4)}),
+                  op(NdOp::COPY, reg(0), {constant(37)})});
+    P.add(0x201, {ret()});
+    P.Code.at(0x201).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    auto O = separatedStoreOptions();
+    O.ExternalStoresPreserveEntryReturnSlot = true;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    if (AddressBytes == 4) {
+      EXPECT_EQ(R.Status, SpecializationStatus::UnresolvedControl)
+          << R.Diagnostic;
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+      continue;
+    }
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    for (uint32_t Value : {uint32_t{0}, uint32_t{17}, UINT32_MAX}) {
+      WideByteOracle Oracle(llvm::endianness::little);
+      Oracle.word(reg(x86reg::RCX), Value);
+      Oracle.word(reg(x86reg::RSP), 0x8018);
+      ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+      EXPECT_EQ(Oracle.number(reg(0)), 37u);
+      EXPECT_EQ(Oracle.number(reg(x86reg::RSP)), 0x8018u);
+      for (unsigned I = 0; I != 4; ++I)
+        EXPECT_EQ(Oracle.Memory.at(0x8000 + I), uint8_t(Value >> (I * 8)));
+      for (unsigned I = 0; I != 8; ++I)
+        EXPECT_EQ(Oracle.Memory.at(0x8008 + I),
+                  uint8_t(uint64_t{0x102} >> (I * 8)));
+    }
+  }
+}
+
+TEST(InterpreterSpecialization,
+     FrameNormalizationPreservesStoresAndNativeReturns) {
+  for (auto [Order, Aligned] : {std::pair{llvm::endianness::little, false},
+                                std::pair{llvm::endianness::little, true},
+                                std::pair{llvm::endianness::big, false},
+                                std::pair{llvm::endianness::big, true}}) {
+    SCOPED_TRACE(Aligned);
+    const uint64_t Displacement = Aligned ? 37 : 40;
+    Provider P;
+    P.add(0x100, {op(NdOp::CALL, reg(0), {constant(0x200)})});
+    P.Code.at(0x100).NativeStackControl =
+        SpecializationNativeStackControl::Call;
+    P.add(0x101, {ret()});
+    P.Code.at(0x101).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    std::vector<LowOp> Body{
+        op(NdOp::INT_XOR, reg(0), {reg(32), reg(8)}),
+        op(NdOp::INT_AND, reg(16), {reg(32), reg(8)}),
+        op(NdOp::INT_MULT, reg(16), {reg(16), constant(2)}),
+        op(NdOp::INT_ADD, reg(0), {reg(0), reg(16)}),
+        op(NdOp::INT_SUB, reg(0), {reg(0), reg(8)}),
+        op(NdOp::INT_ADD, reg(0), {reg(0), constant(uint64_t{0} - 40)})};
+    if (Aligned) {
+      Body.push_back(op(NdOp::INT_AND, reg(0), {reg(0), constant(-16)}));
+      Body.push_back(op(NdOp::INT_ADD, reg(0), {reg(0), constant(11)}));
+    }
+    Body.insert(Body.end(),
+                {op(NdOp::STORE, {}, {reg(0), reg(8)}),
+                 op(NdOp::INT_ADD, reg(16), {reg(0), constant(3)}),
+                 op(NdOp::STORE, {}, {reg(16), constant(0xa13c, 2)}),
+                 op(NdOp::INT_ADD, reg(16),
+                    {reg(32), constant(uint64_t{0} - Displacement)}),
+                 op(NdOp::LOAD, reg(0), {reg(16)}),
+                 op(NdOp::LOAD, reg(64), {reg(32)})});
+    P.add(0x200, std::move(Body));
+    P.add(0x201, {ret()});
+    P.Code.at(0x201).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    SpecializationOptions O;
+    O.FrameBaseRegister = SymRegisterRange{32, 8};
+    O.RequireRestoredFrameAtReturn = true;
+    O.ByteOrder = Order;
+    O.MaxChainedTransfers = 8;
+    O.MaxSolverConflicts = 1;
+    if (Aligned) {
+      O.ExplicitMachineState = true;
+      O.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+      O.MaxSolverGates = 1024;
+    }
+    const auto Disabled = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(Disabled.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Disabled.Residual.Blocks.empty());
+    O.MaxFrameOffsetNormalizationWorkPerProof = 65536;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_GT(R.EvaluatedOperations, Disabled.EvaluatedOperations);
+    for (uint64_t Stack : {uint64_t{8}, uint64_t{0x10008},
+                           uint64_t{0xffff900040000008}, UINT64_MAX - 7})
+      for (uint64_t Input :
+           {uint64_t{0}, uint64_t{0x123456789abcdef0}, UINT64_MAX}) {
+        WideByteOracle Actual(Order);
+        for (uint64_t Reg = 0; Reg < 128; Reg += 8)
+          Actual.word(reg(Reg), 0xabcd000000000000 + Reg);
+        Actual.word(reg(32), Stack);
+        Actual.word(reg(8), Input);
+        for (unsigned I = 0; I != 72; ++I)
+          Actual.Memory[Stack - 56 + I] = I ^ 0x4d;
+        auto Expected = Actual;
+        const auto WriteMemory = [&](uint64_t At, uint64_t Value,
+                                     unsigned Bytes) {
+          for (unsigned I = 0; I != Bytes; ++I)
+            Expected.Memory[At + I] = uint8_t(
+                Value >>
+                (8 * (Order == llvm::endianness::little ? I : Bytes - I - 1)));
+        };
+        WriteMemory(Stack - 8, 0x101, 8);
+        WriteMemory(Stack - 8 - Displacement, Input, 8);
+        WriteMemory(Stack - 5 - Displacement, 0xa13c, 2);
+        uint64_t Result = 0;
+        for (unsigned I = 0; I != 8; ++I)
+          Result |= uint64_t(Expected.Memory.at(Stack - 8 - Displacement + I))
+                    << (8 * (Order == llvm::endianness::little ? I : 7 - I));
+        Expected.word(reg(0), Result);
+        Expected.word(reg(16), Stack - 8 - Displacement);
+        Expected.word(reg(64), 0x101);
+        ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+        std::erase_if(Actual.Registers, [](const auto &V) {
+          return V.first.first == VnodeSpace::TEMP;
+        });
+        EXPECT_EQ(Actual.Registers, Expected.Registers);
+        EXPECT_EQ(Actual.Memory, Expected.Memory);
+      }
+    // Reducing the limit can let MBA finish an exact identity earlier. Find
+    // adjacent successful/refused limits, rather than treating a generous
+    // run's extra search as a mandatory lower bound.
+    auto Exact = O;
+    Exact.MaxOperations = R.EvaluatedOperations;
+    bool FoundBoundary = false;
+    for (unsigned Attempt = 0; Attempt != 128; ++Attempt) {
+      const auto Boundary = specializeInterpreter(P, {0x100}, Exact);
+      ASSERT_TRUE(Boundary.complete()) << Boundary.Diagnostic;
+      ASSERT_LE(Boundary.EvaluatedOperations, Exact.MaxOperations);
+      ASSERT_GT(Boundary.EvaluatedOperations, 1u);
+      auto ShortOptions = Exact;
+      ShortOptions.MaxOperations = Boundary.EvaluatedOperations - 1;
+      const auto Short = specializeInterpreter(P, {0x100}, ShortOptions);
+      if (!Short.complete()) {
+        Exact.MaxOperations = ShortOptions.MaxOperations + 1;
+        const auto Tight = specializeInterpreter(P, {0x100}, Exact);
+        ASSERT_TRUE(Tight.complete()) << Tight.Diagnostic;
+        EXPECT_LE(Tight.EvaluatedOperations, Exact.MaxOperations);
+        const auto Repeated = specializeInterpreter(P, {0x100}, ShortOptions);
+        EXPECT_EQ(Repeated.Status, SpecializationStatus::BudgetExceeded)
+            << Repeated.Diagnostic;
+        EXPECT_EQ(Short.Status, Repeated.Status);
+        EXPECT_EQ(Short.EvaluatedOperations, Repeated.EvaluatedOperations);
+        EXPECT_TRUE(Short.Residual.Blocks.empty());
+        EXPECT_TRUE(Repeated.Residual.Blocks.empty());
+        FoundBoundary = true;
+        break;
+      }
+      ASSERT_LE(Short.EvaluatedOperations, ShortOptions.MaxOperations);
+      Exact.MaxOperations = Short.EvaluatedOperations;
+    }
+    EXPECT_TRUE(FoundBoundary);
+    O.MaxFrameOffsetNormalizationWorkPerProof = 1;
+    const auto NoWork = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(NoWork.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_GT(NoWork.EvaluatedOperations, Disabled.EvaluatedOperations);
+    EXPECT_TRUE(NoWork.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, HighAddressOverlappingOriginsShareExclusion) {
+  constexpr va_t Half = uint64_t{1} << 63;
+  Provider P;
+  P.add(0x100, {op(NdOp::COND_BR, {}, {constant(Half - 3), reg(8, 1)})}, Half);
+  P.add(Half - 3, {op(NdOp::COPY, reg(0), {constant(11)}), ret()}, Half + 5);
+  P.add(Half, {op(NdOp::COPY, reg(0), {constant(17)}), ret()}, Half + 8);
+  P.Code.at(Half - 3).Origin.Size = P.Code.at(Half).Origin.Size = 8;
+  const auto R = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(execute(R.Residual, {{8, 0}}), 17U);
+  EXPECT_EQ(execute(R.Residual, {{8, 1}}), 11U);
+  for (size_t I = 1; I < R.Residual.Blocks.size(); ++I) {
+    const auto &B = R.Residual.Blocks[I];
+    EXPECT_TRUE(B.EndAddr <= Half - 3 || B.StartAddr >= Half + 8);
+  }
+}
+
+TEST(InterpreterSpecialization, HighAddressLabelBitsDoNotRenameMemoryOrData) {
+  constexpr va_t Half = uint64_t{1} << 63;
+  Provider P;
+  P.add(0x100, {op(NdOp::LOAD, reg(0), {constant(Half)}),
+                op(NdOp::INT_XOR, reg(0), {reg(0), constant(Half)}), ret()});
+  const auto R = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  // Deliberately equal to the initial synthetic control label. Only control
+  // operands may be renamed; these bits still name runtime memory and data.
+  ASSERT_EQ(R.Residual.Blocks.at(1).StartAddr, Half);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{13}, UINT64_MAX}) {
+    std::map<uint64_t, uint8_t> Memory;
+    for (unsigned I = 0; I < 8; ++I)
+      Memory[Half + I] = static_cast<uint8_t>(Input >> (8 * I));
+    EXPECT_EQ(execute(R.Residual, {}, Memory), Input ^ Half);
+  }
+}
+
+TEST(InterpreterSpecialization, HighAddressInvalidOrMissingCodeStillRefuses) {
+  Provider P;
+  P.add(0x100, {jump(InvalidVA)});
+  P.add(InvalidVA - 1, {op(NdOp::NOP, {}, {})});
+  P.add(uint64_t{1} << 63, {jump((uint64_t{1} << 63) + 10)});
+  for (va_t Entry :
+       {va_t{0x100}, InvalidVA, InvalidVA - 1, uint64_t{1} << 63}) {
+    const auto R = specializeInterpreter(P, {Entry});
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+    EXPECT_TRUE(R.Origins.empty());
+  }
+  P.Code.at(InvalidVA - 1).Origin.Size = 2;
+  P.Code.at(InvalidVA - 1).Fallthrough = {0};
+  const auto Overflow = specializeInterpreter(P, {InvalidVA - 1});
+  EXPECT_FALSE(Overflow.complete());
+  EXPECT_TRUE(Overflow.Residual.Blocks.empty());
 }
 
 } // namespace
