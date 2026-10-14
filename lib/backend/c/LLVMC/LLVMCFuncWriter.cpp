@@ -62,6 +62,9 @@ namespace neverd {
 
 namespace {
 
+/// Holds the frame record's place until the body has named its members.
+constexpr llvm::StringLiteral kFrameRecordMarker = "/*@neverd-frame-record@*/";
+
 std::string allocaAlignment(const llvm::AllocaInst &Alloca) {
   return llvmc::storageAlignment(Alloca.getAllocatedType(),
                                  Alloca.getModule()->getDataLayout(),
@@ -2377,6 +2380,8 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   SpLocalNameCandidates.clear();
   SpLocalAmbiguousNames.clear();
   FrameSlots.clear();
+  FrameRecord = false;
+  FrameRecordName.clear();
   OverlappingFrameAccessOffsets.clear();
   FrameDebugCache.clear();
   ThisHomes.clear();
@@ -2585,6 +2590,13 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       for (size_t I = First; I < End; ++I)
         OverlappingFrameAccessOffsets.insert(FrameAccesses[I].first);
     First = End;
+  }
+  // A frame that must stay one object still names its slots: as members of
+  // one record laid out exactly like the frame bytes.
+  if (SyntheticFrame && Analysis.RawFrameAllocas.count(SyntheticFrame) &&
+      llvm::isa<llvm::ArrayType>(SyntheticFrame->getAllocatedType())) {
+    FrameRecord = true;
+    FrameRecordName = getName(SyntheticFrame);
   }
   InferredVoid =
       !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
@@ -3137,11 +3149,15 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         if (auto Acc = typedRecordAccess(LI->getPointerOperand(), Size)) {
           ValueTypes[LI] = Acc->Type;
           ValueTexts[LI] = Acc->Text;
-        } else if (auto Acc = frameSlotAccess(LI->getPointerOperand(), Size,
-                                              /*AddressOf=*/false,
-                                              /*Synthesize=*/Size >= 16)) {
+        } else if (auto Acc =
+                       frameSlotAccess(LI->getPointerOperand(), Size,
+                                       /*AddressOf=*/false,
+                                       /*Synthesize=*/Size >= 16,
+                                       /*Overlay=*/false, LI->getType())) {
           ValueTypes[LI] = Acc->Type;
-          ValueTexts[LI] = Acc->Text;
+          // A frame record member is read where the load is.
+          if (!FrameRecord)
+            ValueTexts[LI] = Acc->Text;
         } else if (auto Acc = typedIndexAccess(LI->getPointerOperand())) {
           ValueTypes[LI] = Acc->Type;
           ValueTexts[LI] = Acc->Text;
@@ -3191,7 +3207,9 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
               llvmAccessSize(SI->getValueOperand()->getType());
           const bool Wide = Size >= 16 && !Analysis.DeadFrameStores.count(SI);
           (void)frameSlotAccess(SI->getPointerOperand(), Size,
-                                /*AddressOf=*/false, /*Synthesize=*/Wide);
+                                /*AddressOf=*/false, /*Synthesize=*/Wide,
+                                /*Overlay=*/false,
+                                SI->getValueOperand()->getType());
         }
       }
       if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
@@ -3280,10 +3298,13 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           continue;
         if (auto Acc = frameSlotAccess(LI->getPointerOperand(), Size,
                                        /*AddressOf=*/false,
-                                       /*Synthesize=*/Size >= 16)) {
+                                       /*Synthesize=*/Size >= 16,
+                                       /*Overlay=*/false, LI->getType())) {
           ValueTypes[LI] = Acc->Type;
-          ValueTexts[LI] = Acc->Text;
-          Changed = true;
+          if (!FrameRecord) {
+            ValueTexts[LI] = Acc->Text;
+            Changed = true;
+          }
           continue;
         }
         if (auto Acc = typedIndexAccess(LI->getPointerOperand())) {
@@ -4234,8 +4255,11 @@ bool LLVMCWriter::storedTypedMemberLoad(const llvm::Value *Stored) const {
   const uint16_t Size = llvmAccessSize(LI->getType());
   if (typedRecordAccess(LI->getPointerOperand(), Size))
     return true;
-  return frameSlotAccess(LI->getPointerOperand(), Size, /*AddressOf=*/false)
-      .has_value();
+  // A frame record member is read into a temporary where the load is.
+  return !FrameRecord &&
+         frameSlotAccess(LI->getPointerOperand(), Size, /*AddressOf=*/false,
+                         /*Synthesize=*/false, /*Overlay=*/false, LI->getType())
+             .has_value();
 }
 
 std::optional<std::string>
@@ -8303,7 +8327,8 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         continue;
       (void)frameSlotAccess(SI->getPointerOperand(), Size,
                             /*AddressOf=*/false, /*Synthesize=*/true,
-                            /*Overlay=*/false);
+                            /*Overlay=*/false,
+                            SI->getValueOperand()->getType());
     }
   }
   for (const auto &[_, Slot] : FrameSlots) {
@@ -8380,9 +8405,12 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
           if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
               typedRecordAccess(LI->getPointerOperand(),
                                 llvmAccessSize(LI->getType())) ||
-              frameSlotAccess(LI->getPointerOperand(),
-                              llvmAccessSize(LI->getType()),
-                              /*AddressOf=*/false) ||
+              (!FrameRecord &&
+               frameSlotAccess(LI->getPointerOperand(),
+                               llvmAccessSize(LI->getType()),
+                               /*AddressOf=*/false,
+                               /*Synthesize=*/false,
+                               /*Overlay=*/false, LI->getType())) ||
               typedIndexAccess(LI->getPointerOperand()) ||
               joinFieldDefaultText(asAllocaPointer(LI->getPointerOperand())) ||
               isTypedRecordCursorSlot(
@@ -8431,6 +8459,9 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
   bool EmittedLocal = false;
   std::set<std::string> DeclaredSlots;
   for (const auto &[_, Slot] : FrameSlots) {
+    // Members of the frame record are declared with it.
+    if (FrameRecord)
+      break;
     if (Slot.Name.empty() || !DeclaredSlots.insert(Slot.Name).second)
       continue;
     emitIndent(1);
@@ -8461,6 +8492,11 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         CallDeclNames.push_back(AllocName);
         EmittedLocal = true;
         emitIndent(1);
+        // The body can still name members; the record is declared after it.
+        if (FrameRecord && AI == SyntheticFrame) {
+          OS << kFrameRecordMarker << "\n";
+          continue;
+        }
         OS << allocaAlignment(*AI);
         auto *AllocTy = AI->getAllocatedType();
         if (auto *ArrTy = llvm::dyn_cast<llvm::ArrayType>(AllocTy)) {
@@ -9680,6 +9716,14 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       Declarations += Decl;
     Buffered.insert(DeclInsertPos, Declarations);
   }
+  if (FrameRecord)
+    if (const size_t At = Buffered.find(kFrameRecordMarker);
+        At != std::string::npos) {
+      const size_t Start = Buffered.rfind('\n', At) + 1;
+      const size_t End = Buffered.find('\n', At);
+      Buffered.replace(Start, End + 1 - Start,
+                       frameRecordDeclaration(*SyntheticFrame));
+    }
   std::vector<std::string> DropNames = CallDeclNames;
   DropNames.insert(DropNames.end(), FoldedLocalNames.begin(),
                    FoldedLocalNames.end());

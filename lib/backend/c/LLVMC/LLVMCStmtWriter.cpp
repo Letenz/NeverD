@@ -1095,7 +1095,7 @@ void LLVMCWriter::collectLeftoverNarrowCallStores(llvm::Function &Fn) {
             frameSlotAccess(St->getPointerOperand(), FillSize ? FillSize : 4,
                             /*AddressOf=*/false,
                             /*Synthesize=*/false,
-                            /*Overlay=*/true);
+                            /*Overlay=*/true, Call->getType());
         if (!Member || !(llvm::StringRef(Member->Text).ends_with(".types_") ||
                          llvm::StringRef(Member->Text).ends_with("->types_")))
           continue;
@@ -1809,8 +1809,16 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     }
     if (auto Member = frameSlotAccess(LI->getPointerOperand(),
                                       llvmAccessSize(LI->getType()),
-                                      /*AddressOf=*/false)) {
+                                      /*AddressOf=*/false,
+                                      /*Synthesize=*/false,
+                                      /*Overlay=*/false, LI->getType())) {
       ValueTypes[&Inst] = Member->Type;
+      // The bytes of a frame record escaped: read them here.
+      if (FrameRecord) {
+        emitIndent(Indent);
+        OS << Name << " = " << Member->Text << ";\n";
+        return;
+      }
       ValueTexts[&Inst] = Member->Text;
       return;
     }
@@ -1966,7 +1974,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
                                           FillSize ? FillSize : 4,
                                           /*AddressOf=*/false,
                                           /*Synthesize=*/false,
-                                          /*Overlay=*/true)) {
+                                          /*Overlay=*/true, Fill->getType())) {
           emitIndent(Indent);
           OS << Member->Text << " = " << valueStr(Fill) << ";\n";
           return;
@@ -2023,8 +2031,10 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         return false;
       };
       auto zeroPastAddressTakenByteObject = [&]() {
+        // Bytes past a frame record member belong to the same object: a
+        // callee given the member's address may read them.
         auto Imm = foldImmediate(Stored);
-        if (!Imm || *Imm != "0" || !SyntheticFrame)
+        if (!Imm || *Imm != "0" || !SyntheticFrame || FrameRecord)
           return false;
         const auto Peeled = peelPointerOffset(SI->getPointerOperand());
         if (!Peeled || Peeled->first != SyntheticFrame)
@@ -2041,23 +2051,26 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         }
         return false;
       };
-      if (auto Member = frameSlotAccess(SI->getPointerOperand(), Size,
-                                        /*AddressOf=*/false,
-                                        /*Synthesize=*/false,
-                                        /*Overlay=*/OverlayInt)) {
+      if (auto Member =
+              frameSlotAccess(SI->getPointerOperand(), Size,
+                              /*AddressOf=*/false,
+                              /*Synthesize=*/false,
+                              /*Overlay=*/OverlayInt, Stored->getType())) {
         if (OverlayInt && !integerReturnCall(Stored) &&
             (llvm::StringRef(Member->Text).ends_with(".values_") ||
              llvm::StringRef(Member->Text).ends_with("->values_"))) {
-          if (auto Typed = frameSlotAccess(SI->getPointerOperand(), Size,
-                                           /*AddressOf=*/false,
-                                           /*Synthesize=*/false,
-                                           /*Overlay=*/false))
+          if (auto Typed =
+                  frameSlotAccess(SI->getPointerOperand(), Size,
+                                  /*AddressOf=*/false,
+                                  /*Synthesize=*/false,
+                                  /*Overlay=*/false, Stored->getType()))
             Member = std::move(Typed);
         }
         if (llvm::StringRef(Member->Text).ends_with(".m_pszData") &&
             isResultParamValue(Stored))
           return;
-        std::string StoredText = integerCallStoredText(Stored);
+        std::string StoredText =
+            integerCallStoredText(Stored, /*AsInteger=*/FrameRecord);
         if (Size >= 16 && Member->Type &&
             Member->Type->Kind == NdTypeKind::Struct &&
             !Member->Type->SourceName.empty()) {
@@ -2066,8 +2079,9 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
           while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Source))
             Source = Cast->getOperand(0);
           if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Source)) {
-            auto SourceRecord = frameSlotAccess(Load->getPointerOperand(), Size,
-                                                /*AddressOf=*/false);
+            auto SourceRecord = frameSlotAccess(
+                Load->getPointerOperand(), Size, /*AddressOf=*/false,
+                /*Synthesize=*/false, /*Overlay=*/false, Load->getType());
             auto SourceAddress = frameSlotAccess(Load->getPointerOperand(), 0,
                                                  /*AddressOf=*/true);
             const bool SameRecord =
@@ -2086,7 +2100,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
             const NamedFrameSlot *SourceSlot = nullptr;
             bool Ambiguous = false;
             for (const auto &[_, Slot] : FrameSlots) {
-              if (Slot.Name != PlainText)
+              if (Slot.Name.empty() || slotText(Slot) != PlainText)
                 continue;
               if (SourceSlot)
                 Ambiguous = true;
@@ -2183,12 +2197,15 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         emitIndent(Indent);
         OS << Image << " = " << valueStr(SI->getValueOperand()) << ";\n";
       } else if (Size && Size <= 4) {
-        if (auto Member = frameSlotAccess(SI->getPointerOperand(), Size,
-                                          /*AddressOf=*/false,
-                                          /*Synthesize=*/true,
-                                          /*Overlay=*/false)) {
+        if (auto Member =
+                frameSlotAccess(SI->getPointerOperand(), Size,
+                                /*AddressOf=*/false,
+                                /*Synthesize=*/true,
+                                /*Overlay=*/false, Stored->getType())) {
           emitIndent(Indent);
-          OS << Member->Text << " = " << integerCallStoredText(Stored) << ";\n";
+          OS << Member->Text << " = "
+             << integerCallStoredText(Stored, /*AsInteger=*/FrameRecord)
+             << ";\n";
           return;
         }
         const auto *Init =
@@ -5237,19 +5254,25 @@ std::string LLVMCWriter::inplaceIntegerUpdate(const llvm::StoreInst &SI,
   return Dest.str() + (Delta > 0 ? " += " : " -= ") + std::to_string(Abs);
 }
 
-std::string LLVMCWriter::integerCallStoredText(const llvm::Value *Stored) {
+std::string LLVMCWriter::integerCallStoredText(const llvm::Value *Stored,
+                                               bool AsInteger) {
+  // An integer destination takes an integer even where the value's printer
+  // spells a pointer (`(char*)&frame0 + 24`, a constructor's `this`).
+  auto Text = [&](const llvm::Value *V) {
+    return AsInteger ? integerPointerOperandStr(V) : valueStr(V);
+  };
   const llvm::Value *V = Stored;
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V)) {
       if (llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast)) {
-        return valueStr(Stored);
+        return Text(Stored);
       }
     }
     if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(V)) {
       llvm::Type *Ty = CB->getType();
       if (Ty && Ty->isIntegerTy() && !Ty->isIntegerTy(1))
-        return valueStr(CB);
+        return Text(CB);
       break;
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
@@ -5264,7 +5287,7 @@ std::string LLVMCWriter::integerCallStoredText(const llvm::Value *Stored) {
     }
     break;
   }
-  return valueStr(Stored);
+  return Text(Stored);
 }
 
 std::string LLVMCWriter::enumStoredText(const llvm::AllocaInst *Slot,
