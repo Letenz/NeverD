@@ -1891,3 +1891,5 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 Il profilo nativo richiede anche le verifiche LLVM-C delle costanti e scritture di interi estesi e l’esecuzione nativa delle tabelle sintetizzate i386. Gli osservatori dei segnali Swift usano memoria grezza indipendente, con controlli positivi e negativi separati per le scritture premature dello stato e del risultato a entrambi i livelli di ottimizzazione. Leggere una variabile Swift `inout` attiva nel gestore causerebbe una violazione di esclusività e invaliderebbe l’osservazione dell’eccezione.
+
+`NeverDFPParameterMaskTests` esegue ABI condivisa e `FPParameterMask.*`, conserva byte attivi, scritture precedenti, definizioni ambigue e ritorni non mascherati ed elimina solo byte interamente azzerati o sostituiti. Copre trasferimenti D0, temporanei D16-D31 ed entrambi i percorsi di ritorno FP. `NeverDARM32ObjectImmediateTests` esegue cinque differenziali C ARM32 separatamente; Windows EH CI usa Clang 18, incluse forme NEON zip/mask diverse da Clang 23. I CALL diretti/indiretti senza operandi ABI recuperati conservano registri FP preparati esplicitamente.

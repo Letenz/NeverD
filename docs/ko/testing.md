@@ -1785,3 +1785,5 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 네이티브 구성은 LLVM-C 넓은 정수 상수·저장 검사와 i386 합성 테이블의 네이티브 실행도 요구합니다. Swift 신호 관찰기는 독립적인 원시 저장 공간을 사용하며, 두 최적화 수준에서 미기록 정상 대조와 상태·결과의 조기 기록을 각각 검출하는 음성 대조를 검증합니다. 신호 처리기가 활성 Swift `inout` 변수를 읽으면 배타적 접근 오류가 발생하여 예외 관찰이 무효가 됩니다.
+
+`NeverDFPParameterMaskTests`는 공통 ABI와 `FPParameterMask.*`를 실행하며 유효 바이트, 앞선 저장, 모호한 정의와 마스크되지 않은 반환 경로를 유지하고 완전히 지우거나 대체한 바이트만 제외합니다. D0 중간 전달, D16-D31 임시 레지스터와 FP 반환 합류의 두 경로를 검사합니다. `NeverDARM32ObjectImmediateTests`는 ARM32 호스트 C 차분 5개를 별도로 실행하고 Windows EH CI는 Clang 23과 다른 NEON zip/mask 형태도 Clang 18로 확인합니다. ABI 피연산자가 복구되지 않은 직접/간접 CALL은 명시적으로 준비한 FP 레지스터를 유지합니다.

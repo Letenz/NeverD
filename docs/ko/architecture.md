@@ -1535,3 +1535,5 @@ LLVM 방출기는 현재의 불변 MedFunc 안에서 완료된 기본 예산 스
 `isX86FramePreservingIntrinsic`는 일반 registration 전이와 검증된 local-finally 반환에서 FWAIT, MXCSR 및 부동소수점 연산의 형식 검사를 공유합니다. 원래 연산과 예외 디스패치는 유지됩니다. 지원하지 않는 intrinsic 및 잘못된 형식은 여전히 불투명하며, 이 규칙은 비지역 finally 종료나 네이티브 복원 증명을 제공하지 않습니다.
 
 검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
+
+`MedCallingConvFP`가 부동소수점/벡터 입력의 바이트 요구를 공통으로 관리합니다. AND/OR 상수 마스크는 유일하고 유한한 SSA 상수 증명으로 완전히 지우거나 대체한 바이트만 제외하며, 첫 쓰기 버전이 0인 결합 마스크도 포함합니다. 누락·모호함·로드·호출에서 유래한 마스크는 입력을 유지합니다. FP 반환 레지스터의 중간 쓰기는 값 전달이며 반환 읽기는 현재 CFG에서 각 RETURN에 도달하는 정의로 판정합니다. 알 수 없는 경로는 보수적으로 요구를 유지합니다. 명시적 ABI 피연산자 복구 전에는 FP 반환 레지스터의 전달 값도 CALL의 가능한 읽기입니다. ARM32는 전체 D0-D31을 인자용 D0-D7과 별도로 기술합니다.

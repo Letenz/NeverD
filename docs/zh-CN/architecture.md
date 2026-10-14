@@ -1548,3 +1548,5 @@ LLVM 发射器只在当前不可变 MedFunc 内复用已完成、使用默认预
 `isX86FramePreservingIntrinsic` 为普通 registration 转移和经过验证的 local-finally 返回统一检查 FWAIT、MXCSR 和浮点算术形式。原始操作及异常分派保持完整；不支持的 intrinsic 和畸形形式仍是不透明操作。该规则不授予非局部 finally 退出或原生恢复证明。
 
 受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。
+
+`MedCallingConvFP` 统一负责浮点/向量输入的字节需求。AND/OR 常量掩码仅在唯一、有界的 SSA 常量证明下排除完全清零或替换的字节，包括首写版本为零的拼接掩码；缺失、歧义、加载或调用产生的掩码保留输入。浮点返回寄存器的中间写入仍是值传递；返回读取依据当前 CFG 中到达各 RETURN 的定义，未知路径保守保留需求。恢复显式 ABI 操作数前，经浮点返回寄存器转发的值也是 CALL 的可能读取。ARM32 寄存器定义覆盖完整 D0-D31，与 D0-D7 参数组独立。

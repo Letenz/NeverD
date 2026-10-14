@@ -1795,3 +1795,5 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 ネイティブ構成では LLVM-C の広幅整数定数・格納検証と、i386 合成テーブルのネイティブ実行も必須です。Swift のシグナル観測には独立した生メモリを使い、両最適化レベルで未書き込みの正常例と、状態・結果を早期に書き込む別々の異常例を検証します。シグナルハンドラから使用中の Swift `inout` 変数を読むと排他的アクセス違反が発生し、例外の観測が無効になります。
+
+`NeverDFPParameterMaskTests` は共有 ABI と `FPParameterMask.*` を実行し、有効バイト、先行ストア、曖昧な定義、マスクされない戻り経路を保持して、完全に消去・置換されたバイトだけを除外します。D0 中間転送、D16-D31 作業レジスタ、FP 戻り値合流の両経路を検証します。`NeverDARM32ObjectImmediateTests` は ARM32 ホスト C 差分 5 件を独立実行し、Windows EH CI は Clang 23 と異なる NEON zip/mask 形状も Clang 18 で確認します。ABI オペランド未回復の直接／間接 CALL は明示的に準備された FP レジスタを保持します。

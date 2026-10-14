@@ -1741,3 +1741,5 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 原生設定也要求通過 LLVM-C 寬整數常數與儲存檢查，以及 i386 合成表的原生執行。Swift 訊號觀察器使用獨立的原始儲存，在兩種最佳化層級下分別驗證未寫入的正例、提前寫入狀態與結果的反例。訊號處理器讀取仍處於 Swift `inout` 存取期間的變數會觸發獨佔存取錯誤，使例外觀察失效。
+
+`NeverDFPParameterMaskTests` 執行共用 ABI 套件與 `FPParameterMask.*`，保留有效位元組、先前儲存、歧義定義及未遮罩回傳路徑，只排除完全清零或取代的位元組；涵蓋 D0 中間傳遞、D16-D31 暫用暫存器及浮點回傳匯合的兩條路徑。`NeverDARM32ObjectImmediateTests` 獨立執行五項 ARM32 主機 C 差分，Windows EH CI 用 Clang 18 檢查包括與 Clang 23 不同的 NEON zip/mask 形式。直接與間接呼叫在 ABI 運算元尚未恢復時，保留明確準備的浮點暫存器。

@@ -1703,3 +1703,5 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 原生配置还要求通过 LLVM-C 宽整数常量与存储检查，以及 i386 合成表的原生执行。Swift 信号观察器使用独立的原始存储，在两种优化级别下分别验证未写入的正例、提前写入状态与结果的反例。信号处理器读取仍处于 Swift `inout` 访问期的变量会触发排他访问错误，使异常观察失效。
+
+`NeverDFPParameterMaskTests` 执行共享 ABI 套件与 `FPParameterMask.*`，保留有效字节、先前存储、歧义定义和未屏蔽返回路径，只排除完全清零或替换的字节；覆盖 D0 中间传递、D16-D31 临时寄存器及浮点返回汇合的两条路径。`NeverDARM32ObjectImmediateTests` 单独执行五项 ARM32 宿主 C 差分，Windows EH CI 用 Clang 18 检查包括与 Clang 23 不同的 NEON zip/mask 形式。直接和间接调用在 ABI 操作数尚未恢复时，保留明确准备的浮点寄存器。
