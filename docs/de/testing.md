@@ -1896,3 +1896,16 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 Die native Prüfung verwendet NeverC-Revision `182fd2c5dc`, unabhängig kompilierte Originale und den aktuellen NeverD-Installer. `check_source_patch_hosted_pe_runtime.py` verlangt pro Architektur 36 native Windows-Beobachtungen für C++-Lebensdauern über IR/Objekte/hosted und einen Ausnahme-Callback durch zwei hosted-Rahmen. `check_source_patch_elf_runtime.py` verlangt pro Architektur 66 native Linux-Beobachtungen für C++-IR/Objekte/hosted, hosted-Weitergabe und neun Clang-Ausnahmeszenarien. Belege, Artefakthashes und tatsächliche Hostarchitektur müssen übereinstimmen. Die Prüfungen installieren echte Compilerausgaben; sie behaupten keine Ausführung von NeverC auf dem CI-Host.
 
 Die native Prüfung [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) bestand alle 204 Beobachtungen: je 36 auf Windows x64/ARM64 und je 66 auf Linux x64/ARM64. Die öffentliche Quellcode-API erzeugte C++-IR, normale Objekte und C++ hosted DynCode sowie einen Ausnahme-Callback durch zwei NeverC-Rahmen. Die Wiederholung prüft aktuellen Quellcode-/Submodul-Digest, ursprüngliche und finale Bytes, Belege und tatsächlichen nativen Host. macOS ARM64 und Rosetta x64 bestanden dieselben drei C++-Pfade und die lokale Weitergabe. Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) bestand zusätzlich neun Ausnahmeszenarien mit Kontrollen, je 36 Beobachtungen auf Windows x64/ARM64.
+
+## Native Lift-Qualifikation
+
+Der Workflow `Lift native qualification` prüft die zuvor nicht qualifizierten 108 Fälle (62 Fehler und 46 übersprungene Tests). Er installiert Clang 23 oder neuer, GNU GCC und die i386-Entwicklungsbibliotheken auf einem nativen Linux-x86-64-Runner und initialisiert den festgelegten Binärkorpus. `unittests/Inputs/lift-qualification.json` erhält jede ursprüngliche Testidentität. `scripts/run_lift_qualification.py` weist fehlende, doppelte, deaktivierte, übersprungene oder fehlgeschlagene Fälle sowie einen Prozessrückgabewert ungleich null zurück. `qualification.json` protokolliert einzelne Erfolge, Quellcode- und Korpusrevisionen, Compilerversionen und Binärhashes.
+
+Das Profil führt native i386/x86-64-Kontrollen, erweiterte x87-Präzision sowie generierte Swift-SSE-Prüfungen für Ergebnis, Zustand und unmaskierte Ausnahmen bei beiden Optimierungsstufen aus. Die AArch64-Paritätsprüfung dekodiert den echten `.text` einer festgelegten Rust-Laufzeit. Zielübergreifendes Dekodieren belegt keine native Ausführung auf diesem Ziel; dafür dienen die getrennten nativen Prozessjobs für Windows/Linux x64/ARM64 und die lokalen macOS-Prüfungen.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```

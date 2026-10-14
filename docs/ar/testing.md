@@ -1805,3 +1805,16 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 يثبت التحقق الأصلي مراجعة NeverC على `182fd2c5dc` ويستخدم برامج أصلية مترجمة بصورة مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 ملاحظة Windows أصلية لكل معمارية لأعمار كائنات C++ عبر IR والكائنات وhosted، واستثناء يعبر إطارين hosted. ويتطلب `check_source_patch_elf_runtime.py` عدد 66 ملاحظة Linux أصلية لكل معمارية لـ C++ عبر IR والكائنات وhosted وانتقال استثناءات hosted وتسعة سيناريوهات Clang. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية. تثبت هذه الفحوص مخرجات مترجم حقيقية ولا تدعي تشغيل برنامج NeverC التنفيذي على مضيف CI.
 
 نجح التحقق الأصلي [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) في الملاحظات الـ204 كلها: 36 لكل معمارية Windows x64/ARM64 و66 لكل معمارية Linux x64/ARM64. أنتجت واجهة المصدر العامة C++ IR وكائنات عادية وC++ hosted DynCode، واستثناء يعبر إطارين NeverC. يتحقق الإعادة من بصمات المصدر والوحدات الفرعية الحالية والبايتات الأصلية والنهائية والإيصالات والمضيف الأصلي الفعلي. نجحت أيضًا مسارات C++ الثلاثة والانتقال المحلي على macOS ARM64 وRosetta x64. ونجح Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) بصورة منفصلة في تسعة سيناريوهات وضوابطها، بمجموع 36 ملاحظة لكل معمارية Windows x64/ARM64.
+
+## التحقق الأصلي من Lift
+
+يغطي سير العمل `Lift native qualification` الحالات الـ108 التي لم يكتمل التحقق منها سابقًا (62 فشلًا و46 تخطيًا). يثبت Clang 23 أو أحدث وGNU GCC ومكتبات تطوير i386 على مشغّل Linux x86-64 أصلي، ويهيئ مجموعة الملفات الثنائية عند مراجعتها المثبتة. يحتفظ `unittests/Inputs/lift-qualification.json` بجميع معرفات الاختبارات الأصلية. يرفض `scripts/run_lift_qualification.py` الحالات المفقودة أو المكررة أو المعطلة أو المتخطاة أو الفاشلة، وكذلك رمز خروج العملية غير الصفري. يسجل `qualification.json` كل نجاح ومراجعات المصدر ومجموعة الملفات وإصدارات المترجمات وبصمات الملفات الثنائية.
+
+ينفذ هذا الإعداد اختبارات i386/x86-64 الأصلية ودقة x87 الممتدة وفحوص نتائج Swift SSE المولدة وحالتها والاستثناءات غير المحجوبة عند مستويي التحسين. يفك اختبار تطابق AArch64 ترميز قسم `.text` الحقيقي لبيئة تشغيل Rust مثبتة المراجعة. فك ترميز هدف آخر لا يثبت التنفيذ الأصلي عليه؛ استخدم مهام عمليات ترقيع المصدر الأصلية المنفصلة على Windows/Linux x64/ARM64 وفحوص macOS المحلية.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```

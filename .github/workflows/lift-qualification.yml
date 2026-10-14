@@ -10,6 +10,16 @@ on:
       - 'scripts/tests/test_run_lift_qualification.py'
       - 'unittests/Inputs/lift-qualification.json'
       - 'unittests/backend/HighSwiftEmitterTests.cpp'
+      - 'unittests/lift/**'
+      - 'unittests/CMakeLists.txt'
+      - 'include/**'
+      - 'lib/**'
+      - 'tools/neverd/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'third_party/llvm-project'
+      - 'third_party/capstone'
+      - 'unittests/corpus'
 
 permissions:
   contents: read

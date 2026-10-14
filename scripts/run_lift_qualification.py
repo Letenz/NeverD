@@ -95,6 +95,10 @@ def main() -> int:
         raise ValueError("this execution profile requires a native Linux x86-64 runner")
     output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    xml = output / "results.xml"
+    # Clear prior success before any preflight that can reject this invocation.
+    xml.unlink(missing_ok=True)
+    (output / "qualification.json").unlink(missing_ok=True)
     binary, neverd = options.binary.resolve(), options.neverd.resolve()
     for path in (binary, neverd, ROOT / PARITY_IMAGE):
         if not path.is_file():
@@ -128,10 +132,6 @@ def main() -> int:
     env = dict(os.environ, NEVERD_PARITY_BIN=str(parity), NEVERD=str(neverd),
                TMPDIR=str(output / "tmp"))
     Path(env["TMPDIR"]).mkdir(exist_ok=True)
-    xml = output / "results.xml"
-    # A stale successful report cannot survive a later crashed invocation.
-    xml.unlink(missing_ok=True)
-    (output / "qualification.json").unlink(missing_ok=True)
     with (output / "execution.log").open("w") as log:
         result = subprocess.run([str(binary), "--gtest_filter=" + ":".join(names),
                                  f"--gtest_output=xml:{xml}"],

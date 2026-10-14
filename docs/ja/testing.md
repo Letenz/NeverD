@@ -1780,3 +1780,16 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 ネイティブ検証は NeverC リビジョン `182fd2c5dc`、独立してコンパイルした元プログラム、現在の NeverD インストーラを使用します。`check_source_patch_hosted_pe_runtime.py` は各アーキテクチャで 36 回のネイティブ Windows 観測を要求し、C++ IR/オブジェクト/hosted のライフタイムと二つの hosted フレームを通る例外コールバックを確認します。`check_source_patch_elf_runtime.py` は各アーキテクチャで 66 回のネイティブ Linux 観測を要求し、C++ IR/オブジェクト/hosted、hosted の例外伝播、九つの Clang 例外シナリオを確認します。レシート、成果物ハッシュ、実際のホストアーキテクチャは一致しなければなりません。実際のコンパイラ出力をインストールする検証であり、CI ホスト上で NeverC 実行ファイルを動かしたとは主張しません。
 
 ネイティブ検証 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) は全 204 回の観測に成功しました。Windows x64/ARM64 は各 36 回、Linux x64/ARM64 は各 66 回です。公開ソース API で C++ IR、通常オブジェクト、C++ hosted DynCode を生成し、二つの NeverC フレームを通る例外も確認しました。再生時に現在のソースとサブモジュールのダイジェスト、元と最終のバイト、発行レシート、実際のネイティブホストを確認します。macOS ARM64 と Rosetta x64 でも三つの C++ 経路と二フレームの伝播が成功しました。Clang FH3 の検証 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) は Windows x64/ARM64 の九つの例外シナリオと対照、各 36 回にも成功しました。
+
+## ネイティブ Lift 検証
+
+`Lift native qualification` ワークフローは、以前検証できなかった 108 件（失敗 62 件、スキップ 46 件）を担当します。ネイティブ Linux x86-64 ランナーに Clang 23 以降、GNU GCC、i386 開発ライブラリを導入し、固定リビジョンのバイナリコーパスを初期化します。`unittests/Inputs/lift-qualification.json` は元の全テスト識別子を保持します。`scripts/run_lift_qualification.py` は欠落、重複、無効化、スキップ、失敗、非ゼロ終了を拒否します。`qualification.json` は個別の成功、ソースとコーパスのリビジョン、コンパイラのバージョン、バイナリハッシュを記録します。
+
+この構成は i386/x86-64 のネイティブ対照、x87 拡張精度、および両最適化レベルで生成した Swift SSE の結果・状態・マスク解除例外を実行します。AArch64 一致性検証は固定 Rust ランタイムの実際の `.text` をデコードします。クロスターゲットのデコードは対象上のネイティブ実行を証明しません。Windows/Linux x64/ARM64 には別のソースパッチ用ネイティブプロセスジョブ、macOS にはローカル検証を使用します。
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```

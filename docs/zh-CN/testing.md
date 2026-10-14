@@ -1688,3 +1688,16 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 原生生产器验证固定 NeverC 提交 `182fd2c5dc`，使用独立编译的原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 要求每种架构完成 36 次原生 Windows 观测，覆盖 C++ IR/对象/hosted 生命周期，以及异常穿过两个 hosted 帧的回调。`check_source_patch_elf_runtime.py` 要求每种架构完成 66 次原生 Linux 观测，覆盖 C++ IR/对象/hosted、hosted 异常传播及九种 Clang 异常场景。回执、制品哈希和实际主机架构必须匹配。这些检查安装真实编译器产物，不表示在 CI 主机上运行过 NeverC 编译器。
 
 原生验证 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次进程观测全部通过：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公共源码接口生成 C++ IR、普通对象和 C++ hosted DynCode，并验证异常穿过两层 NeverC 栈帧。重放核对当前引擎源码与子模块摘要、原件和最终字节、安装回执及实际原生主机。macOS ARM64 与 Rosetta x64 在本地通过相同的三条 C++ 路径和两层异常传播。Clang FH3 原生验证 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通过九种异常场景及对照，共各 36 次观测。
+
+## 原生 Lift 验收
+
+`Lift native qualification` 工作流负责此前未完成验证的 108 项（62 项失败和 46 项跳过）。它在原生 Linux x86-64 执行器上安装 Clang 23 或更新版本、GNU GCC 和 i386 开发库，并初始化固定版本的二进制语料。`unittests/Inputs/lift-qualification.json` 保留所有原始测试标识。`scripts/run_lift_qualification.py` 拒绝遗漏、重复、禁用、跳过、失败和非零进程退出；`qualification.json` 记录逐项通过结果、源码与语料版本、编译器版本和二进制哈希。
+
+该配置实际执行 i386/x86-64 对照、x87 扩展精度，以及两种优化级别下生成的 Swift SSE 结果、状态和未屏蔽异常测试。AArch64 一致性测试解码固定版本 Rust 运行库的真实 `.text`。跨目标解码不代表该目标上的原生执行；Windows/Linux x64/ARM64 使用独立的源码补丁原生进程任务，macOS 使用本地验证。
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
