@@ -38,7 +38,7 @@ struct LiftStateBase {
   va_t Addr;
   uint16_t InsnSize;
   int Seq = 0;
-  int TmpId = 0;
+  uint64_t TmpId = 0;
   std::vector<LowOp> &Ops;
   size_t OpsStart;
 
@@ -46,7 +46,21 @@ struct LiftStateBase {
       : Addr(A), InsnSize(ISz), Ops(O), OpsStart(O.size()) {}
 
   NdVar makeTemp(uint16_t Sz) {
-    return NdVar::tmp(TmpBase + (TmpId++) * TmpStride, Sz);
+    // TEMP offsets name byte storage, including in symbolic execution. Reserve
+    // the complete extent before allocating another value. Small values keep
+    // their existing eight-byte spacing; zero-sized accumulator placeholders
+    // still consume one slot and must be replaced before emitting a value.
+    const uint64_t Slots = Sz ? (uint64_t{Sz} + TmpStride - 1) / TmpStride : 1;
+    constexpr uint64_t LastSlot = (UINT64_MAX - TmpBase) / TmpStride;
+    if (TmpId > LastSlot || Slots - 1 > LastSlot - TmpId)
+      llvm::report_fatal_error(
+          llvm::Twine("LiftStateBase: temporary byte storage exhausted "
+                      "(instruction address ") +
+          llvm::Twine(Addr) + ")");
+    const uint64_t Offset = TmpBase + TmpId * TmpStride;
+    // LastSlot + 1 fits the slot cursor and represents exhausted storage.
+    TmpId += Slots;
+    return NdVar::tmp(Offset, Sz);
   }
 
   void emit(
