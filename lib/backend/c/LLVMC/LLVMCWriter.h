@@ -873,6 +873,9 @@ public:
     /// In a frame record, the type the member was laid out with. Later
     /// display typing does not move or widen it.
     TypeRef MemberType;
+    /// `Type` is a debug symbol's: the object's extent, which a prototype's
+    /// pointee (one element of an array, say) must not replace.
+    bool DebugType = false;
   };
   mutable std::map<uint64_t, NamedFrameSlot> FrameSlots;
   /// The frame must stay one object (an escape no type bounds, a span that
@@ -888,6 +891,11 @@ public:
   bool frameRecordAdmits(uint64_t Off, const TypeRef &Ty) const;
   /// The frame record's declaration, from the members the body printed.
   std::string frameRecordDeclaration(const llvm::AllocaInst &Frame) const;
+  /// Whether a named frame slot \p Load reads can print at each use: every
+  /// use prints later in its block, and nothing between may write memory.
+  /// Otherwise the load reads the slot into its temporary where it is.
+  bool slotReadAtUses(const llvm::LoadInst &Load) const;
+  mutable std::map<const llvm::LoadInst *, bool> SlotReadAtUses;
   /// Different overlapping memory extents cannot become independent scalar
   /// locals. Keep unnamed views of those bytes in the shared backing frame.
   std::set<uint64_t> OverlappingFrameAccessOffsets;

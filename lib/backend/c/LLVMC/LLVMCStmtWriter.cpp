@@ -1789,8 +1789,8 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
                                       /*Synthesize=*/false,
                                       /*Overlay=*/false, LI->getType())) {
       ValueTypes[&Inst] = Member->Type;
-      // The bytes of a frame record escaped: read them here.
-      if (FrameRecord) {
+      // Memory may change before a use: read the slot here.
+      if (!slotReadAtUses(*LI)) {
         emitIndent(Indent);
         OS << Name << " = " << Member->Text << ";\n";
         return;
