@@ -328,6 +328,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
 | `MmGetSystemRoutineAddress` | 透過共用匯出清單解析客體計數式名稱 |
 | `MmIsAddressValid` | IRQL ≤ 2 的有限具體查詢：僅在零頁未映射時將 NULL 判為假；只有有效模型物件或非分頁集區的精確位元組具有可讀寫 RAM 後備時才傳回真。分頁集區、已釋放或無主記憶體、配置填補、非集區實體緩衝區及受保護後備均明確停止。查詢不授予欄位存取、擁有權或未來生命週期保證，並保留環境還原相依性。 |
+| `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | 僅限 checked-x64 註冊/取消註冊：記錄須為驅動映像內對齊、可讀寫的 48 位元組區域，回呼須為映像內可執行位址，原因限 2–7，最多保留 64 個記錄身分；元件名稱初始須可讀、以 NUL 結尾且不超過 256 位元組。重複註冊、取消註冊與重新註冊保留已知欄位及 State 變化；僅保留元件指標，不保證後續生命週期。僅回呼、元件、原因及 State 欄位可讀；取消註冊後仍禁止所有寫入、不透明欄位存取及相交頁面的 MDL 借用。DriverUnload 必須取消活躍註冊。環境相依性保留；不支援當機回呼派送或傾印產生。 |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支援類別 `11`（`SystemModuleInformation`）：零長度大小查詢，以及模擬提供者和輸入驅動程式的完整 Win64 模組記錄。部分緩衝區和未知資訊類別會明確停止。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 宣告之轉譯子範圍的非快取映射、共用 RO／RW 別名，以及原始基址／長度完全相符的解除映射 |
 | `IoGetDmaAdapter` | 明確 Internal 匯流排主控版本 0／1 描述與 PASSIVE_LEVEL 的版本一繫結表；更新版本探查傳回 NULL |

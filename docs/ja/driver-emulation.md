@@ -328,6 +328,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `ExAllocatePool2` | ページプール／非ページ NX プールの割り当て。デフォルトでゼロ初期化し、未初期化とキャッシュ整列のフラグをモデル化する。無効な必須フラグは NULL を返し、クォータ／実行可能プールおよび割り当て例外の送出では停止する |
 | `MmGetSystemRoutineAddress` | 長さを持つゲストの名前を、共通のエクスポート一覧で解決する |
 | `MmIsAddressValid` | IRQL ≤ 2 の限定的な具体クエリ。ゼロページが未マップの場合のみ NULL は偽となり、生存するモデルオブジェクトまたは非ページプールの正確なバイトに読み書き可能な RAM がある場合のみ真となります。ページプール、解放済み・所有者不明のメモリ、割り当てパディング、プール以外の物理バッファ、保護された領域は明示的に停止します。フィールドアクセス、所有権、将来の寿命は保証せず、復元時の環境依存を保持します。 |
+| `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | checked-x64 の登録と解除のみ。ドライバー映像内の整列した読み書き可能な 48 バイト記録、映像内の実行可能なコールバック、理由 2–7、最大 64 個の記録を扱います。コンポーネント名は初回に読み取り可能な最大 256 バイトの NUL 終端文字列が必要です。重複登録・解除・再登録は既知のフィールドと State 遷移を保持し、名前のポインターの将来の寿命は保証しません。コールバック・名前・理由・State のみ読み取り可能で、解除後も全書き込み、不透明フィールド、交差ページの MDL 借用を拒否します。DriverUnload 内で登録を解除する必要があります。環境依存を保持し、クラッシュ時の呼び出しとダンプ生成は未対応です。 |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | PASSIVE_LEVEL でクラス `11`（`SystemModuleInformation`）をサポートします。長さゼロのサイズ照会と、モデル化した提供元および入力ドライバーの完全な Win64 モジュール記録を返します。部分バッファーと未知の情報クラスでは明示的に停止します。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 宣言済み変換後部分区間、非キャッシュ RO／RW、共有別名、正確な unmap。任意物理メモリは未対応 |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 厳密に割り当てられた排他的／共有 latched または level_sensitive ライン。PASSIVE_LEVEL の従来 ABI と Ex 1／2／4、厳密な接続世代とロック所有権 |
