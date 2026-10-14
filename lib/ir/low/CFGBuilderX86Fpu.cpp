@@ -993,25 +993,40 @@ class X87CallEffectIndex {
     if (const auto It = Graphs.find(Entry); It != Graphs.end())
       return *It->second;
     const bool HasCodeOwner = Image.hasExecutableCodeOwnerAt(Entry);
+    auto *RegistrationCallees = Settings.BorrowedRegistrationCallees
+                                    ? Settings.BorrowedRegistrationCallees
+                                    : Settings.RegistrationCallees.get();
+    // Registration and floating-call proofs can request one another. Keep
+    // the same in-progress entries, depth and budget across that boundary.
+    // These query-local answers cannot be published in the shared graph cache.
+    const auto SharedGraphs =
+        RegistrationCallees ? nullptr : Settings.SharedX87CallGraphs;
     std::shared_ptr<X87CallGraphCache::PendingGraph> Flight;
-    if (HasCodeOwner && Settings.SharedX87CallGraphs) {
-      auto Request = Settings.SharedX87CallGraphs->acquire(Settings, Entry);
+    if (HasCodeOwner && SharedGraphs) {
+      auto Request = SharedGraphs->acquire(Settings, Entry);
       if (Request.Value)
         return *Graphs.emplace(Entry, std::move(Request.Value)).first->second;
       Flight = std::move(Request.Leader);
     }
-    X87CallGraphCache::Completion Complete(Settings.SharedX87CallGraphs.get(),
+    X87CallGraphCache::Completion Complete(SharedGraphs.get(),
                                            std::move(Flight));
     auto Built = std::make_shared<Graph>();
     const auto It = Graphs.emplace(Entry, Built).first;
     Graph &G = *Built;
     if (!HasCodeOwner)
       return G;
+    // This register-only projection has no dispatcher invocation domain.
+    // Do not construct a registration closure just to discover that its
+    // callback graph cannot supply an ordinary floating-call return proof.
+    if (const auto *EH = Image.ExceptionMetadata.findFunction(Entry);
+        EH && EH->Registration && !EH->Registration->Scopes.empty())
+      return G;
     Decoder Dec;
     if (!Dec.init(Image))
       return G;
     CFGBuilder Builder;
     Builder.SkipX87StackFixup = true;
+    Builder.setRegistrationCalleeIndex(RegistrationCallees);
     Builder.setKnownFuncEntries(Settings.KnownFuncEntries);
     Builder.setNoReturnTargetIndex(Settings.NoReturnTargets);
     Builder.setNoReturnCalleeProver(Settings.NoReturnCallees,
@@ -1043,8 +1058,7 @@ class X87CallEffectIndex {
       }
     };
     const bool RetainBody =
-        Settings.SharedX87CallGraphs &&
-        Settings.SharedX87CallGraphs->canRetainSummary(Settings);
+        SharedGraphs && SharedGraphs->canRetainSummary(Settings);
     std::optional<RecordingProver> Recorder;
     if (RetainBody) {
       Builder.CollectCallRegisterBody = &Witness;
@@ -1057,8 +1071,7 @@ class X87CallEffectIndex {
     LowFunc F = Builder.build(Image, Dec, Entry);
     const llvm::scope_exit Retain([&] {
       if (RetainBody)
-        Settings.SharedX87CallGraphs->retainSummary(Settings, Entry, F,
-                                                    Witness);
+        SharedGraphs->retainSummary(Settings, Entry, F, Witness);
     });
     if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
         F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
@@ -1070,9 +1083,8 @@ class X87CallEffectIndex {
       // refusal marker; prove() still rejects !Complete before charging Cost.
       G = Graph{};
       G.Rejection = Reason;
-      if (Settings.SharedX87CallGraphs)
-        It->second =
-            Settings.SharedX87CallGraphs->publish(Settings, Entry, Built);
+      if (SharedGraphs)
+        It->second = SharedGraphs->publish(Settings, Entry, Built);
       Complete.completed(It->second);
       return *It->second;
     };
@@ -1152,9 +1164,8 @@ class X87CallEffectIndex {
         return RejectProjection(Graph::ProjectionRejection::MissingTerminator);
     }
     G.Complete = true;
-    if (Settings.SharedX87CallGraphs)
-      It->second =
-          Settings.SharedX87CallGraphs->publish(Settings, Entry, Built);
+    if (SharedGraphs)
+      It->second = SharedGraphs->publish(Settings, Entry, Built);
     Complete.completed(It->second);
     return *It->second;
   }
@@ -1266,6 +1277,7 @@ public:
     const auto &Cache = Settings.SharedX87CallGraphs;
     if (Settings.X87CallProofThreads <= 1 || workerThreadCount() <= 1 ||
         !Cache || CurrentX87CacheBuild ||
+        Settings.BorrowedRegistrationCallees || Settings.RegistrationCallees ||
         (Settings.NoReturnCallees &&
          Settings.NoReturnCallees != Cache->NonReentrantProver) ||
         (Settings.NoReturnTargets &&

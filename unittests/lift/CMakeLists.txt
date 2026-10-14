@@ -13,6 +13,22 @@ if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
     NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
 endif()
 
+add_neverd_unittest(NeverDRegistrationCalleeStackTests
+  eh/RegistrationCallTests.cpp
+  eh/RegistrationCalleeRecursionTests.cpp
+  LINK_COMPONENTS Pipeline)
+
+add_neverd_unittest(NeverDX87CallGraphTests
+  x86_32/X86_32_X87FPUTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87CallGraphTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87CallGraphTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader

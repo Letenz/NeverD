@@ -5488,6 +5488,18 @@ range must retain separate owners; a damaged prefix supplies no new entry.
 
 The source registration solver uses one administration-boundary check for object borrows, catch-object construction and local-finally writes. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` and `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` cover EH3/EH4 reads, writes and partial overlaps with SavedESP, exception pointers and cookie cells. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` protects the saved entry frame independently of later reloads. Adjacent ordinary objects remain valid.
 
+`NeverDRegistrationCalleeStackTests` runs the decoded PE32 call/return ABI
+controls, including a cycle between a registration parent and an ordinary
+wrapper. An unbalanced recursive wrapper cannot borrow its own pending ESP
+answer. `NeverDX87CallGraphTests` provides the focused `X87CallStack.*` and
+`X87CallGraphCache.*` checks for the shared-cache and invocation boundaries.
+
+`MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses
+native jump blocks removed before SSA. Both asynchronous and synchronous
+catches must retain the parent's local slot and the nonvolatile value written
+before the throwing call. The original FH3/FH4 GS/no-GS O0/O2 ABI-probe CLIs
+remain the corpus-level check for this projection.
+
 `NeverDSEHRuntimeMemoryTests` checks nested authenticated UCRT calls, actual
 home-area writes, immutable formats and receipt freshness. Wrong providers,
 delay imports, incomplete or conflicting PE32/PE64 storage, `%n` variants,
