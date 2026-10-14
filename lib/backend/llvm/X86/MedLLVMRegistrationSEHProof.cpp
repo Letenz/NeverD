@@ -7,6 +7,7 @@
 #include "MedLLVMRegistrationSEHProof.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/X86RegistrationSEHControl.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -155,17 +156,23 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
         &RegistrationMemoryIR,
     const std::map<const llvm::CallInst *, va_t> &CallSiteAddrs) {
   const auto &States = *Func.RegistrationStates;
-  // Physical finally invocation exits carry source state-flow evidence. The
-  // current native SEH plan has no replacement return-PC/resumption receipt
-  // or physical object receipt for runtime exception-field accesses.
+  // Ordinary near returns use the outlined callback's C return ABI. Other
+  // nonlocal exits still require their own replacement continuation contract.
   if (States.HasBoundSEHCallees || States.HasEH3JumpCaptures ||
       !States.SEHJumpResumptionsComplete ||
       !States.SEHJumpResumptions.empty() ||
-      !States.SEHInvocationExitsComplete ||
-      !States.SEHInvocationExits.empty() ||
       !States.SEHExceptionAccessesComplete ||
       !States.SEHExceptionAccesses.empty())
     return std::nullopt;
+  const auto Returns = getX86RegistrationSEHReturnBlocks(Func);
+  if (!Returns)
+    return std::nullopt;
+  for (const auto &[Id, Entry] : *Returns) {
+    const auto Block = OriginalBlockMap.find(Id);
+    if (Block == OriginalBlockMap.end() || !Block->second ||
+        !llvm::isa<llvm::ReturnInst>(Block->second->getTerminator()))
+      return std::nullopt;
+  }
 
   std::vector<SourceOperation> SourceOperations;
   std::set<llvm::CallInst *> CookieCheckCalls;

@@ -5745,6 +5745,16 @@ calls, malformed boundaries, missing near-return evidence and stack-pop returns
 reject. The check supplies no native callable contract and does not model the
 nonlocal xcpt4 finally exits.
 
+`RegistrationSEHReturn` checks the native near-return consumer against changed
+CALL, callback, return occurrence and continuation identities, duplicate exits,
+and multiple callers sharing one return. `RegistrationSEHControl` checks that
+EH3 and EH4 both partition the physical CALL continuation before later source
+instructions. The `normal-finally`, `eh4-normal-finally` and
+`eh4-gs-normal-finally` reconstruction cases execute the generated callback,
+public section/inplace installation and rebased images. Their independent
+source replay also rejects replacing the generated finally return with
+`unreachable`.
+
 `RAMReservationTests.cpp` checks public write witnesses across identical-value and ABA stores, retained slices, address reuse, sibling mappings, rollback, cancellation, fault-prefix commits and opaque execution. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` checks owned loader facts at preferred, downward and kernel load addresses: restored bytes do not restore invalidated provenance. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distinguishes active CFG pointer replacement from dormant fallback retention.
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` checks PE output, an independent DIR64 reader, model rebasing and exclusion of rewritten debug records. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rejects source/base/order mismatches and excludes formatting replacements even when bytes match. These checks certify diagnostic metadata, not native recovery.
