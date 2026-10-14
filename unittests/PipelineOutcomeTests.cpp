@@ -1185,6 +1185,66 @@ TEST(PipelineOutcome, ResolvedCallsPreserveAllBytesAcrossStackStoreWidths) {
     }
 }
 
+TEST(PipelineOutcome, ResolvedCallsPlaceNarrowStackValuesInTheirSlots) {
+  // -O0 code passes each int stack argument in the low half of its
+  // eight-byte System V slot: `mov [rsp], r11d`, `mov [rsp+8], r10d`. The
+  // next slot also holds a spill. Each callee slot takes its own value, the
+  // rest of the slot being padding: neither the next value's bytes nor the
+  // spill. A slot no value was stored in still refuses.
+  for (bool MissingSlot : {false, true}) {
+    SCOPED_TRACE(MissingSlot);
+    llvm::LLVMContext C;
+    llvm::Module Module("stack_argument_slots", C);
+    Module.setDataLayout("e-p:64:64");
+    auto *I32 = llvm::Type::getInt32Ty(C);
+    auto *I64 = llvm::Type::getInt64Ty(C);
+    auto *Target = llvm::Function::Create(
+        llvm::FunctionType::get(I32, {I32, I64, I64}, false),
+        llvm::GlobalValue::ExternalLinkage, "target", Module);
+    setLLVMArgumentBanks(*Target, 1, 0);
+    auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I32, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "caller", Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+    std::vector<llvm::Value *> Values = {B.getInt32(1), B.getInt32(7),
+                                         B.getInt32(9),
+                                         B.getInt64(0x2d9c127c45ac13abULL)};
+    std::vector<int64_t> Offsets = {0, 8, 16};
+    if (MissingSlot) {
+      Values.erase(Values.begin() + 2);
+      Offsets = {0, 16};
+    }
+    std::vector<llvm::Type *> Types;
+    for (auto *Value : Values)
+      Types.push_back(Value->getType());
+    auto *Call = B.CreateCall(llvm::FunctionType::get(I32, Types, false),
+                              Target, Values);
+    setLLVMArgumentBanks(*Call, 1, 0, Offsets, 8);
+    B.CreateRet(Call);
+    testing::internal::CaptureStderr();
+    const bool Normalized = normalizeResolvedLLVMCalls(Module);
+    const auto Diagnostic = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(Normalized, !MissingSlot) << Diagnostic;
+    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    if (MissingSlot) {
+      EXPECT_NE(
+          Diagnostic.find("lacks recovered argument bank or stack values"),
+          std::string::npos);
+      continue;
+    }
+    const auto *Bound =
+        llvm::cast<llvm::CallBase>(&*Caller->getEntryBlock().begin());
+    ASSERT_EQ(Bound->arg_size(), 3u);
+    const uint64_t Expected[] = {1, 7, 9};
+    for (unsigned I = 0; I < 3; ++I) {
+      const auto *Value =
+          llvm::dyn_cast<llvm::ConstantInt>(Bound->getArgOperand(I));
+      ASSERT_NE(Value, nullptr);
+      EXPECT_EQ(Value->getZExtValue(), Expected[I]);
+    }
+  }
+}
+
 TEST(PipelineOutcome, ResolvedCallConventionMustAgreeEvenWhenTypesMatch) {
   for (bool CalleePops : {false, true}) {
     SCOPED_TRACE(CalleePops);

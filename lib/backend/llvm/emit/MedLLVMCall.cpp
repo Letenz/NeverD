@@ -30,6 +30,8 @@
 #include "neverd/ir/TargetRegInfo.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/Loads.h"
@@ -65,7 +67,7 @@ argumentBanks(const llvm::Function &Function) {
 std::optional<std::pair<unsigned, unsigned>>
 argumentBanks(const llvm::CallBase &Call) {
   const auto *Node = Call.getMetadata(ArgumentBanks);
-  if (!Node || Node->getNumOperands() != 2)
+  if (!Node || Node->getNumOperands() < 2)
     return std::nullopt;
   const auto *Integers =
       llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(0));
@@ -78,6 +80,32 @@ argumentBanks(const llvm::CallBase &Call) {
     return std::nullopt;
   return std::pair{static_cast<unsigned>(Integers->getZExtValue()),
                    static_cast<unsigned>(Floating->getZExtValue())};
+}
+
+/// The slot size and stack value offsets a call records after its banks.
+struct ArgumentStackLayout {
+  std::vector<int64_t> Offsets;
+  unsigned SlotBytes = 0;
+};
+
+ArgumentStackLayout argumentStackLayout(const llvm::CallBase &Call) {
+  const auto *Node = Call.getMetadata(ArgumentBanks);
+  if (!Node || Node->getNumOperands() < 3)
+    return {};
+  const auto *Slot =
+      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(2));
+  if (!Slot || Slot->getBitWidth() != 32)
+    return {};
+  ArgumentStackLayout Result;
+  for (unsigned I = 3; I < Node->getNumOperands(); ++I) {
+    const auto *Offset =
+        llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(I));
+    if (!Offset || Offset->getBitWidth() != 64)
+      return {};
+    Result.Offsets.push_back(Offset->getSExtValue());
+  }
+  Result.SlotBytes = static_cast<unsigned>(Slot->getZExtValue());
+  return Result;
 }
 
 llvm::GlobalValue *constantCallIdentity(llvm::Value *Value,
@@ -136,19 +164,28 @@ void setLLVMArgumentBanks(llvm::Function &Function, unsigned Integers,
 }
 
 void setLLVMArgumentBanks(llvm::CallBase &Call, unsigned Integers,
-                          unsigned Floating) {
+                          unsigned Floating,
+                          llvm::ArrayRef<int64_t> StackOffsets,
+                          unsigned SlotBytes) {
   llvm::IRBuilder<> Builder(Call.getContext());
-  Call.setMetadata(
-      ArgumentBanks,
-      llvm::MDNode::get(
-          Call.getContext(),
-          {llvm::ConstantAsMetadata::get(Builder.getInt32(Integers)),
-           llvm::ConstantAsMetadata::get(Builder.getInt32(Floating))}));
+  llvm::SmallVector<llvm::Metadata *> Operands = {
+      llvm::ConstantAsMetadata::get(Builder.getInt32(Integers)),
+      llvm::ConstantAsMetadata::get(Builder.getInt32(Floating))};
+  if (!StackOffsets.empty() && SlotBytes > 0) {
+    Operands.push_back(
+        llvm::ConstantAsMetadata::get(Builder.getInt32(SlotBytes)));
+    for (int64_t Offset : StackOffsets)
+      Operands.push_back(
+          llvm::ConstantAsMetadata::get(Builder.getInt64(Offset)));
+  }
+  Call.setMetadata(ArgumentBanks,
+                   llvm::MDNode::get(Call.getContext(), Operands));
 }
 
 std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
     const llvm::Function &Target, llvm::ArrayRef<llvm::Value *> Values,
-    unsigned Integers, unsigned Floating, llvm::IRBuilderBase &Builder) {
+    unsigned Integers, unsigned Floating, llvm::IRBuilderBase &Builder,
+    llvm::ArrayRef<int64_t> StackOffsets, unsigned SlotBytes) {
   const auto Banks = argumentBanks(Target);
   const unsigned Count = Values.size();
   const unsigned Fixed = Target.arg_size();
@@ -168,10 +205,11 @@ std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
   for (unsigned I = 0; I < WantedFloating; ++I)
     Append(Integers + I);
 
-  // Stack recovery records a contiguous run of physical bytes. Its stores
-  // need not have the callee's load widths: Darwin packs two overflow floats
-  // into one eight-byte incoming slot. Bind bytes, not argument counts, and
-  // never fill an unproved missing byte with zero.
+  // Stack recovery records where each value was stored. Its stores need not
+  // have the callee's load widths: Darwin packs two overflow floats into one
+  // eight-byte incoming slot, and an int stored into an eight-byte System V
+  // slot leaves the rest of the slot as padding. Bind bytes, not argument
+  // counts, and never fill an unproved missing byte with zero.
   const auto &Layout = Target.getParent()->getDataLayout();
   auto Bits = [&](llvm::Type *Type) -> unsigned {
     if (!Type->isSingleValueType() || !Type->isSized())
@@ -179,32 +217,72 @@ std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
     const auto Size = Layout.getTypeSizeInBits(Type);
     return Size.isScalable() ? 0 : Size.getFixedValue();
   };
+  // Each stack value's bits from the first stack argument: its own, then the
+  // padding it owns to the end of its last slot or to the next value. Without
+  // recorded offsets the values are one contiguous run.
+  struct Placed {
+    unsigned Index;
+    uint64_t Begin, DataEnd, End;
+  };
+  std::vector<Placed> Stack;
+  const bool Located = !StackOffsets.empty() && SlotBytes > 0;
+  for (unsigned I = Integers + Floating, Next = 0; I < Count; ++I) {
+    const unsigned Size = Bits(Values[I]->getType());
+    if (!Located) {
+      // The run ends at a value without a size.
+      if (!Size)
+        break;
+      Stack.push_back({I, Next, Next + Size, Next + Size});
+      Next += Size;
+      continue;
+    }
+    const unsigned K = I - Integers - Floating;
+    if (K >= StackOffsets.size() || StackOffsets[K] < 0 || !Size)
+      continue;
+    const uint64_t Begin = static_cast<uint64_t>(StackOffsets[K]) * 8;
+    const uint64_t Slot = uint64_t{SlotBytes} * 8;
+    Stack.push_back(
+        {I, Begin, Begin + Size, (Begin + Size + Slot - 1) / Slot * Slot});
+  }
+  llvm::stable_sort(Stack, [](const Placed &A, const Placed &B) {
+    return A.Begin < B.Begin;
+  });
+  for (size_t I = 0; I + 1 < Stack.size(); ++I) {
+    if (Stack[I].DataEnd > Stack[I + 1].Begin)
+      return std::nullopt;
+    Stack[I].End = std::min(Stack[I].End, Stack[I + 1].Begin);
+  }
   struct Slice {
-    unsigned Index, Offset, Bits;
+    unsigned Index, Offset, Bits, Shift;
   };
   std::vector<std::vector<Slice>> Slots;
-  unsigned Index = Integers + Floating, Offset = 0;
+  uint64_t Param = 0;
   for (unsigned I = WantedIntegers + WantedFloating; I < Fixed; ++I) {
-    unsigned Remaining = Bits(Target.getFunctionType()->getParamType(I));
-    if (!Remaining)
+    const unsigned Size = Bits(Target.getFunctionType()->getParamType(I));
+    if (!Size)
       return std::nullopt;
+    const uint64_t End = Param + Size;
     std::vector<Slice> Slices;
-    while (Remaining) {
-      if (Index >= Count)
-        return std::nullopt;
-      const unsigned Available = Bits(Values[Index]->getType());
-      if (!Available || Offset >= Available)
-        return std::nullopt;
-      const unsigned Take = std::min(Remaining, Available - Offset);
-      Slices.push_back({Index, Offset, Take});
-      Remaining -= Take;
-      Offset += Take;
-      if (Offset == Available) {
-        ++Index;
-        Offset = 0;
-      }
+    uint64_t Cursor = Param;
+    for (const Placed &Value : Stack) {
+      if (Cursor == End)
+        break;
+      if (Value.End <= Cursor)
+        continue;
+      if (Value.Begin > Cursor)
+        break;
+      const uint64_t Stop = std::min(End, Value.End);
+      if (const uint64_t Data = std::min(Stop, Value.DataEnd); Cursor < Data)
+        Slices.push_back({Value.Index,
+                          static_cast<unsigned>(Cursor - Value.Begin),
+                          static_cast<unsigned>(Data - Cursor),
+                          static_cast<unsigned>(Cursor - Param)});
+      Cursor = Stop;
     }
+    if (Cursor != End)
+      return std::nullopt;
     Slots.push_back(std::move(Slices));
+    Param = End;
   }
   if (!Slots.empty() && !Layout.isLittleEndian())
     return std::nullopt;
@@ -214,15 +292,16 @@ std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
     auto *Wanted =
         Target.getFunctionType()->getParamType(Binding.Values.size());
     const bool Whole =
-        Slices.size() == 1 && Slices[0].Offset == 0 &&
-        Slices[0].Bits == Bits(Values[Slices[0].Index]->getType());
+        Slices.size() == 1 && Slices[0].Offset == 0 && Slices[0].Shift == 0 &&
+        Slices[0].Bits == Bits(Values[Slices[0].Index]->getType()) &&
+        Slices[0].Bits == Bits(Wanted);
     if (Whole && Values[Slices[0].Index]->getType() == Wanted) {
       Append(Slices[0].Index);
       continue;
     }
+    // Padding bits pass as zero: the callee's slot holds no value there.
     auto *Integer = Pack.getIntNTy(Bits(Wanted));
     llvm::Value *Packed = llvm::ConstantInt::get(Integer, 0);
-    unsigned Shift = 0;
     for (const auto &Slice : Slices) {
       auto *Value = Values[Slice.Index];
       auto *SourceInteger = Pack.getIntNTy(Bits(Value->getType()));
@@ -234,10 +313,9 @@ std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
         Value = Pack.CreateLShr(Value, Slice.Offset);
       Value = Pack.CreateZExtOrTrunc(Value, Pack.getIntNTy(Slice.Bits));
       Value = Pack.CreateZExtOrTrunc(Value, Integer);
-      if (Shift)
-        Value = Pack.CreateShl(Value, Shift);
+      if (Slice.Shift)
+        Value = Pack.CreateShl(Value, Slice.Shift);
       Packed = Pack.CreateOr(Packed, Value);
-      Shift += Slice.Bits;
     }
     if (Wanted->isPointerTy())
       Packed = Pack.CreateIntToPtr(Packed, Wanted);
@@ -307,8 +385,10 @@ bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
     const auto CallerBanks = argumentBanks(*Call);
     const auto TargetBanks = argumentBanks(*Target);
     if (CallerBanks && TargetBanks && !Target->isVarArg()) {
+      const ArgumentStackLayout Stack = argumentStackLayout(*Call);
       auto Bound = bindResolvedLLVMArguments(
-          *Target, Values, CallerBanks->first, CallerBanks->second, Builder);
+          *Target, Values, CallerBanks->first, CallerBanks->second, Builder,
+          Stack.Offsets, Stack.SlotBytes);
       if (!Bound)
         return Refuse("lacks recovered argument bank or stack values");
       Indices = std::move(Bound->SourceIndices);
@@ -978,9 +1058,10 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   if (Target && Callee && CI && CI->IntegerRegisterArgCount >= 0 &&
       CI->FloatingRegisterArgCount >= 0 && argumentBanks(*Callee) &&
       !Callee->isVarArg()) {
-    auto Bound =
-        bindResolvedLLVMArguments(*Callee, Args, CI->IntegerRegisterArgCount,
-                                  CI->FloatingRegisterArgCount, Builder);
+    auto Bound = bindResolvedLLVMArguments(
+        *Callee, Args, CI->IntegerRegisterArgCount,
+        CI->FloatingRegisterArgCount, Builder, CI->StackArgumentOffsets,
+        CI->StackArgumentSlotBytes);
     if (!Bound) {
       syncError() << "med_llvm_emitter: resolved indirect call to "
                   << Callee->getName()
@@ -1251,8 +1332,9 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                    Emitted->arg_size() &&
                static_cast<unsigned>(CI->FloatingRegisterArgCount) <=
                    Emitted->arg_size() - CI->IntegerRegisterArgCount) {
-      setLLVMArgumentBanks(*Emitted, CI->IntegerRegisterArgCount,
-                           CI->FloatingRegisterArgCount);
+      setLLVMArgumentBanks(
+          *Emitted, CI->IntegerRegisterArgCount, CI->FloatingRegisterArgCount,
+          CI->StackArgumentOffsets, CI->StackArgumentSlotBytes);
     }
   }
   if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallInst>(Result)) {

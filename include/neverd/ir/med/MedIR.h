@@ -408,6 +408,13 @@ struct MedCallInfo {
   /// source ABI or a convention with positional argument slots).
   int IntegerRegisterArgCount = -1;
   int FloatingRegisterArgCount = -1;
+  /// Where each stack-passed value after those register runs was stored: its
+  /// byte offset from the first stack argument, in Args order, with the ABI's
+  /// stack slot size. A value narrower than its slot leaves the rest of the
+  /// slot as padding (`mov [rsp], r11d` passes an int in an eight-byte slot).
+  /// Empty when a value's place is not known.
+  std::vector<int64_t> StackArgumentOffsets;
+  uint16_t StackArgumentSlotBytes = 0;
 };
 
 struct MedFunc {
