@@ -311,8 +311,8 @@ Handle createDirectory(HANDLE Parent, std::string_view Name,
   validateMemberName(Name);
   Security ACL;
   // The kernel's relative rename opens the target directory for FILE_WRITE_DATA.
-  // Retaining DELETE or LIST_DIRECTORY access here conflicts with that open.
-  // Only the rollback owner needs directory removal authority.
+  // Use traversal access compatible with that open. Only the rollback owner
+  // needs directory removal authority.
   const ACCESS_MASK Extra = Access == DirectoryAccess::Remove
                                ? FILE_LIST_DIRECTORY | DELETE
                                : 0;
@@ -433,7 +433,7 @@ void remove(HANDLE File) {
 void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   validateMemberName(Name);
   const auto Wide = wide(Name);
-  std::vector<unsigned char> Buffer(offsetof(FILE_RENAME_INFO, FileName) +
+  std::vector<unsigned char> Buffer(sizeof(FILE_RENAME_INFO) +
                                         (Wide.size() + 1) * sizeof(wchar_t),
                                     0);
   auto *Info = reinterpret_cast<FILE_RENAME_INFO *>(Buffer.data());
@@ -441,8 +441,18 @@ void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   Info->RootDirectory = Parent;
   Info->FileNameLength = DWORD(Wide.size() * sizeof(wchar_t));
   std::memcpy(Info->FileName, Wide.data(), Info->FileNameLength);
-  if (!SetFileInformationByHandle(File, FileRenameInfo, Info,
-                                  DWORD(Buffer.size())))
+  // The Win32 adapter rejects a non-null RootDirectory on the qualified host.
+  // The native operation admits that retained directory without resolving a
+  // process-relative pathname. FileRenameInformation is WDK information class
+  // 10; the user-mode SDK declares only a subset of FILE_INFORMATION_CLASS.
+  using SetInformation = NTSTATUS(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID,
+                                            ULONG, FILE_INFORMATION_CLASS);
+  static const auto Function = reinterpret_cast<SetInformation>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
+  constexpr auto RenameInformation = static_cast<FILE_INFORMATION_CLASS>(10);
+  IO_STATUS_BLOCK Status{};
+  if (!Function || Function(File, &Status, Info, ULONG(Buffer.size()),
+                             RenameInformation) < 0)
     throw Error("export_io_error");
 }
 } // namespace neverd::web::win
