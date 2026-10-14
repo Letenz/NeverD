@@ -333,6 +333,7 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
         HF.SourceFile = MF.SourceFile;
         HF.SourceLine = MF.SourceLine;
         HF.ExceptionMetadata = MF.ExceptionMetadata;
+        HF.HasUnresolvedSEHFrame = MF.HasUnresolvedSEHFrame;
         HF.ReturnType = MF.ReturnType ? MF.ReturnType : NdType::makeInt(4);
         HF.ReturnsNoValue = MF.ReturnsNoValue;
         HF.SourceTypeHint = MF.SourceTypeHint;

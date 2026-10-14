@@ -9,7 +9,8 @@
 #include <map>
 namespace neverd {
 bool completeLowSEHFrameCFG(const LowFunc &, const std::map<int, size_t> &,
-                            size_t &WorkRemaining);
+                            size_t &WorkRemaining,
+                            bool SourceProjection = false);
 // One immutable query reuses validated ordinary CFG provenance across its
 // handlers. Protected prefixes and handler roles are still checked separately.
 std::map<va_t, LowSEHEstablisherFrame>

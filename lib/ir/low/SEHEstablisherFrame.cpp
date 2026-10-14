@@ -44,7 +44,7 @@ static llvm::Expected<LowSEHEstablisherFrame>
 proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
                 bool OrdinaryEntry, size_t &WorkRemaining,
                 llvm::StringRef LocalUnwindDigest, bool CxxContinuation,
-                std::optional<FrameCFG> &CachedCFG) {
+                std::optional<FrameCFG> &CachedCFG, LowSEHFrameUse Use) {
   auto Fail = [](const std::string &Why) {
     return llvm::createStringError(llvm::errc::not_supported, Why);
   };
@@ -106,7 +106,8 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
         return Fail("noncanonical frame CFG block identity");
       Positions.emplace(Low.Blocks[B].Id, B);
     }
-    if (!completeLowSEHFrameCFG(Low, Positions, WorkRemaining))
+    if (!completeLowSEHFrameCFG(Low, Positions, WorkRemaining,
+                                Use == LowSEHFrameUse::SourceProjection))
       return Fail("incomplete decoded frame CFG");
     FrameCFG CFG;
     CFG.Preds.resize(N);
@@ -343,6 +344,15 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   }
   std::vector<bool> Reachable(N, false);
   Work = Sources;
+  // Source projection seeds only published ordinary entries. An unrelated
+  // disconnected component has no entry-state contract and still refuses.
+  if (Use == LowSEHFrameUse::SourceProjection)
+    for (size_t B = 1; B < N; ++B) {
+      if (!Charge())
+        return Fail("frame propagation budget exhausted");
+      if (Low.OrdinaryModuleAnalysisRoots.count(Low.Blocks[B].StartAddr))
+        Work.push_back(static_cast<int>(B));
+    }
   while (!Work.empty()) {
     if (!Charge())
       return Fail("frame propagation budget exhausted");
@@ -356,15 +366,26 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
     Work.insert(Work.end(), LocalUnwindSuccessors[B].begin(),
                 LocalUnwindSuccessors[B].end());
   }
+  bool IndependentSP = false;
   for (size_t B = 0; B < N; ++B)
     if (Relevant[B] &&
         (!Reachable[B] ||
          (B != 0 &&
           Low.OrdinaryModuleAnalysisRoots.count(Low.Blocks[B].StartAddr) &&
           !LocalUnwindSources.count(static_cast<int>(B)) &&
-          !(CxxContinuation && IsCxxContinuation(Low.Blocks[B].StartAddr)))))
-      return Fail("protected scope has an independent ordinary entry at " +
-                  std::to_string(Low.Blocks[B].StartAddr));
+          !(CxxContinuation && IsCxxContinuation(Low.Blocks[B].StartAddr))))) {
+      if (!Reachable[B] || Use != LowSEHFrameUse::SourceProjection ||
+          CxxContinuation || HasFrameRegister || IsLocalUnwindTarget)
+        return Fail("protected scope has an independent ordinary entry at " +
+                    std::to_string(Low.Blocks[B].StartAddr));
+      IndependentSP = true;
+    }
+  // A source projection may retain the SP of the protected execution instead
+  // of identifying it with this function's entry allocation. The prologue
+  // still has to match the unwind record; no saved cell or local-unwind frame
+  // argument receives a fact from this less precise coordinate.
+  if (IndependentSP)
+    Relevant[0] = true;
 
   for (size_t B = 0; B < N; ++B)
     if (ProtectedBlock[B])
@@ -392,7 +413,7 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   uint32_t PreviousOffset = EH.PrologueSize;
   uint64_t FrameBytes = 0;
   // SP moves outside the protected range after a frame-register prologue.
-  bool DynamicSP = false;
+  bool DynamicSP = IndependentSP;
   for (const UnwindOperation &Op : EH.UnwindOperations) {
     if (!Charge())
       return Fail("frame propagation budget exhausted");
@@ -555,10 +576,11 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
     }
   // Ordinary flow into a shared handler is not proven to bring the SP the
   // dispatcher resumes with once SP moves on the way in.
-  if (DynamicSP && OrdinaryEntry)
+  if (DynamicSP && OrdinaryEntry && !IndependentSP)
     return Fail("SP moves before a handler that ordinary flow also enters");
   Result.FrameBytes = FrameBytes;
   Result.DynamicSP = DynamicSP;
+  Result.HasIndependentEntries = IndependentSP;
   Result.RelevantBlocks = std::move(Relevant);
   Result.ProtectedBlocks = std::move(ProtectedBlock);
   Result.CheckedEnd = std::move(CheckedEnd);
@@ -566,13 +588,15 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   return Result;
 }
 
-llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
-    const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
-    bool OrdinaryEntry, size_t &WorkRemaining,
-    llvm::StringRef LocalUnwindDigest, bool CxxContinuation) {
+llvm::Expected<LowSEHEstablisherFrame>
+proveLowSEHEstablisherFrame(const LowFunc &Low, va_t Handler,
+                            const TargetRegInfo &TRI, bool OrdinaryEntry,
+                            size_t &WorkRemaining,
+                            llvm::StringRef LocalUnwindDigest,
+                            bool CxxContinuation, LowSEHFrameUse Use) {
   std::optional<FrameCFG> CFG;
   return proveInFrameCFG(Low, Handler, TRI, OrdinaryEntry, WorkRemaining,
-                         LocalUnwindDigest, CxxContinuation, CFG);
+                         LocalUnwindDigest, CxxContinuation, CFG, Use);
 }
 
 std::map<va_t, LowSEHEstablisherFrame>
@@ -592,7 +616,8 @@ proveLowSEHHandlerFrames(const LowFunc &Low, llvm::ArrayRef<va_t> Handlers,
     if (Block == Low.Blocks.end())
       continue;
     auto Frame = proveInFrameCFG(Low, Handler, TRI, !Block->Preds.empty(),
-                                 WorkRemaining, LocalUnwindDigest, false, CFG);
+                                 WorkRemaining, LocalUnwindDigest, false, CFG,
+                                 LowSEHFrameUse::InvocationIdentity);
     if (!Frame) {
       llvm::consumeError(Frame.takeError());
       if (!WorkRemaining)

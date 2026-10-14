@@ -80,6 +80,11 @@ public:
   void setSEHFrameCallees(const std::map<va_t, const LowFunc *> *Functions) {
     SEHFrameCallees = Functions;
   }
+  /// Retain runtime SP values in source analysis when fixed entry-relative
+  /// coordinates cannot be proved. Disabled for lifting and native rewriting.
+  void setSEHSourceProjectionEnabled(bool Enabled) {
+    SEHSourceProjectionEnabled = Enabled;
+  }
   void setObjCBlockCaptureCallFields(
       const std::map<va_t, ObjCBlockCaptureCallFields> *Fields) {
     ObjCBlockCaptureFields = Fields;
@@ -307,6 +312,7 @@ private:
 
   const BinaryImage *Image = nullptr;
   bool SourceCallHintsEnabled = false;
+  bool SEHSourceProjectionEnabled = false;
   const std::map<va_t, SourceFunctionTypeHint> *SourceEntryTypeHints = nullptr;
   const std::map<va_t, SourceFunctionTypeHint> *SourceCalleeTypeHints = nullptr;
   const std::map<va_t, const LowFunc *> *SourceCalleeFunctions = nullptr;

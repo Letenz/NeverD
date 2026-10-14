@@ -1068,6 +1068,9 @@ void HighCWriter::writeAnalysisOnlyFunction(const HighFunc &Func) {
     OS << "/* neverd.analysis-only: recovered Windows SEH/C++ as readable C. "
           "*/\n";
   }
+  if (Func.HasUnresolvedSEHFrame)
+    OS << "/* neverd.seh: unresolved runtime stack; unknown entry values "
+          "remain explicit. Native reconstruction is unavailable. */\n";
   writeFunctionProjection(Func);
 }
 
