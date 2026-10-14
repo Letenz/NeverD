@@ -3760,3 +3760,228 @@ focused run passed **20 of 22** large-source/SDK/native-handoff/availability/
 transport cases in 5.50 s; the missing optional Bun producer image and the
 normal backend-omission case are explicit skips. Capability ownership remains
 valid. These receipts use `/tmp/neverd-js-continuation-push-retry-*`.
+
+### 2026-10-13: actual CEF/WebView2 packs and required producer qualification
+
+The follow-up closes the measured resource-format part of the #716 gap with
+one independent C++ validator and two explicit layouts:
+`chromium-datapack-v5-v1` (standard u16 IDs/counts) and
+`msedge-webview2-datapack-v5-u32-v1` (the observed WebView2 wide table).
+Both input headers mark v5; explicit selection prevents layout guessing.
+Complete index/payload admission, sorted unique IDs, checked aliases, original
+SHA-256 slices and revision-bound pages precede publication. Explicit bounded
+native gzip produces separately identified bytes; failures remain unselectable.
+Source/HTML/anchor consumers share `ArtifactView`, including nested ZIP and
+compressed origins. Fixed-name exclusive local export verifies original and
+already selected decoded files before completion; worker/MCP exclude raw export.
+
+The fixed CEF 120.2.7 NuGet original is 128,957,697 bytes and SHA-256
+`e7f2e0b6860d8cce3ab66d7cb50492b9e1ea601172c850e5c7595d2a45baff17`.
+Its 8,187,343-byte pack contains 2,504 canonical resources and 16 aliases.
+Resource 698's 23,108 gzip bytes at pack offset 24,660 decode to 102,823 bytes
+and 11,830 parsed module nodes. Resource 693 yields a 976-byte HTML document
+with one script candidate. Both decoded hashes independently match native
+gzip reference reads. The original NuGet deflate frame remains separate from
+the resource gzip frame in source origins.
+
+The local Teams 26261.303.5165.1465 app supplies WebView2 154.0.4258.37's
+51,851,676-byte pack, SHA-256
+`b3b4fb23fa809ac33895d6f0a87d03fdb6a2f087d6a15824d39faf48644c7b8d`.
+Its measured table contains 5,814 canonical resources and 633 aliases. Numeric
+resource 24,521 retains its exact 535 bytes at offset 621,511 and parses into
+56 script nodes with original anchors. No client/native runtime is run or
+redistributed; resource tables establish no framework identity or runtime route.
+The [profile](web-datapack-profile.md) pins sizes, hashes and limitations.
+
+All 18 new resource/policy checks pass, including both original real inputs.
+Owning Web Release regression passed **814 of 845** distinct cases with
+**31 explicit optional-input/feature skips**, in 117.00 seconds. Worker/MCP/
+availability passed six of seven with the normal backend-omission-only skip;
+Qt Web review passed in 7.20 seconds. JS omission passed all 16 applicable
+resource cases with the same real originals, plus six of seven transport/
+availability cases. Web omission passed six of seven, with the dependent
+positive worker case explicitly skipped; all four additive C symbols remain
+available as omission stubs. Enabled flags are restored before integration.
+LLVM formatting, the 23-capability ledger, source provenance and all 309
+localized Markdown entries pass. Receipts use `/tmp/neverd-js-gap-*`.
+
+For #718, eleven existing fixed full-image tests now have one required
+qualification inventory. `NEVERD_REQUIRE_WEB_PRODUCER_CORPUS=1` converts absent
+inputs and unavailable native/source consumers into failures; missing test
+registrations and empty CTest selections also fail. The release target and
+explicit/reusable workflow require an immutable corpus URL and SHA-256, then
+retain the owning C++ artifact hashes and source witnesses. A separate fixed
+CEF workflow requires its actual redistributable input.
+
+The complete old producer images were stored under erased `/tmp` directories.
+An absence probe selected all eleven required cases and failed all eleven with
+zero skips; no green full-corpus receipt is claimed. Their original manifests
+are preserved while fixed tools/inputs are prepared for reconstruction in a
+persistent directory. [Required corpus qualification](web-producer-corpus-qualification.md)
+records the release contract and remaining artifact-availability work. The
+measured #714 minified-loader/configuration-file follow-up remains separate.
+
+Integration commit `c22b3c756` and merge `46e35f050` retain upstream
+`a07acfadd`'s native function-edit/call-context changes. The resulting Release
+rebuild passed; owning Web passed **818 of 845** distinct cases with **27
+explicit skips** in 146.60 seconds. All 25 full Bun containers were rebuilt
+with the original input, compiler and template pins and individually matched
+their existing complete-file hashes. The full Linux/cross-container, six-target
+map and native-handoff cases now run from a persistent corpus. No old hash was
+changed. Worker/MCP/availability passed six of seven with its normal omission
+skip, and Qt Web review passed in 2.62 seconds. The 23-capability ledger and
+7,695-file source-provenance scan pass after the native merge. These receipts
+use `/tmp/neverd-js-gap-postmerge-*`.
+
+### Persistent full producer corpus restoration (2026-10-13)
+
+The fixed corpus has been rebuilt in a persistent local directory. All 25 Bun containers,
+six injected Node SEA images, three nexe images, six canonical pkg images and
+the BOM/shebang pkg witness match their original whole-file SHA-256 values.
+The preprocessing witness requires the original `stripped-inputs` basename;
+changing it changes the embedded virtual paths and is correctly rejected by
+the fixed hash check. Fresh nexe/pkg dependency locks are recorded separately
+instead of being passed off as the historical locks.
+
+Node's snapshot builder did not reproduce the old opaque snapshot bytes even
+with the original source, compiler path and fixed random seed. A separate
+immutable `2026-10-13` witness therefore pins its 5,644,095 bytes and SHA-256
+`9e94efe5aed0592ce0338a8c80f0e352cd154ff5849e1fe32f866a4841e2772a`.
+The old witness remains the default and unchanged; only an explicit known
+selection admits the new snapshot. Unknown selections and mismatched hashes
+fail. Both witnesses stay opaque and have no invented source selection.
+
+All eleven required producer cases pass with zero skips in 25.73 seconds;
+the receipt is `/tmp/neverd-full-producer-qualified-fixed.xml`. The invalid
+snapshot selection probe also fails as required. Production used only the
+fixed trusted builders in separate fixture preparation; no generated image
+was executed and the C++ qualification invokes no producer or runtime. Remote
+release qualification still requires an accessible immutable archive and a
+green workflow receipt. Real minified-loader/configuration navigation remains
+the next implementation gap.
+
+### Minified configuration file navigation (2026-10-13)
+
+`javascript-configuration-file-navigation-v1` now retains fixed file/layer
+literal sites, common switch-case anchors, local lexical call candidates and
+ordered arrays under the existing source navigation operation. It uses
+`SourceModel::indexSourceFunctions`, also shared by existing client callbacks,
+for authoritative function declaration/initializer cardinality. Duplicate or
+conflicting candidates, dynamic scope, imports and alias chains retain unknown
+targets. Reassignment preserves a source relationship without proving the
+runtime target. Array terms preserve unknown spreads/holes/calls and establish
+source order only. Private paths/names/values remain withheld.
+
+All 2,364 original Claude units complete the new inventory under explicit large
+admission: 973 literal sites, 592 lexical call candidates, 69 layer arrays and
+209 terms. The interactive profile keeps its ten refusals; all 2,354 admitted
+units complete with 682 sites, 341 calls, 50 arrays and 156 terms. The existing
+named loader grammar remains unchanged at zero. Direct CLI navigation of the
+original `m00086.js` retains 30 sites, 19 call candidates and a two-term array
+with an unusable external-tool PATH and empty stderr. The profiles do not
+authenticate loaders or infer enabled layers, merge behavior or file precedence.
+
+Seven new focused C++ checks pass. Owning Web regression passes 823 of 852
+distinct cases with 29 explicit optional input/feature skips in 75.35 seconds;
+all eleven strict producer cases run from the verified archive round trip.
+Worker/MCP/availability passes seven of eight, including the actual fixed
+Linux Claude MCP inventory, with only the backend-omission-only case skipped.
+The full source counts use a separate GoogleTest property receipt because
+CTest JUnit preserves labels rather than those custom measurements. Receipts
+are `/tmp/neverd-configuration-file-*`.
+
+The actual CEF distribution also passes its
+[GitHub workflow](https://github.com/NeverSight/NeverD/actions/runs/38413710185)
+at `9276ef94c`. The persistent local full-corpus archive is 1.2 GiB and has
+SHA-256 `7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+It preserves producer locks, manifests and receipts; full-corpus remote
+qualification still needs an accessible immutable input and a successful run.
+
+Parser omission passes six of eight transport/availability cases with the
+unsupplied optional Claude input and backend-omission-only case skipped. Web
+omission passes six of eight with the two dependent positive Web cases skipped;
+the complete public C ABI omission check passes. Enabled Web/parser flags are
+restored and all seven focused cases pass again. These checks establish honest
+profile discovery and omission behavior, not Windows analysis-host support.
+The restored worker/MCP/availability selection passes seven of eight again,
+including the actual fixed Linux Claude inventory, and Qt Web review passes
+in 4.11 seconds. Formatting, all 23 capability records, the 7,705-file source
+provenance scan and all 309 localized Markdown entries pass. The primary
+checkout's existing signature and diagnostic changes are preserved.
+
+### Combined Web release qualification (2026-10-13)
+
+The individual producer/CEF lanes now have a shared explicit/reusable release
+entry point. `web-release-qualification.yml` calls both workflows at the selected
+ref and exposes one final `Web release qualification gate`. The gate runs after
+the input preflight and both dependencies finish, and accepts only three
+successful results. Local execution of its exact shell condition verifies all
+64 combinations of success, failure, cancellation and skip. Input preflight
+rejects missing/invalid URL/hash/witness selections before reader builds.
+The producer and wrapper preflights use explicit failure exits: local Bash 3.2
+continued past a failing standalone `[[ ... ]]` despite `set -e`. Eighteen
+valid/invalid input cases now verify both exact preflight snippets on that shell.
+YAML parsing, documentation and provenance checks pass. No producer hash,
+consumer selection or raw-source policy changes.
+
+An immutable runner-accessible full-corpus URL remains unavailable. The local
+archive and eleven-case strict receipt are retained; a green combined remote
+release receipt cannot yet be claimed. The gate is ready to dispatch with the
+fixed archive SHA-256 and explicit `2026-10-13` snapshot witness once that input
+is supplied. This workflow does not publish fixtures or alter unrelated package
+publication. See [the release contract](web-producer-corpus-qualification.md).
+
+### Authenticated remote qualification (2026-10-14)
+
+The producer lane and combined gate now accept the optional repository/call
+Secret `NEVERD_WEB_PRODUCER_CORPUS_AUTHORIZATION`. Only the producer download
+receives its bearer header; archive and independent artifact hashes still
+govern admission. Public archive callers can omit it. Nonempty curl option
+arrays preserve macOS Bash 3.2 behavior with `set -u`. Actionlint validates all
+three workflows, and the actual download option construction passes an
+authenticated HTTPS HEAD probe under Bash 3.2. Missing/wrong tokens are denied.
+
+The prior [invalid-input probe](https://github.com/NeverSight/NeverD/actions/runs/38424287437)
+finished with failed input validation, skipped producer/resource jobs and a
+failed final gate. The [full combined run](https://github.com/NeverSight/NeverD/actions/runs/38500156926)
+has been dispatched at `70f433ae49cc25841f0bda92bdcb649b0a847a3f` with the fixed
+archive SHA-256 recorded above and the explicit `2026-10-13` snapshot witness.
+The input preflight passes. A temporary authenticated HTTPS transfer supplies
+only that archive during qualification.
+The first producer job stops before consumer tests: its HTTP/2 stream resets
+after approximately 405 MB, and curl exits 92 without using the existing retry
+count. This is a failed remote receipt.
+Its fixed CEF job succeeds, and the final combined gate fails because the
+producer job failed; a successful resource job cannot mask that failure.
+
+The download now retries all errors within the existing two-retry/time bounds.
+A task-local C++ transfer probe serves the unchanged full archive and cuts the
+first response after 1 MiB. Default retries stop with partial-file error 18;
+the revised policy retries into its explicit output file and recovers all
+1,251,173,226 bytes with SHA-256
+`7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+HTTPS restrictions, bearer authentication and both hash checks remain required.
+The [corrected combined run](https://github.com/NeverSight/NeverD/actions/runs/38502323427)
+now succeeds at `8c1f4ac03875cec8711568b692bc0c76843b40ed`. Download and envelope
+verification complete before the native consumers build. Retained JUnit reports
+confirm eleven producer cases (48 seconds) and fifteen CEF/resource cases
+(6 seconds), both with zero failures and zero skips. Input preflight, both
+called jobs and the final combined gate all report success. This is a full
+fixed-corpus release qualification receipt on the macOS ARM64 reader.
+
+After integration, the owning local selection discovers 852 cases: 822 pass,
+29 retain explicit optional/omission skips, and the required CEF consumer fails
+because its selected `/tmp` input is absent. The unchanged NuGet bytes are
+downloaded to persistent storage and verified against the original hash; the
+affected CEF case passes in 9.79 seconds. All eleven required producer cases
+already pass without skips, and no unresolved test failure remains. The
+worker/MCP/availability selection passes seven cases with one backend-omission
+skip (14.16 seconds); Qt Web review passes (3.37 seconds). All 23 capabilities,
+the 7,823-file provenance scan and 309 localized Markdown entries pass.
+Machine-local receipts and both remote JUnit reports are retained beside the
+persistent corpus. The qualified ref is explicit; later unrelated native
+integration does not acquire a Web receipt from it automatically.
+The task's fixture server and tunnel are stopped. Its temporary repository
+Secret is confirmed absent, and the local token/header files are removed.
+The immutable archive and qualification reports remain in persistent storage;
+no permanent public fixture endpoint is claimed.

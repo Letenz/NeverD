@@ -25,6 +25,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/ImportedMemoryCopy.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/solver/BitVectorSolver.h"
@@ -11086,6 +11087,17 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             Insns.find(Occurrence.DereferenceInstructionAddr);
         const LowOp *Dereference = exactOpAt(
             Occurrence.DereferenceInstructionAddr, Occurrence.DereferenceOpSeq);
+        if (Dereference && Dereference->Opcode == NdOp::CALL) {
+          if (!consumeProduct(32, 32) ||
+              !consumeProduct(CurrentImg->Imports.size(), 4) ||
+              !consumeProduct(CurrentImg->Relocations.size(), 4) ||
+              !consumeProduct(CurrentImg->Sections.size(), 8) ||
+              !consumeProduct(CurrentImg->Segments.size(), 8))
+            return false;
+          return importedMemoryCopyDereferenceMatches(
+              *CurrentImg, Insns, *Dereference, Occurrence, Current, Address,
+              ExpectedAddress);
+        }
         if (DereferenceRec == Insns.end() || !Dereference ||
             DereferenceRec->second.Addr != ExpectedAddress ||
             DereferenceRec->second.IsBranch || DereferenceRec->second.IsCall ||

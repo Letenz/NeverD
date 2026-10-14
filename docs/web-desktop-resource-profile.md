@@ -31,6 +31,10 @@ candidates. Paths/version values stay private. Existing source, HTML, map and
 native operations select exact available artifacts. Suffixes authenticate no
 syntax, native format or framework. `.pak`, `.dat`, WASM and bytecode remain
 opaque; no compiled-resource or original-source recovery is invented.
+An explicitly selected exact `.pak` artifact can independently enter the
+[qualified DataPack readers](web-datapack-profile.md), which retain original
+resources and distinct, explicitly decoded selections. Descriptor admission
+itself still supplies no format/runtime detection.
 
 Shared desktop-manifest SDK/CLI/worker/MCP accept these kinds. Raw local export
 is separately selected and excluded from worker/MCP:

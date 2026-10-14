@@ -22,7 +22,7 @@ See [source patches](source-patching.md).
 `COFFSourceImage` owns installation of compiler-produced PE output on x86,
 x64, ARM32 and ARM64: separate code/state/metadata permissions, retained
 original runtime rows, new base relocations, exact compiler function/funclet
-ranges and bounded x64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
+ranges and bounded x64/ARM64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
 evidence and native base-relocation fields. `MachOPatchObject` authenticates
 native linker atoms and unwind records; format-owned native installers register
 DWARF/compact records without inventing MC tokens. `sourcePatchTargetTriple`
@@ -30,6 +30,12 @@ selects ARM mode, ELF float ABI and Mach-O CPU subtype from the loaded image. Th
 publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
+
+`SourcePatchCompiler` composes NeverC `cpp-core-v2` translation and C23 generation; `validateDynCodePatchImage` binds the hosted audit to actual object/payload hashes and exact linked code/entry layout. Format installers register real compiler unwind records. ARM64 source FH3 uses loader-owned xdata extents and MC-owned funclet/FuncInfo groups. Native compact records may cover every Mach-O function when the original has no DWARF section.
+
+`CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
+
+Recovered indirect-call arguments retain separate integer and floating register runs and the remaining stack bytes. `LLVMCallContract` uses one binder during emission and after LLVM target resolution: surplus registers cannot shift another bank, and packed 32-bit stores are assembled into the callee’s complete stack slots. A callback table cannot replace an already recovered first argument with an inferred object pointer. AArch64 copy-initialized tables authenticate the native BL/import identity, MOVZ length, ADRP/ADD source and complete immutable span; publication and jump-table proof replay check the same witness.
 
 ## Manual PDB presentation boundary
 
@@ -183,15 +189,32 @@ entry; an unmapped instruction reports the missing source mapping.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
-exception runtime. The C++ printer uses the shared symbol spelling rules for
-namespaces, STL aliases and qualified ATL types; non-default template arguments
-and explicit ABI arguments remain visible. DWARF record identities supply type
-spellings, not guessed layouts or implicit member-call conventions. The GUI
-offers a separate C choice for non-C images and omits it when only C is offered.
+exception runtime, and a function whose own exception personality is a C++
+runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
+spelling rules for namespaces, STL aliases and qualified ATL types; non-default
+template arguments and explicit ABI arguments remain visible. DWARF record
+identities supply type spellings, not guessed layouts or implicit member-call
+conventions. The GUI offers a separate C choice for non-C images and omits it
+when only C is offered.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
 tables; it is not a portable implementation of that unwinder.
+
+C++ spells every exception construct in standard syntax. An object's unwind
+action (an MSVC state's cleanup, an Itanium pad's destructors) is a
+`try { … } catch (...) { cleanup; throw; }` scope over the IPs where the
+object is live, nested by the state tree, so a handler runs after the cleanups
+of the objects its try contained and only for objects that were constructed.
+This differs from the runtime only where no handler exists at all: the runtime
+may then terminate without running the cleanups. An Itanium region's clauses
+take their bodies from the landing pad, as the pad runs for each clause's
+selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
+parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
+cannot follow exactly, or that also dispatches an enclosing try's clause,
+keeps the region in its commented form with the pad in place. In C, every
+landing pad of the call-site table keeps its label, so a pad that only runs
+cleanups is not read as dead code after a return.
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
@@ -774,6 +797,14 @@ metadata and `SessionNavigation` composes its independent profile/cache with
 the other navigation owners. No layer promotes these source relationships to
 effective configuration or runtime values. See the
 [configuration order profile](web-configuration-order-profile.md).
+`features/configuration/Files` independently owns direct configuration file/layer
+literal sites, local minified lexical call candidates and array source sequences.
+`SourceModel::indexSourceFunctions` supplies the authoritative function/binding
+cardinality index to both this owner and existing client callbacks. The
+publication layer emits original anchors and fixed roles; it infers no runtime
+paths, enabled layers or effective configuration. `SessionNavigation` caches and
+revokes it with the other navigation results. See the
+[configuration file profile](web-configuration-file-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -971,6 +1002,15 @@ resource descriptor through the same captured namespace/path owner.
 `SessionDesktopExport` reuses the exclusive local writer and exact artifact
 origins; transport adapters neither infer a framework nor export raw resources.
 See the [resource descriptor profile](web-desktop-resource-profile.md).
+`desktop/DataPack` owns the explicit standard v5/u16 and measured WebView2
+v5/u32 table layouts, complete partitions, aliases and original resource hashes.
+`SessionDataPack` owns revision-bound publication and explicit gzip selections;
+`compression/Gzip` owns bounded native stream validation and discarded failures.
+`ArtifactView` retains separate original and decoded origins without granting a
+filesystem namespace or mapping decoded text into compressed storage.
+`SessionDataPackExport` uses the existing exclusive writer and fixed filenames.
+No transport infers a resource name, framework, runtime route or source language.
+See the [resource pack profiles](web-datapack-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker
@@ -1305,6 +1345,22 @@ exact offset only when an authenticated entry-SP definition and the target
 ABI's guaranteed alignment prove every discarded bit. Binary lift and patch
 keep the original operation. The LLVM-to-C route explicitly requests this
 source projection even though it otherwise uses the direct LLVM pipeline.
+
+The same source projection marks prologue saves: a store of a callee-saved
+register's entry value (`push rbx`, an AArch64 `stp`, MSVC's `mov [rsp+8],
+rbx` into a Win64 home slot) whose bytes nothing reads but that register's
+unused restore, and no other store writes. Both source routes leave a marked
+store out, as a C function leaves its caller's registers alone, so the
+prologue neither prints the caller's register as a stale value nor keeps a
+frame in byte storage. The MedIR text view shows the mark. Operations keep
+their positions, because call records index them. A save read for anything
+else stays a store, and binary lift and patch never mark one. On x86 the
+projection also marks a pointer-width load of the slot at the entry stack
+pointer, in a called function whose stores never write that slot: it reads
+the return address the call pushed. HighC prints it as
+`__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
+Neither view gives the frame a slot holding that address, so the read would
+otherwise print as an unassigned local or a zero.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -2791,6 +2847,8 @@ should orchestrate those components rather than absorb their algorithms.
 `LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
 
 `LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
+
+The lifted stack frame prints as the byte array `frame0`. Its named slots become separate C locals only while a type bounds every frame address the function passes to a call or stores to memory: the callee's prototype, a debug-typed local passed in the same position of the same callee, or the debug type of the local at that offset. `analyzeDeadFrameStores` records those escapes, and a frame store stays live while a call that may read memory can still run after it. A frame with an unbounded escape, or one that must stay whole for another reason, keeps one object, and its named slots become members of one record laid out exactly like the frame bytes. Such a member prints as `frame0.var_m10`, and the gaps are named `gapXX`, as IDA names structure gaps. Members are integers or arrays of integers at aligned offsets, and only integer accesses use them: a floating-point, vector or pointer access stays on the frame bytes, where C does not convert the value. A record type keeps its bytes raw, because its layout comes from the reader's headers. A member is read into a temporary where the load is, because a call can change escaped bytes before a later use.
 
 ## Cross-architecture translation contract
 
@@ -5258,6 +5316,18 @@ SourceFrameAnalysis owns complete native output-byte proofs separately from requ
 
 Floating parameter discovery follows current SSA call-clobber preserved-prefix edges in the same byte-use graph as COPY and PHI. Each edge requires a unique returning call occurrence, matching pre/post register identity and width, distinct SSA versions and the authoritative architecture/format preservation prefix. Volatile upper bytes, missing or mismatched call ownership, self-canceling and unobserved paths supply no incoming parameter evidence. Scalar width and logical results still require independent entry-byte and return proofs, fresh lifting and normal publication and closure gates.
 
+`MedCallingConvFP` owns this shared floating/vector byte demand. Constant AND
+and OR masks discard only bytes fully cleared or replaced by a unique, bounded
+SSA constant proof, including concatenated masks first written at version zero.
+Missing, ambiguous, loaded or call-defined masks keep the incoming input.
+Intermediate writes to an FP return register remain transport; possible return
+reads use the definitions reaching each RETURN through the current CFG. Unknown
+paths retain conservative demand. Values forwarded through FP return registers
+also remain possible reads at CALL before ABI recovery supplies explicit
+operands.
+ARM32's register owner describes the
+complete D0-D31 bank independently of its D0-D7 argument bank.
+
 Private-frame carrier tracing for dynamic formatting and NSFastEnumeration follows a bounded graph of all current source-local definitions. A cycle alone supplies no frame address; any reachable synthetic entry SP still marks the carrier as frame-derived. Exhausted depth or work bounds reject the proof. Loads and call results remain separate values, and exact slot writes, every reaching path, complete source flow and current SDK effects remain required.
 
 The Swift SDK catalog authenticates the generic Foundation NSRange initializer with six ordinary pointer carriers (range, string, both metadata values and both witnesses) and a complete two-word result. Swift 6.1.2 compiler declarations and SDK exports agree on ARM64/x86-64 macOS and Mac Catalyst. Only the two exported Foundation install names qualify; the opaque input pointers acquire no layout, borrowing or noescape contract.
@@ -5364,9 +5434,23 @@ DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in Darwi
 
 Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP.
 
+`med/X86/SEHFrame` rechecks converted SP effects and projects protected sources
+by their native operation addresses. CFG compaction and entry splitting change
+MedIR block IDs; a LowIR source ID never indexes the converted block vector.
+Synchronous catches sample their retained throwing calls, so nonvolatile values
+come from the actual call rather than a neighbouring reindexed block. Missing
+source effects or throwing calls fail the conversion explicitly.
+
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.
+
+Registration returning-stack queries and x87 call queries share one registration
+callee index across nested CFG construction. Pending answers, recursion depth
+and cumulative work survive that boundary. Query-local registration graphs
+bypass the shared x87 graph cache and parallel prefetch. The ordinary x87
+projection leaves a registration language graph opaque before constructing its
+callback closure; that graph needs a separate dispatcher invocation domain.
 
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 
@@ -5386,12 +5470,22 @@ Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
 rechecks the same dependencies. Writable formats and opaque calls retain their
 refusal, so this contract does not yet close the x64 xcpt4 case.
 
-`pipeline/Windows/SEHRuntimeFormat` owns a scalar subset of the
+`low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
 for this memory proof. Positional syntax, foreign length/flag extensions, dynamic
 widths, overflowing numeric fields and multibyte formats supply no authority.
 This bounded ASCII subset is independent of Darwin/Objective-C source type
 hints; immutable bytes and current runtime arguments are still required.
+
+`pipeline/Windows/SEHRuntimeFormat` authenticates image storage;
+`low/X86/SEHFrameFormat` additionally accepts live frame formats whose complete
+bytes through NUL come from decoded scalar stores. The common frame state
+intersects these byte facts across every predecessor and inspected callee
+return. Partial or unknown writes, released storage and opaque calls withdraw
+them. Runtime home/scratch areas and active return PCs cannot supply format
+storage. No initial stack contents or writable image bytes receive authority
+from their file values. These byte facts do not restore memory at a language
+handler entry or complete the x64 xcpt4 exception-activation proof.
 
 Win64 `_controlfp_s` has a separate architecture-owned output proof. A current
 UCRT import binding, an unescaped frame and a constant exception-mask subset

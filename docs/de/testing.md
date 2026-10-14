@@ -10,6 +10,8 @@ Fixture und bewahrt generierter Code das Verhalten? Wählen Sie die kleinste
 Suite, die die Frage der Änderung beantwortet, und führen Sie vor einem
 risikoreichen Pull Request das breitere Aggregat aus.
 
+`PipelineOutcome.ResolvedCalls*` prüft Registergruppen, call/invoke-Identität, Zusammenfügen und Aufteilen von Stackbytes sowie die Ablehnung fehlender Bytes. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` deckt x64, ARM32 und AArch64 für ELF, PE und Mach-O ab. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` prüft alle drei Formate und verwirft überschriebene Längen, beschreibbare oder zu große Bereiche, gleichnamige lokale Funktionen, falsche Quellregister, alternative Einstiege und verschiebbare Objektdateien. C-Differenztests kompilieren die Referenz separat mit O0 und den erzeugten C-Code mit O2, damit ein fehlerhaft optimierter Rekurrenzwert des Hostcompilers die Referenz nicht verfälscht. Der AArch64-FMA-Test fordert `-mfma` nur auf x86-Hosts an.
+
 ## Test-Build konfigurieren
 
 Tests sind deaktiviert, sofern `BUILD_TESTING` nicht aktiv ist. Release ist die
@@ -1885,6 +1887,32 @@ Der Windows-Workflow für Quellpatches führt außerdem `scripts/check_source_pa
 
 Die Matrix vergleicht auch die `target`-Belege kompilierter und bereitgestellter nativer Objekte mit einem unabhängigen ABI-Verzeichnis. Nach den fehlerhaften Eingaben müssen die Tests das unveränderte Objekt als gültige Kontrolle installieren und ausführen.
 
+`NeverCProfiles/*` ergänzt 30 Tests in sechs x64/ARM64-Profilen: C++ IR/Objekte/hosted DynCode, nicht-inline Helfer, Rekursion und Ablehnung unzulässigen C++. `NeverDSourcePatchDynCodeTests` lehnt gefälschte Hashes, Einstiege, Ziele, Zustände und Prüfungen ab. `SourcePatchException.NeverC*` testet echte Lebenszeiten und Exceptions durch zwei Frames. Windows verlangt neun Patch-Szenarien, Originalkontrollen, drei Wiederholungen sowie passende Maschine, Commit, Hashes und native x64/ARM64-Hosts.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+Die native Prüfung verwendet NeverC-Revision `182fd2c5dc`, unabhängig kompilierte Originale und den aktuellen NeverD-Installer. `check_source_patch_hosted_pe_runtime.py` verlangt pro Architektur 36 native Windows-Beobachtungen für C++-Lebensdauern über IR/Objekte/hosted und einen Ausnahme-Callback durch zwei hosted-Rahmen. `check_source_patch_elf_runtime.py` verlangt pro Architektur 66 native Linux-Beobachtungen für C++-IR/Objekte/hosted, hosted-Weitergabe und neun Clang-Ausnahmeszenarien. Belege, Artefakthashes und tatsächliche Hostarchitektur müssen übereinstimmen. Die Prüfungen installieren echte Compilerausgaben; sie behaupten keine Ausführung von NeverC auf dem CI-Host.
+
+Die native Prüfung [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) bestand alle 204 Beobachtungen: je 36 auf Windows x64/ARM64 und je 66 auf Linux x64/ARM64. Die öffentliche Quellcode-API erzeugte C++-IR, normale Objekte und C++ hosted DynCode sowie einen Ausnahme-Callback durch zwei NeverC-Rahmen. Die Wiederholung prüft aktuellen Quellcode-/Submodul-Digest, ursprüngliche und finale Bytes, Belege und tatsächlichen nativen Host. macOS ARM64 und Rosetta x64 bestanden dieselben drei C++-Pfade und die lokale Weitergabe. Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) bestand zusätzlich neun Ausnahmeszenarien mit Kontrollen, je 36 Beobachtungen auf Windows x64/ARM64.
+
+## Native Lift-Qualifikation
+
+Der Workflow `Lift native qualification` prüft die zuvor nicht qualifizierten 108 Fälle (62 Fehler und 46 übersprungene Tests). Er installiert Clang 23 oder neuer, GNU GCC und die i386-Entwicklungsbibliotheken auf einem nativen Linux-x86-64-Runner und initialisiert den festgelegten Binärkorpus. `unittests/Inputs/lift-qualification.json` erhält jede ursprüngliche Testidentität. `scripts/run_lift_qualification.py` weist fehlende, doppelte, deaktivierte, übersprungene oder fehlgeschlagene Fälle sowie einen Prozessrückgabewert ungleich null zurück. `qualification.json` protokolliert einzelne Erfolge, Quellcode- und Korpusrevisionen, Compilerversionen und Binärhashes.
+
+Das Profil führt native i386/x86-64-Kontrollen, erweiterte x87-Präzision sowie generierte Swift-SSE-Prüfungen für Ergebnis, Zustand und unmaskierte Ausnahmen bei beiden Optimierungsstufen aus. Die AArch64-Paritätsprüfung dekodiert den echten `.text` einer festgelegten Rust-Laufzeit. Zielübergreifendes Dekodieren belegt keine native Ausführung auf diesem Ziel; dafür dienen die getrennten nativen Prozessjobs für Windows/Linux x64/ARM64 und die lokalen macOS-Prüfungen.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+Das native Profil verlangt außerdem die LLVM-C-Prüfungen breiter Ganzzahlkonstanten und ihrer Speicherzugriffe sowie die native Ausführung synthetisierter i386-Tabellen. Swift-Signalbeobachter verwenden unabhängigen Rohspeicher und prüfen bei beiden Optimierungsstufen positive Kontrollen sowie getrennte negative Kontrollen für vorzeitige Zustands- und Ergebnisschreibzugriffe. Das Lesen einer aktiven Swift-`inout`-Variablen im Signalhandler würde eine Exklusivitätsverletzung auslösen und die Ausnahmebeobachtung ungültig machen.
+
+`NeverDFPParameterMaskTests` führt die gemeinsame ABI-Suite und `FPParameterMask.*` aus, erhält verwendete Bytes, frühere Stores, mehrdeutige Definitionen und unmaskierte Rückgaben und verwirft nur vollständig gelöschte oder ersetzte Bytes. Es prüft D0-Transport, D16-D31-Arbeitsregister und beide FP-Rückgabepfade. `NeverDARM32ObjectImmediateTests` führt fünf ARM32-Host-C-Differentialtests separat aus; Windows-EH-CI nutzt Clang 18 einschließlich von Clang 23 abweichender NEON-zip/mask-Formen. Direkte/indirekte CALLs ohne rekonstruierte ABI-Operanden erhalten explizit vorbereitete FP-Register.
 
 ## Ordinary Darwin whole-file lock coverage
 

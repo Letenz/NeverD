@@ -17,11 +17,14 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <set>
+#include <vector>
 
 #define DEBUG_TYPE "neverd-high-cleanup"
 
@@ -147,6 +150,58 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
         !(S.Val && S.Val->Kind == ExprKind::Var && S.Val->Var == S.Dst->Var))
       Assigned[varKey(S.Dst->Var)] = true;
   });
+  // Preservation is a byte-range property: AArch64 saves D8-D15, while
+  // their Q-register upper halves remain volatile. Share the ABI predicate
+  // used by call liveness instead of the integer-only register list.
+  const BinaryFormat Convention = CurMed && CurMed->CC == CallingConv::Win64
+                                      ? BinaryFormat::COFF
+                                      : BinaryFormat::ELF;
+  // Win64 also hands the callee its register arguments' home slots, above the
+  // return address: MSVC saves nonvolatile registers there (`mov [rsp+8],
+  // rbx`), and the caller reads nothing back from them.
+  const IntegerArgumentLayout Layout =
+      TRI.integerArgumentLayout(Convention == BinaryFormat::COFF);
+  const int64_t HomeBegin = Layout.EntryStackBase - Layout.CallStackBase;
+  // The frame bytes each read takes, and the register a restore puts them
+  // back into: a save slot read for anything else keeps its store.
+  struct FrameRead {
+    int64_t Offset = 0;
+    uint16_t Size = 0;
+    std::optional<MedVar> Restores;
+  };
+  std::vector<FrameRead> FrameReads;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    const HighExpr *Restore = S.Kind == StmtKind::Assign && S.Dst &&
+                                      S.Dst->Kind == ExprKind::Var &&
+                                      S.Dst->Var.Kind == MedVar::Reg && S.Val &&
+                                      S.Val->Kind == ExprKind::Load
+                                  ? S.Val.get()
+                                  : nullptr;
+    std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+      if (!E)
+        return;
+      if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Type &&
+          E->Type->Size)
+        if (const auto At = high_detail::frameAddressOffset(
+                forceInlineExpr(E->Operands[0]), Func, TargetArch,
+                FrameBudget)) {
+          FrameRead Read{*At, E->Type->Size, std::nullopt};
+          if (E.get() == Restore)
+            Read.Restores = S.Dst->Var;
+          FrameReads.push_back(std::move(Read));
+        }
+      E->forEachChildExpr(Visit);
+    };
+    forEachExpr(S, Visit);
+  });
+  auto OnlyRestored = [&](int64_t Offset, const MedVar &V) {
+    return llvm::all_of(FrameReads, [&](const FrameRead &Read) {
+      if (Read.Offset >= Offset + V.Size || Offset >= Read.Offset + Read.Size)
+        return true;
+      return Read.Restores && Read.Restores->RegOff == V.RegOff &&
+             Read.Offset == Offset && Read.Size == V.Size;
+    });
+  };
   auto IsCalleeSaveStore = [&](const HighStmt &S) -> bool {
     if (S.Kind != StmtKind::Store || !S.StoreVal)
       return false;
@@ -165,17 +220,15 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
       return false;
     const auto Offset = high_detail::frameAddressOffset(
         forceInlineExpr(S.StoreAddr), Func, TargetArch, FrameBudget);
-    if (!Offset || *Offset < -Func.FrameSize || *Offset >= 0 ||
-        uint64_t(V.Size) > uint64_t(-*Offset))
+    if (!Offset)
       return false;
-    if (IsFPReg(V) || IsLRReg(V))
+    const int64_t End = *Offset + V.Size;
+    const bool OwnFrame = *Offset >= -Func.FrameSize && End <= 0;
+    const bool Home = *Offset >= HomeBegin && End <= Layout.EntryStackBase;
+    if (!OwnFrame && !(Home && OnlyRestored(*Offset, V)))
+      return false;
+    if (OwnFrame && (IsFPReg(V) || IsLRReg(V)))
       return true;
-    // Preservation is a byte-range property: AArch64 saves D8-D15, while
-    // their Q-register upper halves remain volatile. Share the ABI predicate
-    // used by call liveness instead of the integer-only register list.
-    const BinaryFormat Convention = CurMed && CurMed->CC == CallingConv::Win64
-                                        ? BinaryFormat::COFF
-                                        : BinaryFormat::ELF;
     return V.Kind == MedVar::Reg &&
            TRI.isCallPreserved(V.RegOff, V.Size, Convention);
   };

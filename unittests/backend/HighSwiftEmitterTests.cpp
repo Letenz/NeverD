@@ -10,6 +10,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
@@ -617,9 +618,9 @@ namespace {
 void executeGeneratedSSESource(bool TrapsOnly, bool Generic = false,
                                bool Mixed = false,
                                bool DoubleConversions = false) {
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !(defined(__linux__) && defined(__x86_64__))
   GTEST_SKIP()
-      << "This execution control requires macOS and an x86 Swift target";
+      << "This execution control requires macOS or native Linux x86-64 Swift";
 #else
 #if !defined(__x86_64__)
   if (TrapsOnly)
@@ -687,47 +688,70 @@ void executeGeneratedSSESource(bool TrapsOnly, bool Generic = false,
         "Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64\n";
   }
   std::string Source = *Preambles.begin() + Declarations + Body + R"swift(
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("SSE execution controls require POSIX signals")
+#endif
 func nativeMarker(_ text: Swift.StaticString) {
-    _ = Darwin.write(2, text.utf8Start, text.utf8CodeUnitCount)
+    _ = write(2, text.utf8Start, text.utf8CodeUnitCount)
 }
 nativeMarker("native-start\n")
-var trappedState: Swift.UInt32 = 0x76543210
-var trappedResult: Swift.UInt64 = 0x0123456789abcdef
+// Signal observers must not reenter a Swift inout access during the operation.
+let trappedState = Swift.UnsafeMutablePointer<Swift.UInt32>.allocate(capacity: 1)
+let trappedResult = Swift.UnsafeMutablePointer<Swift.UInt64>.allocate(capacity: 1)
+trappedState.initialize(to: 0x76543210)
+trappedResult.initialize(to: 0x0123456789abcdef)
+defer {
+    trappedState.deinitialize(count: 1)
+    trappedState.deallocate()
+    trappedResult.deinitialize(count: 1)
+    trappedResult.deallocate()
+}
 if Swift.CommandLine.arguments.count == 2 {
     let mode = Swift.CommandLine.arguments[1]
-    Darwin.signal(SIGFPE) { _ in
-        Darwin._exit(trappedState == 0x76543210 &&
-                     trappedResult == 0x0123456789abcdef ? 0 : 43)
+    signal(SIGFPE) { _ in
+        _exit(trappedState.pointee == 0x76543210 &&
+                     trappedResult.pointee == 0x0123456789abcdef ? 0 : 43)
     }
+    if mode == "observe" {
+        _ = raise(SIGFPE)
+    } else if mode == "stateWritten" {
+        trappedState.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "resultWritten" {
+        trappedResult.pointee = 0
+        _ = raise(SIGFPE)
 )swift" +
                        (DoubleConversions ? R"swift(
-    if mode == "precision" {
-        trappedResult = sse_to_double_signed64_legacy(0x0020000000000001,0,0x0f80,&trappedState)
+    } else if mode == "precision" {
+        trappedResult.pointee = sse_to_double_signed64_legacy(0x0020000000000001,0,0x0f80,trappedState)
     } else if mode == "invalid" {
-        trappedResult = sse_to_double_float32_legacy(0x7f812345,0,0x1f00,&trappedState)
+        trappedResult.pointee = sse_to_double_float32_legacy(0x7f812345,0,0x1f00,trappedState)
     } else if mode == "original-precision" {
-        trappedResult = original_signed64ToDouble(0x0020000000000001,0,0x0f80,&trappedState)
+        trappedResult.pointee = original_signed64ToDouble(0x0020000000000001,0,0x0f80,trappedState)
     } else if mode == "original-invalid" {
-        trappedResult = original_float32ToDouble(0x7f812345,0,0x1f00,&trappedState)
+        trappedResult.pointee = original_float32ToDouble(0x7f812345,0,0x1f00,trappedState)
     } else {
-        Darwin._exit(44)
+        _exit(44)
     }
 )swift"
                                           : R"swift(
-    if mode == "trap32" {
-        trappedResult = sse_div32(0x3f800000,0,0x1d80,&trappedState)
+    } else if mode == "trap32" {
+        trappedResult.pointee = sse_div32(0x3f800000,0,0x1d80,trappedState)
     } else if mode == "trap64" {
-        trappedResult = sse_div64(0x3ff0000000000000,0,0x1d80,&trappedState)
+        trappedResult.pointee = sse_div64(0x3ff0000000000000,0,0x1d80,trappedState)
     } else if mode == "original-trap32" {
-        trappedResult = original_div32(0x3f800000,0,0x1d80,&trappedState)
+        trappedResult.pointee = original_div32(0x3f800000,0,0x1d80,trappedState)
     } else if mode == "original-trap64" {
-        trappedResult = original_div64(0x3ff0000000000000,0,0x1d80,&trappedState)
+        trappedResult.pointee = original_div64(0x3ff0000000000000,0,0x1d80,trappedState)
     } else {
-        Darwin._exit(44)
+        _exit(44)
     }
 )swift") + R"swift(
-    Darwin._exit(42)
+    _exit(42)
 }
 func check(_ fn: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
                   Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
@@ -943,11 +967,14 @@ uint64_t original_float32ToDouble(uint64_t a, uint64_t unused,
   const std::optional<llvm::StringRef> OriginalRedirects[] = {
       std::nullopt, std::nullopt, OriginalLog};
   std::string OriginalError;
-  ASSERT_EQ(llvm::sys::ExecuteAndWait(
-                *CCompiler,
-                {*CCompiler, "-target", "x86_64-apple-macosx13.0", "-O2", "-c",
-                 OriginalSource, "-o", OriginalObject},
-                std::nullopt, OriginalRedirects, 120, 0, &OriginalError),
+  llvm::SmallVector<llvm::StringRef, 12> OriginalArguments{*CCompiler};
+#if defined(__APPLE__)
+  OriginalArguments.append({"-target", "x86_64-apple-macosx13.0"});
+#endif
+  OriginalArguments.append({"-O2", "-c", OriginalSource, "-o", OriginalObject});
+  ASSERT_EQ(llvm::sys::ExecuteAndWait(*CCompiler, OriginalArguments,
+                                      std::nullopt, OriginalRedirects, 120, 0,
+                                      &OriginalError),
             0)
       << OriginalError;
   for (llvm::StringRef Optimization : {"-Onone", "-O"}) {
@@ -957,16 +984,19 @@ uint64_t original_float32ToDouble(uint64_t a, uint64_t unused,
     const std::optional<llvm::StringRef> Redirects[] = {
         std::nullopt, std::nullopt, CompilerLog};
     std::string Error;
+    llvm::SmallVector<llvm::StringRef, 12> CompilerArguments{*Compiler};
+#if defined(__APPLE__)
+    CompilerArguments.append({"-target", "x86_64-apple-macosx13.0"});
+#endif
+    CompilerArguments.append({Optimization, "-module-cache-path", Cache, Path,
+                              OriginalObject, "-o", Executable});
     const int Status = llvm::sys::ExecuteAndWait(
-        *Compiler,
-        {*Compiler, "-target", "x86_64-apple-macosx13.0", Optimization,
-         "-module-cache-path", Cache, Path, OriginalObject, "-o", Executable},
-        std::nullopt, Redirects, 120, 0, &Error);
+        *Compiler, CompilerArguments, std::nullopt, Redirects, 120, 0, &Error);
     std::ifstream Log(CompilerLog);
     const std::string Diagnostics((std::istreambuf_iterator<char>(Log)),
                                   std::istreambuf_iterator<char>());
     ASSERT_EQ(Status, 0) << Error << "\n" << Diagnostics << "\n" << Source;
-    auto Run = [&](llvm::StringRef Mode) {
+    auto Run = [&](llvm::StringRef Mode, int ExpectedStatus = 0) {
       const std::string Prefix = Executable + "-" + Mode.str();
       const std::string StandardOutput = Prefix + ".stdout";
       const std::string StandardError = Prefix + ".stderr";
@@ -987,7 +1017,7 @@ uint64_t original_float32ToDouble(uint64_t a, uint64_t unused,
       const std::string NativeDiagnostics(
           (std::istreambuf_iterator<char>(NativeLog)),
           std::istreambuf_iterator<char>());
-      EXPECT_EQ(NativeStatus, 0)
+      EXPECT_EQ(NativeStatus, ExpectedStatus)
           << Optimization.str() << " " << Mode.str() << ": " << Error << "\n"
           << "Native execution elapsed " << Milliseconds << " ms\n"
           << NativeDiagnostics;
@@ -996,6 +1026,10 @@ uint64_t original_float32ToDouble(uint64_t a, uint64_t unused,
                      << Mode << " status=" << NativeStatus
                      << " elapsed_ms=" << Milliseconds << "\n";
     };
+    // Validate the observer before exercising any hardware exception.
+    Run("observe");
+    Run("stateWritten", 43);
+    Run("resultWritten", 43);
     if (!TrapsOnly) {
       Run({});
       continue;

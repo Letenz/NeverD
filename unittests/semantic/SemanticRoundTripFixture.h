@@ -462,15 +462,18 @@ private:
         << "Original emulation failed: " << OrigState.Error
         << "\n  Test: " << TC.Name;
 
-    // ---- Step 5 (NEVERD_SEMANTIC_HIGHC): decompile to C and build it ----
-    // The same comparison then checks the HighC output by execution: the
-    // decompiled module is compiled for the original target, linked and run.
-    if (const char *HighC = std::getenv("NEVERD_SEMANTIC_HIGHC");
-        HighC && *HighC) {
-      highCRoundTrip(TC, ObjPath, EffTarget, ArchFlags, UcArch, UcMode, SPReg,
-                     ParamRegs, RetReg, IsARM32, OrigState.RetVal);
-      return;
-    }
+    // ---- Step 5 (NEVERD_SEMANTIC_HIGHC / _LLVMC): decompile to C, build it
+    // The same comparison then checks the decompiled C by execution: the
+    // module is compiled for the original target, linked and run.
+    for (const auto &[Variable, LlvmRoute] :
+         {std::pair{"NEVERD_SEMANTIC_HIGHC", false},
+          std::pair{"NEVERD_SEMANTIC_LLVMC", true}})
+      if (const char *Value = std::getenv(Variable); Value && *Value) {
+        sourceRoundTrip(TC, ObjPath, EffTarget, ArchFlags, UcArch, UcMode,
+                        SPReg, ParamRegs, RetReg, IsARM32, OrigState.RetVal,
+                        LlvmRoute);
+        return;
+      }
 
     // ---- Step 5: Lift and recompile with NeverD ----
     const bool ExpectFailClosedSwitch =
@@ -556,16 +559,20 @@ private:
         << std::dec;
   }
 
-  /// Decompiles \p ObjPath to C with the HighC route, compiles it for the
-  /// original target, and compares its result with \p Expected.
-  void highCRoundTrip(const RoundTripTC &TC, const std::string &ObjPath,
-                      const std::string &EffTarget,
-                      const std::string &ArchFlags, uc_arch UcArch,
-                      uc_mode UcMode, int SPReg,
-                      const std::vector<int> &ParamRegs, int RetReg,
-                      bool IsARM32, uint64_t Expected) {
+  /// Decompiles \p ObjPath to C with the HighC route, or the LLVM-C route
+  /// when \p LlvmRoute, compiles it for the original target, and compares its
+  /// result with \p Expected.
+  void sourceRoundTrip(const RoundTripTC &TC, const std::string &ObjPath,
+                       const std::string &EffTarget,
+                       const std::string &ArchFlags, uc_arch UcArch,
+                       uc_mode UcMode, int SPReg,
+                       const std::vector<int> &ParamRegs, int RetReg,
+                       bool IsARM32, uint64_t Expected, bool LlvmRoute) {
+    const std::string Route = LlvmRoute ? "LLVM-C" : "HighC";
+    const std::string Tag = LlvmRoute ? "_llvmc" : "_highc";
     const char *Raw = neverd_decompile_all(Sess, ObjPath.c_str(),
-                                           /*UseLlvmRoute=*/0, TC.NoOpt ? 1 : 0,
+                                           /*UseLlvmRoute=*/LlvmRoute ? 1 : 0,
+                                           TC.NoOpt ? 1 : 0,
                                            /*MaxFunctions=*/0);
     std::string Source = Raw ? Raw : "";
     neverd_free_string(Raw);
@@ -573,11 +580,11 @@ private:
       const char *Err = neverd_last_error(Sess);
       const std::string Diagnostic = Err ? Err : "unknown";
       neverd_free_string(Err);
-      FAIL() << "HighC decompile failed: " << Diagnostic
+      FAIL() << Route << " decompile failed: " << Diagnostic
              << "\n  Test: " << TC.Name;
     }
-    const auto CPath = (Work / (TC.Name + "_highc.c")).string();
-    const auto HighCObj = (Work / (TC.Name + "_highc.o")).string();
+    const auto CPath = (Work / (TC.Name + Tag + ".c")).string();
+    const auto SourceObj = (Work / (TC.Name + Tag + ".o")).string();
     {
       std::ofstream F(CPath);
       F << Source;
@@ -590,39 +597,39 @@ private:
         " -ffunction-sections" +
         " -fno-strict-aliasing -fno-stack-protector -fno-exceptions"
         " -fno-unwind-tables -fno-asynchronous-unwind-tables" +
-        ArchFlags + " -o " + neverd::test::shellQuote(HighCObj) + " " +
+        ArchFlags + " -o " + neverd::test::shellQuote(SourceObj) + " " +
         neverd::test::shellQuote(CPath);
     const auto CR = runCmd(CompileCmd);
-    ASSERT_TRUE(CR.ok()) << "HighC compilation failed: " << CR.Err
+    ASSERT_TRUE(CR.ok()) << Route << " compilation failed: " << CR.Err
                          << "\n  Test: " << TC.Name << "\n"
                          << Source;
     // A library routine the C calls (a rounding instruction printed as
     // nearbyint) has no code to link in this freestanding image, and
     // emulation starts at the first code of the section.
-    const ObjectLinkage Linkage = objectLinkage(HighCObj);
+    const ObjectLinkage Linkage = objectLinkage(SourceObj);
     if (!Linkage.Externals.empty())
-      GTEST_SKIP() << "HighC output calls " << Linkage.Externals.front()
+      GTEST_SKIP() << Route << " output calls " << Linkage.Externals.front()
                    << ", which the test does not link\n  Test: " << TC.Name;
     // Each function has its own section; the link puts the tested one
     // first, where emulation starts.
     const std::string Entry = objectLinkage(ObjPath).Entry;
     if (Entry.empty() || !Linkage.Functions.count(Entry))
-      GTEST_SKIP() << "HighC output does not define " << Entry
+      GTEST_SKIP() << Route << " output does not define " << Entry
                    << "\n  Test: " << TC.Name;
     LinkFirst = Entry;
-    if (MemHelperObj.empty() && objReferencesMemBuiltins(HighCObj))
+    if (MemHelperObj.empty() && objReferencesMemBuiltins(SourceObj))
       MemHelperObj =
           compileMemHelper(EffTarget, IsARM32, TC.ClangTargetOverride);
-    auto Buffer = llvm::MemoryBuffer::getFile(HighCObj);
-    ASSERT_TRUE(static_cast<bool>(Buffer)) << "could not read " << HighCObj;
+    auto Buffer = llvm::MemoryBuffer::getFile(SourceObj);
+    ASSERT_TRUE(static_cast<bool>(Buffer)) << "could not read " << SourceObj;
     auto Recompiled = extractSectionsWithLink(
         reinterpret_cast<const unsigned char *>((*Buffer)->getBufferStart()),
-        (*Buffer)->getBufferSize(), TC.Name + "_highc");
+        (*Buffer)->getBufferSize(), TC.Name + Tag);
     if (Recompiled.State == LinkState::Unavailable)
-      GTEST_SKIP() << "HighC link unavailable: " << Recompiled.diagnostic()
+      GTEST_SKIP() << Route << " link unavailable: " << Recompiled.diagnostic()
                    << "\n  Test: " << TC.Name;
     ASSERT_EQ(Recompiled.State, LinkState::Ready)
-        << "HighC object preparation failed: " << Recompiled.diagnostic()
+        << Route << " object preparation failed: " << Recompiled.diagnostic()
         << "\n  Test: " << TC.Name << "\n"
         << Source;
     auto Sections = std::move(Recompiled.Sections);
@@ -630,13 +637,13 @@ private:
     auto State = emulateFunction(UcArch, UcMode, Sections.Text, TC.Args,
                                  ParamRegs, SPReg, RetReg, IsARM32, {}, 0,
                                  TC.UcCpuModel, TC.InitialAArch64FPCR);
-    ASSERT_TRUE(State.OK) << "HighC emulation failed: " << State.Error
+    ASSERT_TRUE(State.OK) << Route << " emulation failed: " << State.Error
                           << "\n  Test: " << TC.Name << "\n"
                           << Source;
     EXPECT_EQ(Expected, State.RetVal)
-        << "Return value mismatch after HighC roundtrip"
+        << "Return value mismatch after " << Route << " roundtrip"
         << "\n  Test: " << TC.Name << "\n  Original: 0x" << std::hex << Expected
-        << "\n  HighC:    0x" << State.RetVal << std::dec << "\n"
+        << "\n  " << Route << ": 0x" << State.RetVal << std::dec << "\n"
         << Source;
   }
 

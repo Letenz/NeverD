@@ -1024,6 +1024,167 @@ TEST(PipelineOutcome,
   EXPECT_EQ(Extend->getType(), I64);
 }
 
+TEST(PipelineOutcome, ResolvedCallsKeepIndependentArgumentBanksAndStackSlots) {
+  for (bool Invoke : {false, true}) {
+    SCOPED_TRACE(Invoke);
+    llvm::LLVMContext C;
+    llvm::Module Module("argument_banks", C);
+    Module.setDataLayout("e-p:64:64");
+    auto *I64 = llvm::Type::getInt64Ty(C);
+    auto *Vector = llvm::FixedVectorType::get(I64, 2);
+    auto *Actual =
+        llvm::FunctionType::get(I64, {I64, Vector, Vector, I64, I64}, false);
+    auto *Target = llvm::Function::Create(
+        Actual, llvm::GlobalValue::ExternalLinkage, "target", Module);
+    setLLVMArgumentBanks(*Target, 1, 2);
+    auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "caller", Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+    std::vector<llvm::Value *> Values = {B.getInt64(11), B.getInt64(99)};
+    for (unsigned I : {21u, 22u, 98u})
+      Values.push_back(llvm::ConstantVector::getSplat(
+          llvm::ElementCount::getFixed(2), B.getInt64(I)));
+    Values.push_back(B.getInt64(31));
+    Values.push_back(B.getInt64(32));
+    auto *Recovered = llvm::FunctionType::get(
+        I64, {I64, I64, Vector, Vector, Vector, I64, I64}, false);
+    llvm::CallBase *Call;
+    if (Invoke) {
+      auto *Normal = llvm::BasicBlock::Create(C, "normal", Caller);
+      auto *Unwind = llvm::BasicBlock::Create(C, "unwind", Caller);
+      auto *Personality = llvm::Function::Create(
+          llvm::FunctionType::get(B.getInt32Ty(), true),
+          llvm::GlobalValue::ExternalLinkage, "personality", Module);
+      Caller->setPersonalityFn(Personality);
+      Call = B.CreateInvoke(Recovered, Target, Normal, Unwind, Values);
+      B.SetInsertPoint(Unwind);
+      auto *Landing = B.CreateLandingPad(
+          llvm::StructType::get(B.getPtrTy(), B.getInt32Ty()), 0);
+      Landing->setCleanup(true);
+      B.CreateResume(Landing);
+      B.SetInsertPoint(Normal);
+    } else {
+      Call = B.CreateCall(Recovered, Target, Values);
+    }
+    setLLVMArgumentBanks(*Call, 2, 3);
+    Call->addParamAttr(2, llvm::Attribute::NoUndef);
+    B.CreateRet(Call);
+    LLVMSourceMap Sources;
+    Sources.Observations.push_back({0x1000, {0x1004, 0}, Call});
+    ASSERT_TRUE(normalizeResolvedLLVMCalls(Module, &Sources));
+    EXPECT_TRUE(validateResolvedLLVMCallSignatures(Module));
+    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    auto *Bound = llvm::dyn_cast_or_null<llvm::CallBase>(
+        static_cast<llvm::Value *>(Sources.Observations[0].Value));
+    ASSERT_NE(Bound, nullptr);
+    ASSERT_EQ(Bound->arg_size(), 5u);
+    const unsigned Expected[] = {0, 2, 3, 5, 6};
+    for (unsigned I = 0; I < 5; ++I)
+      EXPECT_EQ(Bound->getArgOperand(I), Values[Expected[I]]);
+    EXPECT_TRUE(Bound->paramHasAttr(1, llvm::Attribute::NoUndef));
+    EXPECT_FALSE(Bound->paramHasAttr(0, llvm::Attribute::NoUndef));
+    EXPECT_EQ(llvm::isa<llvm::InvokeInst>(Bound), Invoke);
+    EXPECT_TRUE(normalizeResolvedLLVMCalls(Module, &Sources));
+  }
+}
+
+TEST(PipelineOutcome, ResolvedCallsRefuseMissingValuesInEitherArgumentBank) {
+  for (bool MissingFloating : {false, true}) {
+    SCOPED_TRACE(MissingFloating);
+    llvm::LLVMContext C;
+    llvm::Module Module("missing_argument_bank", C);
+    Module.setDataLayout("e-p:64:64");
+    auto *I64 = llvm::Type::getInt64Ty(C);
+    auto *Vector = llvm::FixedVectorType::get(I64, 2);
+    auto *Actual = llvm::FunctionType::get(I64, {I64, Vector}, false);
+    auto *Target = llvm::Function::Create(
+        Actual, llvm::GlobalValue::ExternalLinkage, "target", Module);
+    setLLVMArgumentBanks(*Target, 1, 1);
+    auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "caller", Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+    auto *Carrier = MissingFloating ? I64 : static_cast<llvm::Type *>(Vector);
+    auto *Wrong = llvm::FunctionType::get(I64, {Carrier, Carrier}, false);
+    auto *Value = llvm::Constant::getNullValue(Carrier);
+    auto *Call = B.CreateCall(Wrong, Target, {Value, Value});
+    setLLVMArgumentBanks(*Call, MissingFloating ? 2 : 0,
+                         MissingFloating ? 0 : 2);
+    B.CreateRet(Call);
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(normalizeResolvedLLVMCalls(Module));
+    EXPECT_NE(testing::internal::GetCapturedStderr().find(
+                  "lacks recovered argument bank or stack values"),
+              std::string::npos);
+    EXPECT_EQ(Call->getFunctionType(), Wrong);
+    EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  }
+}
+
+TEST(PipelineOutcome, ResolvedCallsPreserveAllBytesAcrossStackStoreWidths) {
+  for (bool WideStore : {false, true})
+    for (bool MissingByte : {false, true}) {
+      SCOPED_TRACE(WideStore);
+      SCOPED_TRACE(MissingByte);
+      llvm::LLVMContext C;
+      llvm::Module Module("stack_argument_bytes", C);
+      Module.setDataLayout("e-p:64:64");
+      auto *I64 = llvm::Type::getInt64Ty(C);
+      auto *Target = llvm::Function::Create(
+          llvm::FunctionType::get(I64, {I64, I64}, false),
+          llvm::GlobalValue::ExternalLinkage, "target", Module);
+      setLLVMArgumentBanks(*Target, 0, 0);
+      auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                            llvm::GlobalValue::ExternalLinkage,
+                                            "caller", Module);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", Caller));
+      std::vector<llvm::Value *> Values;
+      std::vector<llvm::Type *> Types;
+      if (WideStore) {
+        const unsigned Width = MissingByte ? 120 : 128;
+        llvm::APInt Bits(128, 0x123456789abcdef0ULL);
+        Bits |= llvm::APInt(128, 0xfedcba9876543210ULL).shl(64);
+        Values.push_back(llvm::ConstantInt::get(C, Bits.trunc(Width)));
+      } else {
+        for (uint32_t Value : {0x9abcdef0u, 0x12345678u, 0x76543210u})
+          Values.push_back(B.getInt32(Value));
+        Values.push_back(MissingByte ? B.getIntN(24, 0xdcba98)
+                                     : B.getInt32(0xfedcba98));
+      }
+      for (auto *Value : Values)
+        Types.push_back(Value->getType());
+      auto *Call = B.CreateCall(llvm::FunctionType::get(I64, Types, false),
+                                Target, Values);
+      setLLVMArgumentBanks(*Call, 0, 0);
+      Call->addParamAttr(0, llvm::Attribute::NoUndef);
+      B.CreateRet(Call);
+      testing::internal::CaptureStderr();
+      const bool Normalized = normalizeResolvedLLVMCalls(Module);
+      const auto Diagnostic = testing::internal::GetCapturedStderr();
+      EXPECT_EQ(Normalized, !MissingByte) << Diagnostic;
+      EXPECT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      if (MissingByte) {
+        EXPECT_NE(
+            Diagnostic.find("lacks recovered argument bank or stack values"),
+            std::string::npos);
+        continue;
+      }
+      const auto *Bound =
+          llvm::cast<llvm::CallBase>(&*Caller->getEntryBlock().begin());
+      ASSERT_EQ(Bound->arg_size(), 2u);
+      const uint64_t Expected[] = {0x123456789abcdef0ULL,
+                                   0xfedcba9876543210ULL};
+      for (unsigned I = 0; I < 2; ++I) {
+        const auto *Value =
+            llvm::dyn_cast<llvm::ConstantInt>(Bound->getArgOperand(I));
+        ASSERT_NE(Value, nullptr);
+        EXPECT_EQ(Value->getZExtValue(), Expected[I]);
+        EXPECT_FALSE(Bound->paramHasAttr(I, llvm::Attribute::NoUndef));
+      }
+    }
+}
+
 TEST(PipelineOutcome, ResolvedCallConventionMustAgreeEvenWhenTypesMatch) {
   for (bool CalleePops : {false, true}) {
     SCOPED_TRACE(CalleePops);

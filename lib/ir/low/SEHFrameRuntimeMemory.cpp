@@ -9,6 +9,7 @@
 #include "SEHFrameRuntimeMemory.h"
 
 #include "X86/SEHFrameCRTControl.h"
+#include "X86/SEHFrameFormat.h"
 
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -25,9 +26,11 @@ bool imageStoreIsDisjoint(const LowSEHRuntimeMemory &Memory, va_t Address,
   });
 }
 
-std::optional<State> transferRuntimeMemory(
-    const LowOp &Op, const State &Caller, const TargetRegInfo &TRI,
-    const LowSEHRuntimeMemory &Memory, const std::set<int64_t> &ReturnSlots) {
+std::optional<State> transferRuntimeMemory(const LowOp &Op, const State &Caller,
+                                           const TargetRegInfo &TRI,
+                                           const LowSEHRuntimeMemory &Memory,
+                                           const std::set<int64_t> &ReturnSlots,
+                                           size_t &Remaining) {
   if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
       Op.NumInputs != 1 || Op.Inputs[0].Size != 8 ||
       TRI.Win64ParamRegs.size() < 4 || Caller.EscapedFrame)
@@ -61,14 +64,20 @@ std::optional<State> transferRuntimeMemory(
     Returned = Value{Value::Kind::CRTStream, *Index};
   } else if (Binding->second.Routine == LowSEHRuntimeCall::Kind::CRTVfprintf) {
     const auto Stream = Caller.value(Argument(1));
-    const auto Format = Caller.constant(Argument(2));
+    const auto Format = Caller.value(Argument(2));
     const auto Locale = Caller.constant(Argument(3));
     const auto VAList = Caller.Spills.find(HomeEnd);
     if (!Stream || Stream->Identity != Value::Kind::CRTStream ||
-        Stream->Bits >= 3 || !Format ||
-        !Memory.scalarFormats().count(*Format) || Locale != 0 ||
+        Stream->Bits >= 3 || !Format || Locale != 0 ||
         VAList == Caller.Spills.end() ||
         VAList->second.Identity != Value::Kind::Frame)
+      return std::nullopt;
+    if (Format->Identity == Value::Kind::Constant) {
+      if (!Memory.scalarFormats().count(Format->Bits))
+        return std::nullopt;
+    } else if (Format->Identity != Value::Kind::Frame ||
+               !checkedX64FrameFormat(Caller, int64_t(Format->Bits), HomeEnd,
+                                      ReturnSlots, Remaining))
       return std::nullopt;
   } else if (Binding->second.Routine == LowSEHRuntimeCall::Kind::CRTControlFP) {
     ControlOutput =
@@ -80,11 +89,14 @@ std::optional<State> transferRuntimeMemory(
 
   State Result;
   Result.Spills = Caller.Spills;
+  Result.FrameBytes = Caller.FrameBytes;
   Result.InvalidatedImportSlots = Caller.InvalidatedImportSlots;
   // CALL writes its own PC below SP, and the runtime may allocate private
   // storage farther below it. No saved-byte identity there survives a call.
   std::erase_if(Result.Spills,
                 [&](const auto &Cell) { return Cell.first < *SP; });
+  std::erase_if(Result.FrameBytes,
+                [&](const auto &Byte) { return Byte.first < *SP; });
   Result.invalidateMemory(*SP, HomeEnd);
   if (ControlOutput)
     Result.invalidateMemory(*ControlOutput, *ControlOutput + 4);

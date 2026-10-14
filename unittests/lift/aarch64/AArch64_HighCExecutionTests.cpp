@@ -397,7 +397,9 @@ int crc8(int a) {
 // the C trapped.
 TEST_F(AArch64_HighCExecution, AScalarMoviWritesTheWholeRegister) {
   // The C fuses as the kernel does; the host runs its fma inline.
+#if defined(__i386__) || defined(__x86_64__)
   HostFlags = {"-mfma"};
+#endif
   expectHighCRunsLikeSource({"-target", "aarch64-linux-gnu"},
                             R"C(
 int dotp(int a) {

@@ -9,7 +9,10 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <optional>
+#include <vector>
 
 namespace neverd {
 
@@ -40,6 +43,12 @@ std::optional<int64_t>
 entryStackOffset(const MedFunc &Func, const MedVar &Value, Arch Architecture,
                  BinaryFormat Format,
                  StackEntryKind Entry = StackEntryKind::Call);
+
+/// entryStackOffset of each of \p Values, by one proof over \p Func.
+std::vector<std::optional<int64_t>>
+entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+                  Arch Architecture, BinaryFormat Format,
+                  StackEntryKind Entry = StackEntryKind::Call);
 
 } // namespace neverd
 

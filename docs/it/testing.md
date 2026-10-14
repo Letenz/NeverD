@@ -10,6 +10,8 @@ codice generato conserva il comportamento? Scegli la suite minima che risponde
 alla domanda della modifica, poi esegui l’aggregato più ampio prima di una pull
 request ad alto rischio.
 
+`PipelineOutcome.ResolvedCalls*` verifica gruppi di registri, identità call/invoke, unione e divisione dei byte dello stack e rifiuto di byte mancanti. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` copre x64, ARM32 e AArch64 in ELF, PE e Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` copre i tre formati e rifiuta lunghezze sovrascritte, intervalli scrivibili o eccessivi, funzioni locali omonime, registri sorgente errati, ingressi alternativi e immagini rilocabili. I test differenziali C compilano il riferimento separatamente a O0 e il C generato a O2, evitando che un errore dell’ottimizzatore host su una ricorrenza alteri il riferimento. Il controllo FMA AArch64 richiede `-mfma` soltanto sugli host x86.
+
 ## Configurare una build di test
 
 I test sono disabilitati se non si abilita `BUILD_TESTING`. Release è la scelta
@@ -1865,6 +1867,32 @@ Il workflow Windows per patch sorgente esegue anche `scripts/check_source_patch_
 
 La matrice confronta anche le ricevute `target` degli oggetti nativi compilati e forniti con un inventario ABI indipendente. Dopo gli input malformati, i test devono installare ed eseguire l’oggetto non modificato come controllo valido.
 
+`NeverCProfiles/*` aggiunge 30 test su sei profili x64/ARM64: C++ IR/oggetti/hosted DynCode, helper non inline, ricorsione e rifiuto C++ non supportato. `NeverDSourcePatchDynCodeTests` rifiuta hash, ingressi, target, stato e verifiche falsificati. `SourcePatchException.NeverC*` verifica processi reali e eccezioni attraverso due frame. Windows richiede nove scenari modificati, controlli originali, tre ripetizioni e macchina, commit, hash e host nativi x64/ARM64 corrispondenti.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+La verifica nativa fissa NeverC alla revisione `182fd2c5dc`, usa originali compilati indipendentemente e l’installatore NeverD attuale. `check_source_patch_hosted_pe_runtime.py` richiede 36 osservazioni Windows native per architettura per i cicli di vita C++ IR/oggetti/hosted e un’eccezione che attraversa due frame hosted. `check_source_patch_elf_runtime.py` richiede 66 osservazioni Linux native per architettura per C++ IR/oggetti/hosted, propagazione hosted e nove scenari di eccezioni Clang. Ricevute, hash e architettura effettiva dell’host devono corrispondere. Le verifiche installano output reali del compilatore senza affermare che NeverC sia stato eseguito sull’host CI.
+
+La verifica nativa [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) ha superato tutte le 204 osservazioni: 36 per architettura Windows x64/ARM64 e 66 per architettura Linux x64/ARM64. L’API pubblica ha prodotto C++ IR, oggetti normali e C++ hosted DynCode, oltre a un’eccezione attraverso due frame NeverC. Il replay verifica digest del codice e dei sottomoduli correnti, byte originali e finali, ricevute e host nativo effettivo. macOS ARM64 e Rosetta x64 hanno superato gli stessi tre percorsi C++ e la propagazione locale. Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) ha superato separatamente nove scenari e controlli, 36 osservazioni per architettura Windows x64/ARM64.
+
+## Qualificazione nativa di Lift
+
+Il workflow `Lift native qualification` copre i 108 casi prima non verificati (62 errori e 46 casi saltati). Installa Clang 23 o successivo, GNU GCC e le librerie di sviluppo i386 su un runner Linux x86-64 nativo e inizializza il corpus binario fissato. `unittests/Inputs/lift-qualification.json` conserva ogni identità originale. `scripts/run_lift_qualification.py` rifiuta casi mancanti, duplicati, disabilitati, saltati o falliti e qualsiasi uscita di processo diversa da zero. `qualification.json` registra ogni successo, le revisioni del codice e del corpus, le versioni dei compilatori e gli hash binari.
+
+Il profilo esegue controlli nativi i386/x86-64, precisione estesa x87 e verifiche del codice Swift SSE generato su risultati, stato ed eccezioni non mascherate a entrambi i livelli di ottimizzazione. La parità AArch64 decodifica il vero `.text` di un runtime Rust fissato. La decodifica per un altro target non ne prova l’esecuzione nativa; usare i job separati dei processi nativi per patch sorgente Windows/Linux x64/ARM64 e le verifiche locali macOS.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+Il profilo nativo richiede anche le verifiche LLVM-C delle costanti e scritture di interi estesi e l’esecuzione nativa delle tabelle sintetizzate i386. Gli osservatori dei segnali Swift usano memoria grezza indipendente, con controlli positivi e negativi separati per le scritture premature dello stato e del risultato a entrambi i livelli di ottimizzazione. Leggere una variabile Swift `inout` attiva nel gestore causerebbe una violazione di esclusività e invaliderebbe l’osservazione dell’eccezione.
+
+`NeverDFPParameterMaskTests` esegue ABI condivisa e `FPParameterMask.*`, conserva byte attivi, scritture precedenti, definizioni ambigue e ritorni non mascherati ed elimina solo byte interamente azzerati o sostituiti. Copre trasferimenti D0, temporanei D16-D31 ed entrambi i percorsi di ritorno FP. `NeverDARM32ObjectImmediateTests` esegue cinque differenziali C ARM32 separatamente; Windows EH CI usa Clang 18, incluse forme NEON zip/mask diverse da Clang 23. I CALL diretti/indiretti senza operandi ABI recuperati conservano registri FP preparati esplicitamente.
 
 ## Ordinary Darwin whole-file lock coverage
 

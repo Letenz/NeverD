@@ -11,6 +11,7 @@
 
 #include "BunSourceMap.h"
 #include "Internal.h"
+#include "ProducerCorpus.h"
 #include "gtest/gtest.h"
 
 #include <cstdlib>
@@ -24,13 +25,18 @@ using namespace neverd::web;
 TEST(WebBunSourceMapCorpus,
      OptionalSixPlatformImagesRecoverIndependentOriginalSources) {
 #ifdef _WIN32
+  ASSERT_TRUE(test::producerPrerequisite(false, "POSIX input capture"));
   GTEST_SKIP() << "POSIX capture required";
 #endif
+  ASSERT_TRUE(
+      test::producerPrerequisite(bunSourceMapAvailable(), "native Zstd"));
   if (!bunSourceMapAvailable())
     GTEST_SKIP() << "Native Zstd decoding is unavailable";
   const auto *Linux = std::getenv("NEVERD_BUN_142_CORPUS");
   const auto *Cross = std::getenv("NEVERD_BUN_142_CROSS_CORPUS");
-  if (!Linux || !Cross)
+  ASSERT_TRUE(test::producerCorpus("NEVERD_BUN_142_CORPUS", Linux));
+  ASSERT_TRUE(test::producerCorpus("NEVERD_BUN_142_CROSS_CORPUS", Cross));
+  if (!Linux || !*Linux || !Cross || !*Cross)
     GTEST_SKIP() << "Both pinned Bun 1.4.2 image corpora are required";
   struct Target {
     const char *Name, *Format, *Platform, *Architecture;

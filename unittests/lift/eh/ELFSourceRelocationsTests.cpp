@@ -176,6 +176,32 @@ TEST_F(ELFSourceRelocations,
   EXPECT_EQ(Section.Size, 48u);
 }
 
+TEST_F(ELFSourceRelocations, AArch64AbsolutePointerGetsANativeLoaderWriter) {
+  Original.Arch = Arch::AArch64;
+  auto *Header = reinterpret_cast<ELF::Ehdr *>(Original.Raw.data());
+  Header->e_machine = llvm::ELF::EM_AARCH64;
+  auto &Fixup = Compiled.Sections.back().FixupReferences.front();
+  Fixup.Specifier = 1;
+  Fixup.SpecifierName = "ABS";
+  auto Table = prepareELFSourceRelocations(Original, Module, Compiled, 16);
+  ASSERT_TRUE(bool(Table)) << llvm::toString(Table.takeError());
+  ELF::Rela Added;
+  std::memcpy(&Added, Compiled.Bytes.data() + 16 + sizeof(Added),
+              sizeof(Added));
+  EXPECT_EQ(Added.getSymbol(false), 1u);
+  EXPECT_EQ(Added.getType(false), llvm::ELF::R_AARCH64_ABS64);
+  EXPECT_EQ(Added.r_offset, 0x4000u);
+
+  const auto Before = Compiled.Bytes;
+  Fixup.Specifier = 0x011;
+  Fixup.SpecifierName = "ABS_PAGE";
+  auto Page = prepareELFSourceRelocations(Original, Module, Compiled, 16);
+  ASSERT_FALSE(bool(Page));
+  EXPECT_NE(llvm::toString(Page.takeError()).find("unsupported absolute"),
+            std::string::npos);
+  EXPECT_EQ(Compiled.Bytes, Before);
+}
+
 TEST_F(ELFSourceRelocations, LocalPointersUseLoadBiasInsteadOfSymbolLookup) {
   Compiled.SymbolAddrs["runtime"] = 0x3000;
   Compiled.Sections.back().FixupReferences.front().ResolvedValue = 0x3007;

@@ -196,8 +196,9 @@ llvm::Expected<NativeCOFF> readObject(llvm::StringRef Bytes,
           SectionLengths.contains(Number) &&
           SectionLengths.at(Number) == Section.Size)
         Function.Size = Section.Size;
-      if (!Function.Size ||
-          !rangeInBounds(Function.Offset, Function.Size, Section.Size))
+      if ((Function.Size &&
+           !rangeInBounds(Function.Offset, Function.Size, Section.Size)) ||
+          (!Function.Size && Original.Arch == Arch::X86))
         return fail(
             "function needs an exact auxiliary or singleton-section extent: " +
             Function.Name);
@@ -240,13 +241,70 @@ llvm::Error place(NativeCOFF &Object, uint64_t Base, uint64_t Alignment) {
           Image.Sections[Object.Sections.at(S.Section)].VA + S.Offset;
       if (Object.Names.contains(S.Name))
         Image.SymbolAddrs[S.Name] = VA;
-      if (S.Function)
-        Object.Evidence.Functions.push_back({VA, VA + S.Size});
     }
+  Image.Success = true;
+  return llvm::Error::success();
+}
+
+// Multiple functions in one native section have no auxiliary TotalSize in
+// ordinary LLVM COFF. A decoded runtime-function row supplies an independent
+// exact extent; never infer it from the next symbol or fabricated MC tokens.
+llvm::Error completeFunctionRanges(NativeCOFF &Object,
+                                   const BinaryImage &Original,
+                                   bool RequireUnwind) {
+  auto &Image = Object.Image;
+  std::map<uint64_t, uint64_t> RuntimeRanges;
+  const unsigned RowSize = Original.Arch == Arch::X64 ? 12 : 8;
+  auto Read = [&](uint32_t RVA, uint64_t Size) -> const uint8_t * {
+    const uint64_t VA = Original.Base + RVA;
+    if (VA < Image.BaseVA ||
+        !rangeInBounds(VA - Image.BaseVA, Size, Image.Bytes.size()))
+      return nullptr;
+    return Image.Bytes.data() + VA - Image.BaseVA;
+  };
+  if (Original.Arch != Arch::X86)
+    for (const auto &Section : Image.Sections) {
+      if (!llvm::StringRef(Section.Name).starts_with(".pdata"))
+        continue;
+      if (Section.Size % RowSize)
+        return fail("native runtime-function directory has a partial row");
+      for (uint64_t I = 0; I < Section.Size; I += RowSize) {
+        auto Row =
+            decodeCOFFRuntimeFunction(llvm::ArrayRef<uint8_t>(Image.Bytes)
+                                          .slice(Section.Offset + I, RowSize),
+                                      Original.Arch, Read);
+        if (!Row)
+          return Row.takeError();
+        if (!RuntimeRanges
+                 .emplace(Original.Base + Row->Begin, Original.Base + Row->End)
+                 .second)
+          return fail("duplicate native runtime-function start");
+      }
+    }
+  for (auto &[Index, Symbol] : Object.Symbols) {
+    if (!Symbol.Function || Symbol.Section <= 0 ||
+        !Object.Sections.contains(Symbol.Section))
+      continue;
+    const auto &Section = Image.Sections[Object.Sections.at(Symbol.Section)];
+    const uint64_t Begin = Section.VA + Symbol.Offset;
+    if (!Symbol.Size) {
+      auto Row = RuntimeRanges.find(Begin);
+      if (Row == RuntimeRanges.end() || Row->second <= Begin)
+        return fail("function has no auxiliary/section/runtime extent: " +
+                    Symbol.Name);
+      Symbol.Size = Row->second - Begin;
+    }
+    if (!rangeInBounds(Symbol.Offset, Symbol.Size, Section.Size))
+      return fail("native function extent leaves its code section");
+    if (RequireUnwind && (!RuntimeRanges.contains(Begin) ||
+                          RuntimeRanges.at(Begin) != Begin + Symbol.Size))
+      return fail("hosted DynCode requires exact compiler unwind coverage "
+                  "for every native function");
+    Object.Evidence.Functions.push_back({Begin, Begin + Symbol.Size});
+  }
   llvm::sort(Object.Evidence.Functions, [](const auto &A, const auto &B) {
     return A.BeginVA < B.BeginVA;
   });
-  Image.Success = true;
   return llvm::Error::success();
 }
 
@@ -496,7 +554,8 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt) {
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
+    const DynCodePatchEvidence *DynCode) {
   auto Object = readObject(Bytes, Original);
   if (!Object)
     return Object.takeError();
@@ -513,7 +572,7 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
         !sourceEntryCanHostTrampoline(Original, M.OriginalVA))
       return fail("invalid explicit native entry mapping");
     const auto &S = Object->Symbols.at(Object->Names.at(M.Symbol));
-    if (!S.Function || S.Section <= 0 || !S.Size)
+    if (!S.Function || S.Section <= 0)
       return fail("entry is not a bounded native definition");
   }
   std::map<std::string, SourcePatchBinding> Bindings;
@@ -538,6 +597,13 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
     return std::move(E);
   if (auto E = relocate(*Object, References, Bindings))
     return std::move(E);
+  if (auto E = completeFunctionRanges(*Object, Original, DynCode != nullptr))
+    return std::move(E);
+  if (DynCode)
+    if (auto E =
+            validateDynCodePatchImage(*DynCode, Bytes, Original, Object->Image,
+                                      Mappings, RequestedBindings))
+      return std::move(E);
   return publishSourcePatch(
       Original, Mappings, Output,
       [&](const std::filesystem::path &Input,

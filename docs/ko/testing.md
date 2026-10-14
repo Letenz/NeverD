@@ -8,6 +8,8 @@ NeverD 테스트는 표현 모양이 예상과 같은지, 바이너리 fixture�
 동작하는지, 생성 코드가 동작을 보존하는지라는 세 가지 질문에 답합니다. 변경의 질문에
 답하는 가장 작은 스위트를 고른 뒤 위험이 큰 풀 리퀘스트에서는 더 넓은 집계를 실행하세요.
 
+`PipelineOutcome.ResolvedCalls*`는 레지스터 그룹, call/invoke 식별, 스택 바이트 결합·분할, 누락 바이트 거부를 검사합니다. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument`는 x64, ARM32, AArch64의 ELF, PE, Mach-O를 다룹니다. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths`는 세 형식에서 변경된 길이, 쓰기 가능·범위 초과 데이터, 같은 이름의 로컬 함수, 잘못된 원본 레지스터, 대체 진입점 및 재배치 가능 이미지를 거부합니다. 호스트 C 차등 테스트는 참조 C를 별도 번역 단위에서 O0로, 생성 C를 O2로 컴파일하여 호스트 최적화기의 순환식 오컴파일이 기준값을 오염시키지 않도록 합니다. AArch64 FMA 검사는 x86 호스트에서만 `-mfma`를 요청합니다.
+
 ## 테스트 빌드 구성
 
 `BUILD_TESTING`을 활성화하지 않으면 테스트가 비활성화됩니다. 전체 스위트에는 보통
@@ -1759,6 +1761,32 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 행렬은 컴파일된 객체와 외부 네이티브 객체의 `target` 기록을 독립적인 ABI 목록과 비교합니다. 잘못된 객체를 검사한 뒤에는 수정하지 않은 객체를 설치하고 실행하여 유효한 입력의 대조 결과도 확인해야 합니다.
 
+선택적 `NeverCProfiles/*`는 여섯 x64/ARM64 구성에서 C++ IR/객체/hosted DynCode, 비인라인 도우미·재귀 및 미지원 C++ 거부의 30개 검사를 추가합니다. `NeverDSourcePatchDynCodeTests`는 해시·진입점·대상·상태·검증 위조를 거부합니다. `SourcePatchException.NeverC*`는 실제 프로세스에서 수명과 두 프레임을 통과하는 예외를 검사합니다. Windows 검사기는 아홉 패치 시나리오와 원본 대조를 세 번 실행하고 일치하는 머신·커밋·해시 및 네이티브 x64/ARM64 호스트를 요구합니다.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+네이티브 검증은 NeverC 리비전 `182fd2c5dc`, 독립적으로 컴파일한 원본과 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 아키텍처마다 Windows 네이티브 관측 36회를 요구하며 C++ IR/객체/hosted 수명과 두 hosted 프레임을 통과하는 예외 콜백을 확인합니다. `check_source_patch_elf_runtime.py`는 아키텍처마다 Linux 네이티브 관측 66회를 요구하며 C++ IR/객체/hosted, hosted 예외 전파, Clang 예외 시나리오 9개를 확인합니다. 영수증, 산출물 해시와 실제 호스트 아키텍처가 일치해야 합니다. 실제 컴파일러 산출물을 설치하는 검사이며 CI 호스트에서 NeverC 실행 파일을 실행했다고 주장하지 않습니다.
+
+네이티브 검증 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780)의 관측 204회가 모두 통과했습니다. Windows x64/ARM64는 각각 36회, Linux x64/ARM64는 각각 66회입니다. 공개 소스 API로 C++ IR, 일반 객체, C++ hosted DynCode를 생성하고 두 NeverC 프레임을 통과하는 예외도 확인했습니다. 재생 시 현재 소스와 하위 모듈 다이제스트, 원본과 최종 바이트, 설치 영수증 및 실제 네이티브 호스트를 확인합니다. macOS ARM64와 Rosetta x64에서도 세 C++ 경로와 두 프레임 전파가 통과했습니다. Clang FH3 검증 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780)도 Windows x64/ARM64의 예외 시나리오 9개와 대조군, 각각 36회를 통과했습니다.
+
+## 네이티브 Lift 검증
+
+`Lift native qualification` 워크플로는 이전에 검증하지 못한 108개 사례(실패 62개, 건너뜀 46개)를 담당합니다. 네이티브 Linux x86-64 실행기에 Clang 23 이상, GNU GCC, i386 개발 라이브러리를 설치하고 고정된 바이너리 코퍼스를 초기화합니다. `unittests/Inputs/lift-qualification.json`은 원래 테스트 식별자를 모두 유지합니다. `scripts/run_lift_qualification.py`는 누락, 중복, 비활성화, 건너뜀, 실패와 0이 아닌 프로세스 종료를 거부합니다. `qualification.json`은 개별 통과 결과, 소스 및 코퍼스 리비전, 컴파일러 버전과 바이너리 해시를 기록합니다.
+
+이 구성은 i386/x86-64 네이티브 대조, x87 확장 정밀도와 두 최적화 수준에서 생성된 Swift SSE 결과·상태·마스크 해제 예외 검사를 실행합니다. AArch64 일치성 검사는 고정된 Rust 런타임의 실제 `.text`를 디코딩합니다. 다른 대상의 디코딩은 해당 대상의 네이티브 실행을 입증하지 않습니다. Windows/Linux x64/ARM64에는 별도 소스 패치 네이티브 프로세스 작업을, macOS에는 로컬 검증을 사용합니다.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+네이티브 구성은 LLVM-C 넓은 정수 상수·저장 검사와 i386 합성 테이블의 네이티브 실행도 요구합니다. Swift 신호 관찰기는 독립적인 원시 저장 공간을 사용하며, 두 최적화 수준에서 미기록 정상 대조와 상태·결과의 조기 기록을 각각 검출하는 음성 대조를 검증합니다. 신호 처리기가 활성 Swift `inout` 변수를 읽으면 배타적 접근 오류가 발생하여 예외 관찰이 무효가 됩니다.
+
+`NeverDFPParameterMaskTests`는 공통 ABI와 `FPParameterMask.*`를 실행하며 유효 바이트, 앞선 저장, 모호한 정의와 마스크되지 않은 반환 경로를 유지하고 완전히 지우거나 대체한 바이트만 제외합니다. D0 중간 전달, D16-D31 임시 레지스터와 FP 반환 합류의 두 경로를 검사합니다. `NeverDARM32ObjectImmediateTests`는 ARM32 호스트 C 차분 5개를 별도로 실행하고 Windows EH CI는 Clang 23과 다른 NEON zip/mask 형태도 Clang 18로 확인합니다. ABI 피연산자가 복구되지 않은 직접/간접 CALL은 명시적으로 준비한 FP 레지스터를 유지합니다.
 
 ## Ordinary Darwin whole-file lock coverage
 

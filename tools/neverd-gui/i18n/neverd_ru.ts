@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>Загрузить символы из выбранного файла PDB</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>&amp;Изменить функцию...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>Изменить имя текущей функции и её свойства</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1475,6 +1483,14 @@ Double-click to go to the declaration.</source>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>Свернуть блок (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>Символьное упрощение</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>Не удалось выполнить преобразование: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1489,6 +1505,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>Оставлять эту функцию при перемещении по дизассемблированию</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>Оптимизация</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>Преобразовать текущую функцию</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>Символьно упростить эту функцию</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>Восстановить поток управления LLVM</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>Оптимизация LLVM</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>Базовая очистка</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (по умолчанию)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>Выбрать проходы…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>Проходы LLVM для этой функции</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>Выберите проходы скалярной очистки. Символьное упрощение настраивается отдельно.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>Восстановить исходный текст по умолчанию</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>Отменить преобразование</translation>
     </message>
 </context>
 <context>
@@ -2457,6 +2521,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>Открыто без PDB, указанного во входном файле, как выбрано</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>Изменена функция по адресу %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2865,6 +2933,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Не удаётся сохранить файл символов в %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>Изменение функции</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD не хранит этот размер кадра</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>&amp;Имя функции</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>Конец функции определяет анализ</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>&amp;Начальный адрес</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>&amp;Конечный адрес</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>&amp;Выбрать…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>Цвет функции</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>По &amp;умолчанию</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>&amp;Цвет</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>Размер (в байтах)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>Область &amp;локальных переменных</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>Сохранённые &amp;регистры</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>Только функции x86 снимают свои аргументы со стека</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>&amp;Снимаемые байты</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>&amp;Дельта указателя кадра</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD не хранит этот признак</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>Не &amp;возвращает управление</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>Анализ завершает каждый вызов этой функции</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>Дальняя &amp;функция</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>Дальние функции есть только в 16-битном коде x86</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>&amp;Библиотечная функция</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>Статическая функция</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>Кадр на основе &amp;BP</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP р&amp;авен SP</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>Нечёткий SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>Вынесенный код</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>&amp;ОК</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>ПО УМОЛЧАНИЮ</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
     </message>
 </context>
 </TS>

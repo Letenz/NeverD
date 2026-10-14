@@ -364,10 +364,6 @@ private:
     case csyntax::StmtKind::Throw:
       line(S->Value ? "throw " + expr(S->Value).Text + ";" : "throw;");
       break;
-    case csyntax::StmtKind::PseudoBlock:
-      block(S->Text, S->Then);
-      line("}");
-      break;
     case csyntax::StmtKind::Leave:
       line("__leave;");
       break;

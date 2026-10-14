@@ -10,6 +10,8 @@ fixture binaire et le code généré préserve-t-il le comportement ? Choisissez
 plus petite suite qui répond à la question du changement, puis exécutez
 l’agrégat plus large avant une pull request à haut risque.
 
+`PipelineOutcome.ResolvedCalls*` vérifie les groupes de registres, l’identité call/invoke, le regroupement et la division des octets de pile, ainsi que le refus d’octets manquants. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` couvre x64, ARM32 et AArch64 en ELF, PE et Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` couvre ces trois formats et rejette les longueurs écrasées, les plages modifiables ou débordantes, les fonctions locales homonymes, les mauvais registres source, les entrées alternatives et les images relogeables. Les tests différentiels C compilent la référence séparément à O0 et le C généré à O2, afin qu’une erreur d’optimisation d’une récurrence sur l’hôte ne corrompe pas l’oracle. Le test FMA AArch64 ne demande `-mfma` que sur les hôtes x86.
+
 ## Configurer une compilation de test
 
 Les tests sont désactivés sans `BUILD_TESTING`. Une compilation Release est le
@@ -1884,6 +1886,32 @@ Le workflow Windows des patches source exécute aussi `scripts/check_source_patc
 
 La matrice compare aussi les reçus `target` des objets natifs compilés et fournis à un inventaire ABI indépendant. Après les entrées malformées, les tests doivent installer et exécuter l’objet non modifié comme témoin valide.
 
+`NeverCProfiles/*` ajoute 30 tests sur six profils x64/ARM64 : C++ IR/objets/hosted DynCode, helpers non inline, récursion et refus C++ non pris en charge. `NeverDSourcePatchDynCodeTests` refuse empreintes, entrées, cibles, état et vérification falsifiés. `SourcePatchException.NeverC*` exécute les durées de vie et exceptions traversant deux cadres. Le vérificateur Windows exige neuf scénarios modifiés, contrôles originaux, trois répétitions et machine/commit/empreintes/hôtes natifs x64/ARM64 concordants.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+La qualification native fixe NeverC à la révision `182fd2c5dc`, utilise des originaux compilés indépendamment et l’installateur NeverD actuel. `check_source_patch_hosted_pe_runtime.py` exige 36 observations Windows natives par architecture pour les durées de vie C++ IR/objets/hosted et une exception traversant deux cadres hosted. `check_source_patch_elf_runtime.py` exige 66 observations Linux natives par architecture pour C++ IR/objets/hosted, la propagation hosted et neuf scénarios d’exceptions Clang. Les reçus, empreintes et architectures hôtes réelles doivent correspondre. Ces contrôles installent de vrais résultats du compilateur sans prétendre avoir exécuté NeverC sur l’hôte CI.
+
+La qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) a réussi les 204 observations natives : 36 par architecture Windows x64/ARM64 et 66 par architecture Linux x64/ARM64. L’API source publique a produit C++ IR, objets ordinaires et C++ hosted DynCode, avec une exception traversant deux cadres NeverC. La relecture vérifie le digest du code et des sous-modules actuels, les octets originaux et finaux, les reçus et l’hôte natif réel. macOS ARM64 et Rosetta x64 ont aussi réussi les trois chemins C++ et la propagation locale. La qualification Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) a séparément réussi neuf scénarios et leurs contrôles, soit 36 observations par architecture Windows x64/ARM64.
+
+## Qualification native de Lift
+
+Le workflow `Lift native qualification` couvre les 108 cas auparavant non validés (62 échecs et 46 tests ignorés). Il installe Clang 23 ou ultérieur, GNU GCC et les bibliothèques de développement i386 sur un exécuteur Linux x86-64 natif, puis initialise le corpus binaire épinglé. `unittests/Inputs/lift-qualification.json` conserve chaque identité de test originale. `scripts/run_lift_qualification.py` rejette les cas absents, dupliqués, désactivés, ignorés ou en échec, ainsi que toute sortie de processus non nulle. `qualification.json` enregistre chaque réussite, les révisions du code et du corpus, les versions des compilateurs et les empreintes des binaires.
+
+Ce profil exécute les contrôles natifs i386/x86-64, la précision étendue x87 et les contrôles Swift SSE générés des résultats, de l’état et des exceptions non masquées aux deux niveaux d’optimisation. La parité AArch64 décode le véritable `.text` d’un runtime Rust épinglé. Le décodage pour une autre cible ne prouve pas son exécution native ; utilisez les tâches distinctes de processus natifs pour les correctifs source Windows/Linux x64/ARM64 et les contrôles locaux macOS.
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+Le profil natif exige aussi les contrôles des constantes et écritures d’entiers larges LLVM-C, ainsi que l’exécution native des tables synthétisées i386. Les observateurs de signaux Swift utilisent un stockage brut indépendant, avec des contrôles positifs et des contrôles négatifs séparés pour les écritures prématurées de l’état et du résultat aux deux niveaux d’optimisation. Lire une variable Swift `inout` active depuis le gestionnaire provoquerait une violation d’exclusivité et invaliderait l’observation de l’exception.
+
+`NeverDFPParameterMaskTests` exécute l’ABI partagée et `FPParameterMask.*`, conserve les octets utiles, écritures antérieures, définitions ambiguës et retours non masqués, et exclut seulement les octets entièrement effacés ou remplacés. Il couvre le transfert D0, les temporaires D16-D31 et les deux branches d’un retour FP. `NeverDARM32ObjectImmediateTests` exécute séparément cinq différentiels C ARM32 ; Windows EH CI utilise Clang 18, avec des formes NEON zip/mask différentes de Clang 23. Les CALL directs/indirects sans opérandes ABI récupérés conservent les registres FP explicitement préparés.
 
 ## Ordinary Darwin whole-file lock coverage
 

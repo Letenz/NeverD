@@ -60,6 +60,7 @@ struct NativeMachO {
   std::vector<DwarfEHFrameRecord> OldFDEs;
   std::optional<size_t> EH, CompactSection;
   bool SjLj = false;
+  bool CompactOnly = false;
 };
 
 llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
@@ -330,10 +331,12 @@ llvm::Error place(NativeMachO &Object, uint64_t Base,
       S.ExternalBytes.clear();
     }
   if (Object.EH) {
-    if (!EH)
-      return fail(
-          "native DWARF requires a registered original eh_frame section");
-    Image.Sections[*Object.EH].VA = EH->AppendVA;
+    // Darwin commonly links away redundant DWARF when every function has a
+    // compact encoding. In that image, retain native compact evidence for
+    // every replacement instead of requiring an unused DWARF registration.
+    Object.CompactOnly = !EH;
+    if (EH)
+      Image.Sections[*Object.EH].VA = EH->AppendVA;
   }
   for (const auto &[Index, S] : Object.Symbols)
     if (S.Section && Object.Sections.contains(S.Section))
@@ -347,6 +350,9 @@ llvm::Expected<uint64_t> mapOldVA(const NativeMachO &Object, uint64_t VA) {
   for (const auto &[Number, Index] : Object.Sections) {
     const auto &S = Object.Image.Sections[Index];
     const uint64_t Old = Object.OldSectionVAs.at(Number);
+    if (Object.CompactOnly && Object.EH && Index == *Object.EH && VA >= Old &&
+        VA - Old < S.Size)
+      return fail("reference to unregistered native DWARF storage");
     if (!S.IsAllocated || VA < Old || VA - Old >= S.Size)
       continue;
     if (Value)
@@ -366,6 +372,9 @@ resolve(const NativeMachO &Object, unsigned Index, const BinaryImage &Original,
   if (S.Section) {
     if (!Object.Sections.contains(S.Section))
       return fail("nonallocated native symbol");
+    if (Object.CompactOnly && Object.EH &&
+        Object.Sections.at(S.Section) == *Object.EH)
+      return fail("reference to unregistered native DWARF storage");
     return Object.Image.Sections[Object.Sections.at(S.Section)].VA + S.Offset +
            (S.Function && S.Thumb ? 1 : 0);
   }
@@ -404,6 +413,12 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
          R.Offset - std::prev(Next)->first.second < std::prev(Next)->second))
       return fail("overlapping native relocation writers");
     Written.emplace(Key, R.Width);
+    if (Object.CompactOnly && Object.EH && R.Section == *Object.EH) {
+      if ((R.External && !Object.Symbols.contains(R.SymbolIndex)) ||
+          (R.SubtractSymbol && !Object.Symbols.contains(*R.SubtractSymbol)))
+        return fail("unregistered DWARF relocation names an invalid symbol");
+      continue;
+    }
     uint8_t *Out =
         S.IsInImage
             ? Object.Image.Bytes.data() + S.Offset + R.Offset
@@ -614,7 +629,12 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
     } else
       return fail("unsupported native relocation " + llvm::Twine(R.Type));
   }
-  if (Object.EH) {
+  if (Object.EH && Object.CompactOnly)
+    for (const auto &Record : Object.OldFDEs)
+      if (Record.HasLanguageAugmentation)
+        return fail(
+            "native DWARF language metadata requires a separate contract");
+  if (Object.EH && !Object.CompactOnly) {
     auto &EH = Object.Image.Sections[*Object.EH];
     for (const auto &R : Object.OldFDEs) {
       if (R.HasLanguageAugmentation ||
@@ -663,11 +683,14 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
       const bool Dwarf =
           (A == Arch::AArch64 ? Mode == macho_unwind::kARM64ModeDwarf
                               : Mode == macho_unwind::kX86ModeDwarf);
+      if (Dwarf && Object.CompactOnly)
+        return fail(
+            "native DWARF requires a registered original eh_frame section");
       if (!Dwarf)
         Object.Compact.push_back(Range);
     }
   }
-  if (Object.EH) {
+  if (Object.EH && !Object.CompactOnly) {
     const auto &EH = Object.Image.Sections[*Object.EH];
     auto Records = decodeDwarfEHFrameRecords(EH.ExternalBytes, EH.VA,
                                              Object.Image.PointerWidth == 8);
@@ -710,7 +733,8 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
   auto OriginalCompact = findMachOCompactUnwindRegion(Original.Raw);
   if (!OriginalCompact)
     return OriginalCompact.takeError();
-  if (!*OriginalCompact && !Object.Compact.empty() && Object.EH) {
+  if (!*OriginalCompact && !Object.Compact.empty() && Object.EH &&
+      !Object.CompactOnly) {
     const auto &EH = Object.Image.Sections[*Object.EH];
     auto Records = decodeDwarfEHFrameRecords(EH.ExternalBytes, EH.VA,
                                              Object.Image.PointerWidth == 8);
@@ -732,7 +756,8 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt) {
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
+    const DynCodePatchEvidence *DynCode) {
   auto Object = readObject(Bytes, Original);
   if (!Object)
     return Object.takeError();
@@ -770,6 +795,11 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
     return std::move(E);
   if (auto E = relocate(*Object, References, Bindings))
     return std::move(E);
+  if (DynCode)
+    if (auto E =
+            validateDynCodePatchImage(*DynCode, Bytes, Original, Object->Image,
+                                      Mappings, RequestedBindings))
+      return std::move(E);
   return publishSourcePatch(
       Original, Mappings, Output,
       [&](const std::filesystem::path &Input,
@@ -783,7 +813,7 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
                 Failure = llvm::toString(std::move(E));
                 return false;
               };
-              if (Object->EH)
+              if (Object->EH && !Object->CompactOnly)
                 if (auto E = installNativeMachOEHFrame(
                         Binary, *EH, Object->Image.Sections[*Object->EH]))
                   return Reject(std::move(E));

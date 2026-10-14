@@ -116,6 +116,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdWebSEA.cpp
   cmd/NeverDCmdWebNexe.cpp
   cmd/NeverDCmdWebPkg.cpp
+  cmd/NeverDCmdWebDataPack.cpp
   cmd/NeverDCmdWebWails.cpp
   cmd/NeverDCmdWebTauri.cpp
   cmd/NeverDCmdWebReadableExport.cpp

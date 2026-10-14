@@ -8,6 +8,8 @@ NeverD 的測試回答三個不同問題：表示形狀是否符合預期、完�
 處理二進位 fixture，以及產生的程式碼是否維持行為。先選擇能回答本次變更問題的
 最小套件；對高風險提取請求，再執行較廣的彙總測試。
 
+`PipelineOutcome.ResolvedCalls*` 檢查暫存器分組、call／invoke 身分、堆疊位元組封裝與拆分，以及缺少位元組時的拒絕。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 涵蓋 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 涵蓋三種格式，拒絕長度被改寫、可寫或越界範圍、同名本地函式、錯誤來源暫存器、替代入口及可重定位映像。主機 C 差分測試將原始 C 獨立以 O0 編譯，產生的 C 仍以 O2 編譯，避免主機最佳化器錯算迴圈遞推而污染對照。AArch64 FMA 檢查僅在 x86 主機要求 `-mfma`。
+
 ## 設定測試建置
 
 除非啟用 `BUILD_TESTING`，否則不會建置測試。完整套件通常使用 Release；Debug
@@ -1715,6 +1717,32 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 矩陣也會依獨立的 ABI 清單核對編譯物件與外部原生物件的 `target` 憑據。錯誤物件測試隨後必須安裝並執行未修改的物件，作為有效輸入對照。
 
+可選 `NeverCProfiles/*` 在六個 x64/ARM64 設定增加 30 項測試，涵蓋 C++ IR、物件、hosted DynCode、非內聯輔助函式/遞迴及不支援 C++ 的拒絕。`NeverDSourcePatchDynCodeTests` 拒絕偽造摘要、入口、目標、狀態及驗證。`SourcePatchException.NeverC*` 在真實行程驗證生命週期及兩個 hosted 框架的例外回呼。Windows C++ 檢查器要求九個補丁情境、原始對照、三次執行及相符機器、提交、摘要與原生 x64/ARM64 主機。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```
+
+原生產生器驗證固定 NeverC 提交 `182fd2c5dc`，使用獨立編譯的原程式與目前 NeverD 安裝器。`check_source_patch_hosted_pe_runtime.py` 要求每種架構完成 36 次原生 Windows 觀測，涵蓋 C++ IR/物件/hosted 生命週期，以及例外穿過兩個 hosted 框架的回呼。`check_source_patch_elf_runtime.py` 要求每種架構完成 66 次原生 Linux 觀測，涵蓋 C++ IR/物件/hosted、hosted 例外傳播及九種 Clang 例外情境。回執、製品雜湊與實際主機架構必須相符。這些檢查安裝真實編譯器產物，不表示在 CI 主機執行過 NeverC 編譯器。
+
+原生驗證 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次進程觀測全部通過：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公開原始碼介面產生 C++ IR、普通物件與 C++ hosted DynCode，並驗證例外穿過兩層 NeverC 框架。重放核對目前引擎原始碼和子模組摘要、原件與最終位元組、安裝回執及實際原生主機。macOS ARM64 與 Rosetta x64 在本機通過相同三條 C++ 路徑及兩層例外傳播。Clang FH3 原生驗證 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通過九種例外情境和對照，共各 36 次觀測。
+
+## 原生 Lift 驗收
+
+`Lift native qualification` 工作流程負責先前未完成驗證的 108 項（62 項失敗與 46 項略過）。它在原生 Linux x86-64 執行器上安裝 Clang 23 或更新版本、GNU GCC 與 i386 開發函式庫，並初始化固定版本的二進位語料。`unittests/Inputs/lift-qualification.json` 保留所有原始測試識別碼。`scripts/run_lift_qualification.py` 拒絕遺漏、重複、停用、略過、失敗與非零程序結束狀態；`qualification.json` 記錄逐項通過結果、原始碼與語料版本、編譯器版本和二進位雜湊。
+
+此設定實際執行 i386/x86-64 對照、x87 擴充精度，以及兩種最佳化層級下產生的 Swift SSE 結果、狀態與未遮罩例外測試。AArch64 一致性測試解碼固定版本 Rust 執行階段的真實 `.text`。跨目標解碼不代表在該目標上原生執行；Windows/Linux x64/ARM64 使用獨立的原始碼修補原生程序工作，macOS 使用本機驗證。
+
+```bash
+python3 scripts/run_lift_qualification.py \
+  --binary build-release/bin/NeverDLiftTests \
+  --neverd build-release/bin/neverd \
+  --output build-release/lift-qualification
+```
+
+原生設定也要求通過 LLVM-C 寬整數常數與儲存檢查，以及 i386 合成表的原生執行。Swift 訊號觀察器使用獨立的原始儲存，在兩種最佳化層級下分別驗證未寫入的正例、提前寫入狀態與結果的反例。訊號處理器讀取仍處於 Swift `inout` 存取期間的變數會觸發獨佔存取錯誤，使例外觀察失效。
+
+`NeverDFPParameterMaskTests` 執行共用 ABI 套件與 `FPParameterMask.*`，保留有效位元組、先前儲存、歧義定義及未遮罩回傳路徑，只排除完全清零或取代的位元組；涵蓋 D0 中間傳遞、D16-D31 暫用暫存器及浮點回傳匯合的兩條路徑。`NeverDARM32ObjectImmediateTests` 獨立執行五項 ARM32 主機 C 差分，Windows EH CI 用 Clang 18 檢查包括與 Clang 23 不同的 NEON zip/mask 形式。直接與間接呼叫在 ABI 運算元尚未恢復時，保留明確準備的浮點暫存器。
 
 ## Ordinary Darwin whole-file lock coverage
 

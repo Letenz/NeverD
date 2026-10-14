@@ -14,6 +14,12 @@
 
 يحدد `sourcePatchTargetTriple` وضع ARM وABI الفاصلة العائمة ELF والنوع الفرعي CPU في Mach-O من الصورة. يتحقق `COFFPatchObject` و`MachOPatchObject` من رموز الكائن وتعريفاته المساعدة／الأقسام وسجلاته الأصلية دون اختلاق معرفات MC، وتسجل مثبتات التنسيق الجداول الفعلية.
 
+يجمع `SourcePatchCompiler` ترجمة NeverC `cpp-core-v2` وتوليد C23؛ ويربط `validateDynCodePatchImage` التدقيق ببصمات الكائن والحمولة والكود والمدخل الفعلية. تسجل المثبتات بيانات فك المكدس الحقيقية. يستخدم ARM64 FH3 حدود xdata للودر ومجموعات funclet/FuncInfo في MC. دون DWARF أصلي يجب أن تغطي سجلات compact الأصلية كل دوال Mach-O.
+
+يوحد `CompiledImage` محددات ELF AArch64 ذات النقطتين مرة واحدة للحل الفعلي وfixup المسجل. يتشارك محلل ELF ونشر إعادة تموضع اللودر هويات ABS/GOT الدقيقة؛ وتظل TLS والصيغ المجهولة مرفوضة. يمكن لحدود دوال COFF الأصلية استخدام سجلات وقت التشغيل المفكوكة، ويتطلب كود hosted تغطية كاملة لفك المكدس من المترجم.
+
+تحتفظ معاملات الاستدعاءات غير المباشرة المستعادة بمجموعتين مستقلتين للسجلات الصحيحة وسجلات الفاصلة العائمة، ثم بايتات المكدس المتبقية. يستخدم `LLVMCallContract` آلية الربط نفسها أثناء التوليد وبعد تحديد هدف LLVM؛ فلا تزحزح السجلات الزائدة مجموعة أخرى، وتُجمع كتابات 32 بت المحزومة في خانات المكدس الكاملة للدالة المستدعاة. لا يستبدل جدول الاستدعاءات الراجعة المعامل الأول المستعاد بمؤشر كائن مستنتج. تتحقق جداول القفز AArch64 المهيأة بالنسخ من تعليمة BL الأصلية وهوية الاستيراد وطول MOVZ ومصدر ADRP/ADD وكامل النطاق غير القابل للتغيير؛ ويستخدم النشر وإعادة فحص الإثبات الشاهد نفسه.
+
 ## حدود النظام
 
 ```mermaid
@@ -1556,6 +1562,8 @@ fail-closed عندما تكون دلالة التعليمة خارج التغط�
 يشارك `isX86FramePreservingIntrinsic` التحقق من صيغ FWAIT وMXCSR وحساب الفاصلة العائمة بين انتقالات registration المعتادة وعودة local-finally المتحقق منها. تبقى العمليات الأصلية وتوزيعات الاستثناءات محفوظة. تظل intrinsic غير المدعومة والصيغ غير السليمة معتمة؛ ولا تثبت هذه القاعدة خروج finally غير المحلي أو الاستعادة الأصلية.
 
 يفوّض تنفيذ KVM x64 المتحقق منه حلقة التعليمات كاملة إلى خيط vCPU الخاص عبر `withExecutionOwner`. تبقى موافقة التعليمات ومعاملات RAM والاستدعاءات والميزانيات داخل الحلقة، ويحتفظ كل دخول أصلي بضوابطه وأولوية الاستثناءات. يراقب المستدعي المداخل النشطة ويؤكد اكتمال الإلغاء قبل العودة. لا يجوز أن تعتمد استدعاءات CPU على الحالة المحلية لخيط المستدعي. يبقى إكمال الدخول الأصلي المستقل على خيط المستدعي. يتحقق `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` و`OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` من الملكية والإلغاء الفعلي؛ ولا يشكل هذا التغيير اعتمادًا لبرنامج تشغيل مستعاد.
+
+يوحد `MedCallingConvFP` تحديد بايتات مدخلات FP والمتجهات. تستبعد أقنعة AND/OR الثابتة فقط البايتات الممسوحة أو المستبدلة بالكامل بدليل SSA وحيد ومحدود، بما فيها الأقنعة المجمعة المكتوبة أولًا بالإصدار صفر. تحتفظ الأقنعة المفقودة أو الغامضة أو المحملة أو المعرفة باستدعاء بالمدخل. تظل الكتابات الوسيطة لسجلات إرجاع FP نقلًا للقيم؛ وتُحدد قراءات الإرجاع بالتعريفات التي تصل إلى كل RETURN في CFG الحالي، مع الاحتفاظ التحفظي بالطلب للمسارات المجهولة. قبل استعادة معاملات ABI الصريحة تبقى القيم الممررة عبر هذه السجلات قراءات محتملة عند CALL. يصف ARM32 كامل D0-D31 منفصلًا عن معاملات D0-D7.
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

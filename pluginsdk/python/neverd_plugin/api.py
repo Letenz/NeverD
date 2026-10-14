@@ -1705,7 +1705,7 @@ class Session:
         compiler: str = "clang",
         compiler_path: os.PathLike[str] | str | None = None,
         language: str = "c",
-        artifact: str = "ir",
+        artifact: str | None = None,
         mode: str = "normal",
         strategy: str = "section",
         source_name: os.PathLike[str] | str | None = None,
@@ -1724,6 +1724,9 @@ class Session:
         """
         options = NeverDSourcePatchOptionsV1()
         options.struct_size = ctypes.sizeof(options)
+        if artifact is None:
+            artifact = ("object" if input_kind == "object" or compiler == "gcc"
+                        or mode == "dyncode" else "ir")
         selections = (
             ("input_kind", input_kind, ("source", "ir", "object")),
             ("compiler", compiler, ("clang", "neverc", "gcc")),

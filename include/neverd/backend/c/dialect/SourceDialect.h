@@ -52,8 +52,13 @@ offeredSourceDialects(const LanguageRuntimeInfo &Language);
 /// The dialect a function of an image reads best in, among those the image
 /// is offered in. C-linkage names in a C++ image keep the image's dialect,
 /// as do functions the image does not name (\p Named false).
-SourceDialect sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
-                                      const LanguageRuntimeInfo &Language);
+/// \p HandlerRuntime is the runtime the function's own exception personality
+/// belongs to: a function whose `try` a C++ runtime dispatches is C++ code
+/// whatever its name, and reads in C++ even where the image's other
+/// evidence did not establish that language.
+SourceDialect sourceDialectOfFunction(
+    llvm::StringRef Symbol, bool Named, const LanguageRuntimeInfo &Language,
+    SourceLanguageRuntime HandlerRuntime = SourceLanguageRuntime::Unknown);
 
 struct SourceDialectOptions {
   SourceDialect Dialect = SourceDialect::C;

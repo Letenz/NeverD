@@ -330,28 +330,158 @@ int runRename(neverd_session_t Sess) {
   return 0;
 }
 
+namespace {
+/// The attributes a function edit row states, as "key=value" in
+/// FunctionAttributes.def's order.
+std::string functionAttributeText(const json::Object &Row) {
+  std::string Text;
+  const auto Note = [&](StringRef Key) {
+    const json::Value *Value = Row.get(Key);
+    if (!Value)
+      return;
+    if (!Text.empty())
+      Text += ' ';
+    Text += Key;
+    Text += '=';
+    if (const auto Flag = Value->getAsBoolean())
+      Text += *Flag ? "true" : "false";
+    else if (const auto Spelled = Value->getAsString())
+      Text += *Spelled;
+    else
+      Text += "default";
+  };
+#define NEVERD_FUNCTION_FLAG(Member, Key) Note(Key);
+#define NEVERD_FUNCTION_COLOR(Key) Note(Key);
+#include "neverd/sdk/FunctionAttributes.def"
+  return Text;
+}
+
+/// State what the function at --edit is by --set's key=value pairs.
+int editFunctionAttributes(neverd_session_t Sess, uint64_t Addr) {
+  json::Object Row;
+  for (StringRef Item : FunctionSet) {
+    const auto [Key, Value] = Item.split('=');
+    if (Key.empty() || !Item.contains('=')) {
+      WithColor::error() << "--set takes key=value, not '" << Item << "'\n";
+      return 1;
+    }
+    if (Value == "true" || Value == "false")
+      Row[Key] = Value == "true";
+    else if (Value == "default")
+      Row[Key] = nullptr;
+    else
+      Row[Key] = Value;
+  }
+  const std::string Text = formatv("{0}", json::Value(json::Object(Row)));
+  if (neverd_func_edit(Sess, Addr, Text.c_str()) != 0) {
+    WithColor::error() << "edit failed: " << takeLastError(Sess) << "\n";
+    return 1;
+  }
+  if (neverd_functions_save(Sess) != 0) {
+    WithColor::error() << "function edits save failed: " << takeLastError(Sess)
+                       << "\n";
+    return 1;
+  }
+  if (JsonOutput) {
+    json::Object Result{{"addr", "0x" + utohexstr(Addr)},
+                        {"edited", std::move(Row)}};
+    outs() << json::Value(std::move(Result)) << "\n";
+  } else {
+    outs() << "Edited function at 0x" << utohexstr(Addr) << ": "
+           << functionAttributeText(Row) << "\n";
+  }
+  return 0;
+}
+
+/// Print what the Edit function dialog shows of the function at --show.
+int showFunctionAttributes(neverd_session_t Sess, uint64_t Addr) {
+  const char *Json = neverd_func_attributes_json(Sess, Addr);
+  if (!Json) {
+    WithColor::error() << takeLastError(Sess) << "\n";
+    return 1;
+  }
+  const std::string Text = Json;
+  neverd_free_string(Json);
+  if (JsonOutput) {
+    outs() << Text << "\n";
+    return 0;
+  }
+  auto Parsed = json::parse(Text);
+  const json::Object *Row = Parsed ? Parsed->getAsObject() : nullptr;
+  if (!Row) {
+    consumeError(Parsed.takeError());
+    WithColor::error() << "the engine described the function as invalid JSON\n";
+    return 1;
+  }
+  const json::Object Empty;
+  const json::Object *Stated = Row->getObject("stated");
+  if (!Stated)
+    Stated = &Empty;
+  // Each attribute as its value, and whether the user or analysis says so.
+  const auto Line = [&](StringRef Label, StringRef Key) {
+    const json::Value *Value = Row->get(Key);
+    std::string Shown = "unknown";
+    if (const auto Flag = Value ? Value->getAsBoolean() : std::nullopt)
+      Shown = *Flag ? "yes" : "no";
+    else if (const auto Spelled = Value ? Value->getAsString() : std::nullopt)
+      Shown = Spelled->str();
+    else if (const auto Count = Value ? Value->getAsInteger() : std::nullopt)
+      Shown = std::to_string(*Count);
+    else if (Key == "color" || Key == "purged_bytes" || Key == "end")
+      Shown = "-";
+    if (Stated->get(Key))
+      Shown += " (stated)";
+    outs() << format("  %-18s %s\n", (Label + ":").str().c_str(),
+                     Shown.c_str());
+  };
+  outs() << "\nFunction " << Row->getString("name").value_or("") << ":\n";
+  Line("Start address", "start");
+  Line("End address", "end");
+  Line("Does not return", "noreturn");
+  Line("Library func", "library");
+  Line("Static func", "static");
+  Line("Color", "color");
+  Line("Purged bytes", "purged_bytes");
+  return 0;
+}
+} // namespace
+
 int runFunctionEdits(neverd_session_t Sess) {
   const bool Create = !FunctionCreate.empty();
   const bool Delete = !FunctionDelete.empty();
-  if (Create && Delete) {
-    WithColor::error() << "--create and --delete edit one function at a time\n";
+  const bool Edit = !FunctionEdit.empty();
+  const bool Show = !FunctionShow.empty();
+  if (Create + Delete + Edit + Show > 1) {
+    WithColor::error()
+        << "--create, --delete, --edit and --show work one at a time\n";
     return 1;
   }
-  if (Create || Delete) {
-    std::optional<uint64_t> Addr =
-        parseAddrArg(Create ? FunctionCreate : FunctionDelete);
+  if (Edit == FunctionSet.empty()) {
+    WithColor::error() << (Edit ? "--edit needs the attributes --set states\n"
+                                : "--set needs the function --edit names\n");
+    return 1;
+  }
+  if (Create || Delete || Edit || Show) {
+    std::optional<uint64_t> Addr = parseAddrArg(Create   ? FunctionCreate
+                                                : Delete ? FunctionDelete
+                                                : Edit   ? FunctionEdit
+                                                         : FunctionShow);
     if (!Addr) {
       WithColor::error() << "invalid function address\n";
       return 1;
     }
     // The symbol view of a stripped image lists no detected function; look
-    // further before refusing to delete one, as the workbench lists them.
-    if (Delete && neverd_func_find_by_addr(Sess, *Addr) < 0 &&
+    // further before refusing to edit one, as the workbench lists them.
+    if (!Create && neverd_func_find_by_addr(Sess, *Addr) < 0 &&
         neverd_session_discover_functions(Sess) < 0) {
       WithColor::error() << "function discovery failed: " << takeLastError(Sess)
                          << "\n";
       return 1;
     }
+    if (Edit)
+      return editFunctionAttributes(Sess, *Addr);
+    if (Show)
+      return showFunctionAttributes(Sess, *Addr);
     if ((Create ? neverd_func_create : neverd_func_delete)(Sess, *Addr) != 0) {
       WithColor::error() << (Create ? "create" : "delete")
                          << " failed: " << takeLastError(Sess) << "\n";
@@ -390,9 +520,13 @@ int runFunctionEdits(neverd_session_t Sess) {
         const json::Object *Obj = V.getAsObject();
         if (!Obj)
           continue;
+        std::string Edit = Obj->getString("state").value_or("").str();
+        if (const std::string Attributes = functionAttributeText(*Obj);
+            !Attributes.empty())
+          Edit += (Edit.empty() ? "" : " ") + Attributes;
         outs() << format("  %-18s %s\n",
                          Obj->getString("addr").value_or("").str().c_str(),
-                         Obj->getString("state").value_or("").str().c_str());
+                         Edit.c_str());
         ++Count;
       }
     }

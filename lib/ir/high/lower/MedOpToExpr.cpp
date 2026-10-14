@@ -252,6 +252,19 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
   }
 
   case NdOp::LOAD: {
+    // The return address the call pushed, which the function never
+    // overwrites: C names it, where the frame has no slot for it.
+    if (Op.ReturnAddressRead) {
+      auto Call = HighExpr::makeCall(
+          "__builtin_return_address", 0,
+          {HighExpr::makeConst(0, 4, ConstantAddressProvenance::Scalar)});
+      Call->Type = NdType::makePtr(NdType::makeVoid());
+      auto Value = std::make_shared<HighExpr>();
+      Value->Kind = ExprKind::Cast;
+      Value->Type = Value->CastTo = NdType::makeInt(Op.Output.Size, false);
+      Value->Operands.push_back(std::move(Call));
+      return Value;
+    }
     if (Op.NumInputs >= 1) {
       auto Address = memoryAddressExpr(Op.Inputs[0]);
       if (Image && Address && Address->Kind == ExprKind::Const &&

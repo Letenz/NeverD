@@ -13,6 +13,12 @@ NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部
 
 `sourcePatchTargetTriple` 从镜像确定 ARM 指令模式、ELF 浮点 ABI 和 Mach-O CPU 子类型。`COFFPatchObject` 与 `MachOPatchObject` 使用对象自身的符号、辅助／区段定义和展开记录验证范围，原生对象不伪造 MC 标识；格式安装器负责注册实际展开表。
 
+`SourcePatchCompiler` 组合 NeverC `cpp-core-v2` 翻译和 C23 生成；`validateDynCodePatchImage` 将 hosted 审计绑定到实际对象/载荷摘要及最终代码和入口布局。格式安装器注册真实展开记录。ARM64 源 FH3 使用加载器拥有的 xdata 范围和 MC 拥有的 funclet/FuncInfo 分组。原始 Mach-O 没有 DWARF 节时，必须由原生 compact 记录覆盖全部函数。
+
+`CompiledImage` 在同一个入口规范化 AArch64 ELF 冒号重定位标记，供实时解析和记录后的 fixup 共用。ELF 解析器与加载器重定位发布共用准确的 ABS/GOT 身份，TLS 和未知形式仍明确拒绝。COFF 原生函数范围可采用解码后的运行时记录；hosted 代码必须具备完整的编译器展开覆盖。
+
+恢复后的间接调用参数保留独立的整数寄存器组、浮点寄存器组及剩余栈字节。`LLVMCallContract` 在代码生成和 LLVM 解析出目标后使用同一个绑定器：多收集的寄存器不会挤占另一组，打包的 32 位写入按字节组合成被调函数的完整栈槽。回调表不能用推测的对象指针覆盖已经恢复的第一个实参。AArch64 通过拷贝初始化的跳转表必须验证原生 BL／导入身份、MOVZ 长度、ADRP／ADD 源地址和完整只读范围；发布及跳转表证明重放检查同一份证据。
+
 ## 系统边界
 
 ```mermaid
@@ -1544,6 +1550,8 @@ LLVM 发射器只在当前不可变 MedFunc 内复用已完成、使用默认预
 `isX86FramePreservingIntrinsic` 为普通 registration 转移和经过验证的 local-finally 返回统一检查 FWAIT、MXCSR 和浮点算术形式。原始操作及异常分派保持完整；不支持的 intrinsic 和畸形形式仍是不透明操作。该规则不授予非局部 finally 退出或原生恢复证明。
 
 受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。
+
+`MedCallingConvFP` 统一负责浮点/向量输入的字节需求。AND/OR 常量掩码仅在唯一、有界的 SSA 常量证明下排除完全清零或替换的字节，包括首写版本为零的拼接掩码；缺失、歧义、加载或调用产生的掩码保留输入。浮点返回寄存器的中间写入仍是值传递；返回读取依据当前 CFG 中到达各 RETURN 的定义，未知路径保守保留需求。恢复显式 ABI 操作数前，经浮点返回寄存器转发的值也是 CALL 的可能读取。ARM32 寄存器定义覆盖完整 D0-D31，与 D0-D7 参数组独立。
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

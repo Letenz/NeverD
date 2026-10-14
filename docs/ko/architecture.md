@@ -14,6 +14,12 @@
 
 `sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다.
 
+`SourcePatchCompiler`는 NeverC `cpp-core-v2`와 C23 생성을 조합하며 `validateDynCodePatchImage`는 감사를 실제 객체/페이로드 해시, 코드, 진입점에 연결합니다. 형식 설치기는 실제 언와인드 기록을 등록합니다. ARM64 FH3는 로더 xdata 범위와 MC funclet/FuncInfo 소유권을 사용합니다. DWARF가 없는 Mach-O는 모든 함수의 native compact 기록이 필요합니다.
+
+`CompiledImage`는 AArch64 ELF 콜론 지정자를 한 곳에서 정규화해 실시간 해결과 저장한 fixup에 공통으로 사용합니다. ELF 해결기와 로더 재배치 발행은 정확한 ABS/GOT 식별을 공유하며 TLS와 알 수 없는 형식은 계속 거부합니다. COFF 네이티브 함수 범위는 디코딩된 런타임 기록을 사용할 수 있지만 hosted 코드는 완전한 컴파일러 언와인드 범위가 필요합니다.
+
+복구한 간접 호출 인수는 정수 레지스터 그룹, 부동소수점 레지스터 그룹, 나머지 스택 바이트를 따로 보존합니다. `LLVMCallContract`는 코드 생성 시점과 LLVM의 대상 확정 후에 같은 바인더를 사용합니다. 불필요한 레지스터가 다른 그룹을 밀어내지 않으며, 묶인 32비트 저장은 호출 대상의 전체 스택 슬롯으로 조립됩니다. 콜백 테이블에서 추측한 객체 포인터로 이미 복구한 첫 번째 인수를 덮어쓰지 않습니다. 복사로 초기화되는 AArch64 점프 테이블은 네이티브 BL과 가져오기 식별, MOVZ 길이, ADRP/ADD 원본 및 전체 읽기 전용 범위를 인증하며, 게시와 증명 재검증에서 같은 증거를 확인합니다.
+
 ## 시스템 경계
 
 ```mermaid
@@ -1531,6 +1537,8 @@ LLVM 방출기는 현재의 불변 MedFunc 안에서 완료된 기본 예산 스
 `isX86FramePreservingIntrinsic`는 일반 registration 전이와 검증된 local-finally 반환에서 FWAIT, MXCSR 및 부동소수점 연산의 형식 검사를 공유합니다. 원래 연산과 예외 디스패치는 유지됩니다. 지원하지 않는 intrinsic 및 잘못된 형식은 여전히 불투명하며, 이 규칙은 비지역 finally 종료나 네이티브 복원 증명을 제공하지 않습니다.
 
 검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
+
+`MedCallingConvFP`가 부동소수점/벡터 입력의 바이트 요구를 공통으로 관리합니다. AND/OR 상수 마스크는 유일하고 유한한 SSA 상수 증명으로 완전히 지우거나 대체한 바이트만 제외하며, 첫 쓰기 버전이 0인 결합 마스크도 포함합니다. 누락·모호함·로드·호출에서 유래한 마스크는 입력을 유지합니다. FP 반환 레지스터의 중간 쓰기는 값 전달이며 반환 읽기는 현재 CFG에서 각 RETURN에 도달하는 정의로 판정합니다. 알 수 없는 경로는 보수적으로 요구를 유지합니다. 명시적 ABI 피연산자 복구 전에는 FP 반환 레지스터의 전달 값도 CALL의 가능한 읽기입니다. ARM32는 전체 D0-D31을 인자용 D0-D7과 별도로 기술합니다.
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

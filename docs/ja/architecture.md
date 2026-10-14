@@ -14,6 +14,12 @@ LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキ
 
 `sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。
 
+`SourcePatchCompiler` は NeverC `cpp-core-v2` と C23 生成を組み合わせ、`validateDynCodePatchImage` は監査と実際の成果物ハッシュ・コード・入口を結び付けます。形式別インストーラが本物の展開記録を登録します。ARM64 FH3 はローダの xdata 範囲と MC の funclet/FuncInfo 所有関係を使います。DWARF がない Mach-O では全関数の native compact 記録が必要です。
+
+`CompiledImage` は AArch64 ELF のコロン修飾子を一か所で正規化し、実際の解決と記録した fixup で共有します。ELF リゾルバとローダ再配置の発行は正確な ABS/GOT 識別を使い、TLS と未知の形式は拒否します。COFF のネイティブ関数範囲はデコード済み実行時記録を使えますが、hosted コードにはコンパイラの完全な展開情報が必要です。
+
+復元した間接呼び出しの引数は、整数レジスタ群、浮動小数点レジスタ群、残りのスタックバイトを区別して保持します。`LLVMCallContract` は出力時と LLVM による呼び出し先確定後に同じバインダーを使用します。余分なレジスタは別の群をずらさず、詰められた 32 ビットの書き込みは呼び出し先の完全なスタックスロットに組み立てられます。コールバック表から推測したオブジェクトポインターで、既に復元した第 1 引数を置き換えることはありません。コピーで初期化する AArch64 のジャンプ表では、ネイティブ BL とインポートの同一性、MOVZ の長さ、ADRP/ADD のソース、読み取り専用の全範囲を認証し、公開時と証明の再検証時に同じ証拠を確認します。
+
 ## システム境界
 
 ```mermaid
@@ -1554,6 +1560,8 @@ LLVM エミッタは、現在の不変な MedFunc 内で完了した既定予算
 `isX86FramePreservingIntrinsic` は通常の registration 転送と検証済み local-finally の戻りで FWAIT、MXCSR、浮動小数点演算の形式検証を共有します。元の操作と例外ディスパッチは保持されます。未対応の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
 
 検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。
+
+`MedCallingConvFP` は浮動小数点／ベクトル入力のバイト需要を一元管理します。AND/OR 定数マスクは、一意かつ有界な SSA 定数証明がある場合だけ完全に消去・置換されたバイトを除外し、初回書き込みがバージョンゼロの連結マスクも対象です。欠落・曖昧・ロード由来・呼び出し由来のマスクでは入力を残します。FP 戻り値レジスタの中間書き込みは値の転送であり、戻り値の読み取り候補は現在の CFG で各 RETURN に到達する定義に従います。不明な経路は保守的に需要を残します。明示的 ABI オペランドの回復前は、FP 戻り値レジスタ経由の転送値も CALL の読み取り候補です。ARM32 は D0-D31 全体を引数用 D0-D7 とは別に記述します。
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 
