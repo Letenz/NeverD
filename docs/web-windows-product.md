@@ -52,7 +52,8 @@ To rebuild, check out the receipt's exact NeverD commit and initialize the
 recorded submodules with `git submodule update --init --recursive`. The Release
 source archive contains NeverD source; submodule revisions and downloaded
 dependencies retain their own source repositories and licenses. Use the
-Windows 2022 x64 `clang-cl` frontend with the MSVC runtime toolset and the exact
+Windows Server 2025 / Visual Studio 2026 x64 `clang-cl` frontend with the matching
+MSVC runtime toolset and the exact
 downloads and SHA-256 values in
 `cmake/web-product-dependencies.json`. The full dependency build, CMake flags,
 test selection and install commands are in
@@ -60,6 +61,13 @@ test selection and install commands are in
 receipt also records the actual frontend, MSVC toolset and Windows SDK selected by the
 runner. `NEVERD_BUILD_WEB_PRODUCT=ON` selects the archive's install component;
 ordinary builds leave this optional packaging disabled.
+
+The fixed LLVM package was built with MSVC 14.51.36231 and clang-cl 20.1.8.
+Older MSVC libraries can miss its standard-library helper symbols. The product
+lane enforces the recorded minimum toolset, links and runs a small consumer of
+the actual LLVM Core/Object/Support libraries before building the engine, and
+selects the x64 CRT from that same toolset. Native host qualification uses the
+named Server 2025 image; other Windows releases need separate evidence.
 
 Dispatch `web-product-release.yml` on `dev` with a new
 `web-product-windows-x64-YYYY-MM-DD` tag (or a `-rN` revision). Both called
