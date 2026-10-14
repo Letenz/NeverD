@@ -15,4 +15,5 @@ if(NEVERD_ENABLE_CPU_EMULATION)
     ProcessProbe.cpp
     LINK_LIBS NeverDEmulationProcess
   )
+  neverd_sign_hypervisor(neverd-process-probe)
 endif()
