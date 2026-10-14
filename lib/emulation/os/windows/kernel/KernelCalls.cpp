@@ -237,6 +237,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Registry.call(*this, Name, A);
   case KernelAPIKind::MmGetSystemRoutineAddress:
     return resolveRoutine(A[0]);
+  case KernelAPIKind::MmIsAddressValid:
+    return isResidentKernelAddress(A[0]);
   case KernelAPIKind::KeWaitForSingleObject:
   case KernelAPIKind::KeDelayExecutionThread:
     return beginWait(A, Kind == KernelAPIKind::KeDelayExecutionThread);

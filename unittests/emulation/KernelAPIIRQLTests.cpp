@@ -92,6 +92,7 @@ TEST(DriverKernelAPIIRQL, NonpagedPoolMdlAndWorkOperationsPermitDispatch) {
                                        "IoFreeIrp",
                                        "IoAllocateMdl",
                                        "IoFreeMdl",
+                                       "MmIsAddressValid",
                                        "MmBuildMdlForNonPagedPool",
                                        "MmMapLockedPagesSpecifyCache",
                                        "MmGetSystemAddressForMdlSafe",

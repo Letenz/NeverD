@@ -100,6 +100,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                        .str());
   if (auto E = validateDriverScenario(Options))
     return std::move(E);
+  // Legacy software hooks may stop after a store has already committed.
+  // This view promises refusal before effects and needs checked admission.
+  if (Options.LoaderView && Options.Contract != ExecutionContract::CheckedX64)
+    return failure(session_diagnostic::LoaderViewContract);
   KernelExportRegistry Exports;
   if (auto E = Exports.initialize(Options))
     return std::move(E);
