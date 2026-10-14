@@ -1,5 +1,4 @@
-//===- ARM32_AutoRoundTripTests.cpp - Auto-generated roundtrip tests --*- C++ -*-===//
-//
+//===- ARM32_AutoRoundTripTests.cpp - Auto-generated roundtrip tests ------===//
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
@@ -11,9 +10,10 @@
 
 #include "SemanticRoundTripFixture.h"
 
-TEST_P(ARM32RoundTrip, AutoLiftVerify) {
-  roundTripARM32(GetParam());
-}
+// These cases run under ARM32RoundTrip.LiftVerify
+// (ARM32_RoundTripSemanticTests.cpp): gtest runs every TEST_P of a fixture on
+// each of its instantiations, so another TEST_P here would run all of them
+// again.
 
 // clang-format off
 

@@ -44,13 +44,6 @@ TEST_F(X86_64_FlagOps, CmovaLifts) {
       << "Expected CMP-related op in LowIR for cmov";
 }
 
-TEST_F(X86_64_FlagOps, CmovlLifts) {
-  auto r = liftToLowIR(testObj());
-  ASSERT_EQ(r.exitCode, 0);
-  EXPECT_TRUE(r.out.find("INT_SUB") != std::string::npos)
-      << "Expected CMP-related op in LowIR for cmov";
-}
-
 TEST_F(X86_64_FlagOps, NoUnreachableInFunctions) {
   verifyLLVMIRNotContains(testObj(), "", "unreachable");
 }

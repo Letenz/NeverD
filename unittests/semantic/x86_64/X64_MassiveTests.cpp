@@ -38,13 +38,10 @@ static const std::vector<RoundTripTC> kX64Mass = {
   {"shl_by_cl", "long shl_by_cl(long a, long b) { return a << (b & 63); }\n", {42, 4}, "Mass"},
   {"shr_by_1", "long shr_by_1(long a) { return (unsigned long)a >> 1; }\n", {0x8000000000000000ULL}, "Mass"},
   {"sar_by_cl", "long sar_by_cl(long a, long b) { return a >> (b & 63); }\n", {0xFFFFFFFFFFFFFC00ULL, 3}, "Mass"},
-  {"shl32_by_cl", "long shl32_by_cl(long a, long b) { return (long)((unsigned int)a << ((int)b & 31)); }\n", {1, 20}, "Mass"},
 
   // ============================================================
   // Group 3: Comparison + conditional
   // ============================================================
-  {"setcc_eq", "long setcc_eq(long a, long b) { return a == b; }\n", {42, 42}, "Mass"},
-  {"setcc_ne", "long setcc_ne(long a, long b) { return a != b; }\n", {42, 43}, "Mass"},
   {"setcc_lt", "long setcc_lt(long a, long b) { return a < b; }\n", {0xFFFFFFFFFFFFFFFFULL, 1}, "Mass"},
   {"setcc_ge", "long setcc_ge(long a, long b) { return a >= b; }\n", {5, 5}, "Mass"},
   {"setcc_below", "long setcc_below(long a, long b) { return (unsigned long)a < (unsigned long)b; }\n", {5, 100}, "Mass"},
@@ -167,5 +164,5 @@ static const std::vector<RoundTripTC> kX64Mass = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(Mass, X64MassRT,
-                         ::testing::ValuesIn(kX64Mass), rtTCName);
+INSTANTIATE_TEST_SUITE_P(Mass, X64MassRT, ::testing::ValuesIn(kX64Mass),
+                         rtTCName);

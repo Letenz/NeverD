@@ -10,7 +10,10 @@
 
 #include "SemanticRoundTripFixture.h"
 
-TEST_P(AArch64RoundTrip, CExprVerify) { roundTripAArch64(GetParam()); }
+// These cases run under AArch64RoundTrip.LiftVerify
+// (AArch64_RoundTripSemanticTests.cpp): gtest runs every TEST_P of a fixture on
+// each of its instantiations, so another TEST_P here would run all of them
+// again.
 
 // clang-format off
 
@@ -256,4 +259,5 @@ static const std::vector<RoundTripTC> kA64CExpr = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(A64CExprRT, AArch64RoundTrip, ::testing::ValuesIn(kA64CExpr), rtTCName);
+INSTANTIATE_TEST_SUITE_P(A64CExprRT, AArch64RoundTrip,
+                         ::testing::ValuesIn(kA64CExpr), rtTCName);

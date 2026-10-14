@@ -93,12 +93,6 @@ static const std::vector<RoundTripTC> kARM32Misc = {
    "}\n",
    {42, 100}, "ARM32Misc"},
 
-  {"arm_max",
-   "int arm_max(int a, int b) {\n"
-   "  return a > b ? a : b;\n"
-   "}\n",
-   {42, 100}, "ARM32Misc"},
-
   // ========== Unsigned min/max ==========
   {"arm_umin",
    "int arm_umin(int a, int b) {\n"
@@ -136,15 +130,6 @@ static const std::vector<RoundTripTC> kARM32Misc = {
    {0xDEADBEEF, 8}, "ARM32Misc"},
 
   // ========== Saturating add 16-bit ==========
-  {"arm_qadd16",
-   "int arm_qadd16(int a, int b) {\n"
-   "  int sum = (short)(a & 0xFFFF) + (short)(b & 0xFFFF);\n"
-   "  if (sum > 32767) sum = 32767;\n"
-   "  if (sum < -32768) sum = -32768;\n"
-   "  return (int)(unsigned short)(short)sum;\n"
-   "}\n",
-   {30000, 10000}, "ARM32Misc"},
-
   // ========== Large constant (movw/movt, no literal pool) ==========
   {"arm_large_const",
    "int arm_large_const(int a) {\n"

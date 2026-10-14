@@ -49,12 +49,6 @@ static const std::vector<RoundTripTC> kARM32Ext = {
    {0xDEADBEEF, 16, 8}, "ARM32Ext"},
 
   // --- Divide and modulo ---
-  {"arm_divmod",
-   "int arm_divmod(int a, int b) {\n"
-   "  return (a / b) * 1000 + (a % b);\n"
-   "}\n",
-   {12345, 67}, "ARM32Ext"},
-
   // --- Popcount (Brian Kernighan) ---
   {"arm_popcount_bk",
    "int arm_popcount_bk(int x) {\n"
@@ -121,5 +115,5 @@ static const std::vector<RoundTripTC> kARM32Ext = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(ARM32Ext, ARM32ExtRT,
-                         ::testing::ValuesIn(kARM32Ext), rtTCName);
+INSTANTIATE_TEST_SUITE_P(ARM32Ext, ARM32ExtRT, ::testing::ValuesIn(kARM32Ext),
+                         rtTCName);

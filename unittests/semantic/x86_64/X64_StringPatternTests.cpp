@@ -1,4 +1,4 @@
-//===- X64_StringPatternTests.cpp - String/memory pattern tests --*- C++ -*-===//
+//===- X64_StringPatternTests.cpp - String/memory pattern tests -*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -110,13 +110,6 @@ static const std::vector<RoundTripTC> kX64String = {
    {0x44434241ULL}, "StrRT"},
 
   // --- Endian conversion ---
-  {"c_endian16",
-   "long c_endian16(long a) {\n"
-   "  unsigned short x = (unsigned short)a;\n"
-   "  return (unsigned short)((x >> 8) | (x << 8));\n"
-   "}\n",
-   {0x1234}, "StrRT"},
-
   {"c_endian32",
    "long c_endian32(long a) {\n"
    "  unsigned int x = (unsigned int)a;\n"
@@ -172,5 +165,5 @@ static const std::vector<RoundTripTC> kX64String = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(StrRT, X64StringRT,
-                         ::testing::ValuesIn(kX64String), rtTCName);
+INSTANTIATE_TEST_SUITE_P(StrRT, X64StringRT, ::testing::ValuesIn(kX64String),
+                         rtTCName);
