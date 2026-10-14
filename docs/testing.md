@@ -5779,9 +5779,9 @@ The verifier's evidence regressions run with
 atomic publication, original data bindings, native state and C++ exceptions.
 Its object cases use cross Clang plus LLD for malformed-input, relocation and
 byte-preservation checks even on a non-Linux host. Native ELF runtime cases run
-on Linux x64; Mach-O runtime cases run on Darwin ARM64. Set `NEVERD_TEST_NEVERC`
+on Linux x64/ARM64; Mach-O runtime cases run on Darwin ARM64/x64. Set `NEVERD_TEST_NEVERC`
 to an optional NeverC executable to include its compiler cases. GCC C++ runtime
-cases additionally require a matching Linux x64 `g++`.
+cases additionally require a matching Linux x64/ARM64 `g++`.
 Configure `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` with a compatible Clang
 path; the verified source profile uses Clang 22.1.6. This setting is separate
 from the compiler that builds NeverD and from other suites' fixture compilers.
