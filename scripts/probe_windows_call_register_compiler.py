@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 
 
@@ -95,13 +96,56 @@ def variants(text, newline):
     ]
 
 
+def compare_compilers(build):
+    clang = shutil.which("clang-cl")
+    if not clang:
+        raise SystemExit("The Windows clang-cl frontend is unavailable")
+    version = subprocess.check_output([clang, "--version"], text=True).strip()
+    print(version, flush=True)
+    results = []
+    for name, relative in (
+        ("scope-fix", "CallRegisterEffects.cpp"),
+        ("guard-alias", "jumptable/JumpTableResolverGuardAlias.cpp"),
+    ):
+        source = Path("lib/ir/low", relative).resolve()
+        target = "lib/ir/low/CMakeFiles/NeverDIRLow.dir/" + relative + ".obj"
+        commands = subprocess.check_output(["ninja", "-C", str(build), "-t", "commands", target], text=True)
+        command = commands.strip().splitlines()[-1]
+        for compiler in ("msvc", "clang-cl"):
+            label = name + "-" + compiler
+            invocation, count = re.subn(r'/Fo(?:"[^"]*"|\S+)', "/Fo" + label + ".obj", command, count=1)
+            if count != 1:
+                raise ValueError("Expected the production MSVC output object")
+            if compiler == "clang-cl":
+                invocation, count = re.subn(r'^(?:"[^\"]*cl\.exe"|\S*cl\.exe)',
+                    lambda _: subprocess.list2cmdline([clang]), invocation, count=1, flags=re.IGNORECASE)
+                if count != 1:
+                    raise ValueError("Expected the configured MSVC frontend")
+            process = subprocess.run(invocation, cwd=build, shell=True, capture_output=True)
+            output = process.stdout + process.stderr
+            (build / (label + ".log")).write_bytes(output)
+            row = {"variant": label, "returncode": process.returncode,
+                   "c1001": b"C1001" in output,
+                   "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                   "object_written": (build / (label + ".obj")).is_file()}
+            results.append(row)
+            print(json.dumps(row), flush=True)
+    (build / "compiler-probe.json").write_text(json.dumps({"clang_cl": version, "results": results}, indent=2) + "\n", encoding="utf-8")
+    if any(row["returncode"] != 0 or not row["object_written"] for row in results if row["variant"].endswith("clang-cl")):
+        raise SystemExit("The alternative Windows frontend did not compile both actual source files")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True)
+    parser.add_argument("--compiler-compatibility", action="store_true")
     args = parser.parse_args()
     if os.name != "nt":
         raise SystemExit("This probe requires the native Windows MSVC environment")
     build = args.build.resolve()
+    if args.compiler_compatibility:
+        compare_compilers(build)
+        return
     target = "lib/ir/low/CMakeFiles/NeverDIRLow.dir/CallRegisterEffects.cpp.obj"
     commands = subprocess.check_output(
         ["ninja", "-C", str(build), "-t", "commands", target], text=True)
