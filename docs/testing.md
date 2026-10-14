@@ -5559,7 +5559,8 @@ registration work cap is 4,194,304. A Release observation used 1,144,583 state
 work units and 2,613,031 units for the complete decoded-callee closure. The
 original filter-output test also passes when built independently from its
 unchanged test body and helper. These work counts are deterministic accounting,
-not a throughput benchmark; the PE64 xcpt4 acceptance remains unresolved.
+not a throughput benchmark. PE64 source projection and native-frame proofs
+have separate acceptance gates.
 Unknown-address frame accesses still charge every potentially aliased cell.
 Their budget regression scales its load count with the configured limit and
 must withdraw all complete output when exhausted.
@@ -5664,6 +5665,10 @@ can receive explicit unknown values.
 Malformed unwind/prologue and converted-SP checks run with source projection
 enabled too. `WindowsEHModesCorpus.DecompileMatrixFailsClosedWithAuditableExceptionMetadata`
 runs the original eleven-case matrix, including the complete x64 xcpt4 image.
+`DecompilesRegistrationCalleeProofCycles` gives its full PE32 applications a
+240-second child-process allowance, within the corpus's 300-second CTest
+deadline. This accommodates slower hosts producing the large source body;
+the static proof work limits and output assertions do not change.
 
 Run the original x64 executable locally and verify the separate source result:
 

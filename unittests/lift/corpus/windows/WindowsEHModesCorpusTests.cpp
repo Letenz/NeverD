@@ -88,7 +88,8 @@ selectUnique(ArrayRef<WindowsEHArtifactExpectation> Expectations,
   return Match;
 }
 
-Expected<std::string> decompileToSource(const std::filesystem::path &Input) {
+Expected<std::string> decompileToSource(const std::filesystem::path &Input,
+                                        unsigned TimeoutSeconds = 120) {
   SmallString<128> OutputPath;
   if (std::error_code EC = sys::fs::createTemporaryFile(
           "neverd-windows-eh-mode", "c", OutputPath))
@@ -116,8 +117,9 @@ Expected<std::string> decompileToSource(const std::filesystem::path &Input) {
   std::optional<StringRef> Redirects[] = {std::nullopt, StdoutPath.str(),
                                           StderrPath.str()};
   std::string ProgramError;
-  const int Exit = sys::ExecuteAndWait(NEVERD_BINARY, Args, std::nullopt,
-                                       Redirects, 120, 0, &ProgramError);
+  const int Exit =
+      sys::ExecuteAndWait(NEVERD_BINARY, Args, std::nullopt, Redirects,
+                          TimeoutSeconds, 0, &ProgramError);
   if (Exit != 0) {
     std::string Diagnostic = ProgramError;
     if (auto StderrOrErr = MemoryBuffer::getFile(StderrPath.str()))
@@ -274,7 +276,11 @@ TEST(WindowsEHModesCorpus, DecompilesRegistrationCalleeProofCycles) {
   }};
   for (StringRef Input : Inputs) {
     SCOPED_TRACE(Input.str());
-    auto OutputOrErr = decompileToSource(CorpusRoot / Input.str());
+    // These are complete test applications, including the multi-megabyte
+    // optimized xcpt4 source projection. Allow slower workers more than the
+    // small probes' 120 seconds, within this corpus's 300-second CTest limit.
+    auto OutputOrErr =
+        decompileToSource(CorpusRoot / Input.str(), /*TimeoutSeconds=*/240);
     ASSERT_TRUE(static_cast<bool>(OutputOrErr))
         << toString(OutputOrErr.takeError());
     EXPECT_TRUE(StringRef(*OutputOrErr).contains("encoding=x86-"));
