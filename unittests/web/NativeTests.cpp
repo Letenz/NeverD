@@ -82,11 +82,6 @@ protected:
   fs::path Root;
   std::string Path, Revision, Artifact;
   void SetUp() override {
-#ifdef _WIN32
-    ASSERT_TRUE(
-        neverd::web::test::producerPrerequisite(false, "POSIX capture"));
-    GTEST_SKIP() << "Windows web input capture is not implemented";
-#endif
     Web = neverd_web_session_create();
     ASSERT_NE(Web, nullptr);
     llvm::SmallString<128> Dir;

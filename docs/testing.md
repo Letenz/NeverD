@@ -1339,8 +1339,9 @@ and checks sidecar/patch refusal and transactional file reload. It also covers
 directory occurrences, Bun native-asset provenance and four offline CLI commands.
 The full Bun compiler-container native load case uses `NEVERD_BUN_142_CORPUS`
 and explicitly skips when that corpus is absent. It does not execute the target
-or claim full-runtime native decompilation. Native handoff cases explicitly skip
-on Windows while web input capture is unavailable there. Worker checks retain
+or claim full-runtime native decompilation. The Windows product lane requires
+the eight self-contained native handoff cases without skips. The supplied full
+Bun compiler case remains part of the separate producer gate. Worker checks retain
 a handoff across
 failed replacement, compare direct/framed static analysis, revoke it on import
 and preserve the separate ordinary native project.

@@ -55,6 +55,13 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
+      - name: Record the native frontend and runtime toolset
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $Frontend = & clang-cl --version
+          $Frontend
+          "NEVERD_WEB_PRODUCT_COMPILER=$($Frontend[0])" >> $env:GITHUB_ENV
       - name: Enable the existing compiler cache profile
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
@@ -103,18 +110,15 @@ jobs:
           $ICU = Join-Path $PWD 'web-deps/icu'
           $Prefix = Join-Path $PWD 'web-deps/native'
           $CRT = Join-Path $env:VCToolsRedistDir 'x64/Microsoft.VC143.CRT'
-          cmake -S . -B build-web-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF -DNEVERD_ENABLE_Z3=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=OFF -DNEVERD_BUILD_GUI=OFF -DNEVERD_BUILD_WORKER=ON -DNEVERD_BUILD_WEB_MCP=ON -DNEVERD_ENABLE_WEB_ANALYSIS=ON -DNEVERD_ENABLE_WEB_ASAR=ON -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON -DNEVERD_BUILD_WEB_PRODUCT=ON -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache "-DICU_ROOT=$ICU" "-DCMAKE_PREFIX_PATH=$Prefix" "-DNEVERD_WEB_BROTLI_ROOT=$Prefix" "-DNEVERD_MSVC_REDIST_DIRECTORY=$CRT" -DZLIB_USE_STATIC_LIBS=ON
-          # Exercise the independently isolated compiler boundary before the
-          # remaining engine objects. The full build consumes this same object.
-          cmake --build build-web-windows --target lib/ir/low/CMakeFiles/NeverDIRLow.dir/CallRegisterEffects.cpp.obj --parallel 1
-          cmake --build build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
+          cmake -S . -B build-web-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF -DNEVERD_ENABLE_Z3=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_DRIVER_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=OFF -DNEVERD_BUILD_GUI=OFF -DNEVERD_BUILD_WORKER=ON -DNEVERD_BUILD_WEB_MCP=ON -DNEVERD_ENABLE_WEB_ANALYSIS=ON -DNEVERD_ENABLE_WEB_ASAR=ON -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON -DNEVERD_BUILD_WEB_PRODUCT=ON -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache "-DICU_ROOT=$ICU" "-DCMAKE_PREFIX_PATH=$Prefix" "-DNEVERD_WEB_BROTLI_ROOT=$Prefix" "-DNEVERD_MSVC_REDIST_DIRECTORY=$CRT" -DZLIB_USE_STATIC_LIBS=ON
+          cmake --build build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests NeverDWebNativeTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
           Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
       - name: Qualify Windows owners and public API without skips
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          $Selection = '^Web(WindowsHost|Artifacts|Asar|AsarSDK|SDK|RewriteSDK|ReadableExportSDK|DataPackSDK)\.'
-          $Optional = '^WebReadableExportSDK\.(Zentro030WholeBundleWhenSupplied|OmittedParserRefusesBeforeLocalWrites)$'
+          $Selection = '^Web(Native|WindowsHost|Artifacts|Asar|AsarSDK|SDK|RewriteSDK|ReadableExportSDK|DataPackSDK)\.'
+          $Optional = '^WebReadableExportSDK\.(Zentro030WholeBundleWhenSupplied|OmittedParserRefusesBeforeLocalWrites)$|^WebNative\.PinnedBunCompilerContainerEntersTheNativeLoaderWithoutExecution$'
           ctest --test-dir build-web-windows/unittests/web --show-only=json-v1 -R $Selection -E $Optional | Set-Content -Encoding utf8 dist/windows-native-inventory.json
           ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 --output-junit "$PWD/dist/windows-native-results.xml" -R $Selection -E $Optional
           ctest --test-dir build-web-windows --output-on-failure --no-tests=error --output-junit "$PWD/dist/windows-adapter-results.xml" -R '^(NeverDWorkerWeb|NeverDWebMCPWeb)$'

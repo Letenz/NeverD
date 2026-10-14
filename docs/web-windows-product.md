@@ -52,11 +52,12 @@ To rebuild, check out the receipt's exact NeverD commit and initialize the
 recorded submodules with `git submodule update --init --recursive`. The Release
 source archive contains NeverD source; submodule revisions and downloaded
 dependencies retain their own source repositories and licenses. Use the
-Windows 2022 x64 MSVC environment and the exact downloads and SHA-256 values in
+Windows 2022 x64 `clang-cl` frontend with the MSVC runtime toolset and the exact
+downloads and SHA-256 values in
 `cmake/web-product-dependencies.json`. The full dependency build, CMake flags,
 test selection and install commands are in
 `.github/workflows/web-windows-qualification.yml` at that same commit. The
-receipt also records the actual MSVC toolset and Windows SDK selected by the
+receipt also records the actual frontend, MSVC toolset and Windows SDK selected by the
 runner. `NEVERD_BUILD_WEB_PRODUCT=ON` selects the archive's install component;
 ordinary builds leave this optional packaging disabled.
 
@@ -65,6 +66,8 @@ Dispatch `web-product-release.yml` on `dev` with a new
 qualification workflows use that run's source commit. The final gate refuses
 failed, skipped and cancelled prerequisites; the publish job rechecks reports,
 source/run identity and archive SHA-256 and creates a new Release. Existing
-published Releases are never overwritten. The two optional readable-export
-cases for an unsupplied Zentro image and an omitted parser are outside the
-required enabled-product selection.
+published Releases are never overwritten. Optional readable-export cases for
+an unsupplied Zentro image and an omitted parser are outside the required
+enabled-product selection. The full Bun producer native-load case belongs to
+the complete producer gate; the Windows lane requires its eight independent
+native handoff contracts without that external corpus.
