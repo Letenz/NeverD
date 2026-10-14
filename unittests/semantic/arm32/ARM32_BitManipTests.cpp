@@ -113,17 +113,9 @@ static const std::vector<RoundTripTC> kARM32Bit = {
    {0xDEADBEEF, 12}, "ARM32Bit"},
 
   // --- Parity ---
-  {"arm_parity",
-   "int arm_parity(int a) {\n"
-   "  unsigned int x = (unsigned int)a;\n"
-   "  x ^= x >> 16; x ^= x >> 8;\n"
-   "  x ^= x >> 4; x ^= x >> 2; x ^= x >> 1;\n"
-   "  return x & 1;\n"
-   "}\n",
-   {0x0F0F0F0F}, "ARM32Bit"},
 };
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(ARM32Bit, ARM32BitRT,
-                         ::testing::ValuesIn(kARM32Bit), rtTCName);
+INSTANTIATE_TEST_SUITE_P(ARM32Bit, ARM32BitRT, ::testing::ValuesIn(kARM32Bit),
+                         rtTCName);

@@ -12,7 +12,10 @@
 
 #include "UnicornSemanticFixture.h"
 
-TEST_P(X64Semantic, FPVerify) { runX64(GetParam()); }
+// The one TEST_P of X64Semantic. gtest runs every TEST_P of a fixture on each
+// of its instantiations across all files, so a second one would run every
+// X64Semantic case again.
+TEST_P(X64Semantic, Verify) { runX64(GetParam()); }
 
 // clang-format off
 

@@ -114,6 +114,21 @@ struct DriverLoaderView {
   std::string Evidence;
 };
 
+/// Explicit concrete base-field algorithm for RtlGetVersion. Version 1 writes
+/// major 10, minor 0, declared 16-bit build, platform 2 and preserves all other
+/// bytes. It does not identify or authenticate a Windows implementation.
+/// Buffers must be in the profile's kernel address range with no second VA
+/// mapping of the accessed RAM bytes in the current address space.
+struct DriverVersionQuery {
+  uint32_t Version = 1;
+  std::optional<uint32_t> BuildNumber;
+  /// Caller-supplied printable label, never authenticated provenance.
+  std::string Evidence;
+  /// Nonportable compatibility shape with a real 20-byte buffer. The default
+  /// requires a 276-byte base record with its entire CSD array already zero.
+  bool AllowZeroSize = false;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
@@ -156,6 +171,9 @@ struct DriverOptions {
   /// unreconstructed environment dependency, including when it is not read.
   /// Driver execution requires Contract == CheckedX64 to refuse before effects.
   std::optional<DriverLoaderView> LoaderView;
+  /// Optional checked-x64 diagnostic environment. No host version is inferred;
+  /// even an unused declaration retains an unreconstructed dependency.
+  std::optional<DriverVersionQuery> VersionQuery;
 };
 
 enum class DriverStopReason {

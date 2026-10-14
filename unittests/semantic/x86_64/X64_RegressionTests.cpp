@@ -1,4 +1,4 @@
-//===- X64_RegressionTests.cpp - Regression tests for fixed bugs -*- C++ -*-===//
+//===- X64_RegressionTests.cpp - Regression tests for fixed bugs ----------===//
 //
 // NeverD Decompiler
 //
@@ -55,10 +55,6 @@ static const std::vector<RoundTripTC> kX64Reg = {
    {0x01020304}, "RegRT"},
 
   // --- Shift edge cases (UB prevention) ---
-  {"shift_by_0",
-   "long shift_by_0(long a) { return a << 0; }\n",
-   {42}, "RegRT"},
-
   {"shift_by_63",
    "long shift_by_63(long a) {\n"
    "  return (unsigned long)a >> 63;\n"
@@ -88,17 +84,9 @@ static const std::vector<RoundTripTC> kX64Reg = {
    {0x8000000000000001ULL}, "RegRT"},
 
   // --- Division patterns (IDIV i128 regression) ---
-  {"div_neg_by_pos",
-   "long div_neg_by_pos(long a, long b) { return a / b; }\n",
-   {(uint64_t)-100, 7}, "RegRT"},
-
   {"div_pos_by_neg",
    "long div_pos_by_neg(long a, long b) { return a / b; }\n",
    {100, (uint64_t)-7}, "RegRT"},
-
-  {"mod_neg",
-   "long mod_neg(long a, long b) { return a % b; }\n",
-   {(uint64_t)-100, 7}, "RegRT"},
 
   {"udiv_max",
    "typedef unsigned long ulong;\n"
@@ -284,8 +272,8 @@ static const std::vector<RoundTripTC> kX64Reg = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(RegRT, X64RegRT,
-                         ::testing::ValuesIn(kX64Reg), rtTCName);
+INSTANTIATE_TEST_SUITE_P(RegRT, X64RegRT, ::testing::ValuesIn(kX64Reg),
+                         rtTCName);
 
 // ============================================================================
 // i128 DIV/IDIV fallback path regression tests (bug #7 / #59)

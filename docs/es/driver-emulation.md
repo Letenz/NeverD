@@ -366,7 +366,12 @@ El modelo inicial de API tiene deliberadamente un contrato limitado:
 | API | Comportamiento modelado y restricciones |
 |-----|----------------------------------------|
 | `RtlInitUnicodeString` | Construye una `UNICODE_STRING` del invitado para una fuente acotada terminada en NUL |
+| `RtlGetVersion` | Consulta explícita de versión básica checked-x64, sin valores del host. El formato 276 exige CSD completamente a cero; el formato cero opcional necesita un búfer real de 20 bytes. Se rechazan extensiones y se conservan dependencias. |
 | `RtlCopyUnicodeString`, `RtlCompareUnicodeString`, `RtlEqualUnicodeString` | Copia UTF-16 de longitud explícita y comparación sensible a mayúsculas; la comparación sin distinguir mayúsculas necesita una tabla de conversión de Windows y detiene la ejecución |
+| `RtlInitAnsiString`, `RtlInitString` | Construye un `STRING` del invitado a partir de una fuente de bytes terminada en NUL; la longitud explícita se limita a `0xFFFE`, `MaximumLength` incluye el terminador y se borra el relleno del registro |
+| `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | Añade a un destino UTF-16 de longitud explícita; `STATUS_BUFFER_TOO_SMALL` lo deja sin cambios, el terminador solo se escribe cuando quedan dos bytes libres y una fuente terminada en NUL de más de `0x7FFE` unidades también devuelve `STATUS_BUFFER_TOO_SMALL` |
+| `RtlPrefixUnicodeString` | Prueba de prefijo UTF-16 de longitud explícita; una solicitud sin distinguir mayúsculas solo detiene la ejecución cuando unidades distintas necesitarían la tabla de conversión de Windows |
+| `RtlIntegerToUnicodeString`, `RtlUnicodeStringToInteger` | Conversión sin signo en base 2, 8, 10 y 16 con las reglas del kernel para espacios iniciales, signo, prefijos `0x`/`0o`/`0b` y desbordamiento de 32 bits; el formateo necesita espacio para el terminador y devuelve `STATUS_BUFFER_OVERFLOW` después de guardar la longitud |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | Excepciones C `__except`, filtros reales y `__finally` de desenrollado; sin retorno normal de API |
 | `ExAllocatePool2` | Asignaciones NX paginadas/no paginadas, inicializadas a cero por defecto; se modelan los indicadores de memoria sin inicializar y de alineación a la caché; los indicadores requeridos inválidos devuelven NULL; los pools con cuotas/ejecutables y las excepciones de asignación detienen la ejecución |
 | `MmGetSystemRoutineAddress` | Resuelve un nombre del invitado de longitud explícita mediante el inventario compartido de exportaciones |
@@ -496,7 +501,7 @@ su omisión o `"0x0"` utiliza la dirección preferida. La imagen debe cumplir lo
 requisitos de reubicación. El comando de inicialización y la API C originales
 no implican ningún escenario.
 
-En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `load_address`, `requests`, `unload`,
+En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `load_address`, `requests`, `unload`,
 `kernel_exports`, `registry` y `pnp_devices`. Las solicitudes ordinarias de archivo aceptan `kind`, `device` o `device_id` opcionales (excluyentes) y un `file` opcional. Los IOCTL requieren `code` y aceptan `input`, `output_size`
 y `direct_input`. Un `read` acepta `output_size` y `byte_offset`; un `write`
 acepta `input` y `byte_offset`. Los desplazamientos valen cero por defecto,
@@ -877,6 +882,12 @@ El perfil fijo del controlador desactiva las pilas de sombra CET. Las codificaci
 ## Vista declarada del cargador
 
 La opción `loader_view` declara un entorno concreto de diagnóstico, por ejemplo `{"version":1,"flags":0,"evidence":"fixture declaration"}`. Los tres campos son obligatorios: `flags` es un entero sin signo de 32 bits, incluido el cero explícito; `evidence` es una etiqueta del llamador de 1–256 bytes ASCII imprimibles, no una prueba autenticada. La versión 1 identifica la disposición simulada, no una versión de Windows. Los campos desconocidos y las declaraciones inválidas se rechazan antes de reservar memoria del modelo. Sin la opción, `DriverSection` permanece opaco y no se añade un campo al informe. La declaración completa se conserva en `configuration.loader_view`.
+
+`version_query`: `{"version":1,"build_number":12345,"evidence":"fixture declaration","allow_zero_size":false}`. declaración obligatoria: `version`, `build_number` (0–65535), `evidence` (1–256 ASCII). `allow_zero_size`: false. Solo escribe major=10, minor=0, el build declarado y platform=2 en [4,20), conservando los demás bytes. La versión 1 identifica el algoritmo, no autentica una implementación de Windows. No se infieren valores del host.
+
+Requiere checked-x64 y PASSIVE_LEVEL. El tamaño 276 exige CSD completamente a cero. El formato cero, habilitado por separado, accede solo a 20 bytes y es compatibilidad no portable. Los tamaños 284/292 y otros, CSD no nulo, RAM o permisos inválidos se rechazan antes de escribir; se aplican las protecciones compartidas de objetos. Incluso sin uso, la declaración conserva una dependencia de entorno no reconstruida y no aporta supuestos simbólicos, disposición de punteros ni prueba de recuperación nativa. `configuration.version_query`. [RtlGetVersion](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlgetversion), [CSD](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_osversioninfow).
+
+El búfer debe estar en el intervalo de direcciones del núcleo del perfil. Durante esta operación de API con la CPU detenida, cada byte de RAM accedido debe tener exactamente un mapeo virtual en el espacio de direcciones actual. Los búferes de usuario y cualquier segundo mapeo, incluidos los alias de solo lectura o sin acceso, se rechazan antes de la salida. Esta regla conservadora no deduce la propiedad de una dirección alta; siguen vigentes las protecciones compartidas de objetos.
 
 El registro prestado de 160 bytes solo expone `DllBase` (desplazamiento 48, 8 bytes), `EntryPoint` (56, 8), `SizeOfImage` (64, 4) y `Flags` (104, 4). Los tres primeros valores proceden de la imagen cargada, incluida la reubicación; no se deducen significados de los bits. Se permiten lecturas parciales dentro de esos intervalos. Los bytes desconocidos, accesos que los cruzan y todas las escrituras se rechazan, incluso mediante copias o alias MDL. `DriverObject.Flags` sigue opaco. La vista dura durante el ciclo simulado y conserva una dependencia ambiental no reconstruida aunque no se lea. No autoriza constantes simbólicas ni restauración nativa.
 

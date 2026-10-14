@@ -22,6 +22,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineStructReturnCallSites.cpp
   PipelineReturnContracts.cpp
   PipelineWideIntReturn.cpp
+  PipelineWideIntReturnEvidence.cpp
 
   LINK_COMPONENTS
   BinaryInterpreterSpecialization

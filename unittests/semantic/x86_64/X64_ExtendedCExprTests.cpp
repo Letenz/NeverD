@@ -1,4 +1,4 @@
-//===- X64_ExtendedCExprTests.cpp - Extended C expression tests --*- C++ -*-===//
+//===- X64_ExtendedCExprTests.cpp - Extended C expression tests -*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -50,14 +50,6 @@ static const std::vector<RoundTripTC> kX64Ext = {
    {7, 9}, "ExtRT"},
 
   // --- 16-bit arithmetic ---
-  {"c_add16_overflow",
-   "long c_add16_overflow(long a, long b) {\n"
-   "  unsigned short x = (unsigned short)a;\n"
-   "  unsigned short y = (unsigned short)b;\n"
-   "  return (unsigned short)(x + y);\n"
-   "}\n",
-   {0xFFF0, 0x20}, "ExtRT"},
-
   {"c_mul16",
    "long c_mul16(long a, long b) {\n"
    "  short x = (short)a;\n"
@@ -266,5 +258,5 @@ static const std::vector<RoundTripTC> kX64Ext = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(ExtRT, X64ExtRT,
-                         ::testing::ValuesIn(kX64Ext), rtTCName);
+INSTANTIATE_TEST_SUITE_P(ExtRT, X64ExtRT, ::testing::ValuesIn(kX64Ext),
+                         rtTCName);

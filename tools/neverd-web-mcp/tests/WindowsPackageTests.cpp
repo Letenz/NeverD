@@ -73,6 +73,7 @@ void write(const fs::path &P, std::string_view B) {
 }
 std::string read(const fs::path &P) {
   std::ifstream F(P, std::ios::binary);
+  check(F.good(), "Installed file could not be read");
   return {std::istreambuf_iterator<char>(F), {}};
 }
 struct Fixture {
@@ -246,6 +247,7 @@ public:
     DWORD Code;
     check(GetExitCodeProcess(Child.Value, &Code) && Code == 0,
           "Installed process exited with failure");
+    Log.reset();
     return Result;
   }
 };

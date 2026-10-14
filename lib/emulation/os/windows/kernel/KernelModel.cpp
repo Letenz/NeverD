@@ -16,6 +16,7 @@
 #include "KernelException.h"
 #include "KernelLoaderView.h"
 #include "KernelModelRuntime.h"
+#include "KernelVersionQuery.h"
 #include "KernelWaits.h"
 #include "WindowsKernelLayout.h"
 
@@ -153,6 +154,12 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
         Image.Entry - Image.Base >= Image.Size)
       return modelError("driver loader_view: invalid image metadata");
   }
+  if (Options.VersionQuery) {
+    if (auto E = kernel_version_query::validate(*Options.VersionQuery))
+      return E;
+    if (Options.Contract != ExecutionContract::CheckedX64)
+      return modelError("driver version_query requires checked-x64 execution");
+  }
   std::map<uint64_t, uint64_t> ImageRanges;
   for (const auto &Region : Image.Regions) {
     const uint64_t Size = Region.Bytes.size();
@@ -174,6 +181,9 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   }
   ImageRAM = std::move(ImageRanges);
   Contract = Options.Contract;
+  VersionQuery = Options.VersionQuery;
+  if (VersionQuery)
+    UnpackOpaqueEffects = true;
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
                               Options.Scheduling.has_value());

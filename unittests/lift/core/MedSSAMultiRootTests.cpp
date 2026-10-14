@@ -101,6 +101,69 @@ TEST(MedSSAMultiRoot, MergesDefinitionsFromIndependentSourcesAtAJoin) {
   EXPECT_TRUE(verifyMedFunc(Med, "multi-root-join"));
 }
 
+TEST(MedSSAMultiRoot, UnwrittenPhiEdgeCannotBorrowASiblingDefinition) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const uint16_t Width = TRI.PointerSize;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "partial_high_word";
+    Low.Blocks.resize(3);
+    for (int I = 0; I < 3; ++I) {
+      Low.Blocks[I].Id = I;
+      Low.Blocks[I].StartAddr = Low.Entry + 16 * I;
+      Low.Blocks[I].EndAddr = Low.Entry + 16 * I + 1;
+    }
+    Low.Blocks[0].Succs = {1, 2};
+    Low.Blocks[1].Preds = {0};
+    Low.Blocks[1].Succs = {2};
+    Low.Blocks[2].Preds = {0, 1};
+    LowOp Branch;
+    Branch.Opcode = NdOp::COND_BR;
+    Branch.Addr = Low.Entry;
+    Branch.addInput(NdVar::cst(0x1020, Width));
+    Branch.addInput(NdVar::reg(TRI.IntReturnReg, Width));
+    Low.Blocks[0].Ops.push_back(Branch);
+    LowOp High;
+    High.Opcode = NdOp::COPY;
+    High.Addr = 0x1010;
+    High.Output = NdVar::reg(TRI.IntReturnReg2, Width);
+    High.addInput(NdVar::cst(1, Width));
+    Low.Blocks[1].Ops.push_back(High);
+    LowOp Value = High;
+    Value.Addr = 0x1020;
+    Value.Output = NdVar::reg(TRI.IntReturnReg, Width);
+    Low.Blocks[2].Ops.push_back(Value);
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1020;
+    Return.addInput(Value.Output);
+    Low.Blocks[2].Ops.push_back(Return);
+    const MedFunc Med = LowToMedConverter().convert(Low, Architecture);
+    ASSERT_TRUE(verifyMedFunc(Med, "unwritten-phi-edge"));
+    bool Found = false;
+    for (const PhiNode &Phi : Med.Blocks[2].Phis) {
+      if (Phi.Output.RegOff != TRI.IntReturnReg2)
+        continue;
+      ASSERT_EQ(Phi.Args.size(), 2u);
+      const MedVar &Incoming = Phi.Args[0].second;
+      // AArch64 may already bind the high register as an incoming argument.
+      // Either that entry value or an explicit unknown is valid; the sibling
+      // block's constant is not.
+      if (Incoming.Kind == MedVar::Reg) {
+        EXPECT_EQ(Incoming.RegOff, TRI.IntReturnReg2);
+        EXPECT_EQ(Incoming.SSAVer, 0);
+      } else {
+        EXPECT_EQ(Incoming.Kind, MedVar::Unspecified);
+      }
+      EXPECT_EQ(Phi.Args[1].second, MedVar::makeConst(1, Width));
+      Found = true;
+    }
+    EXPECT_TRUE(Found);
+  }
+}
+
 TEST(MedSSAMultiRoot, DoesNotInventADownstreamRootFromBlockOrder) {
   constexpr va_t EntryVA = 0x2000;
   constexpr va_t DownstreamVA = 0x2100;

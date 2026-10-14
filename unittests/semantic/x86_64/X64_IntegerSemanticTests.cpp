@@ -1,5 +1,4 @@
-//===- X64_IntegerSemanticTests.cpp - x64 integer ALU tests ------*- C++ -*-===//
-//
+//===- X64_IntegerSemanticTests.cpp - x64 integer ALU tests -----*- C++ -*-===//
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
@@ -16,7 +15,9 @@
 // TEST_P body — shared by all instantiations
 // ============================================================================
 
-TEST_P(X64Semantic, IntegerVerify) { runX64(GetParam()); }
+// These cases run under X64Semantic.Verify (X64_FPSemanticTests.cpp): gtest
+// runs every TEST_P of a fixture on each of its instantiations, so another
+// TEST_P here would run all of them again.
 
 // ============================================================================
 // Core: MOV, ADD, SUB, AND, OR, XOR, NOT, NEG, INC, DEC, LEA, etc.
@@ -342,20 +343,37 @@ static const std::vector<SemTC> kX64Atomic = {
 // ============================================================================
 // Test suite instantiations
 // ============================================================================
-INSTANTIATE_TEST_SUITE_P(Core, X64Semantic, ::testing::ValuesIn(kX64Core), semTCName);
-INSTANTIATE_TEST_SUITE_P(Ext, X64Semantic, ::testing::ValuesIn(kX64Ext), semTCName);
-INSTANTIATE_TEST_SUITE_P(Shift, X64Semantic, ::testing::ValuesIn(kX64Shift), semTCName);
-INSTANTIATE_TEST_SUITE_P(Control, X64Semantic, ::testing::ValuesIn(kX64Control), semTCName);
-INSTANTIATE_TEST_SUITE_P(MulDiv, X64Semantic, ::testing::ValuesIn(kX64MulDiv), semTCName);
-INSTANTIATE_TEST_SUITE_P(Rotate, X64Semantic, ::testing::ValuesIn(kX64Rotate), semTCName);
-INSTANTIATE_TEST_SUITE_P(BMI, X64Semantic, ::testing::ValuesIn(kX64BMI), semTCName);
-INSTANTIATE_TEST_SUITE_P(SetccCmov, X64Semantic, ::testing::ValuesIn(kX64SetccCmov), semTCName);
-INSTANTIATE_TEST_SUITE_P(CoreExtra, X64Semantic, ::testing::ValuesIn(kX64CoreExtra), semTCName);
-INSTANTIATE_TEST_SUITE_P(Op32, X64Semantic, ::testing::ValuesIn(kX64Op32), semTCName);
-INSTANTIATE_TEST_SUITE_P(Op16, X64Semantic, ::testing::ValuesIn(kX64Op16), semTCName);
-INSTANTIATE_TEST_SUITE_P(ControlExt, X64Semantic, ::testing::ValuesIn(kX64ControlExt), semTCName);
-INSTANTIATE_TEST_SUITE_P(Mem, X64Semantic, ::testing::ValuesIn(kX64Mem), semTCName);
-INSTANTIATE_TEST_SUITE_P(Flags, X64Semantic, ::testing::ValuesIn(kX64Flags), semTCName);
-INSTANTIATE_TEST_SUITE_P(String, X64Semantic, ::testing::ValuesIn(kX64String), semTCName);
-INSTANTIATE_TEST_SUITE_P(StringExt, X64Semantic, ::testing::ValuesIn(kX64StringExt), semTCName);
-INSTANTIATE_TEST_SUITE_P(Atomic, X64Semantic, ::testing::ValuesIn(kX64Atomic), semTCName);
+INSTANTIATE_TEST_SUITE_P(Core, X64Semantic, ::testing::ValuesIn(kX64Core),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(Ext, X64Semantic, ::testing::ValuesIn(kX64Ext),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(Shift, X64Semantic, ::testing::ValuesIn(kX64Shift),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(Control, X64Semantic, ::testing::ValuesIn(kX64Control),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(MulDiv, X64Semantic, ::testing::ValuesIn(kX64MulDiv),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(Rotate, X64Semantic, ::testing::ValuesIn(kX64Rotate),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(BMI, X64Semantic, ::testing::ValuesIn(kX64BMI),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(SetccCmov, X64Semantic,
+                         ::testing::ValuesIn(kX64SetccCmov), semTCName);
+INSTANTIATE_TEST_SUITE_P(CoreExtra, X64Semantic,
+                         ::testing::ValuesIn(kX64CoreExtra), semTCName);
+INSTANTIATE_TEST_SUITE_P(Op32, X64Semantic, ::testing::ValuesIn(kX64Op32),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(Op16, X64Semantic, ::testing::ValuesIn(kX64Op16),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(ControlExt, X64Semantic,
+                         ::testing::ValuesIn(kX64ControlExt), semTCName);
+INSTANTIATE_TEST_SUITE_P(Mem, X64Semantic, ::testing::ValuesIn(kX64Mem),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(Flags, X64Semantic, ::testing::ValuesIn(kX64Flags),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(String, X64Semantic, ::testing::ValuesIn(kX64String),
+                         semTCName);
+INSTANTIATE_TEST_SUITE_P(StringExt, X64Semantic,
+                         ::testing::ValuesIn(kX64StringExt), semTCName);
+INSTANTIATE_TEST_SUITE_P(Atomic, X64Semantic, ::testing::ValuesIn(kX64Atomic),
+                         semTCName);

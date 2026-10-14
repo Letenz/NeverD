@@ -285,6 +285,19 @@ TEST(WindowsEHModesCorpus, DecompilesRegistrationCalleeProofCycles) {
         << toString(OutputOrErr.takeError());
     EXPECT_TRUE(StringRef(*OutputOrErr).contains("encoding=x86-"));
     EXPECT_FALSE(guardedAnalysisBlocks(*OutputOrErr).empty());
+    if (Input == Inputs.front())
+      for (const char *Address : {"402812", "40288B", "402953", "4065C3"}) {
+        SCOPED_TRACE(Address);
+        const std::string Marker =
+            std::string("/* neverd.entry: 0x") + Address + " */";
+        const size_t Start = OutputOrErr->find(Marker);
+        ASSERT_NE(Start, std::string::npos);
+        StringRef Body =
+            StringRef(*OutputOrErr).drop_front(Start + Marker.size());
+        Body = Body.take_front(Body.find("/* neverd.entry:"));
+        EXPECT_TRUE(Body.contains(std::string("int32_t sub_") + Address + "("));
+        EXPECT_FALSE(Body.contains("unknown return value"));
+      }
   }
 }
 

@@ -35,7 +35,7 @@ graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
 `CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
 
-Recovered indirect-call arguments retain separate integer and floating register runs and the remaining stack bytes. `LLVMCallContract` uses one binder during emission and after LLVM target resolution: surplus registers cannot shift another bank, and packed 32-bit stores are assembled into the callee’s complete stack slots. A callback table cannot replace an already recovered first argument with an inferred object pointer. AArch64 copy-initialized tables authenticate the native BL/import identity, MOVZ length, ADRP/ADD source and complete immutable span; publication and jump-table proof replay check the same witness.
+Recovered indirect-call arguments retain separate integer and floating register runs and the remaining stack bytes. Each stack value also keeps the offset it was stored at, so a value narrower than its slot leaves the rest of the slot as padding: -O0 x86-64 code passes an `int` with `mov [rsp+8], r10d` in an eight-byte slot. `LLVMCallContract` uses one binder during emission and after LLVM target resolution: surplus registers cannot shift another bank, packed 32-bit stores are assembled into the callee’s complete stack slots, a narrower value fills only its own slot, and a slot that no value was stored to refuses. A callback table cannot replace an already recovered first argument with an inferred object pointer. AArch64 copy-initialized tables authenticate the native BL/import identity, MOVZ length, ADRP/ADD source and complete immutable span; publication and jump-table proof replay check the same witness.
 
 ## Manual PDB presentation boundary
 
@@ -1681,6 +1681,15 @@ before writing, including arguments it only passes on to its own callees.
 For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
+
+`PipelineWideIntReturnEvidence` checks the high-word carrier on every return
+before the shared pipeline widens an x86/ARM32 function to a register-pair
+result. Caller liveness only proposes candidates. Independent entries, unknown
+PHI inputs and clobbering calls cannot supply a missing high word; tail-call
+propagation starts from established results rather than mutually justifying
+forwarders. `MedSSA` publishes an explicit unspecified PHI input when a
+predecessor has no reaching definition, preventing constant propagation from
+borrowing a sibling's first version-zero write.
 
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and

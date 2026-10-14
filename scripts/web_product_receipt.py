@@ -39,6 +39,14 @@ NATIVE_REQUIRED = {"WebWindowsHost." + name for name in HOST_CASES} | {
     "WebRewriteSDK.MetadataKeepsRecoveredValuesPrivateAndExportBindsPass",
     "WebReadableExportSDK.ExactOriginalAndSameTreeSurviveInputDeletion",
     "WebDataPackSDK.MetadataAliasPagingAndExplicitSourceSelection",
+    "WebNative.FileAndSnapshotLoadersAgreeForELFPEAndThinMachO",
+    "WebNative.CapturedBytesSurviveInputChangeAndWebSessionDestruction",
+    "WebNative.NoCompanionDiscoveryOrPathDependentPersistence",
+    "WebNative.RejectsInvalidSelectionsBuffersAndImplicitUniversalSlices",
+    "WebNative.DirectoryMembersRetainOccurrenceInsteadOfReopeningTheirPath",
+    "WebNative.TruncatedNativeHeadersNeverPublishAHandle",
+    "WebNative.BunNativeAssetsKeepTheirContainerAndMemberProvenance",
+    "WebNative.NativeCliUsesCppOnlyAndPrintsMetadata",
 }
 ADAPTER_REQUIRED = {"NeverDWorkerWeb", "NeverDWebMCPWeb"}
 
@@ -151,6 +159,7 @@ def main():
         "archive": {"name": args.archive.name, "bytes": args.archive.stat().st_size,
                     "sha256": digest(args.archive)},
         "dependencies": json.loads(Path("cmake/web-product-dependencies.json").read_text()),
+        "compiler": os.environ.get("NEVERD_WEB_PRODUCT_COMPILER"),
         "msvc_toolset": os.environ.get("VCToolsVersion"),
         "windows_sdk": os.environ.get("WindowsSDKVersion"),
         "native": native, "adapters": adapters, "installed": installed,

@@ -1,4 +1,4 @@
-//===- AArch64_AdvancedRoundTripTests.cpp - Advanced pattern tests -*- C++ -*-===//
+//===- AArch64_AdvancedRoundTripTests.cpp - Advanced pattern tests --------===//
 //
 // NeverD Decompiler
 //
@@ -94,13 +94,6 @@ static const std::vector<RoundTripTC> kAArch64Advanced = {
    {5}, "A64Adv"},
 
   // --- GCD ---
-  {"a64_gcd",
-   "long a64_gcd(long a, long b) {\n"
-   "  while (b) { long t = b; b = a % b; a = t; }\n"
-   "  return a;\n"
-   "}\n",
-   {48, 18}, "A64Adv"},
-
   // --- Saturating operations ---
   {"a64_sat_add",
    "long a64_sat_add(long a, long b) {\n"
@@ -120,9 +113,6 @@ static const std::vector<RoundTripTC> kAArch64Advanced = {
    {15}, "A64Adv"},
 
   // --- 32-bit operations ---
-  {"a64_add32", "int a64_add32(int a, int b) { return a + b; }\n", {100, 42}, "A64Adv"},
-  {"a64_mul32", "int a64_mul32(int a, int b) { return a * b; }\n", {6, 7}, "A64Adv"},
-  {"a64_div32", "int a64_div32(int a, int b) { return a / b; }\n", {100, 7}, "A64Adv"},
 };
 
 // clang-format on

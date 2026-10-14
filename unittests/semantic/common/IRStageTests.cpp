@@ -17,9 +17,11 @@
 
 #include "UnicornSemanticFixture.h"
 
-TEST_P(X64Semantic, IRStageVerify) { runX64(GetParam()); }
-TEST_P(AArch64Semantic, IRStageVerify) { runAArch64(GetParam()); }
-TEST_P(ARM32Semantic, IRStageVerify) { runARM32(GetParam()); }
+// These cases run under the one TEST_P of each fixture, X64Semantic.Verify
+// (X64_FPSemanticTests.cpp), AArch64Semantic.Verify
+// (AArch64_SemanticTests.cpp), ARM32Semantic.Verify (ARM32_SemanticTests.cpp).
+// gtest runs every TEST_P of a fixture on each of its instantiations, so
+// another TEST_P here would run all of them again.
 
 // clang-format off
 
@@ -57,6 +59,9 @@ static const std::vector<SemTC> kARM32IRStage = {
 
 // clang-format on
 
-INSTANTIATE_TEST_SUITE_P(X64IRStage, X64Semantic, ::testing::ValuesIn(kX64IRStage), semTCName);
-INSTANTIATE_TEST_SUITE_P(A64IRStage, AArch64Semantic, ::testing::ValuesIn(kA64IRStage), semTCName);
-INSTANTIATE_TEST_SUITE_P(ARM32IRStage, ARM32Semantic, ::testing::ValuesIn(kARM32IRStage), semTCName);
+INSTANTIATE_TEST_SUITE_P(X64IRStage, X64Semantic,
+                         ::testing::ValuesIn(kX64IRStage), semTCName);
+INSTANTIATE_TEST_SUITE_P(A64IRStage, AArch64Semantic,
+                         ::testing::ValuesIn(kA64IRStage), semTCName);
+INSTANTIATE_TEST_SUITE_P(ARM32IRStage, ARM32Semantic,
+                         ::testing::ValuesIn(kARM32IRStage), semTCName);
