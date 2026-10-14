@@ -88,6 +88,8 @@ KernelModel::unpackDependencies() const {
   std::vector<std::string> Reasons;
   if (UnpackOpaqueEffects)
     Reasons.emplace_back("unreconstructed kernel or environment effects");
+  if (hasLiveBugCheckCallbacks())
+    Reasons.emplace_back("live kernel bug-check callbacks");
   if (UnpackMDLIdentityRead)
     Reasons.emplace_back("observed kernel MDL physical identity");
   if (!MDLs.empty())

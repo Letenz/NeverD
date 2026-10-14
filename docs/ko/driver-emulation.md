@@ -325,6 +325,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `ExAllocatePool2` | Paged/nonpaged NX 할당이며 기본값은 0으로 초기화. uninitialized 및 cache-aligned 플래그를 모델링함. 잘못된 필수 플래그는 NULL을 반환하고, quota/executable 풀과 할당 예외 발생은 중단함 |
 | `MmGetSystemRoutineAddress` | 공유 export 목록을 통해 길이가 지정된 게스트 이름을 해석함 |
 | `MmIsAddressValid` | IRQL ≤ 2에서 제한된 구체적 조회를 수행합니다. 영 페이지가 매핑되지 않은 경우에만 NULL은 거짓이며, 살아 있는 모델 객체 또는 비페이지 풀의 정확한 바이트에 읽기와 쓰기가 가능한 RAM이 있을 때만 참입니다. 페이지 풀, 해제되거나 소유자가 없는 메모리, 할당 패딩, 풀 외 물리 버퍼 및 보호된 영역은 명시적으로 중단됩니다. 필드 접근, 소유권이나 이후 수명을 보장하지 않으며 복구의 환경 의존성을 유지합니다. |
+| `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | checked-x64에서 등록과 해제만 지원합니다. 드라이버 이미지의 정렬된 읽기/쓰기 가능한 48바이트 레코드, 이미지 내 실행 가능한 콜백, 사유 2–7, 최대 64개 레코드 식별자로 제한됩니다. 구성 요소 이름은 처음에 읽을 수 있는 최대 256바이트 NUL 종료 문자열이어야 합니다. 중복 등록·해제·재등록은 알려진 필드와 State 전이를 유지하며 이름 포인터의 이후 수명을 보장하지 않습니다. 콜백·이름·사유·State만 읽을 수 있고, 해제 후에도 모든 쓰기, 불투명 필드 접근, 겹치는 페이지의 MDL 대여를 거부합니다. DriverUnload에서 등록을 해제해야 합니다. 환경 의존성을 유지하며 충돌 시 호출과 덤프 생성은 지원하지 않습니다. |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | PASSIVE_LEVEL에서 클래스 `11`(`SystemModuleInformation`)을 지원합니다. 길이 0의 크기 조회와 모델 제공자 및 입력 드라이버의 완전한 Win64 모듈 레코드를 반환합니다. 부분 버퍼와 알 수 없는 정보 클래스는 명시적으로 중단합니다. |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 선언된 변환 후 하위 구간, 비캐시 RO／RW, 공유 별칭과 정확한 unmap. 임의 물리 메모리는 미지원 |
 | `IoConnectInterrupt`, `IoDisconnectInterrupt`, `IoConnectInterruptEx`, `IoDisconnectInterruptEx` | 정확히 할당된 독점/공유 latched 또는 level_sensitive 라인, PASSIVE_LEVEL의 기존 ABI 및 Ex 1/2/4, 엄격한 연결 세대와 잠금 소유권 |

@@ -57,6 +57,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelPoolCalls.cpp
   KernelObjectCalls.cpp
   KernelMemoryCalls.cpp
+  KernelModelBugCheck.cpp
   KernelModelIO.cpp
   KernelModelUserMemory.cpp
   KernelModelPhysicalMemory.cpp

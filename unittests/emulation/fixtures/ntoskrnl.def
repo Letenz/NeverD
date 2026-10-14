@@ -61,6 +61,8 @@ EXPORTS
   DbgPrintEx
   MmGetSystemRoutineAddress
   MmIsAddressValid
+  KeRegisterBugCheckReasonCallback
+  KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
   RtlCompareUnicodeString
   RtlEqualUnicodeString

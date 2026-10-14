@@ -2247,13 +2247,13 @@ jobs:
           version: 'v0.16.0'
       - name: Initialize pinned compiler, decoder, signatures and binary corpus
         run: git submodule update --init --depth 1 third_party/llvm-project third_party/capstone signatures unittests/corpus
-      - name: Install cross-target tooling and the PE32 Wine runtime
+      - name: Install cross-target tooling and the PE32/PE64 Wine runtimes
         timeout-minutes: 25
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
-            install --yes --no-install-recommends lld wine wine32:i386 gcc-multilib
+            install --yes --no-install-recommends lld wine wine32:i386 wine64 gcc-multilib
       - name: Verify runtime evidence admission
         run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
       - name: Fetch genuine MSVC C++ source inputs

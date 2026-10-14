@@ -239,6 +239,10 @@ llvm::Expected<uint64_t> KernelModel::call(
     return resolveRoutine(A[0]);
   case KernelAPIKind::MmIsAddressValid:
     return isResidentKernelAddress(A[0]);
+  case KernelAPIKind::KeRegisterBugCheckReasonCallback:
+    return registerBugCheckCallback(A[0], A[1], uint32_t(A[2]), A[3]);
+  case KernelAPIKind::KeDeregisterBugCheckReasonCallback:
+    return deregisterBugCheckCallback(A[0]);
   case KernelAPIKind::KeWaitForSingleObject:
   case KernelAPIKind::KeDelayExecutionThread:
     return beginWait(A, Kind == KernelAPIKind::KeDelayExecutionThread);

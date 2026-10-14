@@ -821,6 +821,25 @@ private:
   // Only loader-owned mapped spans, excluding image holes. Physical backing is
   // registered lazily when a permitted image range is first locked.
   std::map<uint64_t, uint64_t> ImageRAM;
+  ExecutionContract Contract = ExecutionContract::Legacy;
+  struct BugCheckRecord {
+    uint64_t Callback, Component;
+    uint32_t Reason;
+    bool Live;
+  };
+  // Retain opaque record identities after removal: native list/checksum bytes
+  // have no concrete model value, even when the State byte becomes empty.
+  std::map<uint64_t, BugCheckRecord> BugCheckRecords;
+  llvm::Error validateBugCheckRecord(uint64_t Record) const;
+  llvm::Error validateBugCheckAccess(uint64_t Address, uint32_t Size,
+                                     bool IsWrite) const;
+  llvm::Error validateBugCheckPageBorrow(uint64_t Address, uint64_t Size) const;
+  bool hasLiveBugCheckCallbacks() const;
+  llvm::Expected<uint64_t> registerBugCheckCallback(uint64_t Record,
+                                                    uint64_t Callback,
+                                                    uint32_t Reason,
+                                                    uint64_t Component);
+  llvm::Expected<uint64_t> deregisterBugCheckCallback(uint64_t Record);
   std::optional<uint64_t> imageOwnerForRange(uint64_t Address,
                                              uint64_t Size) const;
   bool unpackImageMDLCall(KernelAPIKind Kind,
