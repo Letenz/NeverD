@@ -245,7 +245,9 @@ noinline/notail 条件和唯一的动态块，拒绝复制到 callee 或其他�
 生命周期证明。finally 返回值只有经过完全不可观察的私有 spill 链时才可移除。
 普通私有叶函数或有界无环调用图，在不借用父帧或对象、不读取传入栈参数且没有
 callee 清栈时，可以保留父函数已经捕获的跳转缓冲区。代码必须不可变，映像写入
-不得覆盖 scope 元数据或 import。易失寄存器和返回值继续保持未知，原生安装仍
+不得覆盖 scope 元数据或 import。EH3/EH4 均可保留 capture；EH4 还要求调用处的
+cookie 槽仍然有效，并拒绝 helper 及其子调用对映像 cookie 的完整或部分覆盖。
+易失寄存器和返回值继续保持未知，原生安装仍
 独立检查完整调用图及返回地址读回。仅证明栈平衡不足以保留 capture；当前调用 SP
 以下的存储也不能继续携带精确值。
 `longjmp-retired-scope` 与 `longjmp-retired-inner-scope` 分别验证退出整个作用域和

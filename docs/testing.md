@@ -4205,9 +4205,13 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats eleven capture/resumption scenarios with and without
+The EH4 jump matrix repeats thirteen capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
-parameters and retired scopes. Each case compares the original and nine generated
+parameters, retired scopes and private leaf/graph calls with a live buffer.
+The helper cases require exactly one observed helper effect after resumption.
+`RegistrationSEHPrivateCall.EH4CalleeGraphsPreserveTheImageCookie` rejects
+transitive cookie/header writes, partial cookie overlap and invalid cookie
+addresses. Each case compares the original and nine generated
 variants at two bases under the authenticated native CRT. The source and MedIR
 mutation tests reject wrong unwind protocols, cookie addresses, argument extents
 and cookie overlap; callback scratch tests retain rejection of cookie/table writes

@@ -95,6 +95,11 @@ _registration_entry:
 #endif
   test eax,eax
   jnz .Lresumed
+#if REGISTRATION_CASE == 50
+  call _registration_no_raise
+#elif REGISTRATION_CASE == 51
+  call _registration_private_graph
+#endif
 #if RETIRED_JUMP
   mov dword ptr [ebp-108],1
 #if REGISTRATION_CASE == 19
@@ -169,6 +174,10 @@ _registration_entry:
 #endif
 #endif
 .Lresumed:
+#if REGISTRATION_CASE == 50 || REGISTRATION_CASE == 51
+  cmp dword ptr [_registration_helper_visits],1
+  jne .Lbad
+#endif
 #if REGISTRATION_CASE == 12
   cmp dword ptr [ebp+8],7
   jne .Lbad

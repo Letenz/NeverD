@@ -19,12 +19,18 @@ namespace neverd::registration_state {
 
 bool SEHPrivateCallProof::proveCallee(va_t Target, size_t &Work) {
   if (Image.IsRelocatable || !Function.ExceptionMetadata ||
-      Function.ExceptionMetadata->Personality !=
-          ExceptionPersonality::ExceptHandler3 ||
       !Function.ExceptionMetadata->Registration ||
       Image.ExceptionMetadata.findFunction(Target))
     return false;
   const auto &EH = *Function.ExceptionMetadata;
+  const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
+  if ((!EH4 && EH.Personality != ExceptionPersonality::ExceptHandler3) ||
+      (EH4 && (!Image.DynInfo.SecurityCookieRVA || Image.Base > UINT32_MAX ||
+               Image.DynInfo.SecurityCookieRVA > UINT32_MAX - Image.Base)))
+    return false;
+  const va_t Cookie = EH4 ? Image.Base + Image.DynInfo.SecurityCookieRVA : 0;
+  if (EH4 && Cookie > UINT32_MAX - 3)
+    return false;
   const auto Table = coff_loader::getX86RegistrationSEHScopeTableRange(EH);
   if (!Table || EH.CodeRange.contains(Target))
     return false;
@@ -49,7 +55,8 @@ bool SEHPrivateCallProof::proveCallee(va_t Target, size_t &Work) {
       return false;
   }
   for (const auto &Write : ABI->ImageWrites) {
-    if (Write.End <= Write.Begin || Table->overlaps(Write))
+    if (Write.End <= Write.Begin || Table->overlaps(Write) ||
+        (EH4 && Write.Begin < Cookie + 4 && Cookie < Write.End))
       return false;
     for (va_t Begin = Write.Begin; Begin != Write.End;) {
       const auto Width =
