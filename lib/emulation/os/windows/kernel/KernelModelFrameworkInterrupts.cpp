@@ -67,7 +67,7 @@ void KernelModel::configureFrameworkInterruptHost() {
       -> llvm::Expected<std::optional<KernelInterrupts::Connection>> {
     const auto *Device = Resources.find(Input.PDO);
     if (!Device) {
-      if (isProviderDevice(Input.PDO) && !Input.ResourceIndex)
+      if (isPnpProviderDevice(Input.PDO) && !Input.ResourceIndex)
         return std::optional<KernelInterrupts::Connection>{};
       return frameworkInterruptError("selection requires a resource provider");
     }

@@ -536,10 +536,20 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     // An existing file identifies its device even when several devices exist.
     if (Input.Kind != DriverRequestKind::Create && FileIt != FileObjects.end())
       Device = FileIt->second.Device;
-    else if (Devices.size() == 1)
-      Device = Devices.begin()->first;
-    else
-      return ioError("an unnamed request requires exactly one live device");
+    else {
+      for (const auto &[Address, Candidate] : Devices) {
+        if (Candidate.OwnerKind != DeviceOwnerKind::Guest ||
+            Candidate.DeletePending || Candidate.UnlinkedFromDriver)
+          continue;
+        if (Device)
+          return ioError(
+              "an unnamed request requires exactly one live guest device");
+        Device = Address;
+      }
+      if (!Device)
+        return ioError(
+            "an unnamed request requires exactly one live guest device");
+    }
   } else {
     auto Resolved = resolveDeviceName(Input.Device);
     if (!Resolved)
@@ -578,6 +588,8 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
   auto Route = deviceStack(*Top);
   if (!Route)
     return Route.takeError();
+  if (auto E = validateFileSystemRoute(*Route))
+    return E;
   auto StackCount = Memory.readInteger(*Top + DeviceStackCountOffset, 1);
   if (!StackCount)
     return StackCount.takeError();
@@ -1335,7 +1347,16 @@ llvm::Error KernelModel::finishUnload() {
       return ioError("unload returned with live object references or handles");
   if (Framework && Framework->hasLiveBinding())
     return ioError("unload returned with a live framework binding");
-  if (!Devices.empty() || !SymbolicLinks.empty() || !Allocations.empty() ||
+  const bool OnlyDeclaredVolumes =
+      Devices.size() == FileSystem.volumeCount() &&
+      std::all_of(Devices.begin(), Devices.end(), [&](const auto &Entry) {
+        const auto &[Address, Device] = Entry;
+        return Device.OwnerKind == DeviceOwnerKind::FileSystemProvider &&
+               FileSystem.ownsDevice(Address) && !Device.Lower &&
+               !Device.Upper && !Device.DeletePending &&
+               !Device.UnlinkedFromDriver && !Device.InternalReferences;
+      });
+  if (!OnlyDeclaredVolumes || !SymbolicLinks.empty() || !Allocations.empty() ||
       !FileObjects.empty() || !Requests.empty() || !DriverIRPs.empty() ||
       !FileInformationQueries.empty() || PendingFileQueryContinuation ||
       !MDLs.empty() || !WorkItems.empty() || !IRPCalls.empty() ||

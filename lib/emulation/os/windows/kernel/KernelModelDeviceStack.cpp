@@ -46,7 +46,8 @@ llvm::Expected<std::vector<uint64_t>>
 KernelModel::driverDeviceInventory(ObjectRead Mode) const {
   std::vector<uint64_t> Inventory;
   std::set<uint64_t> Seen;
-  for (uint64_t Owner : {DriverObject, PnpProviderDriver}) {
+  for (uint64_t Owner :
+       {DriverObject, PnpProviderDriver, FileSystemProviderDriver}) {
     if (!Owner)
       continue;
     auto Head = readObjectField(Owner + DriverDeviceHead, 8, Mode);
@@ -76,9 +77,7 @@ KernelModel::driverDeviceInventory(ObjectRead Mode) const {
 
 llvm::Error KernelModel::validateDeviceTopology(ObjectRead Mode) const {
   for (const auto &[Address, Device] : Devices) {
-    const uint64_t ExpectedOwner = Device.OwnerKind == DeviceOwnerKind::Guest
-                                       ? DriverObject
-                                       : PnpProviderDriver;
+    const uint64_t ExpectedOwner = deviceOwnerDriver(Device.OwnerKind);
     if (Device.Address != Address || !ExpectedOwner ||
         Device.OwnerDriver != ExpectedOwner)
       return deviceError("device has an unsupported driver owner");
@@ -110,10 +109,14 @@ llvm::Error KernelModel::validateDeviceTopology(ObjectRead Mode) const {
     if (!Flags)
       return Flags.takeError();
     if (bool(*Flags & DeviceBusEnumerated) !=
-        (Device.OwnerKind == DeviceOwnerKind::Provider))
+        (Device.OwnerKind == DeviceOwnerKind::PnpProvider))
       return deviceError("DEVICE_OBJECT bus-enumerated role was corrupted");
-    if (Device.OwnerKind == DeviceOwnerKind::Provider && Device.Lower)
-      return deviceError("provider PDO cannot attach above another device");
+    if (Device.OwnerKind != DeviceOwnerKind::Guest && Device.Lower)
+      return deviceError(
+          "terminal provider cannot attach above another device");
+    if (Device.OwnerKind == DeviceOwnerKind::FileSystemProvider)
+      if (auto E = validateFileSystemDevice(Address, Mode))
+        return E;
     if (Device.Lower) {
       auto Lower = Devices.find(Device.Lower);
       if (Lower == Devices.end() || Lower->second.Upper != Address)
@@ -254,7 +257,7 @@ llvm::Expected<uint64_t> KernelModel::attachDevice(uint64_t Source,
     return deviceError("reattaching a device to another PnP identity is "
                        "outside this profile");
   if (*PnpOwner &&
-      (!isProviderDevice(Stack->back()) || Stack->back() != *PnpOwner))
+      (!isPnpProviderDevice(Stack->back()) || Stack->back() != *PnpOwner))
     return deviceError("PnP attachment target no longer reaches its PDO");
   Stack->push_back(Source);
   for (uint64_t Address : *Stack)
@@ -339,7 +342,7 @@ llvm::Error KernelModel::detachFrameworkPnpDevice(uint64_t Source,
   auto FDO = Devices.find(Source);
   auto Physical = Devices.find(PDO);
   if (FDO == Devices.end() || Physical == Devices.end() ||
-      !FrameworkDevices.count(Source) || !isProviderDevice(PDO) ||
+      !FrameworkDevices.count(Source) || !isPnpProviderDevice(PDO) ||
       FDO->second.PnpDevice != PDO || FDO->second.Lower != PDO ||
       FDO->second.Upper || Physical->second.Upper != Source)
     return deviceError("framework PnP detach requires its direct FDO/PDO pair");

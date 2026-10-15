@@ -17,6 +17,7 @@
 #include "../kernel/KernelVersionQuery.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverFileSystemJSON.h"
 #include "DriverLoaderViewJSON.h"
 #include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
@@ -2082,6 +2083,8 @@ llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
 }
 
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
+  if (auto E = validateDriverFileSystem(Options.FileSystem))
+    return E;
   if (Options.LoaderView)
     if (auto E = kernel_loader_view::validate(*Options.LoaderView))
       return E;
@@ -2462,6 +2465,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!ParsedRegistry)
       return ParsedRegistry.takeError();
     Base.Registry = std::move(*ParsedRegistry);
+  }
+  if (const auto *FileSystem = Object->get(FileSystemField)) {
+    auto Volumes = driver_filesystem::parse(*FileSystem);
+    if (!Volumes)
+      return Volumes.takeError();
+    Base.FileSystem = std::move(*Volumes);
   }
   if (const auto *Time = Object->get(RegistrySystemTime100nsField)) {
     Base.RegistrySystemTime100ns = Time->getAsUINT64();

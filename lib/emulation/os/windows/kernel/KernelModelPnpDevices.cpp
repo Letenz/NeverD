@@ -27,10 +27,10 @@ llvm::Error pnpDeviceError(const llvm::Twine &Message) {
 }
 } // namespace
 
-bool KernelModel::isProviderDevice(uint64_t Address) const {
+bool KernelModel::isPnpProviderDevice(uint64_t Address) const {
   const auto Found = Devices.find(Address);
   return Found != Devices.end() &&
-         Found->second.OwnerKind == DeviceOwnerKind::Provider;
+         Found->second.OwnerKind == DeviceOwnerKind::PnpProvider;
 }
 
 KernelModel::PnpDeviceRecord *KernelModel::pnpDeviceForPDO(uint64_t PDO) {
@@ -59,7 +59,7 @@ llvm::Expected<uint64_t> KernelModel::pnpDeviceForRoute(uint64_t Device) const {
   uint64_t Identity = 0;
   for (uint64_t Address : *Route) {
     const uint64_t Owner =
-        isProviderDevice(Address) ? Address : Devices.at(Address).PnpDevice;
+        isPnpProviderDevice(Address) ? Address : Devices.at(Address).PnpDevice;
     if (!Owner)
       continue;
     if (!pnpDeviceForPDO(Owner))
@@ -103,7 +103,7 @@ llvm::Error KernelModel::preparePnpDevices() {
       return pnpDeviceError("provider requires explicit initial power states");
     auto Created = createDeviceObjectForOwner(
         {}, 0, UnknownDeviceType, SecureOpen, false, PnpProviderDriver,
-        DeviceOwnerKind::Provider);
+        DeviceOwnerKind::PnpProvider);
     if (!Created)
       return Created.takeError();
     if (Created->Status != StatusSuccess)
@@ -162,7 +162,7 @@ KernelModel::beginAddDevice(llvm::StringRef ID) {
         return Entry.second.AddDeviceActive;
       }))
     return pnpDeviceError("AddDevice can execute only once and serially");
-  if (!isProviderDevice(Device.PDO) || Unloading || Unloaded ||
+  if (!isPnpProviderDevice(Device.PDO) || Unloading || Unloaded ||
       !Requests.empty() || CurrentIRQL != scheduler::PassiveLevel)
     return pnpDeviceError(
         "AddDevice requires a live idle PDO at PASSIVE_LEVEL");
@@ -221,7 +221,7 @@ llvm::Error KernelModel::finalizeAddDevice(llvm::StringRef ID) {
   auto &Device = Found->second;
   if (!(*Device.AddDeviceStatus & profile::NTStatusFailureMask))
     return llvm::Error::success();
-  if (!isProviderDevice(Device.PDO))
+  if (!isPnpProviderDevice(Device.PDO))
     return llvm::Error::success();
   if (std::any_of(Devices.begin(), Devices.end(), [&](const auto &Entry) {
         return Entry.second.OwnerKind == DeviceOwnerKind::Guest &&
@@ -276,7 +276,7 @@ llvm::Error KernelModel::retirePnpProvider(uint64_t PDO) {
   auto &Device = Found->second;
   if (auto E = canReleaseResources(PDO))
     return E;
-  if (Device.OwnerKind != DeviceOwnerKind::Provider ||
+  if (Device.OwnerKind != DeviceOwnerKind::PnpProvider ||
       Device.OwnerDriver != PnpProviderDriver)
     return pnpDeviceError("provider teardown cannot delete a guest device");
   if (Device.Lower || Device.Upper || Device.InternalReferences ||
@@ -327,7 +327,7 @@ llvm::Error KernelModel::validatePnpRemovalFinalization(
   if (auto E = canReleaseResources(PDO))
     return E;
   const auto *Configured = pnpDeviceForPDO(PDO);
-  if (!Configured || !isProviderDevice(PDO))
+  if (!Configured || !isPnpProviderDevice(PDO))
     return pnpDeviceError("remove finalization lost its provider identity");
   auto Inventory = driverDeviceInventory();
   if (!Inventory)

@@ -938,7 +938,7 @@ A PASSIVE_LEVEL, lunghezze inferiori a 4 restituiscono `STATUS_INFO_LENGTH_MISMA
 
 `RtlCaptureContext` condivide chiamate importate/dinamiche su checked-x64 Unicorn/KVM/WHP a IRQL <= DISPATCH_LEVEL. Il record kernel di 1232 byte richiede allineamento a 16 e accesso completo in lettura/scrittura. Scrive solo `[48,72)`, `[120,262)`, `[280,284)` e `[416,672)`; conserva gli altri byte, dati/puntatori x87 e MXCSR mask. ContextFlags=`0x10000f`, RSP chiamante=RSP ingresso+8, RIP proviene dal ritorno reale. Scrive 8 byte di flag a RSP ingresso-8; RAX riceve EFLAGS esteso con zeri e i flag aritmetici seguono ADD(RSP ingresso-8,8). DS/ES/FS/GS usano SS logico checked, non valori host o grezzi. Record, ritorno e scratch richiedono RAM kernel ordinaria, oggetti vivi, permessi e mappatura fisica unica; niente sovrapposizione e RSP ingresso modulo 16 uguale a 8. Errori di raccolta/ammissione non modificano CPU/RAM; legacy è rifiutato. Non rappresenta tutte le implementazioni Windows; la dipendenza ambientale resta dopo sovrascrittura e non autorizza UNPACK né premesse simboliche.
 
-I corpi file condividono un’identità per indirizzo tra handle dello scenario, aggiuntivi e puntatori. ObOpenObjectByPointer apre FILE_OBJECT già creati in modalità kernel, con OBJ_KERNEL_HANDLE facoltativo e conversione dei diritti generici. L’ultimo handle di un processo genera IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL se altri processi ne conservano; l’ultimo globale genera CLEANUP. CLEANUP differito conserva la risposta dichiarata del provider. CLOSE attende ultimi handle, puntatori e continuazioni anche dopo il riuso del numero. Gli handle kernel appartengono al sistema: CLEANUP cambia temporaneamente processo effettivo conservando thread, processo creatore e PreviousMode; CLOSE ripristina il processo liberatore. I callback pendenti sospendono il chiamante. CREATE fallito mantiene solo memoria referenziata senza dispositivo. Ogni corpo associato conta una volta in DEVICE_OBJECT.ReferenceCount. WDM e KMDF condividono la durata; KMDF ordinario completa LOCK_CONTROL con STATUS_INVALID_DEVICE_REQUEST. Riapertura nei callback di chiusura, chiusura con I/O pendente, inoltro LOCK_CONTROL dei filtri KMDF, nomi e file system dichiarati restano non supportati.
+I corpi file condividono un’identità per indirizzo tra handle dello scenario, aggiuntivi e puntatori. ObOpenObjectByPointer apre FILE_OBJECT già creati in modalità kernel, con OBJ_KERNEL_HANDLE facoltativo e conversione dei diritti generici. L’ultimo handle di un processo genera IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL se altri processi ne conservano; l’ultimo globale genera CLEANUP. CLEANUP differito conserva la risposta dichiarata del provider. CLOSE attende ultimi handle, puntatori e continuazioni anche dopo il riuso del numero. Gli handle kernel appartengono al sistema: CLEANUP cambia temporaneamente processo effettivo conservando thread, processo creatore e PreviousMode; CLOSE ripristina il processo liberatore. I callback pendenti sospendono il chiamante. CREATE fallito mantiene solo memoria referenziata senza dispositivo. Ogni corpo associato conta una volta in DEVICE_OBJECT.ReferenceCount. WDM e KMDF condividono la durata; KMDF ordinario completa LOCK_CONTROL con STATUS_INVALID_DEVICE_REQUEST. Riapertura nei callback di chiusura, chiusura con I/O pendente, inoltro LOCK_CONTROL dei filtri KMDF, nomi e I/O del provider restano non supportati.
 
 ## IRP di interrogazione delle informazioni sui file
 
@@ -953,3 +953,40 @@ Le query sincrone mantengono una regione critica fino al CLOSE finale e ripristi
 Il profilo a processore singolo offre `KeGetCurrentProcessorNumberEx` a ogni IRQL modellato: indice zero e output opzionale di quattro byte per gruppo zero, processore zero e byte riservato zero. Rifiuta output non validi e preserva i byte adiacenti. `KeRaiseIrqlToDpcLevel` accetta IRQL 0, 1 o 2, restituisce il livello precedente e condivide lo stack di annidamento per esecuzione con `KfRaiseIrql` e `KeLowerIrql`. Import e ricerca dinamica usano lo stesso contratto. Il wrapper inline del WDK x64 chiama `KfRaiseIrql(2)`; anche l’export separato è disponibile dinamicamente.
 
 `RtlInt64ToUnicodeString` formatta l’intero valore senza segno a 64 bit a PASSIVE_LEVEL. Sono ammesse le basi 2, 8, 10 e 16; zero seleziona quella decimale. `RtlIntegerToUnicodeString` mantiene il troncamento ULONG. Entrambe scrivono `Length` prima di restituire `STATUS_BUFFER_OVERFLOW`, richiedono spazio per il terminatore e preservano i byte inutilizzati. Dopo le cifre rileggono `Buffer` per il terminatore, anche se l’output si sovrappone al record. Un errore successivo del terminatore conserva le cifre già scritte.
+
+
+## Inventario dei file system dichiarati
+
+Il campo facoltativo `filesystem` dichiara i volumi della sessione prima di DriverEntry. L’omissione lascia ignota la disponibilità; `[]` dichiara zero provider. Un volume vuoto include esplicitamente la radice. Non vengono letti file host né presunti successi I/O. Ricerca dei dispositivi, riferimenti e collegamento dei filtri condividono le identità canoniche. Creazione/apertura, metadati, lettura/scrittura, enumerazione e controlli restano non supportati; i percorsi con un volume dichiarato vengono rifiutati prima di creare l’oggetto file o inviare l’IRP.
+
+Nomi e percorsi usano ASCII stampabile senza distinzione di maiuscole, directory padre esplicite e ID a 64 bit unici per volume. Alias, stream, link, reparse point e Unicode sono esclusi. Tipo, attributi, allocazione e quattro timestamp signed64 non negativi sono obbligatori anche a zero. I file richiedono byte esadecimali esatti in `data`; EOF è il loro numero. Le directory omettono data e allocano zero. Settori: potenze di due 512–4096; allocazione allineata e almeno EOF; maschera 2^n−1 inferiore al settore. `full_access` esclude solo i rifiuti ACL.
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` conserva l’input; `filesystem` pubblica lo stato indipendente con `device_object` ed `end_of_file`, anche dopo arresti o errori di proiezione. `devices` contiene solo dispositivi guest. I volumi possono sopravvivere allo scaricamento, ma riferimenti, handle, collegamenti e IRP guest devono terminare. Ogni dichiarazione, anche `[]`, impedisce il ripristino eseguibile UNPACK. Unicorn precedente può applicare una scrittura rifiutata prima di fermarsi; la diagnosi conserva l’errore di proiezione.

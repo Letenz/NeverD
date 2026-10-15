@@ -44,6 +44,8 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
   auto Route = deviceStack(Device);
   if (!Route)
     return Route.takeError();
+  if (auto E = validateFileSystemRoute(*Route))
+    return E;
   const auto &Storage = Allocation->second;
   struct Field {
     uint64_t Offset, Expected;
@@ -119,7 +121,7 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
                                       *Output);
     if (!Plan)
       return Plan.takeError();
-  } else if (isProviderDevice(Device)) {
+  } else if (isPnpProviderDevice(Device)) {
     return driverIRPError("internal provider submission requires USB idle");
   }
   constexpr uint64_t CompletionFlags =
@@ -128,7 +130,7 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
       (*Control & CompletionFlags) != CompletionFlags)
     return driverIRPError("caller packets require a completion routine for "
                           "success, error and cancellation");
-  auto PC = isProviderDevice(Device)
+  auto PC = isPnpProviderDevice(Device)
                 ? llvm::Expected<uint64_t>(0)
                 : Memory.readInteger(Target->second.OwnerDriver +
                                          DriverDispatchOffset +
@@ -136,7 +138,7 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
                                      sizeof(uint64_t));
   if (!PC)
     return PC.takeError();
-  if (!*PC && !isProviderDevice(Device))
+  if (!*PC && !isPnpProviderDevice(Device))
     return driverIRPError(
         "internal target requires a registered dispatch routine");
   uint64_t CompletionDevice = 0;

@@ -123,6 +123,8 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
       std::find(Request->DeviceRoute.begin(), Request->DeviceRoute.end(),
                 Device) == Request->DeviceRoute.end())
     return stackError("target is outside the request's retained device route");
+  if (auto E = validateFileSystemRoute(Request->DeviceRoute))
+    return E;
   auto Cursor = requestStackCursor(IRP);
   if (!Cursor)
     return Cursor.takeError();
@@ -156,7 +158,7 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
       return stackError(
           "changing the power minor while forwarding is unsupported");
   }
-  const bool Provider = isProviderDevice(Device);
+  const bool Provider = isPnpProviderDevice(Device);
   llvm::Expected<uint64_t> PC =
       Provider ? llvm::Expected<uint64_t>(0)
                : Memory.readInteger(Devices.at(Device).OwnerDriver +

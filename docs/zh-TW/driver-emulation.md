@@ -684,7 +684,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 共用匯入與動態實作，要求 IRQL <= DISPATCH_LEVEL。記錄須為 16 位元組對齊、完整可讀寫的 1232 位元組核心 RAM。只寫入 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，保留其餘位元組及 x87 資料/指標、MXCSR mask。ContextFlags=`0x10000f`，呼叫者 RSP=入口 RSP+8，RIP 來自實際返回槽；入口 RSP-8 寫入 8 位元組旗標，RAX 為零擴展 EFLAGS，算術旗標依 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 邏輯 SS，不代表主機或原始後端值。完整記錄、返回槽與暫存槽須通過普通核心 RAM、有效物件、權限與唯一實體映射檢查，記錄不可重疊返回/暫存範圍；入口 RSP 模 16 為 8。擷取或驗證失敗不改 CPU/RAM，legacy 明確拒絕。此有界模型不代表所有 Windows 實作；即使覆寫擷取內容仍保留環境相依性，不授予 UNPACK 還原或符號前提。
 
-檔案物件以位址維持唯一身分，由情境控制代碼、額外控制代碼與呼叫端指標共同參考。ObOpenObjectByPointer 支援已建立的 FILE_OBJECT、核心存取和選用 OBJ_KERNEL_HANDLE，並將通用檔案權限映射為具體權限。關閉某行程最後一個控制代碼時，若其他行程仍持有控制代碼，便傳送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；全域最後一個才傳送 CLEANUP。延後的情境 CLEANUP 保留宣告的下層回應。即使編號已重用，CLOSE 仍等待最後的控制代碼、指標及關閉續調。核心控制代碼屬於系統行程：CLEANUP 暫時使用該有效行程，保留呼叫執行緒、建立行程及 PreviousMode；CLOSE 恢復實際釋放者的行程。暫止回呼暫停釋放者。CREATE 失敗僅保留帶參考的儲存空間並清除裝置關聯。每個關聯物件只計入一次 DEVICE_OBJECT.ReferenceCount。WDM 與 KMDF 共用生命週期；一般 KMDF 裝置以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。關閉回呼內重開、存在未完成檔案 I/O 時關閉、KMDF 篩選驅動程式的 LOCK_CONTROL 轉送、名稱查詢及宣告式檔案系統提供者仍未支援。
+檔案物件以位址維持唯一身分，由情境控制代碼、額外控制代碼與呼叫端指標共同參考。ObOpenObjectByPointer 支援已建立的 FILE_OBJECT、核心存取和選用 OBJ_KERNEL_HANDLE，並將通用檔案權限映射為具體權限。關閉某行程最後一個控制代碼時，若其他行程仍持有控制代碼，便傳送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；全域最後一個才傳送 CLEANUP。延後的情境 CLEANUP 保留宣告的下層回應。即使編號已重用，CLOSE 仍等待最後的控制代碼、指標及關閉續調。核心控制代碼屬於系統行程：CLEANUP 暫時使用該有效行程，保留呼叫執行緒、建立行程及 PreviousMode；CLOSE 恢復實際釋放者的行程。暫止回呼暫停釋放者。CREATE 失敗僅保留帶參考的儲存空間並清除裝置關聯。每個關聯物件只計入一次 DEVICE_OBJECT.ReferenceCount。WDM 與 KMDF 共用生命週期；一般 KMDF 裝置以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。關閉回呼內重開、存在未完成檔案 I/O 時關閉、KMDF 篩選驅動程式的 LOCK_CONTROL 轉送、名稱查詢及提供者檔案 I/O仍未支援。
 
 ## 檔案資訊查詢 IRP
 
@@ -699,3 +699,40 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 單處理器設定在所有已建模 IRQL 上實作 `KeGetCurrentProcessorNumberEx`，傳回處理器索引零，並可選地精確寫入四位元組：群組零、處理器零及保留位元組零。輸出檢查保留相鄰記憶體並拒絕無效儲存。`KeRaiseIrqlToDpcLevel` 接受 IRQL 0、1、2，傳回原層級，並與 `KfRaiseIrql`、`KeLowerIrql` 共用執行內容的巢狀堆疊。匯入及動態查找共用這些契約。真正的 x64 WDK 內聯包裝呼叫 `KfRaiseIrql(2)`；獨立匯出入口也能動態查找。
 
 `RtlInt64ToUnicodeString` 在 PASSIVE_LEVEL 格式化完整的無號 64 位元值，支援 2、8、10、16 進位，0 代表十進位。既有 `RtlIntegerToUnicodeString` 保留 ULONG 截斷。兩者先寫入 `Length`，再回報 `STATUS_BUFFER_OVERFLOW`，必須預留終止字元空間，並保留未使用的位元組。寫入數字後會重新讀取 `Buffer` 再寫入終止字元，包含輸出與記錄重疊的情況；終止字元寫入失敗時，已寫入的數字仍保留。
+
+
+## 宣告式檔案系統清單
+
+選用欄位 `filesystem` 在 DriverEntry 前宣告工作階段內的磁碟區。省略表示可用性未知；`[]` 表示沒有檔案系統提供者。空磁碟區必須明確包含根目錄。宣告不讀取主機檔案，也不使檔案 I/O 自動成功。裝置查找、指標參考及來賓篩選器附加共用裝置身分；建立／開啟、中繼資料查詢、讀寫、目錄列舉及控制操作仍未實作。包含宣告磁碟區的路徑會在建立檔案物件或提交 IRP 前拒絕。
+
+名稱與路徑限可列印 ASCII，忽略大小寫辨識；父目錄須明確宣告，64 位元檔案 ID 在各磁碟區內唯一。不接受別名、串流、連結、重新解析點及 Unicode 路徑。每個節點必須提供類型、屬性、配置大小及四個非負有號 64 位元時間戳記，包含零。檔案須提供精確十六進位 `data`，空檔案使用空字串；EOF 為位元組數。目錄不含 data 且配置為零。磁區為 512–4096 的二次方，配置須對齊磁區並涵蓋 EOF；對齊遮罩為小於磁區大小的 2^n−1。`full_access` 僅排除 ACL 拒絕。
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。

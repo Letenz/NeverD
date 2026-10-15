@@ -102,6 +102,82 @@ protected:
   }
 };
 
+TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
+  for (char Mode : {'S', 'W'}) {
+    const std::string Scenario =
+        std::string(R"({"service_name":"DeclaredFileSystem)") + Mode +
+        R"(","unload":true,"filesystem":[{"device_name":"\\Device\\DeclaredVolume",)"
+        R"("access_policy":"full_access","sector_size":4096,"alignment_mask":511, "nodes":[)"
+        R"({"path":"\\","kind":"directory","file_id":0,"attributes":16,"allocation_size":0,)"
+        R"("creation_time_100ns":0,"last_access_time_100ns":0,"last_write_time_100ns":0,"change_time_100ns":0},)"
+        R"({"path":"\\Data","kind":"file","file_id":18446744073709551615,"attributes":32,)"
+        R"("allocation_size":4096,"creation_time_100ns":1,"last_access_time_100ns":2,)"
+        R"("last_write_time_100ns":3,"change_time_100ns":4,"data":"007f80ff"}]}]})";
+    const auto FromC = takeString(neverd_emulate_driver_scenario_json(
+        Session, fixture("driver_filesystem_provider").c_str(),
+        Scenario.c_str(), nullptr));
+    ASSERT_FALSE(FromC.empty()) << error();
+    const auto FromCLI =
+        runCLI(Scenario, Mode == 'S' ? 0 : 3, "driver_filesystem_provider");
+    for (const auto &Text : {FromC, FromCLI}) {
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"),
+                Mode == 'S' ? "returned" : "model_error");
+      EXPECT_EQ(Report->getBoolean("unload_completed"), Mode == 'S');
+      const auto *State = Report->getArray("filesystem");
+      ASSERT_NE(State, nullptr);
+      ASSERT_EQ(State->size(), 1u);
+      const auto &Volume = *State->front().getAsObject();
+      EXPECT_NE(Volume.getString("device_object"), "0x0");
+      const auto *Nodes = Volume.getArray("nodes");
+      ASSERT_NE(Nodes, nullptr);
+      ASSERT_EQ(Nodes->size(), 2u);
+      const auto &File = *(*Nodes)[1].getAsObject();
+      EXPECT_EQ(File.getString("data"), "007f80ff");
+      EXPECT_EQ(File.getInteger("end_of_file"), 4);
+      EXPECT_EQ(File.getInteger("change_time_100ns"), 4);
+      EXPECT_EQ(File.get("file_id")->getAsUINT64(), UINT64_MAX);
+      const auto *Configuration = Report->getObject("configuration");
+      ASSERT_NE(Configuration, nullptr);
+      const auto *Input = Configuration->getArray("filesystem");
+      ASSERT_NE(Input, nullptr);
+      const auto *InputVolume = Input->front().getAsObject();
+      EXPECT_EQ(InputVolume->get("device_object"), nullptr);
+      EXPECT_EQ((*InputVolume->getArray("nodes"))[1].getAsObject()->get(
+                    "end_of_file"),
+                nullptr);
+    }
+  }
+}
+
+TEST_F(DriverScenarioPublic, FileSystemOmissionEmptyAndInvalidRemainDistinct) {
+  for (bool Empty : {false, true}) {
+    const auto Scenario = Empty ? R"({"filesystem":[]})" : "{}";
+    const auto Text = takeString(neverd_emulate_driver_scenario_json(
+        Session, fixture("success").c_str(), Scenario, nullptr));
+    ASSERT_FALSE(Text.empty()) << error();
+    auto Parsed = llvm::json::parse(Text);
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    const auto *State = Parsed->getAsObject()->get("filesystem");
+    ASSERT_NE(State, nullptr);
+    EXPECT_EQ(State->getAsArray() != nullptr, Empty);
+    if (Empty)
+      EXPECT_TRUE(State->getAsArray()->empty());
+    else
+      EXPECT_EQ(State->kind(), llvm::json::Value::Null);
+  }
+  for (const auto *Scenario :
+       {R"({"filesystem":null})", R"({"filesystem":[{}]})"}) {
+    EXPECT_EQ(neverd_emulate_driver_scenario_json(Session, "missing.sys",
+                                                  Scenario, nullptr),
+              nullptr);
+    EXPECT_NE(error().find("filesystem"), std::string::npos);
+  }
+}
+
 TEST_F(DriverScenarioPublic, EmptyScenarioPreservesInitializationOnlyBehavior) {
   auto Parsed =
       llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(

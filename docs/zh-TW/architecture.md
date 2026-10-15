@@ -1660,3 +1660,6 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 `KernelModelNamespace.cpp` 透過統一參照及控制代碼擁有者解析名稱。裝置紀錄擁有裝置名稱；物件紀錄擁有不可變的驅動/目錄/連結名稱。連結保存捕獲目標位元組，區分永久狀態與名稱綁定。最後控制代碼關閉移除臨時名稱，指標參照決定回收。裝置 I/O 保留控制清單移除，物件參照控制儲存生命週期；後端不另設計數。
 
 KernelModelObjects 在共用物件表管理檔案控制代碼與指標計數。KernelModelFileObjects 選擇行程解鎖或全域清理，在消耗控制代碼前準備請求，並管理延後 CLOSE 與等待。KernelModelIO 保留情境參數，僅在請求完成且派送與續調返回後銷毀物件。KernelFramework 只為內部檔案生命週期回呼攜帶選用有效行程覆寫。DriverSession 保持呼叫執行緒與建立行程身分、啟用繼承位址空間，並於最終釋放前恢復來源內容。獨立排程回呼保留自己的內容。裝置與 PnP 保留檢查物件本身。
+
+
+`KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。

@@ -14,6 +14,7 @@
 #include "DeviceLifecycle.h"
 #include "KernelDMA.h"
 #include "KernelDispatcher.h"
+#include "KernelFileSystem.h"
 #include "KernelFramework.h"
 #include "KernelGuestCall.h"
 #include "KernelInterrupts.h"
@@ -562,6 +563,7 @@ private:
   /// Framework-owned WDM devices and their canonical symbolic-link keys.
   std::map<uint64_t, std::vector<std::string>> FrameworkDevices;
   KernelRegistry Registry;
+  KernelFileSystem FileSystem;
   KernelScheduler Scheduler;
   KernelDispatcher Dispatcher;
   KernelRemoveLocks RemoveLocks;
@@ -1152,7 +1154,7 @@ private:
   };
   std::map<uint64_t, PoolAllocation> Allocations;
   std::map<uint64_t, uint64_t> ArenaAllocations;
-  enum class DeviceOwnerKind { Guest, Provider };
+  enum class DeviceOwnerKind { Guest, PnpProvider, FileSystemProvider };
   struct DeviceRecord {
     uint64_t Address = 0;
     uint64_t Extension = 0;
@@ -1195,11 +1197,15 @@ private:
     std::optional<DriverWakeCapabilities> WakeCapabilities;
   };
   uint64_t PnpProviderDriver = 0;
+  uint64_t FileSystemProviderDriver = 0;
+  uint64_t deviceOwnerDriver(DeviceOwnerKind Kind) const;
+  llvm::Error initializeFileSystem(const DriverOptions &Options);
+  llvm::Error validateFileSystemRoute(llvm::ArrayRef<uint64_t> Route) const;
   bool PnpDevicesPrepared = false;
   std::vector<DriverPnpDevice> ConfiguredPnpDevices;
   std::map<std::string, PnpDeviceRecord> PnpDevices;
   DeviceLifecycle Lifecycle;
-  bool isProviderDevice(uint64_t Address) const;
+  bool isPnpProviderDevice(uint64_t Address) const;
   PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO);
   const PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO) const;
   llvm::Expected<uint64_t> pnpDeviceForRoute(uint64_t Device) const;
@@ -1709,6 +1715,7 @@ private:
                                             DeviceStackQuery Query);
   llvm::Expected<std::vector<uint64_t>> deviceStack(uint64_t Top) const;
   enum class ObjectRead { Execution, Snapshot };
+  llvm::Error validateFileSystemDevice(uint64_t Address, ObjectRead Mode) const;
   llvm::Expected<uint64_t> readObjectField(uint64_t Address, unsigned Width,
                                            ObjectRead Mode) const;
   llvm::Error

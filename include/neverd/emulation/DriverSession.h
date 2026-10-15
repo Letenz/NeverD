@@ -13,6 +13,7 @@
 #ifndef NEVERD_EMULATION_DRIVERSESSION_H
 #define NEVERD_EMULATION_DRIVERSESSION_H
 
+#include "neverd/emulation/DriverFileSystem.h"
 #include "neverd/emulation/DriverPnp.h"
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/DriverRegistry.h"
@@ -43,7 +44,8 @@ enum class DriverRequestKind {
 struct DriverRequest {
   static constexpr uint32_t DefaultRequestorProcessID = 0x1000;
   DriverRequestKind Kind = DriverRequestKind::DeviceControl;
-  /// CREATE with an empty name selects the sole live device; ambiguity fails.
+  /// CREATE with an empty name selects the sole live guest device; ambiguity
+  /// fails. Declared provider volumes do not participate in this selection.
   /// Later requests use their file's device unless a matching name is given.
   std::string Device;
   uint32_t ControlCode = 0;
@@ -193,6 +195,10 @@ struct DriverOptions {
   /// An explicitly populated registry namespace. Omission leaves registry
   /// availability unspecified; an empty inventory models an empty namespace.
   std::optional<std::vector<DriverRegistryKey>> Registry;
+  /// Explicit session-local volumes. Omission means unknown availability; an
+  /// empty vector declares no filesystem providers. File I/O remains
+  /// unsupported.
+  std::optional<std::vector<DriverFileSystemVolume>> FileSystem;
   /// Registry system time at virtual time zero, in Windows 100 ns units.
   /// Mutations use this epoch plus the shared scheduler's elapsed time.
   std::optional<uint64_t> RegistrySystemTime100ns;
@@ -321,6 +327,8 @@ struct DriverResult {
   std::optional<DriverFault> Fault;
   /// Final registry state, including changes observed before execution stops.
   std::optional<std::vector<DriverRegistryKey>> Registry;
+  /// Observed filesystem owner state, including bound volume devices.
+  std::optional<std::vector<DriverFileSystemVolumeState>> FileSystem;
   std::vector<DriverPnpDeviceResult> PnpDevices;
   std::vector<DriverInterruptResult> Interrupts;
   std::vector<DriverDmaResult> DmaTransfers;
