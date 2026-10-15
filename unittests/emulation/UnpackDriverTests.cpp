@@ -883,6 +883,323 @@ private:
   size_t Index = 0;
 };
 
+class DirectDriver : public UnpackDriver {
+protected:
+  DriverOptions directScenario() const {
+    auto D = scenario();
+    D.Contract = ExecutionContract::DirectDriverX64;
+    D.TraceMemoryWrites = false;
+    return D;
+  }
+  std::filesystem::path codeInput(llvm::ArrayRef<uint8_t> Code) {
+    const auto *Program = Original.section(".prog");
+    if (!Program || Program->FileSize < Code.size()) {
+      ADD_FAILURE() << "direct driver control has no code storage";
+      return {};
+    }
+    auto Bytes = Original.File;
+    std::copy(Code.begin(), Code.end(), Bytes.begin() + Program->FileOffset);
+    write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+    const auto Path = Scratch / "direct-driver.sys";
+    test::writeFile(Path, Bytes);
+    return Path;
+  }
+};
+
+TEST_P(DirectDriver, PackedDriverUsesExistingAPIsCallbacksAndReturnGates) {
+  const auto Packed = packed();
+  ASSERT_FALSE(HasFailure());
+  for (const auto &Input :
+       {std::filesystem::path(NEVERD_UNPACK_DRIVER_FIXTURE), Packed}) {
+    for (const uint64_t Base : {0x180000000ULL, 0xfffff80010000000ULL}) {
+      SCOPED_TRACE(Input.string());
+      SCOPED_TRACE(Base);
+      auto D = directScenario();
+      D.LoadAddress = Base;
+      // Direct execution is bounded by time and events, not an invented
+      // instruction count. A single instruction credit must not stop it.
+      D.InstructionLimit = 1;
+      DriverObserver Observer;
+      auto Run = observeDriver(Input, D, Observer);
+      ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+      ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+      EXPECT_EQ(Run->NTStatus, 0u);
+      EXPECT_EQ(Run->Instructions, 0u);
+      EXPECT_TRUE(Run->Writes.empty());
+      EXPECT_TRUE(Run->UnloadCompleted);
+      EXPECT_TRUE(Run->Devices.empty());
+      ASSERT_EQ(Run->Requests.size(), 4u);
+      for (const auto &Request : Run->Requests) {
+        EXPECT_TRUE(Request.Completed);
+        EXPECT_EQ(Request.IOStatus, 0u);
+      }
+      EXPECT_EQ(Run->Requests[1].Output,
+                (std::vector<uint8_t>{0x4a, 0xbb, 0x5a, 0xa5}));
+      EXPECT_EQ(Observer.Entries.size(), 6u);
+      EXPECT_EQ(Observer.Invocations, 5u);
+      EXPECT_GT(Observer.Exports, 0u);
+    }
+  }
+}
+
+TEST_P(DirectDriver, UnobservedDriverDispatchRegistrationSurvivesRequests) {
+  // No ProcessObserver requests instruction stops. Registration must still
+  // reach the kernel owner's committed-byte initialization inventory.
+  for (const uint64_t Base : {0x180000000ULL, 0xfffff80010000000ULL}) {
+    SCOPED_TRACE(Base);
+    auto D = directScenario();
+    D.LoadAddress = Base;
+    auto Run = emulateDriver(NEVERD_UNPACK_DRIVER_FIXTURE, D);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+    EXPECT_EQ(Run->NTStatus, 0u);
+    EXPECT_TRUE(Run->UnloadCompleted);
+    ASSERT_EQ(Run->Requests.size(), 4u);
+    for (unsigned Major : {0u, 2u, 14u, 18u}) {
+      EXPECT_GE(Run->MajorFunctions[Major], Base);
+      EXPECT_LT(Run->MajorFunctions[Major] - Base, Original.Mapped.size());
+      EXPECT_EQ(Run->MajorFunctions[Major], Run->MajorFunctions[0]);
+    }
+    for (const auto &Request : Run->Requests) {
+      EXPECT_TRUE(Request.Completed);
+      EXPECT_EQ(Request.IOStatus, 0u);
+    }
+    EXPECT_EQ(Run->Requests[1].Output,
+              (std::vector<uint8_t>{0x4a, 0xbb, 0x5a, 0xa5}));
+  }
+}
+
+TEST_P(DirectDriver, SameValueDispatchStoresKeepExactInitializationWidths) {
+  // DRIVER_OBJECT.MajorFunction[1] is at byte 0x78. These stores leave its
+  // initially zero bytes unchanged, so a byte comparison cannot witness
+  // either the partial write or the two separate complete halves.
+  const std::vector<std::vector<uint8_t>> Stores = {
+      {0xc6, 0x41, 0x78, 0},                // mov byte [rcx+0x78],0
+      {0xc7, 0x41, 0x78, 0, 0, 0, 0},       // mov dword [rcx+0x78],0
+      {0x48, 0xc7, 0x41, 0x78, 0, 0, 0, 0}, // mov qword [rcx+0x78],0
+      {0xc7, 0x41, 0x78, 0, 0, 0, 0,        // mov dword [rcx+0x78],0
+       0xc7, 0x41, 0x7c, 0, 0, 0, 0}};      // mov dword [rcx+0x7c],0
+  for (size_t I = 0; I < Stores.size(); ++I) {
+    SCOPED_TRACE(I);
+    auto Code = Stores[I];
+    Code.insert(Code.end(), {0x31, 0xc0, 0xc3}); // xor eax,eax; ret
+    const auto Input = codeInput(Code);
+    ASSERT_FALSE(HasFailure());
+    auto D = directScenario();
+    D.Requests.clear();
+    D.Unload = false;
+    auto Run = emulateDriver(Input, D);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    if (I < 2) {
+      EXPECT_EQ(Run->Stop, DriverStopReason::ModelError);
+      EXPECT_NE(Run->Diagnostic.find("partially initialized dispatch pointer"),
+                std::string::npos)
+          << Run->Diagnostic;
+    } else {
+      EXPECT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+      EXPECT_EQ(Run->NTStatus, 0u);
+      EXPECT_EQ(Run->MajorFunctions[1], 0u);
+    }
+  }
+}
+
+TEST_P(DirectDriver, RepeatedWatchResumesRetainOpaquePrefixDependencies) {
+  // XOR r8d,r8d; INC r8; CMP r8d,3; JNE INC; XOR eax,eax; RET.
+  const uint8_t Code[] = {0x45, 0x31, 0xc0, 0x49, 0xff, 0xc0, 0x41, 0x83,
+                          0xf8, 0x03, 0x75, 0xf7, 0x31, 0xc0, 0xc3};
+  const auto Input = codeInput(Code);
+  ASSERT_FALSE(HasFailure());
+  const uint64_t RVA = Original.section(".prog")->RVA;
+  DriverContextObserver Observer({RVA + 3, RVA + 3, RVA + 3, RVA + 12});
+  auto Run = observeDriver(Input, directScenario(), Observer);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+  EXPECT_EQ(Run->Instructions, 0u);
+  ASSERT_TRUE(Observer.Initial);
+  EXPECT_FALSE(Observer.Initial->hasAdditionalDependencies());
+  ASSERT_EQ(Observer.Contents.size(), 4u);
+  for (size_t I = 0; I != Observer.Contents.size(); ++I) {
+    const auto &State =
+        static_cast<const WindowsDriverState &>(*Observer.Contents[I]);
+    ASSERT_TRUE(State.Entry);
+    EXPECT_EQ(State.Entry->Registers.at(CPURegister::X64R8)[0], I);
+    EXPECT_NE(std::find(State.Reasons.begin(), State.Reasons.end(),
+                        "DriverEntry continuation requires fresh-caller "
+                        "reconstruction"),
+              State.Reasons.end());
+    EXPECT_NE(std::find(State.Reasons.begin(), State.Reasons.end(),
+                        "unreconstructed kernel or environment effects"),
+              State.Reasons.end());
+  }
+}
+
+TEST_P(DirectDriver, WriteWatchesObserveCommittedAndSameValueStores) {
+  for (const bool SameValue : {false, true}) {
+    SCOPED_TRACE(SameValue);
+    const auto Input = writeWatchInput(SameValue);
+    ASSERT_FALSE(HasFailure());
+    DriverWriteObserver Observer(
+        Original.section(".pack")->RVA,
+        Original.section(".prog")->RVA + (SameValue ? 30 : 50), false);
+    auto Run = observeDriver(Input, directScenario(), Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    EXPECT_EQ(Run->Instructions, 0u);
+    EXPECT_TRUE(Run->Writes.empty());
+    EXPECT_TRUE(Observer.FinalMemoryUnchanged);
+    EXPECT_TRUE(llvm::none_of(Observer.MemoryUnchanged,
+                              [](bool Unchanged) { return Unchanged; }));
+    if (SameValue) {
+      EXPECT_TRUE(Observer.Changes.empty());
+      EXPECT_EQ(Observer.Final, (std::pair<uint32_t, uint32_t>{0, 0}));
+      EXPECT_GE(Observer.MemoryUnchanged.size(), 4u);
+    } else {
+      EXPECT_EQ(Observer.Changes, (std::vector<std::pair<uint32_t, uint32_t>>{
+                                      {1, 0}, {2, 0x11}}));
+      EXPECT_EQ(Observer.Final, (std::pair<uint32_t, uint32_t>{2, 0x22}));
+    }
+  }
+}
+
+TEST_P(DirectDriver, ProcessorViewIsPreparedBeforeOriginalGSAndCR8Reads) {
+  // MOV r8,gs:[0x188]; MOV rax,cr8; NOP; RET.
+  const uint8_t Code[] = {0x65, 0x4c, 0x8b, 0x04, 0x25, 0x88, 0x01, 0x00,
+                          0x00, 0x44, 0x0f, 0x20, 0xc0, 0x90, 0xc3};
+  const auto Input = codeInput(Code);
+  ASSERT_FALSE(HasFailure());
+  DriverContextObserver Observer({Original.section(".prog")->RVA + 13});
+  auto Run = observeDriver(Input, directScenario(), Observer);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+  ASSERT_EQ(Observer.Contents.size(), 1u);
+  const auto &State =
+      static_cast<const WindowsDriverState &>(*Observer.Contents.front());
+  ASSERT_TRUE(State.Entry);
+  EXPECT_EQ(State.Entry->Registers.at(CPURegister::X64AX)[0], 0u);
+  const auto Thread = State.Entry->Registers.at(CPURegister::X64R8)[0];
+  EXPECT_GE(Thread, profile::KernelArenaBase);
+  EXPECT_LT(Thread, profile::KernelArenaBase + profile::KernelArenaSize);
+}
+
+TEST_P(DirectDriver, ChangedIRQLAndGSFailBeforeObserversOrModeledAPIs) {
+  const auto Import = std::find_if(
+      Original.Imports.begin(), Original.Imports.end(),
+      [](const auto &I) { return I.Name == "KeQueryActiveProcessors"; });
+  ASSERT_NE(Import, Original.Imports.end());
+  const uint64_t RVA = Original.section(".prog")->RVA;
+  for (const bool ChangeGS : {false, true}) {
+    for (const bool CallAPI : {false, true}) {
+      SCOPED_TRACE(ChangeGS);
+      SCOPED_TRACE(CallAPI);
+      // MOV eax,2; MOV cr8,rax, or WRMSR(IA32_GS_BASE,0x12345000).
+      std::vector<uint8_t> Code =
+          ChangeGS
+              ? std::vector<uint8_t>{0xb9, 0x01, 0x01, 0x00, 0xc0, 0xb8, 0x00,
+                                     0x50, 0x34, 0x12, 0x31, 0xd2, 0x0f, 0x30}
+              : std::vector<uint8_t>{0xb8, 2, 0, 0, 0, 0x44, 0x0f, 0x22, 0xc0};
+      const uint64_t Stop = RVA + Code.size();
+      if (CallAPI) {
+        Code.insert(Code.end(), {0xff, 0x25}); // JMP [rip+IAT].
+        const size_t At = Code.size();
+        Code.resize(At + 4);
+        write32le(Code.data() + At, Import->Slot - (RVA + Code.size()));
+      } else
+        Code.insert(Code.end(), {0x90, 0xc3});
+      const auto Input = codeInput(Code);
+      ASSERT_FALSE(HasFailure());
+      DriverContextObserver Observer({Stop});
+      auto Run = CallAPI ? emulateDriver(Input, directScenario())
+                         : observeDriver(Input, directScenario(), Observer);
+      ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+      EXPECT_EQ(Run->Stop, DriverStopReason::UnsupportedInstruction)
+          << Run->Diagnostic;
+      EXPECT_NE(
+          Run->Diagnostic.find(ChangeGS ? "modeled GS base" : "modeled IRQL"),
+          std::string::npos);
+      EXPECT_TRUE(Observer.Contents.empty());
+      EXPECT_TRUE(Run->Calls.empty());
+      EXPECT_FALSE(Run->NTStatus);
+    }
+  }
+}
+
+TEST_P(DirectDriver, InteriorServiceGatesAndRawProcessorFaultsFailExplicitly) {
+  for (const uint64_t Target :
+       {profile::ThunkBase + 1,
+        profile::KernelModuleBase + profile::KernelModuleCodeRVA + 1}) {
+    SCOPED_TRACE(Target);
+    std::vector<uint8_t> Code{0x48, 0xb8}; // MOV rax,imm64; JMP rax.
+    Code.resize(10);
+    llvm::support::endian::write64le(Code.data() + 2, Target);
+    Code.insert(Code.end(), {0xff, 0xe0});
+    const auto Input = codeInput(Code);
+    ASSERT_FALSE(HasFailure());
+    auto Run = emulateDriver(Input, directScenario());
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, DriverStopReason::UnsupportedAPI) << Run->Diagnostic;
+    EXPECT_NE(Run->Diagnostic.find("interior service gate"), std::string::npos);
+    EXPECT_FALSE(Run->NTStatus);
+  }
+  const uint8_t Service[] = {0x90, 0x0f, 0x05, 0xc3}; // NOP; SYSCALL; RET.
+  auto Run = emulateDriver(codeInput(Service), directScenario());
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  EXPECT_EQ(Run->Stop, DriverStopReason::UnsupportedInstruction)
+      << Run->Diagnostic;
+  ASSERT_TRUE(Run->Fault);
+  EXPECT_EQ(Run->Fault->Interrupt, 6u);
+  EXPECT_EQ(Run->PC, Original.Base + Original.section(".prog")->RVA + 1);
+  EXPECT_EQ(Run->Fault->PC, Run->PC);
+  EXPECT_FALSE(Run->NTStatus);
+}
+
+TEST_P(DirectDriver, ProcessorIdentityAndTimestampRemainRuntimeDependencies) {
+  for (unsigned Mode : {17u, 19u}) {
+    SCOPED_TRACE(Mode);
+    DriverPoolObserver Observer(Original.Entry);
+    auto Run = observeDriver(packed(Mode), directScenario(), Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    EXPECT_EQ(Run->Instructions, 0u);
+    ASSERT_TRUE(Observer.Contents);
+    const auto &State =
+        static_cast<const WindowsDriverState &>(*Observer.Contents);
+    EXPECT_NE(std::find(State.Reasons.begin(), State.Reasons.end(),
+                        "unreconstructed kernel or environment effects"),
+              State.Reasons.end());
+  }
+}
+
+TEST_P(DirectDriver, DriverEntryReturnStillChecksTheNativeABI) {
+  // MOV ebx,1; XOR eax,eax; RET. Returning success cannot hide clobbered RBX.
+  const uint8_t Code[] = {0xbb, 1, 0, 0, 0, 0x31, 0xc0, 0xc3};
+  const auto Input = codeInput(Code);
+  ASSERT_FALSE(HasFailure());
+  auto Run = emulateDriver(Input, directScenario());
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  EXPECT_EQ(Run->Stop, DriverStopReason::ModelError) << Run->Diagnostic;
+  EXPECT_NE(Run->Diagnostic.find("changed nonvolatile rbx"), std::string::npos);
+  EXPECT_FALSE(Run->NTStatus);
+}
+
+TEST_P(DirectDriver, TimeoutAndAPIEventLimitsRemainEnforced) {
+  const uint8_t Loop[] = {0x90, 0xeb, 0xfe};
+  const auto Input = codeInput(Loop);
+  ASSERT_FALSE(HasFailure());
+  auto D = directScenario();
+  D.TimeoutMilliseconds = 20;
+  auto Run = emulateDriver(Input, D);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  EXPECT_EQ(Run->Stop, DriverStopReason::Timeout) << Run->Diagnostic;
+  EXPECT_EQ(Run->Instructions, 0u);
+  EXPECT_EQ(Run->PC, Original.Base + Original.section(".prog")->RVA + 1);
+  D = directScenario();
+  D.EventLimit = 1;
+  Run = emulateDriver(NEVERD_UNPACK_DRIVER_FIXTURE, D);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  EXPECT_EQ(Run->Stop, DriverStopReason::EventLimit) << Run->Diagnostic;
+  EXPECT_EQ(Run->Calls.size(), 1u);
+}
+
 TEST_P(UnpackDriver, RelocationFactsRequireUninterruptedLoaderWrites) {
   const auto Input = relocationHistoryInput();
   ASSERT_FALSE(HasFailure());
@@ -1637,6 +1954,11 @@ TEST(DriverChecksum, NativeImageHlpValidatesOddAndEvenFileExtents) {
   GTEST_SKIP() << "native ImageHlp requires Windows";
 #endif
 }
+
+INSTANTIATE_TEST_SUITE_P(Native, DirectDriver,
+                         testing::Values(Backend{"Kvm",
+                                                 ExecutionBackendKind::KVM}),
+                         [](const auto &I) { return I.param.Name; });
 
 INSTANTIATE_TEST_SUITE_P(
     Backends, UnpackDriver,

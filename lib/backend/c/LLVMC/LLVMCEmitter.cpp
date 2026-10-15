@@ -16,16 +16,18 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
 #include "../FloatConversion.h"
-#include "../FloatingPointContract.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../pass/LLVMC/LLVMCBitTests.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCSourceStrings.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
 #include "LLVMCWriter.h"
@@ -33,10 +35,12 @@
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
@@ -271,6 +275,13 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
         IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
       Name = IntrinsicHelper;
     }
+    if (const char *Kind = integerSaturationSpelling(Fn.getIntrinsicID())) {
+      IntrinsicHelper = std::string("neverd_llvm_") + Kind;
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
     if (const char *Kind = scalarUnarySpelling(Fn.getIntrinsicID())) {
       IntrinsicHelper = std::string("neverd_llvm_") + Kind;
       if (const auto *Integer =
@@ -496,6 +507,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   NeedsUnalignedTypes = false;
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
+  std::map<std::string, ScalarIntegerSaturation> IntegerSaturations;
   std::map<std::string, ScalarUnary> ScalarUnaries;
   FPStateHelperNames.clear();
   SyscallHelperNames.clear();
@@ -510,6 +522,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                  Inst.getOpcode() == llvm::Instruction::FMul ||
                                  Inst.getOpcode() == llvm::Instruction::FDiv;
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          if (auto Shape = scalarIntegerSaturation(*Call))
+            IntegerSaturations.emplace(
+                functionIdentifier(*Call->getCalledFunction()), *Shape);
           if (auto Shape = scalarIntegerMinMax(*Call))
             IntegerMinMax.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
@@ -683,6 +698,24 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Id, Name] : SyscallHelperNames)
     if (const SyscallConvention *Syscall = modeledSyscallConvention(Id))
       OS << linuxSyscallHelperDefinition(*Syscall, Name);
+  for (const auto &[Name, Shape] : IntegerSaturations) {
+    const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
+    const std::string Type = CarrierBits == 128
+                                 ? "unsigned __int128"
+                                 : "uint" + std::to_string(CarrierBits) + "_t";
+    OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
+       << Type << " b) {\n";
+    if (Shape.Bits == 1)
+      OS << "    a &= 1;\n    b &= 1;\n";
+    if (Shape.Add) {
+      OS << "    const " << Type << " maximum = (" << Type << ")"
+         << (Shape.Bits == 1 ? "1" : "-1") << ";\n"
+         << "    return a > maximum - b ? maximum : (" << Type << ")(a + b);\n";
+    } else {
+      OS << "    return a < b ? 0 : (" << Type << ")(a - b);\n";
+    }
+    OS << "}\n\n";
+  }
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
@@ -965,7 +998,7 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       continue;
     }
 
-    if (!GV.hasInitializer())
+    if (!GV.hasInitializer() || sourceStringOnlyCalledByValue(GV))
       continue;
 
     // The image's storage stays the image's in one function's output, which
@@ -1265,6 +1298,39 @@ void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
       }
 }
 
+std::string LLVMCWriter::sourceScalarType(llvm::Type *T, bool Signed) const {
+  if (Signed && (T->isIntegerTy(8) || T->isIntegerTy(16) ||
+                 T->isIntegerTy(32) || T->isIntegerTy(64)))
+    return "int" + std::to_string(T->getIntegerBitWidth()) + "_t";
+  return typeToCLLVM(T);
+}
+
+std::string
+LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
+                                       llvm::StringRef Declarator) const {
+  auto *FT = Fn.getFunctionType();
+  std::string Result =
+      sourceScalarType(FT->getReturnType(),
+                       Fn.hasFnAttribute(LLVMSourceSignedResult)) +
+      " " + Declarator.str() + "(";
+  if (FT->getNumParams() == 0 && !FT->isVarArg()) {
+    Result += "void";
+  } else if (FT->getNumParams()) {
+    for (unsigned I = 0; I < FT->getNumParams(); ++I) {
+      if (I)
+        Result += ", ";
+      Result += sourceScalarType(
+          FT->getParamType(I),
+          Fn.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
+    }
+    if (FT->isVarArg())
+      Result += ", ...";
+  }
+  // ISO C before C23 cannot spell only `...`: preserve the existing
+  // unprototyped projection rather than inventing a fixed argument.
+  return Result + ")";
+}
+
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
@@ -1312,25 +1378,7 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
       continue;
     }
 
-    auto *FT = Fn.getFunctionType();
-    OS << typeToCLLVM(FT->getReturnType()) << " " << Name << "(";
-    if (FT->getNumParams() == 0 && !FT->isVarArg()) {
-      OS << "void";
-    } else if (FT->getNumParams() == 0 && FT->isVarArg()) {
-      // ISO C before C23 cannot spell a prototype containing only `...`.
-      // An empty parameter list is deliberately non-prototyped and therefore
-      // keeps the analysis projection callable without inventing an ABI-visible
-      // fixed argument.
-    } else {
-      for (unsigned I = 0; I < FT->getNumParams(); ++I) {
-        if (I > 0)
-          OS << ", ";
-        OS << typeToCLLVM(FT->getParamType(I));
-      }
-      if (FT->isVarArg())
-        OS << ", ...";
-    }
-    OS << ")";
+    OS << sourceFunctionDeclaration(Fn, Name);
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string Comment;
@@ -1710,6 +1758,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         // contract.
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
           (void)scalarIntegerMinMax(*Call);
+          (void)scalarIntegerSaturation(*Call);
           (void)scalarUnary(*Call);
         }
         if (const auto *Allocation =
@@ -1775,8 +1824,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         promoteCallResultHomes(Function);
   for (auto &Function : *Projection)
     if (!ProjectionOnly || &Function == ProjectionOnly) {
+      llvmc::simplifyBitTests(Function);
       llvmc::factorCommonBranchTests(Function);
       llvmc::factorLoopPhiExpressions(Function);
+      llvmc::distributeReturnEdges(Function);
     }
   llvm::LoopAnalysisManager Loops;
   llvm::FunctionAnalysisManager Functions;

@@ -85,7 +85,8 @@ struct SymStorePreservationRange {
   int64_t End = 0;
 };
 
-/// Caller-established separation for one STORE: none of its accessed bytes
+/// Caller-established separation for one STORE or one atomic write phase:
+/// none of its accessed bytes
 /// can equal a byte in the union of the primary and additional root-relative
 /// ranges. Addresses use modulo-2^64 arithmetic. This interface does not prove
 /// separation or grant accessibility; callers supply a proof or an explicit
@@ -149,15 +150,18 @@ public:
 
   /// Read \p Bytes at \p Addr.  An address that is a base plus a constant is
   /// read out of that base's region; anything else is its own region, read as
-  /// stable unknowns that later reads of the same address agree with.  Invalid,
-  /// zero-byte, and wrapping requests return an invalid reference.
+  /// stable unknowns that later reads of the same address agree with. A 64-bit
+  /// symbolic region uses modular relative coordinates, including across zero.
+  /// This does not establish validity of the actual address. Invalid,
+  /// zero-byte, and overflowing absolute requests return an invalid reference.
   SymRef load(SymRef Addr, uint16_t Bytes);
 
   /// Store \p Value and return whether an exact absolute write was recorded.
   ///
   /// For a valid symbolic-base write, false means the value was recorded in
-  /// that region but may also alias others, which are forgotten.  Invalid or
-  /// unrepresentable writes also return false and conservatively clobber
+  /// that region, using modular coordinates for a 64-bit base, but may also
+  /// alias others, which are forgotten. Invalid or unrepresentable writes
+  /// also return false and conservatively clobber
   /// memory instead of publishing a partial update.
   bool store(SymRef Addr, SymRef Value);
 

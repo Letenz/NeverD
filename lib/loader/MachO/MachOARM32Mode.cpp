@@ -6,6 +6,7 @@
 
 #include "neverd/loader/MachO/MachOARM32Mode.h"
 
+#include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -42,7 +43,8 @@ struct SectionEvidence {
 
 } // namespace
 
-llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary) {
+llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary,
+                                       bool ReadsStrippedSymbols) {
   const MachOHeaderInfo Header = parseMachOHeader(Binary.data(), Binary.size());
   if (Header.HeaderSize == 0 || Header.Is64 ||
       Binary.size() < sizeof(mach_header))
@@ -138,6 +140,8 @@ llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary) {
         Binary.data() + static_cast<size_t>(EntryOffset));
     if ((Entry->n_type & N_STAB) != 0 || (Entry->n_type & N_TYPE) != N_SECT ||
         Entry->n_sect == NO_SECT || Entry->n_sect >= SectionsByIndex.size())
+      continue;
+    if (!ReadsStrippedSymbols && macho_loader::isStrippedSymbol(Entry->n_type))
       continue;
 
     const va_t Address = clearThumbBit(Entry->n_value);

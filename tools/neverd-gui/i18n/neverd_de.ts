@@ -2236,6 +2236,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>Could not tell whether %1 has DWARF: %2</source>
         <translation>Ob %1 DWARF enthält, ließ sich nicht ermitteln: %2</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a symbol table: %2</source>
+        <translation>Ob %1 eine Symboltabelle enthält, ließ sich nicht ermitteln: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2528,6 +2532,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Opened without its DWARF debug information, as chosen</source>
         <translation>Ohne seine DWARF-Debuginformationen geöffnet, wie gewählt</translation>
+    </message>
+    <message>
+        <source>Opened without its symbol table, as chosen</source>
+        <translation>Ohne seine Symboltabelle geöffnet, wie gewählt</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -3075,6 +3083,25 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Load DWARF debug information?</source>
         <translation>DWARF-Debuginformationen laden?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolTablePromptDialog</name>
+    <message>
+        <source>Symbol table found</source>
+        <translation>Symboltabelle gefunden</translation>
+    </message>
+    <message>
+        <source>Load the symbol table?</source>
+        <translation>Symboltabelle laden?</translation>
+    </message>
+    <message>
+        <source>(%1: %2)</source>
+        <translation>(%1: %2)</translation>
     </message>
     <message>
         <source>(%1)</source>

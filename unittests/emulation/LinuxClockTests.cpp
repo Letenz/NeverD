@@ -33,6 +33,38 @@ TEST(LinuxClock, IdleAdvancementSharesElapsedTimeWithoutOverflowingEpochs) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
 }
 
+TEST(LinuxClock, InstructionTimeSharesIdleEpochAndRefusesOverflowAtomically) {
+  std::optional<LinuxTimeOptions> Options{std::in_place};
+  Options->AdvanceOnIdle = true;
+  Options->NanosecondsPerInstruction = 3;
+  Options->Clocks = {{1, {4, 999999990}}, {2, {1, 2}}};
+  linux_model::LinuxClock Clock(Options);
+  ProcessResult R{ProcessProfile::LinuxELF64,
+                  GuestArchitecture::X64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  ASSERT_TRUE(Clock.accountInstructions(10, R));
+  EXPECT_EQ(Clock.elapsed(), 30u);
+  EXPECT_EQ(Clock.read(1, R)->Seconds, 5);
+  EXPECT_EQ(Clock.read(1, R)->Nanoseconds, 20);
+  EXPECT_EQ(Clock.read(2, R)->Nanoseconds, 2);
+  ASSERT_TRUE(Clock.advanceTo(100, R));
+  ASSERT_TRUE(Clock.accountInstructions(10, R));
+  EXPECT_EQ(Clock.elapsed(), 100u);
+  ASSERT_TRUE(Clock.accountInstructions(13, R));
+  EXPECT_EQ(Clock.elapsed(), 109u);
+  EXPECT_FALSE(Clock.accountInstructions(12, R));
+  EXPECT_EQ(Clock.elapsed(), 109u);
+  EXPECT_FALSE(Clock.accountInstructions(UINT64_MAX, R));
+  EXPECT_EQ(Clock.elapsed(), 109u);
+  ASSERT_TRUE(Clock.accountInstructions(14, R));
+  EXPECT_EQ(Clock.elapsed(), 112u);
+  Options->Clocks[0] = {INT64_MAX, 999999887};
+  EXPECT_FALSE(Clock.accountInstructions(15, R));
+  EXPECT_EQ(Clock.elapsed(), 112u);
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+}
+
 TEST(LinuxClock, OverflowRefusesAllClocksAndSaturatedSleepIsNotEINVAL) {
   std::optional<LinuxTimeOptions> Options{std::in_place};
   Options->AdvanceOnIdle = true;

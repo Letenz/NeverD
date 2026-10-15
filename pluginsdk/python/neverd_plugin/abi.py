@@ -979,6 +979,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_symbol_table_reference_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_set_load_options",
     "int",
     ["neverd_session_t", "const char *"],
@@ -1080,6 +1086,11 @@ _declare(
     ["neverd_session_t", "int"],
 )
 _declare(
+    "neverd_session_set_symbol_table",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
     "neverd_session_set_symbol_path",
     "void",
     ["neverd_session_t", "const char *"],
@@ -1150,6 +1161,11 @@ _declare(
     "neverd_prepare_function",
     "int",
     ["neverd_session_t", "neverd_va_t"],
+)
+_declare(
+    "neverd_prepare_function_view",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "const char *"],
 )
 _declare(
     "neverd_decompile",

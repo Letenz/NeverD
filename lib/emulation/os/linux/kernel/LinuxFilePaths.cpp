@@ -62,21 +62,52 @@ LinuxFiles::parsePath(llvm::StringRef Path) {
 
 LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
                                             bool RequiresDirectory) const {
-  if (Path == "/")
+  if (Path == "/" || llvm::is_contained(Options->Directories, Path))
     return PathKind::Directory;
+  if (Options->DynamicProcFDs) {
+    if (Path == "/proc" || Path == "/proc/self/fd")
+      return PathKind::Directory;
+    if (Path == "/proc/self")
+      return RequiresDirectory ? PathKind::LinkTraversal
+                               : PathKind::SymbolicLink;
+    if (llvm::StringRef(Path).starts_with("/proc/self/fd/")) {
+      auto FD = procDescriptor(Path);
+      if (FD && Descriptors.contains(*FD))
+        return RequiresDirectory ? PathKind::LinkTraversal
+                                 : PathKind::SymbolicLink;
+      return PathKind::Missing;
+    }
+  }
   if (Options->Files.contains(Path))
     return RequiresDirectory ? PathKind::NotDirectory : PathKind::File;
-  // Catalogue prefixes denote directories; a known file used as a path
-  // component is ENOTDIR.
+  if (Options->Devices.contains(Path))
+    return RequiresDirectory ? PathKind::NotDirectory : PathKind::Device;
+  if (Options->SymbolicLinks.contains(Path))
+    return RequiresDirectory ? PathKind::LinkTraversal : PathKind::SymbolicLink;
+  // Catalogue prefixes denote directories; a link component requires an
+  // unmodeled traversal, while a regular file component is ENOTDIR.
   const std::string Prefix = Path + '/';
-  auto Next = Options->Files.lower_bound(Prefix);
-  if (Next != Options->Files.end() &&
-      llvm::StringRef(Next->first).starts_with(Prefix))
+  for (const auto *Catalogue : {&Options->Files, &Options->SymbolicLinks}) {
+    auto Next = Catalogue->lower_bound(Prefix);
+    if (Next != Catalogue->end() &&
+        llvm::StringRef(Next->first).starts_with(Prefix))
+      return PathKind::Directory;
+  }
+  for (const auto &Directory : Options->Directories)
+    if (llvm::StringRef(Directory).starts_with(Prefix))
+      return PathKind::Directory;
+  auto Device = Options->Devices.lower_bound(Prefix);
+  if (Device != Options->Devices.end() &&
+      llvm::StringRef(Device->first).starts_with(Prefix))
     return PathKind::Directory;
   for (size_t I = Path.find('/', 1); I != std::string::npos;
-       I = Path.find('/', I + 1))
-    if (Options->Files.contains(Path.substr(0, I)))
+       I = Path.find('/', I + 1)) {
+    const auto Parent = Path.substr(0, I);
+    if (Options->Files.contains(Parent) || Options->Devices.contains(Parent))
       return PathKind::NotDirectory;
+    if (Options->SymbolicLinks.contains(Parent))
+      return PathKind::LinkTraversal;
+  }
   return PathKind::Missing;
 }
 
@@ -95,11 +126,15 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
   if (!Path)
     return unsupported(Result, FilePathForm);
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::Directory:
     if (Mode)
       return unsupported(Result, FileAccessMode);
@@ -125,9 +160,13 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   const size_t Slash = Path.rfind('/');
   const std::string Parent = Slash ? Path.substr(0, Slash) : "/";
   switch (lookupPath(Parent)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
@@ -140,34 +179,90 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   return unsupported(Result, FileDirectoryCreation);
 }
 
-llvm::Expected<std::optional<uint64_t>>
-LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
+llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
+                                                         uint32_t Flags,
+                                                         ProcessResult &Result,
+                                                         uint32_t DirectoryFD) {
   const bool ARM64 = CPU.architecture() == GuestArchitecture::AArch64;
   const uint32_t LargeFile = ARM64 ? OpenLargeFileARM64 : OpenLargeFileX64;
   const uint32_t Directory = ARM64 ? OpenDirectoryARM64 : OpenDirectoryX64;
   const uint32_t Direct = ARM64 ? OpenDirectARM64 : OpenDirectX64;
-  if (Flags & ~(OpenCloseOnExec | LargeFile | Directory | Direct))
+  if ((Flags & Directory) && (Flags & OpenCreate))
+    return unsupported(Result,
+                       "O_CREAT with O_DIRECTORY is kernel-version dependent");
+  const uint32_t AccessMask =
+      3 | OpenCreate | OpenExclusive | OpenTruncate | OpenAppend;
+  if ((Flags &
+       ~(OpenCloseOnExec | LargeFile | Directory | Direct | AccessMask)) ||
+      (Flags & 3) == 3)
     return unsupported(Result, FileOpenFlags);
   auto Imported = readPath(Address);
   if (!Imported)
     return Imported.takeError();
   if (const auto *Error = std::get_if<uint32_t>(&*Imported))
     return std::optional<uint64_t>(uint64_t(0) - *Error);
-  auto Path = parsePath(std::get<std::string>(*Imported));
+  std::string Name = std::get<std::string>(*Imported);
+  if (!llvm::StringRef(Name).starts_with('/') &&
+      DirectoryFD != AtCurrentDirectory) {
+    auto I = Descriptors.find(DirectoryFD);
+    if (I == Descriptors.end())
+      return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
+    const auto *D = std::get_if<OpenDirectory>(I->second.get());
+    if (!D)
+      return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
+    Name = D->Path + (D->Path == "/" ? "" : "/") + (Name == "." ? "" : Name);
+  }
+  auto Path = parsePath(Name);
   if (!Path)
     return unsupported(Result, FilePathForm);
 
   uint32_t FD = nextDescriptor();
   if (FD == Options->DescriptorLimit)
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
-  switch (
-      lookupPath(Path->Name, Path->RequiresDirectory || (Flags & Directory))) {
+  const auto Kind =
+      lookupPath(Path->Name, Path->RequiresDirectory || (Flags & Directory));
+  if ((Flags & (OpenCreate | OpenExclusive)) == (OpenCreate | OpenExclusive) &&
+      Kind != PathKind::Missing && Kind != PathKind::NotDirectory &&
+      Kind != PathKind::LinkTraversal)
+    return std::optional<uint64_t>(uint64_t(0) - AlreadyExists);
+  switch (Kind) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
+    if (Flags & OpenCreate)
+      return unsupported(Result,
+                         "memory-file creation requires an explicit object");
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
-    return unsupported(Result, FileDirectory);
+    if ((Flags & 3) || (Flags & (OpenCreate | OpenTruncate)))
+      return std::optional<uint64_t>(uint64_t(0) - IsDirectory);
+    if (Flags & Direct)
+      return unsupported(Result, FileDirectIO);
+    Descriptors.emplace(
+        FD, std::make_shared<Descriptor>(OpenDirectory{Path->Name}));
+    return std::optional<uint64_t>(FD);
+  case PathKind::Device: {
+    if (Flags & (OpenCreate | OpenExclusive | OpenTruncate | OpenAppend))
+      return unsupported(Result, DeviceOpenMode);
+    if (Flags & Direct)
+      return unsupported(Result, FileDirectIO);
+    const auto &Device = Options->Devices.at(Path->Name);
+    if ((Flags & 3) != Device.AccessMode)
+      return unsupported(Result, DeviceOpenMode);
+    if (Device.OpenErrno)
+      return std::optional<uint64_t>(uint64_t(0) - Device.OpenErrno);
+    std::erase_if(DeviceDescriptions,
+                  [](const auto &D) { return D.expired(); });
+    auto Description =
+        std::make_shared<LinuxDeviceState>(LinuxDeviceState{&Device});
+    DeviceDescriptions.push_back(Description);
+    Descriptors.emplace(FD,
+                        std::make_shared<Descriptor>(std::move(Description)));
+    return std::optional<uint64_t>(FD);
+  }
   case PathKind::File:
     break;
   }
@@ -176,12 +271,25 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   // this catalogue does not infer a backing filesystem's direct-I/O policy.
   if (Flags & Direct)
     return unsupported(Result, FileDirectIO);
+  if ((Flags & 3) || (Flags & OpenTruncate)) {
+    if (!Options->WriteLimits.contains(Path->Name))
+      return unsupported(Result,
+                         "memory-file write requires an explicit reservation");
+    auto [I, Inserted] = MutableFiles.try_emplace(Path->Name);
+    if (Inserted)
+      I->second.Bytes = Options->Files.at(Path->Name);
+    if (Flags & OpenTruncate) {
+      I->second.Bytes.clear();
+      I->second.Changed = true;
+    }
+  }
   auto File = Options->Files.find(Path->Name);
   auto Metadata = Options->Metadata.find(Path->Name);
-  Descriptors.emplace(FD,
-                      OpenFile{File->second, Metadata == Options->Metadata.end()
-                                                 ? nullptr
-                                                 : &Metadata->second});
+  Descriptors.emplace(
+      FD, std::make_shared<Descriptor>(OpenFile{
+              File->second,
+              Metadata == Options->Metadata.end() ? nullptr : &Metadata->second,
+              0, Path->Name, Flags}));
   return std::optional<uint64_t>(FD);
 }
 

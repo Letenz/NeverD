@@ -80,13 +80,85 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
   if (!Object || !Object->get(field::Files))
     return invalid(field::LinuxFiles);
   LinuxFileOptions Out;
+  uint64_t PayloadBytes = 0;
+  uint64_t Transactions = 0;
+  size_t Entries = 0;
+  auto Reserve = [&](llvm::StringRef Path, llvm::StringRef Hex) {
+    const uint64_t Cost = Path.size() + 1;
+    if (++Entries > linux_model::FileCountLimit ||
+        Cost > linux_model::FileByteLimit - PayloadBytes ||
+        Hex.size() / 2 > linux_model::FileByteLimit - PayloadBytes - Cost)
+      return false;
+    PayloadBytes += Cost + Hex.size() / 2;
+    return true;
+  };
   for (const auto &[Key, V] : *Object) {
     llvm::StringRef Name = Key;
+    if (Name == field::DynamicProcFDs) {
+      auto B = V.getAsBoolean();
+      if (!B)
+        return invalid(Name);
+      Out.DynamicProcFDs = *B;
+      continue;
+    }
+    if (Name == field::FileDirectories) {
+      const auto *Dirs = V.getAsArray();
+      if (!Dirs || Dirs->size() > linux_model::FileCountLimit)
+        return invalid(Name);
+      for (const auto &D : *Dirs) {
+        auto Path = D.getAsString();
+        if (!Path || !Reserve(*Path, {}))
+          return invalid(Name);
+        Out.Directories.push_back(Path->str());
+      }
+      continue;
+    }
+    if (Name == field::FileDevices) {
+      const auto *Devices = V.getAsArray();
+      if (!Devices || Devices->size() > linux_model::FileCountLimit)
+        return invalid(Name);
+      for (const auto &Value : *Devices) {
+        const auto *Device = Value.getAsObject();
+        auto Path = Device ? Device->getString(field::Path) : std::nullopt;
+        if (!Path || !Reserve(*Path, {}))
+          return invalid(Name);
+        auto Input =
+            linuxDeviceOptionsFromJSON(*Device, PayloadBytes, Transactions);
+        if (!Input)
+          return Input.takeError();
+        if (!Out.Devices.emplace(Path->str(), std::move(*Input)).second)
+          return invalid(field::Path);
+      }
+      continue;
+    }
     if (Name == field::DescriptorLimit) {
       auto N = V.getAsUINT64();
       if (!N || *N > UINT32_MAX)
         return invalid(Name);
       Out.DescriptorLimit = *N;
+      continue;
+    }
+    if (Name == field::SymbolicLinks) {
+      const auto *Links = V.getAsArray();
+      if (!Links || Links->size() > linux_model::FileCountLimit)
+        return invalid(Name);
+      for (const auto &Link : *Links) {
+        const auto *L = Link.getAsObject();
+        if (!L || L->size() != 2)
+          return invalid(Name);
+        auto Path = L->getString(field::Path);
+        auto Target = L->getString(field::SymbolicLinkTarget);
+        if (!Path || !Target || Target->size() % 2 ||
+            !Reserve(*Path, *Target) ||
+            !llvm::all_of(*Target, llvm::isHexDigit))
+          return invalid(Name);
+        std::string Bytes = llvm::fromHex(*Target);
+        if (!Out.SymbolicLinks
+                 .emplace(Path->str(),
+                          std::vector<uint8_t>(Bytes.begin(), Bytes.end()))
+                 .second)
+          return invalid(field::Path);
+      }
       continue;
     }
     if (Name != field::Files)
@@ -96,12 +168,13 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
       return invalid(Name);
     for (const auto &File : *Files) {
       const auto *F = File.getAsObject();
-      if (!F || (F->size() != 2 && F->size() != 3) ||
-          (F->size() == 3 && !F->get(field::FileMetadata)))
+      if (!F ||
+          F->size() != 2 + unsigned(F->get(field::FileMetadata) != nullptr) +
+                           unsigned(F->get(field::FileWriteLimit) != nullptr))
         return invalid(Name);
       auto Path = F->getString(field::Path);
       auto Bytes = F->getString(field::Bytes);
-      if (!Path || !Bytes || Bytes->size() % 2 ||
+      if (!Path || !Bytes || Bytes->size() % 2 || !Reserve(*Path, *Bytes) ||
           !llvm::all_of(*Bytes, llvm::isHexDigit))
         return invalid(Name);
       std::string Data = llvm::fromHex(*Bytes);
@@ -110,6 +183,12 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
                         std::vector<uint8_t>(Data.begin(), Data.end()))
                .second)
         return invalid(field::Path);
+      if (const auto *Limit = F->get(field::FileWriteLimit)) {
+        auto N = process_json::integer<uint64_t>(*Limit);
+        if (!N)
+          return invalid(field::FileWriteLimit);
+        Out.WriteLimits.emplace(Path->str(), *N);
+      }
       if (const auto *M = F->get(field::FileMetadata)) {
         auto Parsed = metadata(*M);
         if (!Parsed)

@@ -163,7 +163,7 @@ Der Binäradapter akzeptiert derzeit fertig gelinkte x64-ELF- und PE-Abbilder an
 ihren gemappten Adressen. Mappings, Bytes und Berechtigungen müssen unverändert
 bleiben; gleichzeitige Änderungen sind ausgeschlossen. Striktes Lifting bei
 Bedarf folgt dem erreichbaren Maschinencode. Nicht unterstützte Instruktionen,
-Aufrufe, undurchsichtige Operationen, geordnete Speicherzugriffe, nicht
+Aufrufe, undurchsichtige Operationen, geordnete Speicherzugriffe außerhalb des unten beschriebenen engen Raw-CAS-Bereichs, nicht
 aufgelöster Kontrollfluss und sprachabhängige Ausnahmebehandlung stoppen die
 Rekonstruktion.
 
@@ -205,6 +205,14 @@ Die exakten x64-Formen von `PUSHFQ`/`POPFQ` bleiben im Restprogramm erhalten. Di
 Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetische Flag und das Richtungsflag innerhalb der rekonstruierten Funktion definiert sein. Auch ein direkter Flag-Lesezugriff braucht auf jedem erreichbaren Vorgängerpfad eine Definition, selbst wenn die symbolische Vereinfachung seinen Wert aufhebt. Andernfalls wird die Rekonstruktion abgelehnt, statt C mit einer Falle für ein unbekanntes Register auszugeben.
 
 LowIR-Temporärwerte gelten nur innerhalb einer gehobenen nativen Anweisung. Jedes gelesene Byte muss zuvor in derselben Anweisung definiert worden sein; ein wiederverwendeter Offset aus einer früheren Anweisung oder ein algebraisch aufgehobener undefinierter Wert ist kein Beleg für gültigen Quellcode. Eintrittskonstanten dürfen nur physische Register binden.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Vergleich und Austausch im sequenziellen Raw-Modell
+
+Die Raw-Spezialisierung akzeptiert `ATOMIC_CMPXCHG` nur mit `ExplicitMachineState=true` und `NormalNonfaultingExecution=true`, `Default`-Speicher, einer 64-Bit-Adresse, gleich breiten Werten von 1/2/4/8 Byte und `SequentiallyConsistent`. Atomare Operation, Speicherordnung, Adressraum und Vorkommen bleiben erhalten. Es gilt der bestehende sequenzielle Ausführungsbereich ohne gleichzeitige oder asynchrone Änderungen; ein Nebenläufigkeits- oder MMIO-Modell entsteht dadurch nicht. Andere atomare Operationen, 16-Byte-CAS, andere Speicherordnungen, segmentierte CAS und geordnete LOAD/STORE bleiben in diesem Rekonstruktionspfad unzulässig.
+
+Die bestehenden Verträge `ExternalStoresPreserveEntryReturnSlot` und `ExternalStoresDisjointEntryFrame` gelten für die gesamte Schreibphase, auch bei fehlgeschlagenem Vergleich oder unverändertem Wert. `ExternalStoresPreserveEntryReturnSlot` schützt nur den Eintritts-Rückkehrslot. `ExternalStoresDisjointEntryFrame` schützt nur die deklarierten Frame-Grenzen; aktive native Rückkehrzellen außerhalb benötigen weiterhin unabhängige Trennungsevidenz. Es wird keine zusätzliche Nichtalias-Voraussetzung abgeleitet. Die Maschinenzustands-Quelltextkapselung sowie die unabhängigen LowIR-/nativen/LLVM-Beweispfade lehnen erreichbare geordnete CAS weiterhin ab. Ein vollständiges Raw-Ergebnis ist kein Quelltext- oder Äquivalenzzertifikat.
 
 <!-- i18n-section: machine-state -->
 

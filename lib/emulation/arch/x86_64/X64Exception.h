@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace neverd::emulation {
 namespace x64 {
@@ -92,6 +93,24 @@ public:
 
 private:
   X64Exception Exception;
+};
+
+/// A direct transport captured the actual stopped scalar/FP context but found
+/// live machine state its public context cannot retain. The captured PC may
+/// be published for diagnosis; the machine cannot resume this execution.
+class X64UnsupportedStateError final
+    : public llvm::ErrorInfo<X64UnsupportedStateError> {
+public:
+  static inline char ID = 0;
+  explicit X64UnsupportedStateError(llvm::StringRef Diagnostic)
+      : Diagnostic(Diagnostic.str()) {}
+  void log(llvm::raw_ostream &OS) const override { OS << Diagnostic; }
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+
+private:
+  std::string Diagnostic;
 };
 } // namespace neverd::emulation
 #endif

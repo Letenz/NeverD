@@ -136,5 +136,7 @@ and severity pages, followed by the match summary and pages. Exit success means
 analysis completed, not that a package is safe or vulnerable at runtime.
 
 The [qualification record](web-package-advisory-qualification.md) pins original
-public metadata and actual NeverD CLI results. Provenance/signature assessment,
-analyst dispositions and composed reports remain separate #715 work.
+public metadata and actual NeverD CLI results. The separate
+[attestation profile](web-package-attestation-profile.md) records provenance and
+signature metadata; the [assessment profile](web-package-assessment-profile.md)
+composes selected evidence, analyst dispositions and readable reports.

@@ -81,6 +81,7 @@ source models. At most 16 source arguments are accepted across both sides.
 Worker and MCP expose the same analysis/paging operations using retained IDs;
 they do not accept source text, paths, execution directives or raw-value export.
 
-This implements selected syntax comparison within #715. Advisory/provenance
-imports, analyst dispositions and broader report composition remain separate
-work. It does not complete the entire supply-chain epic.
+This implements selected syntax comparison within #715. The separate
+[assessment profile](web-package-assessment-profile.md) composes these results
+with selected advisory/provenance evidence and analyst dispositions. The
+[epic acceptance audit](web-epic-acceptance.md) records the combined coverage.

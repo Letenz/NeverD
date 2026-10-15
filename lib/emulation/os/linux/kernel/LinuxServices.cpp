@@ -57,6 +57,8 @@ LinuxServices::handle(const ProcessServiceEvent &Event, ThreadContext *Thread) {
 llvm::Expected<std::optional<uint64_t>>
 LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                       ThreadContext *Thread) {
+  if (auto E = synchronizeDevices())
+    return std::move(E);
   if (unavailableKernelService(Kind, Options.LinuxKernel))
     return std::optional<uint64_t>(uint64_t(0) - ServiceNotImplemented);
   switch (Kind) {
@@ -76,6 +78,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return Files.extendedAttribute(Kind, Event, Options.LinuxKernel, Result);
   case ServiceKind::PPoll:
     return Files.poll(Event, Options.LinuxKernel, Result);
+  case ServiceKind::Getdents64:
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
   case ServiceKind::Access:
@@ -83,7 +86,13 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Mkdir:
   case ServiceKind::MkdirAt:
   case ServiceKind::Read:
+  case ServiceKind::Readlink:
+  case ServiceKind::ReadlinkAt:
   case ServiceKind::Close:
+  case ServiceKind::Dup:
+  case ServiceKind::Dup2:
+  case ServiceKind::Dup3:
+  case ServiceKind::Ioctl:
   case ServiceKind::Lseek:
   case ServiceKind::Fstat:
   case ServiceKind::FstatAt:
@@ -121,6 +130,15 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::GetEGID:
     return std::optional<uint64_t>(GroupID);
   case ServiceKind::Mmap:
+    if (Event.Arguments[3] == MapShared) {
+      auto Device = Files.mappingDevice(uint32_t(Event.Arguments[4]));
+      if (const auto *Error = std::get_if<uint64_t>(&Device))
+        return std::optional<uint64_t>(*Error);
+      auto Owner = std::get<std::shared_ptr<LinuxDeviceState>>(Device);
+      return Memory.mapDevice(Event, Owner ? Owner->Options : nullptr, Result,
+                              Owner);
+    }
+    return Memory.handle(Kind, Event, Result);
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:
   case ServiceKind::Madvise:
@@ -131,12 +149,19 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
-    if (Options.LinuxFiles)
+    if (Files.isDevice(Event.Arguments[0]) ||
+        Files.isRegularFile(Event.Arguments[0]))
+      return Files.handle(Kind, Event, Result);
+    if (Options.LinuxFiles) {
       if (auto E = Files.outputError(Event.Arguments[0])) {
         if (*E == uint64_t(0) - InvalidArgument)
           return writeOutput(CPU, Kind, Event, Layout, Options, Result, E);
         return E;
       }
+      auto OutputEvent = Event;
+      OutputEvent.Arguments[0] = Files.outputTarget(Event.Arguments[0]);
+      return writeOutput(CPU, Kind, OutputEvent, Layout, Options, Result);
+    }
     return writeOutput(CPU, Kind, Event, Layout, Options, Result);
   }
   llvm_unreachable("unhandled Linux service kind");

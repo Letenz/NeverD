@@ -8,7 +8,7 @@ metadata:
   version: "1.2"
   qt-version: "6.x"
   category: conceptual
-  changelog: "Added NeverD workbench chrome guidance and window-manager checks"
+  changelog: "Added NeverD workbench chrome guidance, window-manager checks, and crisp-stroke guidance"
 ---
 # Qt UI Design
 
@@ -204,6 +204,14 @@ Ask question 7 in the intake. Act on the answer here.
 - **Text expansion:** Translated strings are typically 30–40% longer than English source. Design containers and buttons to accommodate expansion — avoid fixed-width containers for any user-visible string.
 - **Icons:** Avoid icons that are culturally specific or that carry variable meaning across regions (e.g. a thumbs-up, certain hand gestures). Prefer universal symbols (checkmark for success, X for close, magnifying glass for search).
 - **Avoid embedding text in images or icons.** Localisation requires all text to be in string resources — text baked into assets cannot be translated.
+### 1.6 Crisp strokes on the pixel grid (desktop/web)
+
+Thin lines show their full colour only where they cover whole pixels. A 1 px line centred on a pixel boundary renders as two pixels at half strength, and a 1.4 px stroke as two pixels at about 70%. The line looks blurred, and darker and duller than its colour token. Users report this as a colour problem ("the blue looks heavy"), not as blur.
+
+- **Snap straight strokes at the size the asset is drawn.** Centre strokes at least 1 px and under 2 px wide on pixel centres (x.5), centre 2 px strokes on pixel boundaries, and put the edges of unstroked fills on whole pixels. Curves and diagonals always antialias. An icon drawn on a 16 px grid stays crisp at 16 px and at whole multiples (32, 48), but not at 20 or 24.
+- **In paint code**, fill hairlines as integer rectangles or offset 1 px pens by 0.5. Round a computed position before drawing a thin line with antialiasing on. In QML, place thin items and icons at whole-pixel positions (for example with `Math.round`), and draw icons at their native size or a whole multiple of it.
+- **Choose thin-stroke colours by how they render.** On dark surfaces, a thin icon needs a lighter tone than text of the same hue. Visual Studio Code, for example, uses `#75BEFF` for coloured icons and `#4DAAFC` for links.
+- **Verify at 100% scale** in a capture of the real UI, because 100% is common on desktop monitors. Then check that 150% and 200% are no worse. Fractional scales cannot be snapped everywhere, so do not distort a design to chase them.
 ---
 
 ## 2. Accessibility (WCAG 2.2)
@@ -325,6 +333,7 @@ Apply section 4 constraints first if the target is embedded.
 - [ ] Typography: are body text ≥ 16 px and no more than three type sizes used per screen?
 - [ ] Keyboard: is every interactive element reachable and operable by keyboard alone?
 - [ ] Colour: are all colours token-based or semantically named? Is colour paired with a second cue for all state changes?
+- [ ] Crispness: at 100% scale, do straight icon strokes and 1 px lines cover whole pixels, so thin elements show their real colour?
 - [ ] Localisation: do all user-visible strings use locale-aware formatting? Are containers able to expand 30–40% for translated text?
 - [ ] AI features: are latency patterns, uncertainty, and consent handled per section 3?
 ---

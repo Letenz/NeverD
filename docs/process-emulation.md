@@ -80,7 +80,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
 | `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
-| `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
+| `linux_files` | Absent | Explicit guest file catalogue, bounded write grants and optional live FD links |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
 | `linux_kernel` | Absent | Explicit released GKI branch, fixed guest task catalogue or observed absent guest kernel interfaces |
@@ -309,7 +309,13 @@ and [KSM policy](https://github.com/torvalds/linux/blob/v6.8/mm/ksm.c). Other
 advice, including `MADV_DONTNEED` and `MADV_FREE`, stops as an unsupported
 service before changing state; discarding content is not modeled as a hint.
 
-File/shared/fixed mappings, grow-down, huge pages, memory locking, protection
+Explicit `linux_files.devices[].read_only_mappings` additionally admit
+read-only shared device RAM snapshots, with shared backing across opens,
+mapping lifetime independent of descriptor close and bounded permission
+changes. See [device contracts](linux-device-contracts.md) for the supplied
+page format and supported operations.
+
+Ordinary file, anonymous shared and fixed mappings, grow-down, huge pages, memory locking, protection
 keys, execute-only/write-only policy and other flags remain explicit unsupported
 service contracts. They stop before publishing effects or inventing a syscall
 return. Ordinary range/length/alignment errors within the admitted subset return
@@ -323,8 +329,8 @@ guest pointer or mapping request to the host OS.
 ## Explicit guest clocks
 
 The optional `linux_time` input supplies observations, fixed by default, shared by raw
-Linux services and Android Bionic. It never reads the host clock, advances time
-with instruction execution, or supplies a default epoch. For example:
+Linux services and Android Bionic. It never reads the host clock or supplies a
+default epoch. Instruction time is frozen unless explicitly configured. For example:
 
 ```json
 {"linux_time":{"clocks":[
@@ -350,15 +356,31 @@ use `ProcessOptions::LinuxTime`, with the same value validation. Other process
 profiles reject this option.
 
 `"advance_on_idle": true` explicitly enables relative `nanosleep` on x64 and
-ARM64, including Android's named and variadic wrappers. Clock IDs 0, 1 and
-7 advance from their initial values by elapsed virtual time. Process CPU clock
+ARM64, including Android's named and variadic wrappers and scalar `usleep`.
+Clock IDs 0, 1 and 7 advance from their initial values by elapsed virtual time.
+Process CPU clock
 observations may coexist with this policy and stay fixed during idle advancement.
 Other clock inputs remain excluded from this policy.
 A sleeping Android thread retains its original pending service;
 other runnable threads execute first. When all threads are blocked, time advances
 to the earliest sleep deadline. A single-threaded workload advances directly.
-Instruction execution itself does not advance time, so a busy runnable thread
-can leave a sleeper pending until the workload budget expires.
+Without an instruction-time input, a busy runnable thread can leave a sleeper
+pending until the workload budget expires.
+
+`"nanoseconds_per_instruction":100` optionally assigns a deterministic virtual
+wall-time rate to admitted guest instructions. Zero (the default) disables it.
+The unsigned 64-bit rate may also be a decimal string. A workload-wide cumulative
+instruction count is accounted exactly once at successful service and quantum
+boundaries, across all Android threads. Realtime, monotonic and boottime share
+that elapsed time with idle advancement; supplied process CPU samples stay fixed.
+Unsupported clock kinds are rejected just as for idle advancement. Multiplication,
+elapsed-time and epoch overflow stop before changing any clock.
+
+This rate is a declared analysis input, not measured hardware timing or CPU-time
+accounting. It lets busy guest polling loops observe scheduled device-page changes
+and lets sleepers wake while another guest thread runs. Updates remain quantized
+by actual execution boundaries and `instruction_quantum`; reports should retain
+the rate, quantum and producer trace. No host clock or sample PC participates.
 
 The request is copied before checking nonnegative seconds and normalized
 nanoseconds. Bad input addresses return `EFAULT`; invalid values return `EINVAL`.
@@ -397,9 +419,28 @@ sleep and real device clocks remain unsupported.
 
 ## Explicit memory files
 
-`linux_files` supplies immutable file bytes to Linux ELF64 and Android native
+`linux_files` supplies initial file bytes to Linux ELF64 and Android native
 workloads. C++ uses `ProcessOptions::LinuxFiles`; C, Python and CLI share this
 strict JSON contract:
+
+Optional `devices` entries add [explicit descriptor-owned ioctl transactions and read-only mapping snapshots](linux-device-contracts.md)
+in the same namespace. Device responses are declared inputs; regular file
+bytes remain immutable unless granted a `write_limit`; device mappings are not implied.
+
+
+Optional `symbolic_links` entries use the same canonical absolute namespace:
+`{"path":"/links/item","target_hex":"2e2e2f746172676574"}`. Targets are
+nonempty NUL-free bytes and share the catalogue's count and byte limits with
+regular files. A link cannot also name a file or an ancestor directory.
+Raw x64 `readlink`, x64/AArch64 `readlinkat`, Android imports and `dlsym` bindings
+copy the observed target prefix without adding NUL. Absolute queries ignore
+`dirfd`; the kernel's signed low-32-bit size check precedes pathname access.
+Link queries preserve file cursors and do not resolve the target, including
+relative or dangling targets. Traversal through links, link metadata,
+relative queries and unknown descriptor-backed links stop explicitly; other
+file operations cannot silently treat these links as missing regular files.
+Mixed-permission output copies remain unsupported before any bytes are written.
+The error ordering follows the [Linux readlink contract](https://github.com/torvalds/linux/blob/v6.12/fs/stat.c#L491-L540).
 
 ```json
 {"linux_files":{"files":[
@@ -408,7 +449,7 @@ strict JSON contract:
 ```
 
 `files` is required and may be empty. Every entry requires `path` and
-`bytes_hex`, with optional `metadata`; empty bytes describe an empty file. Paths must be distinct,
+`bytes_hex`, with optional `metadata` and `write_limit`; empty bytes describe an empty file. Paths must be distinct,
 absolute and canonical, with no NUL, empty, `.` or `..` components or trailing
 slash. Paths have fewer than 4096 bytes and components at most 255 bytes.
 A file cannot be another file's parent directory. The catalogue holds at most
@@ -434,17 +475,17 @@ pathname and descriptor-exhaustion failures before reaching an opened file;
 the catalogue does not infer its backing filesystem's direct-I/O support.
 ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
 `0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
-Other flags, relative paths, internal repeated
-separators, `.`/`..` components,
-directory opens, writes/creation, symlinks, duplication and descriptor-control
-operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
+Unlisted flags, cwd-relative paths, internal repeated separators, `..`
+components, creation, symlink traversal and descriptor-control operations
+remain unsupported. `openat` additionally resolves canonical relative names
+and `.` against a live directory FD. Exec is unmodeled, so close-on-exec flags have
 no observable transition in this subset.
 
 Guest queries accept canonical absolute names followed by one or more `/`
 characters. Trailing separators require the final object to be a directory:
 queries of a regular file with a trailing slash return `ENOTDIR`, and missing
 names still return `ENOENT`. Paths consisting only of slashes name the root.
-Directory opens and directory metadata remain unsupported. This parsing does
+Directory opens are modeled; directory stat metadata remains unknown. This parsing does
 not relax the canonical keys required by the catalogue configuration. The
 directory requirement follows Linux
 [pathname lookup](https://www.kernel.org/doc/html/latest/filesystems/path-lookup.html).
@@ -470,6 +511,59 @@ the existing captured stdout/stderr streams. Closing those slots enables
 ordinary file reuse; writes through a closed slot or read-only file return
 `EBADF`. Reading stdin remains unsupported; it is never assumed to be empty.
 Descriptors, open flags and seek modes consume their low 32 bits.
+
+**Directories and live FD links**
+
+Catalogue parents and `/` are enumerable directories. `directories` optionally
+adds canonical empty directory paths. They share the 256-entry catalogue limit.
+`getdents64` (x64 217, AArch64 61) emits LP64 records with 8-byte alignment,
+opaque continuation cookies, type, inode, name and NUL; padding remains
+unchanged. `.` and `..` precede byte-sorted catalogue children. Supplied file
+inodes are retained; other inodes are deterministic workload-local identities,
+not captured host values. At most 8,448 such identities are admitted. A device
+whose char/block type is unknown has `DT_UNKNOWN`. `dup` shares the directory
+cursor; independent opens do not. Small buffers, EOF, invalid descriptors,
+non-directories and wholly inaccessible outputs have explicit errno behavior;
+mixed-permission record writes stop as unsupported. Directory reads return
+`EISDIR`. Directory `SEEK_SET`/`SEEK_CUR` accepts nonnegative cookies.
+
+`dynamic_proc_fds: true` reserves `/proc/self/fd` for live links and enumeration.
+Opening, duplicating, replacing, closing and reusing an FD immediately changes
+that namespace; no stale static link overrides it. Known file, directory and
+device paths come from their actual open description. Standard captured streams
+have no inferred tty/pipe pathname, so their readlink query stops explicitly.
+`/proc/self` reports the modeled process ID. Conflicting catalogue entries are
+rejected. The virtual FD table preallocates `descriptor_limit` rounded up to
+64 slots: proc cookies include closed slots and reach that table boundary at
+EOF. Rewind is required to revisit reused slots below the cursor. These rules
+follow the kernel [record ABI](https://github.com/torvalds/linux/blob/v5.10/fs/readdir.c)
+and [FD iteration](https://github.com/torvalds/linux/blob/v5.10/fs/proc/fd.c).
+This option does not supply dynamic maps, task, status or fdinfo files, nor
+PID aliases, proc mount metadata or general proc symlink traversal.
+
+**Bounded writes to existing files**
+
+An entry's `write_limit` grants mutable content with that maximum extent.
+The full reservation counts against the 16 MiB file budget. The grant does
+not assert real DAC/SELinux permissions or disk capacity. `O_WRONLY`, `O_RDWR`,
+`O_TRUNC` and `O_APPEND` use one mutable object per catalogue path, shared by
+all opens; cursor and flags remain per open description. `dup` shares both.
+`write` overwrites, zero-fills holes, preserves readable-page prefixes on a
+partial input fault, and chooses the current object end for append. Kernel
+validation checks the original signed cursor and count before append selects
+EOF, following the [VFS write contract](https://github.com/torvalds/linux/blob/v5.10/fs/read_write.c).
+Reads and newly opened descriptors observe the resulting bytes. Missing write
+grants and exhausted reservations stop explicitly; they are not fabricated
+EACCES/ENOSPC results. `O_CREAT` can open an existing entry; `O_EXCL` returns
+EEXIST before truncation. Creating absent objects remains unmodeled. `O_CREAT | O_DIRECTORY` also stops
+explicitly because its behavior depends on the Linux release.
+
+Any write or truncation invalidates captured stat observations. A later stat
+stops rather than returning stale size, block counts or timestamps. The known
+filesystem block size remains usable for stdio buffer selection. Vectored
+mutable-file writes, regular file mappings, truncate syscalls, unlink/rename,
+new objects, timestamps and general permission changes remain unmodeled.
+Captured stdout/stderr keep their existing bounded output semantics.
 
 Directory creation supports only failures already determined by pathname
 lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
@@ -545,8 +639,9 @@ and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/ua
 `newfstatat` (x64 262, AArch64 79), Bionic `fstatat`/`fstatat64` and variadic
 `syscall` query those same observations. Absolute paths in the supported form ignore dirfd;
 missing entries return `ENOENT`, and traversal through a regular file returns
-`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for this
-catalogue, which has neither symlinks nor automounts. A non-NULL empty pathname
+`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for supported
+regular-file queries; link metadata, link traversal and automount behavior
+remain unmodeled. A non-NULL empty pathname
 with `AT_EMPTY_PATH` queries an existing descriptor without changing its cursor;
 without that flag it returns `ENOENT`. Closed descriptors return `EBADF`.
 The directory and flags arguments use their low 32 bits. Invalid flag bits
@@ -694,3 +789,10 @@ versions at the same address. The same x64 ELF runs natively on Linux as an
 independent result/fault oracle. Pure memory tests cover budget exhaustion,
 reclamation and authoritative mapping snapshots without retaining RAM.
 Cross-compilation and Unicorn ARM64 results are not native ARM64 KVM/WHP evidence.
+
+Android `atoi`, `atol` and `atoll` accept bounded C-locale decimal prefixes,
+including leading whitespace and one sign. The first nondigit ends the scan;
+representable 32-bit/64-bit results preserve errno. Out-of-range results stop
+explicitly without choosing libc-specific wrapping or saturation. This subset
+follows [C11 section 7.22.1.2](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf);
+it does not add general `strtol` bases, end pointers or locale mutation.

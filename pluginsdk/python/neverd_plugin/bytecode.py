@@ -24,6 +24,11 @@ class BytecodeRecoveryResult:
     scope: Literal["cfg", "state-c"]
     source: str
     with_context: bool = False
+    mapped_observations: int = 0
+    unmapped_observations: int = 0
+    reconstructed_calls: int = 0
+    unresolved_contract_calls: int = 0
+    guarded_contract_calls: int = 0
 
 
 def recover_bytecode(
@@ -37,6 +42,8 @@ def recover_bytecode(
     optimize: bool = False,
     unaligned_pointers: bool = False,
     with_context: bool = False,
+    observations: Mapping[str, Any] | None = None,
+    source_contracts: Mapping[str, Any] | None = None,
     api: HostAPI | None = None,
 ) -> BytecodeRecoveryResult:
     """Check or emit caller-defined bytecode through the public C ABI.
@@ -52,7 +59,8 @@ def recover_bytecode(
     return _recover(
         code, profile, functions, bindings=bindings, base=base, output=output,
         optimize=optimize, unaligned_pointers=unaligned_pointers, api=api,
-        with_context=with_context,
+        with_context=with_context, observations=observations,
+        source_contracts=source_contracts,
     )
 
 
@@ -68,6 +76,7 @@ def recover_bytecode_with_decoder(
     optimize: bool = False,
     unaligned_pointers: bool = False,
     with_context: bool = False,
+    source_contracts: Mapping[str, Any] | None = None,
     api: HostAPI | None = None,
 ) -> BytecodeRecoveryResult:
     """Recover with a synchronous, trusted Python instruction decoder.
@@ -90,7 +99,7 @@ def recover_bytecode_with_decoder(
         code, layout, functions, decoder=decoder, bindings=bindings, base=base,
         output=output, optimize=optimize,
         unaligned_pointers=unaligned_pointers, api=api,
-        with_context=with_context,
+        with_context=with_context, source_contracts=source_contracts,
     )
 
 
@@ -113,6 +122,8 @@ def _recover(
     unaligned_pointers: bool,
     with_context: bool,
     api: HostAPI | None,
+    observations: Mapping[str, Any] | None = None,
+    source_contracts: Mapping[str, Any] | None = None,
     decoder: Callable[[bytes, int], Mapping[str, Any]] | None = None,
 ) -> BytecodeRecoveryResult:
     if not isinstance(code, bytes):
@@ -130,6 +141,14 @@ def _recover(
     # Keep the default ABI usable with engines predating this opt-in key.
     if with_context:
         request_fields["with_context"] = True
+    if observations is not None:
+        if not isinstance(observations, Mapping):
+            raise TypeError("observations must be a mapping")
+        request_fields["observations"] = dict(observations)
+    if source_contracts is not None:
+        if not isinstance(source_contracts, Mapping):
+            raise TypeError("source_contracts must be a mapping")
+        request_fields["source_contracts"] = dict(source_contracts)
     request = _json_bytes(request_fields, "request")
     buffer = (ctypes.c_ubyte * len(code)).from_buffer_copy(code)
     host = api if api is not None else HostAPI()
@@ -188,6 +207,16 @@ def _recover(
     selected_context = result.get("with_context", False)
     if type(selected_context) is not bool or selected_context != with_context:
         raise NeverDError("invalid bytecode recovery context contract")
+    evidence_counts = [result.get(key, 0 if observations is None else None)
+                       for key in ("mapped_observations", "unmapped_observations")]
+    if any(type(value) is not int or value < 0 for value in evidence_counts):
+        raise NeverDError("invalid bytecode source evidence coverage")
+    contract_counts = [result.get(key, 0 if source_contracts is None else None)
+                       for key in ("reconstructed_calls", "unresolved_contract_calls", "guarded_contract_calls")]
+    if any(type(value) is not int or value < 0 for value in contract_counts):
+        raise NeverDError("invalid bytecode source contract coverage")
+    if cast(int, contract_counts[2]) > cast(int, contract_counts[0]):
+        raise NeverDError("invalid guarded bytecode call coverage")
     if (result.get("scope") not in ("cfg", "state-c") or
             not isinstance(result.get("source"), str) or
             result["input_bytes"] != len(code) or
@@ -200,6 +229,8 @@ def _recover(
         result["decoded_bytes"], result["input_bytes"],
         cast(Literal["cfg", "state-c"], result["scope"]), result["source"],
         selected_context,
+        cast(int, evidence_counts[0]), cast(int, evidence_counts[1]),
+        cast(int, contract_counts[0]), cast(int, contract_counts[1]), cast(int, contract_counts[2]),
     )
 
 

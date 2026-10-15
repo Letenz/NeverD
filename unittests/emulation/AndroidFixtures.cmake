@@ -110,7 +110,8 @@ foreach(_optimization O0 O2)
 endforeach()
 foreach(_optimization O0 O2)
   foreach(_file_source android_time.c linux_files.c android_search.c
-      android_signals.c android_snapshots.c linux_residency.c android_sleep.c)
+      android_signals.c android_snapshots.c linux_residency.c android_sleep.c
+      linux_devices.c)
     get_filename_component(_file_kind "${_file_source}" NAME_WE)
     string(REGEX REPLACE "^(android|linux)_" "" _file_kind "${_file_kind}")
     set(_service_object "${_android_fixture_dir}/${_file_kind}-${_optimization}.o")
@@ -208,6 +209,46 @@ foreach(_optimization O0 O2)
         "${_finalizers_object}" -o "${_finalizers_file}"
       DEPENDS "${_finalizers_object}" VERBATIM)
     list(APPEND _android_outputs "${_finalizers_file}")
+  endforeach()
+endforeach()
+foreach(_optimization O0 O2)
+  set(_properties_object "${_android_fixture_dir}/properties-${_optimization}.o")
+  add_custom_command(OUTPUT "${_properties_object}"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+      -fno-asynchronous-unwind-tables "-${_optimization}" -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_properties.c"
+      -o "${_properties_object}"
+    DEPENDS fixtures/android_properties.c VERBATIM)
+  foreach(_packing none android relr)
+    set(_properties_file "${_android_fixture_dir}/properties-${_optimization}-${_packing}.so")
+    add_custom_command(OUTPUT "${_properties_file}"
+      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+        "${_properties_object}" -o "${_properties_file}"
+      DEPENDS "${_properties_object}" VERBATIM)
+    list(APPEND _android_outputs "${_properties_file}")
+  endforeach()
+endforeach()
+foreach(_optimization O0 O2)
+  set(_stdio_object "${_android_fixture_dir}/stdio-${_optimization}.o")
+  add_custom_command(OUTPUT "${_stdio_object}"
+    COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" --target=aarch64-linux-android28
+      -std=c11 -ffreestanding -fno-builtin -fPIC -fstack-protector-all
+      -fno-vectorize -fno-slp-vectorize -fno-unwind-tables
+      -fno-asynchronous-unwind-tables "-${_optimization}" -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_stdio.c"
+      -o "${_stdio_object}"
+    DEPENDS fixtures/android_stdio.c VERBATIM)
+  foreach(_packing none android relr)
+    set(_stdio_file "${_android_fixture_dir}/stdio-${_optimization}-${_packing}.so")
+    add_custom_command(OUTPUT "${_stdio_file}"
+      COMMAND "${NEVERD_PROCESS_LLD}" -shared -z max-page-size=4096
+        --build-id=none --hash-style=gnu "--pack-dyn-relocs=${_packing}"
+        "${_stdio_object}" -o "${_stdio_file}"
+      DEPENDS "${_stdio_object}" VERBATIM)
+    list(APPEND _android_outputs "${_stdio_file}")
   endforeach()
 endforeach()
 add_custom_target(NeverDAndroidFixtures DEPENDS ${_android_outputs})

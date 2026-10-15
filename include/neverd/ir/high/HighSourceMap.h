@@ -17,7 +17,7 @@ namespace neverd {
 
 struct HighExpr;
 enum class StmtKind : uint8_t;
-enum class HighSourceKind { Expression, Store, Statement };
+enum class HighSourceKind { Expression, Store, Statement, CallExpression };
 
 /// An expression produced from one concrete MedIR occurrence. Weak ownership
 /// deliberately loses a mapping when a transformation replaces the expression.

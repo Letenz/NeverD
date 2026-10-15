@@ -1,0 +1,110 @@
+{
+  "language": "c",
+  "commands": [
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=i686-unknown-linux-gnu",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/nonleaf.c",
+        "-o",
+        "<fixtures>/producers/linux-x86-abi/nonleaf-supplied-object.o"
+      ],
+      "object": "producers/linux-x86-abi/nonleaf-supplied-object.o",
+      "sha256": "39503da18121c82de2d5ae886b4c1a0568aa2894bc02b05bffae74f509bd239f"
+    },
+    {
+      "producer": "gcc_x86",
+      "arguments": [
+        "coverage-gcc-x86",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/nonleaf.c",
+        "-o",
+        "<fixtures>/producers/linux-x86-abi/nonleaf-gcc-object.o"
+      ],
+      "object": "producers/linux-x86-abi/nonleaf-gcc-object.o",
+      "sha256": "5957b81a106059cb1a68d66337d23f22f1fe8b3da0821a7c7f0bc972bbc1400d"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=i686-unknown-linux-gnu",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/writable-pointer.c",
+        "-o",
+        "<fixtures>/producers/linux-x86-abi/writable-pointer-supplied-object.o"
+      ],
+      "object": "producers/linux-x86-abi/writable-pointer-supplied-object.o",
+      "sha256": "8fbef02324bca5178f4d3d5256da775b5121d646a00e89c0a7a81a5cdefc1d7c"
+    },
+    {
+      "producer": "gcc_x86",
+      "arguments": [
+        "coverage-gcc-x86",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/writable-pointer.c",
+        "-o",
+        "<fixtures>/producers/linux-x86-abi/writable-pointer-gcc-object.o"
+      ],
+      "object": "producers/linux-x86-abi/writable-pointer-gcc-object.o",
+      "sha256": "2ce5d9e57749295396e2d4a0dd1b586d427375cdababae550ee5bec10f84895d"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=i686-unknown-linux-gnu",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/floating-stack.c",
+        "-o",
+        "<fixtures>/producers/linux-x86-abi/floating-stack-supplied-object.o"
+      ],
+      "object": "producers/linux-x86-abi/floating-stack-supplied-object.o",
+      "sha256": "a8e65d18781f5d00366a60de7a9b421eb95153a598cf3fb2517d23dd38171918"
+    },
+    {
+      "producer": "gcc_x86",
+      "arguments": [
+        "coverage-gcc-x86",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/floating-stack.c",
+        "-o",
+        "<fixtures>/producers/linux-x86-abi/floating-stack-gcc-object.o"
+      ],
+      "object": "producers/linux-x86-abi/floating-stack-gcc-object.o",
+      "sha256": "28a8f5668d5a25c6910630cc9fd93196dc8e3540793c6f6375e8d546962cf28d"
+    }
+  ]
+}

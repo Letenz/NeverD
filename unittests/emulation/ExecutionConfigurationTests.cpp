@@ -70,6 +70,53 @@ TEST(ExecutionConfiguration, NativeDriverProfilesAreBackendQualified) {
   EXPECT_EQ(C.MemoryObservation, ExecutionMemoryObservation::EngineCallbacks);
 }
 
+TEST(ExecutionConfiguration,
+     DirectDriverProfileRequiresKvmSupervisorExecution) {
+  const auto C = llvm::cantFail(
+      executionCapabilities(ExecutionContract::DirectDriverX64,
+                            GuestArchitecture::X64, ExecutionBackendKind::KVM));
+  EXPECT_EQ(C.Privilege, ExecutionPrivilege::Supervisor);
+  EXPECT_EQ(C.AddressModel, ExecutionAddressModel::Canonical);
+  EXPECT_EQ(C.VirtualAddressBits, NativeAddressBits);
+  EXPECT_TRUE(C.SupportsNativeExecution);
+  EXPECT_FALSE(C.HasInstructionAllowlist);
+  EXPECT_TRUE(C.InstructionFamilies.empty());
+  EXPECT_EQ(C.MemoryObservation, ExecutionMemoryObservation::Unobserved);
+  EXPECT_EQ(C.ControlPrecision, ExecutionControlPrecision::InstructionBoundary);
+  EXPECT_EQ(llvm::cantFail(parseExecutionContract("direct-driver-x64-v1")),
+            ExecutionContract::DirectDriverX64);
+  for (auto Backend : {ExecutionBackendKind::Unicorn, ExecutionBackendKind::WHP,
+                       ExecutionBackendKind::HVF}) {
+    auto Result = executionCapabilities(ExecutionContract::DirectDriverX64,
+                                        GuestArchitecture::X64, Backend);
+    ASSERT_FALSE(bool(Result));
+    llvm::consumeError(Result.takeError());
+  }
+  auto RAM = llvm::cantFail(PhysicalMemory::create(MemoryLimit));
+  auto Space = llvm::cantFail(AddressSpace::create(RAM, MemoryLimit));
+  llvm::cantFail(Space->map(Code, PageSize, Read | Write));
+  const auto Generation = Space->mappingGeneration();
+  for (auto Feature :
+       {ExecutionFeature::InstructionObservation,
+        ExecutionFeature::MemoryPreflight, ExecutionFeature::MMIO,
+        ExecutionFeature::MMIOAtomics, ExecutionFeature::ParallelCPUs,
+        ExecutionFeature::UserSupervisorIsolation,
+        ExecutionFeature::ServiceTraps}) {
+    EXPECT_FALSE(C.supports(Feature));
+    ExecutionConfiguration Config;
+    Config.Backend = ExecutionBackendKind::KVM;
+    Config.Contract = ExecutionContract::DirectDriverX64;
+    Config.RequiredFeatures = Feature;
+    auto Result = createExecutionBackend(Config, Space);
+    ASSERT_FALSE(bool(Result));
+    auto E = Result.takeError();
+    EXPECT_FALSE(E.isA<BackendUnavailableError>());
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(RAM->allocatedBytes(), PageSize);
+    EXPECT_EQ(Space->mappingGeneration(), Generation);
+  }
+}
+
 TEST(ExecutionConfiguration, StringFamiliesArePublishedOnceForCheckedProfiles) {
   for (auto Backend :
        {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,

@@ -3,6 +3,7 @@
 #include "Icons.h"
 
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QComboBox>
 #include <QFileDialog>
@@ -18,6 +19,11 @@
 
 namespace neverd::gui {
 namespace {
+/// The object name of Qt's file dialog places pane.
+constexpr char FileDialogPlaces[] = "sidebar";
+/// The size of icons drawn on the 16 pixel grid of IconSet.def.
+constexpr int SmallIconSize = 16;
+
 bool drawsMnemonics(const QWidget *widget) {
   return qobject_cast<const QMenuBar *>(widget) ||
          qobject_cast<const QMenu *>(widget) ||
@@ -99,6 +105,12 @@ void WorkbenchStyle::polish(QWidget *widget) {
   if (auto *files = qobject_cast<QFileDialog *>(widget);
       files && files->iconProvider() != fileIcons())
     files->setIconProvider(fileIcons());
+  // Its places pane draws them at 24 pixels, where icons drawn on the 16
+  // pixel grid blur; at 16 they are as sharp as in the file list.
+  if (auto *places = qobject_cast<QAbstractItemView *>(widget);
+      places && places->objectName() == QLatin1String(FileDialogPlaces) &&
+      qobject_cast<QFileDialog *>(places->window()))
+    places->setIconSize(QSize(SmallIconSize, SmallIconSize));
 }
 
 void WorkbenchStyle::polish(QApplication *application) {

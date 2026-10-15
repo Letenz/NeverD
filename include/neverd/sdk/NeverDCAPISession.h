@@ -86,6 +86,18 @@ NEVERD_API const char *neverd_pdb_reference_json(const char *Path,
 /// by name alone).  {"dwarf":null,"error"} when \p Path names no readable
 /// file.  Paths are UTF-8.  Free with neverd_free_string.
 NEVERD_API const char *neverd_dwarf_reference_json(const char *Path);
+/// The static symbol table of the image at \p Path, which strip removes,
+/// found without loading the image: {"symbols":null} for an image without
+/// one, for an object file, which is never read without its table, and for
+/// a format that has none, and otherwise
+/// {"symbols":{"table","count","names"}}.  "table" names it: ".symtab" for
+/// ELF and SBF, "COFF symbol table" for a PE, "LC_SYMTAB" for the Mach-O
+/// symbols an image does not export.  "count" is the defined names a load
+/// reads from it, and "names" its first function names, at most eight, the
+/// global ones first.
+/// {"symbols":null,"error"} when \p Path names no readable file.  UTF-8.
+/// Free with neverd_free_string.
+NEVERD_API const char *neverd_symbol_table_reference_json(const char *Path);
 /// Read the input of the next neverd_session_load() as \p OptionsJson says
 /// instead of by its header: {"loader":"binary","processor":"x86"|"x86_64"|
 /// "arm"|"thumb"|"aarch64","base","offset","size","entry"?,"platform"?}
@@ -221,6 +233,14 @@ NEVERD_API void neverd_session_set_pdb_search(neverd_session_t Sess,
 /// though other debug information is still found.  For a user who declined
 /// it.  Enabled by default.
 NEVERD_API void neverd_session_set_dwarf_search(neverd_session_t Sess,
+                                                int Enabled);
+
+/// Pass 0 to load an image without its static symbol table, as if it had
+/// been stripped: the next neverd_session_load() reads only the symbols
+/// dynamic linking needs (see neverd_symbol_table_reference_json).  For a
+/// user who distrusts the names in it.  An object file cannot load so.
+/// Enabled by default.
+NEVERD_API void neverd_session_set_symbol_table(neverd_session_t Sess,
                                                 int Enabled);
 
 /// Search the directories and symbol stores of \p SymbolPath, in

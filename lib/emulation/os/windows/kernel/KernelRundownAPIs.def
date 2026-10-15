@@ -1,0 +1,61 @@
+//===- KernelRundownAPIs.def - Run-down protection contracts --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, caller-IRQL ceilings and typed operations for run-down
+/// protection, a lock-free reference count drivers use to drain accesses before
+/// tearing an object down. The whole state is the caller's EX_RUNDOWN_REF.Count
+/// word (bit 0 marks run-down in progress, the rest is the outstanding count
+/// times two), so every operation only touches caller-provided guest memory.
+/// Behavior is modeled 1:1 against the Windows 10.0.19041.6456 kernel exports;
+/// the paths a single cooperative processor could never reach -- waiting with
+/// outstanding references, or releasing once run-down has completed -- fail
+/// clearly rather than guess.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinitializerundownprotection
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exreinitializerundownprotection
+// RVA 0x341ef0 (shared with ExInitializePushLock and KeInitializeSpinLock) and
+// RVA 0x37e680 both clear Count to zero.
+NEVERD_KERNEL_RUNDOWN_API(ExInitializeRundownProtection, 1, APC,
+                          initializeRundownProtection(A[0]))
+NEVERD_KERNEL_RUNDOWN_API(ExReInitializeRundownProtection, 1, APC,
+                          initializeRundownProtection(A[0]))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exacquirerundownprotection
+// RVA 0x2edfd0: FALSE once run-down has begun, otherwise add two and return
+// TRUE. DISPATCH_LEVEL is allowed while the block is nonpaged.
+NEVERD_KERNEL_RUNDOWN_API(ExAcquireRundownProtection, 1, Dispatch,
+                          acquireRundownProtection(A[0], 1))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exreleaserundownprotection
+// RVA 0x2f1d20: subtract two from the outstanding count. A release once
+// run-down has completed would decrement through a null wait block in the
+// kernel, so it is refused.
+NEVERD_KERNEL_RUNDOWN_API(ExReleaseRundownProtection, 1, Dispatch,
+                          releaseRundownProtection(A[0], 1))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exacquirerundownprotectionex
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exreleaserundownprotectionex
+// RVA 0x26d9b0 and 0x5b59d0: the same updates by twice a ULONG count, doubled
+// in 32 bits before the 64-bit add or subtract. Acquisition still writes
+// nothing once run-down has begun.
+NEVERD_KERNEL_RUNDOWN_API(ExAcquireRundownProtectionEx, 2, Dispatch,
+                          acquireRundownProtection(A[0], uint32_t(A[1])))
+NEVERD_KERNEL_RUNDOWN_API(ExReleaseRundownProtectionEx, 2, Dispatch,
+                          releaseRundownProtection(A[0], uint32_t(A[1])))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exwaitforrundownprotectionrelease
+// RVA 0x3427f0: with no outstanding references, mark run-down and return; if it
+// already ran down, do nothing; outstanding references would block on an event,
+// which this cooperative processor cannot drain, so it is refused.
+NEVERD_KERNEL_RUNDOWN_API(ExWaitForRundownProtectionRelease, 1, APC,
+                          waitForRundownProtectionRelease(A[0]))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exrundowncompleted
+// RVA 0x2517a0: unconditionally mark the object run down.
+NEVERD_KERNEL_RUNDOWN_API(ExRundownCompleted, 1, APC, rundownCompleted(A[0]))

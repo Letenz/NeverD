@@ -14,7 +14,9 @@
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
+#include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCSourceStrings.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCWriter.h"
 
@@ -22,6 +24,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
@@ -90,6 +93,23 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
       // The existing memory projection materializes this access. In C an
       // integer byte representation contains no LLVM poison bit.
       Anchors.push_back(Value);
+      continue;
+    }
+    if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(Value)) {
+      const auto *Callee = Call->getCalledFunction();
+      if (!Callee || Callee->isIntrinsic() || Call->hasOperandBundles() ||
+          Call->getCallingConv() != llvm::CallingConv::C)
+        return false;
+      // An ordinary integer C call materializes one returned bit pattern.
+      // Reuse that value, without a new invocation or an LLVM noundef fact.
+      // Its arguments must independently have a total projection: passing
+      // poison is not necessarily immediate LLVM UB, so an unsafe argument
+      // cannot be hidden behind the call's otherwise ordinary C result.
+      Anchors.push_back(Value);
+      for (const auto &Argument : Call->args()) {
+        Users[Argument].push_back(Value);
+        Work.push_back(Argument);
+      }
       continue;
     }
     const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value);
@@ -1409,6 +1429,11 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
+  if (RawMemoryUpdateInputs.count(&Inst))
+    return;
+  if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst))
+    if (writeRawMemoryUpdate(*Store, Indent))
+      return;
   // Aggregate SSA values and storage arrays have distinct C declarations but
   // identical byte layouts. A byte copy also preserves unaligned accesses.
   auto AggregateAddress = [&](const llvm::Value *Ptr) { return valueStr(Ptr); };
@@ -4722,10 +4747,12 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
     break;
   }
   std::string Parameters;
-  for (auto *Parameter : Type->params()) {
+  for (unsigned I = 0; I < Type->getNumParams(); ++I) {
     if (!Parameters.empty())
       Parameters += ", ";
-    Parameters += typeToCLLVM(Parameter);
+    Parameters += sourceScalarType(
+        Type->getParamType(I),
+        Call.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
   }
   if (Type->isVarArg()) {
     // C before C23 names no variadic type without a fixed parameter; shown
@@ -4738,8 +4765,9 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
   } else if (Parameters.empty()) {
     Parameters = "void";
   }
-  return typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
-         Parameters + ")";
+  return sourceScalarType(Type->getReturnType(),
+                          Call.hasFnAttr(LLVMSourceSignedResult)) +
+         " (" + Convention + "*)(" + Parameters + ")";
 }
 
 std::string
@@ -4767,7 +4795,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
     return Expr;
   }
 
-  if (scalarIntegerMinMax(Call)) {
+  if (scalarIntegerMinMax(Call) || scalarIntegerSaturation(Call)) {
     // An actual function captures each argument once, including when the
     // intrinsic itself is inlined into another rendered expression.
     const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +
@@ -4851,6 +4879,26 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
     bool PointerSpelling = false;
     std::string Argument =
         callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx, &PointerSpelling);
+    if (auto Hint =
+            Call.getAttributes().getParamAttr(ArgIdx, LLVMSourceArgumentType);
+        Hint.isValid()) {
+      auto Spelling = Hint.getValueAsString();
+      auto *T = Call.getArgOperand(ArgIdx)->getType();
+      bool Valid = ((Spelling == "int8_t" || Spelling == "uint8_t") &&
+                    T->isIntegerTy(8)) ||
+                   ((Spelling == "int16_t" || Spelling == "uint16_t") &&
+                    T->isIntegerTy(16)) ||
+                   ((Spelling == "int32_t" || Spelling == "uint32_t") &&
+                    T->isIntegerTy(32)) ||
+                   ((Spelling == "int64_t" || Spelling == "uint64_t") &&
+                    T->isIntegerTy(64)) ||
+                   (Spelling == "void*" && T->isPointerTy() &&
+                    T->getPointerAddressSpace() == 0);
+      if (!Valid || (ArgIdx >= Call.getFunctionType()->getNumParams() &&
+                     !Call.getFunctionType()->isVarArg()))
+        throw std::runtime_error("invalid source scalar argument");
+      Argument = "(" + Spelling.str() + ")(" + Argument + ")";
+    }
     const auto *Callee = Call.getCalledFunction();
     const bool HeaderInteger =
         !Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
@@ -5290,6 +5338,11 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
                                     bool *PointerSpelling) {
   if (PointerSpelling)
     *PointerSpelling = false;
+  if (const auto *String = sourceStringArgument(Arg, Call, ArgIdx)) {
+    if (PointerSpelling)
+      *PointerSpelling = true;
+    return "\"" + escapeCString(String->getAsCString()) + "\"";
+  }
   const llvm::BasicBlock *BB = Call.getParent();
   if (const llvm::PHINode *Phi = joinPhiForCallArg(Arg, BB))
     return getName(Phi);

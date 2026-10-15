@@ -6,6 +6,8 @@ captured manifest using in-process C++. They complement the
 [ZIP container](web-zip-profile.md), [Electron](web-electron-profile.md) and
 [package](web-package-profile.md) profiles; each retains its own semantics.
 Selecting a profile does not authenticate a framework, publisher or version.
+The [desktop adapter matrix](web-desktop-adapter-matrix.md) separates detection,
+listing, extraction and downstream analysis for each named layout.
 
 ## Declarations and entries
 
@@ -64,7 +66,12 @@ is at most 10,001 root/member records with 8 MiB path metadata; one path is at
 most 4,096 bytes. Replies contain a fixed set of declaration statuses and at
 most five entries. They disclose no raw target string, path, version, dynamic
 contribution key or activation value. Fixed field names and kinds are NeverD's
-vocabulary. No raw export or reviewed-display permission is implied.
+vocabulary. Manifest analysis does not grant raw export or reviewed-display
+permission. Available member IDs can separately enter the local
+[readable-source exporter](web-readable-export-profile.md); that operation
+retains its own admission, explicit destination and verification contract.
+Neither the manifest reader nor ZIP extraction writes an entire extension or
+NW.js application tree to disk.
 
 ## Interfaces and qualification
 
@@ -93,4 +100,8 @@ the [implementation ledger](web-analysis-implementation.md).
 Field semantics follow the primary [NW.js manifest reference](https://github.com/nwjs/nw.js/blob/main/docs/References/Manifest%20Format.md)
 and [VS Code extension manifest reference](https://code.visualstudio.com/api/references/extension-manifest).
 No upstream implementation was copied. These profiles do not establish full
-distribution detection, VSIX XML/signature validation, activation or safe export.
+distribution detection, VSIX XML/signature validation or runtime activation.
+The authored VSIX fixture independently connects its exact JS entry to the
+source frontend and its embedded Bun helper to the native-JavaScript reader.
+Extension declarations, helper producer evidence and container hashes remain
+separate; a shared wrapper does not imply equal application/helper versions.

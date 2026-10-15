@@ -8,16 +8,45 @@
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
+std::optional<uint64_t> LinuxFiles::duplicate(ServiceKind Kind, uint32_t Old,
+                                              uint32_t New, uint32_t Flags,
+                                              ProcessResult &Result) {
+  if (Kind == ServiceKind::Dup3 && (Old == New || (Flags & ~OpenCloseOnExec)))
+    return uint64_t(0) - InvalidArgument;
+  auto I = Descriptors.find(Old);
+  if (I == Descriptors.end())
+    return uint64_t(0) - BadDescriptor;
+  if (Kind == ServiceKind::Dup) {
+    New = nextDescriptor();
+    if (New == Options->DescriptorLimit)
+      return uint64_t(0) - TooManyFiles;
+  } else if (New >= Options->DescriptorLimit)
+    return uint64_t(0) - BadDescriptor;
+  auto Target = Descriptors.find(New);
+  if (Target != Descriptors.end() && Target->second != I->second &&
+      !canRelease(Target->second))
+    return unsupported(
+        Result, "GPU descriptor replacement cannot retire a busy context");
+  // Save before replacement, including Old == New. No observer can see an
+  // intermediate close/reallocation or a different open-description identity.
+  auto Description = I->second;
+  Descriptors.insert_or_assign(New, std::move(Description));
+  return New;
+}
+
 uint32_t LinuxFiles::nextDescriptor() const {
   uint32_t FD = 0;
   while (FD < Options->DescriptorLimit && Descriptors.contains(FD))
     ++FD;
   return FD;
 }
-llvm::Expected<std::optional<uint64_t>> LinuxFiles::close(uint32_t FD) {
+llvm::Expected<std::optional<uint64_t>>
+LinuxFiles::close(uint32_t FD, ProcessResult &Result) {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
+  if (!canRelease(I->second))
+    return unsupported(Result, "GPU last close cannot retire a busy context");
   Descriptors.erase(I);
   return std::optional<uint64_t>(0);
 }
@@ -28,14 +57,20 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-  if (std::holds_alternative<ProcessDescriptor>(I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
-  auto *File = std::get_if<OpenFile>(&I->second);
+  if (std::holds_alternative<OpenDevice>(*I->second))
+    return unsupported(Result, DeviceOperation);
+  if (std::holds_alternative<OpenDirectory>(*I->second))
+    return std::optional<uint64_t>(uint64_t(0) - IsDirectory);
+  auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
-    if (std::get<Stream>(I->second) == Stream::Input)
+    if (std::get<Stream>(*I->second) == Stream::Input)
       return unsupported(Result, FileInputStream);
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   }
+  if ((File->Flags & 3) == 1)
+    return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   auto Value = read(*File, Address, Size);
   if (!Value)
     return Value.takeError();
@@ -50,11 +85,26 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (Whence > SeekHole)
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
-  if (std::holds_alternative<ProcessDescriptor>(I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
-  auto *File = std::get_if<OpenFile>(&I->second);
+  if (std::holds_alternative<OpenDevice>(*I->second))
+    return unsupported(Result, DeviceOperation);
+  if (auto *D = std::get_if<OpenDirectory>(I->second.get())) {
+    if (Whence > SeekCurrent)
+      return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+    const uint64_t Position = (Whence == SeekCurrent ? D->Offset : 0) + Offset;
+    if (Position > MaxSignedIOSize)
+      return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+    if (Options->DynamicProcFDs && D->Path == "/proc/self/fd" &&
+        Position > UINT32_MAX)
+      return unsupported(Result,
+                         "proc FD cookie exceeds the supported index extent");
+    D->Offset = Position;
+    return std::optional<uint64_t>(Position);
+  }
+  auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
-    if (std::get<Stream>(I->second) == Stream::Input)
+    if (std::get<Stream>(*I->second) == Stream::Input)
       return unsupported(Result, FileInputStream);
     return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
   }
@@ -72,8 +122,9 @@ llvm::Expected<uint64_t> LinuxFiles::read(OpenFile &File, uint64_t Address,
   // either transfer clamping or EOF can reduce the request.
   if (Size > MaxSignedIOSize - File.Offset)
     return uint64_t(0) - InvalidArgument;
+  const auto Bytes = fileBytes(File);
   const uint64_t Available =
-      File.Bytes.size() - std::min<uint64_t>(File.Offset, File.Bytes.size());
+      Bytes.size() - std::min<uint64_t>(File.Offset, Bytes.size());
   Size = std::min({Size, Available, MaxReadWriteSize & ~(Layout.PageSize - 1)});
   uint64_t Copied = 0;
   while (Copied < Size) {
@@ -85,7 +136,7 @@ llvm::Expected<uint64_t> LinuxFiles::read(OpenFile &File, uint64_t Address,
       return Access.takeError();
     if (!*Access)
       return Copied ? Copied : uint64_t(0) - BadAddress;
-    if (auto E = CPU.write(Start, File.Bytes.slice(File.Offset, Count)))
+    if (auto E = CPU.write(Start, Bytes.slice(File.Offset, Count)))
       return std::move(E);
     Copied += Count;
     File.Offset += Count;
@@ -103,7 +154,7 @@ uint64_t LinuxFiles::seek(OpenFile &File, uint64_t Offset, uint32_t Whence) {
     Base = File.Offset;
     break;
   case SeekEnd:
-    Base = File.Bytes.size();
+    Base = fileBytes(File).size();
     break;
   default:
     llvm_unreachable("seek mode must be admitted by the service owner");

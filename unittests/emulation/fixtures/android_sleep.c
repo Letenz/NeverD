@@ -8,6 +8,7 @@ struct Timespec {
   long Seconds, Nanoseconds;
 };
 extern int nanosleep(const struct Timespec *, struct Timespec *);
+extern int usleep(unsigned);
 extern long syscall(long, ...);
 extern int clock_gettime(int, struct Timespec *);
 extern long time(long *);
@@ -28,6 +29,9 @@ static long sleep_route(U64 Mode, const struct Timespec *Request,
     return nanosleep(Request, Remaining);
   if (Mode == 1)
     return syscall(101, Request, Remaining);
+  if (Mode == 3)
+    return usleep(
+        (unsigned)(Request->Seconds * 1000000 + Request->Nanoseconds / 1000));
   register U64 X0 __asm__("x0") = (U64)Request;
   register U64 X1 __asm__("x1") = (U64)Remaining;
   register U64 X8 __asm__("x8") = 101;
@@ -118,6 +122,29 @@ U64 sleep_dynamic(U64 Closed) {
     dlclose(Library);
   struct Timespec Request = {0, 1};
   return Sleep(&Request, (void *)1);
+}
+
+// Forward the full ABI register so the model must narrow useconds_t itself.
+__attribute__((naked)) static int sleep_micro_register(U64 Microseconds) {
+  __asm__("b usleep");
+}
+
+U64 sleep_micro(U64 Microseconds, U64 Route, U64 *Out) {
+  int (*Sleep)(unsigned) = usleep;
+  if (Route == 1 || Route == 2) {
+    void *Library = dlopen("libsleep-model.so", 0);
+    Sleep = dlsym(Library, "usleep");
+    if (Route == 2)
+      dlclose(Library);
+  }
+  *__errno() = 73;
+  int Result = Route == 3 ? sleep_micro_register(Microseconds)
+                          : Sleep((unsigned)Microseconds);
+  Out[0] = *__errno();
+  if (clock_gettime(0, (void *)(Out + 1)))
+    return 99;
+  Out[3] = time(0);
+  return (U64)(long)Result;
 }
 
 static void *spinner(void *Argument) {

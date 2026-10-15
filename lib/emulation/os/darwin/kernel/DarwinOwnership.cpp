@@ -42,7 +42,8 @@ DarwinFiles::changeOwnership(ServiceKind Service,
       return returned(InvalidArgument, true);
     auto Resolved = resolvePath(
         At ? A[1] : A[0], At ? uint32_t(A[0]) : uint32_t(AtCurrentDirectory),
-        LookupMode::Existing, {!(Flags & AtNoFollow), false}, true,
+        LookupMode::Existing,
+        {Service != ServiceKind::Lchown && !(Flags & AtNoFollow), false}, true,
         Subject::Effective, LookupAuthorization::Ownership);
     if (!Resolved)
       return Resolved.takeError();
@@ -52,7 +53,8 @@ DarwinFiles::changeOwnership(ServiceKind Service,
       return unsupported(Result, *Reason);
     File = std::get<Description>(std::move(*Resolved));
   }
-  if (File.Type != Kind::File && File.Type != Kind::Directory)
+  if (File.Type != Kind::File && File.Type != Kind::Directory &&
+      File.Type != Kind::SymbolicLink)
     return unsupported(Result, diagnostic::FileOwnershipTarget);
   auto Current = statusMetadata(File);
   if (auto *Reason = std::get_if<const char *>(&Current))
@@ -64,9 +66,10 @@ DarwinFiles::changeOwnership(ServiceKind Service,
     return returned(*Error, true);
   if (auto *Reason = std::get_if<const char *>(&Authority))
     return unsupported(Result, *Reason);
-  const auto *ProviderTime = File.Type == Kind::File
-                                 ? File.File->OwnershipTime
-                                 : File.Directory->OwnershipTime;
+  const auto *ProviderTime = File.Type == Kind::File ? File.File->OwnershipTime
+                             : File.Type == Kind::Directory
+                                 ? File.Directory->OwnershipTime
+                                 : File.Link->OwnershipTime;
   if (!ProviderTime)
     return unsupported(Result, diagnostic::FileOwnershipProvider);
   if (Requested.UID != UINT32_MAX || Requested.GID != UINT32_MAX) {
@@ -75,9 +78,10 @@ DarwinFiles::changeOwnership(ServiceKind Service,
     if (File.Type == Kind::Directory && Requested.GID != UINT32_MAX &&
         !File.Directory->Identity)
       return unsupported(Result, diagnostic::FileCreationParent);
-    auto &CurrentMetadata = File.Type == Kind::File
-                                ? File.File->CurrentMetadata
-                                : File.Directory->CurrentMetadata;
+    auto &CurrentMetadata = File.Type == Kind::File ? File.File->CurrentMetadata
+                            : File.Type == Kind::Directory
+                                ? File.Directory->CurrentMetadata
+                                : File.Link->CurrentMetadata;
     CurrentMetadata = *Metadata;
     if (Requested.UID != UINT32_MAX)
       CurrentMetadata->UID = Requested.UID;

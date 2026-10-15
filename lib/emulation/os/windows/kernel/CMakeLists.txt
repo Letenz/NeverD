@@ -53,6 +53,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelVaShadowQuery.cpp
   KernelModelVaShadow.cpp
   KernelQueryBuffer.cpp
+  KernelModelContextCapture.cpp
   KernelModelVersion.cpp
   KernelUnpackState.cpp
   KernelCalls.cpp
@@ -94,7 +95,9 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelRemoveLocks.cpp
   KernelRemoveLocks.cpp
   KernelModelRuntime.cpp
+  KernelModelRundown.cpp
   KernelModelScheduling.cpp
+  KernelModelSLists.cpp
   KernelModelWaits.cpp
   KernelModelThreadPriorities.cpp
   KernelModelProcessors.cpp

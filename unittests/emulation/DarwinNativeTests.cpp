@@ -1115,6 +1115,67 @@ TEST(DarwinNative, DirectoryRecordsMatchHostSDKAndCapturedFilesystemBytes) {
   EXPECT_EQ((**Seek).Value, uint64_t(Terminal));
 #endif
 }
+TEST(DarwinNative, SymbolicOwnershipWorkloadsMatchOwnedNativeLifetime) {
+#ifndef NEVERD_DARWIN_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-symbolic-ownership",
+                                                    Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  bool Passed = false;
+  auto Cleanup = llvm::scope_exit([&] {
+    if (Passed)
+      std::filesystem::remove_all(Root);
+  });
+  const std::string Bytes("ab\0\xff"
+                          "ef",
+                          6);
+  for (const char *Mode :
+       {"symbolic-ownership-mutations", "created-symbolic-ownership",
+        "lchown-ownership-mutations"}) {
+    const bool Created = llvm::StringRef(Mode) == "created-symbolic-ownership";
+    const auto Parent = Root / Mode;
+    ASSERT_TRUE(std::filesystem::create_directories(Parent / "dir"));
+    std::filesystem::permissions(Parent / "dir",
+                                 std::filesystem::perms::owner_all);
+    {
+      std::ofstream Data(Parent / "data", std::ios::binary);
+      Data.write(Bytes.data(), Bytes.size());
+      ASSERT_TRUE(Data.good());
+    }
+    const auto Input = (Parent / "dir" / "link").string();
+    if (!Created)
+      std::filesystem::create_symlink("../data", Input);
+    const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
+    const auto Output = (Parent / "stdout").string(),
+               Error = (Parent / "stderr").string();
+    const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                        Error};
+    std::string LaunchError;
+    bool ExecutionFailed = false;
+    const auto Status = llvm::sys::ExecuteAndWait(
+        Program, {Program, Mode, Input}, std::nullopt, Redirects, 5, 0,
+        &LaunchError, &ExecutionFailed);
+    ASSERT_FALSE(ExecutionFailed) << LaunchError;
+    auto Out = llvm::MemoryBuffer::getFile(Output),
+         Err = llvm::MemoryBuffer::getFile(Error),
+         Data = llvm::MemoryBuffer::getFile((Parent / "data").string());
+    ASSERT_TRUE(bool(Out));
+    ASSERT_TRUE(bool(Err));
+    ASSERT_TRUE(bool(Data));
+    EXPECT_EQ(Status, 58) << LaunchError << (*Err)->getBuffer().str();
+    EXPECT_EQ((*Out)->getBuffer(), "W");
+    EXPECT_TRUE((*Err)->getBuffer().empty());
+    EXPECT_EQ((*Data)->getBuffer(), Bytes);
+    for (const auto &Name : {Input, Input + ".moved", Input + ".alias"})
+      EXPECT_EQ(std::filesystem::symlink_status(Name).type(),
+                std::filesystem::file_type::not_found);
+  }
+  Passed = !HasFailure();
+#endif
+}
+
 TEST(DarwinNative, SymbolicFileSystemWorkloadsMatchOwnedNativeLifetime) {
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
   GTEST_SKIP() << "native Darwin reference requires a macOS build host";
@@ -1460,6 +1521,23 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       CaseInput = (Catalogue / "link").string();
       if (llvm::StringRef(Test.Mode) == "symbolic-filesystem-observations")
         std::filesystem::create_symlink("data", CaseInput);
+    } else if (llvm::StringRef(Test.Mode) == "symbolic-ownership-mutations" ||
+               llvm::StringRef(Test.Mode) == "created-symbolic-ownership" ||
+               llvm::StringRef(Test.Mode) == "lchown-ownership-mutations") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "dir"));
+      std::filesystem::permissions(Catalogue / "dir",
+                                   std::filesystem::perms::owner_all);
+      {
+        std::ofstream Data(Catalogue / "data", std::ios::binary);
+        Data.write("ab\0\xff"
+                   "ef",
+                   6);
+        ASSERT_TRUE(Data.good());
+      }
+      CaseInput = (Catalogue / "dir" / "link").string();
+      if (llvm::StringRef(Test.Mode) != "created-symbolic-ownership")
+        std::filesystem::create_symlink("../data", CaseInput);
     } else if (llvm::StringRef(Test.Mode) == "created-directory-filesystem") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directory(Catalogue));

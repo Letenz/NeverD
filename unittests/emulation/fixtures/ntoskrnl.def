@@ -7,11 +7,15 @@ EXPORTS
   ZwOpenKey
   ZwCreateKey
   ZwQueryValueKey
+  ZwEnumerateValueKey
+  ZwQueryKey
+  ZwEnumerateKey
   ZwSetValueKey
   ZwDeleteValueKey
   ZwDeleteKey
   ZwClose
   RtlGetVersion
+  RtlCaptureContext
   RtlInitUnicodeString
   ExAllocatePool
   NtQuerySystemInformation
@@ -111,3 +115,59 @@ EXPORTS
   RtlTimeFieldsToTime
   RtlStringFromGUID
   RtlGUIDFromString
+  ExInterlockedInsertHeadList
+  ExInterlockedInsertTailList
+  ExInterlockedRemoveHeadList
+  ExInterlockedPushEntryList
+  ExInterlockedPopEntryList
+  ExInterlockedAddUlong
+  ExInterlockedAddLargeInteger
+  KeInitializeSpinLock
+  InitializeSListHead
+  ExpInterlockedPushEntrySList
+  ExpInterlockedPopEntrySList
+  ExpInterlockedFlushSList
+  ExQueryDepthSList
+  FirstEntrySList
+  strlen
+  wcslen
+  strnlen
+  wcsnlen
+  strcmp
+  wcscmp
+  strncmp
+  wcsncmp
+  _stricmp
+  _wcsicmp
+  _strnicmp
+  _wcsnicmp
+  strchr
+  wcschr
+  strrchr
+  wcsrchr
+  strstr
+  wcsstr
+  strspn
+  wcsspn
+  wcscspn
+  KeAcquireInStackQueuedSpinLock
+  KeReleaseInStackQueuedSpinLock
+  KeAcquireInStackQueuedSpinLockAtDpcLevel
+  KeReleaseInStackQueuedSpinLockFromDpcLevel
+  ExInitializeRundownProtection
+  ExReInitializeRundownProtection
+  ExAcquireRundownProtection
+  ExReleaseRundownProtection
+  ExWaitForRundownProtectionRelease
+  ExRundownCompleted
+  ExAcquireRundownProtectionEx
+  ExReleaseRundownProtectionEx
+
+strcpy
+wcscpy
+strncpy
+wcsncpy
+strcat
+wcscat
+strncat
+wcsncat

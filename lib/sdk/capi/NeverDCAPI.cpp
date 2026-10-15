@@ -42,6 +42,7 @@
 #include "neverd/loader/ELF/SBFELFLoader.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
+#include "neverd/loader/StaticSymbolTable.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
 #include "neverd/sdk/NeverDPlugin.h"
@@ -171,6 +172,7 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   if (Policy) {
     LoadOpts.OnlyFunctionEntries = Policy->OnlyFunctionEntries;
     LoadOpts.ARMFunctionModes = Policy->ARMFunctionModes;
+    LoadOpts.ReadStaticSymbols = Policy->ReadsStaticSymbols;
     DbgRequest = Policy->DbgRequest;
   }
   // The file reads with the loader its project keeps, as a session load
@@ -473,6 +475,31 @@ const char *neverd_dwarf_reference_json(const char *Path) {
   return Answer();
 }
 
+const char *neverd_symbol_table_reference_json(const char *Path) {
+  // Enough of the table's names to tell planted ones by, for a question.
+  constexpr size_t SampleNames = 8;
+  llvm::json::Object Root;
+  const auto Answer = [&] {
+    return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+  };
+  Root["symbols"] = nullptr;
+  auto Found = findStaticSymbolTable(std::filesystem::u8path(Path ? Path : ""),
+                                     SampleNames);
+  if (!Found) {
+    Root["error"] = jsonSafeText(llvm::toString(Found.takeError()));
+    return Answer();
+  }
+  if (!*Found)
+    return Answer();
+  llvm::json::Array Names;
+  for (const auto &Name : (*Found)->Names)
+    Names.push_back(jsonSafeText(Name));
+  Root["symbols"] = llvm::json::Object{{"table", (*Found)->Table},
+                                       {"count", (*Found)->Count},
+                                       {"names", std::move(Names)}};
+  return Answer();
+}
+
 int neverd::sdk::loadNativeSnapshotSession(neverd_session_t Sess,
                                            BinaryImage Image,
                                            uint64_t InputBytes,
@@ -519,6 +546,7 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   BinaryLoadOptions LoadOpts;
   LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
   LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
+  LoadOpts.ReadStaticSymbols = S->ReadsStaticSymbols;
   // The file reads with the loader the caller chose, else the one its
   // project keeps.
   if (S->RequestedLoad) {
@@ -584,6 +612,7 @@ int neverd::sdk::loadNativeMobileSession(neverd_session_t Sess,
     return 0;
   }
   MachOLoader Loader;
+  Loader.setReadsStaticSymbols(S->ReadsStaticSymbols);
   auto Image = Loader.load(Path);
   if (!Image) {
     S->setError("invalid selected Mach-O: " +
@@ -760,6 +789,11 @@ void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
 void neverd_session_set_pdb_search(neverd_session_t Sess, int Enabled) {
   if (auto *S = toSession(Sess))
     S->DbgRequest.SearchPDB = Enabled != 0;
+}
+
+void neverd_session_set_symbol_table(neverd_session_t Sess, int Enabled) {
+  if (auto *S = toSession(Sess))
+    S->ReadsStaticSymbols = Enabled != 0;
 }
 
 void neverd_session_set_dwarf_search(neverd_session_t Sess, int Enabled) {

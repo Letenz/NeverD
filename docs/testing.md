@@ -51,7 +51,13 @@ prebuilt-LLVM guidance.
 `SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and
-module cache identities. `HighSymSimplify.OrdinaryConversion*` keeps optional
+module cache identities. `NativeLLVMInspection*` preserves inspection branches
+across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
+checks integer and floating call results, unchanged LLVM/source output and
+resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
+prepared function on invalid view names. Worker source-cache tests also check
+that preparation receives the requested LLVM representation.
+`HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
 enable it through the production converter. `SymSimplifyGuard.SourceProfiles*`
 checks that the optional expression pass stays off when disabled and evaluates
@@ -151,13 +157,18 @@ complement `source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
-It also checks that empty library evidence needs only the ordinary HighC render,
+It also checks that statement navigation without library or call-expression
+evidence needs only the ordinary HighC render,
 preserves definitions and instruction locations, and matches independent marker
 proofs across nested statements and multiple functions. Buffered byte positions
 cover UTF-8, marker-looking text, nested relocation, suppressed statements and
 refusal of invalid or overflowing ranges without partial publication. Private
 recordings still reject changed text. Ordinary rendering and output failures
 propagate without retrying them as optional mapping failures.
+Call-expression maps reject position mode before mutation and use independent
+recording; the mapped output must equal ordinary C without leaked delimiters,
+and changed expression kinds still lose their anchors. The bytecode observation
+test also recompiles and runs the resulting call and pointer-store evidence.
 `SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
 Go, partial slices, conflicting spans and functions shown as C after a dialect
 refusal. `SessionCAPITest.DialectNavigationMapsOnlyTheReturnRowAcrossPages`
@@ -729,6 +740,14 @@ frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 through straight-line and nested continuation uses, including 32-bit wraparound.
 It also requires unused argument stores and address chains to disappear.
 
+`LLVMCValues.RawMemoryUpdates*` compares emitted C with independently compiled
+LLVM at O0/O2 with undefined-behavior traps. It covers constant add/subtract and
+bitwise updates at 8/16/32/64 bits, captured wrapped results, unaligned byte
+storage and surrounding sentinels. Intervening calls, reads, aliasing stores,
+earlier result users, old-value users, changed addresses/widths and volatile or
+atomic accesses retain their memory ordering and separate stores. The byte-copy
+mode and the unchanged input module are checked too.
+
 `LLVMCValues.SelectedFunctionKeeps*SynthesizedTableStorage` compiles and executes
 selected lookup-table output at O0/O2 for x86, x64, ARM and AArch64 source
 profiles across ELF, COFF and Mach-O. Execution uses host scalar C for 64-bit
@@ -1290,7 +1309,11 @@ The fixed native ICU policy is required; omission tests check an explicit
 [fixture manifest](../unittests/web/fixtures/asar/README.md).
 
 `NeverDWebArtifactTests` covers artifact identity, immutable import publication,
-input links/collisions, aggregate budgets and bounded JSON admission. Its blob
+input links/collisions, aggregate budgets and bounded JSON admission. Shared
+`WebPathPolicy` owner cases check portable device names and
+NFC/full-fold equivalence; captured Unicode aliases refuse before publication
+without changing original evidence names. Both owner cases and the portable
+capture case are mandatory in the Windows product receipt. Its blob
 tests additionally check immutable disk snapshots, shared descriptor lifetime,
 range/overflow limits, concurrent reads and a C++ child with a lowered file-size
 limit to inject storage-write failure. The maximum-size case streams two 256 MiB
@@ -1918,8 +1941,151 @@ that same slot, in either operand order.
 strings, generic builtins compiled for a different source ISA, and dead image
 address calculations. The latter must retain volatile/atomic loads and
 observable calls while leaving the input LLVM module unchanged.
+Return-only join tests compare 6144 full-status cases at each O0/O2 level against
+independently compiled LLVM, checking call counts and volatile output effects.
+They also require direct returns in the C and unchanged input IR. Effectful
+joins, exception personalities and address-taken return blocks are refused.
+Concise GEP tests exercise 4096 address calculations per width and optimization
+level, including negative narrow indices, scaled wide indices and wraparound
+in both 32- and 64-bit address domains, with undefined-behavior traps.
+Single-bit condition tests compare 28,672 cases per O0/O2 level against
+independently compiled LLVM at 8/16/32/64 bits, including signed and unsigned
+comparisons, inverted flags, narrow sign bits, shifts and boolean truncation.
+Volatile word reads/writes and intervening observer calls must retain their
+values and counts, and caller IR must stay unchanged. Negative and budget cases
+retain freeze, variable/oversized shifts, arithmetic, independent bit sources,
+poison, multi-bit masks and overly deep graphs; shared DAGs remain bounded.
 
 ## Interpreter recovery checks
+
+`LLVMCValues.RepeatedParameterFieldAddressesPreserveMemoryObservations`
+compares x64 and ARM64 C projections against independently compiled LLVM at
+O0/O2. Each projection checks 2,048 complete-buffer cases with unaligned and
+overlapping accesses, negative field offsets, branch-dependent stores and an
+opaque call that changes the observed memory. Undefined-behavior traps remain
+enabled; repeating an address must not reuse the value previously read there.
+
+`NeverDBytecodeObservation` covers input-bound call-site source evidence through
+HighC, LLVMC and optimized LLVMC, compiling and executing successful and failed
+state gateway calls. It rejects stale reports and mismatched call occurrences.
+Symbol identities are tested through complete memory transport, partial stores
+and opaque-call invalidation with 32- and 64-bit results. `SymValueIdentity.*`
+also checks both byte orders, constants, arithmetic and conflicting identities.
+`CSourceEvidence.*` exercises the shared Windows/ELF source model, mismatched
+functions, ambiguous spans and hostile comment text. It does not claim native
+Windows process execution coverage.
+
+`StateSource.*` checks contract rejection before mutation, exact pointer
+round trips, Windows x64/ARM64 ELF call reconstruction and unknown-site
+fallback. `StateSourceCompiled.*` compares the complete unaligned state bank,
+guest writes, signed arguments/results and nonzero statuses against independent
+gateway implementations at `-O0`/`-O2` with undefined-behavior traps. Partial-selector tests cover both
+byte orders, byte/halfword/word slices and an intervening overwrite. These checks use synthetic inputs;
+they do not authenticate a producer's isolation or host-service assertions.
+`LocalBankPreservesEveryByteAndOpaqueBoundaries` compares independently
+compiled original LLVM and emitted C at O0/O2 with UBSan traps: 2,048 inputs per
+level vary unaligned banks, overlapping partial writes, loops, every-byte opaque
+mutations, pointer identity, guest effects, call traces and full-width failure
+returns. Unsupported selected bank addresses retain the original body. These
+checks cover the implementation under the explicit private-bank assertion;
+they do not prove that arbitrary callers satisfy that assertion.
+`BankEffectsPreserveCallsLoopsAndCompleteState` adds three independent
+LLVM-versus-C cases at O0/O2 with UBSan traps (2,048 inputs per configuration):
+recursive callees, conflicting loop/backedge writes, partial result overlap,
+full-bank gateway reads, bounded and unbounded fallback writes, fixed fallback
+widths, arbitrary opaque mutation, guest effects and nonzero statuses. Separate
+refusal tests cover weak/interposable and indirect callees. Schema checks reject
+malformed fallback assertions before mutation. LLVMC unsigned saturation tests
+cover 1/8/16/32/64/128-bit add/subtract, boundaries, operand evaluation, assigned
+and inline expressions, name collisions and malformed shapes.
+The Python native integration suite checks static/callback producer parity,
+strict schema admission and reconstruction counts; the CLI retains existing
+output after a rejected source contract.
+String cases cover indirect bank capture, both byte orders, missing assertions,
+unknown/out-of-range offsets, unknown keys and missing terminators. The compiled
+string oracle varies bytes (including the terminator), normalization modes,
+module sentinels and bank alignment at O0/O2 with undefined-behavior traps,
+comparing complete bank bytes, guest effects, native-call traces and failure
+statuses. Native Python tests exercise static/callback parity and reject
+malformed images, string declarations and exclusions through the shared C ABI.
+String spelling also rejects missing call-site contracts, writable globals and
+externally initialized globals, preserving ordinary address identity.
+Pointer cases reject mixed selector modes, incomplete/duplicate source slots,
+narrow loads and unknown offsets. Windows x64 and ARM64 IR retain address and
+arity checks even after opaque bank calls. The compiled pointer oracle compares
+2048 cases at O0/O2, including target replacement, null pointers, changed cache
+contents after capture, signed results, unaligned full banks, guest effects and
+nonzero gateway statuses. Python tests check static/callback parity, underscore
+symbols and strict pointer-contract parsing. These are synthetic ABI cases, not
+native Windows import-table or whole-program execution coverage.
+The pointer oracle also supplies an unsigned header overload for its signed
+import, so address guards and call operands must preserve the declared signature.
+The variadic compiled oracle checks 1024 complete-bank cases at O0/O2 using
+actual `va_arg` consumers, signed/unsigned 32- and 64-bit operands, a small
+64-bit constant and a pointer. It checks guest effects and return values;
+native Python parsing rejects zero, fractional and oversized fixed prefixes and preserves
+explicit promoted types at guarded pointer call sites.
+Void-capture cases exercise full and partial overwrites on both byte orders,
+branch coverage, intervening observers, mixed bank/guest addresses, cycles and
+early exits. The independent compiled oracle compares 2048 unaligned complete
+banks, guest effects and statuses at O0/O2 while varying the gateway's otherwise
+unspecified captured bits. It exercises both the native void arm and failed
+arity fallback. Native Python tests verify static/callback parity, the legacy
+zero policy, proof failure and strict void-policy schema admission.
+Scalar-selector cases cover both byte orders, partial slices, multiple bank
+transports, unlisted candidates and unknown writers. The compiled oracle checks
+4096 full-bank cases at O0/O2 with undefined-behavior traps, changing the selector
+across an opaque call, varying upper bits and argument counts, and comparing
+guest effects, signed results and full-width failure statuses. Native Python
+tests verify static/callback parity and preservation of the runtime guard and
+original fallback. PHI/select candidates include conflicting arms and loop
+backedges. The compiled oracle executes both straight-line and variable-trip
+loops, preserving complete banks and per-iteration effects across native and
+fallback paths.
+
+Narrow-signature cases check signed and unsigned 8- and 16-bit results on both
+byte orders. The compiled default-argument oracle compares 8192 cases per
+optimization level, varying all four result types, 1/2/4/8-byte destinations,
+supplied counts, signed operands, null pointer defaults and bank alignment.
+Full banks, guest effects, native traces and failure statuses must agree at
+O0/O2 with undefined-behavior traps; both accepted and fallback paths execute.
+Native Python tests check static/callback parity, zero supplied operands,
+out-of-range counts and rejection of malformed or overflowing defaults,
+non-null pointer defaults and unpromoted narrow variadic operands.
+Forwarded-target cases reject conflicting identities, malformed target indices,
+missing required slots and target normalization before mutation. Windows x64
+and big-endian ARM64 IR check target removal at different operand positions and
+signed indirect signatures. An independent compiled oracle compares 8192 cases
+per O0/O2 level with undefined-behavior traps: replaced and null targets,
+captured operands whose slots are overwritten, optional pointers, padding beyond
+the available bank slots, signed narrow results, all four store widths, full
+unaligned banks, guest effects and failure statuses. Python static/callback
+producers share padding and target admission through the native C API.
+Context-forwarding cases reject absent, non-pointer, variadic and excess gateway
+parameters before mutation, including conflicting signed declarations after
+receiver insertion. Windows x64 and ARM64 IR cover named, pointer-candidate,
+forwarded-target and string calls. The compiled oracle compares 6144 cases at
+each O0/O2 level with undefined-behavior traps and uninitialized-variable errors:
+distinct and null receivers, receiver/guest aliases, mutations before the call,
+reentrant calls using another receiver, signed arguments/results, defaults,
+variadics, full unaligned banks and fallback status/effects. Python static and
+callback producers share strict boolean parsing and missing-context rejection.
+These tests establish explicit receiver forwarding, not original object layouts
+or native Windows runtime behavior.
+Guest-selector tests check endian-aware slices and unrelated offsets. Their
+4096-case independent LLVM/C oracle at O0/O2 changes the bank-held base, guest
+bytes and argument count across an opaque call. Both successful guarded calls
+and full-status fallbacks preserve unaligned banks, guest bytes and call traces
+with undefined-behavior traps.
+`LLVMCValues.PreservedIndirectChainsKeepLoadsStoresAndCapturedTargets` checks
+1024 nested-pointer cases at each O0/O2 level against independently compiled
+LLVM, with undefined-behavior traps. It preserves observable target snapshots
+and calls the captured value after another call replaces or nulls the slot.
+The compiler also rejects any emitted read of an uninitialized target.
+`LLVMCVoidAnalysis.FreezeOfIntegerCall*` covers joins between an integer call
+result and a memory load. Its 1024-case C oracle checks both branches, the
+stored/returned bits and exact call counts at O0/O2 with undefined-behavior
+traps. Unproved shift, undef and poison arguments still refuse emission.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed
@@ -2108,6 +2274,11 @@ Seed regressions cover agreement at every external entry, multiple backedges, hi
 Additional loop regressions cover narrow wrapped last indices, separate body/latch blocks, both guard polarities, swapped equality operands, reordered and descending unit-step carriers, zero-trip high-data differences, newly executed poison and wrong boundary guesses. Exact/short construction and proof budgets plus candidate exhaustion preserve atomic refusal. Original LLVM and emitted C run at O0/O2 against independent arithmetic oracles.
 
 `NeverDLLVMCScalarLoopRecoveryTests` checks default whole-module and selected-function output, continued recovery after return-path cleanup, function identity and attributes, caller bindings, existing/new intrinsics and symbol collisions, shared budgets, effectful calls, missing input-definedness, metadata, image projections, external block addresses and foreign selections. Independent arithmetic and rotation oracles execute generated C at O0/O2 with undefined-behavior traps; arithmetic also compares independently compiled original LLVM across every byte control, boundary words and deterministic full-width data.
+The memory-region tests compare generated C with original LLVM at O0/O2 under
+UBSan. They cover aliased memory, indirect observer calls, pointer PHI swaps,
+acyclic diamonds, zero-trip loops and shared failure-return PHIs. The observer
+trace and complete buffers are compared, not only the final scalar return.
+
 
 `SymSimplifyPredicates.*` also compares standalone and full-pass policy, reported work, exact/one-short budgets, a disabled phase and stamped functions. Scalar source regressions cover arithmetic-encoded loop stops at 8/32/64 bits, signed-overflow refusal and construction limits shared across rounds and functions. Failed publication retains the original IR; emitted C runs at O0/O2 against independently compiled original LLVM and an arithmetic oracle.
 
@@ -2182,6 +2353,8 @@ independent byte-vector executor for signed/unsigned products, both byte orders,
 unknown high bits controlling both branches, numeric byte slices, malformed
 shapes and exact/short budgets. `BinaryLowIRRefinement.WideInteger*` checks raw
 binary completion while retaining native-proof and both source-layout refusals.
+
+`InterpreterSpecialization.WideIntegerConcat*` checks both byte orders, high/low words, constant inputs, overlapping output, high-word control, malformed shapes, exact/short budgets and retained unknown-memory provenance. Strictly decoded `PSHUFD` covers all 256 selectors with aliased and distinct destinations against independent dword indexing. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` retains native-proof and both source-layout refusals.
 
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 
@@ -2617,6 +2790,11 @@ observed bytes, request/remaining aliases, malformed inputs, multiple deadlines,
 saved registers/TLS/errno, join/mutex/once continuations, provider lifetime and
 pending events at instruction limits. Available native AArch64 transports also
 match Unicorn's complete reports, including instruction and thread traces.
+Direct and dynamically resolved `usleep` callers check zero, subsecond and
+multi-second durations, full unsigned 32-bit range, high register-bit narrowing,
+clock rollover, errno preservation, idle wake completion and a runnable peer.
+Disabled time policy, clock overflow and closed providers retain incomplete
+calls and unchanged output memory.
 `LinuxClockTests.cpp` checks shared elapsed
 time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
 fixtures verify raw sleep errors, unchanged input and both updated clock layouts.
@@ -2823,6 +3001,17 @@ that external pins reject completion without changing IRP or MDL state.
 Additional fixtures cover driver-owned nonpaged pool MDLs, independent descriptor
 and buffer lifetimes, registry query layouts and short buffers, handle rights,
 deletion and leaks, and full-width `information_hex` for zero-output IOCTLs.
+`DriverKernelRegistry` also covers Basic/Node/Full/Name/Cached key layouts,
+explicit and unknown timestamps, overflow before mutation, identical-value
+writes, retained maxima and live subkey indices. Original
+`driver_registry_values.c` and `driver_registry_keys.c` execute query,
+enumeration and deletion through Unicorn/KVM/WHP/HVF with legacy/checked-x64
+contracts at preferred/rebased addresses; unavailable host backends skip
+explicitly.
+`driver_cstring_writes.c` uses the same backend/contract/base matrix for eight
+C string writers. Model tests cover copy padding versus append termination,
+zero-count narrow/wide differences, exact source boundaries, full-width counts,
+overlap, write preflight, paged IRQL restrictions and expired pool storage.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 
@@ -4897,7 +5086,7 @@ The required execution policy follows existing CI ownership:
   `NeverDSourceAnchorTests`. Missing compilers, missing generated corpus inputs,
   skipped checks, or omitted suites fail the audit. The CTest evidence artifact
   includes the compiler versions, native ELF inputs, emitted C and CLI logs.
-- The only platform exceptions within these required suites are
+- Platform exceptions within these required suites include
   `ObjCEHCorpus.HonorsHostMachORewriteContractForEveryVariant` and
   `CxxItaniumEHCorpus.HonorsHostMachORewriteContractForEveryProbeVariant` on
   non-macOS hosts. Both execute native Mach-O probes; their exact identities
@@ -5145,7 +5334,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 86 driver environment checks = 5598`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -5222,6 +5411,41 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidDevices.*` runs independent O0/O2 callers with ordinary, APS2 and RELR
+relocations. Raw, named, variadic and dynamic ioctl routes check full buffers,
+errno, scalar argument width, independent opens, descriptor reuse and provider
+lifetime. Rejected requests, nested pointers, later input/output faults and
+read-only buffers must preserve bytes; alias cases resolve every input before
+outputs. `AndroidDeviceMemory.*` checks retry without sequence consumption.
+Linux x64/ARM64 callers use the same synthetic inputs and independent byte
+oracle. Process JSON and Python integration cover strict schema, shared limits
+and public API parity. These tests validate explicit device transactions, not
+real hardware or driver execution.
+
+`LinuxMemory.Device*` checks device snapshot alias identity, partial retirement,
+maximum permissions across coalesced ranges, refused requests and allocation
+budgets. `AndroidDevices.DeviceMapping*` executes raw, Bionic, variadic and dynamic
+callers at O0/O2 with each relocation packing, including access faults and mappings
+that survive descriptor close. The Linux device fixture runs the same lifecycle
+checks on x64 and ARM64. `ProcessReport.LinuxDeviceMappings*` checks strict JSON
+and C++ admission; the Python process integration test transports the same public
+contract through the C ABI. Run the shared Linux process, Android native,
+execution-session and process-public suites when changing this memory boundary.
+
+`AndroidDevices` and the shared O0/O2 x64/ARM64 device fixture cover duplicated
+file cursors, ioctl positions and output sinks; context ownership and VMA-retained
+lifetimes; consumed/retired timestamps; equal-time, cross-page producer writes;
+PROT_NONE aliases, partial unmapping and address reuse. Context refusal cases
+check unchanged output bytes for unsupported flags, copy-out and busy retirement.
+A pure guest polling loop requires the explicit instruction-time input; a runnable
+child and sleeping/joining parent share that clock and the updated physical page.
+`LinuxClock.InstructionTime*` tests cumulative accounting, idle coexistence and
+atomic overflow. `ProcessReport.StatefulDevices*` checks strict JSON and C++
+admission. The Python device integration case exercises the same contracts through
+the C ABI. These are deterministic model checks, not vendor GPU or SDK equivalence.
+Run the Linux process, Android native and public process suites when changing these
+shared owners; report unavailable transports separately.
+
 `AndroidResidencyTests.cpp` compares raw SVC, variadic and named `mincore`
 calls using independent O0/O2 fixtures with ordinary, APS2 and RELR relocations.
 It checks ordered range/alignment errors, empty queries, unchanged output bytes,
@@ -5249,6 +5473,23 @@ earlier field stores and retained state after a later user-space pointer fault.
 `LinuxProcessTests` executes original x64/AArch64 syscall fixtures at O0/O2;
 `ProcessReportTests` checks lossless input, malformed entries and profile gates.
 These tests validate action bookkeeping, not signal delivery or handler frames.
+
+`AndroidNativeTests.cpp` checks device API queries against absent, empty,
+positive, nonpositive, prefix and overflowing property values through direct
+imports and dynamic providers. Repeated results, errno preservation and closed
+provider rejection are checked with independently compiled O1 callers across
+ordinary, APS2 and RELR relocations. The O0/O2 decimal conversion tests cover
+the shared parser's guest-memory behavior.
+An external device query must be replayed from explicit captured properties;
+its API level alone does not establish compatibility with that Android release.
+
+`ProcessReport.LinuxDeviceMappingBase64PreservesCompleteBinaryPages` compares
+every decoded byte of a 32 KiB binary page input while retaining the 64 KiB JSON
+limit. It rejects ambiguous encodings, malformed padding/alphabet, noncanonical
+spare bits, partial pages and unaligned offsets. The Python process tests execute
+the same mapping lifecycle through raw, named, variadic and dynamic calls with
+the compact input. Base64 changes transport only; shared Linux mapping and
+catalogue bounds remain authoritative.
 
 `AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
 with `getpagesize`, page-aligned allocation and its final valid byte. Compiled
@@ -5337,6 +5578,44 @@ write ordering, and cumulative budgets. Control mutation or unmapping before
 waiter resumption must leave the original call incomplete. Complete reports
 from the same independent programs are compared between Unicorn and available
 native ARM64 HVF execution.
+`AndroidPropertyTests.cpp` runs independently authored O0/O2 callers with
+ordinary, APS2 and RELR linking. Full-buffer expectations cover stable handles,
+empty/missing values, maximum short values, full callback names versus legacy
+truncation, overlapping output order, page-tail names and unsigned nth indices.
+Nested foreach/read/once callbacks and cooperative threads check live stack
+locals, full-width cookies, separate errno and ordered pending call results.
+Invalid handles, callback addresses, output permissions, mapping retirement,
+changed property bytes and aggregate memory exhaustion have explicit outcomes.
+Unsupported callbacks and instruction/event exhaustion cannot complete the
+parent call. Available HVF execution is compared with Unicorn on the same
+nested/thread programs. Public C/CLI and Python checks reuse the dynamic
+property fixture and provider-lifetime controls. These are immutable API 28
+model checks; property-service updates, SELinux contexts, long values and native
+Android-device equivalence are not established. Run the full Android native,
+execution-session and process-public suites after callback-owner changes.
+
+`AndroidStdio` executes independent O0/O2 callers with ordinary, APS2 and RELR
+relocations on Unicorn, and O0/O2 RELR callers on HVF when available. It checks
+complete output buffers, raw FD offsets, partial element reads, EOF retries,
+seek/position aliases, fdopen/dup ownership, buffer replacement, allocation
+fallback, direct-read EFAULT versus buffered-pointer faults, descriptor closure,
+opaque handles, errno isolation and dynamic provider retirement. C API/CLI and
+Python cases use the same fixture and compare exact returned memory. All file
+contents and metadata are synthetic explicit inputs; no device or host stdio
+is an oracle for the Android ABI. Run `ctest -R AndroidStdio` after building
+`NeverDAndroidNativeTests`; unsupported backends remain skips, not passes.
+
+The same `AndroidStdio` fixture covers full/line/unbuffered writes, read/write
+transitions, append with competing opens, flush failures, raw-versus-buffered
+pointer faults, dynamic proc FD reuse and directory buffering/cookies.
+`LinuxFileNamespace` in `NeverDLinuxProcessTests` independently checks both
+LP64 architectures, complete defined dirent bytes and untouched padding,
+partial source-page writes, closed FD slots, EOF cookies and budget refusal.
+C/CLI and Python exercise fresh mutable-file and proc workloads through the
+public JSON contract. None of these fixtures needs a phone or a host filesystem
+oracle. These bounded contracts do not establish dynamic maps/task procfs,
+creation, timestamp maintenance or complete Android filesystem equivalence.
+
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only
@@ -5550,6 +5829,16 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 `NeverDLLVMCPhiTests` covers multi-backedge loop-expression factoring with independent O0/O2 oracles, ordered observers, memory snapshots before modifying calls, narrow wrap and signed extension. It checks whole-module and selected-function output without changing caller IR, conflicting edges, shared roots, poison annotations, undefined operands, variable shifts, constrained intrinsics, exception functions and complete budget refusal. Rotate calls must collapse only when every incoming operation agrees.
 
 `NeverDLLVMCPhiTests` also executes structured scalar regions at O0/O2: nested loops with shuffled block layout, diamonds, zero iterations, narrow wrap, header observers, PHI swaps, live outer carriers, shared steps and funnel-shift endpoints. It checks source-IR preservation, three-local coalescing, and executable fallback for multi-exit, irreducible and oversized graphs. These are independent synthetic fixtures; source rendering does not certify native recovery.
+
+`LLVMCScalarLoopRecovery.EffectfulGuardLaddersKeepSharedFailureAndEdgeValues`
+and `DistinctLoopExitTailsKeepEffectsAndCommonPhis` compare generated C with
+independently compiled LLVM at O0/O2 with UBSan traps. They vary branch polarity,
+skipped null-pointer reads, aliased memory, indirect observer order, early
+returns, shared exit tails and parallel pointer PHIs over 2,048 inputs per
+level each. Selected-function and module bodies agree without mutating LLVM.
+`NestedOptionalCallsKeepTheirOuterContinuation` retains structured outer
+joins around optional effectful calls and distinct early returns, with the
+same independent O0/O2 comparison of return values, memory and observer order.
 
 `NeverDLLVMCValueTests` compares typed scalar-loop C directly with independently compiled LLVM at O0/O2, with undefined-behavior traps enabled for the generated C. Boundary and deterministic full-width inputs cover narrow multiplication and wrap before shifts, widened multiplication and right shifts, wide-to-boolean truncation, signed comparisons/extensions, precedence, conditional expressions, boolean arithmetic, unsupported-operation fallback and deep materialized expressions. The tests also assert unchanged caller IR and removal of redundant casts.
 
@@ -6142,7 +6431,7 @@ source replay also rejects replacing the generated finally return with
 or supplied IR, reloads the result and invokes the patched original entry in
 Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
 PE, Mach-O) require successful source, supplied-IR and native-object installation,
-reload and exact execution. The 143-case inventory includes both ARMv7k watchOS
+reload and exact execution. The 154-case inventory includes both ARMv7k watchOS
 and ARMv7 iOS, mutable/readonly state, original floating-point and stack-argument
 bindings, and source/object entries at two nonzero image-base slides. Every
 invocation must reach the return address within a finite instruction/time budget.
@@ -6194,9 +6483,9 @@ The verifier's evidence regressions run with
 atomic publication, original data bindings, native state and C++ exceptions.
 Its object cases use cross Clang plus LLD for malformed-input, relocation and
 byte-preservation checks even on a non-Linux host. Native ELF runtime cases run
-on Linux x64; Mach-O runtime cases run on Darwin ARM64. Set `NEVERD_TEST_NEVERC`
+on Linux x64/ARM64; Mach-O runtime cases run on Darwin ARM64/x64. Set `NEVERD_TEST_NEVERC`
 to an optional NeverC executable to include its compiler cases. GCC C++ runtime
-cases additionally require a matching Linux x64 `g++`.
+cases additionally require a matching Linux x64/ARM64 `g++`.
 Configure `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` with a compatible Clang
 path; the verified source profile uses Clang 22.1.6. This setting is separate
 from the compiler that builds NeverD and from other suites' fixture compilers.
@@ -6245,21 +6534,35 @@ Checked double-shift rejection reports the masked count and operand width when i
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` checks CPL0 IF clear/set against a CPL3 countercontrol, profile matching and digest separation, TF/AC/IOPL refusals, mandatory final IF dependence even with ordinary observations disabled, restoration and exact/one-short work limits. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` also checks that this native kernel profile cannot silently select the user source ABI. The production undefined-instruction admission and driver recovery guards are unchanged.
 
+Readlink coverage in `linux_files.c` checks raw x64/AArch64 and Android O0/O2
+ordinary/APS2/RELR calls, direct and dynamic Bionic bindings, signed low-word
+sizes, error ordering, binary targets without NUL, truncation, aliasing,
+page-tail import/output and unchanged descriptor cursors. Unsupported traversal,
+metadata and mixed-copy cases retain pending calls and unchanged output bytes.
+`ProcessReportTests` rejects conflicting namespaces, malformed targets and
+combined limits; C API/CLI and Python reuse the same query fixture.
+
+Android decimal-prefix tests use independent callers and literal expectations
+for all six C whitespace characters, signs, empty/nondigit inputs, decimal-only
+prefixes and signed 32/64-bit endpoints. They check errno preservation, dynamic
+provider lifetime, first-nondigit/page-tail access and fail-loud overflow under
+the same O0/O2 and ordinary/APS2/RELR fixture matrix.
+
 Driver write-watch controls independently encode changed-value and repeated same-value stores with raw write tracing disabled. Both legacy and checked x64 contracts must suspend after each watched commit, withdraw the unchanged-memory guarantee, and restore it at a later pure execution watch. Lifecycle observation verifies that new invocations and kernel export callbacks withdraw that guarantee. The same-value case is mandatory in native KVM/WHP inventory.
 
 `KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.
 
 Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
 
-The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C++ IR, C++ objects, C++ hosted DynCode, noninline helpers/recursion and unsupported C++ rejection. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` runs actual lifetimes and a throwing callback through two hosted frames. The Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
+The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C IR, C objects, C hosted DynCode, noninline helpers/recursion and C++ rejection. `SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler` also verifies rejection without an installed NeverC. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` executes C results and a throwing callback through two hosted C frames. The separate Clang Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
 
-Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.
+Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C IR/object/hosted results and a throwing callback through two hosted C frames. `check_source_patch_elf_runtime.py` requires 120 native Linux observations per architecture for C IR/objects/hosted, hosted propagation and nine Clang C++ exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real C producer outputs; they do not claim a NeverC executable ran on the CI host. The Linux inventory includes nine exception scenarios for each of Clang IR, Clang native objects and GCC native objects on x64 and ARM64. NeverC remains C-only.
 
-Native qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) passed all 204 process observations: 36 each on Windows x64/ARM64 and 66 each on Linux x64/ARM64. The public source API produced C++ IR, ordinary objects and C++ hosted DynCode, plus a throwing callback through two NeverC frames. Replay verified the current engine source/submodule digest, original and final bytes, publication receipts and actual native host. macOS ARM64 and Rosetta x64 passed the same three C++ routes and two-frame propagation locally. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) separately passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64.
+The earlier 204-observation translation-profile receipt is historical. Current fixtures require C-only NeverC producers; Clang C++ FH3, native-host identity and emulated CPU profiles retain separate evidence. `HighSwiftEmitter` executes register and memory scalar conversions at both optimization levels, observing result bits and MXCSR. The mobile C parser accepts only the backend's exact pragma-only rounding prefix and continues to reject conditional declarations and mutated directives.
 
 `InterpreterSpecialization.HighAddress*` and `BinaryLowIRRefinement.HighAddress*` cover upper-half entries and transfers, overlapping native extents, original CALL return bytes, stack restoration, data equal to label values, malformed or missing code, and exact/short budgets. The independent byte oracle and a changed-return-word negative control distinguish runtime values from CFG labels.
 
@@ -6286,6 +6589,10 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 The native profile also requires the LLVM-C wide-integer constant/store checks and native i386 synthesized-table execution. Swift signal observers use independent raw storage, with positive controls and separate negative controls for premature state and result writes at both optimization levels. Observing an active Swift `inout` variable from the signal handler would instead trigger an exclusivity failure and invalidate the exception observation.
+
+The native Linux x64 job also requires three C++ exception replacement checks: Clang IR, Clang native objects and GCC native objects. Their XML and process exit are audited separately, and any failure or skip fails qualification; NeverC is not used for these C++ inputs.
+
+The native qualification job builds the pinned LLVM fork from source, including the scoped x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -6352,9 +6659,9 @@ DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB 
 
 ## Swift scalar instruction completion
 
-Recovered x86_64 Swift supports scalar register ADD/SUB/MUL/DIV and Float32, signed32 and signed64 register conversions to Double, preserving numerical bits and complete input/output MXCSR. Other conversions, memory, packed arithmetic, SQRT/MIN/MAX, FMA, rounding and approximate operations remain unsupported. These repairs address observed Swift stack and mixed-function recovery failures; the full macOS/iOS runtime and framework environment remains incomplete.
+Recovered x86_64 Swift supports scalar ADD/SUB/MUL/DIV in register and memory forms, signed 32/64-bit conversion to Float32/Float64, and Float32/Float64 conversion in both directions, including VEX forms. Numerical bits and complete incoming/outgoing MXCSR remain paired. Packed arithmetic, SQRT/MIN/MAX, FMA, rounding and approximate operations remain unsupported; the full macOS/iOS framework environment remains incomplete.
 
-HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers, GenericScalarCompletionRejectsOtherShapesAndControls, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper and ScalarDoubleConversionsRejectOtherEffectsAndLayouts check shared contracts, helper identities and explicit unsupported/malformed refusal. GenericScalarCompletionCompilesAndExecutesCompleteState, MixedScalarCompletionDeduplicatesHelpersAndExecutesState, ScalarDoubleConversionSourceExecutesCompleteState and MixedScalarDoubleConversionsDeduplicateAndExecuteState compile and execute literal numerical/MXCSR cases at Onone/O, comparing emitted Swift with independently authored original SSE arithmetic and CVTSI2SD32/CVTSI2SD64/CVTSS2SD observers. Coverage includes signed boundaries,2^53+1 precision, all rounding modes, sticky flags, DAZ/FTZ, subnormals, signed zeros, infinities and quiet/signaling NaN payloads. Compiler/native bounds remain120/5 seconds. Separate legacy/generic divide-by-zero and conversion precision/invalid trap tests require native Intel macOS and untouched numerical/state sentinels. They skip explicitly on ARM64 because Rosetta forces exception masks; translated masked execution never qualifies Intel unmasked traps.
+Mixed legacy/generic and legacy/VEX cases check one helper per numerical/state contract. Independent original SSE observers and literal results compare generated Swift at Onone/O for rounding, sticky flags, DAZ/FTZ, subnormals, signed zeros and NaNs. Register/memory controls also cover all scalar conversion directions. Unmasked arithmetic and conversion traps require native Linux x64 or Intel macOS and unchanged result/state sentinels; ARM64 hosts explicitly skip those trap checks because Rosetta masks exceptions.
 
 ## Explicit ordinary directory modes
 
@@ -6373,6 +6680,14 @@ The97 initial private/strict JSON checks passed before route addition. Directory
 Explicit ownership providers now support chown, fchown and fchownat on independently granted initial and newly created ordinary directories. Group changes update the actual parent identity used by child creation. Namespace, mode and timestamp authority remain independent. Complete Apple runtimes and frameworks, and physical iOS verification remain unfinished.
 
 Initial focused private and strict JSON checks passed103 identities before route addition. New directory cases cover4KiB/16KiB, complete literal stat144 with guards, independent initial/created grants, actual current parent group inheritance for all3routes and all3child kinds, aliases, active/inactive IDs, authorization and group knowledge, high carriers, errors, dup/cursors, moves/exchanges, held removal/reuse and permanent invalidation. Five software process/C/CLI/Python profiles and all three matching ARM64 HVF profiles passed fresh executions. The complete Darwin owner reconciles3511 identities with2419 passed and1092 hardware-unavailable, including all273 mandatory matching ARM64 executions, across four disjoint serial bounded shards plus37 fresh isolated replays of the initial guest-time-limit failures. Every replay passed on the same source/products and original bounds. This is not a clean full-round or unsharded timing-stability claim. Shared public/Linux/service/budget/safety owners passed1852 cases, together with affected Python attribute/filesystem regressions. Native common inventory is76 and mandatory inventory91 per matching platform. The earlier complete Darwin round retains guest-time-limit failures during high observed host load; the final complete-inventory qualification uses unchanged source, products and bounds, combining the original disjoint shards with focused replays. Native5s, compiler120s, component1200s/parallel2, original method bounds, guest5000000us/quantum1024 and public30s remain unchanged. The new negative-membership fixture correction and a guest-deadline failure from redundant end-to-end Cartesian snapshots are retained in immutable epochs; the final workload keeps independent full typing proof and unchanged bounds. Physical Intel/iOS, native nonowner/special security and complete Apple runtimes/frameworks remain unqualified.
+
+## Symbolic ownership regression
+
+`DarwinSymbolicOwnershipTestData.h` supplies independently authored complete stat144 records with two8-byte guards. `DarwinOwnershipTests.cpp` covers exact initial/created authority, effective credentials and known/unknown groups, complete-record preservation/commit, descriptor versus SEARCH error order, flags/carriers, dangling/cyclic targets, alias/dup/move/exchange/held-unlink/reuse and permanent metadata invalidation. Strict JSON checks preserve purpose-specific Booleans, defaults, creation prerequisites and lossless timestamp import.
+
+The SDK-free `darwin_process.c` ownership modes use59/60 authored common calls and67/68 literal calls, return58/W and emit1281 bytes in each literal mode. The eight full guarded records distinguish original link, unchanged/changed target, two-name/renamed/held link and fresh replacement. Process tests repeat positives from fresh state and retain early/late unsupported outcomes with exact raw service/scalar argument checks. Native catalogue seeding explicitly creates a symbolic input and a separate binary target. Original owned nonroot O0/O1/O2 probes retain318 observations, and common initial/created native workloads execute at all three levels. Common native checks capture no service trace and assert no fixed native ctime.
+
+`SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate` is required on every matching native platform through `scripts/NativeDarwinTests.def`; inventory now contains94 methods per platform and282 matching ARM64 identities. `DarwinNativeCases.def` contains81 common cases. Execute all five software profiles, all three matching ARM64 HVF identities and C/CLI/Python routes; skips do not count as native acceptance. Preserve guest5000000us, quantum1024, native5s, compiler120s, component1200s/parallel2 and public30s limits. Full Darwin qualification uses the existing disjoint serial method shards, with any bounded unchanged-source recovery reported as a composite. Intel hardware, physical iOS and complete Apple runtimes remain unqualified.
 
 ## Filesystem snapshots for created directories
 
@@ -6402,3 +6717,19 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ### Declared kernel VA shadow query
 
 `KernelVaShadowQueryTests` checks independent flags, exact/short/cross-page outputs, ULONG truncation, both destinations, overlap, permissions, aliases, objects, context, IRQL and retained dependencies. `DriverVaShadowQueryTests` checks strict transport and imported/dynamic queries through rebased Unicorn/KVM/WHP lifecycles. Unused declarations still refuse UNPACK recovery. All 19 identities per native backend are mandatory; unavailable execution remains an explicit skip. Existing version-query cases cover the shared buffer admission.
+
+## Source patch qualification after integration
+
+The native Linux qualification also runs the complete `HighSwiftEmitter` owner, including register and memory conversions, legacy/VEX helper sharing, original SSE comparisons and unmasked traps. Use the corrected LLVM source build: r4 can misencode i386 PIC GOT anchors; publication now rejects an invalid anchor displacement. Ten Linux/ELF-specific `SessionCAPITest` cases retain explicit platform skips on macOS and Windows. The audit matches their exact names, owner labels and original reasons, continues to require native Linux execution, and never counts these skips as passes. The host-compiled no-return fixture accounts for Mach-O symbol spelling and the recovered native argument width.
+
+### Bounded kernel caller-context capture
+
+`KernelContextCaptureTests` covers all record/guard bytes, stack scratch, flags, aliases, overlaps, objects, permissions, IRQL and injected collector/setter failures. `DriverContextCaptureTests` checks live GPR/FPCW/MXCSR/XMM values and imported/dynamic calls through rebased entry/request/unload lifecycles, including rejected outputs and retained dependencies. Its bytewise twelve-record oracle has an explicit 400000-instruction test budget. The fixture uses the checked initial FPCW; separate collector cases vary it. All 17 identities per native backend are mandatory; unavailable WHP execution remains an explicit Linux skip. Existing x64/ARM64 user context tests protect unchanged behavior.
+
+### Symbolic region coordinates across zero
+
+`SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.
+
+### Sequential raw compare-and-exchange
+
+`SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.

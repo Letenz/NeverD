@@ -6,6 +6,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../lib/backend/c/LLVMC/LLVMCFrameLayout.h"
+#include "../../../lib/backend/c/pass/LLVMC/LLVMCBitTests.h"
+#include "../../../lib/backend/c/pass/LLVMC/LLVMCCommonBranches.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -109,6 +111,83 @@ __attribute__((noreturn)) void _start(void) {
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
 }
 
+TEST(LLVMCValues, RepeatedParameterFieldAddressesPreserveMemoryObservations) {
+  const char *IR = R"ir(
+target datalayout = "e-p:64:64"
+declare void @observe_field(ptr, ptr)
+define i64 @field_addresses(ptr %base, ptr %alias, i1 %choose) {
+entry:
+  %forward_field_address = getelementptr i8, ptr %base, i64 11
+  %backward_field_address = getelementptr i8, ptr %base, i64 -7
+  %before = load i64, ptr %forward_field_address, align 1
+  call void @observe_field(ptr %forward_field_address, ptr %alias)
+  br i1 %choose, label %left, label %right
+left:
+  %changed = load i64, ptr %forward_field_address, align 1
+  store i64 %changed, ptr %backward_field_address, align 1
+  br label %join
+right:
+  %other = load i64, ptr %backward_field_address, align 1
+  store i64 %other, ptr %forward_field_address, align 1
+  br label %join
+join:
+  %after = load i64, ptr %forward_field_address, align 1
+  %result = xor i64 %before, %after
+  ret i64 %result
+}
+)ir";
+  for (auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(IR, Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    neverd::CEmitterOptions Options;
+    Options.TheArch = Arch;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = true;
+    Options.ScalarPointers =
+        neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+    EXPECT_EQ(Source.find("forward_field_address"), std::string::npos);
+    EXPECT_EQ(Source.find("backward_field_address"), std::string::npos);
+    Module->getFunction("field_addresses")->setName("reference_fields");
+    std::string Reference;
+    llvm::raw_string_ostream ReferenceOut(Reference);
+    Module->print(ReferenceOut, nullptr);
+    const std::string Main = R"(
+#include <string.h>
+static unsigned observations;
+void observe_field(void *field, void *alias) {
+  uint64_t value;
+  memcpy(&value, field, 8);
+  value ^= UINT64_C(0x8765432101020304);
+  memcpy(alias, &value, 8);
+  ++observations;
+}
+extern uint64_t reference_fields(void *, void *, _Bool);
+int main(void) {
+  unsigned char actual[96], expected[96];
+  for (unsigned input = 0; input < 2048; ++input) {
+    for (unsigned i = 0; i < sizeof(actual); ++i)
+      actual[i] = expected[i] = (unsigned char)(input * 31 + i * 17);
+    unsigned base = 16 + (input % 8);
+    unsigned alias = base + ((input & 8) ? 11 : 3);
+    observations = 0;
+    uint64_t want = reference_fields(expected + base, expected + alias, input & 1);
+    uint64_t got = field_addresses(actual + base, actual + alias, input & 1);
+    if (got != want || memcmp(actual, expected, sizeof(actual)) || observations != 2)
+      return 1;
+  }
+  return 0;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source + Main, Level, Reference, true);
+  }
+}
+
 TEST(LLVMCValues, DeepForwardedBitAssemblyRetainsEveryDefinition) {
   llvm::LLVMContext Context;
   llvm::Module Module("forwarded-packed-bits", Context);
@@ -149,6 +228,222 @@ int main(void) {
 )";
   for (const char *Optimization : {"-O0", "-O2"})
     compileAndRun(Source + Driver, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, RawMemoryUpdatesPreserveWrappedResultsAndUnalignedBytes) {
+  using namespace llvm;
+  LLVMContext Context;
+  Module Module("scalar-memory-updates", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(Triple(sys::getDefaultTargetTriple()));
+  std::string Declarations, Checks;
+  std::vector<std::pair<Function *, std::string>> Functions;
+  for (unsigned Width : {8, 16, 32, 64}) {
+    auto *Type = IntegerType::get(Context, Width);
+    for (auto Op : {Instruction::Add, Instruction::Sub, Instruction::And,
+                    Instruction::Or, Instruction::Xor}) {
+      for (unsigned Kind = 0; Kind != 3; ++Kind) {
+        const APInt Bits = Kind == 0   ? APInt(Width, 1)
+                           : Kind == 1 ? APInt::getAllOnes(Width)
+                                       : APInt::getSignMask(Width);
+        for (bool Capture : {false, true}) {
+          const std::string Name =
+              "update_" + std::to_string(Width) + "_" + std::to_string(Op) +
+              "_" + std::to_string(Kind) + "_" + std::to_string(Capture);
+          auto *Function = Function::Create(
+              FunctionType::get(Type::getInt64Ty(Context),
+                                {PointerType::getUnqual(Context)}, false),
+              GlobalValue::ExternalLinkage, Name, Module);
+          Functions.emplace_back(Function, Name);
+          IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", Function));
+          auto *Old =
+              B.CreateAlignedLoad(Type, Function->getArg(0), Align(1), "old");
+          auto *Step = ConstantInt::get(Context, Bits);
+          // Commutative forms exercise both operand orders.
+          Value *Next = Op != Instruction::Sub && Kind == 1
+                            ? B.CreateBinOp(Op, Step, Old, "updated")
+                            : B.CreateBinOp(Op, Old, Step, "updated");
+          B.CreateAlignedStore(Next, Function->getArg(0), Align(1));
+          B.CreateRet(Capture ? B.CreateZExtOrTrunc(Next, B.getInt64Ty())
+                              : B.getInt64(85));
+          Declarations += "uint64_t ref_" + Name + "(void *);\n";
+          Checks += "memcpy(a + offset, &cases[n], sizeof(cases[n]));\n"
+                    "memcpy(b, a, sizeof(a));\nif (" +
+                    Name + "(a + offset) != ref_" + Name +
+                    "(b + offset) || memcmp(a, b, sizeof(a))) return 1;\n";
+        }
+      }
+    }
+  }
+  ASSERT_FALSE(verifyModule(Module, &errs()));
+  std::string Original, Reference;
+  raw_string_ostream OriginalOS(Original), ReferenceOS(Reference);
+  Module.print(OriginalOS, nullptr);
+  for (auto &[Fn, Name] : Functions)
+    Fn->setName("ref_" + Name);
+  Module.print(ReferenceOS, nullptr);
+  for (auto &[Fn, Name] : Functions)
+    Fn->setName(Name);
+  const std::string Driver = "#include <string.h>\n" + Declarations + R"(
+int main(void) {
+  const uint64_t cases[] = {0, 1, 127, 128, 255, 65535, UINT32_MAX,
+      UINT64_MAX, UINT64_C(1) << 63, UINT64_C(0x123456789abcdef0)};
+  for (unsigned n = 0; n < sizeof(cases) / sizeof(cases[0]); ++n)
+    for (unsigned offset = 1; offset < 4; ++offset) {
+      uint8_t a[24], b[24];
+      for (unsigned j = 0; j < sizeof(a); ++j) a[j] = (uint8_t)(j * 17);
+      memcpy(a + offset, &cases[n], sizeof(cases[n]));
+      memcpy(b, a, sizeof(a));
+)" + Checks + R"(
+    }
+  return 0;
+}
+)";
+  for (bool PointerSpelling : {false, true}) {
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = PointerSpelling;
+    Options.ScalarPointers =
+        neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+    std::string Source;
+    raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    for (StringRef Op : {"+=", "-=", "&=", "|=", "^="})
+      EXPECT_EQ(Source.find(Op.str()) != std::string::npos, PointerSpelling);
+    std::string Unchanged;
+    raw_string_ostream UnchangedOS(Unchanged);
+    Module.print(UnchangedOS, nullptr);
+    EXPECT_EQ(Unchanged, Original);
+    for (StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source + Driver, Level, Reference, true);
+  }
+}
+
+TEST(LLVMCValues, RawMemoryUpdatesRetainObserversAliasesAndOrderedAccesses) {
+  using namespace llvm;
+  LLVMContext Context;
+  SMDiagnostic Diagnostic;
+  auto Module = parseAssemblyString(R"(
+declare void @mutate(ptr)
+define i64 @alias_store(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  store i64 83, ptr %q, align 1
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @call_observer(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = sub i64 %old, 1
+  call void @mutate(ptr %q)
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @call_before_update(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  call void @mutate(ptr %q)
+  %new = add i64 %old, 1
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @store_before_update(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  store i64 47, ptr %q, align 1
+  %new = add i64 %old, 1
+  store i64 %new, ptr %p, align 1
+  ret i64 %new
+}
+define i64 @read_observer(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  %read = load volatile i64, ptr %q, align 8
+  store i64 %new, ptr %p, align 1
+  %result = xor i64 %read, %new
+  ret i64 %result
+}
+define i64 @earlier_result(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  %early = xor i64 %new, 5
+  store i64 %new, ptr %p, align 1
+  ret i64 %early
+}
+define i64 @old_snapshot(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  store i64 %new, ptr %p, align 1
+  %result = xor i64 %old, %new
+  ret i64 %result
+}
+define i64 @different_address(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  store i64 %new, ptr %q, align 1
+  ret i64 %new
+}
+define i64 @volatile_update(ptr %p, ptr %q) {
+  %old = load volatile i64, ptr %p, align 8
+  %new = add i64 %old, 1
+  store volatile i64 %new, ptr %p, align 8
+  ret i64 %new
+}
+define i64 @atomic_update(ptr %p, ptr %q) {
+  %old = load atomic i64, ptr %p seq_cst, align 8
+  %new = add i64 %old, 1
+  store atomic i64 %new, ptr %p seq_cst, align 8
+  ret i64 %new
+}
+define i64 @changed_width(ptr %p, ptr %q) {
+  %old = load i64, ptr %p, align 1
+  %new = add i64 %old, 1
+  %narrow = trunc i64 %new to i32
+  store i32 %narrow, ptr %p, align 1
+  ret i64 %new
+}
+)",
+                                    Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  Module->setDataLayout("e-p:64:64");
+  Module->setTargetTriple(Triple(sys::getDefaultTargetTriple()));
+  std::string Declarations, Checks;
+  std::vector<std::pair<Function *, std::string>> Functions;
+  for (auto &Fn : *Module) {
+    if (Fn.isDeclaration())
+      continue;
+    const auto Name = Fn.getName().str();
+    Functions.emplace_back(&Fn, Name);
+    Declarations += "uint64_t ref_" + Name + "(void *, void *);\n";
+    Checks += "if (" + Name + "(a, a + other) != ref_" + Name +
+              "(b, b + other) || memcmp(a, b, sizeof(a))) return 1;\n";
+  }
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.ScalarPointers =
+      neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  std::string Source;
+  raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  EXPECT_EQ(Source.find(" += "), std::string::npos);
+  EXPECT_EQ(Source.find(" -= "), std::string::npos);
+  for (auto &[Fn, Name] : Functions)
+    Fn->setName("ref_" + Name);
+  std::string Reference;
+  raw_string_ostream ReferenceOS(Reference);
+  Module->print(ReferenceOS, nullptr);
+  const std::string Driver = "#include <string.h>\n" + Declarations + R"(
+void mutate(void *p) { uint64_t x = 97; memcpy(p, &x, sizeof(x)); }
+int main(void) {
+  for (unsigned n = 0; n < 64; ++n)
+    for (unsigned other = 0; other < 2; ++other) {
+      uint64_t a[3] = {UINT64_MAX - n, (uint64_t)n * 17, 0x98765432};
+      uint64_t b[3]; memcpy(b, a, sizeof(a));
+)" + Checks + R"(
+    }
+  return 0;
+}
+)";
+  for (StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source + Driver, Level, Reference, true);
 }
 
 TEST(LLVMCValues, ArrayResultsKeepBothWordsAcrossExternalCalls) {
@@ -2085,6 +2380,83 @@ int main(void) {
   }
 }
 
+TEST(LLVMCValues, PreservedIndirectChainsKeepLoadsStoresAndCapturedTargets) {
+  llvm::LLVMContext C;
+  llvm::SMDiagnostic Diag;
+  auto M = llvm::parseAssemblyString(R"(
+declare void @replace_target(ptr)
+define i64 @captured(ptr %holder, ptr %snapshot, i64 %x) {
+  %base = load i64, ptr %holder, align 1
+  %address = add i64 %base, 24
+  %slot = inttoptr i64 %address to ptr
+  %target = load i64, ptr %slot, align 1
+  store i64 %target, ptr %snapshot, align 1
+  call void @replace_target(ptr %slot)
+  %nonnull = icmp ne i64 %target, 0
+  br i1 %nonnull, label %invoke, label %empty
+invoke:
+  %callee = inttoptr i64 %target to ptr
+  %result = call i64 %callee(i64 %x)
+  ret i64 %result
+empty:
+  ret i64 0
+}
+)",
+                                     Diag, C);
+  ASSERT_TRUE(M);
+  M->setDataLayout("e-p:64:64");
+  auto Print = [&] {
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    M->print(OS, nullptr);
+    return Text;
+  };
+  auto Before = Print();
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers =
+      neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*M, OS, Options));
+  EXPECT_EQ(Print(), Before);
+  M->getFunction("captured")->setName("reference");
+  auto Reference = Print();
+  Source += R"(
+#include <string.h>
+extern uint64_t reference(void *,void *,uint64_t);
+static unsigned mode,calls;
+static uint64_t trace;
+static uint64_t first(uint64_t x) { ++calls;trace=x*131;return x^0xa987654321ULL; }
+static uint64_t second(uint64_t x) { ++calls;trace=x*37;return x+0x192837465ULL; }
+void replace_target(void *p) {
+ uint64_t target=mode ? 0 : (uintptr_t)second;
+ memcpy(p,&target,8);
+}
+int main(void) {
+ for(unsigned k=0;k<1024;k++) {
+  unsigned char object[48],saved[48],holder[16],a[16],b[16];
+  memset(object,0x63,sizeof(object));memset(holder,0x19,sizeof(holder));
+  memset(a,0x57,sizeof(a));memcpy(b,a,sizeof(a));
+  unsigned off=k&7;mode=(k/8)&1;
+  uint64_t base=(uintptr_t)(object+off);
+  uint64_t target=k%3==0 ? 0 : k%3==1 ? (uintptr_t)first : (uintptr_t)second;
+  memcpy(holder+off,&base,8);memcpy(object+off+24,&target,8);
+  uint64_t x=UINT64_C(0xfedcba9876543210)*k;
+  calls=0;trace=0;uint64_t ra=reference(holder+off,a+off,x),ta=trace;unsigned ca=calls;
+  memcpy(saved,object,sizeof(object));memcpy(object+off+24,&target,8);
+  calls=0;trace=0;uint64_t rb=captured(holder+off,b+off,x);
+  if(ra!=rb || ta!=trace || ca!=calls || memcmp(a,b,sizeof(a)) || memcmp(object,saved,sizeof(object))) return 1;
+  uint64_t snapshot;memcpy(&snapshot,b+off,8);if(snapshot!=target) return 2;
+ }
+ return 0;
+}
+)";
+  for (auto Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+}
+
 TEST(LLVMCValues, PreservedIndirectVoidCallHasExplicitEmptyPrototype) {
   llvm::LLVMContext C;
   llvm::Module M("indirect-void-call", C);
@@ -3139,6 +3511,378 @@ int main(void) {
 )c";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, PackedBitConditionsPreserveWordStoresAndProducerEffects) {
+  using namespace llvm;
+  LLVMContext Context;
+  Module Module("packed-condition-effects", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(Triple(sys::getDefaultTargetTriple()));
+  auto *I64 = Type::getInt64Ty(Context);
+  auto *Ptr = PointerType::getUnqual(Context);
+  auto *Observe =
+      Function::Create(FunctionType::get(I64, {I64, Ptr}, false),
+                       GlobalValue::ExternalLinkage, "bit_observe", Module);
+  auto *Mutate = Function::Create(
+      FunctionType::get(Type::getVoidTy(Context), {Ptr}, false),
+      GlobalValue::ExternalLinkage, "bit_mutate", Module);
+  SmallVector<Function *, 28> Functions;
+  SmallVector<CondBrInst *, 28> Branches;
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    for (unsigned Mode = 0; Mode != 7; ++Mode) {
+      auto *F = Function::Create(
+          FunctionType::get(I64, {I64, I64, Ptr}, false),
+          GlobalValue::ExternalLinkage,
+          "bit_reference_" + std::to_string(Functions.size()), Module);
+      Functions.push_back(F);
+      IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+      auto *Word = B.getIntNTy(Width);
+      auto *Loaded = B.CreateLoad(I64, F->getArg(2), true, "captured_word");
+      auto *X = B.CreateZExtOrTrunc(B.CreateXor(F->getArg(0), Loaded), Word);
+      auto *Y = B.CreateZExtOrTrunc(
+          B.CreateCall(Observe, {F->getArg(1), F->getArg(2)}), Word);
+      auto *Eq = B.CreateICmpEQ(X, Y);
+      auto *Less = B.CreateICmpULT(X, Y);
+      auto *SignedGreater = B.CreateICmpSGT(X, Y);
+      auto *SignedLess = B.CreateICmpSLT(X, Y);
+      auto Constant = [&](uint64_t V) { return ConstantInt::get(Word, V); };
+      Value *Packed = B.CreateZExt(Eq, Word);
+      Packed =
+          B.CreateOr(Packed, B.CreateSelect(Less, Constant(2), Constant(0)));
+      Packed = B.CreateOr(
+          Packed, B.CreateSelect(SignedGreater, Constant(0), Constant(4)));
+      Packed = B.CreateOr(
+          Packed, B.CreateAnd(B.CreateSExt(SignedLess, Word), Constant(8)));
+      Packed =
+          B.CreateOr(Packed, B.CreateAnd(B.CreateLShr(X, Constant(Width - 5)),
+                                         Constant(16)));
+      Packed =
+          B.CreateOr(Packed, B.CreateAnd(B.CreateAShr(X, Constant(Width - 6)),
+                                         Constant(32)));
+      Packed = B.CreateOr(
+          Packed, B.CreateXor(B.CreateShl(B.CreateZExt(Eq, Word), Constant(6)),
+                              Constant(64)));
+      auto *Output = B.CreateGEP(I64, F->getArg(2), B.getInt64(1));
+      B.CreateStore(B.CreateZExtOrTrunc(Packed, I64), Output, true);
+      B.CreateCall(Mutate, {F->getArg(2)});
+      Value *Condition;
+      if (Mode == 2) {
+        Condition =
+            B.CreateTrunc(B.CreateLShr(Packed, Constant(4)), B.getInt1Ty());
+      } else {
+        const uint64_t Masks[] = {2, 4, 0, 8, 64, 1, 32};
+        const uint64_t Mask = Masks[Mode];
+        auto *Masked = B.CreateAnd(Constant(Mask), Packed);
+        Condition = Mode == 1   ? B.CreateICmpNE(Constant(Mask), Masked)
+                    : Mode == 4 ? B.CreateICmpNE(Masked, Constant(0))
+                    : Mode == 5 ? B.CreateICmpEQ(Masked, Constant(Mask))
+                                : B.CreateICmpEQ(Masked, Constant(0));
+      }
+      auto *True = BasicBlock::Create(Context, "true", F);
+      auto *False = BasicBlock::Create(Context, "false", F);
+      Branches.push_back(B.CreateCondBr(Condition, True, False));
+      B.SetInsertPoint(True);
+      B.CreateRet(B.getInt64(0xfedcba9876543210ULL));
+      B.SetInsertPoint(False);
+      B.CreateRet(B.getInt64(0x1234567800000001ULL));
+    }
+  }
+  ASSERT_FALSE(verifyModule(Module, &errs()));
+  std::string Reference, Original;
+  raw_string_ostream ReferenceOS(Reference), OriginalOS(Original);
+  Module.print(ReferenceOS, nullptr);
+  for (unsigned I = 0; I != Functions.size(); ++I)
+    Functions[I]->setName("bit_projected_" + std::to_string(I));
+  Module.print(OriginalOS, nullptr);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, Options));
+  std::string Unchanged;
+  raw_string_ostream UnchangedOS(Unchanged);
+  Module.print(UnchangedOS, nullptr);
+  EXPECT_EQ(Original, Unchanged);
+  for (unsigned I = 0; I != Functions.size(); ++I) {
+    SCOPED_TRACE(I);
+    ASSERT_TRUE(neverd::llvmc::simplifyBitTests(*Functions[I]));
+    auto *Condition = dyn_cast<ICmpInst>(Branches[I]->getCondition());
+    ASSERT_NE(Condition, nullptr);
+    if ((I % 7 == 2 || I % 7 == 6) && I / 7 < 3) {
+      // Truncation exposes a narrow sign bit in the original wide SSA value.
+      // Its mask is required; the packed flags must no longer feed the test.
+      auto *Masked = dyn_cast<BinaryOperator>(Condition->getOperand(0));
+      ASSERT_NE(Masked, nullptr);
+      EXPECT_EQ(Masked->getOpcode(), Instruction::And);
+      EXPECT_EQ(cast<ConstantInt>(Masked->getOperand(1))->getZExtValue(),
+                uint64_t(1) << ((8u << (I / 7)) - 1));
+      EXPECT_EQ(cast<BinaryOperator>(Masked->getOperand(0))->getOpcode(),
+                Instruction::Xor);
+    } else {
+      EXPECT_FALSE(
+          isa<BinaryOperator>(Condition->getOperand(0)) &&
+          cast<BinaryOperator>(Condition->getOperand(0))->getOpcode() ==
+              Instruction::And);
+    }
+  }
+  ASSERT_FALSE(verifyModule(Module, &errs()));
+  Source += R"c(
+static unsigned calls;
+uint64_t bit_observe(uint64_t y,void *out) {
+  ++calls; ((uint64_t *)out)[0] ^= UINT64_C(0xfedc123456780001); return y;
+}
+void bit_mutate(void *out) { ++calls; ((uint64_t *)out)[0] += 0x713; }
+)c";
+  for (unsigned I = 0; I != Functions.size(); ++I)
+    Source += "extern uint64_t bit_reference_" + std::to_string(I) +
+              "(uint64_t,uint64_t,void*);\n";
+  Source += R"c(
+int main(void) {
+  const uint64_t edges[]={0,1,0x7f,0x80,0x7fff,0x8000,0x7fffffff,0x80000000,
+                         UINT64_C(1)<<63,UINT64_MAX};
+  uint64_t seed=1;
+  for(unsigned k=0;k<1024;k++) {
+    seed=seed*UINT64_C(6364136223846793005)+1;
+    uint64_t x=k<100 ? edges[k/10]:seed;
+    uint64_t y=k<100 ? edges[k%10]:(seed^(seed>>29));
+)c";
+  for (unsigned I = 0; I != Functions.size(); ++I) {
+    auto Index = std::to_string(I);
+    Source += "{ uint64_t a[2]={k,0},b[2]={k,0}; calls=0; uint64_t "
+              "expected=bit_reference_" +
+              Index +
+              "(x,y,a); if(calls!=2) return 1; calls=0; uint64_t "
+              "actual=bit_projected_" +
+              Index +
+              "(x,y,b); if(calls!=2 || expected!=actual || a[0]!=b[0] || "
+              "a[1]!=b[1]) return 2; }\n";
+  }
+  Source += "} return 0; }\n";
+  for (StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+}
+
+TEST(LLVMCValues, BitProjectionRetainsOpaqueValuesAndHonorsWorkBounds) {
+  using namespace llvm;
+  for (unsigned Case = 0; Case != 8; ++Case) {
+    LLVMContext Context;
+    Module Module("bit-boundaries", Context);
+    auto *I64 = Type::getInt64Ty(Context);
+    auto *F = Function::Create(
+        FunctionType::get(Type::getInt1Ty(Context), {I64, I64}, false),
+        GlobalValue::ExternalLinkage, "test", Module);
+    IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+    Value *Packed = B.CreateSelect(B.CreateICmpULT(F->getArg(0), F->getArg(1)),
+                                   B.getInt64(128), B.getInt64(0));
+    if (Case == 0)
+      Packed = B.CreateFreeze(Packed);
+    if (Case == 1)
+      Packed = B.CreateAdd(Packed, F->getArg(0));
+    if (Case == 2)
+      Packed = B.CreateShl(Packed, F->getArg(1));
+    if (Case == 3)
+      Packed = B.CreateShl(Packed, B.getInt64(64));
+    if (Case == 4)
+      Packed = B.CreateOr(Packed, F->getArg(0));
+    if (Case == 5)
+      Packed = B.CreateSelect(B.CreateICmpEQ(F->getArg(0), B.getInt64(0)),
+                              Packed, F->getArg(1));
+    if (Case == 6)
+      Packed = B.CreateOr(Packed, PoisonValue::get(I64));
+    B.CreateRet(B.CreateICmpEQ(
+        B.CreateAnd(Packed, B.getInt64(Case == 7 ? 129 : 128)), B.getInt64(0)));
+    ASSERT_FALSE(verifyModule(Module, &errs()));
+    std::string Before, After;
+    raw_string_ostream BeforeOS(Before), AfterOS(After);
+    Module.print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::simplifyBitTests(*F)) << Case;
+    Module.print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After) << Case;
+  }
+  for (unsigned Depth : {40u, 80u}) {
+    LLVMContext Context;
+    Module Module("shared-bit-dag", Context);
+    auto *F =
+        Function::Create(FunctionType::get(Type::getInt1Ty(Context),
+                                           {Type::getInt1Ty(Context)}, false),
+                         GlobalValue::ExternalLinkage, "test", Module);
+    IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+    Value *Packed =
+        B.CreateSelect(F->getArg(0), B.getInt64(128), B.getInt64(0));
+    for (unsigned I = 0; I < Depth; ++I)
+      Packed = B.CreateOr(Packed, Packed);
+    auto *Return = B.CreateRet(
+        B.CreateICmpNE(B.CreateAnd(Packed, B.getInt64(128)), B.getInt64(0)));
+    std::string Before, After;
+    raw_string_ostream BeforeOS(Before), AfterOS(After);
+    Module.print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::simplifyBitTests(*F, 0));
+    EXPECT_FALSE(
+        neverd::llvmc::simplifyBitTests(*F, F->getInstructionCount() + 2));
+    Module.print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After);
+    EXPECT_EQ(neverd::llvmc::simplifyBitTests(*F), Depth == 40);
+    if (Depth == 40)
+      EXPECT_EQ(Return->getReturnValue(), F->getArg(0));
+    ASSERT_FALSE(verifyModule(Module, &errs()));
+  }
+}
+
+TEST(LLVMCValues, ReturnOnlyJoinsKeepEffectsAndFullStatusOnEachEdge) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+target datalayout = "e-p:64:64"
+declare i64 @observe_status(i64, ptr)
+define i64 @before(i64 %key, ptr %out) {
+entry:
+  %first = call i64 @observe_status(i64 %key, ptr %out)
+  %failed = icmp ne i64 %first, 0
+  br i1 %failed, label %common_return, label %next
+next:
+  %key2 = add i64 %key, 37
+  %second = call i64 @observe_status(i64 %key2, ptr %out)
+  %failed2 = icmp ne i64 %second, 0
+  br i1 %failed2, label %common_return, label %success
+success:
+  %p = getelementptr i64, ptr %out, i64 1
+  store volatile i64 123, ptr %p, align 8
+  br label %common_return
+common_return:
+  %joined_status = phi i64 [ %first, %entry ], [ %second, %next ], [ 0, %success ]
+  ret i64 %joined_status
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  std::string Reference;
+  llvm::raw_string_ostream ReferenceOS(Reference);
+  Module->print(ReferenceOS, nullptr);
+  Module->getFunction("before")->setName("after");
+  std::string Original;
+  llvm::raw_string_ostream OriginalOS(Original);
+  Module->print(OriginalOS, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_EQ(Source.find("common_return"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("joined_status"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto L_return_edge"), std::string::npos) << Source;
+  std::string Unchanged;
+  llvm::raw_string_ostream UnchangedOS(Unchanged);
+  Module->print(UnchangedOS, nullptr);
+  EXPECT_EQ(Original, Unchanged);
+  Source += R"c(
+extern uint64_t before(uint64_t,void*);
+static unsigned mode,calls;
+uint64_t observe_status(uint64_t key,void *out) {
+  ++calls;uint64_t *p=out;p[0]=p[0]*31+key;
+  if(calls==mode) return key|UINT64_C(0xfedc000000000001);
+  return 0;
+}
+int main(void) {
+  for(mode=0;mode<3;mode++) for(unsigned k=0;k<2048;k++) {
+    uint64_t a[2]={k*13,0xabc},b[2]={k*13,0xabc};
+    calls=0;uint64_t x=before(k,a);unsigned n=calls;
+    calls=0;uint64_t y=after(k,b);
+    if(x!=y || calls!=n || a[0]!=b[0] || a[1]!=b[1]) return 1;
+    if(calls!=(mode==1 ? 1:2) || (mode==0 && b[1]!=123) || (mode!=0 && b[1]!=0xabc)) return 2;
+  }
+  return 0;
+}
+)c";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+}
+
+TEST(LLVMCValues, ReturnDistributionRetainsEffectsAndProtectedControlFlow) {
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(R"ir(
+declare i32 @personality(...)
+define i64 @work(i1 %choose, ptr %p) {
+entry:
+  br i1 %choose, label %left, label %right
+left:
+  br label %done
+right:
+  br label %done
+done:
+  %value = phi i64 [ 11, %left ], [ 17, %right ]
+  ret i64 %value
+}
+)ir",
+                                            Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    auto *F = Module->getFunction("work");
+    auto &Done = F->back();
+    llvm::IRBuilder<> B(Done.getTerminator());
+    if (Case == 0)
+      B.CreateStore(B.getInt64(31), F->getArg(1), true);
+    else if (Case == 1) {
+      auto *Load = B.CreateLoad(B.getInt64Ty(), F->getArg(1), true);
+      Done.getTerminator()->setOperand(0, Load);
+    } else if (Case == 2)
+      F->setPersonalityFn(Module->getFunction("personality"));
+    else
+      new llvm::GlobalVariable(
+          *Module, B.getPtrTy(), true, llvm::GlobalValue::ExternalLinkage,
+          llvm::BlockAddress::get(F, &Done), "return_address");
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    std::string Before;
+    llvm::raw_string_ostream BeforeOS(Before);
+    Module->print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::distributeReturnEdges(*F));
+    std::string After;
+    llvm::raw_string_ostream AfterOS(After);
+    Module->print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After);
+  }
+}
+
+TEST(LLVMCValues, ConciseGEPsKeepSignedIndicesAndAddressWidthWrapping) {
+  for (unsigned Bits : {32u, 64u}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(R"ir(
+define i64 @address_bits(ptr %base, i8 %small, i64 %wide) {
+  %a = getelementptr [16 x i32], ptr %base, i64 %wide, i8 %small
+  %b = getelementptr i8, ptr %a, i64 -19
+  %bits = ptrtoint ptr %b to i64
+  ret i64 %bits
+}
+)ir",
+                                            Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    Module->setDataLayout(Bits == 32 ? "e-p:32:32" : "e-p:64:64");
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+    EXPECT_EQ(Source.find("(uint" + std::to_string(Bits) + "_t)0x"),
+              std::string::npos);
+    Source += "\n#define ADDRESS_BITS " + std::to_string(Bits) + "\n";
+    Source += R"c(
+int main(void) {
+  for(unsigned k=0;k<4096;k++) {
+    uint64_t base=UINT64_C(0xfffffffffffeff00)+(uint64_t)k*77;
+    uint64_t wide=UINT64_C(0xabcdef0012345678)+(uint64_t)k*123;
+    uint8_t small=(uint8_t)k;
+    uint64_t expected=base+wide*64+(uint64_t)(int64_t)(int8_t)small*4-19;
+    if(ADDRESS_BITS==32) expected=(uint32_t)expected;
+    if(address_bits((void*)(uintptr_t)base,small,wide)!=expected) return 1;
+  }
+  return 0;
+}
+)c";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source, Level, {}, true);
+  }
 }
 
 TEST(LLVMCValues, FrameBaseOffsetsUseThePointerIndexWidth) {

@@ -23,15 +23,24 @@ public:
                 ProcessResult &Result)
       : CPU(CPU), Layout(Layout), Options(Options), Result(Result),
         Memory(*CPU.addressSpace(), Layout, InitialBreak, Options),
-        Files(CPU, Layout, Options.LinuxFiles), Signals(Options.LinuxSignals),
-        Priority(Options.LinuxPriority), Clock(Options.LinuxTime) {}
+        Files(CPU, Layout, Options.LinuxFiles, &Memory),
+        Signals(Options.LinuxSignals), Priority(Options.LinuxPriority),
+        Clock(Options.LinuxTime) {}
 
   llvm::Expected<std::optional<uint64_t>>
   handle(const ProcessServiceEvent &Event, ThreadContext *Thread = nullptr);
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ThreadContext *Thread = nullptr);
+  auto descriptorStatus(uint32_t FD) const {
+    return Files.descriptorStatus(FD, Result);
+  }
   LinuxClock &clock() { return Clock; }
+  /// Run while the physical owner is stopped, after idle scheduling and before
+  /// guest execution or another service observes device memory.
+  llvm::Error synchronizeDevices() {
+    return Memory.synchronizeDevices(Clock.elapsed(), Options.LinuxFiles);
+  }
 
   std::optional<SignalActionResult>
   signalAction(int32_t Signal, const LinuxSignalAction *NewAction,

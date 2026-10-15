@@ -31,8 +31,9 @@ the capability API.
 Framework linking and hypervisor signing are restricted to the macOS build target (`CMAKE_SYSTEM_NAME=Darwin`). Apple mobile targets, including iOS, do not acquire this framework dependency or entitlement. An iOS guest profile can still use HVF when NeverD itself runs on a Mac with the matching ISA.
 
 The **process executable** needs `com.apple.security.hypervisor`. Signing only
-`libneverd.dylib` is insufficient. CMake signs the CLI, worker and emulation test
-executables using `resources/macos/neverd-hypervisor.entitlements` after linking.
+`libneverd.dylib` is insufficient. CMake signs the CLI, worker, process probe and
+emulation test executables using `resources/macos/neverd-hypervisor.entitlements`
+after linking.
 `NEVERD_HVF_SIGN_IDENTITY` defaults to ad-hoc (`-`) and can select an existing
 signing identity. Packaging reapplies the entitlement to the worker after
 Mach-O dependency repair, preserves it during recursive signing, and verifies

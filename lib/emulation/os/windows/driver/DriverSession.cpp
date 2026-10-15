@@ -21,6 +21,7 @@
 #include "../kernel/KernelModel.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverContextCapture.h"
 #include "DriverEntryABI.h"
 #include "DriverImage.h"
 #include "DriverObservation.h"
@@ -87,9 +88,18 @@ std::string guestCallPhase(const GuestCallToken &Token) {
 static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                                               const DriverOptions &Options,
                                               ProcessObserver *Observer) {
+  const bool Direct = Options.Contract == ExecutionContract::DirectDriverX64;
   if (Options.Contract != ExecutionContract::Legacy &&
-      Options.Contract != ExecutionContract::CheckedX64)
+      Options.Contract != ExecutionContract::CheckedX64 && !Direct)
     return diagnostic::error(diagnostic::Contract);
+  if (Direct) {
+    if (Options.Scheduling)
+      return failure(session_diagnostic::DirectScheduling);
+    if (Options.TraceMemoryWrites)
+      return failure(session_diagnostic::DirectWriteTrace);
+    if (!Options.CPUID.empty())
+      return failure(session_diagnostic::DirectCPUID);
+  }
   if (!Options.InstructionLimit || !Options.MemoryLimit ||
       !Options.EventLimit || !Options.TimeoutMilliseconds ||
       Options.TimeoutMilliseconds > MaxTimeoutMilliseconds ||
@@ -191,6 +201,15 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
   DriverObservation Observation(Observer, CPU, *Image, Kernel, Exports, Result,
                                 std::move(RelocationWrites),
                                 Path.filename().string());
+  if (Direct) {
+    const auto Services = KernelExportRegistry::executionWatches();
+    std::vector<ExecutionWatch> Gates(Services.begin(), Services.end());
+    if (Image->Guard.Enabled)
+      Gates.push_back({GuardThunkBase, PageSize});
+    // The reserved return sentinel is inside the complete service region.
+    // Watching whole regions also covers later WDF/DMA/provider registrations.
+    Observation.setExecutionGates(std::move(Gates));
+  }
   bool PendingObservation = false, PendingMemoryWrite = false;
   std::optional<std::string> ObserverFailure;
   auto ObservationFailed = [&](llvm::Error Error) {
@@ -272,6 +291,19 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     Stopped = true;
     CPU.stop();
   };
+  auto ValidateDirectProcessorView = [&]() -> llvm::Error {
+    auto IRQL = CPU.reg(X64Register::CR8);
+    if (!IRQL)
+      return IRQL.takeError();
+    if (*IRQL != Kernel.currentIRQL())
+      return failure(session_diagnostic::DirectIRQL);
+    auto GS = CPU.readRegister(CPURegister::X64GSBase);
+    if (!GS)
+      return GS.takeError();
+    if ((*GS)[0] != ProcessorEnvironmentBase)
+      return failure(session_diagnostic::DirectGS);
+    return llvm::Error::success();
+  };
   auto EventAvailable = [&]() {
     if (!Resources.hasEvents()) {
       Stop(DriverStopReason::EventLimit, runtime::EventLimit);
@@ -304,7 +336,16 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     if (Stopped)
       return;
     Result.PC = Address;
-    if (Observation.matches(Address)) {
+    // A processor may retain CR8/TLS changes, but this Windows environment
+    // owns IRQL and its GS processor view. Reject divergent state before an
+    // observer or modeled API can consume it with different assumptions.
+    if (Direct)
+      if (auto E = ValidateDirectProcessorView()) {
+        Stop(DriverStopReason::UnsupportedInstruction,
+             llvm::toString(std::move(E)));
+        return;
+      }
+    if (Observation.matches(Address, Direct)) {
       PendingObservation = true;
       CPU.stop();
       return;
@@ -357,6 +398,15 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     if (const auto *Export = Exports.lookup(Address)) {
       Pending = Export;
       CPU.stop();
+      return;
+    }
+    if (Direct) {
+      if (KernelExportRegistry::overlapsThunk(Address) ||
+          (Image->Guard.Enabled && Address >= GuardThunkBase &&
+           Address - GuardThunkBase < PageSize))
+        Stop(DriverStopReason::UnsupportedAPI, session_diagnostic::DirectGate);
+      // A resumed execution watch retires its original instruction in the
+      // processor. This zero-size handoff is not checked admission.
       return;
     }
     if (!Resources.hasInstructions()) {
@@ -941,7 +991,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       return IRQL.takeError();
     if (*IRQL != Kernel.currentIRQL())
       return failure(session_diagnostic::SavedIRQL);
-    if (ProcessorViewMapped)
+    if (Direct && !ProcessorViewMapped) {
+      if (auto E = PrepareProcessorView())
+        return E;
+    } else if (ProcessorViewMapped)
       if (auto E = RefreshProcessorView())
         return E;
     Result.Phase = Frame.Phase;
@@ -995,9 +1048,9 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       if (Observer) {
         if (auto E = CPU.setReg(X64Register::PC, NextPC))
           return E;
-        if (auto E = Observation.resuming())
-          return ObservationFailed(std::move(E));
       }
+      if (auto E = Observation.resuming())
+        return ObservationFailed(std::move(E));
       const uint64_t Remaining = Resources.remainingMicroseconds();
       if (!Remaining) {
         Stop(DriverStopReason::Timeout, runtime::Timeout);
@@ -1010,6 +1063,8 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       // The preceding proof belongs to the stopped observer callback. Every
       // resumed CPU interval must establish its own watched-memory guarantee.
       Observation.setWatchedMemoryUnchanged(false);
+      if (Direct)
+        Observation.opaqueExecutionResuming();
       if (auto E = CPU.run(NextPC, Remaining)) {
         const bool Rejected = E.isA<UnsupportedExecutionError>();
         std::string Message = llvm::toString(std::move(E));
@@ -1021,6 +1076,18 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                : CPU.hasDeviceError() ? DriverStopReason::ModelError
                                       : DriverStopReason::EngineError,
                Message);
+      }
+      if (Direct) {
+        // Direct execution has no instruction callback between gates. Faults,
+        // committed-write stops and deadlines must report the captured CPU PC.
+        auto PC = CPU.reg(X64Register::PC);
+        if (!PC)
+          return PC.takeError();
+        Result.PC = *PC;
+        if (!Stopped)
+          if (auto E = ValidateDirectProcessorView())
+            Stop(DriverStopReason::UnsupportedInstruction,
+                 llvm::toString(std::move(E)));
       }
       if (Stopped)
         break;
@@ -1093,8 +1160,8 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       }
       if (PendingEnvironmentRead) {
         const auto &Action = PendingEnvironmentRead->Request;
-        if (Action.Source == WindowsX64ExecutionPolicy::Action::Kind::
-                                 ReadDisabledShadowStack) {
+        if (Action.Source ==
+            WindowsX64ExecutionPolicy::Action::Kind::ReadDisabledShadowStack) {
           // CR4.CET is disabled by this profile. RDSSPD also preserves the
           // upper destination bits; no register write or transport helper is
           // involved. The instruction has already consumed its normal budget.
@@ -1300,7 +1367,13 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         Arguments.push_back(*Value);
         return *Value;
       };
-      auto Value = Kernel.call(*Pending, FixedArguments, ReadVariableArgument);
+      auto ReadContext = [&] { return collectDriverContext(CPU); };
+      auto SetContextFlags = [&](uint64_t Flags) {
+        return CPU.setReg(X64Register::FLAGS, Flags);
+      };
+      const KernelContextCapture Context{ReadContext, SetContextFlags};
+      auto Value =
+          Kernel.call(*Pending, FixedArguments, ReadVariableArgument, &Context);
       if (!Value) {
         std::optional<uint32_t> RaisedCode;
         auto OtherError = llvm::handleErrors(
@@ -2044,7 +2117,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       return llvm::Error::success();
     }
     if (Phase == EntryPhase &&
-        Options.Contract == ExecutionContract::CheckedX64) {
+        (Options.Contract == ExecutionContract::CheckedX64 || Direct)) {
       auto State = DriverEntryABI::capture(CPU);
       if (!State)
         return State.takeError();

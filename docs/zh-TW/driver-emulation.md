@@ -27,6 +27,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
 
+`direct-driver-x64-v1` 在 x64 KVM 上直接執行核心態程式碼，並沿用現有驅動與核心模型。核心匯出、回呼返回、guard 跳板和停止觀察點仍透過明確的執行邊界處理。執行受時間與 API 事件預算約束；無法逐條計數，指令數回報為零。依指令排程、逐寫入追蹤和自訂 CPUID 表會遭拒絕。處理器識別與時間戳記來自執行後端，並保留為擷取狀態的環境相依性。不支援的特殊暫存器變更會明確失敗。此執行契約本身不代表已還原擷取的 SYS 檔案。
+
+核心欄位的初始化追蹤需要精確記錄已提交的寫入範圍。在受監控的頁面上，直接執行目前接受純量 MOV/MOVABS/XOR 和已支援的傳統 SSE 儲存指令，其他寫入形式會明確失敗。同值寫入和部分欄位仍按原有規則檢查初始化。
+
+KVM 的實體唯讀槽亦會保護受監控的 RAM 頁，避免暫時修改 CR0.WP 繞過寫入監視。遭拒的第二層寫入會終止執行，不會完成待處理的 MMIO 操作；診斷中的 RIP 不代表完整已提交的 CPU 上下文。槽位不足會明確失敗。特殊狀態於執行邊界檢查，無法證明執行期間沒有暫時修改 CR3 或映射。
+
 ## 建置與執行
 
 此功能須明確啟用，且不依賴 `BUILD_TESTING`：
@@ -324,6 +330,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 |-----|----------------|
 | `RtlInitUnicodeString` | 根據有界且以 NUL 結尾的來源字串建立客體 `UNICODE_STRING` |
 | `RtlGetVersion` | 明確的 checked-x64 基礎版本查詢，不採用主機版本預設值。需要 `version_query`；長度 276 的記錄必須預先清零整個 CSD 陣列。零長度相容行為需單獨啟用並提供實際 20 位元組緩衝區。擴充長度與未宣告查詢明確停止，保留環境相依。 |
+| `RtlCaptureContext` | 有界核心呼叫者內容擷取; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`、`RtlCompareUnicodeString`、`RtlEqualUnicodeString` | 計數式 UTF-16 複製及區分大小寫的比較；不區分大小寫的比較需要 Windows 大小寫對照表，因此會停止 |
 | `RtlInitAnsiString`、`RtlInitString` | 根據以 NUL 結尾的位元組來源建立客體 `STRING`；計數長度上限為 `0xFFFE`，`MaximumLength` 包含結尾字元，並清除記錄的填補位元組 |
 | `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 附加到計數式 UTF-16 目標；回傳 `STATUS_BUFFER_TOO_SMALL` 時目標保持不變，至少剩餘兩個空閒位元組時才寫入結尾字元，超過 `0x7FFE` 個單元的 NUL 結尾來源同樣回傳 `STATUS_BUFFER_TOO_SMALL` |
@@ -353,6 +360,8 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 使用者／系統對映繼承實體頁面快取屬性及各自權限；非分頁集區 MDL 透過安全輔助函式重用原系統對映 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 獨立或 IRP 關聯的非分頁集區／使用者描述元；可修改鏈指標，鎖頁與系統別名獨立；不支援配額 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明確配置的工作階段登錄、每個控制代碼的權限與生命週期、查詢緩衝區大小及修改；不存取主機登錄 |
+| `ZwEnumerateValueKey` | 依建立順序列舉 Basic、Full、Partial 值資訊；取代保留索引，刪除壓縮索引，重建附加至尾端。需要 `KEY_QUERY_VALUE`，超出範圍傳回 `STATUS_NO_MORE_ENTRIES`。與值查詢共用序列化：x64 Full 資料按 8 位元組對齊，空資料位移為 `0xffffffff`，填補和不完整 UTF-16 單元維持原值 |
+| `ZwQueryKey`, `ZwEnumerateKey` | 查詢支援 Basic、Node、Full、Name、Cached；列舉支援 Basic/Node/Full，依大寫 ASCII 順序遍歷直接存活子鍵。查詢需 `KEY_QUERY_VALUE`（Name 接受任意已授予權限），列舉需 `KEY_ENUMERATE_SUB_KEYS`。保留精確短緩衝區結果和歷史最大長度；含時間的輸出需要明確時間 |
 | `ExAllocatePool` | 舊版雙參數介面，支援集區類型 `0`、`1`、`512` 的資料配置；共用對齊、未初始化位元組模型及大小／IRQL 檢查，耗盡時傳回 NULL。透過 `ExFreePool` 或零標籤的 `ExFreePoolWithTag` 釋放；存活配置仍屬於核心相依狀態。 |
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | 對集區類型 `0`、`1`、`512` 提供資料配置；大小／標籤必須為正，帶標籤釋放必須相符，位址不重複使用 |
 | `IoCreateDevice`、`IoDeleteDevice` | 裝置類型為 `0x22`，characteristics 為 `0` 或 `0x100`，擴充區大小有界，名稱為 ASCII `\Device\Name` |
@@ -368,6 +377,10 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeGetCurrentIrql` | 讀取目前 IRQL/CR8，包括明確升降級；派送與工作項目從 `PASSIVE_LEVEL` 開始，DPC 從 `DISPATCH_LEVEL` 開始 |
 | `KfRaiseIrql`, `KeLowerIrql` | 真正的 x64 WDK IRQL 升降匯入，包含內聯輔助函式；每個執行必須在返回前按 LIFO 順序恢復儲存值。IRQL <= APC_LEVEL 的合法等待保留升降配對，並按等待時的 IRQL 恢復；DISPATCH_LEVEL 持鎖不能暫停。CR8 反映每次變化；設定的 CPU0 事件搶占使用 `scheduling`；任意巢狀中斷仍不受支援。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上常駐且對齊的執行自旋鎖；檢查擁有者、取得與釋放配對及 IRQL 恢復。競爭的阻塞取得會明確停止。 |
+| `KeAcquireInStackQueuedSpinLock`, `KeReleaseInStackQueuedSpinLock`, `KeAcquireInStackQueuedSpinLockAtDpcLevel`, `KeReleaseInStackQueuedSpinLockFromDpcLevel` | CPU0 上的在堆疊排隊自旋鎖。呼叫方的 `KLOCK_QUEUE_HANDLE` 記錄鎖，升高形式還記錄儲存的 IRQL；取得會升到 `DISPATCH_LEVEL` 並將控制代碼存入鎖，而 `AtDpcLevel` 形式要求呼叫方已在該層級。釋放會清除鎖，升高形式恢復儲存的 IRQL，且釋放形式必須與取得相符。本協作處理器無法等待其他處理器持有的鎖，會明確停止；分頁、使用者模式或與鎖重疊的控制代碼儲存同樣會停止。 |
+| `ExInitializeRundownProtection`, `ExReInitializeRundownProtection`, `ExAcquireRundownProtection`, `ExReleaseRundownProtection`, `ExWaitForRundownProtectionRelease`, `ExRundownCompleted`, `ExAcquireRundownProtectionEx`, `ExReleaseRundownProtectionEx` | 無鎖的 run-down 保護作用於呼叫方的 `EX_RUNDOWN_REF`，其唯一的 `Count` 字保存 run-down 位元與兩倍的未完成計數。在 run-down 開始前，取得會加二並回傳 TRUE，之後回傳 FALSE 且不寫入；釋放會減二。沒有未完成參考時，等待會立即將物件標記為已 run-down，重複等待沒有效果；`ExRundownCompleted` 無條件標記，初始化則清零。存在未完成參考時的等待、以及 run-down 開始後的釋放在本協作處理器上無法推進，會明確停止；沒有未完成參考時的釋放同樣會停止。帶計數的 `Ex` 形式按其 ULONG 的兩倍（在 32 位元內加倍）調整計數；快取感知形式未建模。 |
+| `ExInterlockedInsertHeadList`、`ExInterlockedInsertTailList`、`ExInterlockedRemoveHeadList`、`ExInterlockedPushEntryList`、`ExInterlockedPopEntryList`、`ExInterlockedAddUlong`、`ExInterlockedAddLargeInteger` | 在任意 IRQL 下，於閒置的常駐執行自旋鎖內遮罩中斷、維持 IRQL 不變完成一次更新。插入回傳原本的相鄰項或 NULL，移除保留被移除項本身的連結，加法回繞並回傳原值。損毀的連結如核心的 `FAST_FAIL_CORRUPT_LIST_ENTRY` 一樣停止；已被持有的鎖，以及可分頁、使用者模式或與鎖重疊的儲存會明確停止。 |
+| `InitializeSListHead`、`ExpInterlockedPushEntrySList`、`ExpInterlockedPopEntrySList`、`ExpInterlockedFlushSList`、`ExQueryDepthSList`、`FirstEntrySList` | x64 無鎖 `SLIST_HEADER` 串列，`InterlockedPushEntrySList`、`InterlockedPopEntrySList`、`InterlockedFlushSList` 巨集及其 `ExInterlocked` 形式經由 `Exp` 匯出到達這裡。推入把 Depth 和 Sequence 同時加一，彈出只減少 Depth，清空會清除 Depth 和首項，彈出或清空的項保留各自的連結。`InitializeSListHead` 像核心一樣對未對齊的標頭引發 `STATUS_DATATYPE_MISALIGNMENT`；其他未對齊的標頭和項會明確停止。`ExQueryDepthSList` 要求 `DISPATCH_LEVEL` 或更低，其餘可在任意 IRQL 呼叫。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 裝置擁有的不透明工作項目；僅支援 `DelayedWorkQueue`，在 `PASSIVE_LEVEL` 將裝置與內容傳給回呼；禁止釋放仍在佇列中的項目 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 不透明 DPC 儲存、四個客體回呼參數、`DISPATCH_LEVEL`、重複排入／移除及優先順序；僅目標 CPU0 |
 | `KeInitializeTimer`, `KeInitializeTimerEx`, `KeSetTimer`, `KeSetTimerEx`, `KeCancelTimer`, `KeReadStateTimer` | 通知／同步計時器；相對／絕對 100 ns 期限、毫秒週期、重新設定／取消及虛擬時間中的訊號查詢 |
@@ -384,6 +397,8 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `IoMarkIrpPending` | 標記目前存活的 IRP；也支援 WDM 巨集對堆疊控制欄位的等效寫入；派送必須傳回 `STATUS_PENDING` |
 | `IofCompleteRequest`、`IoCompleteRequest` | 以 `IO_NO_INCREMENT` 執行完成展開，支援暫停／繼續；僅在最終展開邊界釋放 IRP、MDL 與緩衝區 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | 有界的客體緩衝區操作，每次呼叫最多 1 MiB；要求不重疊的複製 API 會拒絕重疊 |
+| `strlen`、`wcslen`、`strnlen`、`wcsnlen`、`strcmp`、`wcscmp`、`strncmp`、`wcsncmp`、`_stricmp`、`_wcsicmp`、`_strnicmp`、`_wcsnicmp`、`strchr`、`wcschr`、`strrchr`、`wcsrchr`、`strstr`、`wcsstr`、`strspn`、`wcsspn`、`wcscspn` | 匯出的 C 執行階段字串輔助函式在任意 IRQL 下逐個單元讀取呼叫方記憶體；沒有結束字元的掃描會在 1 MiB 模型上限處停止。計數與搜尋結果遵循標準 C 語意：`strcmp`、`wcscmp`、`strncmp` 正規化為 -1、0 或 1，而 `wcsncmp` 與不分大小寫的一組會傳回原始差值，且僅折疊 ASCII A-Z。搜尋目標會被截斷為單元寬度，並且連結束字元一起搜尋，因此搜尋 0 會傳回其位址；`strstr`/`wcsstr` 的空子字串會傳回原字串。空記錄，或沒有計數且越過已對應記憶體的掃描，都會明確失敗。 |
+| `strcpy`, `wcscpy`, `strncpy`, `wcsncpy`, `strcat`, `wcscat`, `strncat`, `wcsncat` | 位元組和 UTF-16 複製／串接傳回原目標位址。定長複製恰寫指定單元數，短輸入補零，截斷後不額外終止；定長串接至多附加指定數量並終止。零計數的 `strncpy`／`wcsncpy`／`strncat` 不存取記憶體，`wcsncat` 仍掃描並寫入目標終止符。重疊、無效儲存及超過 1 MiB 的操作在寫入前停止；分頁記憶體仍受 IRQL 約束 |
 
 `MmProbeAndLockPages` 支援在 IRQL <= APC_LEVEL 下，以 `KernelMode` 鎖定輸入驅動程式映像中由載入器擁有的單一連續區間。映像頁必須可讀，並受實體頁配額限制。模型已持有私有且駐留的映像後備儲存：即使原映像檢視唯讀，`IoWriteAccess` 和 `IoModifyAccess` 也允許可寫 MDL 別名；`IoReadAccess` 仍只允許唯讀別名。原映像保護屬性保持不變。映像空洞和無關對映不屬於該所有權；低於使用者位址邊界的映像也透過所有權識別。鎖定後必須解鎖並釋放描述元。載入器擁有的映像頁上，暫時 MDL 的全部別名解除、全部鎖釋放且全部描述元釋放後，不再額外阻止還原。此契約允許未指定位址的核心模式快取別名。存活 MDL、其他所有權或對映類型，以及客體對實體 PFN 身分的讀取仍保留還原相依性；模型化的複製、移動和比較服務讀取也計入。
 
@@ -426,7 +441,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 選用根欄位 `"load_address": "0x190000000"` 請求變更載入基底位址；省略此欄位或指定 `"0x0"` 時使用慣用位址。映像必須滿足重新定位需求。原有的初始化命令或 C API 不會隱含執行任何請求情境。
 
-根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
+根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry_system_time_100ns`, `registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
 
 僅 READ／WRITE／IOCTL 請求接受選用欄位 `cancel_after_100ns`，它必須是 0 到 `INT64_MAX`（9223372036854775807）之間的 JSON 整數。此值相對於請求提交時刻，以虛擬 100 ns 為單位，並非實際時間。對 KMDF，零表示框架路由後、客體 I/O 回呼前觸發取消；若路由已直接完成請求，則完成優先。對 WDM，零在派送傳回後生效。正數延遲僅在沒有就緒回呼或執行框架時，隨時間推進至計時器、等待或取消期限而觸發。掛起的 WDM IRP 會在持有取消自旋鎖的 `DISPATCH_LEVEL` 呼叫已註冊的取消常式；常式必須使用 `Irp->CancelIrql` 釋放鎖後再完成請求。一般佇列與 PnP 取消仍不支援。每個請求報告都包含 `cancel_requested_at_100ns`，值為取消實際發生時的絕對虛擬時間；若未發生取消，包括完成先發生的情況，則為 null。請求取消本身不會完成 IRP，也不規定最終狀態。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 與 `IoCancelIrp` 共用相同的 IRP 狀態及取消自旋鎖；`IoCancelIrp` 同步呼叫已註冊常式，並傳回是否實際呼叫。
@@ -469,6 +484,10 @@ IOCTL 的 `output_size` 非零時，`Information` 不得超過該大小，即使
 `ZwQueryValueKey` 實作 Basic、Full、Partial 及其有定義的 Align64 資訊類別，包括精確長度、資料對齊、部分輸出，以及不同的 `STATUS_BUFFER_TOO_SMALL`／`STATUS_BUFFER_OVERFLOW` 結果。`ZwSetValueKey` 與 `ZwDeleteValueKey` 只修改此工作階段的樹。`ZwDeleteKey` 拒絕刪除仍有子機碼的機碼；已刪除機碼的控制代碼在關閉前傳回 `STATUS_KEY_DELETED`。`ZwClose` 獨立釋放控制代碼，不刪除機碼；卸載時仍有開啟的登錄控制代碼會導致失敗。
 
 限制為包含祖先的 256 個機碼、總計 1024 個值、每值 65536 位元組、值資料總計 512 KiB、機碼路徑 1024 個 ASCII 位元組、值名稱 256 位元組，以及同時開啟 256 個控制代碼。建立與修改遵守和情境預檢相同的限制。報告的 `configuration.registry` 保留原始輸入；`registry` 列出最終存活的機碼路徑和值，包括停止前的修改。未指定登錄時報告 null。此值快照不包含揮發性屬性及控制代碼識別。
+
+每個鍵可宣告 `last_write_time_100ns`；根欄位 `registry_system_time_100ns` 定義虛擬時間零點的 Windows 絕對時間（自 1601 年起的 100 ns 單位），並要求明確的 `registry`。兩者均為 0..9223372036854775807 的 JSON 整數，零是有效宣告。鍵的明確時間優先，否則初始鍵和隱含祖先繼承時鐘；缺少來源則時間未知。Name 查詢和大小探測無需時間，其他輸出遇到未知時間會明確停止。修改使用時鐘加排程器經過時間，溢位在修改前停止；未設定時鐘時，修改使受影響鍵的時間變為未知。相同類型及資料的寫入保留時間，子鍵建立／刪除更新父鍵時間。報告保留已知時間與原始時鐘設定，省略未知時間。
+
+Full/Cached 傳回目前計數，但名稱和資料最大長度保留歷史峰值，直到對應子鍵／值列表為空才歸零。Cached 在 x64 需要 40 位元組，最後 4 位元組填補不寫入。Name 查詢可以複製已刪除鍵的路徑：完整輸出傳回 `STATUS_KEY_DELETED`，短緩衝區傳回一般大小狀態。快照不含快取峰值，不能作為完整執行檢查點。
 
 ## Microsoft 範例驗收檢查
 
@@ -645,3 +664,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 選用的 `kernel_va_shadow_query` 提供類別 `196`（`SystemKernelVaShadowInformation`）的結果：`{"version":1,"flags":0,"evidence":"fixture declaration"}`。三個欄位皆必填，明確的零值有效。版本 1 僅接受低十四個已定義位元（`0x3fff`）；保留位元、格式錯誤、未知欄位及非 `checked-x64` 執行皆拒絕。evidence 為 1–256 個可列印 ASCII 位元組，不推斷主機狀態或實作硬體緩解措施。
 
 在 PASSIVE_LEVEL，長度小於 4 時回傳 `STATUS_INFO_LENGTH_MISMATCH` 且不存取結果；長度至少為 4 時僅更新前四位元組。非 NULL 的 `ReturnLength` 在兩種情況皆寫入 4。ULONG 引數取低 32 位元。結果須為可讀寫核心 RAM，長度輸出須可寫；兩者均須具唯一實體映射及有效物件生命週期。成功輸出不得重疊，所有檢查先於寫入。Nt 要求已知的 KernelMode previous-mode，Zw 保留呼叫者內容。報告保留宣告，即使未使用也保留尚未重建的環境相依性。
+
+## 有界核心呼叫者內容擷取
+
+`RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 共用匯入與動態實作，要求 IRQL <= DISPATCH_LEVEL。記錄須為 16 位元組對齊、完整可讀寫的 1232 位元組核心 RAM。只寫入 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，保留其餘位元組及 x87 資料/指標、MXCSR mask。ContextFlags=`0x10000f`，呼叫者 RSP=入口 RSP+8，RIP 來自實際返回槽；入口 RSP-8 寫入 8 位元組旗標，RAX 為零擴展 EFLAGS，算術旗標依 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 邏輯 SS，不代表主機或原始後端值。完整記錄、返回槽與暫存槽須通過普通核心 RAM、有效物件、權限與唯一實體映射檢查，記錄不可重疊返回/暫存範圍；入口 RSP 模 16 為 8。擷取或驗證失敗不改 CPU/RAM，legacy 明確拒絕。此有界模型不代表所有 Windows 實作；即使覆寫擷取內容仍保留環境相依性，不授予 UNPACK 還原或符號前提。

@@ -678,7 +678,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
                            "+ 4 image memory checks + 6 CPUID "
                            "+ 7 kernel snapshots + 10 pool captures "
                            "+ 4 DriverEntry caller checks "
-                           "+ 86 driver environment checks = 5598")
+                           "+ 103 driver environment checks = 5615")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -2515,3 +2515,46 @@ NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "166 initial private strict JSON checks / five software C CLI Python and "
     "three matching ARM64 HVF profiles / public30s guest5000000us quantum1024")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "symbolic ownership: chown16 fchown123 fchownat468 / ordinary initial "
+    "regular directory symbolic objects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "fchown O_SYMLINK and fchownat NOFOLLOW0x20 select actual LinkNode / "
+    "chown and default fchownat follow target")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "OwnershipMutations CreatedSymbolicLinkObjects=false / "
+    "FileOwnershipCreatedSymbolicLinkObjects created_symbolic_link_objects "
+    "strict Boolean")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial exact Objects grant / created symbolic ownership requires "
+            "complete CreationPolicy.Namespace and uses Mutation.Time / "
+            "independent regular directory flags")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "LinkNode OwnershipTime independent of MutationTime and FileSystem / "
+    "unknown complete metadata never restored")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "symbolic-ownership-mutations59 created-symbolic-ownership60 "
+            "virtual-symbolic-ownership67 virtual-created-symbolic-ownership68 "
+            "authored services / main58 stdout W")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "literal variants each1281 output bytes / eight complete stat144 "
+    "records with two8-byte guards / separate link target and replacement "
+    "inodes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "318 owned native ownership observations O0 O1 O2 / six common native "
+    "runs / native common81 mandatory94 per platform ARM64282")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "74 direct ownership plus6 strict JSON checks / five software C CLI "
+    "Python profiles / three matching ARM64 HVF required")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "native5s compiler120s build1200s parallel2 guest5000000us quantum1024 "
+    "public30s / native Intel and physical iOS unqualified")

@@ -155,6 +155,18 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
             case_input = catalogue / "link"
             if mode == "symbolic-filesystem-observations":
                 case_input.symlink_to("data")
+        elif mode in ("symbolic-ownership-mutations", "created-symbolic-ownership",
+                      "lchown-ownership-mutations"):
+            catalogue = initial_root / mode
+            catalogue.mkdir(mode=0o700)
+            catalogue.chmod(0o700)
+            parent = catalogue / "dir"
+            parent.mkdir(mode=0o700)
+            parent.chmod(0o700)
+            (catalogue / "data").write_bytes(b"ab\0\xffef")
+            case_input = parent / "link"
+            if mode != "created-symbolic-ownership":
+                case_input.symlink_to("../data")
         elif mode == "created-directory-filesystem":
             catalogue = initial_root / mode
             catalogue.mkdir(mode=0o700)

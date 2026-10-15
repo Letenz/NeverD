@@ -233,7 +233,7 @@ CheckedX64Backend::runWatchedRegion(std::optional<uint64_t> &OpenPage) {
   ++WatchEpoch;
   auto Root = buildX64PageTables(
       *Memory, UserMode, Machine->requiresExceptionMonitor(), Closed,
-      WatchEpoch, true, RegionPhysical, &WatchTables);
+      WatchEpoch, true, RegionPhysical, &WatchTables, true);
   ++WatchEpoch;
   if (!Root)
     return Root.takeError();

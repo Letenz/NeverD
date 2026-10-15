@@ -249,12 +249,16 @@ wall-clock promises. All summaries remain partial, with
 `runtime_entries_verified`, `runtime_path_bases_verified` and
 `selection_complete` false and `html_analysis: not_analyzed`.
 
-## Required remaining work
+## Boundaries and related adapters
 
-HTML script entries and source import closure, runtime channel routing,
-wrappers and broader dataflow, distribution detection and runtime-version
-evidence still require implementation and qualification. This
-increment does not finish Electron, safe export, NW.js, VSIX, Tauri, Wails,
-CEF/WebView or issue #716. Their requirements remain in the
-[implementation plan](superpowers/plans/2026-10-10-javascript-analysis-design-zh.md)
-and [ledger](web-analysis-implementation.md).
+The separate [HTML profile](web-html-profile.md) inspects explicitly selected
+HTML and script candidates. This Electron entry association does not construct
+a complete HTML/import closure. Runtime channel routing, general wrappers and
+dataflow, distribution authentication and runtime-version verification remain
+unqualified. Static entry/IPC candidates do not establish those outcomes.
+
+NW.js/VSIX, Tauri/Wails and CEF/WebView have independently implemented
+[desktop adapter profiles](web-desktop-adapter-matrix.md). Their detection,
+listing, extraction and analysis results are recorded separately. Executed
+qualification belongs in the [ledger](web-analysis-implementation.md), and
+issue-wide acceptance belongs in the [acceptance audit](web-epic-acceptance.md).

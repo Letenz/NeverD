@@ -118,6 +118,24 @@ NEVERD_WDM_VALUE(UnicodeMaximumOffset, 0x02)
 // CLIENT_ID{HANDLE UniqueProcess; HANDLE UniqueThread;}
 NEVERD_WDM_VALUE(ClientIDSize, 0x10)
 NEVERD_WDM_VALUE(ClientIDThreadOffset, 0x08)
+// x64 ntdef.h LIST_ENTRY {Flink, Blink} and SINGLE_LIST_ENTRY {Next}.
+NEVERD_WDM_VALUE(ListEntrySize, 0x10)
+NEVERD_WDM_VALUE(ListEntryFlinkOffset, 0x00)
+NEVERD_WDM_VALUE(ListEntryBlinkOffset, 0x08)
+NEVERD_WDM_VALUE(SingleListEntrySize, 0x08)
+// x64 wdm.h KLOCK_QUEUE_HANDLE {KSPIN_LOCK_QUEUE{Next, Lock}; KIRQL OldIrql}.
+NEVERD_WDM_VALUE(LockQueueNextOffset, 0x00)
+NEVERD_WDM_VALUE(LockQueueLockOffset, 0x08)
+NEVERD_WDM_VALUE(LockQueueOldIrqlOffset, 0x10)
+NEVERD_WDM_VALUE(LockQueueHandleSize, 0x18)
+// x64 wdm.h SLIST_HEADER: Depth:16 and Sequence:48, then the first entry with
+// four reserved low bits, since entries are 16-byte aligned.
+NEVERD_WDM_VALUE(SListHeaderSize, 0x10)
+NEVERD_WDM_VALUE(SListHeaderEntryOffset, 0x08)
+NEVERD_WDM_VALUE(SListAlignment, 0x10)
+NEVERD_WDM_VALUE(SListDepthMask, 0xffff)
+NEVERD_WDM_VALUE(SListSequenceUnit, 0x10000)
+NEVERD_WDM_VALUE(SListReservedMask, 0x0f)
 NEVERD_WDM_VALUE(ObjectAttributesSize, 48)
 NEVERD_WDM_VALUE(ObjectRootOffset, 8)
 NEVERD_WDM_VALUE(ObjectNameOffset, 16)

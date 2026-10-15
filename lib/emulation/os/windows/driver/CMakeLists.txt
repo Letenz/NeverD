@@ -9,6 +9,7 @@ target_sources(NeverDEmulation PRIVATE
   DriverSchedulingJSON.cpp
   DriverSession.cpp
   DriverEntryABI.cpp
+  DriverContextCapture.cpp
   DriverObservation.cpp
   WindowsX64ExecutionPolicy.cpp
   DriverImage.cpp

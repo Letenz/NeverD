@@ -53,8 +53,10 @@ struct CapturedFixupReference {
 
 struct SourceDisplacements {
   bool IsMachO = false;
+  bool IsI386ELF = false;
   std::map<std::pair<uint64_t, std::string>, uint64_t> Targets;
   std::map<std::pair<uint64_t, std::string>, uint64_t> MachOGOTData;
+  std::map<std::pair<uint64_t, std::string>, uint64_t> I386GOTAnchors;
 
   void record(const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request,
               uint64_t Address) {
@@ -65,6 +67,9 @@ struct SourceDisplacements {
     if (IsMachO && Request.SpecifierName == "GOTPCREL" &&
         Request.FixupKindName == "FK_Data_4" && !Request.IsPCRel)
       MachOGOTData[{Request.FixupVA, Request.Symbol.str()}] = Address;
+    if (IsI386ELF && Request.Symbol == "_GLOBAL_OFFSET_TABLE_" &&
+        !Request.Specifier)
+      I386GOTAnchors[{Request.FixupVA, Request.Symbol.str()}] = Address;
   }
 
   bool validate(const CompiledImage &Image) const {
@@ -106,6 +111,25 @@ struct SourceDisplacements {
         Bytes = Section.ExternalBytes;
       }
       for (const auto &Fixup : Section.FixupReferences) {
+        auto Anchor =
+            I386GOTAnchors.find({Section.VA + Fixup.Offset, Fixup.Symbol});
+        if (Anchor != I386GOTAnchors.end()) {
+          if (Fixup.BitWidth != 32 || !Fixup.IsResolved ||
+              !Fixup.SubtractSymbol.empty() ||
+              !rangeInBounds(Fixup.Offset, 4, Section.Size))
+            return false;
+          const uint32_t Encoded =
+              readLE<uint32_t>(Bytes.data() + Fixup.Offset);
+          const uint32_t Expected = static_cast<uint32_t>(
+              Anchor->second + static_cast<uint64_t>(Fixup.Addend) -
+              (Section.VA + Fixup.Offset));
+          if (Encoded != Expected) {
+            llvm::WithColor::error()
+                << "compileImageForPatch: LLVM encoded an invalid i386 GOT "
+                   "anchor displacement; rebuild the corrected LLVM fork\n";
+            return false;
+          }
+        }
         auto Target =
             MachOGOTData.find({Section.VA + Fixup.Offset, Fixup.Symbol});
         if (Target == MachOGOTData.end())
@@ -490,9 +514,11 @@ static CompiledImage compileImageForPatchImpl(
     RewriteInputKind InputKind) {
   SourceDisplacements PLT;
   PLT.IsMachO = Fmt == BinaryFormat::MachO;
+  PLT.IsI386ELF = TargetArch == Arch::X86 && Fmt == BinaryFormat::ELF;
   SourceDisplacements *PLTCheck =
-      TargetArch == Arch::X64 &&
-              (Fmt == BinaryFormat::ELF || Fmt == BinaryFormat::MachO) &&
+      ((TargetArch == Arch::X64 &&
+        (Fmt == BinaryFormat::ELF || Fmt == BinaryFormat::MachO)) ||
+       PLT.IsI386ELF) &&
               InputKind == RewriteInputKind::ReplacementIR
           ? &PLT
           : nullptr;

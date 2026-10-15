@@ -257,6 +257,7 @@ jobs:
           "$PYTHON" -m unittest \
             scripts.tests.test_check_capabilities \
             scripts.tests.test_check_docs_i18n \
+            scripts.tests.test_check_gui_icons \
             scripts.tests.test_check_python_plugin_sdk \
             scripts.tests.test_check_source_provenance -v
           "$PYTHON" scripts/check_capabilities.py

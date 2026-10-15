@@ -12,7 +12,10 @@
 /// set.  The workbench unit tests fail when an icon is missing from this
 /// record or listed without its file, leaves the 16 px grid, draws in a color
 /// not listed here, or embeds a raster image, text, an external reference, a
-/// script or an editor's metadata.
+/// script or an editor's metadata.  scripts/check_gui_icons.py fails when a
+/// straight stroke or an unstroked fill edge falls between two pixels at the
+/// size the icon is drawn on, its viewBox, unless NEVERD_ICON_SOFT_LINE
+/// allows the icon such a line.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -24,6 +27,11 @@
 #endif
 #ifndef NEVERD_ICON
 #define NEVERD_ICON("Name", Group, Shows)
+#endif
+// NEVERD_ICON_SOFT_LINE("Name", Why): an icon allowed a straight line between
+// two pixels, and why it cannot have it on whole pixels.
+#ifndef NEVERD_ICON_SOFT_LINE
+#define NEVERD_ICON_SOFT_LINE(Name, Why)
 #endif
 
 NEVERD_ICON_COLOR("#3B4250", "outline of every icon")
@@ -135,6 +143,9 @@ NEVERD_ICON("analyze", Analysis, "a gear with a play mark")
 NEVERD_ICON("cancel", Analysis, "a stop square in a circle")
 NEVERD_ICON("refresh", Analysis, "two arrows chasing each other")
 NEVERD_ICON("signatures", Analysis, "a fingerprint")
+NEVERD_ICON_SOFT_LINE("signatures",
+                      "its center ridge lies on the fingerprint's axis, where "
+                      "a 1 px line cannot be both centered and whole")
 NEVERD_ICON("undefine", Analysis, "a form with a cross")
 NEVERD_ICON("function_library", Library, "an f on a library tile")
 
@@ -183,7 +194,8 @@ NEVERD_ICON("menu_check-dark", Chrome, "a check mark")
 NEVERD_ICON("menu_check-light", Chrome, "a check mark")
 
 // Line glyphs of the quick start, drawn on a 24 px grid and tinted where they
-// are painted.
+// are painted.  Straight strokes run along pixel centers, so the 24 px glyphs
+// keep their full color instead of blurring across two pixels.
 NEVERD_ICON("start_new", Glyph, "a page with a plus")
 NEVERD_ICON("start_go", Glyph, "a window with a side pane")
 NEVERD_ICON("start_previous", Glyph, "a clock with an arrow turning back")
@@ -194,3 +206,4 @@ NEVERD_ICON("app", Brand, "the NeverD logo")
 
 #undef NEVERD_ICON_COLOR
 #undef NEVERD_ICON
+#undef NEVERD_ICON_SOFT_LINE

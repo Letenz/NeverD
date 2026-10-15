@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDBackendC
   CSourceRecorder.cpp
+  CSourceEvidence.cpp
   dialect/CDialect.cpp
   dialect/CSyntaxLexer.cpp
   dialect/CSyntaxParser.cpp
@@ -26,6 +27,7 @@ add_neverd_component_library(NeverDBackendC
   LLVMC/LLVMCEmitter.cpp
   LLVMC/LLVMCExprWriter.cpp
   LLVMC/LLVMCFuncWriter.cpp
+  LLVMC/LLVMCMemoryUpdates.cpp
   LLVMC/LLVMCScalarRegions.cpp
   LLVMC/LLVMCScalarExpressions.cpp
   LLVMC/LLVMCStmtWriter.cpp
@@ -35,6 +37,7 @@ add_neverd_component_library(NeverDBackendC
   pass/HighC/HighCStoreForwarding.cpp
   pass/HighC/HighCUsedVars.cpp
   pass/HighC/HighCVoidAnalysis.cpp
+  pass/LLVMC/LLVMCBitTests.cpp
   pass/LLVMC/LLVMCCommonBranches.cpp
   pass/LLVMC/LLVMCLoopPhases.cpp
   pass/LLVMC/LLVMCScalarLoopRecovery.cpp

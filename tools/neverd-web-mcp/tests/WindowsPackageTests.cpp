@@ -21,6 +21,7 @@
 #include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <windows.h>
@@ -93,6 +94,7 @@ struct Fixture {
 class Process {
   Handle In, Out, Child, Log;
   std::string Pending;
+  bool WorkerHello = false;
 
 public:
   Process(const fs::path &Binary, std::wstring Options,
@@ -217,9 +219,19 @@ public:
         more();
       auto V = Json::parse(Pending.substr(4, N));
       Pending.erase(0, N + 4);
+      check(V.value("protocol_major", 0) == 1,
+            "Installed worker protocol mismatch");
+      if (V.value("type", "") == "hello") {
+        check(!WorkerHello && Sequence == 1 &&
+                  V.value("protocol_minor", 0) == 1,
+              "Installed worker handshake mismatch");
+        WorkerHello = true;
+        continue;
+      }
       if (V.value("type", "") == "heartbeat")
         continue;
-      check(V.value("request_id", "") == ID && V.at("status") == "ok",
+      check(WorkerHello && V.value("type", "") == "response" &&
+                V.value("request_id", "") == ID && V.at("status") == "ok",
             "Installed worker failed");
       return V.at("payload");
     }
@@ -361,10 +373,23 @@ int wmain(int Count, wchar_t **Args) {
     }
     Process CLI(Bin / L"neverd.exe", L"web inspect \"" + Input.native() + L"\"",
                 F.Root / L"cli.log");
-    check(Json::parse(CLI.finish()).value("status", "") == "ok",
+    std::istringstream CLIOutput(CLI.finish());
+    std::string MetadataLine, ArtifactsLine, ExtraLine;
+    check(bool(std::getline(CLIOutput, MetadataLine)) &&
+              bool(std::getline(CLIOutput, ArtifactsLine)) &&
+              !std::getline(CLIOutput, ExtraLine),
+          "Installed CLI framing failed");
+    const auto Metadata = Json::parse(MetadataLine);
+    const auto Artifacts = Json::parse(ArtifactsLine);
+    check(Metadata.value("status", "") == "ok" &&
+              Artifacts.value("status", "") == "ok" &&
+              Metadata.at("artifact_count") == 1 &&
+              Artifacts.at("items").size() == 1 &&
+              Metadata.at("revision") == Artifacts.at("revision") &&
+              Metadata.at("project_id") == Artifacts.at("project_id"),
           "Installed CLI failed");
     Process Worker(Bin / L"neverd-worker.exe", L"", F.Root / L"worker.log");
-    check(Worker.worker("web_capabilities", Json::object(), 1)
+    check(Worker.worker("web_capabilities", {{"schema_version", 1}}, 1)
                   .at("input_reader") == Caps.at("input_reader"),
           "Worker capability mismatch");
     P = Worker.worker("web_import_preview",

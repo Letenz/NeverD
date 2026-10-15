@@ -164,6 +164,10 @@ struct SpecializationOptions {
   /// scalar-to-16-byte integer extensions, one-byte equality results and
   /// constant byte slices back to scalars. These retain their full width;
   /// scalar native-proof and source interfaces keep their own value contracts.
+  /// The same sequential nonfaulting raw domain admits default-space CMPXCHG
+  /// with a 64-bit address, 1/2/4/8-byte values and sequential consistency.
+  /// Its complete ordered operation remains in the residual; source wrapping
+  /// and independent native/LLVM proofs still reject ordered memory.
   bool ExplicitMachineState = false;
   /// Optional execution-profile certificates; neither is valid without the
   /// explicit machine-state interface. The binary provider owns their use.
@@ -187,11 +191,12 @@ struct SpecializationOptions {
   /// Raw-only environment domain: these exact ordinary named PE imports have
   /// stable loader bindings, and their callees neither return nor reenter this
   /// residual graph via unwind, callbacks, context restoration or other means.
-  /// No return value, side effect or pointer value is assumed. Requires explicit
-  /// nonfaulting CET-disabled x64 state. Only canonical RIP-relative memory
-  /// calls are admitted. Static import names alone do not prove this contract.
-  /// Consumers must retain and validate ExternalExits with the raw residual;
-  /// native proof and source interfaces reject even unused declarations.
+  /// No return value, side effect or pointer value is assumed. Requires
+  /// explicit nonfaulting CET-disabled x64 state. Only canonical RIP-relative
+  /// memory calls are admitted. Static import names alone do not prove this
+  /// contract. Consumers must retain and validate ExternalExits with the raw
+  /// residual; native proof and source interfaces reject even unused
+  /// declarations.
   std::vector<SpecializationTerminalImport> X64TerminalImports;
   /// Raw-only supplemental code domain. Requires explicit nonfaulting,
   /// CET-disabled x64 state and a restored eight-byte entry RSP root. The
@@ -243,24 +248,27 @@ struct SpecializationOptions {
   /// and uncertified return dispatch remain unsupported.
   bool RequireRestoredFrameAtReturn = false;
   /// Opt in to additional solver queries proving that an unknown-origin
-  /// STORE's complete extent misses the entry return slot. Also preserve live
-  /// native return cells across non-frame, 64-bit-address stores only when
+  /// memory write's complete extent misses the entry return slot. Also preserve
+  /// live native return cells across non-frame, 64-bit-address stores only when
   /// each complete cell is proved disjoint under the current path. This is a
   /// precision strategy, not a nonalias assumption. Requires an active
   /// restored-frame check. Unsafe provenance and all unproved memory alias
   /// invalidation remain; proofs and preservation share global budgets.
+  /// Includes the complete CMPXCHG write phase, even when comparison fails.
   /// Disabled by default so existing strategies keep their costs.
   bool ProveStoreReturnSlotSeparation = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry
   /// control slot. Frame-derived or unknown-origin addresses are never
   /// exempted by this precondition.
+  /// Applies to the full CMPXCHG write phase, including comparison failure.
   bool ExternalStoresPreserveEntryReturnSlot = false;
   /// Unchecked source precondition: every external-origin STORE's entire
   /// extent is disjoint from EntryFrameBounds. Requires explicit machine state
   /// and an RSP frame root. This does not constrain external LOADs or aliasing
   /// between external pointers. Frame-derived/unknown-origin stores retain
   /// normal alias invalidation. Native proof APIs currently reject this domain.
+  /// Includes the complete CMPXCHG write phase, even when comparison fails.
   bool ExternalStoresDisjointEntryFrame = false;
   /// Physical-register preconditions supplied by the caller, not values
   /// inferred from a run. Instruction-local lifter temporaries are not ABI
@@ -466,9 +474,9 @@ validateSpecializationRawEnvironment(const SpecializationResult &Result,
 /// prior definitions for every modelled flag unless ExplicitMachineState
 /// supplies their incoming values. Guest cursors retain all 64 address bits;
 /// InvalidVA remains a sentinel. Synthetic labels identify clones in a checked
-/// range disjoint from explored native instruction extents and the entry anchor.
-/// Only CFG identities are renamed, never runtime data or native return words.
-/// NativeInstruction preserves provenance without copying stale address-
+/// range disjoint from explored native instruction extents and the entry
+/// anchor. Only CFG identities are renamed, never runtime data or native return
+/// words. NativeInstruction preserves provenance without copying stale address-
 /// occurrence certificates.
 SpecializationResult
 specializeInterpreter(SpecializationProvider &Provider,

@@ -35,6 +35,9 @@ HOST_CASES = {
     "RewriteIncompleteAndBudgetFailuresRemoveOwnedDirectory",
 }
 NATIVE_REQUIRED = {"WebWindowsHost." + name for name in HOST_CASES} | {
+    "WebPathPolicy.SharedComponentsRejectPortableDeviceNames",
+    "WebPathPolicy.CaptureAndArchiveUseTheSameUnicodeComparison",
+    "WebArtifacts.CapturedUnicodeAliasesRefuseWithoutChangingEvidenceNames",
     "WebAsar.PrivatePathValidationCoversUnicodeAliasesDevicesAndEscapes",
     "WebSDK.SourceQueriesUsePinnedBytesAndDoNotExposeNamesOrText",
     "WebRewriteSDK.MetadataKeepsRecoveredValuesPrivateAndExportBindsPass",

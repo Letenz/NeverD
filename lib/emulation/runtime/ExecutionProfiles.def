@@ -33,6 +33,12 @@ NEVERD_EXECUTION_FEATURE_GROUP(
         Feature::TypedExits | Feature::CooperativeCPUs |
         Feature::ThreadPointer | Feature::UserSupervisorIsolation |
         Feature::ServiceTraps)
+NEVERD_EXECUTION_FEATURE_GROUP(
+    DirectDriverFeatures,
+    Feature::ScalarInteger | Feature::VectorRegisterState |
+        Feature::FloatingPoint | Feature::SIMD | Feature::SharedPhysicalMemory |
+        Feature::MultipleAddressSpaces | Feature::RetainedMemoryViews |
+        Feature::TypedExits | Feature::CooperativeCPUs | Feature::ThreadPointer)
 #endif
 
 #ifdef NEVERD_BACKEND_EXECUTION_FEATURE
@@ -97,6 +103,8 @@ NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
                          true, true)
 NEVERD_EXECUTION_PROFILE(DirectUserX64, DirectUserX64, X64, User, Canonical,
                          DirectFeatures, true, false)
+NEVERD_EXECUTION_PROFILE(DirectDriverX64, DirectDriverX64, X64, Supervisor,
+                         Canonical, DirectDriverFeatures, true, false)
 #endif
 
 #ifdef NEVERD_NATIVE_EXECUTION_PROFILE

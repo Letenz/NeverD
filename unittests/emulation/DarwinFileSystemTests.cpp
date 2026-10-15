@@ -928,7 +928,7 @@ TEST_P(DarwinFileSystemTest,
   llvm::cantFail(Space->read(Base + 256, Target));
   EXPECT_EQ(Target, (std::array<uint8_t, 4>{'d', 'a', 't', 'a'}));
   refused(ServiceKind::Fchown, {Copy, UINT32_MAX, UINT32_MAX},
-          diagnostic::FileOwnershipTarget);
+          diagnostic::FileOwnershipEnvironment);
   EXPECT_EQ(status(FD), Before);
 }
 TEST_P(DarwinFileSystemTest, HeldSymbolicAndReplacementNeverShareNameBindings) {

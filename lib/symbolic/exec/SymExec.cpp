@@ -62,6 +62,23 @@ SymSpace spaceOf(const NdVar &V) {
 
 } // namespace
 
+bool supportsCmpxchgPreservation(const LowOp &Op) {
+  if (Op.Opcode != NdOp::ATOMIC_CMPXCHG || Op.NumInputs != 3 ||
+      Op.MemoryOrdering != NdMemoryOrdering::SequentiallyConsistent ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Scalar = [](const NdVar &V) {
+    return V.Size && (V.isConst() || V.isReg() || V.isTemp()) &&
+           (V.isConst() || V.Offset <= UINT64_MAX - (V.Size - 1));
+  };
+  const auto Bytes = Op.Output.Size;
+  return (Bytes == 1 || Bytes == 2 || Bytes == 4 || Bytes == 8) &&
+         (Op.Output.isReg() || Op.Output.isTemp()) && Scalar(Op.Output) &&
+         Op.Inputs[0].Size == 8 && Scalar(Op.Inputs[0]) &&
+         Op.Inputs[1].Size == Bytes && Scalar(Op.Inputs[1]) &&
+         Op.Inputs[2].Size == Bytes && Scalar(Op.Inputs[2]);
+}
+
 //===----------------------------------------------------------------------===//
 // Reading and writing operands
 //===----------------------------------------------------------------------===//
@@ -652,6 +669,9 @@ StepResult SymExec::stepMemory(const LowOp &Op,
     }
     return unmodelled(Op);
   };
+  if (Preservation && Op.Opcode == NdOp::ATOMIC_CMPXCHG &&
+      !supportsCmpxchgPreservation(Op))
+    return Refuse();
   const LowMemoryOperandView Memory = lowMemoryOperands(Op);
   const SymRef Addr = memoryAddressValue(Op);
   if (!Addr)
@@ -660,6 +680,18 @@ StepResult SymExec::stepMemory(const LowOp &Op,
       Absolute && Absolute->getBitWidth() <= 64 &&
       Absolute->getZExtValue() > UINT64_MAX - (Memory.AccessSize - 1))
     return Refuse();
+  const auto Commit = [&](SymRef Value) {
+    const bool Absolute = Preservation ? State.store(Addr, Value, *Preservation)
+                                       : State.store(Addr, Value);
+    if (Preservation &&
+        Preservation->Status != SymStorePreservationStatus::Applied)
+      return Refuse();
+    if (!Absolute) {
+      ++Unmodelled;
+      ++MemoryHavocs;
+    }
+    return StepResult::Continue;
+  };
   if (Op.Opcode == NdOp::LOAD) {
     const auto Value = State.load(Addr, Memory.AccessSize);
     if (!Value)
@@ -689,28 +721,21 @@ StepResult SymExec::stepMemory(const LowOp &Op,
       return Refuse();
     SymRef Expected = fit(read(*Memory.ExpectedValue), widthOf(Op.Output));
     SymRef Desired = fit(read(*Memory.StoredValue), widthOf(Op.Output));
-    writeResult(Op.Output, Old);
-    if (!State.store(Addr, Ctx.mkIte(Ctx.mkEq(Old, Expected), Desired, Old))) {
-      ++Unmodelled;
-      ++MemoryHavocs;
-    }
+    // Preserve the legacy no-descriptor ordering, including RAM outputs.
+    // The strict preservation shape has only scalar outputs and publishes Old
+    // after its write contract has actually succeeded.
+    if (!Preservation)
+      writeResult(Op.Output, Old);
+    const auto Committed =
+        Commit(Ctx.mkIte(Ctx.mkEq(Old, Expected), Desired, Old));
+    if (Committed != StepResult::Continue)
+      return Committed;
+    if (Preservation)
+      writeResult(Op.Output, Old);
     return StepResult::Continue;
   }
 
-  SymRef Value = read(*Memory.StoredValue);
-  const bool Absolute = Preservation ? State.store(Addr, Value, *Preservation)
-                                     : State.store(Addr, Value);
-  if (Preservation &&
-      Preservation->Status != SymStorePreservationStatus::Applied) {
-    State.clobberMemory();
-    ++MemoryHavocs;
-    return unmodelled(Op);
-  }
-  if (!Absolute) {
-    ++Unmodelled;
-    ++MemoryHavocs;
-  }
-  return StepResult::Continue;
+  return Commit(read(*Memory.StoredValue));
 }
 
 StepResult SymExec::stepControl(const LowOp &Op,
@@ -817,7 +842,7 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
   if (Preservation) {
     Preservation->Status = SymStorePreservationStatus::Invalid;
     Preservation->WorkUsed = 0;
-    if (Op.Opcode != NdOp::STORE)
+    if (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::ATOMIC_CMPXCHG)
       return step(Op, CallEffect);
   }
   switch (Op.Opcode) {

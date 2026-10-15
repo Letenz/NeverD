@@ -67,6 +67,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 ARM64 CPU execution is available through the independent [C++ CPU interface](architecture.md#cpu-execution).
 This driver CLI still requires the x64 Windows ABI and rejects ARM64 driver images.
 
+`direct-driver-x64-v1` reuses this driver and kernel model with direct supervisor execution on x64 KVM. Kernel exports, callback returns, guard thunks and stopped observers remain explicit execution gates. The run is bounded by time and API events; its instruction count is unavailable and reported as zero. Instruction-driven scheduling, per-write tracing and custom CPUID rows are rejected. Processor identity and timestamps come from the transport and remain captured environment dependencies. Unsupported special-register changes fail explicitly. This execution contract alone does not restore a captured SYS image.
+
+Kernel fields with initialization tracking need exact committed write ranges. On their monitored pages, direct execution currently accepts scalar MOV/MOVABS/XOR and the supported legacy SSE stores; other store forms fail explicitly. Same-value writes and partial fields retain their ordinary initialization checks.
+
+KVM physical read-only slots additionally protect watched RAM pages against temporary CR0.WP changes. A rejected second-level write terminates execution without completing its pending MMIO operation; its diagnostic RIP is not a complete committed CPU context. Slot exhaustion fails explicitly. Special-state validation occurs at execution boundaries and does not prove the absence of temporary CR3 or mapping changes.
+
 ## Build and run
 
 The feature is opt-in and independent of `BUILD_TESTING`:
@@ -533,6 +539,7 @@ The initial API model deliberately has a finite contract:
 |------|-----------------------------------|
 | `RtlInitUnicodeString` | Builds a guest `UNICODE_STRING` for a bounded NUL-terminated source |
 | `RtlGetVersion` | Explicit checked-x64 base version query; no host version defaults. Requires `version_query`; base size 276 requires a zeroed CSD array. Optional zero-size compatibility has a real 20-byte buffer. Extended sizes and undeclared queries stop; environment dependencies remain. |
+| `RtlCaptureContext` | Bounded kernel caller-context capture; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`, `RtlCompareUnicodeString`, `RtlEqualUnicodeString` | Counted UTF-16 copy and case-sensitive comparison; case-insensitive comparison requires a Windows case table and stops |
 | `RtlInitAnsiString`, `RtlInitString` | Builds a guest `STRING` from a NUL-terminated byte source; the counted length is capped at `0xFFFE`, `MaximumLength` includes the terminator and the record padding is cleared |
 | `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | Appends to a counted UTF-16 destination; `STATUS_BUFFER_TOO_SMALL` leaves it unchanged, a terminator is written only when two spare bytes remain, and a NUL-terminated source longer than `0x7FFE` units also returns `STATUS_BUFFER_TOO_SMALL` |
@@ -555,6 +562,8 @@ The initial API model deliberately has a finite contract:
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | MDL system aliases and process-owned user views retain physical cache attributes and permissions; nonpaged pool MDLs reuse the original pool mapping through the safe helper |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Standalone or IRP-associated nonpaged-pool/user descriptors, mutable chain links, independent locks and shared system aliases; no quota |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Explicit session registry, per-handle rights and lifetime, query buffer sizing and mutations; no host registry access |
+| `ZwEnumerateValueKey` | Basic, Full and Partial value enumeration in creation order; replacement keeps its index, deletion compacts indices, recreation appends. Requires `KEY_QUERY_VALUE`; out-of-range indices return `STATUS_NO_MORE_ENTRIES`. Shares value-query serialization: x64 Full data is 8-byte aligned, empty data uses offset `0xffffffff`, and padding and incomplete UTF-16 units remain untouched |
+| `ZwQueryKey`, `ZwEnumerateKey` | Basic, Node, Full, Name and Cached key queries; Basic/Node/Full enumeration of immediate live subkeys in uppercase ASCII order. Query needs `KEY_QUERY_VALUE` (Name accepts any granted access); enumeration needs `KEY_ENUMERATE_SUB_KEYS`. Exact short-buffer results and retained maximum lengths; timestamp-bearing output requires declared time |
 | `ExAllocatePool` | Legacy two-argument data allocation for pool types `0`, `1`, and `512`; shared alignment, uninitialized-byte model, size/IRQL checks and NULL on exhaustion. Free through `ExFreePool` or a zero-tag `ExFreePoolWithTag`; retained allocations remain kernel dependencies. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Data allocations for pool types `0`, `1`, and `512`; positive size/tag, matching tagged frees, no address reuse |
 | `IoCreateDevice`, `IoDeleteDevice` | Device type `0x22`, characteristics `0` or `0x100`, bounded extensions, ASCII `\Device\Name` names |
@@ -579,6 +588,10 @@ The initial API model deliberately has a finite contract:
 | `KfRaiseIrql`, `KeLowerIrql` | Actual x64 WDK raise/lower imports, including inline helpers; each execution restores saved IRQL values in LIFO order before return. Legal waits at IRQL <= APC_LEVEL preserve their saved raises and resume at the waiting IRQL. Dispatch-level holds cannot suspend. CR8 observes each change; configured CPU0 event preemption uses `scheduling`; arbitrary nested interrupts remain unsupported. |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | Nested per-thread APC-disable state. Critical regions and held KMUTEX objects disable normal kernel APCs; guarded regions and IRQL >= APC_LEVEL disable all APCs. New system threads begin inside one critical region. Unmatched leaves and unbalanced callback returns fail; APC delivery is not modeled. |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | Resident, aligned executive locks on CPU0; exact owner and acquire/release pairing, saved IRQL restoration, and nonblocking try-acquire. Contended blocking acquisitions stop explicitly because the scheduler cannot make progress while spinning. |
+| `KeAcquireInStackQueuedSpinLock`, `KeReleaseInStackQueuedSpinLock`, `KeAcquireInStackQueuedSpinLockAtDpcLevel`, `KeReleaseInStackQueuedSpinLockFromDpcLevel` | In-stack queued spin locks on CPU0. The caller's `KLOCK_QUEUE_HANDLE` records the lock and, for the raising form, the saved IRQL; acquisition raises to `DISPATCH_LEVEL` and stores the handle in the lock, while the `AtDpcLevel` form requires the caller already there. Release clears the lock and the raising form restores the saved IRQL, and the release variant must match the acquisition. A lock another processor holds cannot be waited out on this cooperative processor and stops explicitly, as do paged, user-mode or lock-overlapping handle storage. |
+| `ExInitializeRundownProtection`, `ExReInitializeRundownProtection`, `ExAcquireRundownProtection`, `ExReleaseRundownProtection`, `ExWaitForRundownProtectionRelease`, `ExRundownCompleted`, `ExAcquireRundownProtectionEx`, `ExReleaseRundownProtectionEx` | Lock-free run-down protection on the caller's `EX_RUNDOWN_REF`, whose single `Count` word holds the run-down bit and twice the outstanding count. Acquisition adds two and returns TRUE until run-down begins, then returns FALSE without writing; release subtracts two. With nothing outstanding, a wait marks the object run down at once and a repeat wait has no effect; `ExRundownCompleted` marks it unconditionally and initialization clears it. Waiting with outstanding references and releasing after run-down started cannot progress on this cooperative processor and stop explicitly, as does a release with nothing outstanding. The counted `Ex` forms move the count by twice their ULONG, doubled in 32 bits; the cache-aware forms are not modeled. |
+| `ExInterlockedInsertHeadList`, `ExInterlockedInsertTailList`, `ExInterlockedRemoveHeadList`, `ExInterlockedPushEntryList`, `ExInterlockedPopEntryList`, `ExInterlockedAddUlong`, `ExInterlockedAddLargeInteger` | One update at any IRQL under a free, resident executive spin lock, with interrupts masked and IRQL unchanged. Inserts return the old neighbor or NULL, removals leave the removed entry's own links, and the additions wrap and return the original value. Corrupted links stop as the kernel's `FAST_FAIL_CORRUPT_LIST_ENTRY` does; a held lock and storage that is paged, user-mode or overlaps the lock stop explicitly. |
+| `InitializeSListHead`, `ExpInterlockedPushEntrySList`, `ExpInterlockedPopEntrySList`, `ExpInterlockedFlushSList`, `ExQueryDepthSList`, `FirstEntrySList` | Lock-free x64 `SLIST_HEADER` lists, which the `InterlockedPushEntrySList`, `InterlockedPopEntrySList` and `InterlockedFlushSList` macros and their `ExInterlocked` forms reach through the `Exp` exports. A push adds one to Depth and Sequence together, a pop decrements only Depth, a flush clears Depth and the first entry, and popped or flushed entries keep their links. `InitializeSListHead` raises `STATUS_DATATYPE_MISALIGNMENT` for an unaligned header like the kernel; other unaligned headers and entries stop explicitly. `ExQueryDepthSList` requires `DISPATCH_LEVEL` or lower, the others any IRQL. |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | Device-owned opaque work items; `DelayedWorkQueue` only, callbacks receive the device and context at `PASSIVE_LEVEL`; queued items cannot be freed |
 | `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | Bounded system-process threads run at `PASSIVE_LEVEL` with a separate guest stack. Kernel handles and referenced opaque thread objects have independent lifetimes. Termination does not return to the guest, signals the thread object, and a normal start-routine return stops explicitly. NULL process handles, an optional `ClientId` output and NULL or kernel-handle-only object attributes are supported; APC delivery, process priority classes and typed object references are not. |
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | Runtime priorities at `PASSIVE_LEVEL`; setters accept 1..31 and return the previous priority. The deterministic initial priority is 8. Known thread objects are required. Priority scheduling is enabled by `scheduling`; dynamic boosts and process priority classes remain unsupported. [driver-scheduling.md](driver-scheduling.md) |
@@ -595,6 +608,8 @@ The initial API model deliberately has a finite contract:
 | `IoSetCancelRoutine`, `IoAcquireCancelSpinLock`, `IoReleaseCancelSpinLock`, `IoCancelIrp` | Live WDM IRP cancel-routine exchange, nonrecursive system cancel lock with saved IRQL, and synchronous driver-initiated cancellation; the WDK inline helper uses the same IRP field |
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`; executes completion unwinding, supports stopped/resumed completion and retires IRP/MDL/buffer storage only at its terminal boundary |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Bounded guest buffer operations, at most 1 MiB per call; non-overlapping copy APIs reject overlaps |
+| `strlen`, `wcslen`, `strnlen`, `wcsnlen`, `strcmp`, `wcscmp`, `strncmp`, `wcsncmp`, `_stricmp`, `_wcsicmp`, `_strnicmp`, `_wcsnicmp`, `strchr`, `wcschr`, `strrchr`, `wcsrchr`, `strstr`, `wcsstr`, `strspn`, `wcsspn`, `wcscspn` | Exported C runtime string helpers read caller memory one unit at a time at any IRQL, stopping a terminator-less run at the 1 MiB model limit. Counts and search results follow standard C semantics; `strcmp`, `wcscmp` and `strncmp` normalize to -1, 0 or 1 while `wcsncmp` and the case-insensitive family return the raw difference, folding only ASCII A-Z. A search target is truncated to the unit width and the terminator is searched too, so a zero target returns its address; an empty `strstr`/`wcsstr` needle returns the haystack. A null record, or a count-free run past mapped memory, stops explicitly. |
+| `strcpy`, `wcscpy`, `strncpy`, `wcsncpy`, `strcat`, `wcscat`, `strncat`, `wcsncat` | Byte and UTF-16 copies/appends return the original destination. Counted copy writes exactly the count, zero-pads short input and adds no terminator after truncation; counted append adds at most that many units and terminates. Zero-count `strncpy`/`wcsncpy`/`strncat` touch no memory; `wcsncat` still scans and writes the destination terminator. Overlap, bad storage and operations over 1 MiB stop before writes; paged memory retains the IRQL rule |
 
 `MmProbeAndLockPages` accepts `KernelMode` ranges within one contiguous loader-owned span of the input driver image at IRQL <= APC_LEVEL. Image pages must be readable and use the existing physical-page quota. The model already owns private resident image backing: `IoWriteAccess` and `IoModifyAccess` permit writable MDL aliases even when the original image view is read-only; `IoReadAccess` retains a read-only alias contract. Original image protections stay unchanged. Image holes and unrelated mappings are excluded, and ownership also identifies images below the user-address cutoff. Locks require unlock and descriptor release. Temporary MDLs over loader-owned image pages no longer add a recovery dependency after every alias is unmapped, every lock is released and every descriptor is freed. This contract admits kernel-mode cached aliases without a requested address. Live MDLs, other ownership or mapping kinds, and guest reads of physical PFN identities remain dependencies; reads by modeled copy, move and compare services count too.
 
@@ -690,7 +705,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
@@ -952,6 +967,10 @@ reboot or disk persistence model.
 `ZwQueryValueKey` implements Basic, Full, Partial and their defined Align64
 information classes, including exact lengths, aligned data, partial output and
 distinct `STATUS_BUFFER_TOO_SMALL` / `STATUS_BUFFER_OVERFLOW` results.
+`ZwEnumerateValueKey` accepts Basic, Full and Partial (not Align64), uses
+creation order and returns `STATUS_NO_MORE_ENTRIES` beyond the current count.
+An existing value retains its spelling and position when replaced; deletion
+compacts indices and recreation appends. Snapshots preserve value order.
 `ZwSetValueKey` and `ZwDeleteValueKey` change only this session's tree.
 `ZwDeleteKey` rejects a key with live children; handles to a deleted key return
 `STATUS_KEY_DELETED` until closed. `ZwClose` releases a handle independently of
@@ -964,6 +983,31 @@ the same limits as scenario preflight. The report's `configuration.registry`
 retains the original input; `registry` lists final live key paths and values,
 including mutations observed before a stop. Unspecified registry state reports
 as null. Volatility and handle identities are not part of that value snapshot.
+
+`ZwQueryKey` supports Basic, Node, Full, Name and Cached information;
+`ZwEnumerateKey` supports Basic, Node and Full for immediate live children,
+sorted by uppercase ASCII name. Full paths retain each ancestor's spelling,
+including after deletion. Enumeration requires `KEY_ENUMERATE_SUB_KEYS`;
+query requires `KEY_QUERY_VALUE`, except Name accepts any nonzero granted key
+access. Full/Cached report live counts but retain historical maximum name and
+data lengths until the corresponding child/value list becomes empty. Cached
+requires 40 bytes on x64 and leaves its final four padding bytes untouched.
+Name queries can copy a deleted handle's retained path: a complete output returns
+`STATUS_KEY_DELETED`, while short buffers retain the usual sizing status.
+
+Each key may declare `last_write_time_100ns`. The root-level
+`registry_system_time_100ns` declares absolute Windows time (100 ns since 1601)
+at virtual time zero and requires an explicit `registry`. Both fields are JSON
+integers in 0..9223372036854775807; zero is a supplied value. A key's explicit
+time wins; otherwise initial keys and implicit ancestors inherit the declared
+clock. Without either source, time remains unknown. Name queries and sizing
+calls need no time; output containing an unknown timestamp stops explicitly.
+Mutations use the declared clock plus the shared scheduler's elapsed 100 ns;
+overflow stops before mutation. Without a clock, a mutation invalidates the
+affected key's known time. Identical type/data writes preserve it. Child creation
+and deletion update the parent's time. Reports preserve known per-key times and
+the original clock configuration; unknown times are omitted. Snapshots omit
+cached maxima and are not complete execution checkpoints.
 
 ## Microsoft sample acceptance check
 
@@ -1254,3 +1298,7 @@ At PASSIVE_LEVEL, `MmGetPhysicalMemoryRanges` returns a fresh 32-byte nonpaged p
 Optional `kernel_va_shadow_query` supplies the class `196` (`SystemKernelVaShadowInformation`) result: `{"version":1,"flags":0,"evidence":"fixture declaration"}`. All fields are required; explicit zero flags are valid. Version 1 admits only the low fourteen documented bits (`0x3fff`); reserved bits, malformed or unknown fields and non-`checked-x64` execution are rejected. Evidence is 1–256 printable ASCII bytes. No host mitigation state is inferred or implemented.
 
 At PASSIVE_LEVEL, lengths below 4 return `STATUS_INFO_LENGTH_MISMATCH` without accessing the result; lengths of at least 4 update exactly its first four bytes. Non-NULL `ReturnLength` receives 4 in either case. ULONG arguments use their low 32 bits. The result requires readable/writable kernel RAM; the optional length requires writable kernel RAM. Both spans must have unique physical mappings and valid object lifetimes. Successful output spans cannot overlap; all admission precedes writes. Nt requires known KernelMode previous-mode; Zw preserves caller context. The report retains the declaration, and even an unused declaration retains an unreconstructed environment dependency.
+
+## Bounded kernel caller-context capture
+
+`RtlCaptureContext` uses one shared imported/dynamic implementation on checked-x64 Unicorn/KVM/WHP at IRQL <= DISPATCH_LEVEL. It requires a 16-byte aligned, readable/writable 1232-byte kernel record. It writes only `[48,72)`, `[120,262)`, `[280,284)` and `[416,672)`; other bytes, including x87 payload/pointers and the MXCSR mask, remain untouched. ContextFlags is `0x10000f`. Caller RSP is entry RSP+8 and RIP comes from the actual return word. The 8-byte flags scratch at entry RSP-8 is written, RAX receives zero-extended saved EFLAGS, and arithmetic flags follow ADD(entry RSP-8,8). DS/ES/FS/GS use the checked logical SS selector; these are not host selector values or raw transport claims. Complete record, return and scratch admission checks live ordinary kernel RAM, permissions and unique physical backing; the record cannot overlap the return/scratch extent. Entry RSP must be 8 modulo 16. Collection or admission failure leaves CPU and RAM unchanged; legacy execution fails explicitly. This bounded model does not identify every Windows implementation. Captures retain an unreconstructed environment dependency even after overwritten bytes, and do not authorize UNPACK reconstruction or symbolic premises.

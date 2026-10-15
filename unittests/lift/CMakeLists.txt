@@ -29,6 +29,10 @@ add_neverd_unittest(NeverDFPParameterMaskTests
   core/MedCallingConvTests.cpp
   LINK_COMPONENTS Pipeline BackendLLVM BackendC)
 
+add_neverd_unittest(NeverDHighSwiftEmitterTests
+  ../backend/HighSwiftEmitterTests.cpp
+  LINK_COMPONENTS Pipeline BackendSwift)
+
 add_neverd_unittest(NeverDARM32ObjectImmediateTests
   arm32/ARM32_ObjectImmediateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -1134,6 +1138,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 add_neverd_unittest(NeverDJumpTableTests
   core/AffineFrameStateTests.cpp
   core/ResolverGraphCacheTests.cpp
+  core/ResolverDefinitionCacheTests.cpp
   core/ResolverLaneViewTests.cpp
   core/JumpTableCountLaneTests.cpp
   core/IndirectTailFrameTests.cpp
@@ -1923,6 +1928,16 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # Exact cells for residual overlapping byte arrays after ordinary SROA.
+add_neverd_unittest(NeverDStateSourceRecoveryTests
+  pipeline/StateSourceRecoveryTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+target_compile_definitions(NeverDStateSourceRecoveryTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 add_neverd_unittest(NeverDByteCellScalarizationTests
   pipeline/ByteCellScalarizationTests.cpp
   pipeline/ByteCellScalarizationCompileTests.cpp

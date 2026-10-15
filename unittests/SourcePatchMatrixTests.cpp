@@ -59,6 +59,8 @@ const Profile Profiles[] = {
      "arm64-apple-macos14.0"},
     {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "thumbv7-apple-ios5.0",
      "armv7-apple-ios5.0"},
+    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32_Thumb",
+     "thumbv7-unknown-linux-gnueabihf"},
 };
 std::string take(const char *Text) {
   std::string Result = Text ? Text : "";
@@ -242,12 +244,21 @@ protected:
       const auto Source = Directory / "original.c",
                  Object = Directory / "original.o";
       std::ofstream(Source) << originalSource();
-      ASSERT_EQ(run({NEVERD_TEST_CLANG,
-                     std::string("--target=") +
-                         llvmCodegenTriple(P.Architecture, P.Format),
-                     "-O0", "-funwind-tables", "-fno-pie", "-c",
-                     Source.string(), "-o", Object.string()}),
-                0);
+      std::vector<std::string> Command{NEVERD_TEST_CLANG,
+                                       std::string("--target=") +
+                                           P.ReceiptTriple,
+                                       "-O0",
+                                       "-funwind-tables",
+                                       "-fno-pie",
+                                       "-c",
+                                       Source.string(),
+                                       "-o",
+                                       Object.string()};
+      if (P.Architecture == Arch::ARM)
+        Command.push_back(llvm::StringRef(P.ReceiptTriple).starts_with("thumb")
+                              ? "-mthumb"
+                              : "-marm");
+      ASSERT_EQ(run(Command), 0);
       const auto Linker = linker(P.Format == BinaryFormat::ELF    ? "ld.lld"
                                  : P.Format == BinaryFormat::COFF ? "lld-link"
                                                                   : "ld64.lld");
@@ -373,7 +384,7 @@ TEST_P(SourcePatchMatrix, SuppliedIRUsesTheSameInstallationContract) {
       (P.Format == BinaryFormat::MachO && P.Architecture == Arch::ARM
            ? (P.FrontendTriple ? "thumbv7-apple-ios5.0"
                                : "thumbv7k-apple-watchos")
-           : llvmCodegenTriple(P.Architecture, P.Format)) +
+           : P.ReceiptTriple) +
       "\"\n" + "target datalayout = \"e-p:" +
       std::to_string(Image.getPointerSize() * 8) + ":" +
       std::to_string(Image.getPointerSize() * 8) + "\"\n" +
@@ -524,10 +535,14 @@ TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
                                    O.string()};
   if (Image.Format == BinaryFormat::MachO && Image.Arch == Arch::ARM) {
     Args[1] = "--target=arm" + Target->substr(5);
-    Args.push_back("-mthumb");
     Args.push_back("-fno-omit-frame-pointer");
     Args.push_back("-mno-omit-leaf-frame-pointer");
   }
+  if (Image.Arch == Arch::ARM)
+    Args.push_back(
+        llvm::StringRef(GetParam().ReceiptTriple).starts_with("thumb")
+            ? "-mthumb"
+            : "-marm");
   if (Image.Format == BinaryFormat::COFF)
     Args.push_back("-ffunction-sections");
   else
@@ -621,9 +636,9 @@ protected:
           << "explicit NeverC producer required for its optional matrix";
     SourcePatchMatrix::SetUp();
   }
-  void check(llvm::StringRef Source, bool Cpp, bool Object, bool DynCode,
-             int Scale, int Offset) {
-    Options.language = Cpp ? NEVERD_SOURCE_PATCH_CXX : NEVERD_SOURCE_PATCH_C;
+  void check(llvm::StringRef Source, bool Object, bool DynCode, int Scale,
+             int Offset) {
+    Options.language = NEVERD_SOURCE_PATCH_C;
     Options.artifact = Object ? NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT
                               : NEVERD_SOURCE_PATCH_ARTIFACT_IR;
     Options.mode =
@@ -638,16 +653,7 @@ protected:
     ASSERT_NE(Receipt, nullptr);
     EXPECT_EQ(Receipt->getInteger("compiler"), NEVERD_SOURCE_PATCH_NEVERC);
     EXPECT_EQ(Receipt->getInteger("language"), Options.language);
-    if (Cpp) {
-      const auto *Translation = Receipt->getObject("translation");
-      ASSERT_NE(Translation, nullptr);
-      const auto *Manifest = Translation->getObject("manifest");
-      ASSERT_NE(Manifest, nullptr);
-      EXPECT_EQ(Manifest->getString("profile"), "cpp-core-v2");
-      ASSERT_NE(Manifest->getObject("target"), nullptr);
-      EXPECT_EQ(Manifest->getObject("target")->getString("triple"),
-                GetParam().ReceiptTriple);
-    }
+    EXPECT_EQ(Receipt->getObject("translation"), nullptr);
     if (DynCode) {
       ASSERT_NE(Receipt->getObject("dyncode"), nullptr);
       EXPECT_EQ(Receipt->getObject("dyncode")->getString("execution_profile"),
@@ -661,31 +667,25 @@ protected:
       execute(*Reloaded, GetParam(), X, X * Scale + Offset);
     EXPECT_EQ(read(Original), OriginalBytes);
   }
-  static constexpr llvm::StringLiteral CppSource = R"(
-template <class T> T twice(T value) { return value * 2; }
-struct Guard {
-  int *p;
-  Guard(int *q) : p(q) { *p += 3; }
-  ~Guard() { *p += 5; }
-};
-extern "C" int replacement(int x) {
-  int result = x;
-  { Guard guard(&result); result = twice(result); }
-  return result + sizeof(long);
+  static constexpr llvm::StringLiteral CSource = R"(
+struct State { int value; };
+static int twice(int value) { return value * 2; }
+int replacement(int x) {
+  struct State state = {x + 3};
+  state.value = twice(state.value);
+  return state.value + 5 + sizeof(long);
 })";
 };
-TEST_P(NeverCSourcePatchMatrix,
-       TranslatedCppIRPreservesLifetimesAndTargetLayout) {
-  check(CppSource, true, false, false, 2,
+TEST_P(NeverCSourcePatchMatrix, CIRPreservesTargetLayout) {
+  check(CSource, false, false, 2,
         GetParam().Format == BinaryFormat::COFF ? 15 : 19);
 }
-TEST_P(NeverCSourcePatchMatrix,
-       TranslatedCppObjectPreservesLifetimesAndTargetLayout) {
-  check(CppSource, true, true, false, 2,
+TEST_P(NeverCSourcePatchMatrix, CObjectPreservesTargetLayout) {
+  check(CSource, true, false, 2,
         GetParam().Format == BinaryFormat::COFF ? 15 : 19);
 }
-TEST_P(NeverCSourcePatchMatrix, HostedCppUsesBothTranslationAndDynCode) {
-  check(CppSource, true, true, true, 2,
+TEST_P(NeverCSourcePatchMatrix, HostedCUsesExactPayloadLayout) {
+  check(CSource, true, true, 2,
         GetParam().Format == BinaryFormat::COFF ? 15 : 19);
 }
 TEST_P(NeverCSourcePatchMatrix,
@@ -701,9 +701,9 @@ __attribute__((noinline)) static int helper(int x) {
 int replacement(int x) {
   volatile int value = recurse(3); return helper(x) + value + 37;
 })",
-        false, true, true, 3, 40);
+        true, true, 3, 40);
 }
-TEST_P(NeverCSourcePatchMatrix, CppExceptionsAndNonCExportsCannotPublish) {
+TEST_P(NeverCSourcePatchMatrix, CppSourceCannotPublishWithNeverC) {
   Options.language = NEVERD_SOURCE_PATCH_CXX;
   for (llvm::StringRef Source : {"extern \"C\" int replacement(int x) { try "
                                  "{throw x;} catch (...) {return 1;} }",
@@ -711,7 +711,7 @@ TEST_P(NeverCSourcePatchMatrix, CppExceptionsAndNonCExportsCannotPublish) {
     EXPECT_EQ(neverd_patch_source(Session, Source.data(), Source.size(),
                                   &Options, Output.string().c_str()),
               0);
-    EXPECT_FALSE(error().empty());
+    EXPECT_NE(error().find("NeverC accepts C source only"), std::string::npos);
     EXPECT_FALSE(std::filesystem::exists(Output));
   }
 }

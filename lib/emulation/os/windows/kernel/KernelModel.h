@@ -41,6 +41,7 @@ namespace neverd::emulation {
 class RAMInitializationWatch;
 struct DriverImage;
 class KernelExportRegistry;
+struct KernelContextCapture;
 enum class KernelAPIKind;
 class KernelModel {
 public:
@@ -86,7 +87,8 @@ public:
   llvm::Expected<uint64_t>
   call(const KernelExportRegistry::Export &Export,
        llvm::ArrayRef<uint64_t> Arguments,
-       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+       const KernelContextCapture *Context = nullptr);
   std::optional<KernelGuestCall> takeGuestCall();
   std::optional<KernelGuestCall> takeIndependentGuestCall();
   std::optional<KernelGuestCall> takePoFxThreadCall(uint64_t Thread);
@@ -102,7 +104,8 @@ public:
   llvm::Expected<uint64_t>
   call(const std::string &Name, llvm::ArrayRef<uint64_t> Arguments,
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
-           nullptr);
+           nullptr,
+       const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -658,6 +661,66 @@ private:
   llvm::Expected<uint64_t> acquireSpinLock(uint64_t Address, SpinLockMode Mode);
   llvm::Expected<uint64_t> releaseSpinLock(uint64_t Address,
                                            std::optional<uint8_t> RestoreIRQL);
+  // In-stack queued spin locks store the caller's KLOCK_QUEUE_HANDLE pointer in
+  // the lock and the saved IRQL in the handle, keyed here by the lock address.
+  struct QueuedSpinLock {
+    uint64_t Execution;
+    uint64_t Handle;
+    uint8_t OldIRQL;
+    bool RaisedIRQL;
+  };
+  std::map<uint64_t, QueuedSpinLock> QueuedSpinLocks;
+  // A lock address or an execution holds a lock if either spin-lock kind tracks
+  // it, so every held-lock rule treats executive and queued locks alike.
+  bool spinLockHeldAt(uint64_t Address) const {
+    return ExecutiveSpinLocks.count(Address) || QueuedSpinLocks.count(Address);
+  }
+  bool executionHoldsSpinLock(uint64_t Execution) const {
+    for (const auto &[Address, Lock] : ExecutiveSpinLocks)
+      if (Lock.Execution == Execution)
+        return true;
+    for (const auto &[Address, Lock] : QueuedSpinLocks)
+      if (Lock.Execution == Execution)
+        return true;
+    return false;
+  }
+  llvm::Error validateQueueHandle(uint64_t Handle) const;
+  llvm::Expected<uint64_t> acquireQueuedSpinLock(uint64_t SpinLock,
+                                                 uint64_t Handle, bool Raise);
+  llvm::Expected<uint64_t> releaseQueuedSpinLock(uint64_t Handle, bool Restore);
+  // Run-down protection keeps its whole state in the caller's EX_RUNDOWN_REF
+  // Count word, so these operations only validate and update guest memory.
+  llvm::Expected<uint64_t> readRundownCount(uint64_t RunRef);
+  llvm::Expected<uint64_t> initializeRundownProtection(uint64_t RunRef);
+  // \p Units is 1 for the plain routines and the ULONG count of the Ex forms.
+  llvm::Expected<uint64_t> acquireRundownProtection(uint64_t RunRef,
+                                                    uint32_t Units);
+  llvm::Expected<uint64_t> releaseRundownProtection(uint64_t RunRef,
+                                                    uint32_t Units);
+  llvm::Expected<uint64_t> waitForRundownProtectionRelease(uint64_t RunRef);
+  llvm::Expected<uint64_t> rundownCompleted(uint64_t RunRef);
+  llvm::Error validateInterlockedLock(uint64_t Lock) const;
+  llvm::Error validateInterlockedStorage(uint64_t Lock, uint64_t Address,
+                                         uint32_t Size, bool IsWrite) const;
+  llvm::Expected<uint64_t> readInterlockedLink(uint64_t Lock, uint64_t Address,
+                                               bool IsWrite) const;
+  llvm::Expected<uint64_t> interlockedInsertList(llvm::ArrayRef<uint64_t> A,
+                                                 bool Tail);
+  llvm::Expected<uint64_t>
+  interlockedRemoveHeadList(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> interlockedPushEntryList(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> interlockedPopEntryList(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> interlockedAdd(llvm::ArrayRef<uint64_t> A,
+                                          unsigned Size);
+  llvm::Error validateSListStorage(uint64_t Address, uint32_t Size,
+                                   bool IsWrite) const;
+  llvm::Expected<std::pair<uint64_t, uint64_t>>
+  readSListHeader(uint64_t Header, bool IsWrite) const;
+  llvm::Expected<uint64_t> initializeSList(uint64_t Header);
+  llvm::Expected<uint64_t> pushEntrySList(uint64_t Header, uint64_t Entry);
+  llvm::Expected<uint64_t> popEntrySList(uint64_t Header);
+  llvm::Expected<uint64_t> flushSList(uint64_t Header);
+  llvm::Expected<uint64_t> querySList(uint64_t Header, bool FirstEntry);
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
@@ -871,6 +934,8 @@ private:
   llvm::Expected<uint64_t> queryKernelVaShadow(llvm::ArrayRef<uint64_t> Args);
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
+  llvm::Expected<uint64_t>
+  captureCallerContext(uint64_t Address, const KernelContextCapture *Context);
   std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
   llvm::Expected<uint64_t> queryPhysicalMemoryRanges();
   // Admission conservatively records reads that can expose model PFNs,

@@ -114,7 +114,12 @@ The upstream [license and notices](../LICENSES/node/LICENSE) are preserved.
 
 The [fixture recorder and manifest](../unittests/web/fixtures/sea/README.md)
 separate real compiler-produced blobs from synthetic native-container fixtures.
-Real injected-image qualification and final integration results are recorded
-in the implementation ledger. None of this closes #718 or the other four
-JavaScript epics; pkg/nexe and broader runtime/host profiles remain independent
-work.
+The [required producer lane](web-producer-corpus-qualification.md) verifies six
+injected native images and the independently pinned opaque snapshot witness.
+Both SEA cases passed without skips in
+[run 38677375352](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
+at `5e126750ae7513591b6d79056c02358fe55da0f1` on the macOS arm64 reader.
+The separate Windows product selection does not establish full-image SEA
+qualification on a Windows host. The [pkg and nexe adapters](web-native-javascript-matrix.md)
+have independent fixtures and versioned coverage; broader runtime/host profiles
+require their own evidence.

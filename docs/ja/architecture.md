@@ -14,7 +14,7 @@ LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキ
 
 `sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。
 
-`SourcePatchCompiler` は NeverC `cpp-core-v2` と C23 生成を組み合わせ、`validateDynCodePatchImage` は監査と実際の成果物ハッシュ・コード・入口を結び付けます。形式別インストーラが本物の展開記録を登録します。ARM64 FH3 はローダの xdata 範囲と MC の funclet/FuncInfo 所有関係を使います。DWARF がない Mach-O では全関数の native compact 記録が必要です。
+`SourcePatchCompiler` は起動前に NeverC を C のみに制限し、C++ は Clang または適合する ELF GCC ドライバが担当します。`validateDynCodePatchImage` は hosted C の監査を実際のオブジェクト、ペイロードのハッシュ、正確なコードと入口配置に結び付けます。形式別インストーラは実際のアンワインド記録を登録します。ARM64 Clang FH3 はローダーの xdata 範囲と MC の funclet/FuncInfo 群を使い、Mach-O は完全なネイティブ compact 記録にも対応します。
 
 `CompiledImage` は AArch64 ELF のコロン修飾子を一か所で正規化し、実際の解決と記録した fixup で共有します。ELF リゾルバとローダ再配置の発行は正確な ABS/GOT 識別を使い、TLS と未知の形式は拒否します。COFF のネイティブ関数範囲はデコード済み実行時記録を使えますが、hosted コードにはコンパイラの完全な展開情報が必要です。
 
@@ -1574,6 +1574,8 @@ LLVM エミッタは、現在の不変な MedFunc 内で完了した既定予算
 
 `MedCallingConvFP` は浮動小数点／ベクトル入力のバイト需要を一元管理します。AND/OR 定数マスクは、一意かつ有界な SSA 定数証明がある場合だけ完全に消去・置換されたバイトを除外し、初回書き込みがバージョンゼロの連結マスクも対象です。欠落・曖昧・ロード由来・呼び出し由来のマスクでは入力を残します。FP 戻り値レジスタの中間書き込みは値の転送であり、戻り値の読み取り候補は現在の CFG で各 RETURN に到達する定義に従います。不明な経路は保守的に需要を残します。明示的 ABI オペランドの回復前は、FP 戻り値レジスタ経由の転送値も CALL の読み取り候補です。自身の下位バイトから拡張されるベクトルレジスタ（`vzeroupper`）は自分の入力バイトだけをそのまま保持し、別のレジスタから移されたバイトは他の書き込みと同様に戻り値に届きます。ARM32 は D0-D31 全体を引数用 D0-D7 とは別に記述します。
 
+ELF オブジェクト解析、ネイティブ再配置、ローダーの来歴検証は同じフィールド幅表を使います。AArch64 `PREL64` は八バイトで、完全幅の REL 暗黙加数を含む符号付き `S + A - P` を保持します。境界違反、書き込みの重複、符号付きオーバーフローは公開前に拒否します。
+
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 
 DarwinFiles extends its sole authorizer with typed OwnershipSearch and OwnershipChange and an explicit UID/GID request. DarwinOwnership.cpp owns chown16/fchown123/fchownat468 import and the atomic active UID/GID/ctime commit; DarwinServices only forwards. The shared path walker and statusMetadata owner supply actual current records. Target membership and change-derived TAKE_OWNERSHIP/WRITE_SECURITY decisions stay in the sole authorizer. Contents retains a separate initial ownership provider/time grant; both inactive IDs still require it and preserve every field. Mode/data/namespace/xattr/storage/VM grants remain independent, creation/name reuse never inherits authority and invalidated records remain unknown. Strict JSON uses the existing vocabulary/admission/time owners. Static query closures deny all57 other file routes before preflight. This ordinary environment excludes ACL/MAC/listeners/bypass/revocation/native leases and unmodeled setattr lifecycle; it does not establish general DAC or a complete macOS/iOS environment.
@@ -1633,9 +1635,9 @@ DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fs
 
 ## Swift scalar instruction completion
 
-復元された x86_64 Swift は、スカラーのレジスター ADD/SUB/MUL/DIV と、Float32、signed32、signed64 のレジスターから Double への変換をサポートし、数値ビットと完全な入出力 MXCSR を保持します。その他の変換、メモリー、パック演算、SQRT/MIN/MAX、FMA、丸め、近似演算は未対応です。確認された Swift スタック引数と混合関数の復元失敗を修正しますが、完全な macOS/iOS ランタイムとフレームワーク環境は未完成です。
+復元された x86_64 Swift は、レジスタとメモリのスカラー ADD/SUB/MUL/DIV、符号付き 32/64 ビット整数から Float32/Float64 への変換、Float32/Float64 の双方向変換と VEX 形式をサポートします。数値ビットと完全な入出力 MXCSR を対で保持します。パック演算、SQRT/MIN/MAX、FMA、丸め専用演算と近似演算は拒否され、完全な macOS/iOS フレームワーク環境は未完成です。
 
-The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits register X86FPArithState with scalar control16|optional8|kind for 4/8-byte Add/Subtract/Multiply/Divide, normalizing its intrinsic/width helper key and dropping only Control at operand0. X86FPScalarConvertState admits only controls4/5/7 and VEX variants12/13/15 for Float32/signed32/signed64 to Double. Its conversion-specific full-layout key removes only VEX bit8, keeps all three source kinds distinct, and drops only the literal Control at operand1. Source and State retain their order. Legacy/VEX and legacy/generic occurrences share one helper per numerical/state contract. Signed32 truncates and reinterprets its raw bits; signed64 reinterprets its full source, and Float32 preserves its low32 bit pattern. Target guards, file-level module_preamble, optimization-disabled numerical work and complete96-bit result/MXCSR packing remain required. The lifter still owns vector upper lanes. No ARM64 MXCSR substitution or memory/packed lowering is inferred.
+共有 X86FPState 形状検証が基準です。旧形式と汎用算術は命令/幅ヘルパーを共有します。変換キーは入力種別、入出力幅、レジスタ/メモリを区別し、VEX 上位レーンのビットだけを除去します。上位レーンはリフタが管理します。入力と状態の順序、最適化を無効にした数値計算、64/96 ビットの完全な結果/MXCSR を保持し、ARM64 MXCSR の代替は推測しません。
 
 ## Explicit ordinary directory modes
 
@@ -1669,6 +1671,14 @@ Directory ownership preserves unrelated stat bytes, cursors, flags, enumeration 
 
 The strict shared timed-object parser admits created_directory_objects for exactly Mode, Ownership and Timestamp, with a single type decision. Required objects, exact Boolean, time validation and common budgets remain authoritative. The existing FileModeCreatedDirectoryObjects identifier and wire string remain compatible. No syscall, C function, constructor, dependency or scheduling policy changed.
 
+## Explicit ordinary symbolic ownership
+
+DarwinFiles retains one ordinary admission boundary; only ownership extends it to complete independently granted symbolic vnodes. LinkNode owns its separate OwnershipTime pointer. Initial exact Objects membership attaches it; only successful complete symlink construction with OwnershipMutations.CreatedSymbolicLinkObjects=true attaches CreationPolicy.Mutation.Time. MutableSymbolicLinks, parent/target ownership, filesystem snapshots and regular/directory creation flags supply no such grant. Initial nlink1/no-alias admission does not prevent later explicit runtime symbolic hardlinks from sharing the actual object and its grant.
+
+DarwinOwnership.cpp remains the sole ownership execution and commit owner. It selects actual File, Directory or Link provider/current metadata after existing lookup, complete-stat and shared effective authorization. O_SYMLINK/NOFOLLOW select the link, while followed paths select the target. Active IDs and supplied ctime commit atomically; both inactive IDs still require execution authority and preserve the whole record. Link GID updates never change DirectoryIdentity or target state. Provider pointers follow existing namespace/descriptor lifetime through moves, exchange, runtime links and held deletion; reused names bind new objects. Ownership cannot reverse namespace/xattr metadata invalidation.
+
+The strict generic JSON provider header accepts created_symbolic_link_objects only for FileSystem and Ownership, with separate wire identifiers and authority. Other purposes still reject the key, including false. Complete Namespace creation prerequisites and shared budgets remain authoritative. No service, constructor, C ABI, dependency or scheduling boundary changes. The compact original native/model/C/CLI/Python workloads distinguish complete link and target records, high carriers, lifetime, fresh state and early/late missing grants under original limits.
+
 ## Filesystem snapshots for created directories
 
 独立した作成フラグにより、新しいディレクトリは実際の親に宣言されたファイルシステムのスナップショットを保持できます。移動と削除後も開いた記述子は元の関連を保持します。完全な Apple ランタイムと実機 iOS 検証は未完了です。
@@ -1683,10 +1693,24 @@ DarwinFileSystems.cpp remains the single LP642168-byte serializer and query owne
 
 DarwinFiles retains one declaration admission, namespace publication owner and actual-object lifetime. Initial filesystem Objects may independently name any declared regular, directory or symbolic vnode; only the existing path+2168 snapshot reference charge applies, without following a symbolic target or demanding target/stat metadata. LinkNode stores its own immutable snapshot pointer. Initial bindings use exact object membership. Successful complete symlink creation captures its actual parent snapshot only when FileSystemObservations.CreatedSymbolicLinkObjects is true. Unknown parents stay null and do not prevent valid creation.
 
-The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the new exact Boolean only for FileSystem; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
+The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the exact Boolean for FileSystem and Ownership with independent wire identifiers; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
 
 DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
 
 ### 明示的なカーネル VA シャドウ情報
 
 `KernelSystemInformation.cpp` がクラスと previous-mode、`KernelModelVaShadow.cpp` が 4 バイト結果を管理します。`KernelQueryBuffer.cpp` はバージョン照会とオブジェクト、権限、物理エイリアス検証を共有します。クラス 11 の動作は保持され、宣言からメモリや緩和策の権限は得られません。
+
+### 制限付きカーネル呼び出し元コンテキスト取得
+
+`WindowsX64Context.def` が共通レイアウト、`WindowsX64Context.cpp` が整数取得と論理セレクタを所有します。ユーザーの完全 FP とカーネルの限定 FP は分離します。`DriverContextCapture.cpp` は同期・非再入コールバックで CPU を借用し、`KernelModelContextCapture.cpp` がメモリ、実際の戻り値、効果を管理します。全検証後に FLAGS を原子的に設定して検証済み RAM を書きます。任意の書き込み失敗や並行マッピング変更のロールバックではありません。
+
+### ゼロをまたぐシンボリック領域座標
+
+`SymState` が 2^64 を法とする相対座標を使うのは、シンボリックな基底が 64 ビットの領域だけです。相対座標のゼロをまたぐ読み取りは、折り返さない二つの範囲に分割し、各入力の由来を一つの範囲内に保ちます。書き込みは値全体を保存します。絶対メモリ、レジスタ、一時記憶域の範囲オーバーフローは引き続き拒否します。この索引規則は実アドレスの有効性、非エイリアス性、フレーム分離を前提として与えません。通常の領域間無効化と STORE ごとの保存証明は変わらず、Unicorn、KVM、WHP が同じ解析規則を共有します。
+
+### 逐次 raw 実行での比較交換
+
+`SymExec` は受け入れられた raw `ATOMIC_CMPXCHG` の値の意味論を所有します。出力を書き戻す前にアドレス、期待値、更新値、旧値を取得し、`ite(Old == Expected, Desired, Old)` を一度だけコミットします。`SymState` はその書き込みのバイト効果、エイリアスの無効化、保存予算を担当します。`InterpreterSpecialization` は受け入れと由来を管理します。Old には書き込み前のメモリ由来を使い、条件付き書き込みには Old、期待値、更新値の由来を保守的に統合し、重なり得るアフィンスピルの事実を破棄します。比較が失敗しても、書き込み範囲全体と保護された戻りセルの分離証明が必要です。残余には元の原子操作、メモリ順序、発生回数を保持し、拒否時には部分的な残余 CFG を公開しません。
+
+raw 特殊化は、書込み可能な16バイトスカラーへの厳密な8+8バイト `CONCAT` も受理します。第1入力が上位64ビット、第2入力が下位64ビットとなり、格納時のバイト順には依存しません。入力は完全なスカラー位置または定数に限ります。明示的で非フォールトの機械状態、既定アドレス空間、順序なし操作という制限は維持します。値の意味は `SymExec` が所有し、出力が重なる場合も両入力を読んでから書き込みます。ソース配置やネイティブ証明の契約は拡張しません。

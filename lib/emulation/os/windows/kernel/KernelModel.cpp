@@ -207,7 +207,8 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
                               Options.Scheduling.has_value());
   ConfiguredPnpDevices = Options.PnpDevices;
-  if (auto E = Registry.initialize(Options.Registry))
+  if (auto E = Registry.initialize(Options.Registry,
+                                   Options.RegistrySystemTime100ns))
     return E;
   if (Exports) {
     auto Modules = makeKernelModuleImages(*Exports);
@@ -779,6 +780,10 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
       return modelError("guest access to an active opaque APC state");
   if (IsWrite)
     for (const auto &[Lock, State] : ExecutiveSpinLocks)
+      if (Address < Lock + 8 && Lock < End)
+        return modelError("guest write to a held executive spin lock");
+  if (IsWrite)
+    for (const auto &[Lock, State] : QueuedSpinLocks)
       if (Address < Lock + 8 && Lock < End)
         return modelError("guest write to a held executive spin lock");
   if (auto E = validateIOAccess(Address, Size, IsWrite))

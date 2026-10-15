@@ -67,6 +67,33 @@ TEST(KernelExports, SeededModeledExportAndDuplicateImportsShareIdentity) {
   EXPECT_EQ(Registry.lookup(Dynamic + 1), nullptr);
 }
 
+TEST(KernelExports, ExecutionGatesCoverLaterBoundFunctionsAndInteriorBytes) {
+  KernelExportRegistry Registry;
+  ASSERT_EQ(llvm::toString(Registry.initialize(DriverOptions{})), "");
+  // Capture once before the model publishes dynamically bound tables.
+  const auto Gates = KernelExportRegistry::executionWatches();
+  const auto Watched = [&](uint64_t Address) {
+    return std::any_of(Gates.begin(), Gates.end(),
+                       [&](const ExecutionWatch &Range) {
+                         return Address >= Range.Address &&
+                                Address - Range.Address < Range.Size;
+                       });
+  };
+  for (const auto Address :
+       {requireValue(Registry.resolve("ExAllocatePoolWithTag")),
+        requireValue(Registry.insertFrameworkFunction(1, "WdfDeviceCreate")),
+        requireValue(Registry.insertDMAFunction(2, "PutDmaAdapter")),
+        requireValue(Registry.insertProviderFunction(3, "Reference"))}) {
+    EXPECT_NE(Address, 0u);
+    EXPECT_TRUE(Watched(Address));
+    EXPECT_TRUE(Watched(Address + 1));
+    EXPECT_NE(Registry.lookup(Address), nullptr);
+    EXPECT_EQ(Registry.lookup(Address + 1), nullptr);
+  }
+  EXPECT_TRUE(Watched(profile::ThunkBase + profile::ThunkSize - 1));
+  EXPECT_FALSE(Watched(profile::ThunkBase + profile::ThunkSize));
+}
+
 TEST(KernelExports, AvailabilityIsIndependentOfAnExecutionModel) {
   DriverOptions Options;
   Options.KernelExports = {{"NeverDOptionalAbsent", false},

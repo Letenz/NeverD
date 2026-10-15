@@ -21,8 +21,12 @@ if(CMAKE_VERSION VERSION_LESS 3.21)
   message(FATAL_ERROR "Web runtime dependency packaging requires CMake 3.21 or newer")
 endif()
 set(NEVERD_MSVC_REDIST_DIRECTORY "" CACHE PATH "Matching licensed MSVC x64 CRT directory")
-if(NOT EXISTS "${NEVERD_MSVC_REDIST_DIRECTORY}/msvcp140.dll" OR
-   NOT EXISTS "${NEVERD_MSVC_REDIST_DIRECTORY}/vcruntime140.dll")
+# Untyped -D values can retain native backslashes. Convert them once before
+# install() embeds these paths as quoted strings in cmake_install.cmake.
+cmake_path(SET _neverd_product_icu_root NORMALIZE "${ICU_ROOT}")
+cmake_path(SET _neverd_product_redist NORMALIZE "${NEVERD_MSVC_REDIST_DIRECTORY}")
+if(NOT EXISTS "${_neverd_product_redist}/msvcp140.dll" OR
+   NOT EXISTS "${_neverd_product_redist}/vcruntime140.dll")
   message(FATAL_ERROR "Set NEVERD_MSVC_REDIST_DIRECTORY to the matching x64 redistributable CRT")
 endif()
 install(TARGETS neverd neverd_shared neverd-worker neverd-web-mcp
@@ -31,15 +35,15 @@ install(TARGETS neverd neverd_shared neverd-worker neverd-web-mcp
   LIBRARY DESTINATION bin COMPONENT WebProduct
   ARCHIVE DESTINATION lib COMPONENT WebProduct)
 install(RUNTIME_DEPENDENCY_SET neverd_web_product_runtime
-  DIRECTORIES "${ICU_ROOT}/bin64" "${NEVERD_MSVC_REDIST_DIRECTORY}"
+  DIRECTORIES "${_neverd_product_icu_root}/bin64" "${_neverd_product_redist}"
   PRE_EXCLUDE_REGEXES "[Aa][Pp][Ii]-[Mm][Ss]-.*" "[Ee][Xx][Tt]-[Mm][Ss]-.*"
   POST_EXCLUDE_REGEXES ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
   RUNTIME DESTINATION bin COMPONENT WebProduct)
 # ICU data is loaded by ICU itself and need not appear in the engine's import
 # table. Always stage the exact data DLL alongside its exact 77.1 consumer.
-install(FILES "${ICU_ROOT}/bin64/icuuc77.dll" "${ICU_ROOT}/bin64/icudt77.dll"
+install(FILES "${_neverd_product_icu_root}/bin64/icuuc77.dll" "${_neverd_product_icu_root}/bin64/icudt77.dll"
   DESTINATION bin COMPONENT WebProduct)
-install(DIRECTORY "${NEVERD_MSVC_REDIST_DIRECTORY}/"
+install(DIRECTORY "${_neverd_product_redist}/"
   DESTINATION bin COMPONENT WebProduct FILES_MATCHING PATTERN "*.dll")
 install(DIRECTORY "${CMAKE_BINARY_DIR}/bin/sdk/"
   DESTINATION sdk COMPONENT WebProduct)
@@ -56,5 +60,5 @@ install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" "${CMAKE_SOURCE_DIR}/NOTICE"
   "${CMAKE_SOURCE_DIR}/docs/web-windows-product.md"
   "${CMAKE_SOURCE_DIR}/cmake/web-product-dependencies.json"
   DESTINATION . COMPONENT WebProduct)
-install(FILES "${ICU_ROOT}/LICENSE"
+install(FILES "${_neverd_product_icu_root}/LICENSE"
   DESTINATION share/neverd/licenses/icu RENAME ICU-77.1-LICENSE COMPONENT WebProduct)

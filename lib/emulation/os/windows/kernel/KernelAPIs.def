@@ -80,6 +80,7 @@ NEVERD_KERNEL_API(RtlCompareMemory, 3, Export)
 NEVERD_KERNEL_API(DbgPrintEx, 3, Export)
 NEVERD_KERNEL_API(RtlInitUnicodeString, 2, Export)
 NEVERD_KERNEL_API(RtlGetVersion, 1, Export)
+NEVERD_KERNEL_API(RtlCaptureContext, 1, Export)
 NEVERD_KERNEL_API(ExFreePoolWithTag, 2, Export)
 NEVERD_KERNEL_API(IoCreateSymbolicLink, 2, Export)
 NEVERD_KERNEL_API(RtlZeroMemory, 2, Export)
@@ -127,6 +128,18 @@ NEVERD_KERNEL_API(KeGetCurrentIrql, 0, Export)
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelRuntimeTimeAPIs.def"
 #undef NEVERD_KERNEL_RUNTIME_TIME_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
+#define NEVERD_KERNEL_CSTRING_API(Name, Arity, IRQL, Operation)                \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelCStringAPIs.def"
+#undef NEVERD_KERNEL_CSTRING_API
+#define NEVERD_KERNEL_RUNDOWN_API(Name, Arity, IRQL, Operation)                \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelRundownAPIs.def"
+#undef NEVERD_KERNEL_RUNDOWN_API
 NEVERD_KERNEL_API(IoAllocateWorkItem, 1, Export)
 NEVERD_KERNEL_API(IoQueueWorkItem, 4, Export)
 NEVERD_KERNEL_API(IoFreeWorkItem, 1, Export)

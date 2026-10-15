@@ -187,6 +187,26 @@ u64 stdio_content(void) { return __sF[0]; }
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
+u64 device_api_level(unsigned int *out, u64 mode) {
+  int (*query)(void) = android_get_device_api_level;
+  if (mode) {
+    void *handle = dlopen("libplatform.so", 2);
+    if (!handle)
+      return 1;
+    query = (int (*)(void))dlsym(handle, "android_get_device_api_level");
+    if (!query)
+      return 2;
+    if (mode == 2 && dlclose(handle))
+      return 3;
+  }
+  *__errno() = 77;
+  int level = query();
+  out[0] = (unsigned int)level;
+  out[1] = (unsigned int)*__errno();
+  out[2] = (unsigned int)query();
+  out[3] = (unsigned int)*__errno();
+  return (u64)(long)level;
+}
 extern char *dlerror(void);
 typedef u64 (*length_fn)(const char *);
 typedef unsigned int (*identity_fn)(void);

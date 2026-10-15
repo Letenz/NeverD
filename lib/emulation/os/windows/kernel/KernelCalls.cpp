@@ -44,7 +44,8 @@ std::optional<unsigned> KernelModel::argumentCount(const std::string &Name) {
 
 llvm::Expected<uint64_t> KernelModel::call(
     const std::string &Name, llvm::ArrayRef<uint64_t> A,
-    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument) {
+    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+    const KernelContextCapture *Context) {
   const auto *API = lookupKernelAPI(Name);
   if (!API || A.size() != API->Arity)
     return modelError("unknown API or incorrect argument count: " + Name);
@@ -75,6 +76,18 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::Name:
 #include "KernelRuntimeTimeAPIs.def"
 #undef NEVERD_KERNEL_RUNTIME_TIME_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  case KernelAPIKind::Name:
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
+#define NEVERD_KERNEL_CSTRING_API(Name, Arity, IRQL, Operation)                \
+  case KernelAPIKind::Name:
+#include "KernelCStringAPIs.def"
+#undef NEVERD_KERNEL_CSTRING_API
+#define NEVERD_KERNEL_RUNDOWN_API(Name, Arity, IRQL, Operation)                \
+  case KernelAPIKind::Name:
+#include "KernelRundownAPIs.def"
+#undef NEVERD_KERNEL_RUNDOWN_API
     break;
   case KernelAPIKind::IoAllocateMdl:
   case KernelAPIKind::IoFreeMdl:
@@ -162,6 +175,8 @@ llvm::Expected<uint64_t> KernelModel::call(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
   case KernelAPIKind::RtlGetVersion:
     return queryVersion(A[0]);
+  case KernelAPIKind::RtlCaptureContext:
+    return captureCallerContext(A[0], Context);
   case KernelAPIKind::PsGetCurrentProcessId:
     if (auto Context = executionProcessContext())
       return uint64_t(Context->CreatingProcessID);
@@ -237,6 +252,21 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelInterlockedAPIs.def"
+#undef NEVERD_KERNEL_INTERLOCKED_API
+#define NEVERD_KERNEL_CSTRING_API(Name, Arity, IRQL, Operation)                \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelCStringAPIs.def"
+#undef NEVERD_KERNEL_CSTRING_API
+#define NEVERD_KERNEL_RUNDOWN_API(Name, Arity, IRQL, Operation)                \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelRundownAPIs.def"
+#undef NEVERD_KERNEL_RUNDOWN_API
 #define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \
   case KernelAPIKind::Name:                                                    \
     return Operation;

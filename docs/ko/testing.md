@@ -1264,7 +1264,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 86 driver environment checks = 5598`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1732,11 +1732,11 @@ MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템
 
 ## 소스 및 네이티브 오브젝트 패치
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다. 143개 CPU 검사는 소스／IR／객체, 네 아키텍처, 세 형식, 상태, 부동소수점／스택 인수, 두 비영점 주소 변경을 요구합니다. 구형 32비트 Mach-O 컨테이너는 실제 컴파일러 코드를 유지하지만 OS 인증은 아닙니다.
+`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다. 154개 CPU 검사는 소스／IR／객체, 네 아키텍처, 세 형식, 상태, 부동소수점／스택 인수, 두 비영점 주소 변경을 요구합니다. 구형 32비트 Mach-O 컨테이너는 실제 컴파일러 코드를 유지하지만 OS 인증은 아닙니다.
 
 [소스 및 네이티브 오브젝트 패치](source-patching.md)
 
@@ -1763,15 +1763,15 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 행렬은 컴파일된 객체와 외부 네이티브 객체의 `target` 기록을 독립적인 ABI 목록과 비교합니다. 잘못된 객체를 검사한 뒤에는 수정하지 않은 객체를 설치하고 실행하여 유효한 입력의 대조 결과도 확인해야 합니다.
 
-선택적 `NeverCProfiles/*`는 여섯 x64/ARM64 구성에서 C++ IR/객체/hosted DynCode, 비인라인 도우미·재귀 및 미지원 C++ 거부의 30개 검사를 추가합니다. `NeverDSourcePatchDynCodeTests`는 해시·진입점·대상·상태·검증 위조를 거부합니다. `SourcePatchException.NeverC*`는 실제 프로세스에서 수명과 두 프레임을 통과하는 예외를 검사합니다. Windows 검사기는 아홉 패치 시나리오와 원본 대조를 세 번 실행하고 일치하는 머신·커밋·해시 및 네이티브 x64/ARM64 호스트를 요구합니다.
+선택적 `NeverCProfiles/*`는 여섯 x64/ARM64 프로필에서 C IR, C 객체, C hosted DynCode, 비인라인 헬퍼와 재귀, C++ 거부 등 30개를 확인합니다. `SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler`는 NeverC 설치 없이 실행 전 거부를 검증합니다. `SourcePatchException.NeverC*`는 C 결과와 두 hosted C 프레임을 통과하는 예외 콜백을 실행하며 Clang C++ 예외는 별도로 검증합니다. Swift 레지스터 및 메모리 스칼라 변환은 두 최적화 수준에서 결과 비트와 MXCSR를 검사합니다. 모바일 파서는 C 백엔드의 정확한 반올림 pragma 접두사만 허용하며 조건부 선언과 변경된 지시문은 계속 거부합니다.
 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
 
-네이티브 검증은 NeverC 리비전 `182fd2c5dc`, 독립적으로 컴파일한 원본과 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 아키텍처마다 Windows 네이티브 관측 36회를 요구하며 C++ IR/객체/hosted 수명과 두 hosted 프레임을 통과하는 예외 콜백을 확인합니다. `check_source_patch_elf_runtime.py`는 아키텍처마다 Linux 네이티브 관측 66회를 요구하며 C++ IR/객체/hosted, hosted 예외 전파, Clang 예외 시나리오 9개를 확인합니다. 영수증, 산출물 해시와 실제 호스트 아키텍처가 일치해야 합니다. 실제 컴파일러 산출물을 설치하는 검사이며 CI 호스트에서 NeverC 실행 파일을 실행했다고 주장하지 않습니다.
+네이티브 검증은 NeverC `182fd2c5dc`, 독립 원본 및 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 Windows 아키텍처마다 C IR/객체/hosted 결과와 두 C 프레임의 예외 전달을 36회 관측합니다. `check_source_patch_elf_runtime.py`는 Linux 아키텍처마다 C, hosted 전달과 아홉 Clang C++ 예외 시나리오를 120회 관측합니다. 영수증, 해시, 실제 호스트 아키텍처가 일치해야 하며 CI 호스트에서 NeverC 실행 파일을 실행했다는 뜻은 아닙니다. Linux x64와 ARM64에서 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체 각각의 아홉 예외 시나리오를 검증합니다. NeverC는 계속 C 전용입니다.
 
-네이티브 검증 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780)의 관측 204회가 모두 통과했습니다. Windows x64/ARM64는 각각 36회, Linux x64/ARM64는 각각 66회입니다. 공개 소스 API로 C++ IR, 일반 객체, C++ hosted DynCode를 생성하고 두 NeverC 프레임을 통과하는 예외도 확인했습니다. 재생 시 현재 소스와 하위 모듈 다이제스트, 원본과 최종 바이트, 설치 영수증 및 실제 네이티브 호스트를 확인합니다. macOS ARM64와 Rosetta x64에서도 세 C++ 경로와 두 프레임 전파가 통과했습니다. Clang FH3 검증 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780)도 Windows x64/ARM64의 예외 시나리오 9개와 대조군, 각각 36회를 통과했습니다.
+이전 변환 프로필의 204회 관측은 과거 기록이며 현재 C 전용 계약의 근거가 아닙니다. 현재 세 NeverC 경로는 C를 사용하고 Clang C++ FH3는 별도로 검증합니다. macOS x64는 Rosetta 2를 사용하며 Unicorn/QEMU CPU 결과는 네이티브 OS와 언와인더 검증을 대신하지 않습니다.
 
 `InterpreterSpecialization.HighAddress*` 및 `BinaryLowIRRefinement.HighAddress*`는 상위 주소, 겹치는 명령 범위, CALL 반환 바이트, 스택 복원, 레이블과 같은 값의 데이터, 잘못되거나 누락된 코드, 정확하거나 부족한 예산을 검사합니다. 독립 바이트 실행기와 반환 워드를 바꾼 음성 대조로 실행 값과 CFG 레이블을 구별합니다.
 
@@ -1800,6 +1800,10 @@ python3 scripts/run_lift_qualification.py \
 네이티브 구성은 LLVM-C 넓은 정수 상수·저장 검사와 i386 합성 테이블의 네이티브 실행도 요구합니다. Swift 신호 관찰기는 독립적인 원시 저장 공간을 사용하며, 두 최적화 수준에서 미기록 정상 대조와 상태·결과의 조기 기록을 각각 검출하는 음성 대조를 검증합니다. 신호 처리기가 활성 Swift `inout` 변수를 읽으면 배타적 접근 오류가 발생하여 예외 관찰이 무효가 됩니다.
 
 `NeverDFPParameterMaskTests`는 공통 ABI와 `FPParameterMask.*`를 실행하며 유효 바이트, 앞선 저장, 모호한 정의와 마스크되지 않은 반환 경로를 유지하고 완전히 지우거나 대체한 바이트만 제외합니다. D0 중간 전달, D16-D31 임시 레지스터와 FP 반환 합류의 두 경로를 검사합니다. `NeverDARM32ObjectImmediateTests`는 ARM32 호스트 C 차분 5개를 별도로 실행하고 Windows EH CI는 Clang 23과 다른 NEON zip/mask 형태도 Clang 18로 확인합니다. ABI 피연산자가 복구되지 않은 직접/간접 CALL은 명시적으로 준비한 FP 레지스터를 유지합니다.
+
+네이티브 Linux x64 작업은 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체의 세 C++ 예외 패치도 필수로 검증합니다. XML과 프로세스 종료 상태를 별도로 감사하며 실패나 건너뛰기는 검증 실패입니다. 이 C++ 입력에는 NeverC를 사용하지 않습니다.
+
+네이티브 검증 작업은 x64 PLT/AArch64 지정자 범위 수정을 포함하는 고정 LLVM 포크를 소스에서 빌드합니다. r4 사전 빌드 패키지만으로는 Clang IR 예외 경로의 기능 검증을 완료할 수 없습니다.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -1866,9 +1870,9 @@ DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB 
 
 ## Swift scalar instruction completion
 
-복원된 x86_64 Swift는 스칼라 레지스터 ADD/SUB/MUL/DIV와 Float32, signed32, signed64 레지스터에서 Double로의 변환을 지원하며 수치 비트와 전체 입력 및 출력 MXCSR을 보존합니다. 다른 변환, 메모리, 패킹 연산, SQRT/MIN/MAX, FMA, 반올림 및 근사 연산은 지원하지 않습니다. 확인된 Swift 스택 인수와 혼합 함수 복원 실패를 수정하지만 전체 macOS/iOS 런타임과 프레임워크 환경은 아직 미완성입니다.
+복원된 x86_64 Swift는 레지스터 및 메모리 스칼라 ADD/SUB/MUL/DIV, 부호 있는 32/64비트 정수의 Float32/Float64 변환, Float32/Float64 양방향 변환과 VEX 형식을 지원합니다. 결과 비트와 전체 입력/출력 MXCSR를 함께 보존합니다. 패킹 연산, SQRT/MIN/MAX, FMA, 반올림 전용 연산과 근사 연산은 거부하며 완전한 macOS/iOS 프레임워크 환경은 아직 미완성입니다.
 
-HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers, GenericScalarCompletionRejectsOtherShapesAndControls, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper and ScalarDoubleConversionsRejectOtherEffectsAndLayouts check shared contracts, helper identities and explicit unsupported/malformed refusal. GenericScalarCompletionCompilesAndExecutesCompleteState, MixedScalarCompletionDeduplicatesHelpersAndExecutesState, ScalarDoubleConversionSourceExecutesCompleteState and MixedScalarDoubleConversionsDeduplicateAndExecuteState compile and execute literal numerical/MXCSR cases at Onone/O, comparing emitted Swift with independently authored original SSE arithmetic and CVTSI2SD32/CVTSI2SD64/CVTSS2SD observers. Coverage includes signed boundaries,2^53+1 precision, all rounding modes, sticky flags, DAZ/FTZ, subnormals, signed zeros, infinities and quiet/signaling NaN payloads. Compiler/native bounds remain120/5 seconds. Separate legacy/generic divide-by-zero and conversion precision/invalid trap tests require native Intel macOS and untouched numerical/state sentinels. They skip explicitly on ARM64 because Rosetta forces exception masks; translated masked execution never qualifies Intel unmasked traps.
+기존/일반 및 기존/VEX 혼합은 수치/상태 계약마다 헬퍼가 하나인지 확인합니다. 독립적인 원본 SSE 관측과 리터럴 값을 사용해 Onone/O에서 반올림, 고정 플래그, DAZ/FTZ, 비정규 수, 부호 있는 0, NaN과 모든 스칼라 변환 방향을 비교합니다. 마스크 해제 산술/변환 트랩은 네이티브 Linux x64 또는 Intel macOS와 변경되지 않은 결과/상태 감시값이 필요합니다. Rosetta가 예외를 마스킹하므로 ARM64 호스트에서는 명시적으로 건너뜁니다.
 
 ## Explicit ordinary directory modes
 
@@ -1887,6 +1891,14 @@ The97 initial private/strict JSON checks passed before route addition. Directory
 명시적 소유권 제공자는 독립적으로 허용된 초기 및 새 일반 디렉터리의 chown/fchown/fchownat를 지원합니다. 그룹 변경은 자식 생성에 쓰는 실제 부모 디렉터리 정보도 갱신합니다. 이름 공간, 모드, 시간 권한은 독립적으로 유지됩니다. 전체 Apple 런타임과 프레임워크, 실제 iOS 기기 검증은 아직 완료되지 않았습니다.
 
 Initial focused private and strict JSON checks passed103 identities before route addition. New directory cases cover4KiB/16KiB, complete literal stat144 with guards, independent initial/created grants, actual current parent group inheritance for all3routes and all3child kinds, aliases, active/inactive IDs, authorization and group knowledge, high carriers, errors, dup/cursors, moves/exchanges, held removal/reuse and permanent invalidation. Five software process/C/CLI/Python profiles and all three matching ARM64 HVF profiles passed fresh executions. The complete Darwin owner reconciles3511 identities with2419 passed and1092 hardware-unavailable, including all273 mandatory matching ARM64 executions, across four disjoint serial bounded shards plus37 fresh isolated replays of the initial guest-time-limit failures. Every replay passed on the same source/products and original bounds. This is not a clean full-round or unsharded timing-stability claim. Shared public/Linux/service/budget/safety owners passed1852 cases, together with affected Python attribute/filesystem regressions. Native common inventory is76 and mandatory inventory91 per matching platform. The earlier complete Darwin round retains guest-time-limit failures during high observed host load; the final complete-inventory qualification uses unchanged source, products and bounds, combining the original disjoint shards with focused replays. Native5s, compiler120s, component1200s/parallel2, original method bounds, guest5000000us/quantum1024 and public30s remain unchanged. The new negative-membership fixture correction and a guest-deadline failure from redundant end-to-end Cartesian snapshots are retained in immutable epochs; the final workload keeps independent full typing proof and unchanged bounds. Physical Intel/iOS, native nonowner/special security and complete Apple runtimes/frameworks remain unqualified.
+
+## Symbolic ownership regression
+
+`DarwinSymbolicOwnershipTestData.h` supplies independently authored complete stat144 records with two8-byte guards. `DarwinOwnershipTests.cpp` covers exact initial/created authority, effective credentials and known/unknown groups, complete-record preservation/commit, descriptor versus SEARCH error order, flags/carriers, dangling/cyclic targets, alias/dup/move/exchange/held-unlink/reuse and permanent metadata invalidation. Strict JSON checks preserve purpose-specific Booleans, defaults, creation prerequisites and lossless timestamp import.
+
+The SDK-free `darwin_process.c` ownership modes use59/60 authored common calls and67/68 literal calls, return58/W and emit1281 bytes in each literal mode. The eight full guarded records distinguish original link, unchanged/changed target, two-name/renamed/held link and fresh replacement. Process tests repeat positives from fresh state and retain early/late unsupported outcomes with exact raw service/scalar argument checks. Native catalogue seeding explicitly creates a symbolic input and a separate binary target. Original owned nonroot O0/O1/O2 probes retain318 observations, and common initial/created native workloads execute at all three levels. Common native checks capture no service trace and assert no fixed native ctime.
+
+`SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate` is required on every matching native platform through `scripts/NativeDarwinTests.def`; inventory now contains94 methods per platform and282 matching ARM64 identities. `DarwinNativeCases.def` contains81 common cases. Execute all five software profiles, all three matching ARM64 HVF identities and C/CLI/Python routes; skips do not count as native acceptance. Preserve guest5000000us, quantum1024, native5s, compiler120s, component1200s/parallel2 and public30s limits. Full Darwin qualification uses the existing disjoint serial method shards, with any bounded unchanged-source recovery reported as a composite. Intel hardware, physical iOS and complete Apple runtimes remain unqualified.
 
 ## Filesystem snapshots for created directories
 
@@ -1920,3 +1932,21 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ### 명시적 커널 VA 섀도 상태 조회
 
 `KernelVaShadowQueryTests`는 독립 플래그, 짧은/정확한/페이지 경계 출력, ULONG 절단, 두 대상, 중첩, 권한, 별칭, 객체, 문맥, IRQL 및 의존성을 검사합니다. `DriverVaShadowQueryTests`는 엄격한 전송과 Unicorn/KVM/WHP 재배치 수명 주기의 가져오기 및 동적 조회를 검사합니다. 미사용 선언도 UNPACK 복원을 거부합니다. 각 네이티브 백엔드에서 19개 항목이 필수이며 실행 불가능은 명시적으로 건너뜁니다. 기존 버전 조회 검사도 공통 버퍼 검증을 확인합니다.
+
+## 통합 후 소스 패치 검증
+
+Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스터와 메모리 변환, legacy/VEX 헬퍼 공유, 원래 SSE와의 비교, 마스크되지 않은 예외를 확인합니다. 수정된 LLVM 소스를 빌드해야 합니다. r4는 i386 PIC의 GOT 기준 주소를 잘못 인코딩할 수 있으며, 이제 잘못된 변위가 있으면 패치 출력을 거부합니다. Linux/ELF 전용 `SessionCAPITest` 10개는 macOS와 Windows에서 명시적으로 건너뜁니다. 감사는 정확한 이름, 소유자 라벨, 원래 이유를 확인하며 Linux 네이티브 실행을 계속 요구하고 건너뛴 항목을 통과로 집계하지 않습니다. 호스트에서 컴파일한 no-return 테스트는 Mach-O 심볼 표기와 복원된 인자 폭을 고려합니다.
+
+### 제한된 커널 호출자 문맥 캡처
+
+`KernelContextCaptureTests`는 전체 바이트, 가드, 스택, 플래그, 별칭, 겹침, 객체, 권한, IRQL과 주입 실패를 검사합니다. `DriverContextCaptureTests`는 실시간 GPR/FPCW/MXCSR/XMM, 재배치 진입/요청/해제, 가져오기/동적 호출과 의존성을 검사합니다. 12개 레코드 바이트 비교에는 명시적 400000 명령 테스트 예산을 쓰며 초기 FPCW 외에 독립 collector가 값을 바꿉니다. 각 네이티브 backend의 17개가 필수이고 Linux의 WHP 불가 상태는 명시적으로 건너뜁니다. 기존 x64/ARM64 사용자 테스트도 유지합니다.
+
+### 0을 가로지르는 기호 영역 좌표
+
+`SymRegionWrap.*`는 두 바이트 순서, 상대 좌표 0을 가로지르는 전체 및 부분 접근, 순환하지 않는 입력 출처, 복사된 미지 상태 세대, 정확하거나 부족한 보존 예산, 절대／스칼라 범위 오버플로 거부를 검사합니다. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero`는 기호 주소가 `base - 1` 형태를 유지하는지 확인하고, 독립적인 바이트 참조 실행으로 전체 STORE 효과, 네이티브 반환 주소 워드, 복원된 스택 상태를 검사합니다. 분리 증명이나 진입 정렬이 없으면 계속 거부해야 합니다.
+
+### 순차 raw 실행의 비교 교환
+
+`SymAtomicCmpxchg.*`와 `InterpreterSpecialization.AtomicCmpxchg*`는 전체 바이트 효과, 두 바이트 순서, 이전 값 출처, 입출력 별칭, 네이티브 반환 셀, 병합을 가로지르는 아핀 스필 무효화, 순서 지정 연산의 발생 유지, 엄격한 허용과 정확한/부족한 예산을 다룹니다. 독립 바이트 오라클은 순차 값 의미론만 모델링합니다. 소스 래핑 대조군은 초기화되고 구조적으로 유효한 그래프에 대해 순서 지정 메모리 경계의 거부를 요구합니다. 독립 LowIR 대조군은 완전한 sidecar도 결합하며 인증서가 없어야 합니다. 네이티브 바이너리 증명은 LOCK CMPXCHG의 아키텍처 미정의 출력 감사가 완전하지 않아 더 이른 단계에서 거부될 수 있습니다. raw 영수증 검사는 순서, 주소 공간과 새 값 피연산자를 결합합니다. 지원을 선언하기 전에 소유 테스트 모음을 실행해야 합니다. 테스트 정의만으로 실행 증거가 되지는 않습니다.
+
+`InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.

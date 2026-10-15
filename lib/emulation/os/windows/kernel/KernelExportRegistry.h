@@ -13,6 +13,7 @@
 #ifndef NEVERD_EMULATION_KERNELEXPORTREGISTRY_H
 #define NEVERD_EMULATION_KERNELEXPORTREGISTRY_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -26,6 +27,7 @@
 namespace neverd::emulation {
 struct DriverOptions;
 struct DriverImport;
+struct ExecutionWatch;
 
 class KernelExportRegistry {
 public:
@@ -56,6 +58,9 @@ public:
   static std::optional<uint64_t> moduleBase(llvm::StringRef Module);
   /// Service bodies are opaque, including unused addresses in their gates.
   static bool overlapsThunk(uint64_t Address, uint64_t Size = 1);
+  /// Complete service regions, including identities registered after startup.
+  /// Direct execution must stop before entering any byte of these bodies.
+  static llvm::ArrayRef<ExecutionWatch> executionWatches();
 
   llvm::Error initialize(const DriverOptions &Options);
   llvm::Expected<uint64_t> bindImport(const DriverImport &Import);

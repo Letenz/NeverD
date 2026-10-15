@@ -69,7 +69,7 @@ analysis/profile identities, whole input/candidate hashes and session revision.
 A receipt for another pass or revision fails. This operation is omitted from
 MCP and the shared worker transport. MCP and worker use the same metadata API.
 
-The POSIX local writer creates a new private directory with three fixed files:
+The local writer creates a new private directory with three fixed files:
 
 - `original.js`: exact original bytes reconstructed and hash-verified by undo.
 - `candidate.js`: the verified derived candidate.
@@ -86,10 +86,13 @@ Failure rollback only removes fixed files still matching the entries created
 by that transaction, using retained directory handles. A replaced path or
 foreign entry is preserved. Created file handles remain open through the
 transaction so an unlinked inode cannot be reused as a foreign cleanup target.
-An observed rename of the output directory can
+On POSIX, an observed rename of the output directory can
 leave an empty moved directory. This is not isolation from a concurrent
-same-user process changing files after verification. Windows local export is
-unavailable in this profile; source analysis itself remains native C++.
+same-user process changing files after verification. The Windows writer uses
+the shared NTFS handle owner for protected current-user creation, exclusive
+writes, hash verification and rollback of owned objects. Its native host
+qualification is Windows Server 2025 x64; see the
+[Windows product contract](web-windows-product.md).
 
 The CLI first prints analysis metadata and its receipt:
 
@@ -105,15 +108,16 @@ does not read a substitute hand-reconstructed module. Existing source-map
 directives remain byte-preserved evidence; no map for the derived candidate is
 generated or implied.
 
-## Required later work
+## Related transform profiles
 
-Issue #714 remains open in scope. The separate
+The separate
 [lexical rename profile](web-scope-rename-profile.md) adds `scope_renaming` while
 preserving these two primitive passes and their receipts exactly. The separate
 [Boolean branch profile](web-boolean-branches-profile.md) selects proven
 Boolean expression operands with retained binding and GetValue validation.
 Statement transforms and broader control-flow deobfuscation remain outside
-these profiles. The other four JS epics retain their documented gaps.
+these profiles. The [epic acceptance audit](web-epic-acceptance.md) records
+current criterion coverage across the source and consumer profiles.
 
 Language references: [SameValue](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-samevalue),
 [directive prologues](https://tc39.es/ecma262/multipage/ecmascript-language-source-code.html#sec-directive-prologues-and-the-use-strict-directive),

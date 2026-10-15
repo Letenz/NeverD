@@ -73,3 +73,26 @@ u64 search_dynamic(u64 *out, u64 close_first, u64 reverse) {
   out[2] = *__errno();
   return (unsigned int)dlclose(library);
 }
+
+extern int atoi(const char *);
+extern long atol(const char *);
+extern long long atoll(const char *);
+u64 decimal_supplied(const char *input, u64 mode, unsigned *saved_errno) {
+  *__errno() = 733;
+  u64 result = mode == 0   ? (u64)(long)atoi(input)
+               : mode == 1 ? (u64)atol(input)
+                           : (u64)atoll(input);
+  *saved_errno = *__errno();
+  return result;
+}
+u64 decimal_dynamic(const char *input, u64 closed) {
+  void *library = dlopen("libsearch.so", 2);
+  if (!library)
+    return 97;
+  int (*convert)(const char *) = dlsym(library, "atoi");
+  if (!convert)
+    return 96;
+  if (closed && dlclose(library))
+    return 95;
+  return (u64)(long)convert(input);
+}

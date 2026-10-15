@@ -10,16 +10,20 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HvfTestPolicy.h"
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
 #include "os/windows/kernel/KernelModel.h"
+
+#include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/FormatVariadic.h"
 
 #include <initializer_list>
 #include <map>
 #include <string_view>
+#include <tuple>
 
 namespace neverd::emulation {
 namespace {
@@ -1450,6 +1454,159 @@ TEST(KernelRuntimeExecution, CompiledDriverRoundTripsCalendarTimes) {
     ++Calls[Call.Name];
   EXPECT_EQ(Calls["RtlTimeFieldsToTime"], 3u);
   EXPECT_EQ(Calls["RtlTimeToTimeFields"], 1u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverSharesQueuesUnderOneSpinLock) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_interlocked.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // FIFO drain after one head insertion, LIFO reuse from the free list.
+  EXPECT_EQ(Result->Messages[0],
+            "queue 1 1 1 order 30 10 20 free 20 10 30 pending 0 bytes 60");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["ExInterlockedInsertTailList"], 2u);
+  EXPECT_EQ(Calls["ExInterlockedInsertHeadList"], 1u);
+  EXPECT_EQ(Calls["ExInterlockedRemoveHeadList"], 4u);
+  EXPECT_EQ(Calls["ExInterlockedPushEntryList"], 3u);
+  EXPECT_EQ(Calls["ExInterlockedPopEntryList"], 4u);
+  EXPECT_EQ(Calls["ExInterlockedAddUlong"], 6u);
+  EXPECT_EQ(Calls["ExInterlockedAddLargeInteger"], 3u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverCachesEntriesOnASequencedList) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_slist.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // LIFO order; the flushed chain keeps its links.
+  EXPECT_EQ(Result->Messages[0],
+            "slist depth 4 top 4 popped 4 chain 321 count 3 empty 1");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["InitializeSListHead"], 1u);
+  EXPECT_EQ(Calls["ExpInterlockedPushEntrySList"], 4u);
+  EXPECT_EQ(Calls["ExpInterlockedPopEntrySList"], 2u);
+  EXPECT_EQ(Calls["ExpInterlockedFlushSList"], 1u);
+  EXPECT_EQ(Calls["ExQueryDepthSList"], 2u);
+  EXPECT_EQ(Calls["FirstEntrySList"], 1u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverUsesCRuntimeStringHelpers) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_cstrings.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // Lengths | ordered/raw/folded compares | char search | substrings | spans.
+  EXPECT_EQ(Result->Messages[0],
+            "cstrings 11 5 3 5 | -1 0 0 0 0 0 0 0 | 2 2 9 3 -1 | 6 0 2 | "
+            "4 2 2");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["strlen"], 1u);
+  EXPECT_EQ(Calls["strchr"], 2u); // first hit and a miss
+  EXPECT_EQ(Calls["wcsstr"], 1u);
+  EXPECT_EQ(Calls["strspn"], 1u);
+  EXPECT_EQ(Calls["wcscspn"], 1u);
+}
+
+class KernelCStringWriteExecution
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(KernelCStringWriteExecution, OriginalDriverCopiesPadsAndAppends) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                                  "driver_cstring_writes.sys",
+                              Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name : {"strcpy", "strncpy", "strcat", "strncat", "wcscpy",
+                           "wcsncpy", "wcscat", "wcsncat"})
+    EXPECT_GT(Calls[Name], 0u) << Name;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, KernelCStringWriteExecution,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
+
+TEST(KernelRuntimeExecution, CompiledDriverGuardsWithAnInStackQueuedSpinLock) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_qspinlock.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // PASSIVE before, DISPATCH while held, PASSIVE after; the counter updates.
+  EXPECT_EQ(Result->Messages[0], "qspin before 0 held 2 after 0 value 7");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["KeAcquireInStackQueuedSpinLock"], 1u);
+  EXPECT_EQ(Calls["KeReleaseInStackQueuedSpinLock"], 1u);
+  EXPECT_EQ(Calls["KeInitializeSpinLock"], 1u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverDrainsWithRundownProtection) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_rundown.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // Two protected accesses succeed, the acquire after the wait fails because
+  // the object ran down, a reinitialized object protects again, and a counted
+  // acquisition of three holds six in the word until its matching release.
+  EXPECT_EQ(Result->Messages[0], "rundown 1 1 0 1 1 held 6 left 0");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["ExAcquireRundownProtection"], 4u);
+  EXPECT_EQ(Calls["ExReleaseRundownProtection"], 3u);
+  EXPECT_EQ(Calls["ExWaitForRundownProtectionRelease"], 1u);
+  EXPECT_EQ(Calls["ExReInitializeRundownProtection"], 1u);
+  EXPECT_EQ(Calls["ExAcquireRundownProtectionEx"], 1u);
+  EXPECT_EQ(Calls["ExReleaseRundownProtectionEx"], 1u);
 }
 
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
