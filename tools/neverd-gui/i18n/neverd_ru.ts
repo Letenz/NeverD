@@ -1515,8 +1515,8 @@ Double-click to go to the declaration.</source>
         <translation>Преобразовать текущую функцию</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>Символьно упростить эту функцию</translation>
+        <source>Symbolic simplification</source>
+        <translation>Символьное упрощение</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

@@ -1512,8 +1512,8 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation>Die aktuelle Funktion umwandeln</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>Diese Funktion symbolisch vereinfachen</translation>
+        <source>Symbolic simplification</source>
+        <translation>Symbolische Vereinfachung</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

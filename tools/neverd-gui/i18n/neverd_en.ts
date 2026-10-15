@@ -1512,8 +1512,8 @@ Double-click to go to the declaration.</translation>
         <translation>Transform the current function</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>Symbolically simplify this function</translation>
+        <source>Symbolic simplification</source>
+        <translation>Symbolic simplification</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

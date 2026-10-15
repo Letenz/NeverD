@@ -2751,8 +2751,9 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     code->addSourceActions(menu);
     if (text->hasPrelude()) {
       const bool folded = text->preludeFolded();
-      auto *declarations = menu.addAction(folded ? tr("Expand declarations")
-                                                 : tr("Collapse declarations"));
+      auto *declarations = menu.addAction(
+          icon(folded ? QStringLiteral("expand") : QStringLiteral("collapse")),
+          folded ? tr("Expand declarations") : tr("Collapse declarations"));
       declarations->setStatusTip(
           tr("Show or hide the includes and declarations before the function "
              "(Keypad + / Keypad -)"));
@@ -2762,7 +2763,8 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (text->foldableCount() > 0) {
       const bool folded = text->libraryFolded();
       auto *library =
-          menu.addAction(folded ? tr("Expand library operations")
+          menu.addAction(icon(QStringLiteral("function_library")),
+                         folded ? tr("Expand library operations")
                                 : tr("Collapse library operations"));
       connect(library, &QAction::triggered, text,
               [text, folded] { text->setFolded(!folded); });
