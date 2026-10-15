@@ -12034,8 +12034,9 @@ TEST(LLVMCPointerAddresses, AssignsPhiAtPredecessorEdges) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-phi", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(I32, {llvm::Type::getInt1Ty(Context)}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      I32, {llvm::Type::getInt1Ty(Context), llvm::PointerType::get(Context, 0)},
+      false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "join", Module);
   llvm::BasicBlock *Entry =
@@ -12054,6 +12055,8 @@ TEST(LLVMCPointerAddresses, AssignsPhiAtPredecessorEdges) {
   llvm::PHINode *Phi = JoinBuilder.CreatePHI(I32, 2, "joined");
   Phi->addIncoming(llvm::ConstantInt::get(I32, 1), Left);
   Phi->addIncoming(llvm::ConstantInt::get(I32, 2), Right);
+  // Keep a real post-join effect: a return-only PHI may be distributed.
+  JoinBuilder.CreateStore(Phi, Function->getArg(1));
   JoinBuilder.CreateRet(Phi);
 
   std::string Source;
@@ -19388,16 +19391,17 @@ TEST(LLVMCPointerAddresses, InvertsSkipGotoOverNestedBranch) {
   const auto ArmAt = Source.find("arm_step(", BodyAt);
   const auto LeftAt = Source.find("left_step(", BodyAt);
   const auto UseAt = Source.find("use_step(", BodyAt);
-  const auto GotoAt = Source.find("goto L_done;", BodyAt);
+  const auto EarlyReturnAt = Source.find("return;", LeftAt);
   ASSERT_NE(IfAt, std::string::npos) << Source;
   ASSERT_NE(ArmAt, std::string::npos) << Source;
   ASSERT_NE(LeftAt, std::string::npos) << Source;
   ASSERT_NE(UseAt, std::string::npos) << Source;
-  ASSERT_NE(GotoAt, std::string::npos) << Source;
+  ASSERT_NE(EarlyReturnAt, std::string::npos) << Source;
   EXPECT_LT(IfAt, ArmAt) << Source;
   EXPECT_LT(ArmAt, LeftAt) << Source;
-  EXPECT_LT(LeftAt, GotoAt) << Source;
-  EXPECT_LT(GotoAt, UseAt) << Source;
+  EXPECT_LT(LeftAt, EarlyReturnAt) << Source;
+  EXPECT_LT(EarlyReturnAt, UseAt) << Source;
+  EXPECT_EQ(Source.find("goto L_done;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_after;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_after:", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_body:", BodyAt), std::string::npos) << Source;
@@ -19611,7 +19615,7 @@ TEST(LLVMCPointerAddresses, InvertsSkipGotoOverReturningFalseBody) {
   EXPECT_EQ(Source.find("arm_step(", ArmAt + 1), std::string::npos) << Source;
 }
 
-TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenFalseBodyHasAnotherEntry) {
+TEST(LLVMCPointerAddresses, KeepsFalseBodyLabelWhenItHasAnotherEntry) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-skip-shared", Context);
   llvm::FunctionType *WorkTy =
@@ -19652,10 +19656,10 @@ TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenFalseBodyHasAnotherEntry) {
   const auto BodyAt = Source.find("skip_false_shared(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ArmAt = Source.find("arm_step(", BodyAt);
-  const auto GotoAt = Source.find("goto ", BodyAt);
+  const auto ReturnAt = Source.find("return;", BodyAt);
   ASSERT_NE(ArmAt, std::string::npos) << Source;
-  ASSERT_NE(GotoAt, std::string::npos) << Source;
-  EXPECT_LT(GotoAt, ArmAt) << Source;
+  ASSERT_NE(ReturnAt, std::string::npos) << Source;
+  EXPECT_LT(ReturnAt, ArmAt) << Source;
   EXPECT_NE(Source.find("L_body:", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("arm_step(", ArmAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("if (!(flag))", BodyAt), std::string::npos) << Source;
@@ -19722,8 +19726,9 @@ TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenJoinAssignsPhi) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   llvm::Function *Arm = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "arm_step", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(I32, {llvm::Type::getInt1Ty(Context)}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      I32, {llvm::Type::getInt1Ty(Context), llvm::PointerType::get(Context, 0)},
+      false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "skip_false_phi", Module);
   Function->getArg(0)->setName("flag");
@@ -19741,6 +19746,8 @@ TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenJoinAssignsPhi) {
   llvm::PHINode *Phi = AfterBuilder.CreatePHI(I32, 2, "joined");
   Phi->addIncoming(llvm::ConstantInt::get(I32, 1), Entry);
   Phi->addIncoming(llvm::ConstantInt::get(I32, 2), Body);
+  // The common store requires the PHI edge copies to remain observable.
+  AfterBuilder.CreateStore(Phi, Function->getArg(1));
   AfterBuilder.CreateRet(Phi);
 
   std::string Source;
