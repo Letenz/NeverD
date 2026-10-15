@@ -1736,6 +1736,12 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverPendingCycles.*` checks nested loops whose late definitions must reach
+every batched query, in both query orders and in isolated queries. Register and
+private-frame variants cover x86, x64, ARM and AArch64 across ELF, COFF and
+Mach-O. Reachable values cannot disappear from feasible masks or certify a false
+upper bound; real arithmetic updates cannot become transparent backedges. Warm
+and cold queries must agree at evidence-budget and resolver-depth boundaries.
 `ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
 budget boundary, including completion flags and masks. It covers owned temporary
 overrides, equal-sized edge changes, roots, different builders, nested leases,
@@ -3632,6 +3638,17 @@ turning descriptor symbols into callable imports. `PLTUnwindRangesDoNotHideIndiv
 checks all four architectures, including explicit function ownership and
 partial-range counterexamples. Session C API regressions cover TLS calls,
 variadic veneers and lazy-binding source pages.
+
+`ExternalFunctionPointersNeedAnExactAbsoluteSymbol` checks the four absolute
+relocation types with REL and RELA addends, and that GOT bindings, data,
+untyped, weak and defined symbols, conflicting names and relocatable objects
+yield no external function pointer. `PointerVariablesStartAtExternalFunctions`
+builds, for each architecture, a library whose two pointer variables start at a
+function another library defines. One is volatile, so x64 calls the other
+straight from memory (`call [rip+disp]`) and loads this one into a register
+first. Its LLVM C must not trap and must compile for all four targets. On an
+x64 host the program runs and must call the initial function, then the one
+stored over it.
 
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
@@ -6678,6 +6695,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
 
 ## Native Lift qualification
@@ -6876,6 +6895,7 @@ native transports remain skips, not execution evidence.
 
 `KernelDeviceStackTests.cpp` checks current neighbors, borrowed versus retained results, deletion of either query input or neighbor, last-reference retirement, invalid/corrupted inputs and IRQL rejection before retention. Original `fixtures/driver_device_queries.c` runs through `DriverDeviceQueryTests.cpp` on available backends, both contracts and image bases, with cooperative and 17-instruction scheduling. It verifies held storage after detach/delete and rejects unload with a deliberately leaked reference; all four native contract/base outcomes are required.
 
+KernelFileObjectTests checks references during CREATE, type mismatch, reused identifiers, pending CLOSE, deletion, failed CREATE and rejection of elevated final release. Original driver_file_objects.c and DriverFileObjectTests execute synchronous/pending close, failed creation and deliberate leaks on available backends, both contracts and bases, with cooperative and 17-instruction scheduling. The nested close checks the actual thread, process and PreviousMode. Native acceptance requires all four contract/base outcomes. File handles and filesystem operations need separate coverage.
 
 ### Android method, transaction and command execution
 

@@ -1463,10 +1463,19 @@ same frame state for each query. Every incoming value must agree; unanchored
 cycles, nonzero loop deltas and overflowing intermediate offsets invalidate
 their users. The existing evidence allowance charges graph construction and
 propagation. Completed equations are immutable within a proof mode, so later
-queries solve only new dependencies. Register/memory transparent-cycle memo
-entries are reusable only until either resolver learns a concrete result;
-both share the invalidation generation because their walks recurse into each
-other. Neither cache bypasses incomplete-proof rejection.
+queries solve only new dependencies.
+
+Register and memory value reconstruction share a stack of active walks. A
+concrete merge that skipped a transparent backedge is still provisional: later
+loop definitions may add values. Every memo result records a conservative range
+of the active walks it depends on, including dependencies inherited through memo
+hits. Retiring a dependency invalidates that snapshot; closing the state's own
+backedges removes only its own activation. Unique activation identities prevent
+a later walk at the same depth from reviving stale entries. Concrete results
+with no pending dependency retain their ordinary batch lifetime. Context-free
+transparent cycles retain the existing shared generation guard; memory-context
+resets also invalidate those entries in the value memo. Neither cache bypasses
+incomplete-proof rejection.
 
 HighIR's call-argument projection uses the same checked affine equation core
 for entry-stack offsets in an immutable MedIR function. Each SSA definition is
@@ -1678,6 +1687,19 @@ Defined data uses its existing image backing. TLS and IFUNC records are excluded
 This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
+
+An absolute symbol relocation (`NEVERD_ELF_ABSOLUTE_SYMBOL`: `R_386_32`,
+`R_X86_64_64`, `R_ARM_ABS32`, `R_AARCH64_ABS64`) with no addend against a strong
+undefined function starts an ordinary data word at that function, as
+`void (*sink)(int) = exit;` does. `collectExternalFunctionPointers` lists these
+words. They are not import storage: the program may store another function
+there, so the listing keeps the variable's name, and no call through the word
+takes the function's name or its no-return contract. LLVM emission treats the
+word as callable storage, loads it for each call, and starts its mirror field at
+the function's address rather than at the file's zero. Until a call proves the
+function's type, C names it through the same opaque assembly-name alias as
+undefined data. Weak symbols, addends and words two relocations name
+differently stay unknown, and a call through them still fails closed.
 
 The shared i386 get-PC recognizer requires the complete `mov r32,[esp]; ret`
 encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
@@ -6327,6 +6349,8 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
 
+For constant-only projections, `InterpreterSpecialization` reuses a completed empty-projection proof under the identical predicate and tuple limit, then reconstructs the literal tuple. Constants do not establish reachability. Observers still validate every original address and extent, including cache hits; rejected observations and incomplete enumeration never supply a completed proof.
+
 ELF object parsing, native relocation writers and loader provenance share one field-width table. AArch64 `PREL64` consumes eight bytes and preserves signed `S + A - P`, including full-width implicit REL addends. Bounds, overlapping writers and signed overflow fail before publication.
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
@@ -6501,3 +6525,5 @@ adapters declare these contracts and never infer methods, services or commands.
 
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
+
+KernelModel keeps scenario identifiers separate from address-keyed file bodies. KernelModelObjects owns caller pointer counts; KernelModelFileObjects owns deferred CLOSE dispatch and waits. KernelModelIO retires bodies only after packet completion and dispatch/continuation return. Device and PnP holds inspect bodies, including bodies with no scenario identifier. DriverSession inherits the actual parent context for synchronous nested callbacks; independent scheduled callbacks keep their own context.

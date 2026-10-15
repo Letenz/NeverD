@@ -1821,6 +1821,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` يتحقق من عدم احتساب السجل المخزن مؤقتًا مرة أخرى، واستمرار احتساب الثوابت العريضة المضافة، ورفض ميزانيات العمل والعقد غير الكافية، واستقلال نسخ مخبأ قابلية القراءة.
 
 ## التحقق الأصلي من Lift
@@ -2002,3 +2004,5 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 
 تتحقق `KernelDeviceStackTests.cpp` من الجيران الحاليين والنتائج المستعارة والمحتفظ بها وحذف الإدخال أو الجار وتحرير آخر مرجع والمدخلات غير الصالحة أو التالفة ورفض IRQL قبل إضافة المرجع. يعمل المثال الأصلي `fixtures/driver_device_queries.c` عبر `DriverDeviceQueryTests.cpp` على الخلفيات المتاحة بالعقدين وعنواني التحميل وبجدولة تعاونية واستباقية كل 17 تعليمة. يتحقق من الاحتفاظ بالتخزين بعد detach/delete ورفض التفريغ عند تسريب مرجع عمداً؛ يلزم نجاح التركيبات الأصلية الأربع للعقد والعنوان.
+
+يتحقق KernelFileObjectTests من المراجع أثناء CREATE وعدم تطابق النوع وإعادة استعمال الأرقام وCLOSE المعلق والحذف وفشل CREATE ورفض التحرير الأخير عند IRQL مرتفع. تختبر الشيفرة الأصلية driver_file_objects.c وDriverFileObjectTests الإغلاق المتزامن والمعلق والفشل والتسرب المقصود على الخلفيات المتاحة والعقدين والعنوانين، بالتنفيذ التعاوني وجدولة 17 تعليمة. يفحص CLOSE الخيط والعملية وPreviousMode. يلزم اجتياز التركيبات الأصلية الأربع؛ وتحتاج المقابض ونظام الملفات إلى تغطية منفصلة.

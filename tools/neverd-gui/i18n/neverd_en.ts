@@ -748,8 +748,8 @@
         <translation>Undef&amp;ine</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>Show the current item&apos;s bytes as bytes</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>Turn the current item back into undefined bytes</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -1605,16 +1605,16 @@ Double-click to go to the declaration.</translation>
         <translation>Disconnected</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
-        <translation>MCP Connections</translation>
+        <source>MCP connections</source>
+        <translation>MCP connections</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>Current GUI session</translation>
+        <source>This NeverD session</source>
+        <translation>This NeverD session</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
-        <translation>Copy Credential Path</translation>
+        <source>Copy credential path</source>
+        <translation>Copy credential path</translation>
     </message>
     <message>
         <source>Transport</source>
@@ -1661,24 +1661,24 @@ Double-click to go to the declaration.</translation>
         <translation>Schema</translation>
     </message>
     <message>
-        <source>Call Tool</source>
-        <translation>Call Tool</translation>
+        <source>Call tool</source>
+        <translation>Call tool</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
-        <translation>Cancel Call</translation>
+        <source>Cancel call</source>
+        <translation>Cancel call</translation>
     </message>
     <message>
         <source>Select a resource or call a tool to inspect its response.</source>
         <translation>Select a resource or call a tool to inspect its response.</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
-        <translation>Disable Sharing</translation>
+        <source>Disable sharing</source>
+        <translation>Disable sharing</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
-        <translation>Enable Sharing</translation>
+        <source>Enable sharing</source>
+        <translation>Enable sharing</translation>
     </message>
     <message>
         <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
@@ -1717,8 +1717,8 @@ Double-click to go to the declaration.</translation>
         <translation>Arguments must be a JSON array of strings.</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
-        <translation>Tool Input Schema</translation>
+        <source>Tool input schema</source>
+        <translation>Tool input schema</translation>
     </message>
 </context>
 <context>
@@ -1766,8 +1766,8 @@ Double-click to go to the declaration.</translation>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
-        <translation>Import Manifest…</translation>
+        <source>Import manifest…</source>
+        <translation>Import manifest…</translation>
     </message>
     <message>
         <source>Run</source>
@@ -1945,8 +1945,8 @@ Double-click to go to the declaration.</translation>
         <translation>Up</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
-        <translation>Disk: %1GB</translation>
+        <source>Disk: %1 GB</source>
+        <translation>Disk: %1 GB</translation>
     </message>
     <message>
         <source> · read-only</source>
@@ -2139,12 +2139,12 @@ Signed: %4</translation>
         <translation>Detect common code pages</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
-        <translation>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</translation>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
+        <translation>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</translation>
     </message>
     <message>
         <source>Code pages:</source>
@@ -2179,8 +2179,8 @@ Signed: %4</translation>
         <translation>Collapse library operations</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
-        <translation>The ways to load %1 are unknown: %2</translation>
+        <source>Cannot determine how to load %1: %2</source>
+        <translation>Cannot determine how to load %1: %2</translation>
     </message>
     <message>
         <source>Comment this source line:</source>
@@ -2227,10 +2227,10 @@ Signed: %4</translation>
         <translation>Use unverified PDB for analysis</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <translation>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</translation>
     </message>
@@ -3004,8 +3004,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>&amp;Name of function</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
-        <translation>Analysis decodes where the function ends</translation>
+        <source>Analysis decides where the function ends</source>
+        <translation>Analysis decides where the function ends</translation>
     </message>
     <message>
         <source>&amp;Start address</source>
@@ -3064,8 +3064,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>D&amp;oes not return</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>Analysis ends every call to the function</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>Analysis stops control flow at every call to the function</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
@@ -3144,6 +3144,228 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>Kind</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Evidence</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>Binding</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>Confidence</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>Analyst disposition</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>Disposition source</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>Finding ID</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>Not selected</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>Offline package review</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>Preview file…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>Preview directory…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>Capture preview</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>Select local evidence</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>Select local evidence directory</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>Loose manifest / lock file</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>Inspect archive</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>Captured artifact</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>Container</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>Manifest member</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>Manifest format</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>Include captured registry declarations</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>Original bytes</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>Registry metadata</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>Capture descriptor</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>Assess selected evidence</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>Filter evidence, confidence, disposition or ID</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>Filter findings</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>Selected finding evidence anchors</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>Unreviewed</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>Needs review</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>Accepted risk (analyst assertion)</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>False positive (analyst assertion)</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>Record disposition</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>Save review…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>Load review…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>Restore loaded review</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>Stop worker</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>Starting NeverD analysis worker…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>Offline evidence analysis in progress</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>Operation refused: %1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>Reading bounded offline evidence…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>%1 findings · %2 analyst decisions · partial coverage · head %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>Select local evidence to preview or assess.</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>Save local review</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>NeverD review (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>Review save refused: %1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>Saved opaque evidence IDs and analyst assertions locally.</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>Load local review</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>Review load refused: %1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>Unsaved review</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>Discard unsaved analyst assertions and continue?</translation>
     </message>
 </context>
 </TS>

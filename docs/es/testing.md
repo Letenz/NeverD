@@ -1897,6 +1897,8 @@ Las 204 observaciones del antiguo perfil de traducción son históricas y no pru
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` comprueba que el historial en caché no se vuelve a cobrar, las constantes anchas añadidas siguen teniendo coste de admisión, los presupuestos insuficientes de trabajo y nodos rechazan y las copias de la caché de legibilidad permanecen independientes.
 
 ## Validación nativa de Lift
@@ -2077,3 +2079,5 @@ La validación nativa de Linux ejecuta también toda la batería `HighSwiftEmitt
 `KernelRegistryTests.cpp` cubre aperturas independientes, referencias tipadas, handles copiados, ámbito de proceso, derechos genéricos, identidades borradas, búferes cortos/impares, alias de salidas y límites de fallo/capacidad. `DriverRegistryObjectTests.cpp` ejecuta el original `fixtures/driver_registry_objects.c` en los motores disponibles, ambos contratos y bases, con planificación cooperativa y de 17 instrucciones. Una fuga deliberada verifica el rechazo de descarga; la aceptación nativa exige las cuatro combinaciones.
 
 `KernelDeviceStackTests.cpp` comprueba vecinos actuales, resultados prestados o retenidos, eliminación de la entrada o del vecino, retirada de la última referencia, entradas inválidas o dañadas y rechazo de IRQL antes de referenciar. El original `fixtures/driver_device_queries.c` se ejecuta mediante `DriverDeviceQueryTests.cpp` en los backends disponibles, con ambos contratos y direcciones de carga y planificación cooperativa o preventiva de 17 instrucciones. Verifica la conservación del almacenamiento tras detach/delete y el rechazo de descarga con una referencia filtrada deliberadamente; se requieren las cuatro combinaciones nativas de contrato/dirección.
+
+KernelFileObjectTests comprueba referencias durante CREATE, tipos incorrectos, números reutilizados, CLOSE pendiente, eliminación, CREATE fallido y rechazo de la última liberación en IRQL elevado. Los originales driver_file_objects.c y DriverFileObjectTests validan cierre síncrono y pendiente, fallo y fugas intencionales en backends disponibles, ambos contratos y bases, con ejecución cooperativa y turnos de 17 instrucciones. CLOSE comprueba hilo, proceso y PreviousMode. Son obligatorias las cuatro combinaciones nativas; handles y sistema de archivos necesitan cobertura adicional.

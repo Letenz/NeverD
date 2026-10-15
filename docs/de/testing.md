@@ -1912,6 +1912,8 @@ Die 204 Beobachtungen des früheren Übersetzungsprofils sind historische Belege
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` prüft, dass zwischengespeicherte Historie nicht erneut berechnet wird, angehängte breite Konstanten weiterhin Zulassungskosten haben, knappe Arbeits- und Knotenbudgets ablehnen und kopierte Lesbarkeitscaches unabhängig bleiben.
 
 ## Native Lift-Qualifikation
@@ -2092,3 +2094,5 @@ Die native Linux-Qualifikation führt zusätzlich den gesamten `HighSwiftEmitter
 `KernelRegistryTests.cpp` prüft getrennte Öffnungen, Typreferenzen, kopierte Handles, Prozessbereich, generische Rechte, gelöschte Identitäten, kurze/ungerade Namenspuffer, überlappende Ausgaben und Fehler-/Kapazitätsgrenzen. `DriverRegistryObjectTests.cpp` führt das Original `fixtures/driver_registry_objects.c` auf verfügbaren Backends, beiden Verträgen und Ladeadressen mit kooperativer und 17-Instruktions-Planung aus. Ein absichtliches Zeigerleck prüft die Entladeverweigerung; native Abnahme verlangt alle vier Vertrags-/Adresskombinationen.
 
 `KernelDeviceStackTests.cpp` prüft aktuelle Nachbarn, geliehene und gehaltene Ergebnisse, Löschung von Eingabe oder Nachbar, Freigabe der letzten Referenz, ungültige oder beschädigte Eingaben und IRQL-Ablehnung vor dem Referenzieren. Das eigene `fixtures/driver_device_queries.c` läuft über `DriverDeviceQueryTests.cpp` auf verfügbaren Backends mit beiden Verträgen und Ladeadressen sowie kooperativer und präemptiver Planung mit 17 Instruktionen. Es prüft Speicherhaltung nach detach/delete und verweigertes Entladen bei einer absichtlich verlorenen Referenz; alle vier nativen Vertrags-/Adresskombinationen sind erforderlich.
+
+KernelFileObjectTests prüft CREATE-Referenzen, falsche Typen, wiederverwendete Nummern, ausstehenden CLOSE, Löschung, fehlgeschlagenes CREATE und abgelehnte letzte Freigabe bei erhöhtem IRQL. Die Originaltests driver_file_objects.c und DriverFileObjectTests prüfen synchronen und ausstehenden CLOSE, Fehler und absichtliche Lecks auf verfügbaren Backends, beiden Verträgen und Basen, kooperativ und mit 17 Befehlen pro Zeitscheibe. CLOSE prüft Thread, Prozess und PreviousMode. Alle vier nativen Kombinationen sind erforderlich; Handles und Dateisystem benötigen eigene Abdeckung.

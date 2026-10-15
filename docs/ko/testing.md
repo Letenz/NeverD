@@ -1786,6 +1786,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 는 캐시된 이력을 다시 청구하지 않고, 추가된 넓은 상수는 계속 청구하며, 작업 및 노드 예산 부족은 거부하고, 복사된 가독성 캐시가 독립적으로 유지되는지 확인합니다.
 
 ## 네이티브 Lift 검증
@@ -1966,3 +1968,5 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 `KernelRegistryTests.cpp`는 독립 열기, 형식 참조, 복제 핸들, 프로세스 범위, 일반 권한, 삭제 ID, 짧거나 홀수인 버퍼, 출력 별칭과 실패/용량 경계를 검사합니다. `DriverRegistryObjectTests.cpp`는 독자 작성한 `fixtures/driver_registry_objects.c`를 사용 가능한 백엔드, 두 계약과 두 베이스에서 협력형 및 17명령 스케줄링으로 실행합니다. 의도적인 포인터 누수로 언로드 거부를 확인하며 네이티브 수용에는 네 조합 모두가 필요합니다.
 
 `KernelDeviceStackTests.cpp`는 현재 이웃, 빌린 결과와 보유한 결과, 입력 또는 이웃 장치의 삭제, 마지막 참조 해제, 잘못되거나 손상된 입력, 참조 추가 전 IRQL 거부를 검사합니다. 자체 `fixtures/driver_device_queries.c`는 `DriverDeviceQueryTests.cpp`를 통해 사용 가능한 백엔드, 두 계약과 로드 주소, 협력 및 17명령 선점 스케줄링에서 실행됩니다. detach/delete 후 저장 공간 유지와 의도적 참조 누수 시 언로드 거부를 검증하며 네 가지 네이티브 계약/주소 결과가 필수입니다.
+
+KernelFileObjectTests는 CREATE 중 참조, 유형 불일치, 번호 재사용, 대기 CLOSE, 삭제, 생성 실패 및 높은 IRQL에서 마지막 해제 거부를 확인합니다. 독자적인 driver_file_objects.c와 DriverFileObjectTests는 사용 가능한 백엔드, 두 계약과 기준 주소, 협력 실행과 17명령 스케줄링으로 동기 및 대기 종료, 생성 실패와 의도적 누수를 검사합니다. 중첩 종료는 실제 스레드, 프로세스 및 PreviousMode를 확인합니다. 네 가지 계약 및 주소 조합이 네이티브 필수 검증이며 핸들과 파일 시스템은 별도 검증이 필요합니다.

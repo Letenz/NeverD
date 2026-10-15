@@ -92,6 +92,9 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
       Information)
     return frameworkRequestError(
         "CLEANUP and CLOSE require zero IoStatus.Information");
+  if (Request->Kind == DriverRequestKind::Create && Status == StatusReparse)
+    return frameworkRequestError(
+        "CREATE reparse requires a filesystem provider");
   if (Request->Kind == DriverRequestKind::Create &&
       Information > MaxCreateInformation)
     return frameworkRequestError(

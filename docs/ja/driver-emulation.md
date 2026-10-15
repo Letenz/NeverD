@@ -107,7 +107,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 有効な Control Flow Guard（CFG）は PE フラグ、ポインタスロット、ソート済み実行可能ターゲット表を検証します。check/dispatch ヘルパーは宣言済みイメージ入口または登録済み API サンクだけを許可し、Win64 呼び出し状態を保持して未宣言ターゲットを拒否します。CFG を有効にしない計装では元のゲストのフォールバックポインタを維持します。有効な XFG、エクスポート抑制、その他の未モデル化ポリシーは拒否し、実行可能メモリ内という理由だけでターゲットを許可しません。
 
-WDM スタックには同じゲストドライバーが所有する複数のデバイスを配置できます。`IoAttachDeviceToDeviceStack` は独立したソースを対象の現在の最上位に接続し、以前の最上位を返します。`StackSize` と `AlignmentRequirement` を設定しますが、`NextDevice` リストやバッファーフラグは変更しません。`IoDetachDevice` は保存した下位デバイスを受け取り、`PASSIVE_LEVEL` を要求します。接続は `DISPATCH_LEVEL` 以下で実行できます。名前付き下位デバイスを開くと現在の最上位へディスパッチされますが、`FILE_OBJECT.DeviceObject` とレポートは名前付きデバイスを保持します。READ/WRITE のバッファー方式は選択した最上位のフラグで決まります。要求が保持する経路は切断・削除後もディスパッチの復帰まで各デバイスを保持し、内部参照は開いたハンドル数を示す `ReferenceCount` に加算しません。
+WDM スタックには同じゲストドライバーが所有する複数のデバイスを配置できます。`IoAttachDeviceToDeviceStack` は独立したソースを対象の現在の最上位に接続し、以前の最上位を返します。`StackSize` と `AlignmentRequirement` を設定しますが、`NextDevice` リストやバッファーフラグは変更しません。`IoDetachDevice` は保存した下位デバイスを受け取り、`PASSIVE_LEVEL` を要求します。接続は `DISPATCH_LEVEL` 以下で実行できます。名前付き下位デバイスを開くと現在の最上位へディスパッチされますが、`FILE_OBJECT.DeviceObject` とレポートは名前付きデバイスを保持します。READ/WRITE のバッファー方式は選択した最上位のフラグで決まります。要求が保持する経路は切断・削除後もディスパッチの復帰まで各デバイスを保持し、内部参照は`DEVICE_OBJECT.ReferenceCount` に加算しません。
 
 モデル化されたデバイススタックでは、`IoGetAttachedDevice` は参照を増やさず現在の最上位を借用します。`IoGetAttachedDeviceReference` と `IoGetDeviceAttachmentBaseRef` は最上位と基底をポインター参照付きで返します。`IoGetLowerDeviceObject` は直下を参照し、直下が存在しない場合または入力デバイスが削除待ちの場合は null を返します。直下だけが削除待ちでも結果は抑制されません。参照付きの結果はそれぞれ `ObDereferenceObject` で解放します。参照は detach/delete 後も記憶領域を保持し、`DEVICE_OBJECT.ReferenceCount` を変更しません。4 つのクエリは所有するトポロジーを検証し、IRQL は `DISPATCH_LEVEL` 以下が必要です。
 
@@ -683,3 +683,5 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 ## 制限付きカーネル呼び出し元コンテキスト取得
 
 `RtlCaptureContext` は checked-x64 Unicorn/KVM/WHP で共通の静的/動的実装を使い、IRQL <= DISPATCH_LEVEL を要求します。16 バイト境界の読み書き可能な 1232 バイトのカーネル記録に、`[48,72)`、`[120,262)`、`[280,284)`、`[416,672)` だけを書きます。他のバイト、x87 データ/ポインタ、MXCSR mask は保持します。ContextFlags=`0x10000f`、呼び出し元 RSP=入口 RSP+8、RIP は実際の戻りスロットです。入口 RSP-8 に 8 バイトのフラグを書き、RAX はゼロ拡張 EFLAGS、算術フラグは ADD(入口 RSP-8,8) に従います。DS/ES/FS/GS は checked 論理 SS であり、ホストや生の転送値ではありません。記録全体、戻り/一時領域は通常のカーネル RAM、寿命、権限、一意の物理マッピングを検証し、記録との重複を拒否します。入口 RSP は 16 を法として 8。取得/検証失敗は CPU/RAM を変更せず、legacy を拒否します。全 Windows 実装を意味せず、上書き後も環境依存を保持し、UNPACK 復元や記号的前提を許可しません。
+
+ファイルオブジェクトはアドレスごとに一意で、CREATE 中に取得する参照も共通のポインター参照管理に従います。古い本体を保持したままシナリオ番号を再利用できます。CLEANUP はシナリオのハンドルを閉じ、CLOSE は残りの保持を解放します。ドライバーの参照が残る場合、最後の解放が PASSIVE_LEVEL で実際のコールバックを送るまで、CLOSE 結果の IRP はゼロで未完了です。保留された CLOSE は解放側のスレッドを待機させます。CREATE が失敗した本体は参照が残る間保持されますが、デバイスとの関連は消え、CLOSE は送られません。関連する本体は最終破棄までデバイスを保持し、DEVICE_OBJECT.ReferenceCount に数えられます。入れ子のコールバックは呼び出し元のスレッド、プロセス、PreviousMode を継承します。ファイルハンドルの作成・複製、ファイル名照会、宣言型ファイルシステムは未対応です。

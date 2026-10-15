@@ -111,6 +111,7 @@ EXPORTS
   RtlIntegerToUnicodeString
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId
+  ExGetPreviousMode
   PsGetProcessId
   PsGetCurrentProcess
   PsGetCurrentThread

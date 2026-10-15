@@ -287,14 +287,16 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
   const bool IsInternal =
       Input.Kind == DriverRequestKind::InternalDeviceControl;
   const bool FileFree = IsPnp || IsPower || IsInternal;
+  const bool FileLifecycle = Input.Kind == DriverRequestKind::Close ||
+                             Input.Kind == DriverRequestKind::Cleanup;
   if (IsInternal && (File || Request->ProcessID))
     return ioError(
         "internal control packets require kernel file-free ownership");
   uint32_t Flags = FileFree || Request->AsynchronousFile ? 0 : IRPSynchronous;
   if (Input.Kind == DriverRequestKind::Create)
     Flags |= IRPCreate;
-  if (Input.Kind == DriverRequestKind::Close)
-    Flags |= IRPClose;
+  if (FileLifecycle)
+    Flags |= IRPClose | IRPSynchronous;
   if (Input.Kind == DriverRequestKind::Read)
     Flags |= IRPReadOperation;
   if (Input.Kind == DriverRequestKind::Write)
@@ -315,7 +317,8 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
             {IRPFlagsOffset, Flags, 4},
             {IRPSystemBufferOffset, Request->SystemBuffer, 8},
             {IRPStatusOffset, FileFree ? StatusNotSupported : 0, 4},
-            {IRPRequestorModeOffset, FileFree ? KernelMode : UserMode, 1},
+            {IRPRequestorModeOffset,
+             FileFree || FileLifecycle ? KernelMode : UserMode, 1},
             {IRPUserBufferOffset, Request->UserBuffer, 8},
             {IRPOriginalFileOffset, File, 8},
             {Request->Stack - Packet, majorFunction(Input.Kind), 1}}})
@@ -415,10 +418,21 @@ KernelModel::beginRequest(const DriverRequest &Input,
   Observation.ByteOffset = Input.ByteOffset;
   Result.Requests.push_back(std::move(Observation));
   const size_t Index = Result.Requests.size() - 1;
+  return beginFileRequest(Input, SourceIndex, Index);
+}
+
+llvm::Expected<KernelModel::Invocation>
+KernelModel::beginFileRequest(const DriverRequest &Input,
+                              std::optional<size_t> SourceIndex, size_t Index,
+                              uint64_t RetainedFile) {
+  auto FileIt = FileObjects.find(
+      RetainedFile ? RetainedFile
+                   : (Files.contains(Input.File) ? Files.at(Input.File) : 0));
   if (Unloading || Unloaded ||
-      std::any_of(Requests.begin(), Requests.end(), [](const auto &Entry) {
-        return !Entry.second.DispatchReturned;
-      }))
+      (!RetainedFile &&
+       std::any_of(Requests.begin(), Requests.end(), [](const auto &Entry) {
+         return !Entry.second.DispatchReturned;
+       })))
     return ioError(
         "cannot begin a request during another invocation or after unload");
   if ((!Input.InterruptEvents.empty() || !Input.DmaEvents.empty()) &&
@@ -491,7 +505,11 @@ KernelModel::beginRequest(const DriverRequest &Input,
   if (auto E = snapshot())
     return E;
   uint64_t Device = 0;
-  if (!Input.DeviceID.empty()) {
+  if (RetainedFile) {
+    if (FileIt == FileObjects.end() || Input.Kind != DriverRequestKind::Close)
+      return ioError("retained CLOSE lost its file object");
+    Device = FileIt->second.Device;
+  } else if (!Input.DeviceID.empty()) {
     auto Found = PnpDevices.find(Input.DeviceID);
     if (Found == PnpDevices.end() || !Found->second.AddDeviceStatus ||
         (*Found->second.AddDeviceStatus & profile::NTStatusFailureMask) ||
@@ -499,17 +517,16 @@ KernelModel::beginRequest(const DriverRequest &Input,
       return ioError(
           "file request requires a successfully added live device_id");
     Device = Found->second.PDO;
-    const auto Existing = Files.find(Input.File);
-    if (Input.Kind != DriverRequestKind::Create && Existing != Files.end()) {
-      if (Existing->second.PnpDevice != Device)
+    if (Input.Kind != DriverRequestKind::Create &&
+        FileIt != FileObjects.end()) {
+      if (FileIt->second.PnpDevice != Device)
         return ioError("device_id does not match the file's device");
-      Device = Existing->second.Device;
+      Device = FileIt->second.Device;
     }
   } else if (Input.Device.empty()) {
     // An existing file identifies its device even when several devices exist.
-    auto Existing = Files.find(Input.File);
-    if (Input.Kind != DriverRequestKind::Create && Existing != Files.end())
-      Device = Existing->second.Device;
+    if (Input.Kind != DriverRequestKind::Create && FileIt != FileObjects.end())
+      Device = FileIt->second.Device;
     else if (Devices.size() == 1)
       Device = Devices.begin()->first;
     else
@@ -524,9 +541,8 @@ KernelModel::beginRequest(const DriverRequest &Input,
   }
   Result.Requests[Index].Device = Devices.at(Device).Name;
   uint64_t PnpOwner = 0;
-  const auto ExistingFile = Files.find(Input.File);
-  if (Input.Kind != DriverRequestKind::Create && ExistingFile != Files.end()) {
-    PnpOwner = ExistingFile->second.PnpDevice;
+  if (Input.Kind != DriverRequestKind::Create && FileIt != FileObjects.end()) {
+    PnpOwner = FileIt->second.PnpDevice;
   } else {
     auto Owner = pnpDeviceForRoute(Device);
     if (!Owner)
@@ -584,7 +600,8 @@ KernelModel::beginRequest(const DriverRequest &Input,
       (!Neither ||
        (Input.Input.empty() && !Input.OutputSize && Input.UserBuffers.empty())))
     return ioError("user unmapping requires a nonempty neither-I/O transfer");
-  if (Input.RequestorProcessID <= 4)
+  if (Input.RequestorProcessID < 4 ||
+      (Input.RequestorProcessID == 4 && !RetainedFile))
     return ioError("requestor process identity must be above the system PID");
   // Process and thread IDs share one namespace; issued IDs keep their owner.
   if (IssuedThreadClientIDs.contains(Input.RequestorProcessID))
@@ -598,17 +615,16 @@ KernelModel::beginRequest(const DriverRequest &Input,
       (!Neither ||
        (Input.Input.empty() && !Input.OutputSize && Input.UserBuffers.empty())))
     return ioError("requestor exit requires a nonempty neither-I/O transfer");
-  auto FileIt = Files.find(Input.File);
   if (Input.Kind == DriverRequestKind::Create) {
     if (Devices.at(Device).DeletePending || Devices.at(*Top).DeletePending)
       return ioError("CREATE cannot target a delete-pending device");
-    if (FileIt != Files.end())
+    if (FileIt != FileObjects.end())
       return ioError("CREATE requires an unused file identity");
     auto Flags = Memory.readInteger(Device + DeviceFlagsOffset, 4);
     if (!Flags)
       return Flags.takeError();
     if ((*Flags & DeviceExclusive) &&
-        std::any_of(Files.begin(), Files.end(),
+        std::any_of(FileObjects.begin(), FileObjects.end(),
                     [&](const auto &F) { return F.second.Device == Device; }))
       return ioError("exclusive device already has a live file object");
     auto File = allocate(FileSize);
@@ -620,7 +636,9 @@ KernelModel::beginRequest(const DriverRequest &Input,
     State.PnpDevice = PnpOwner;
     State.Asynchronous = Input.AsynchronousFile.value_or(false);
     State.State = FileState::Opening;
-    FileIt = Files.emplace(Input.File, State).first;
+    FileIt = FileObjects.emplace(*File, std::move(State)).first;
+    Files.emplace(Input.File, *File);
+    ReferencedObjects.emplace(*File, ObjectReferences{ObjectKind::File});
     struct Field {
       uint64_t Offset, Value;
       unsigned Size;
@@ -639,8 +657,10 @@ KernelModel::beginRequest(const DriverRequest &Input,
               {FileNameBufferOffset, 0, 8}}})
       if (auto E = Memory.writeInteger(*File + F.Offset, F.Value, F.Size))
         return E;
+    if (auto E = updateDeviceReferences(Device))
+      return E;
   } else {
-    if (FileIt == Files.end() || FileIt->second.Device != Device)
+    if (FileIt == FileObjects.end() || FileIt->second.Device != Device)
       return ioError(
           "request requires a successful CREATE on the same device and file");
     const auto State = FileIt->second.State;
@@ -670,6 +690,20 @@ KernelModel::beginRequest(const DriverRequest &Input,
         }))
       return ioError("asynchronous file lifecycle requires prior transfers "
                      "to finalize");
+  }
+  if (Input.Kind == DriverRequestKind::Close) {
+    auto &File = FileIt->second;
+    const auto &References = ReferencedObjects.at(File.Address);
+    if (References.Pointers || References.Handles) {
+      if (RetainedFile)
+        return ioError("retained CLOSE still has external references");
+      File.DeferredClose = DeferredFileClose{Input, Index, SourceIndex};
+      Files.erase(Input.File);
+      // No CLOSE was dispatched. Its existing result row is filled only when
+      // the last pointer releases this particular body, even after ID reuse.
+      return Invocation{};
+    }
+    File.State = FileState::Closing;
   }
   auto Packet = allocate(IRPSize + *StackCount * StackSize);
   if (!Packet)
@@ -1119,8 +1153,9 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
     return snapshot();
   }
   auto &Observation = Result.Requests[Request->ResultIndex];
-  auto FileIt = Files.find(Request->FileId);
-  if (FileIt == Files.end() || FileIt->second.Address != Request->FileAddress ||
+  auto FileIt = FileObjects.find(Request->FileAddress);
+  if (FileIt == FileObjects.end() ||
+      FileIt->second.Address != Request->FileAddress ||
       FileIt->second.Device != Request->Device ||
       FileIt->second.PnpDevice != Request->PnpDevice)
     return ioError("active request lost its file identity");
@@ -1133,21 +1168,37 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
   if (Request->Kind == DriverRequestKind::Create) {
     if (ntSuccess(CompletionStatus)) {
       File.State = FileState::Open;
+      auto Flags = Memory.readInteger(File.Address + FileFlagsOffset, 4);
+      if (!Flags)
+        return Flags.takeError();
+      if (auto E = Memory.writeInteger(File.Address + FileFlagsOffset,
+                                       *Flags | FileHandleCreated, 4))
+        return E;
     } else {
-      FreedRanges.emplace(File.Address, FileSize);
-      Files.erase(FileIt);
+      Files.erase(Request->FileId);
+      File.State = FileState::Failed;
+      File.Device = 0;
+      File.PnpDevice = 0;
+      if (auto E = Memory.writeInteger(File.Address + FileDeviceOffset, 0, 8))
+        return E;
+      if (auto E = retireFileIfUnreferenced(File.Address))
+        return E;
     }
   } else if (Request->Kind == DriverRequestKind::Cleanup) {
     File.State = FileState::Cleaned;
-    if (auto E = Memory.writeInteger(
-            File.Address + FileFlagsOffset,
-            (File.Asynchronous ? FileFlags & ~FileSynchronousIO : FileFlags) |
-                FileCleanupComplete,
-            4))
+    auto Flags = Memory.readInteger(File.Address + FileFlagsOffset, 4);
+    if (!Flags)
+      return Flags.takeError();
+    if (auto E = Memory.writeInteger(File.Address + FileFlagsOffset,
+                                     *Flags | FileCleanupComplete, 4))
       return E;
   } else if (Request->Kind == DriverRequestKind::Close) {
+    const auto Identity = Files.find(Request->FileId);
+    if (Identity != Files.end() && Identity->second == File.Address)
+      Files.erase(Identity);
     FreedRanges.emplace(File.Address, FileSize);
-    Files.erase(FileIt);
+    ReferencedObjects.erase(File.Address);
+    FileObjects.erase(FileIt);
   } else if ((Request->Kind == DriverRequestKind::Read ||
               Request->Kind == DriverRequestKind::Write) &&
              !ntError(CompletionStatus) && !File.Asynchronous) {
@@ -1178,7 +1229,7 @@ llvm::Expected<KernelModel::Invocation> KernelModel::beginUnload() {
   if (Scheduler.queuedCallbackCount() || Scheduler.active() ||
       Scheduler.suspendedCallbackCount())
     return ioError("unload requires scheduled callbacks to drain");
-  if (!Requests.empty() || !Files.empty() || !DriverIRPs.empty())
+  if (!Requests.empty() || !FileObjects.empty() || !DriverIRPs.empty())
     return ioError(
         "unload requires all requests completed and the file closed");
   if (Unloading || Unloaded)
@@ -1215,7 +1266,7 @@ llvm::Error KernelModel::finishUnload() {
   if (Framework && Framework->hasLiveBinding())
     return ioError("unload returned with a live framework binding");
   if (!Devices.empty() || !SymbolicLinks.empty() || !Allocations.empty() ||
-      !Files.empty() || !Requests.empty() || !DriverIRPs.empty() ||
+      !FileObjects.empty() || !Requests.empty() || !DriverIRPs.empty() ||
       !MDLs.empty() || !WorkItems.empty() || !IRPCalls.empty() ||
       PendingWdmCall || Scheduler.hasPending() || !PoFxDeviceObjects.empty() ||
       !BlockingPoFx.empty())
@@ -1241,7 +1292,7 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
             "guest access to an opaque or read-only WDM request field");
     return llvm::Error::success();
   };
-  for (const auto &[Id, File] : Files) {
+  for (const auto &[Id, File] : FileObjects) {
     (void)Id;
     if (auto E = Check(File.Address, FileSize, [&](uint64_t Offset) {
           if (IsWrite)

@@ -217,6 +217,11 @@ bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
     for (va_t VA : ConflictingImportStorageSlots)
       if (S->contains(VA))
         return true;
+    for (const auto &[VA, Name] : ExternalFunctionPointerSlots) {
+      (void)Name;
+      if (S->contains(VA))
+        return true;
+    }
     return false;
   };
   auto overlapsRuntimeCallableSlots = [&]() {
@@ -409,6 +414,11 @@ bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
     for (va_t S : ConflictingImportStorageSlots)
       if (S >= RunStart && S < RunEnd)
         return true;
+    for (const auto &[S, Name] : ExternalFunctionPointerSlots) {
+      (void)Name;
+      if (S >= RunStart && S < RunEnd)
+        return true;
+    }
     return false;
   };
   auto runtimeCallableInRun = [&]() {

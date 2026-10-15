@@ -210,7 +210,7 @@ KernelModel::validateDeviceStackMutation(llvm::ArrayRef<uint64_t> Stack) const {
     if (FrameworkDevices.count(Address))
       return deviceError("framework device attachment is outside this profile");
     if (Device.InternalReferences || Scheduler.hasOutstanding(Address) ||
-        std::any_of(Files.begin(), Files.end(),
+        std::any_of(FileObjects.begin(), FileObjects.end(),
                     [&](const auto &Entry) {
                       return Entry.second.Address &&
                              Entry.second.Device == Address;

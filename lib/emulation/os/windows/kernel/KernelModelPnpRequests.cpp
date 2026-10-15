@@ -136,7 +136,7 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
     if (State->Pnp == DevicePnpState::Started)
       return pnpError(
           "normal removal of a started device requires query-remove");
-    for (const auto &[ID, File] : Files) {
+    for (const auto &[ID, File] : FileObjects) {
       (void)ID;
       if (File.PnpDevice == PDO)
         return pnpError("remove requires all device files to close");

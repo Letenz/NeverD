@@ -20,6 +20,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/DataSymbolMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -94,7 +95,7 @@ MedLLVMEmitter::resolveDataSymbolAddress(const DataSymbolBinding &Binding) {
                                 Binding.Name);
   if (!Binding.Definition)
     if (auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Target))
-      Global->setMetadata("neverd.data-symbol", llvm::MDNode::get(*Ctx, {}));
+      data_symbol::mark(*Global);
   auto *Integer = llvm::IntegerType::get(*Ctx, Img->getPointerSize() * 8);
   auto *Address = llvm::ConstantExpr::getPtrToInt(Target, Integer);
   return Binding.Addend
@@ -550,6 +551,7 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
       Img->DataPtrRelocSlots.count(Addr) != 0 ||
       EffectiveImportStorageSlots.count(Addr) != 0 ||
       ConflictingImportStorageSlots.count(Addr) != 0 ||
+      ExternalFunctionPointerSlots.count(Addr) != 0 ||
       Img->hasRuntimeCallablePointerSlotAt(Addr);
   bool IsInductionStringBase = isInductionRodataStringBase(Addr);
   if (IsString && StrLen > 0 && AtStringStart && !SizedObjectBeyondString &&
