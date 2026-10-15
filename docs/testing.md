@@ -55,7 +55,15 @@ module cache identities. `NativeLLVMInspection*` preserves inspection branches
 across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
 checks integer and floating call results, unchanged LLVM/source output and
 resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
-prepared function on invalid view names. Worker source-cache tests also check
+prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
+builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
+the GOT's mirror before the definition and name the `__libc_start_main` slot as
+the listing does; pages keep the prelude, epilogue and by-line references
+through small pages, a rename of the slot reaches the comment, and `main`'s
+strings read beside their references.
+`LLVMViewMapsEachSpellingOfAMirrorToItsOwnOffset` renders a hand-written
+module: a mirror spelled at two offsets on one line, and on a call whose
+callee prints before its arguments, maps each spelling to its own address. Worker source-cache tests also check
 that preparation receives the requested LLVM representation.
 `HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
@@ -114,6 +122,12 @@ the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
 than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
+`llvmIrNamesGoWhereTheyStandFor` opens LLVM IR between its folded prelude and
+epilogue, jumps to the lines defining values, blocks, parameters, attribute
+groups and metadata, shows the declaration of a name the binary lacks, resolves
+a comment's address, and sends an image mirror to its first byte where declared,
+to the byte its constant offset reaches on a load, and each of two spellings on
+one line to its own offset.
 Cross-reference cases query the name under the code cursor while assembly is
 at a different function, then select an instruction in the caller. They check
 the originating window, representation and pin, proven source-line mapping,

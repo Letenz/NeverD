@@ -1447,6 +1447,32 @@ Operazione di libreria riconosciuta; fai clic per mostrarne il codice.</translat
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Gli include, i tipi di supporto e le dichiarazioni con cui questo codice viene compilato; fai clic per mostrarli, - del tastierino numerico per richiuderli.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n riga di dichiarazioni</numerusform>
+            <numerusform>%n righe di dichiarazioni</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n riga di attributi e metadati</numerusform>
+            <numerusform>%n righe di attributi e metadati</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>Il target, i tipi, le variabili globali e le funzioni a cui fa riferimento questa funzione; fai clic per mostrarli, - del tastierino numerico per richiuderli.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>I gruppi di attributi e i metadati usati da questa funzione; fai clic per mostrarli, - del tastierino numerico per richiuderli.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>Fai doppio clic per andare a %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>

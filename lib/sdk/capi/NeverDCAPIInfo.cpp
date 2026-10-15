@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "ImportSlots.h"
 #include "JSONText.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
@@ -228,35 +229,41 @@ const char *neverd_imports_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
-const char *neverd_import_slots_json(neverd_session_t Sess) {
-  auto *S = toSession(Sess);
-  if (!S || !S->Loaded)
-    return dupStr(std::string("[]"));
-  const auto Collection = S->Img.collectImportStorageSlots();
-  std::map<va_t, std::pair<std::string, int64_t>> Slots;
+std::map<va_t, ImportAddressSlot>
+neverd::sdk::importAddressSlots(const BinaryImage &Img) {
+  const auto Collection = Img.collectImportStorageSlots();
+  std::map<va_t, ImportAddressSlot> Slots;
   std::set<va_t> Conflicts(Collection.Conflicts.begin(),
                            Collection.Conflicts.end());
   const auto Note = [&](va_t Addr, const std::string &Name, int64_t Addend) {
     if (Name.empty())
       return;
-    auto [It, Inserted] = Slots.try_emplace(Addr, Name, Addend);
-    if (!Inserted && (It->second.first != Name || It->second.second != Addend))
+    auto [It, Inserted] =
+        Slots.try_emplace(Addr, ImportAddressSlot{Name, Addend});
+    if (!Inserted && (It->second.Name != Name || It->second.Addend != Addend))
       Conflicts.insert(Addr);
   };
   for (const auto &[Addr, Slot] : Collection.Slots)
     Note(Addr, Slot.Name, Slot.Addend);
-  if (S->Img.Format == BinaryFormat::ELF && !S->Img.IsRelocatable)
-    for (const auto &Rel : S->Img.Relocations)
-      if (elf_loader::isELFSlotBinding(S->Img.Arch, Rel.Type))
+  if (Img.Format == BinaryFormat::ELF && !Img.IsRelocatable)
+    for (const auto &Rel : Img.Relocations)
+      if (elf_loader::isELFSlotBinding(Img.Arch, Rel.Type))
         Note(Rel.Address, Rel.SymbolName, Rel.Addend);
+  for (va_t Addr : Conflicts)
+    Slots.erase(Addr);
+  return Slots;
+}
+
+const char *neverd_import_slots_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
   llvm::json::Array Arr;
-  for (const auto &[Addr, Slot] : Slots) {
-    if (Conflicts.count(Addr))
-      continue;
+  for (const auto &[Addr, Slot] : importAddressSlots(S->Img)) {
     llvm::json::Object Obj{{"addr", vaHex(Addr)},
-                           {"name", jsonSafeText(Slot.first)},
-                           {"addend", Slot.second}};
-    addCName(Obj, Slot.first, S->Img);
+                           {"name", jsonSafeText(Slot.Name)},
+                           {"addend", Slot.Addend}};
+    addCName(Obj, Slot.Name, S->Img);
     Arr.push_back(std::move(Obj));
   }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
