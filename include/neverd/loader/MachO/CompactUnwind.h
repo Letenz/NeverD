@@ -37,6 +37,13 @@
 
 namespace neverd::macho_unwind {
 
+/// ARM32 unwind code pointers may carry the Thumb state bit. Semantic PC
+/// ranges use byte addresses. This applies only to declared code-address
+/// fields, never to data pointers, section offsets, or range lengths.
+constexpr uint64_t canonicalCodeAddress(Arch TargetArch, uint64_t Address) {
+  return TargetArch == Arch::ARM ? Address & ~uint64_t(1) : Address;
+}
+
 /// `__unwind_info` section header.  Every `*SectionOffset` field is an offset
 /// from the start of the section; every `functionOffset` and `lsdaOffset` is
 /// an offset from the Mach-O header, i.e. from the image base.

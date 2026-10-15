@@ -888,7 +888,8 @@ TEST(MachOARM32Transaction, UnprovenOddCodeExportIsNotNormalized) {
   checkARM32TrieAddress(kARM32TextOff + 1, false, kARM32TextOff + 1);
 }
 
-void checkMixedSourceMode(bool Replacement, bool ThumbEvidence) {
+void checkMixedSourceMode(bool Replacement, bool ThumbEvidence,
+                          bool TaggedUnwind = false) {
   ARM32TransactionFixture Fixture = makeARM32TransactionFixture(
       macho_unwind::kARMModeFrame | macho_unwind::kARMFrameFirstPushR4,
       /*CompactCapacity=*/0x2000);
@@ -896,6 +897,12 @@ void checkMixedSourceMode(bool Replacement, bool ThumbEvidence) {
   auto *Symbols =
       reinterpret_cast<nlist *>(Fixture.Binary.data() + kARM32SymtabOff);
   addARM32TrieExport(Fixture, kARM32TextOff + 1);
+  if (TaggedUnwind) {
+    writeU32(Fixture.Binary, kARM32UnwindOff + 28, kARM32TextOff + 1);
+    writeU32(Fixture.Binary, kARM32UnwindOff + 40,
+             kARM32TextOff + kARM32TextSize + 1);
+    writeU32(Fixture.Binary, kARM32UnwindOff + 60, kARM32TextOff + 1);
+  }
   // An unrelated ARM leaf models the import thunks in a linked iOS image.
   Symbols[2].n_desc = 0;
   writeU32(Fixture.Binary, kARM32TextOff + 0x20, 0xe3a0002f); // mov r0, #47
@@ -966,6 +973,90 @@ TEST(MachOARM32Transaction,
 
 TEST(MachOARM32Transaction, MixedLiftedRewriteStillRefuses) {
   checkMixedSourceMode(false, true);
+}
+
+TEST(MachOARM32Transaction, TaggedCompactRangesPermitExactThumbReplacement) {
+  checkMixedSourceMode(true, true, true);
+}
+
+TEST(MachOARM32Transaction, TaggedUnwindNormalizationPreservesOddLSDAAddress) {
+  auto Bytes = makeRegularCompactUnwind(macho_unwind::kARMModeFrame |
+                                        macho_unwind::kHasLSDA);
+  Bytes.insert(Bytes.begin() + 52, 8, 0);
+  writeU32(Bytes, 28, kARM32TextOff + 1);
+  writeU32(Bytes, 32, 60); // second-level page after the LSDA row
+  writeU32(Bytes, 36, 52);
+  writeU32(Bytes, 40, kARM32TextOff + kARM32TextSize + 1);
+  writeU32(Bytes, 48, 60);
+  writeU32(Bytes, 52, kARM32TextOff + 1);
+  writeU32(Bytes, 56, kARM32GOTOff + 1);
+  writeU32(Bytes, 68, kARM32TextOff + 1);
+  auto Raw = macho_unwind::parseCompactUnwindRaw(Bytes);
+  ASSERT_TRUE(bool(Raw)) << llvm::toString(Raw.takeError());
+  MachOCompactUnwindRecords EmptyGenerated;
+  EmptyGenerated.TargetArch = Arch::ARM;
+  EmptyGenerated.PointerWidth = 4;
+  EmptyGenerated.ByteOrder = llvm::endianness::little;
+  auto Merged = mergeMachOCompactUnwind(Arch::ARM, kARM32ImageBase, *Raw,
+                                        EmptyGenerated, {});
+  ASSERT_TRUE(bool(Merged)) << llvm::toString(Merged.takeError());
+  ASSERT_EQ(Merged->Records.size(), 1u);
+  EXPECT_EQ(Merged->Records.front().FunctionRVA, kARM32TextOff);
+  EXPECT_EQ(Merged->Records.front().FunctionEndRVA,
+            kARM32TextOff + kARM32TextSize);
+  EXPECT_EQ(Merged->Records.front().LSDARVA,
+            std::optional<uint32_t>(kARM32GOTOff + 1));
+  EXPECT_EQ(Raw->OriginalBytes, Bytes);
+}
+
+TEST(MachOARM32Transaction, TaggedDwarfCodeLocationsUseCanonicalAddresses) {
+  auto Fixture =
+      makeARM32TransactionFixture(macho_unwind::kARMModeFrame, 0x2000);
+  ASSERT_FALSE(Fixture.Binary.empty());
+  std::vector<uint8_t> Frame;
+  auto Append32 = [&](uint32_t Value) {
+    const auto Offset = Frame.size();
+    Frame.resize(Offset + 4);
+    writeU32(Frame, Offset, Value);
+  };
+  Append32(13);
+  Append32(0);
+  Frame.insert(Frame.end(), {1, 'z', 'R', 0, 1, 0x7c, 14, 1, 0});
+  const auto FDE = Frame.size();
+  Append32(18);
+  Append32(static_cast<uint32_t>(FDE + 4));
+  Append32(kARM32FunctionVA + 1);
+  Append32(0x10);
+  Frame.push_back(0); // empty augmentation
+  Frame.push_back(1); // DW_CFA_set_loc
+  Append32(kARM32FunctionVA + 5);
+  Append32(0);
+  std::copy(Frame.begin(), Frame.end(),
+            Fixture.Binary.begin() + kARM32EHFrameOff);
+  auto *Segment = reinterpret_cast<segment_command *>(Fixture.Binary.data() +
+                                                      sizeof(mach_header));
+  auto *Sections = reinterpret_cast<section *>(Segment + 1);
+  Sections[1].size = static_cast<uint32_t>(Frame.size());
+  Sections[2].size = 0; // isolate the FDE-only semantic path
+  llvm::SmallString<128> Path;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-arm32-tagged-fde",
+                                                  "macho", Path));
+  llvm::FileRemover Remove(Path);
+  ASSERT_TRUE(writeFile(Path, Fixture.Binary));
+  MachOLoader Loader;
+  auto Image = Loader.load(Path.str().str());
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  ASSERT_EQ(Image->ExceptionMetadata.Functions.size(), 1u);
+  const auto &Function = Image->ExceptionMetadata.Functions.front();
+  ASSERT_TRUE(Function.Dwarf.has_value());
+  EXPECT_EQ(Function.CodeRange.Begin, kARM32FunctionVA);
+  EXPECT_EQ(Function.CodeRange.End, kARM32FunctionVA + 0x10);
+  EXPECT_EQ(Function.Dwarf->InitialLocation, kARM32FunctionVA);
+  EXPECT_EQ(Function.Dwarf->AddressRange, 0x10u);
+  ASSERT_EQ(Function.Dwarf->Instructions.size(), 1u);
+  EXPECT_EQ(Function.Dwarf->Instructions.front().Kind, CFIOpKind::SetLoc);
+  EXPECT_EQ(Function.Dwarf->Instructions.front().Offset, kARM32FunctionVA + 4);
+  EXPECT_EQ(Image->Raw, Fixture.Binary);
 }
 
 TEST(MachOARM32Transaction, DoesNotTreatTextSegmentDataAsModeEvidence) {

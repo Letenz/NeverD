@@ -1557,13 +1557,17 @@ normalizeOriginalTable(Arch TargetArch,
     RemainingLSDAs.emplace(Entry.FunctionOffset, Entry.LSDAOffset);
 
   NormalizedOriginalTable Result;
-  Result.TerminalFunctionRVA = Original.Index.back().FunctionOffset;
+  Result.TerminalFunctionRVA = static_cast<uint32_t>(
+      canonicalCodeAddress(TargetArch, Original.Index.back().FunctionOffset));
   Result.Records.reserve(Entries.size());
   for (size_t I = 0; I < Entries.size(); ++I) {
-    const auto [FunctionRVA, Encoding] = Entries[I];
-    const uint32_t FunctionEndRVA = I + 1 == Entries.size()
-                                        ? Result.TerminalFunctionRVA
-                                        : Entries[I + 1].first;
+    const auto [RawFunctionRVA, Encoding] = Entries[I];
+    const uint32_t FunctionRVA =
+        static_cast<uint32_t>(canonicalCodeAddress(TargetArch, RawFunctionRVA));
+    const uint32_t FunctionEndRVA =
+        I + 1 == Entries.size() ? Result.TerminalFunctionRVA
+                                : static_cast<uint32_t>(canonicalCodeAddress(
+                                      TargetArch, Entries[I + 1].first));
     if (FunctionRVA >= FunctionEndRVA)
       return mergeError(MergeFailure::InvalidOriginalTable,
                         MergeInputKind::OriginalRecord, I,
@@ -1579,7 +1583,7 @@ normalizeOriginalTable(Arch TargetArch,
       return mergeError(MergeFailure::PersonalityIndexOutOfRange,
                         MergeInputKind::OriginalRecord, I);
 
-    const auto LSDAIt = RemainingLSDAs.find(FunctionRVA);
+    const auto LSDAIt = RemainingLSDAs.find(RawFunctionRVA);
     const bool HasLSDAEntry = LSDAIt != RemainingLSDAs.end();
     if (((Encoding & kHasLSDA) != 0) != HasLSDAEntry)
       return mergeError(MergeFailure::LSDAEncodingMismatch,
