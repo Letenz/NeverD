@@ -1,0 +1,178 @@
+//===- TypeRenderShared.h - What every type language shares -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// What the C, C++, Rust and Go renderers share: offset comments, names
+/// that step around a language's keywords, and where a language's own
+/// layout would put a member, so that a filler can move it to the offset
+/// the library records.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LIB_TYPES_TYPERENDERSHARED_H
+#define NEVERD_LIB_TYPES_TYPERENDERSHARED_H
+
+#include "neverd/types/LocalTypes.h"
+#include "neverd/types/TypeRender.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace neverd::types::render {
+
+/// Hex digits that show every offset of a record of \p Size bytes.
+unsigned offsetDigits(uint64_t Size);
+
+/// A byte offset as a comment shows it: 0x1A0 padded to \p Digits, or a
+/// decimal +416.
+std::string offsetText(uint64_t Byte, const RenderOptions &Options,
+                       unsigned Digits);
+
+/// A bitfield's place in its storage unit: "bit 3" or "bits 4..63".
+std::string bitText(uint64_t BitInUnit, uint32_t Width);
+
+/// \p Name made safe from \p Lang's keywords.
+std::string escapedName(Language Lang, llvm::StringRef Name);
+
+/// \p Code followed by "// Comment" at the comment column.
+std::string withComment(std::string Code, llvm::StringRef Comment,
+                        const RenderOptions &Options);
+
+uint64_t alignTo(uint64_t Value, uint64_t Alignment);
+
+/// Where a language that lays a structure's members out one after another
+/// would put the next member, and how many bytes a filler needs to put it
+/// where the library records it instead.
+class SequentialLayout {
+public:
+  explicit SequentialLayout(uint32_t Pack) : Pack(Pack) {}
+
+  struct Step {
+    /// Bytes an explicit filler must take before the member.
+    uint64_t Filler = 0;
+    /// Bytes the language pads with on its own before the member.
+    uint64_t Padding = 0;
+  };
+
+  /// Places a member of \p Size and \p Alignment at \p Byte.
+  Step place(uint64_t Byte, uint64_t Size, uint32_t Alignment);
+  /// Closes a record of \p Size and \p Alignment.
+  Step finish(uint64_t Size, uint32_t Alignment) const;
+  uint64_t end() const { return End; }
+
+private:
+  uint32_t Pack;
+  uint64_t End = 0;
+};
+
+/// One place of a record laid out for a language without anonymous records
+/// or bitfields, as Rust and Go are.
+struct Slot {
+  enum class Kind : uint8_t {
+    Field,     ///< A member; an anonymous record has a generated type.
+    Bitfields, ///< A run of bitfields in one storage unit.
+    Filler,    ///< Bytes that move the next place to its offset.
+  };
+  Kind TheKind = Kind::Field;
+  /// Field: the member.  Bitfields: the run, in order.
+  const Member *Field = nullptr;
+  std::vector<const Member *> Bits;
+  /// Bitfields: the storage unit's type.
+  TypeExprRef Storage;
+  /// In bytes from the record that holds the place.
+  uint64_t Byte = 0;
+  /// Filler: its length in bytes.
+  uint64_t Size = 0;
+  /// Bytes the language pads with on its own before the place.
+  uint64_t PaddingBefore = 0;
+  /// The field's name: the member's, Anonymous for an anonymous record,
+  /// _bitfield for a run, as windows-rs names them.
+  std::string Name;
+  /// Field: the generated name of an anonymous record's or enumeration's
+  /// type, and the bounds of the arrays of it, outermost first.
+  std::string NestedType;
+  std::vector<uint64_t> Bounds;
+};
+
+/// A record laid out in slots, with its anonymous records, which take the
+/// names <Name>_0, <Name>_1 and so on.
+struct RecordPlan {
+  std::string Name;
+  const RecordDef *Record = nullptr;
+  uint32_t Pack = 0;
+  std::vector<Slot> Slots;
+  uint64_t TailFiller = 0;
+  uint64_t TailPadding = 0;
+  std::vector<RecordPlan> Nested;
+  /// Anonymous enumerations, by their generated names.
+  std::vector<std::pair<std::string, const EnumDef *>> Enums;
+};
+
+/// \p Record laid out as \p Name under \p Pack, which its anonymous records
+/// share unless they have their own.
+RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
+                      std::string Name, uint32_t Pack, Language Lang);
+
+/// How a bitfield of \p Type reads: the bytes of its storage unit, and
+/// whether its value is signed, which C extends from its top bit.
+struct BitStorage {
+  unsigned Bytes = 0;
+  bool Signed = false;
+};
+BitStorage bitStorage(const TypeLibrary &Library, const TypeExpr &Type);
+
+/// One accessor's arithmetic on a run's unsigned storage, as Rust and Go
+/// spell it alike: the field's bits, sign-extended when the field is signed.
+struct BitAccess {
+  unsigned UnitBits = 0;
+  uint64_t Shift = 0;
+  uint32_t Width = 0;
+  bool Signed = false;
+  /// The mask of the field's bits, before shifting, in hexadecimal.
+  std::string Mask;
+};
+BitAccess bitAccess(const TypeLibrary &Library, const Member &Field);
+
+/// \p Type's innermost element through arrays, with their bounds.
+const TypeExpr &arrayElement(const TypeExpr &Type,
+                             std::vector<uint64_t> &Bounds);
+
+/// The named types \p Roots need, closed over: by value and, when
+/// \p ThroughPointers, behind pointers too.  Every type when \p Roots is
+/// empty.  In ordinal order.
+std::vector<const LocalType *>
+neededTypes(const TypeLibrary &Library, llvm::ArrayRef<const LocalType *> Roots,
+            bool ThroughPointers);
+
+/// The named types \p Type holds by value, which C needs complete first.
+void valueDependencies(const TypeExpr &Type, std::vector<std::string> &Names);
+void valueDependencies(const LocalType &Type, std::vector<std::string> &Names);
+
+/// Every named type \p Type mentions, through pointers too.
+void mentionedTypes(const TypeExpr &Type, std::vector<std::string> &Names);
+void mentionedTypes(const LocalType &Type, std::vector<std::string> &Names);
+
+/// The renderers of each language.
+std::string renderC(const TypeLibrary &Library, const LocalType &Type,
+                    const RenderOptions &Options);
+std::string renderCHeader(const TypeLibrary &Library,
+                          llvm::ArrayRef<const LocalType *> Types,
+                          const RenderOptions &Options);
+std::string renderRust(const TypeLibrary &Library, const LocalType &Type,
+                       const RenderOptions &Options);
+std::string renderRustModule(const TypeLibrary &Library,
+                             llvm::ArrayRef<const LocalType *> Types,
+                             const RenderOptions &Options);
+std::string renderGo(const TypeLibrary &Library, const LocalType &Type,
+                     const RenderOptions &Options);
+std::string renderGoFile(const TypeLibrary &Library,
+                         llvm::ArrayRef<const LocalType *> Types,
+                         const RenderOptions &Options);
+
+} // namespace neverd::types::render
+
+#endif // NEVERD_LIB_TYPES_TYPERENDERSHARED_H

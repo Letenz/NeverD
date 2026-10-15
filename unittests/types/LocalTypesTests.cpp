@@ -24,6 +24,16 @@ FlatMember flat(std::string Name, Builtin Type, uint64_t Byte,
   Member.BitOffset = Byte * 8;
   Member.StorageBitOffset = Byte * 8;
   Member.StorageBits = builtinBytes(Type, Model) * 8;
+  Member.Alignment = builtinBytes(Type, Model);
+  return Member;
+}
+
+/// \p Count elements of \p Type at \p Byte.
+FlatMember array(std::string Name, Builtin Type, uint64_t Count,
+                 uint64_t Byte) {
+  FlatMember Member = flat(std::move(Name), Type, Byte);
+  Member.Type = makeArray(makeBuiltin(Type), Count);
+  Member.StorageBits *= Count;
   return Member;
 }
 
@@ -213,4 +223,69 @@ TEST(LocalTypesNesting, NestedUnionInsideAStructAlternative) {
   EXPECT_EQ(shapeOf(Record),
             "struct{union@0{D@0 struct@0{A@0 union@4{B@0 C@0}}}}");
   expectRoundTrip(Record, Flat);
+}
+
+TEST(LocalTypesNesting, AMemberReachingBackTakesTheMembersItOverlaps) {
+  // struct { union { struct { Kernel; Special; }; Combined; }; }, as
+  // _KTHREAD has CombinedApcDisable over two SHORTs.
+  const std::vector<FlatMember> Flat = {
+      flat("Fill", Builtin::ULong, 0), flat("Kernel", Builtin::Short, 4),
+      flat("Special", Builtin::Short, 6), flat("Combined", Builtin::ULong, 4)};
+  const RecordDef Record = nested(Flat);
+  EXPECT_EQ(shapeOf(Record), "struct{Fill@0 union@4{struct@0{Kernel@0 "
+                             "Special@2} Combined@0}}");
+  expectRoundTrip(Record, Flat);
+}
+
+TEST(LocalTypesNesting, AMemberReachingBackOverAGapTakesEverythingBetween) {
+  // C lies inside A, after B: the union holds all three in order.
+  const std::vector<FlatMember> Flat = {flat("A", Builtin::ULong, 0),
+                                        flat("B", Builtin::ULong, 8),
+                                        flat("C", Builtin::UShort, 2)};
+  const RecordDef Record = nested(Flat);
+  EXPECT_EQ(shapeOf(Record),
+            "struct{union@0{struct@0{A@0 B@8} struct@0{C@2}}}");
+  expectRoundTrip(Record, Flat);
+}
+
+TEST(LocalTypesNesting, LayoutProblemsNameTheMember) {
+  TypeLibrary Library;
+  RecordDef Record;
+  Record.Size = 8;
+  Member A;
+  A.Name = "A";
+  A.Type = makeBuiltin(Builtin::ULong);
+  Member B = A;
+  B.Name = "B";
+  B.BitOffset = 16;
+  Record.Members = {A, B};
+  EXPECT_EQ(layoutProblem(Library, Record), "B overlaps the member before it");
+  Record.Members[1].BitOffset = 48;
+  EXPECT_EQ(layoutProblem(Library, Record), "B reaches past its record");
+  Record.Members[1].BitOffset = 32;
+  EXPECT_EQ(layoutProblem(Library, Record), "");
+  Record.Union = true;
+  EXPECT_EQ(layoutProblem(Library, Record), "B does not begin its union");
+}
+
+TEST(LocalTypesNesting, AMemberInAUnionsPaddingBelongsToIt) {
+  // union { ULONGLONG Quad; struct { ULONG Overlay[3]; ULONG Pad; }; }, as
+  // _KUSER_SHARED_DATA has TickCountPad: the union pads Overlay to 16.
+  std::vector<FlatMember> Flat = {flat("Quad", Builtin::ULongLong, 0),
+                                  array("Overlay", Builtin::ULong, 3, 0),
+                                  flat("Pad", Builtin::ULong, 12),
+                                  flat("Cookie", Builtin::ULong, 16)};
+  const RecordDef Record = nested(Flat);
+  EXPECT_EQ(shapeOf(Record),
+            "struct{union@0{Quad@0 struct@0{Overlay@0 Pad@12}} Cookie@16}");
+  EXPECT_EQ(Record.Members[0].Type->Record->Size, 16u);
+  expectRoundTrip(Record, Flat);
+
+  // Packed to four, the union ends with Overlay.
+  Flat[0].Alignment = 4;
+  const RecordDef Packed = nested(Flat);
+  EXPECT_EQ(shapeOf(Packed),
+            "struct{union@0{Quad@0 Overlay@0} Pad@12 Cookie@16}");
+  EXPECT_EQ(Packed.Members[0].Type->Record->Size, 12u);
+  expectRoundTrip(Packed, Flat);
 }

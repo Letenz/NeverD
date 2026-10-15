@@ -275,7 +275,13 @@ struct Unit {
   uint64_t Begin = 0;
   uint64_t Finish = 0; ///< One past its last bit.
   bool Bitfields = false;
+  uint32_t Alignment = 1;
 };
+
+uint64_t alignBits(uint64_t Bits, uint32_t Alignment) {
+  const uint64_t Unit = uint64_t(std::max<uint32_t>(Alignment, 1)) * 8;
+  return (Bits + Unit - 1) / Unit * Unit;
+}
 
 std::vector<Unit> unitsOf(llvm::ArrayRef<FlatMember> Flat) {
   std::vector<Unit> Units;
@@ -290,23 +296,27 @@ std::vector<Unit> unitsOf(llvm::ArrayRef<FlatMember> Flat) {
             Last.StorageBits == Field.StorageBits &&
             Field.BitOffset >= Last.BitOffset + Last.BitWidth) {
           Units.back().End = I + 1;
+          Units.back().Alignment =
+              std::max(Units.back().Alignment, Field.Alignment);
           continue;
         }
       }
       Units.push_back({I, I + 1, Field.StorageBitOffset,
-                       Field.StorageBitOffset + Field.StorageBits, true});
+                       Field.StorageBitOffset + Field.StorageBits, true,
+                       Field.Alignment});
       continue;
     }
     Units.push_back({I, I + 1, Field.BitOffset,
-                     Field.BitOffset + Field.StorageBits, false});
+                     Field.BitOffset + Field.StorageBits, false,
+                     Field.Alignment});
   }
   return Units;
 }
 
 class Nester {
 public:
-  explicit Nester(llvm::ArrayRef<FlatMember> Flat)
-      : Flat(Flat), Units(unitsOf(Flat)) {}
+  Nester(llvm::ArrayRef<FlatMember> Flat, uint32_t Pack)
+      : Flat(Flat), Units(unitsOf(Flat)), Pack(Pack) {}
 
   std::vector<Member> record(bool Union) {
     if (Units.empty())
@@ -326,17 +336,28 @@ private:
       M.Type = Field.Type;
       M.BitOffset = Field.BitOffset - Base;
       M.BitWidth = Field.BitWidth;
+      if (Field.BitWidth)
+        M.StorageBitOffset = Field.StorageBitOffset - Base;
       Out.push_back(std::move(M));
     }
   }
 
+  /// The alignment of units [First, End) together.
+  uint32_t alignment(size_t First, size_t End) const {
+    uint32_t Alignment = 1;
+    for (size_t I = First; I < End; ++I)
+      Alignment = std::max(Alignment, Units[I].Alignment);
+    return Alignment;
+  }
+
   /// An anonymous record in place, holding \p Members, at \p Begin from
-  /// \p Base.
+  /// \p Base; the compiler pads it up to its \p Alignment.
   Member anonymous(bool Union, std::vector<Member> Members, uint64_t Begin,
-                   uint64_t Finish, uint64_t Base) {
+                   uint64_t Finish, uint64_t Base, uint32_t Alignment) {
     auto Record = std::make_shared<RecordDef>();
     Record->Union = Union;
-    Record->Size = (Finish - Begin + 7) / 8;
+    Record->Size = alignBits(Finish - Begin, Alignment) / 8;
+    Record->Pack = Pack;
     Record->Members = std::move(Members);
     Member M;
     M.Type = makeRecord(std::move(Record));
@@ -358,7 +379,7 @@ private:
     for (size_t I = First; I < End; ++I)
       Finish = std::max(Finish, Units[I].Finish);
     return anonymous(/*Union=*/false, body(First, End, Begin), Begin, Finish,
-                     Begin);
+                     Begin, alignment(First, End));
   }
 
   /// The alternatives of a union over units [First, End) that begins at
@@ -391,35 +412,67 @@ private:
   }
 
   /// The members of units [First, End) laid out one after another, with
-  /// offsets from \p Base, and unions where units overlap.
+  /// offsets from \p Base, and unions where units overlap.  Units that
+  /// overlap form one union with every unit between them, so a unit that
+  /// reaches back over the members before it takes them into its union, and
+  /// a unit that begins in a union's padding belongs to it.
   std::vector<Member> body(size_t First, size_t End, uint64_t Base) {
-    std::vector<Member> Out;
-    size_t I = First;
-    while (I < End) {
-      const uint64_t Begin = Units[I].Begin;
-      uint64_t Finish = Units[I].Finish;
-      bool Overlaps = false;
-      size_t J = I + 1;
-      // A union reaches as far as any unit inside it reaches.
-      while (J < End && Units[J].Begin < Finish) {
-        Overlaps = true;
-        Finish = std::max(Finish, Units[J].Finish);
-        ++J;
+    struct Cluster {
+      size_t First, End;
+      uint64_t Begin, Finish;
+      uint32_t Alignment;
+      /// Where what follows may begin: a union ends after its padding.
+      uint64_t reach() const {
+        return End - First > 1 ? Begin + alignBits(Finish - Begin, Alignment)
+                               : Finish;
       }
-      if (!Overlaps) {
-        members(Units[I], Base, Out);
-        I = J;
+      bool overlaps(const Cluster &Other) const {
+        return Begin < Other.reach() && Other.Begin < reach();
+      }
+      void take(const Cluster &Other) {
+        First = std::min(First, Other.First);
+        Begin = std::min(Begin, Other.Begin);
+        Finish = std::max(Finish, Other.Finish);
+        Alignment = std::max(Alignment, Other.Alignment);
+      }
+    };
+    std::vector<Cluster> Clusters;
+    for (size_t I = First; I < End; ++I) {
+      Cluster Next{I, I + 1, Units[I].Begin, Units[I].Finish,
+                   Units[I].Alignment};
+      // The earliest cluster the unit overlaps, and every one after it.
+      size_t Keep = Clusters.size();
+      for (size_t C = 0; C < Clusters.size(); ++C)
+        if (Clusters[C].overlaps(Next)) {
+          Keep = C;
+          break;
+        }
+      for (size_t C = Keep; C < Clusters.size(); ++C)
+        Next.take(Clusters[C]);
+      Clusters.resize(Keep);
+      // The wider cluster may reach clusters before it in turn.
+      while (!Clusters.empty() && Clusters.back().overlaps(Next)) {
+        Next.take(Clusters.back());
+        Clusters.pop_back();
+      }
+      Clusters.push_back(Next);
+    }
+    std::vector<Member> Out;
+    for (const Cluster &C : Clusters) {
+      if (C.End - C.First == 1) {
+        members(Units[C.First], Base, Out);
         continue;
       }
-      Out.push_back(anonymous(/*Union=*/true, alternatives(I, J, Begin), Begin,
-                              Finish, Base));
-      I = J;
+      Out.push_back(anonymous(/*Union=*/true,
+                              alternatives(C.First, C.End, C.Begin), C.Begin,
+                              C.Finish, Base, C.Alignment));
     }
     return Out;
   }
 
   llvm::ArrayRef<FlatMember> Flat;
   std::vector<Unit> Units;
+  uint32_t Pack;
 };
 
 void flattenInto(const RecordDef &Record, uint64_t Base,
@@ -434,21 +487,51 @@ void flattenInto(const RecordDef &Record, uint64_t Base,
     Flat.Type = Field.Type;
     Flat.BitOffset = Base + Field.BitOffset;
     Flat.BitWidth = Field.BitWidth;
+    if (Field.BitWidth)
+      Flat.StorageBitOffset = Base + Field.StorageBitOffset;
     Out.push_back(std::move(Flat));
   }
 }
 
 } // namespace
 
-std::vector<Member> nestFlatMembers(llvm::ArrayRef<FlatMember> Flat,
-                                    bool Union) {
-  return Nester(Flat).record(Union);
+std::vector<Member> nestFlatMembers(llvm::ArrayRef<FlatMember> Flat, bool Union,
+                                    uint32_t Pack) {
+  return Nester(Flat, Pack).record(Union);
 }
 
 std::vector<FlatMember> flattenMembers(const RecordDef &Record) {
   std::vector<FlatMember> Out;
   flattenInto(Record, 0, Out);
   return Out;
+}
+
+std::string layoutProblem(const TypeLibrary &Library, const RecordDef &Record) {
+  uint64_t End = 0;
+  for (const Member &Field : Record.Members) {
+    if (!Field.Type)
+      continue;
+    const std::string Name = Field.Name.empty() ? "<anonymous>" : Field.Name;
+    const uint64_t Bits = Field.isBitfield()
+                              ? Field.BitWidth
+                              : Library.sizeOf(*Field.Type).value_or(0) * 8;
+    if (Field.BitOffset > Record.Size * 8 ||
+        Field.BitOffset + Bits > Record.Size * 8)
+      return Name + " reaches past its record";
+    if (Record.Union) {
+      if (!Field.isBitfield() && Field.BitOffset)
+        return Name + " does not begin its union";
+    } else if (Field.BitOffset < End) {
+      return Name + " overlaps the member before it";
+    }
+    End = Field.BitOffset + Bits;
+    if (Field.Type->Kind == TypeExprKind::Record && Field.Type->Record) {
+      const std::string Inner = layoutProblem(Library, *Field.Type->Record);
+      if (!Inner.empty())
+        return Name + ": " + Inner;
+    }
+  }
+  return std::string();
 }
 
 } // namespace neverd::types

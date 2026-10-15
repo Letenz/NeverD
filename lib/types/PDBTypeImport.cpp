@@ -159,6 +159,13 @@ private:
   TypeExprRef expr(cv::TypeIndex Index);
   TypeExprRef exprUncached(cv::TypeIndex Index);
   uint64_t sizeOf(cv::TypeIndex Index);
+  /// How MSVC aligns a value of \p Index: naturally, but no further than
+  /// the #pragma pack of the record it is.
+  uint32_t alignOf(cv::TypeIndex Index);
+  /// The #pragma pack a record was laid out under, found from the offsets
+  /// and size the compiler chose: zero when its members sit where they would
+  /// unpacked, else the largest pack that puts them where they are.
+  uint32_t packOf(cv::TypeIndex Definition);
   std::shared_ptr<const RecordDef> record(cv::TypeIndex Definition);
   std::shared_ptr<const EnumDef> enumeration(cv::TypeIndex Definition);
   std::shared_ptr<const FunctionDef> function(cv::TypeIndex Return,
@@ -175,6 +182,8 @@ private:
   llvm::StringMap<cv::TypeIndex> ByName;
   llvm::DenseMap<uint32_t, TypeExprRef> Exprs;
   llvm::DenseMap<uint32_t, uint64_t> Sizes;
+  llvm::DenseMap<uint32_t, uint32_t> Alignments;
+  llvm::DenseMap<uint32_t, uint32_t> Packs;
   /// Records, named or in place, whose nesting did not flatten back.
   unsigned Mismatches = 0;
 };
@@ -293,6 +302,105 @@ uint64_t Importer::sizeOf(cv::TypeIndex Index) {
   }
   Sizes[Index.getIndex()] = Size;
   return Size;
+}
+
+uint32_t Importer::alignOf(cv::TypeIndex Index) {
+  if (Index.isNoneType())
+    return 1;
+  if (Index.isSimple())
+    return Library.alignOf(*expr(Index));
+  if (auto Found = Alignments.find(Index.getIndex()); Found != Alignments.end())
+    return Found->second;
+  uint32_t Alignment = 1;
+  const cv::CVType Type = Types.getType(Index);
+  switch (Type.kind()) {
+  case cv::LF_POINTER:
+    Alignment = static_cast<uint32_t>(std::max<uint64_t>(sizeOf(Index), 1));
+    break;
+  case cv::LF_MODIFIER:
+    if (auto Record = deserialize<cv::ModifierRecord>(Type))
+      Alignment = alignOf(Record->getModifiedType());
+    break;
+  case cv::LF_ARRAY:
+    if (auto Record = deserialize<cv::ArrayRecord>(Type))
+      Alignment = alignOf(Record->getElementType());
+    break;
+  case cv::LF_BITFIELD:
+    if (auto Record = deserialize<cv::BitFieldRecord>(Type))
+      Alignment = alignOf(Record->getType());
+    break;
+  case cv::LF_ENUM:
+    if (auto Record = deserialize<cv::EnumRecord>(Type))
+      Alignment = alignOf(Record->getUnderlyingType());
+    break;
+  case cv::LF_STRUCTURE:
+  case cv::LF_CLASS:
+  case cv::LF_INTERFACE:
+  case cv::LF_UNION: {
+    auto Definition = definition(Index);
+    if (!Definition)
+      break;
+    const cv::CVType Defined = Types.getType(*Definition);
+    cv::TypeIndex List;
+    if (Defined.kind() == cv::LF_UNION) {
+      if (auto Record = deserialize<cv::UnionRecord>(Defined))
+        List = Record->getFieldList();
+    } else if (auto Record = deserialize<cv::ClassRecord>(Defined)) {
+      List = Record->getFieldList();
+    }
+    for (const FieldCollector::Data &Field : fields(List).Fields)
+      Alignment = std::max(Alignment, alignOf(Field.Type));
+    if (const uint32_t Pack = packOf(*Definition))
+      Alignment = std::min(Alignment, Pack);
+    break;
+  }
+  default:
+    break;
+  }
+  Alignments[Index.getIndex()] = Alignment;
+  return Alignment;
+}
+
+uint32_t Importer::packOf(cv::TypeIndex Definition) {
+  if (auto Found = Packs.find(Definition.getIndex()); Found != Packs.end())
+    return Found->second;
+  const cv::CVType Type = Types.getType(Definition);
+  cv::TypeIndex List;
+  uint64_t Size = 0;
+  if (Type.kind() == cv::LF_UNION) {
+    if (auto Record = deserialize<cv::UnionRecord>(Type)) {
+      List = Record->getFieldList();
+      Size = Record->getSize();
+    }
+  } else if (auto Record = deserialize<cv::ClassRecord>(Type)) {
+    List = Record->getFieldList();
+    Size = Record->getSize();
+  }
+  // The largest power of two that divides a value.
+  const auto divisor = [](uint64_t Value) {
+    return static_cast<uint32_t>(std::min<uint64_t>(Value & (~Value + 1), 16));
+  };
+  uint32_t Pack = 0;
+  uint32_t Natural = 1;
+  for (const FieldCollector::Data &Field : fields(List).Fields) {
+    const uint32_t Alignment = alignOf(Field.Type);
+    Natural = std::max(Natural, Alignment);
+    // A member, or a bitfield's storage unit, below its alignment.
+    if (Alignment > 1 && Field.Offset % Alignment) {
+      const uint32_t Allowed = divisor(Field.Offset);
+      if (!Pack || Allowed < Pack)
+        Pack = Allowed;
+    }
+  }
+  // A size the record's alignment does not divide was packed too.
+  const uint32_t Aligned = Pack ? std::min(Natural, Pack) : Natural;
+  if (Size && Size % Aligned) {
+    const uint32_t Allowed = divisor(Size);
+    if (!Pack || Allowed < Pack)
+      Pack = Allowed;
+  }
+  Packs[Definition.getIndex()] = Pack;
+  return Pack;
 }
 
 TypeExprRef Importer::expr(cv::TypeIndex Index) {
@@ -445,6 +553,7 @@ std::shared_ptr<const RecordDef> Importer::record(cv::TypeIndex Definition) {
     Result->Size = Record->getSize();
     List = Record->getFieldList();
   }
+  Result->Pack = packOf(Definition);
   FieldCollector Collector = fields(List);
   std::vector<FlatMember> Flat;
   Flat.reserve(Collector.Fields.size());
@@ -461,15 +570,19 @@ std::shared_ptr<const RecordDef> Importer::record(cv::TypeIndex Definition) {
         Member.BitWidth = Bits->getBitSize();
         Member.BitOffset += Bits->getBitOffset();
         Member.StorageBits = sizeOf(Bits->getType()) * 8;
-        Flat.push_back(std::move(Member));
-        continue;
+        Member.Alignment = alignOf(Bits->getType());
       }
     }
-    Member.Type = expr(Field.Type);
-    Member.StorageBits = sizeOf(Field.Type) * 8;
+    if (!Member.BitWidth) {
+      Member.Type = expr(Field.Type);
+      Member.StorageBits = sizeOf(Field.Type) * 8;
+      Member.Alignment = alignOf(Field.Type);
+    }
+    if (Result->Pack)
+      Member.Alignment = std::min(Member.Alignment, Result->Pack);
     Flat.push_back(std::move(Member));
   }
-  Result->Members = nestFlatMembers(Flat, Result->Union);
+  Result->Members = nestFlatMembers(Flat, Result->Union, Result->Pack);
   // The nesting must lay the members out exactly as MSVC listed them.
   const std::vector<FlatMember> Back = flattenMembers(*Result);
   bool Holds = Back.size() == Flat.size();
@@ -620,35 +733,6 @@ PDBTypeImportStats Importer::run() {
   return Stats;
 }
 
-/// The #pragma pack that put a member below its natural alignment, found
-/// from the offsets the compiler chose; zero when every member is aligned.
-uint32_t inferredPack(const TypeLibrary &Library, const RecordDef &Record,
-                      uint64_t Base) {
-  uint32_t Pack = 0;
-  for (const Member &Field : Record.Members) {
-    if (!Field.Type)
-      continue;
-    const uint64_t Bit = Base + Field.BitOffset;
-    if (Field.isAnonymous() && Field.Type->Record) {
-      const uint32_t Inner = inferredPack(Library, *Field.Type->Record, Bit);
-      if (Inner && (!Pack || Inner < Pack))
-        Pack = Inner;
-      continue;
-    }
-    if (Field.isBitfield() || Bit % 8)
-      continue;
-    const uint64_t Offset = Bit / 8;
-    const uint32_t Alignment = Library.alignOf(*Field.Type);
-    if (Alignment <= 1 || Offset % Alignment == 0)
-      continue;
-    // The largest power of two that divides the offset.
-    const auto Allowed = static_cast<uint32_t>(Offset & (~Offset + 1));
-    if (!Pack || Allowed < Pack)
-      Pack = Allowed;
-  }
-  return Pack;
-}
-
 } // namespace
 
 llvm::Expected<PDBTypeImportStats> importPDBTypes(llvm::pdb::PDBFile &File,
@@ -659,19 +743,12 @@ llvm::Expected<PDBTypeImportStats> importPDBTypes(llvm::pdb::PDBFile &File,
   if (!Tpi)
     return Tpi.takeError();
   PDBTypeImportStats Stats = Importer(*Tpi, Into).run();
-  // Packing needs every type's alignment, so it waits for the whole stream.
-  for (const LocalType *Type : Into.types()) {
-    if (!Type->Record || !Type->Record->Defined)
-      continue;
-    const uint32_t Pack = inferredPack(Into, *Type->Record, 0);
-    if (!Pack)
-      continue;
-    LocalType Packed = *Type;
-    auto Record = std::make_shared<RecordDef>(*Type->Record);
-    Record->Pack = Pack;
-    Packed.Record = std::move(Record);
-    Into.define(std::move(Packed));
-  }
+  // Layout needs every type's size, so it waits for the whole stream.
+  for (const LocalType *Type : Into.types())
+    if (Type->Record && Type->Record->Defined &&
+        !layoutProblem(Into, *Type->Record).empty() &&
+        !llvm::is_contained(Stats.NestingMismatches, Type->Name))
+      Stats.NestingMismatches.push_back(Type->Name);
   return Stats;
 }
 

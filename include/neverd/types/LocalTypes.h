@@ -147,6 +147,9 @@ struct Member {
   /// A bitfield's width; zero for other members.  A bitfield's type is that
   /// of the storage it lives in.
   uint32_t BitWidth = 0;
+  /// Where a bitfield's storage unit begins, in bits from the record that
+  /// holds the member; a packed record need not align it.
+  uint64_t StorageBitOffset = 0;
   std::string Comment;
 
   bool isBitfield() const { return BitWidth != 0; }
@@ -264,20 +267,29 @@ struct FlatMember {
   /// A bitfield's storage unit, or the member, in bits from the record.
   uint64_t StorageBitOffset = 0;
   uint64_t StorageBits = 0;
+  /// How the member aligns, which the record's packing may lower.
+  uint32_t Alignment = 1;
 };
 
 /// Rebuilds the anonymous unions and structures of a record whose members
 /// MSVC flattened.  Members that begin where an earlier one began are the
-/// alternatives of a union; a member that begins inside such a union belongs
-/// to its last alternative, which becomes a structure; a run of bitfields
-/// that share a storage unit is one alternative.  The nesting is the
-/// smallest that lays the members out as \p Flat does.
-std::vector<Member> nestFlatMembers(llvm::ArrayRef<FlatMember> Flat,
-                                    bool Union);
+/// alternatives of a union; a member that begins inside such a union, its
+/// padding up to its alignment included, belongs to its last alternative,
+/// which becomes a structure; a run of bitfields that share a storage unit
+/// is one alternative.  The nesting is the smallest that lays the members
+/// out as \p Flat does.  Anonymous records take the record's \p Pack.
+std::vector<Member> nestFlatMembers(llvm::ArrayRef<FlatMember> Flat, bool Union,
+                                    uint32_t Pack = 0);
 
 /// \p Record's members with its anonymous unions and structures flattened,
 /// as MSVC lists them: the inverse of nestFlatMembers().
 std::vector<FlatMember> flattenMembers(const RecordDef &Record);
+
+/// Why \p Record's members cannot sit where they say, or empty when they
+/// can: a member reaching past the record that holds it, a member of a
+/// structure overlapping the one before it, or an alternative of a union
+/// that does not begin with the union.
+std::string layoutProblem(const TypeLibrary &Library, const RecordDef &Record);
 
 } // namespace neverd::types
 
