@@ -67,6 +67,10 @@ llvm::Expected<uint64_t> KernelModel::leaveApcRegion(ApcRegionKind Kind) {
   if (!Depth)
     return apcError(Critical ? "KeLeaveCriticalRegion has no matching entry"
                              : "KeLeaveGuardedRegion has no matching entry");
+  if (auto E = validateFastMutexContext(
+          CurrentIRQL, (*State)->CriticalDepth - (Critical ? 1 : 0),
+          (*State)->GuardedDepth - (Critical ? 0 : 1)))
+    return E;
   --Depth;
   return 0;
 }

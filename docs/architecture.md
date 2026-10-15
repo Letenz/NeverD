@@ -4313,6 +4313,16 @@ argument-dependent checks in the owning model.
 
 `KernelModelLookaside` owns paged/nonpaged lookaside registration and the kernel-owned fields of the x64 header. WDK inline cache contents and counters remain in guest bytes; the existing SLIST operations and pool allocator retain their ownership. Default callback addresses come from the session export registry. Deletion preflights the entire cache and both registration neighbors before retiring anything; storage retirement and unload share the live-list and cached-entry guards. MDL admission prevents aliases and DMA borrows from bypassing header ownership. These bounded lifetimes retain an explicit unpack dependency.
 
+`KernelModelFastMutex` owns fast/guarded mutex holds by logical thread and validates
+IRQL/APC-region restoration against all remaining holds. `KernelDispatcher`
+remains the sole owner of the embedded synchronization event, including the
+verified initializer bytes; the fast-mutex layer never creates a second event
+state. Initialization/acquisition and MDL admission share storage-borrow guards
+with lookaside lists, so aliases cannot bypass held-object ownership. Guest
+returns, thread termination, memory retirement and unload check the same hold
+inventory. AutoBoost waiting and contended blocking acquisition stop explicitly;
+the uncontended model retains an unpack dependency.
+
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
 `KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.

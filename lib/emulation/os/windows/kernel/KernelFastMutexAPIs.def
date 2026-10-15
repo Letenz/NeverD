@@ -1,0 +1,39 @@
+//===- KernelFastMutexAPIs.def - Fast and guarded mutex contracts ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Windows 10.0.19041.6456 uses the fast-mutex protocol for guarded mutexes.
+// ExInitializeFastMutex is a WDK macro, not an export on this target.
+// https://learn.microsoft.com/windows-hardware/drivers/kernel/fast-mutexes-and-guarded-mutexes
+NEVERD_KERNEL_FAST_MUTEX_API(KeInitializeGuardedMutex, 1, APC,
+                             initializeFastMutex(A[0]))
+NEVERD_KERNEL_FAST_MUTEX_API(ExAcquireFastMutex, 1, APC,
+                             acquireFastMutex(A[0], FastMutexMode::Normal,
+                                              false))
+NEVERD_KERNEL_FAST_MUTEX_API(ExTryToAcquireFastMutex, 1, APC,
+                             acquireFastMutex(A[0], FastMutexMode::Normal,
+                                              true))
+NEVERD_KERNEL_FAST_MUTEX_API(ExReleaseFastMutex, 1, APC,
+                             releaseFastMutex(A[0], false))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exacquirefastmutexunsafe
+NEVERD_KERNEL_FAST_MUTEX_API(ExAcquireFastMutexUnsafe, 1, APC,
+                             acquireFastMutex(A[0], FastMutexMode::Unsafe,
+                                              false))
+NEVERD_KERNEL_FAST_MUTEX_API(ExReleaseFastMutexUnsafe, 1, APC,
+                             releaseFastMutex(A[0], true))
+NEVERD_KERNEL_FAST_MUTEX_API(KeAcquireGuardedMutex, 1, APC,
+                             acquireFastMutex(A[0], FastMutexMode::Normal,
+                                              false))
+NEVERD_KERNEL_FAST_MUTEX_API(KeTryToAcquireGuardedMutex, 1, APC,
+                             acquireFastMutex(A[0], FastMutexMode::Normal,
+                                              true))
+NEVERD_KERNEL_FAST_MUTEX_API(KeReleaseGuardedMutex, 1, APC,
+                             releaseFastMutex(A[0], false))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keacquireguardedmutexunsafe
+NEVERD_KERNEL_FAST_MUTEX_API(KeAcquireGuardedMutexUnsafe, 1, APC,
+                             acquireFastMutex(A[0],
+                                              FastMutexMode::UnsafeGuarded,
+                                              false))
+NEVERD_KERNEL_FAST_MUTEX_API(KeReleaseGuardedMutexUnsafe, 1, APC,
+                             releaseFastMutex(A[0], true))

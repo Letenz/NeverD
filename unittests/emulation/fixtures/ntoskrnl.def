@@ -82,6 +82,7 @@ EXPORTS
   PsTerminateSystemThread
   KeAreApcsDisabled
   KeAreAllApcsDisabled
+  KeEnterCriticalRegion
   KeLeaveCriticalRegion
   KeEnterGuardedRegion
   KeLeaveGuardedRegion
@@ -175,3 +176,15 @@ ExInitializeNPagedLookasideList
 ExInitializePagedLookasideList
 ExDeleteNPagedLookasideList
 ExDeletePagedLookasideList
+
+KeInitializeGuardedMutex
+ExAcquireFastMutex
+ExTryToAcquireFastMutex
+ExReleaseFastMutex
+ExAcquireFastMutexUnsafe
+ExReleaseFastMutexUnsafe
+KeAcquireGuardedMutex
+KeTryToAcquireGuardedMutex
+KeReleaseGuardedMutex
+KeAcquireGuardedMutexUnsafe
+KeReleaseGuardedMutexUnsafe

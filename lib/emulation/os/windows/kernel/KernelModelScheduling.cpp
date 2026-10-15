@@ -198,6 +198,8 @@ llvm::Expected<uint64_t> KernelModel::terminateSystemThread(uint32_t Status) {
       Thread->second.CallbackID != Active->ID || Thread->second.Exited ||
       Thread->second.Terminating)
     return schedulingError("system thread termination lost its live object");
+  if (threadHoldsFastMutex(CurrentThreadKey))
+    return schedulingError("system thread termination retains a fast mutex");
   Thread->second.ExitStatus = Status;
   Thread->second.Terminating = true;
   PendingThreadTermination = Status;
@@ -727,6 +729,10 @@ KernelModel::canRevokeVirtualRange(uint64_t Base, uint64_t Size,
     return E;
   if (auto E = canReleaseLookasideRange(Base, Size, RetiringLookaside))
     return E;
+  for (const auto &[Address, Hold] : FastMutexHolds)
+    if (Size && Address < Base + Size &&
+        Base < Address + windows::FastMutexSize)
+      return schedulingError("cannot release a held fast mutex");
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))
       return schedulingError("cannot release a held executive spin lock");

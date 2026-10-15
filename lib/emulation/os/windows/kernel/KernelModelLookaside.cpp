@@ -28,33 +28,7 @@ llvm::Error lookasideError(const llvm::Twine &Text) {
 bool overlaps(uint64_t A, uint64_t Size, uint64_t B, uint64_t Length) {
   return Size && Length && A < B + Length && B < A + Size;
 }
-uint64_t pageBase(uint64_t Address) {
-  return Address & ~(profile::PageSize - 1);
-}
 } // namespace
-
-llvm::Error KernelModel::validateLookasideBorrow(uint64_t Address,
-                                                 uint64_t Size) const {
-  if (!Size)
-    return llvm::Error::success();
-  if (Size > UINT64_MAX - Address)
-    return lookasideError("overflowing lookaside storage borrow");
-  // Image MDLs expose their whole owned pages; pool mappings retain the
-  // logical ByteCount boundary. Neither may bypass kernel-owned fields.
-  if (imageOwnerForRange(Address, Size)) {
-    const uint64_t Last = pageBase(Address + Size - 1);
-    Address = pageBase(Address);
-    Size = Last - Address + profile::PageSize;
-  }
-  for (uint64_t Head : LookasideHeads)
-    if (Head && overlaps(Address, Size, Head, ListEntrySize))
-      return lookasideError(
-          "MDL borrow intersects a private lookaside registry");
-  for (const auto &[Base, List] : Lookasides)
-    if (overlaps(Address, Size, Base, LookasideSize))
-      return lookasideError("MDL borrow intersects a live lookaside list");
-  return llvm::Error::success();
-}
 
 llvm::Error KernelModel::writableLookasideStorage(uint64_t Address,
                                                   uint32_t Size) const {
@@ -177,23 +151,8 @@ KernelModel::initializeLookaside(llvm::ArrayRef<uint64_t> A, bool Paged) {
       return lookasideError("lookaside list storage must be nonpaged");
   if (auto E = writableLookasideStorage(Address, LookasideSize))
     return E;
-  for (const auto &[MDL, State] : MDLs) {
-    if (State.Owner == LockedMdl::Ownership::Driver ||
-        State.Owner == LockedMdl::Ownership::ReleasedPages)
-      continue;
-    uint64_t Backing = State.BackingAddress, Length = State.ByteCount;
-    if (Length && imageOwnerForRange(Backing, Length)) {
-      const uint64_t Last = pageBase(Backing + Length - 1);
-      Backing = pageBase(Backing);
-      Length = Last - Backing + profile::PageSize;
-    }
-    if (overlaps(Address, LookasideSize, Backing, Length) ||
-        (State.Mapped &&
-         overlaps(Address, LookasideSize, pageBase(State.Buffer),
-                  State.AllocationSize)))
-      return lookasideError(
-          "lookaside storage already has an MDL borrow or alias");
-  }
+  if (auto E = validateUnborrowedKernelStorage(Address, LookasideSize))
+    return E;
   if (!Exports)
     return lookasideError(
         "lookaside callbacks require the session export registry");
