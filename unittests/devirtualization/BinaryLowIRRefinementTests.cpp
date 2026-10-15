@@ -3199,8 +3199,8 @@ TEST(BinaryLowIRRefinement, TaskPriorityContractCannotCertifyUnusedState) {
 
 TEST(BinaryLowIRRefinement, StoreSeparationUsesExplicitEntryAlignment) {
   // MOV RAX,[RCX]; AND RAX,-16; MOV qword ptr [RAX],7; RET.
-  Program P({0x48, 0x8b, 0x01, 0x48, 0x83, 0xe0, 0xf0,
-             0x48, 0xc7, 0x00, 7, 0, 0, 0, 0xc3});
+  Program P({0x48, 0x8b, 0x01, 0x48, 0x83, 0xe0, 0xf0, 0x48, 0xc7, 0x00, 7, 0,
+             0, 0, 0xc3});
   EXPECT_EQ(P.recover().Status, SpecializationStatus::Unsupported);
   P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {16, 8};
   P.Options.ProveStoreReturnSlotSeparation = true;
@@ -3227,8 +3227,7 @@ TEST(BinaryLowIRRefinement, StoreSeparationPolicyBindsIndependentProof) {
   P.Options.ProveStoreReturnSlotSeparation = true;
   const auto Enabled = P.check(R.Residual);
   ASSERT_TRUE(Enabled.proved()) << Enabled.Proof.Diagnostic;
-  EXPECT_NE(Default.Certificate->InputDigest,
-            Enabled.Certificate->InputDigest);
+  EXPECT_NE(Default.Certificate->InputDigest, Enabled.Certificate->InputDigest);
 }
 
 TEST(BinaryLowIRRefinement, FrameNormalizationStrategyBindsIndependentProof) {
@@ -3353,6 +3352,43 @@ TEST(BinaryLowIRRefinement, HighAddressDecodedCallRetainsPhysicalReturnWord) {
         P.Image, Base, P.Options, Changed, P.Contract, Witness::LiftedBits);
     refused(Bad, Status::Different);
   }
+}
+
+TEST(BinaryLowIRRefinement, RawCmpxchgDoesNotGrantNativeProof) {
+  // LOCK CMPXCHG qword ptr [rsp-8],rdx; RET. The complete frame access misses
+  // the entry return word, without using an external-pointer premise.
+  Program P({0xf0, 0x48, 0x0f, 0xb1, 0x54, 0x24, 0xf8, 0xc3});
+  P.Options.RequireRestoredFrameAtReturn = true;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Atomics = 0;
+  for (const auto &B : R.Residual.Blocks)
+    for (const auto &Op : B.Ops)
+      if (Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+        ++Atomics;
+        EXPECT_EQ(Op.Output.Size, 8u);
+        EXPECT_EQ(Op.MemoryOrdering, NdMemoryOrdering::SequentiallyConsistent);
+      }
+  ASSERT_EQ(Atomics, 1u);
+  // The architecture has not audited LOCK CMPXCHG undefined outputs. Native
+  // collection refuses that coverage before the ordered-memory proof guard.
+  const auto Relation = P.check(R.Residual);
+  refused(Relation, Status::Unsupported);
+  EXPECT_NE(
+      Relation.Proof.Diagnostic.find(
+          "original instruction lacks complete undefined-output evidence"),
+      std::string::npos)
+      << Relation.Proof.Diagnostic;
+  const auto Independence =
+      checkBinaryUndefinedIndependence(P.Image, Entry, P.Options, P.Contract);
+  EXPECT_EQ(Independence.Proof.Status, LowIRIndependenceStatus::Unsupported);
+  EXPECT_FALSE(Independence.Certificate);
+  EXPECT_FALSE(Independence.Proof.Certificate);
+  EXPECT_NE(
+      Independence.Proof.Diagnostic.find(
+          "original instruction lacks complete undefined-output evidence"),
+      std::string::npos)
+      << Independence.Proof.Diagnostic;
 }
 
 } // namespace

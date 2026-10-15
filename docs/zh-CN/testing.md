@@ -1906,3 +1906,7 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 ### 跨过零点的符号区域坐标
 
 `SymRegionWrap.*` 检查两种字节序、跨相对零点的完整和局部访问、不回绕的输入来源、复制后的未知状态纪元、精确和不足的保存预算，以及绝对／标量范围溢出的拒绝。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` 断言符号地址仍为 `base - 1`，并用独立字节校验器检查完整 STORE 副作用、原生返回地址字和恢复后的栈状态。缺少分离证明或入口对齐时仍须拒绝。
+
+### 顺序执行域内的原始比较交换
+
+`SymAtomicCmpxchg.*` 与 `InterpreterSpecialization.AtomicCmpxchg*` 覆盖完整字节效果、两种字节序、旧值来源、输入输出别名、原生返回单元、跨汇合点的仿射溢出存储失效、有序操作发生次数的保留、严格准入及精确／不足预算。独立字节校验器仅模拟顺序值语义。源码包装对照采用初始化完整、结构有效的图，要求在有序内存边界拒绝。独立 LowIR 对照还绑定完整 sidecar，并要求不产生证书。原生二进制证明可能更早拒绝，因为 LOCK CMPXCHG 尚缺完整的架构未定义输出审计。原始收据检查绑定内存序、地址空间和目标操作数。声明支持前应运行所属测试集；测试定义本身不是执行证据。

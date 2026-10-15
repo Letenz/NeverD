@@ -162,7 +162,7 @@ L’adattatore binario accetta attualmente immagini x64 ELF e PE già collegate,
 agli indirizzi in cui sono mappate. Mappature, byte e permessi devono restare
 invariati, senza modifiche concorrenti. Il lifting rigoroso su richiesta segue
 il codice macchina raggiungibile. Istruzioni non supportate, chiamate,
-operazioni opache, accessi alla memoria ordinati, controllo non risolto e
+operazioni opache, accessi alla memoria ordinati fuori dal dominio raw CAS ristretto descritto sotto, controllo non risolto e
 gestione delle eccezioni del linguaggio interrompono il recupero.
 
 Il recupero PE richiede tutti i metadati dell’immagine, comprese le rilocazioni globali e i record delle eccezioni. La CLI li carica prima di applicare `--func`; chi usa l’API C non deve prima limitare la sessione con `neverd_session_restrict_function()`. L’adattatore rifiuta immagini caricate con un insieme ristretto di funzioni, perché i metadati omessi non dimostrano l’assenza di correzioni del loader o archi di eccezione.
@@ -202,6 +202,14 @@ Le forme x64 esatte di `PUSHFQ`/`POPFQ` restano nel programma residuo. L’anali
 Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direzione modellato deve essere definito nella funzione recuperata. Ogni lettura diretta di un flag richiede inoltre una definizione su tutti i percorsi predecessori raggiungibili, anche se la semplificazione simbolica ne annulla il valore. Altrimenti il recupero viene rifiutato, invece di emettere C con una trappola per un registro sconosciuto.
 
 I temporanei LowIR sono locali a una sola istruzione nativa sollevata. Ogni byte letto deve essere stato definito prima nella stessa istruzione; il riuso di un offset da un’istruzione precedente o l’annullamento algebrico di un valore indefinito non dimostrano la validità del sorgente. Le costanti d’ingresso possono vincolare solo registri fisici.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Confronto e scambio nel modello raw sequenziale
+
+La specializzazione raw ammette `ATOMIC_CMPXCHG` solo con `ExplicitMachineState=true` e `NormalNonfaultingExecution=true`, memoria `Default`, indirizzo a 64 bit, valori della stessa larghezza di 1/2/4/8 byte e ordine `SequentiallyConsistent`. Conserva operazione atomica, ordine, spazio di indirizzi e occorrenze. Usa il dominio sequenziale esistente senza modifiche concorrenti o asincrone; non fornisce un modello di concorrenza o MMIO. Altre operazioni atomiche, CAS da 16 byte, altri ordini, CAS segmentati e LOAD/STORE ordinati restano non supportati da questo percorso.
+
+I contratti esistenti `ExternalStoresPreserveEntryReturnSlot` e `ExternalStoresDisjointEntryFrame` si applicano all’intera fase di scrittura, anche quando il confronto fallisce o il valore non cambia. `ExternalStoresPreserveEntryReturnSlot` protegge solo lo slot di ritorno all’ingresso. `ExternalStoresDisjointEntryFrame` protegge solo i limiti del frame dichiarati; le celle di ritorno native attive esterne richiedono ancora prove di separazione indipendenti. Non viene dedotta alcuna premessa aggiuntiva di assenza di alias. L’involucro sorgente dello stato macchina e i percorsi indipendenti di prova LowIR/nativa/LLVM continuano a rifiutare CAS ordinati raggiungibili; un risultato raw completo non è un certificato del sorgente o di equivalenza.
 
 <!-- i18n-section: machine-state -->
 

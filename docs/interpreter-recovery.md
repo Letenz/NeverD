@@ -268,7 +268,7 @@ The binary adapter currently accepts linked x64 ELF and PE images at their
 mapped addresses. Mappings, bytes, and permissions must remain fixed, with no
 concurrent mutation. Strict on-demand lifting follows reachable machine code;
 unsupported instructions, calls, opaque operations outside the flag forms
-described below, ordered memory, unresolved control, and language exception
+described below, ordered memory outside the narrow raw CAS domain below, unresolved control, and language exception
 handling stop recovery.
 
 PE recovery requires full image metadata, including image-wide relocations and
@@ -321,6 +321,14 @@ The exact x64 `PUSHFQ`/`POPFQ` forms remain in the residual program. Analysis tr
 Before a full flag snapshot, every modelled arithmetic or direction flag must have a definition within the recovered function. Any direct flag read also needs a definition on every reachable predecessor, even when symbolic simplification cancels its value. Otherwise recovery refuses instead of emitting an unknown-register trap in C.
 
 LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Sequential raw compare-and-exchange
+
+Raw specialization admits `ATOMIC_CMPXCHG` only with `ExplicitMachineState=true` and `NormalNonfaultingExecution=true`, `Default` memory, a 64-bit address, 1/2/4/8-byte values of equal width and `SequentiallyConsistent` ordering. It retains the original atomic operation, ordering, address space and occurrence. This uses the existing sequential execution domain with no concurrent or asynchronous modification; it supplies no concurrency or MMIO model. Other atomic operations, 16-byte CAS, other orderings, segmented CAS and ordered LOAD/STORE remain unsupported by this recovery path.
+
+The existing `ExternalStoresPreserveEntryReturnSlot` and `ExternalStoresDisjointEntryFrame` contracts apply to the entire write phase, including a failed comparison or an unchanged value. `ExternalStoresPreserveEntryReturnSlot` protects only the entry return slot. `ExternalStoresDisjointEntryFrame` protects only the declared frame bounds; live native return cells outside those bounds still need independent separation evidence. No additional nonalias premise is inferred. Machine-source wrapping and the independent LowIR/native/LLVM proof routes still refuse reachable ordered CAS; a complete raw result is not a source or equivalence certificate.
 
 <!-- i18n-section: machine-state -->
 

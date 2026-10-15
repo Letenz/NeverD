@@ -1636,3 +1636,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 跨越零點的符號區域座標
 
 `SymState` 僅對基底位址為 64 位元的符號區域使用模 2^64 的相對座標。跨越相對零點的讀取分成兩個不回繞的區間，使每項輸入來源都位於單一區間內；寫入保留完整值。絕對記憶體、暫存器與暫存儲存區的範圍溢位仍被拒絕。此索引規則不提供實際位址有效性、不別名或堆疊框架分離前提；一般的跨區域失效與逐 STORE 保存證明保持不變。Unicorn、KVM 與 WHP 共用此分析規則。
+
+### 循序執行範圍內的原始比較交換
+
+`SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。

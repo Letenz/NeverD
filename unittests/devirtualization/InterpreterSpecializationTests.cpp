@@ -2368,6 +2368,7 @@ struct WideByteOracle {
   using Key = std::pair<VnodeSpace, uint64_t>;
   std::map<Key, uint8_t> Registers;
   std::map<uint64_t, uint8_t> Memory;
+  std::vector<va_t> AtomicAddresses;
   llvm::endianness Order;
   bool Valid = true;
   std::string Diagnostic;
@@ -2524,6 +2525,35 @@ struct WideByteOracle {
           const uint64_t Sign = uint64_t{1} << (Bytes * 8 - 1);
           word(O.Output,
                (number(O.Inputs[0]) ^ Sign) < (number(O.Inputs[1]) ^ Sign));
+          break;
+        }
+        case NdOp::ATOMIC_CMPXCHG: {
+          // Sequential byte semantics only; this is not a concurrency oracle.
+          if (O.NumInputs != 3 || O.Inputs[0].Size != 8 ||
+              O.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              O.MemoryOrdering != NdMemoryOrdering::SequentiallyConsistent ||
+              (O.Output.Size != 1 && O.Output.Size != 2 && O.Output.Size != 4 &&
+               O.Output.Size != 8) ||
+              O.Inputs[1].Size != O.Output.Size ||
+              O.Inputs[2].Size != O.Output.Size)
+            return false;
+          const auto Address = number(O.Inputs[0]);
+          const auto Expected = read(O.Inputs[1]);
+          const auto Desired = read(O.Inputs[2]);
+          if (Address > UINT64_MAX - (O.Output.Size - 1))
+            return false;
+          std::vector<uint8_t> Old(O.Output.Size);
+          for (unsigned I = 0; I < Old.size(); ++I) {
+            const auto It = Memory.find(Address + I);
+            if (It == Memory.end())
+              return false;
+            Old[I] = It->second;
+          }
+          if (Old == Expected)
+            for (unsigned I = 0; I < Old.size(); ++I)
+              Memory[Address + I] = Desired[I];
+          write(O.Output, Old);
+          AtomicAddresses.push_back(O.Addr);
           break;
         }
         case NdOp::LOAD:
@@ -3474,6 +3504,520 @@ TEST(InterpreterSpecialization, HighAddressInvalidOrMissingCodeStillRefuses) {
   const auto Overflow = specializeInterpreter(P, {InvalidVA - 1});
   EXPECT_FALSE(Overflow.complete());
   EXPECT_TRUE(Overflow.Residual.Blocks.empty());
+}
+
+std::vector<va_t>
+nativeAtomicAddresses(const SpecializationResult &R,
+                      const std::vector<va_t> &ResidualAddresses) {
+  std::vector<va_t> Native;
+  for (va_t Address : ResidualAddresses) {
+    unsigned Matches = 0;
+    va_t Found = InvalidVA;
+    for (const auto &Origin : R.Origins)
+      if (Origin.ResidualAddress == Address) {
+        ++Matches;
+        Found = Origin.NativeInstruction.Address;
+      }
+    EXPECT_EQ(Matches, 1u) << "atomic residual address " << Address;
+    Native.push_back(Found);
+  }
+  return Native;
+}
+
+LowOp atomicCmpxchg(NdVar Output, NdVar Address, NdVar Expected,
+                    NdVar Desired) {
+  auto O = op(NdOp::ATOMIC_CMPXCHG, Output, {Address, Expected, Desired});
+  O.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  return O;
+}
+
+Provider atomicNativeProvider(uint16_t Bytes = 8, uint64_t Bias = 0) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_SUB, reg(32), {reg(32), constant(8)})});
+  P.add(0x101, {op(NdOp::CALL, reg(0), {constant(0x200)})});
+  P.Code.at(0x101).NativeStackControl = SpecializationNativeStackControl::Call;
+  P.add(0x102, {op(NdOp::INT_ADD, reg(32), {reg(32), constant(8)})});
+  P.add(0x103, {ret()});
+  P.Code.at(0x103).NativeStackControl =
+      SpecializationNativeStackControl::Return;
+  // The base is 1 modulo 16. The default target has displacement UINT64_MAX
+  // from that base, and each native return word occupies residues [8, 16).
+  std::vector<LowOp> Body{
+      op(NdOp::LOAD, reg(40), {reg(16)}),
+      op(NdOp::INT_OR, reg(40), {reg(40), constant(1)}),
+      op(NdOp::INT_AND, reg(40), {reg(40), constant(~uint64_t{14})}),
+      op(NdOp::INT_SUB, reg(40), {reg(40), constant(1)})};
+  if (Bias)
+    Body.push_back(op(NdOp::INT_ADD, reg(40), {reg(40), constant(Bias)}));
+  Body.push_back(
+      atomicCmpxchg(reg(0, Bytes), reg(40), reg(8, Bytes), reg(64, Bytes)));
+  Body.push_back(op(NdOp::LOAD, reg(48, Bytes), {reg(40)}));
+  P.add(0x200, std::move(Body));
+  P.add(0x201, {ret()});
+  P.Code.at(0x201).NativeStackControl =
+      SpecializationNativeStackControl::Return;
+  return P;
+}
+
+TEST(InterpreterSpecialization,
+     AtomicCmpxchgKeepsNativeReturnWordsAndOrderedEffects) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      SCOPED_TRACE(Bytes);
+      SCOPED_TRACE(Order == llvm::endianness::little);
+      auto P = atomicNativeProvider(Bytes);
+      auto O = separatedStoreOptions();
+      O.ByteOrder = Order;
+      ASSERT_FALSE(O.ExternalStoresPreserveEntryReturnSlot);
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      EXPECT_EQ(count(R.Residual, NdOp::ATOMIC_CMPXCHG), 1u);
+      EXPECT_EQ(count(R.Residual, NdOp::STORE), 1u); // Native return word only.
+      EXPECT_EQ(count(R.Residual, NdOp::RETURN), 1u);
+      for (const auto &B : R.Residual.Blocks)
+        for (const auto &A : B.Ops)
+          if (A.Opcode == NdOp::ATOMIC_CMPXCHG) {
+            EXPECT_EQ(nativeAtomicAddresses(R, {A.Addr}),
+                      std::vector<va_t>{0x200});
+            EXPECT_EQ(A.NumInputs, 3u);
+            EXPECT_EQ(A.Output.Size, Bytes);
+            EXPECT_EQ(A.Inputs[0].Size, 8u);
+            EXPECT_EQ(A.MemoryOrdering,
+                      NdMemoryOrdering::SequentiallyConsistent);
+            EXPECT_EQ(A.MemoryAddressSpace, NdMemoryAddressSpace::Default);
+          }
+      // Targets can occupy either side of the live native return word, or a
+      // separate allocation. Full memory comparison also checks guard bytes.
+      for (uint64_t Target : {0x8000u, 0x8010u, 0x6000u})
+        for (unsigned Pattern = 0; Pattern != 3; ++Pattern)
+          for (bool Match : {false, true}) {
+            SCOPED_TRACE(Target);
+            SCOPED_TRACE(Pattern);
+            SCOPED_TRACE(Match);
+            constexpr uint64_t Stack = 0x8018;
+            std::vector<uint8_t> Old(Bytes), Desired(Bytes);
+            for (unsigned I = 0; I < Bytes; ++I) {
+              Old[I] = Pattern == 0 ? 0 : Pattern == 1 ? 0xff : 0x31 + 7 * I;
+              Desired[I] = 0xe2 - 9 * I;
+            }
+            auto Expected = Old;
+            if (!Match)
+              Expected.back() ^= 0x80;
+            WideByteOracle Actual(Order);
+            Actual.word(reg(32), Stack);
+            Actual.word(reg(16), 0x4000);
+            Actual.write(reg(8, Bytes), Expected);
+            Actual.write(reg(64, Bytes), Desired);
+            for (uint64_t A = Stack - 32; A != Stack + 24; ++A)
+              Actual.Memory[A] = uint8_t(0x90 + A - Stack);
+            for (uint64_t A = Target - 1; A != Target + Bytes + 1; ++A)
+              Actual.Memory[A] = 0xa5;
+            for (unsigned I = 0; I < Bytes; ++I)
+              Actual.Memory[Target + I] = Old[I];
+            for (unsigned I = 0; I != 8; ++I) {
+              const unsigned Shift =
+                  8 * (Order == llvm::endianness::little ? I : 7 - I);
+              Actual.Memory[0x4000 + I] = uint8_t((Target | 15) >> Shift);
+            }
+            auto ExpectedMemory = Actual.Memory;
+            for (unsigned I = 0; I < Bytes; ++I)
+              ExpectedMemory[Target + I] = Match ? Desired[I] : Old[I];
+            for (unsigned I = 0; I != 8; ++I) {
+              const unsigned Shift =
+                  8 * (Order == llvm::endianness::little ? I : 7 - I);
+              ExpectedMemory[Stack - 16 + I] =
+                  uint8_t(uint64_t{0x102} >> Shift);
+            }
+            ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+            EXPECT_EQ(Actual.read(reg(0, Bytes)), Old);
+            EXPECT_EQ(Actual.read(reg(48, Bytes)), Match ? Desired : Old);
+            EXPECT_EQ(Actual.number(reg(32)), Stack);
+            EXPECT_EQ(Actual.Memory, ExpectedMemory);
+            EXPECT_EQ(nativeAtomicAddresses(R, Actual.AtomicAddresses),
+                      std::vector<va_t>{0x200});
+          }
+    }
+}
+
+TEST(InterpreterSpecialization,
+     AtomicCmpxchgRetainsFailureAndUnusedResultEffects) {
+  for (bool Immutable : {false, true}) {
+    Provider P;
+    if (Immutable)
+      P.add(0xff, {op(NdOp::COPY, reg(0), {constant(0)})});
+    else
+      // A preceding STORE makes the failed/no-change comparisons constant in
+      // the symbolic state, so this also tests effect retention after folding.
+      P.add(0xff, {op(NdOp::STORE, {}, {constant(0x4000), constant(7)})});
+    // Both first operations leave the bytes unchanged. Their unused outputs
+    // do not authorize removing, merging or reordering the ordered accesses.
+    P.add(0x100,
+          {atomicCmpxchg(reg(8), constant(0x4000), constant(9), constant(11))});
+    P.add(0x101,
+          {atomicCmpxchg(reg(8), constant(0x4000), constant(7), constant(7))});
+    std::vector<va_t> ExpectedOrigins{0x100, 0x101};
+    if (Immutable) {
+      imageWord(P, 0x4000, 7);
+      P.add(0x102, {op(NdOp::COPY, reg(0), {constant(37)}), ret()});
+    } else {
+      P.add(0x102, {atomicCmpxchg(reg(8), constant(0x4000), constant(7),
+                                  constant(11))});
+      P.add(0x103, {atomicCmpxchg(reg(8), constant(0x4000), constant(7),
+                                  constant(13))});
+      P.add(0x104, {op(NdOp::COPY, reg(0), {constant(37)}), ret()});
+      ExpectedOrigins.insert(ExpectedOrigins.end(), {0x102, 0x103});
+    }
+    const auto R = specializeInterpreter(P, {0xff}, wideOptions());
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::ATOMIC_CMPXCHG), ExpectedOrigins.size());
+    EXPECT_EQ(count(R.Residual, NdOp::LOAD), 0u);
+    EXPECT_EQ(count(R.Residual, NdOp::STORE), Immutable ? 0u : 1u);
+    WideByteOracle Actual(llvm::endianness::little);
+    for (unsigned I = 0; I != 8; ++I)
+      Actual.Memory[0x4000 + I] = I ? 0 : 7;
+    auto ExpectedMemory = Actual.Memory;
+    ExpectedMemory[0x4000] = Immutable ? 7 : 11;
+    ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+    EXPECT_EQ(nativeAtomicAddresses(R, Actual.AtomicAddresses),
+              ExpectedOrigins);
+    EXPECT_EQ(Actual.Memory, ExpectedMemory);
+    EXPECT_EQ(Actual.number(reg(0)), 37u);
+  }
+}
+
+TEST(InterpreterSpecialization,
+     AtomicCmpxchgChecksTheCompleteReturnSlotFootprint) {
+  // No natural-alignment restriction is invented for raw 2/4-byte accesses.
+  // The other cases touch the first or last byte of a possible return word.
+  for (const auto &[Bytes, Bias] : {std::pair<uint16_t, uint64_t>{2, 1},
+                                    {4, 3},
+                                    {8, 1},
+                                    {2, 7},
+                                    {1, 8},
+                                    {2, 15}}) {
+    SCOPED_TRACE(Bytes);
+    SCOPED_TRACE(Bias);
+    auto P = atomicNativeProvider(Bytes, Bias);
+    const auto R = specializeInterpreter(P, {0x100}, separatedStoreOptions());
+    const bool Separated = Bias + Bytes <= 8;
+    EXPECT_EQ(R.complete(), Separated) << R.Diagnostic;
+    if (!Separated) {
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+      continue;
+    }
+    WideByteOracle Actual(llvm::endianness::little);
+    Actual.word(reg(32), 0x8018);
+    Actual.word(reg(16), 0x4000);
+    Actual.word(reg(8, Bytes), 7);
+    Actual.word(reg(64, Bytes), 11);
+    for (unsigned I = 0; I != 8; ++I)
+      Actual.Memory[0x4000 + I] = uint8_t(uint64_t{0x800f} >> (8 * I));
+    for (unsigned I = 0; I < Bytes; ++I)
+      Actual.Memory[0x8000 + Bias + I] = I ? 0 : 7;
+    ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.number(reg(0, Bytes)), 7u);
+    EXPECT_EQ(Actual.number(reg(48, Bytes)), 11u);
+    EXPECT_EQ(Actual.number(reg(32)), 0x8018u);
+  }
+  for (bool RemoveAlignment : {false, true}) {
+    auto P = atomicNativeProvider();
+    auto O = separatedStoreOptions();
+    if (RemoveAlignment)
+      O.EntryFrameAlignment.reset();
+    else
+      O.ProveStoreReturnSlotSeparation = false;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  for (uint64_t Back : {0u, 1u}) {
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::INT_SUB, reg(40), {reg(32), constant(Back)}),
+           atomicCmpxchg(reg(0, 2), reg(40), constant(7, 2), constant(7, 2)),
+           ret()});
+    auto O = separatedStoreOptions();
+    O.ExternalStoresPreserveEntryReturnSlot = true;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, AtomicCmpxchgBudgetsNeverPublishPartialCFG) {
+  auto P = atomicNativeProvider();
+  const auto Baseline =
+      specializeInterpreter(P, {0x100}, separatedStoreOptions());
+  ASSERT_TRUE(Baseline.complete()) << Baseline.Diagnostic;
+  ASSERT_GT(Baseline.EvaluatedOperations, 1u);
+  ASSERT_GT(Baseline.SolverQueries, 1u);
+  for (bool QueryBudget : {false, true}) {
+    auto O = separatedStoreOptions();
+    if (QueryBudget)
+      O.MaxSolverQueries = Baseline.SolverQueries;
+    else
+      O.MaxOperations = Baseline.EvaluatedOperations;
+    EXPECT_TRUE(specializeInterpreter(P, {0x100}, O).complete());
+    if (QueryBudget)
+      --O.MaxSolverQueries;
+    else
+      --O.MaxOperations;
+    const auto Short = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded)
+        << Short.Diagnostic;
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, AtomicCmpxchgRequiresTheExplicitNarrowDomain) {
+  const auto Valid =
+      atomicCmpxchg(reg(0, 4), constant(0x4001), reg(8, 4), reg(16, 4));
+  for (unsigned Domain = 0; Domain != 4; ++Domain) {
+    Provider P;
+    P.add(0x100, {Valid, ret()});
+    auto O = wideOptions();
+    O.ExplicitMachineState = Domain & 1;
+    O.NormalNonfaultingExecution = Domain & 2;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(R.complete(), Domain == 3) << R.Diagnostic;
+    if (Domain != 3)
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+
+  std::vector<LowOp> Bad;
+  for (auto Ordering :
+       {NdMemoryOrdering::None, NdMemoryOrdering::Relaxed,
+        NdMemoryOrdering::Acquire, NdMemoryOrdering::AcquireRelease,
+        static_cast<NdMemoryOrdering>(255)}) {
+    auto A = Valid;
+    A.MemoryOrdering = Ordering;
+    Bad.push_back(A);
+  }
+  for (auto Space : {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS,
+                     static_cast<NdMemoryAddressSpace>(255)}) {
+    auto A = Valid;
+    A.MemoryAddressSpace = Space;
+    Bad.push_back(A);
+  }
+  for (uint16_t Width : {0, 3, 16}) {
+    auto A = Valid;
+    A.Output.Size = A.Inputs[1].Size = A.Inputs[2].Size = Width;
+    Bad.push_back(A);
+  }
+  auto A = Valid;
+  A.Inputs[0].Size = 4;
+  Bad.push_back(A);
+  A = Valid;
+  A.NumInputs = 2;
+  Bad.push_back(A);
+  A = Valid;
+  A.addInput(constant(0));
+  Bad.push_back(A);
+  A = Valid;
+  A.Inputs[1].Size = 2;
+  Bad.push_back(A);
+  for (auto Output :
+       {constant(0, 4), NdVar::ram(0x5000, 4), reg(UINT64_MAX, 4)}) {
+    A = Valid;
+    A.Output = Output;
+    Bad.push_back(A);
+  }
+  for (unsigned Index : {0u, 1u, 2u}) {
+    A = Valid;
+    A.Inputs[Index] = NdVar::ram(0x5000, A.Inputs[Index].Size);
+    Bad.push_back(A);
+  }
+  A = Valid;
+  A.Inputs[2] = reg(UINT64_MAX, 4);
+  Bad.push_back(A);
+  A = Valid;
+  A.Inputs[0] = constant(UINT64_MAX - 1);
+  Bad.push_back(A);
+  A = op(NdOp::ATOMIC_ADD, reg(0, 4), {constant(0x4000), reg(8, 4)});
+  A.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  Bad.push_back(A);
+  for (auto Ordinary : {op(NdOp::LOAD, reg(0, 4), {constant(0x4000)}),
+                        op(NdOp::STORE, {}, {constant(0x4000), reg(8, 4)})}) {
+    Ordinary.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+    Bad.push_back(Ordinary);
+  }
+  for (unsigned I = 0; I < Bad.size(); ++I) {
+    SCOPED_TRACE(I);
+    Provider P;
+    P.add(0x100, {Bad[I], ret()});
+    const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization, AtomicCmpxchgOldValueKeepsMemoryOrigin) {
+  auto O = ordinaryReturnOptions();
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = true;
+  O.ExternalStoresPreserveEntryReturnSlot = true;
+  O.MaxChainedTransfers = 0;
+  for (bool ReplaceOldWithInput : {false, true}) {
+    Provider P;
+    std::vector<LowOp> Body{
+        atomicCmpxchg(reg(40), reg(8), constant(0), constant(1))};
+    if (ReplaceOldWithInput)
+      Body.push_back(op(NdOp::COPY, reg(40), {reg(16)}));
+    Body.push_back(jump(0x110));
+    P.add(0x100, std::move(Body));
+    P.add(0x110, {op(NdOp::STORE, {}, {reg(40), constant(7)}),
+                  op(NdOp::COPY, reg(0), {constant(9)}), ret()});
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    if (ReplaceOldWithInput) {
+      EXPECT_TRUE(R.complete()) << R.Diagnostic;
+    } else {
+      EXPECT_EQ(R.Status, SpecializationStatus::Unsupported);
+      // Reject the use of Old as a pointer, not the preceding valid CAS.
+      EXPECT_NE(R.Diagnostic.find("address origin"), std::string::npos)
+          << R.Diagnostic;
+      EXPECT_TRUE(R.Residual.Blocks.empty());
+    }
+  }
+
+  // Old has a safe frame-spill origin before this write. Desired is a frame
+  // pointer, so using the write's new provenance for Old would over-refuse.
+  Provider SafeOld;
+  SafeOld.add(0x100,
+              {op(NdOp::INT_ADD, reg(40), {reg(32), constant(16)}),
+               op(NdOp::STORE, {}, {reg(40), reg(8)}),
+               atomicCmpxchg(reg(56), reg(40), reg(8), reg(32)), jump(0x110)});
+  SafeOld.add(0x110, {op(NdOp::STORE, {}, {reg(56), constant(37)}),
+                      op(NdOp::COPY, reg(0), {constant(9)}), ret()});
+  const auto Good = specializeInterpreter(SafeOld, {0x100}, O);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  WideByteOracle Actual(llvm::endianness::little);
+  Actual.word(reg(32), 0x1000);
+  Actual.word(reg(8), 0x4000);
+  ASSERT_TRUE(Actual.run(Good.Residual)) << Actual.Diagnostic;
+  EXPECT_EQ(Actual.number(reg(0)), 9u);
+  for (unsigned I = 0; I != 8; ++I) {
+    EXPECT_EQ(Actual.Memory.at(0x1010 + I),
+              uint8_t(uint64_t{0x1000} >> (8 * I)));
+    EXPECT_EQ(Actual.Memory.at(0x4000 + I), uint8_t(uint64_t{37} >> (8 * I)));
+  }
+
+  // A failed comparison keeps unknown/frame-derived bytes even when Desired
+  // is external. The subsequent frame reload must retain that possibility.
+  Provider UnsafeWrite;
+  UnsafeWrite.add(0x100, {op(NdOp::INT_ADD, reg(40), {reg(32), constant(16)}),
+                          op(NdOp::INT_XOR, reg(48), {reg(32), reg(24)}),
+                          op(NdOp::STORE, {}, {reg(40), reg(48)}),
+                          atomicCmpxchg(reg(56), reg(40), reg(16), reg(8)),
+                          jump(0x110)});
+  UnsafeWrite.add(0x110, {op(NdOp::LOAD, reg(64), {reg(40)}), jump(0x120)});
+  UnsafeWrite.add(0x120, {op(NdOp::STORE, {}, {reg(64), constant(7)}), ret()});
+  const auto Bad = specializeInterpreter(UnsafeWrite, {0x100}, O);
+  EXPECT_EQ(Bad.Status, SpecializationStatus::Unsupported);
+  EXPECT_NE(Bad.Diagnostic.find("address origin"), std::string::npos)
+      << Bad.Diagnostic;
+  EXPECT_TRUE(Bad.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, AtomicCmpxchgInvalidatesAliasedAffineSpills) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_ADD, reg(40), {reg(32), constant(8)}),
+         op(NdOp::INT_ADD, reg(48), {reg(32), constant(32)}),
+         op(NdOp::STORE, {}, {reg(40), reg(48)}),
+         op(NdOp::COND_BR, {}, {constant(0x110), reg(24, 1)})},
+        0x120);
+  P.add(0x110,
+        {op(NdOp::LOAD, reg(72), {reg(8)}),
+         op(NdOp::INT_AND, reg(72), {reg(72), constant(~uint64_t{15})}),
+         atomicCmpxchg(reg(64), reg(72), reg(48), reg(32)), jump(0x130)});
+  P.add(0x120, {jump(0x130)});
+  P.add(0x130,
+        {op(NdOp::LOAD, reg(56), {reg(40)}),
+         op(NdOp::INT_EQUAL, reg(80, 1), {reg(56), reg(32)}),
+         op(NdOp::COND_BR, {}, {constant(0x140), reg(80, 1)})},
+        0x150);
+  P.add(0x140, {op(NdOp::COPY, reg(0), {constant(17)}), ret()});
+  P.add(0x150, {op(NdOp::COPY, reg(0), {constant(19)}), ret()});
+  auto O = separatedStoreOptions();
+  O.MaxChainedTransfers = 0; // Exercise projection, join and re-seeding.
+  ASSERT_FALSE(O.ExternalStoresPreserveEntryReturnSlot);
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_GE(count(R.Residual, NdOp::COND_BR), 2u);
+  for (uint64_t Stack : {0x1008u, 0x2008u})
+    for (bool TakeAtomic : {false, true})
+      for (bool Alias : {false, true}) {
+        SCOPED_TRACE(Stack);
+        SCOPED_TRACE(TakeAtomic);
+        SCOPED_TRACE(Alias);
+        const uint64_t Target = Alias ? Stack + 8 : 0x5000;
+        WideByteOracle Actual(llvm::endianness::little);
+        Actual.word(reg(32), Stack);
+        Actual.word(reg(8), 0x4000);
+        Actual.word(reg(24, 1), TakeAtomic);
+        for (unsigned I = 0; I != 8; ++I) {
+          Actual.Memory[0x4000 + I] = uint8_t(Target >> (8 * I));
+          Actual.Memory[0x5000 + I] = uint8_t((Stack + 32) >> (8 * I));
+          Actual.Memory[Stack + I] = 0xa0 + I;
+        }
+        auto ExpectedMemory = Actual.Memory;
+        for (unsigned I = 0; I != 8; ++I) {
+          ExpectedMemory[Stack + 8 + I] = uint8_t((Stack + 32) >> (8 * I));
+          if (TakeAtomic)
+            ExpectedMemory[Target + I] = uint8_t(Stack >> (8 * I));
+        }
+        ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+        EXPECT_EQ(Actual.number(reg(0)), TakeAtomic && Alias ? 17u : 19u);
+        EXPECT_EQ(Actual.number(reg(32)), Stack);
+        EXPECT_EQ(Actual.Memory, ExpectedMemory);
+        EXPECT_EQ(nativeAtomicAddresses(R, Actual.AtomicAddresses),
+                  TakeAtomic ? std::vector<va_t>{0x110} : std::vector<va_t>{});
+      }
+}
+
+TEST(InterpreterSpecialization, AtomicCmpxchgDoesNotInventAffineDesiredSpill) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_ADD, reg(40), {reg(32), constant(16)}),
+                op(NdOp::INT_ADD, reg(48), {reg(32), constant(32)}),
+                op(NdOp::STORE, {}, {reg(40), reg(48)}),
+                atomicCmpxchg(reg(56), reg(40), reg(8), reg(32)), jump(0x110)});
+  P.add(0x110,
+        {op(NdOp::LOAD, reg(64), {reg(40)}),
+         op(NdOp::INT_EQUAL, reg(80, 1), {reg(64), reg(32)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(80, 1)})},
+        0x130);
+  P.add(0x120, {op(NdOp::COPY, reg(0), {constant(17)}), ret()});
+  P.add(0x130, {op(NdOp::COPY, reg(0), {constant(19)}), ret()});
+  auto O = ordinaryReturnOptions();
+  O.ExplicitMachineState = O.NormalNonfaultingExecution = true;
+  O.MaxChainedTransfers = 0; // Reload through node projection and re-seeding.
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::ATOMIC_CMPXCHG), 1u);
+  EXPECT_GE(count(R.Residual, NdOp::COND_BR), 1u);
+  // Desired is an exact frame pointer, but it describes only a successful
+  // comparison. Importing it as an unconditional spill would erase mismatch.
+  for (uint64_t Stack : {0x1000u, 0x2000u})
+    for (bool Match : {false, true}) {
+      SCOPED_TRACE(Stack);
+      SCOPED_TRACE(Match);
+      WideByteOracle Actual(llvm::endianness::little);
+      Actual.word(reg(32), Stack);
+      Actual.word(reg(8), Stack + 32 + (Match ? 0 : 1));
+      for (uint64_t A = Stack + 8; A < Stack + 32; ++A)
+        Actual.Memory[A] = uint8_t(0xa0 + A - Stack);
+      auto ExpectedMemory = Actual.Memory;
+      const uint64_t FinalPointer = Match ? Stack : Stack + 32;
+      for (unsigned I = 0; I != 8; ++I)
+        ExpectedMemory[Stack + 16 + I] = uint8_t(FinalPointer >> (8 * I));
+      ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+      EXPECT_EQ(Actual.number(reg(0)), Match ? 17u : 19u);
+      EXPECT_EQ(Actual.number(reg(32)), Stack);
+      EXPECT_EQ(Actual.number(reg(56)), Stack + 32);
+      EXPECT_EQ(Actual.number(reg(64)), FinalPointer);
+      EXPECT_EQ(Actual.Memory, ExpectedMemory);
+      EXPECT_EQ(nativeAtomicAddresses(R, Actual.AtomicAddresses),
+                std::vector<va_t>{0x100});
+    }
 }
 
 } // namespace
