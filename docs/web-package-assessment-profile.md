@@ -157,5 +157,7 @@ results are recorded in [the implementation ledger](web-analysis-implementation.
 See the [actual Claude/OSV qualification](web-package-assessment-qualification.md)
 for pinned inputs, report hashes and the distinction between archive, signature
 and source evidence.
-This profile is one bounded increment of issue #715; the JavaScript epics
-#714–#718 retain the gaps listed in the support matrix and implementation ledger.
+This profile owns assessment and review within issue #715. The
+[epic acceptance audit](web-epic-acceptance.md) records current criterion coverage;
+the [support matrix](web-support-matrix.md) retains each profile's supported
+boundary.

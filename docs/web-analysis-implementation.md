@@ -5,7 +5,10 @@ This work implements issues [714](https://github.com/NeverSight/NeverD/issues/71
 [716](https://github.com/NeverSight/NeverD/issues/716),
 [717](https://github.com/NeverSight/NeverD/issues/717), and
 [718](https://github.com/NeverSight/NeverD/issues/718).
-It is in progress. A foundation milestone does not close the five epics.
+The required operations are implemented within their documented profiles.
+The [2026-10-15 acceptance audit](web-epic-acceptance.md) distinguishes satisfied
+issue criteria from future adapters and unknown runtime semantics. Final
+shared-path regression and closure receipts are recorded below.
 
 ## Authoritative implementation constraint
 
@@ -33,25 +36,31 @@ their existing scope; no Python support for web APIs is claimed.
 
 ## Required work and current evidence
 
-| Work | Current state | Evidence required before completion |
-|---|---|---|
-| P0 identity/schema/profile contract | [Schema](web-artifact-schema.md), [support matrix](web-support-matrix.md) and pinned parser documented | Container layout dependencies and fixture manifests remain |
-| P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified. Windows Server 2025 x64 now passes native ownership and extracted product checks, recorded below | Other hosts, unified input/archive/export filename rules and additional size qualification remain |
-| P2 SDK/CLI/worker | Thirty-four SDK/CLI tests passed, including navigation/storage/view anchors and direct Bun navigation/view/anchor commands; C++ worker adapter/framed-process and all nine worker regressions passed | Broader host, cancellation/resource and distribution qualification remain |
-| P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
-| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
-| Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
-| P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, captured registry/in-toto/DSSE/SLSA metadata, composed assessments, bounded persistent review journals and selected-evidence Qt review implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature/report metadata | Broader GUI evidence selectors, lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
-| P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR/member syntax candidates, one-layer lexical fetch parameter forwarding, separate request/result syntax links and explicit fetch-only method/origin/path comparison implemented | General wrapper/dataflow, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
-| P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
-| P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
-| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA, nexe 4.0.0-rc.7 EOF and pkg 5.8.1 VFS readers; measured Wails 2.11.0 / Go 1.25.7 Linux ELF and Windows PE x64 assets, raw/readable local export and native handoff; shared consumers | Tauri/custom CEF assets, Wails bridges, larger interactive analysis and broader host/producer qualification remain; other Node-family layouts stay unsupported |
-| P8 C++ MCP, optional presentation, distribution | Native C++ MCP stdio profile qualified; Windows Server 2025 x64 CLI/SDK/worker/MCP product published with same-source gates and verified public downloads, recorded below | Broader host/distribution and optional presentation remain |
-| P9 full acceptance audit | [Issue-by-issue and fixed-sample audit](web-epic-acceptance.md) records qualified operations and explicit gaps | Required Tauri assets, broader source/config flow and remaining consumer boundaries prevent completion |
+The table summarizes the final implementation. The increment records below
+preserve historical counts, limitations and issue states at their recorded
+baselines.
 
-Original bytes now use `posix-unlinked-spool-v1`: a private, immediately unlinked
-file with one close-on-exec descriptor per snapshot. Import streams and hashes
+| Work | Implemented evidence | Explicit boundary |
+|---|---|---|
+| P0 identity/schema/profile contract | [Schema](web-artifact-schema.md), [support matrix](web-support-matrix.md), pinned parser and producer manifests | Versioned profiles do not imply unknown-layout support |
+| P1 artifact store and safe input | Immutable bounded spool; POSIX and Windows NTFS handle owners; shared portable component validation and NFC/full-fold collision checks | Other filesystems/hosts need independent qualification; no global process quota |
+| P2 SDK/CLI/worker | Shared C++ source domain, immutable input, metadata/query/range APIs, CLI and framed worker consumers | Web APIs remain independent of native sessions and the Python binding |
+| P3 parser/scope/query/maps | Parser, lexical/value/effect/module/bundle/navigation models, private views and exact source-map anchors | No general runtime dataflow, foreign export resolution or erased-source recovery |
+| P4A standalone extraction | Bun ELF/thin Mach-O/PE x64/ARM64, compiler corpus, serialized maps, local raw/readable export and eight captured Claude packages | Unknown layouts refuse; JSC cache contents remain opaque |
+| Shared native handoff | Snapshot/file loader parity, independent native session lifetime, original container/member origins | Native loading is separate from extraction and runtime behavior |
+| P4B desktop/VSIX extraction | ASAR/unpacked, ZIP32, Electron/NW.js/VSIX manifests and selected entries; HTML/import-map and native consumers | Runtime routing and unsupported framework versions remain unknown |
+| P4C package graph/diff | npm graph/archive/SRI, behavior/install/diff, offline advisory/registry/provenance evidence, assessments and persistent Qt review | pnpm/Yarn are separate future adapters; declarations do not authenticate publishers |
+| P4D passive interfaces/HAR | Redacted preview/commit, source request components, bounded source/HAR joins and v2 observed field trees | Syntax is not executed; observed presence is not server optionality |
+| P5 reversible projections | Primitive rewrites, whole-binding renaming, Boolean expression selection, exact undo and verified same-tree readable export | No general statement/control-flow recovery or whole-program equivalence |
+| P6 stream/log consumers | Versioned SSE/JSONL/JSON-RPC/MCP/log readers, recorded-ID candidates, malformed/budget cases and selected-source relations | Real transcripts are optional and never fabricated; runtime attribution remains unknown |
+| P7 framework/Node profiles | Measured Tauri/Wails assets, direct bridge syntax, actual CEF/WebView2 DataPack profiles; independent SEA/nexe/pkg producers and consumers | Each version/target has its own contract; opaque snapshots stay opaque |
+| P8 transport/distribution | C++ MCP and worker parity; published Windows Server 2025 x64 CLI/SDK/worker/MCP product with same-source producer/resource gates | Other host/product profiles require separate qualification |
+| P9 acceptance | [Issue-by-issue and per-input audit](web-epic-acceptance.md) records mandatory criteria, exact evidence and boundaries | Closure relies on required criteria; future adapters remain explicitly unsupported |
+
+## Historical foundation qualification
+
+Original bytes at this milestone use `posix-unlinked-spool-v1`: a private,
+immediately unlinked file with one close-on-exec descriptor per snapshot. Import streams and hashes
 64 KiB chunks, seals before publication and exposes only bounded immutable ranges
 internally. Admission is capped at 512 MiB aggregate / 256 MiB per original file,
 10,000 entries and depth 64. Preview retains only its candidate digest, so one
@@ -130,7 +139,7 @@ source files byte-for-byte. This verifies those notice rules, not a complete
 product distribution or installation of all targets.
 No new Python, JavaScript or shell implementation/test scripts were added.
 
-## Next implementation boundary
+## Historical package metadata increment
 
 The Node metadata increment adds `node-package-evidence-v1` through C++ core,
 session, SDK, CLI and worker layers. Twenty-six core tests include the pinned
@@ -154,7 +163,8 @@ This is a projection of supplied registry metadata, not inspection of an npm
 tarball or proof that its native binary matches the standalone distribution.
 No declared script ran and no dependency was resolved. Archive/hash comparison
 was the next package boundary at that checkpoint; the qualified archive/SRI
-increment below now supplies that comparison. #715 remains partial.
+increment below supplies that comparison. At that checkpoint, #715 remained
+partial.
 
 The user-required LLVM filename/project/Doxygen headers now cover the web
 implementation and its C++ fixtures/adapters. Package algorithms have their
@@ -3359,7 +3369,7 @@ provenance,capabilities}.log`.
 The user requested another comparison with the original five GitHub issues.
 All remain open with zero comments; their bodies retain the October 9 scope.
 The blanket completion conclusion above is superseded by the updated
-[acceptance audit](web-epic-acceptance.md#re-audit-findings-and-follow-up).
+[acceptance audit](web-epic-acceptance.md#historical-re-audit-findings-and-resolution).
 The named implementations and earlier verification receipts remain valid.
 
 Production CLI probes expose two #717 coverage gaps: unresolved URL templates

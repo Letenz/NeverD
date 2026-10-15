@@ -59,8 +59,10 @@ The ordinary SDK reply is metadata only. The local directory discloses the
 selected source by explicit caller action and is outside the reviewed source
 display/redaction flow. No worker or MCP operation exposes this raw export.
 No target code, formatter, JavaScript runtime or external helper is executed.
-The current exclusive writer is available on POSIX hosts; other hosts retain
-its explicit `export_writer_unavailable` behavior.
+The exclusive writer supports POSIX hosts and the qualified Windows Server
+2025 x64 fixed-NTFS profile. The [Windows product contract](web-windows-product.md)
+records its handle ownership, private creation and native export qualification;
+other Windows hosts are not qualified by that receipt.
 
 ## SDK and CLI
 

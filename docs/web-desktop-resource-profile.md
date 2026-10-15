@@ -50,10 +50,12 @@ manifest retains original artifacts/origins, roles, hashes and unavailable
 entries. No target pathname becomes an output path. Existing destinations refuse;
 failures can retain partial evidence without a completion manifest. Original
 descriptor/resource files can contain sensitive values and are disclosed only
-by this explicit local operation. The writer remains unavailable on unqualified
-Windows hosts.
+by this explicit local operation. The same writer has a native Windows Server
+2025 x64 qualification in the [Windows product profile](web-windows-product.md);
+that result does not qualify arbitrary host filesystems or other Windows builds.
 
 Self-authored C++ fixtures qualify directory/compressed ZIP scope, JS/HTML/native
 handoff, opaque/missing members, stable identities, refusal paths and exact local
 export. These fixtures do not authenticate a real application's framework or
-packaging. Real Electron/Tauri/Wails/VSIX evidence keeps its independent profiles.
+packaging. Real Electron/Tauri/Wails/VSIX evidence keeps its independent profiles
+in the [desktop adapter matrix](web-desktop-adapter-matrix.md).

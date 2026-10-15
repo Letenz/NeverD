@@ -146,7 +146,7 @@ byte offsets remain unavailable rather than being interpolated. Unsupported or
 unavailable members cannot create an export directory. No archive path becomes
 an output filename and no package entry or installer is invoked.
 
-The C++ POSIX writer creates a private directory and uses generated ordinal
+The C++ local writer creates a private directory and uses generated ordinal
 filenames with exclusive no-follow writes. Existing destinations, including
 symlinks, are refused. Virtual member names occur only as manifest data and
 HTML-escaped index labels, never filesystem paths. `original.bin` retains the
@@ -156,6 +156,8 @@ decoded hashes. Every output is reread and SHA-256 checked. `manifest.json` is
 published without replacing an existing file only after it is verified;
 failed exports may leave a partial directory or `manifest.pending`. No crash
 durability guarantee is made. Output is bounded by 1 GiB and 40,000 files.
+The [Windows product contract](web-windows-product.md) records the shared
+writer's separate Windows Server 2025 x64 fixed-NTFS qualification.
 
 The shared decoder streams stored Latin-1/UTF-16LE in 64 KiB chunks, including
 surrogate pairs across chunk boundaries. Explicit export permits at most
@@ -212,10 +214,11 @@ container and native asset members can enter an independent native session
 through [explicit native handoff](web-analysis.md#explicit-native-handoff).
 The container hash or exact member range remains attached to that session;
 encoded source, maps, cache and runtime-prefix regions cannot be selected as
-standalone native images. The independent SEA/pkg/nexe adapters and broader
-runtime-version qualification remain #718 work. Native-loader support alone
-does not qualify a new Bun layout; the six targets above have separate
-compiler-container and member-hash evidence.
+standalone native images. The independent SEA/pkg/nexe adapters have their own
+[versioned contracts and qualification](web-native-javascript-matrix.md).
+Broader runtime-version coverage requires separate evidence. Native-loader
+support alone does not qualify a new Bun layout; the six targets above have
+separate compiler-container and member-hash evidence.
 
 ## Serialized source maps
 
@@ -298,8 +301,10 @@ hashes and original member hashes are recorded independently of the reader.
 The small checked-in fixtures preserve the exact graph bytes, not the native
 runtime. Default C++ tests use explicitly synthetic container wrappers for these
 graphs plus hostile mutations. The full-container test requires the separately
-held corpus and is explicitly skipped when it is absent. A successful small
-fixture test alone must not be reported as full-container qualification.
+supplied corpus. Ordinary local runs explicitly skip absent inputs; the
+[required producer qualification](web-producer-corpus-qualification.md) turns
+missing inputs or consumers into failures. A successful small fixture test
+alone must not be reported as full-container qualification.
 
 The [cross-container corpus](../unittests/web/fixtures/bun/cross/README.md) adds
 20 complete compiler images: four cases for each additional target. The C++
@@ -320,9 +325,11 @@ ctest --test-dir build-release/tools/neverd-worker -R NeverDWorkerWeb --output-o
 
 The corpus compiler and development recorder are never prerequisites for
 analysis, ordinary builds or tests. The CLI/worker tests deliberately use an
-unusable external-tool PATH. Host qualification remains macOS arm64 Release;
-the extracted targets are listed above. This does not establish Linux-host or
-Windows-host support.
+unusable external-tool PATH. The complete producer corpus is qualified on the
+macOS arm64 Release reader. The later [Windows Server 2025 x64 product](web-windows-product.md)
+separately qualifies native ownership and selected Bun source/map/export
+consumers; its required selection does not run every full producer image.
+Other host coverage requires independent evidence.
 
 The preserved minified asset and cached CommonJS graphs also exercise actual
 serialized maps and raw/compressed Zstd blocks. Their recovered source hashes

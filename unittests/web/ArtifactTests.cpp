@@ -9,10 +9,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "gtest/gtest.h"
-
 #include "Internal.h"
 #include "PathPolicy.h"
+#include "gtest/gtest.h"
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Session.h"

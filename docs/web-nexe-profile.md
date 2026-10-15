@@ -122,14 +122,18 @@ They contain the same 16,044-byte bootstrap and four original files totalling
 Native header/ARM64 prefix fixtures additionally test prefix-independent
 arithmetic; **ARM64 producer outputs and target runtime activation are not
 qualified**. No sample was executed. Native prefixes, complete outputs, producer
-metadata and a dependency lock are retained locally, not redistributed.
+metadata and dependency locks are retained in the
+[published producer corpus and source companion](web-producer-corpus-qualification.md#published-fixed-corpus-and-corresponding-source).
 
 Exact artifact/base/input hashes and producer identity are recorded in
 [`fixtures/nexe/manifest.json`](../unittests/web/fixtures/nexe/manifest.json).
 `WebNexe.OptionalPinnedProducerImagesPreserveIndependentInputs` and
 `WebNexeSDK.OptionalProducerSourcesBootstrapAndManifestUseSharedConsumers` use
-`NEVERD_NEXE_4RC7_CORPUS`; missing artifacts explicitly skip. Tests never install,
-download or execute a producer. The manual C++ fixture-input writer is excluded
+`NEVERD_NEXE_4RC7_CORPUS`; ordinary local runs explicitly skip missing artifacts.
+The required producer lane fails absent inputs or consumers and passed both
+nexe cases at `5e126750ae7513591b6d79056c02358fe55da0f1` on macOS arm64.
+The Windows product selection does not run these full-image nexe cases.
+Tests never install, download or execute a producer. The manual C++ fixture-input writer is excluded
 from ordinary builds and tests. See the [fixture recipe](../unittests/web/fixtures/nexe/README.md).
 
 The implementation is independent of upstream source; no nexe code is linked
@@ -139,5 +143,6 @@ or copied into the product. Format evidence is pinned to commit
 [`bundle.ts`](https://github.com/nexe/nexe/blob/c32a79a684011d7ac28a236593c514be441b6c27/src/fs/bundle.ts),
 [`boot-nexe.ts`](https://github.com/nexe/nexe/blob/c32a79a684011d7ac28a236593c514be441b6c27/src/patches/boot-nexe.ts),
 and [`util.ts`](https://github.com/nexe/nexe/blob/c32a79a684011d7ac28a236593c514be441b6c27/src/util.ts).
-Other nexe layouts, pkg, native loader validation and full project reconstruction
-remain separate work; this increment does not complete #714–#718.
+Other nexe layouts, native loader validation and full project reconstruction
+require separate contracts. The [pkg adapter](web-pkg-profile.md) has independent
+qualification and does not inherit nexe evidence.

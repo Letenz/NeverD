@@ -115,4 +115,6 @@ external analyzer or extension mechanism is introduced.
 
 This profile supplies inspection candidates. Import-rooted framework attribution,
 configuration merge/dataflow, property dispatch, effective policy and registration
-reachability remain separate work; it does not complete #714–#718.
+reachability remain outside this profile. The
+[epic acceptance audit](web-epic-acceptance.md) records current criterion
+coverage across the source and consumer profiles.

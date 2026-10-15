@@ -152,6 +152,13 @@ oracles: stat sizes remain 78/22 while stored source sizes are 56/19. This
 prevents confusing original-file metadata with actual source coordinates.
 No target runtime was executed.
 
+The [required producer lane](web-producer-corpus-qualification.md) supplies the
+fixed public corpus and fails missing inputs or consumers. Its three pkg cases
+cover the six full images, preprocessing witness and shared source consumers;
+all passed at `5e126750ae7513591b6d79056c02358fe55da0f1` on macOS arm64 in
+[run 38677375352](https://github.com/NeverSight/NeverD/actions/runs/38677375352).
+The Windows product selection does not run these full-image pkg cases.
+
 Format evidence is pinned to pkg commit
 [`5dc987b`](https://github.com/vercel/pkg/tree/5dc987b90ffd191263eb0202833dc382cea0d47d):
 [`producer.ts`](https://github.com/vercel/pkg/blob/5dc987b90ffd191263eb0202833dc382cea0d47d/lib/producer.ts),
@@ -165,5 +172,5 @@ The locator and bases use pkg-fetch commit
 its [`Node patch`](https://github.com/vercel/pkg-fetch/blob/0b2a03743e72ca11eacdb2acd90c6c5abdaa2734/patches/node.v18.5.0.cpp.patch)
 and [`expected hashes`](https://github.com/vercel/pkg-fetch/blob/0b2a03743e72ca11eacdb2acd90c6c5abdaa2734/lib/expected.ts).
 No upstream implementation is copied or linked into this reader. Compressed
-profiles, link resolution, V8 semantics, native validation, other producer
-versions and the remaining #714–#718 acceptance work are separate requirements.
+profiles, link resolution, V8 semantics, native validation and other producer
+versions remain outside this qualified profile.

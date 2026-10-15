@@ -82,8 +82,9 @@ cyclic, excessive and foreign ancestry refuses the whole aggregation.
 `install_entry_propagation:not_analyzed` remain explicit. Manifest lifecycle
 commands are declarations owned by package metadata; this source inspection
 does not parse shell commands or prove which files run during installation.
-Advisory/provenance imports, reachability, analyst dispositions and human reports
-remain separate #715 work.
+Advisory/provenance imports, analyst dispositions and human reports use the
+separate [assessment profile](web-package-assessment-profile.md) and its selected
+evidence owners. Runtime reachability remains unverified.
 
 ## Ownership, limits and surfaces
 

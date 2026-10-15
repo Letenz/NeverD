@@ -1044,7 +1044,11 @@ select this result; worker/MCP exclude raw export. See the
 [readable-export profile](web-readable-export-profile.md).
 Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
-owns its pinned native Unicode collision policy. `SessionAsar` publishes bounded
+owns portable component validation and the pinned native Unicode collision
+policy shared by directory capture and archive namespaces. Comparison keys
+never replace evidence names. Fixed-name export writers use the same component
+validator; without pinned ICU, captured directory member names admit only the
+exact ASCII subset and non-ASCII members refuse. `SessionAsar` publishes bounded
 member pages and explicit captured unpacked associations. Source, anchors,
 relative module-file comparisons and native handoff share these selections;
 unavailable members never become consumer bytes. `SourceOrigins` owns finite

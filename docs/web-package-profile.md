@@ -1,9 +1,10 @@
 # Offline package evidence profile
 
 `node-package-evidence-v1` inspects explicitly selected `package-json` or
-`npm-lock` metadata in an immutable captured namespace. It is a partial
-implementation of #715. No package manager, shell, target JavaScript or network
-request runs. A lifecycle script remains data.
+`npm-lock` metadata in an immutable captured namespace. It owns the graph and
+snapshot-diff portion of #715; related profiles below supply behavior, external
+evidence and analyst review. No package manager, shell, target JavaScript or
+network request runs. A lifecycle script remains data.
 
 ## Input and graph ownership
 

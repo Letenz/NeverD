@@ -1309,7 +1309,11 @@ The fixed native ICU policy is required; omission tests check an explicit
 [fixture manifest](../unittests/web/fixtures/asar/README.md).
 
 `NeverDWebArtifactTests` covers artifact identity, immutable import publication,
-input links/collisions, aggregate budgets and bounded JSON admission. Its blob
+input links/collisions, aggregate budgets and bounded JSON admission. Shared
+`WebPathPolicy` owner cases check portable device names and
+NFC/full-fold equivalence; captured Unicode aliases refuse before publication
+without changing original evidence names. Both owner cases and the portable
+capture case are mandatory in the Windows product receipt. Its blob
 tests additionally check immutable disk snapshots, shared descriptor lifetime,
 range/overflow limits, concurrent reads and a C++ child with a lowered file-size
 limit to inject storage-write failure. The maximum-size case streams two 256 MiB
