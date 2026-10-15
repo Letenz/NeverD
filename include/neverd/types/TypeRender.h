@@ -28,6 +28,8 @@
 
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace neverd::types {
 
@@ -47,7 +49,7 @@ enum class BuiltinSpelling : uint8_t {
   Windows,  ///< ULONG and UCHAR, as the Windows headers name them.
   IDA,      ///< unsigned int and unsigned __int8, as IDA's local types do.
   Keywords, ///< unsigned long, as the compiler recorded it.
-  Portable, ///< uint32_t, which lays out alike on every target.
+  Portable, ///< uint32_t and the other exact-width types of <stdint.h>.
 };
 
 struct RenderOptions {
@@ -73,6 +75,12 @@ std::string renderType(const TypeLibrary &Library, const LocalType &Type,
 std::string renderTypes(const TypeLibrary &Library,
                         llvm::ArrayRef<const LocalType *> Types,
                         const RenderOptions &Options);
+
+/// The names \p Lang cannot spell as they are, such as `std::pair<int,int>`
+/// or an enumerator another enumeration has too, each with the identifier
+/// rendered source calls it by.  In the library's order.
+std::vector<std::pair<std::string, std::string>>
+renamedNames(const TypeLibrary &Library, Language Lang);
 
 } // namespace neverd::types
 

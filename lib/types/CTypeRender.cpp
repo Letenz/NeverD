@@ -74,8 +74,8 @@ std::string portableBuiltin(Builtin Type, DataModel Model) {
 class CWriter {
 public:
   CWriter(const TypeLibrary &Library, const RenderOptions &Options)
-      : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp) {
-  }
+      : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp),
+        Names(Library, Options.Lang) {}
 
   std::string builtin(Builtin Type) const;
   std::string declare(const TypeExpr &Type, std::string Declarator) const;
@@ -84,6 +84,8 @@ public:
   void forwardDeclaration(const LocalType &Type, std::string &Out) const;
   /// The builtins rendered so far.
   const std::set<Builtin> &builtins() const { return UsedBuiltins; }
+  /// Whether a record rendered so far declares its alignment.
+  bool alignsRecords() const { return AlignsRecords; }
 
 private:
   void record(const LocalType &Type, std::string &Out);
@@ -99,6 +101,8 @@ private:
   void line(unsigned Indent, llvm::StringRef Code, llvm::StringRef Comment,
             std::string &Out) const;
   std::string tagged(const LocalType &Type) const;
+  /// "struct" or "union", with the alignment \p Record declares.
+  std::string keyword(const RecordDef &Record);
   std::string offset(uint64_t Byte) const {
     return offsetText(Byte, Options, Digits);
   }
@@ -109,9 +113,11 @@ private:
   const TypeLibrary &Library;
   const RenderOptions &Options;
   const bool Cpp;
+  const NameSpelling Names;
   unsigned Digits = 1;
   unsigned Fillers = 0;
   mutable std::set<Builtin> UsedBuiltins;
+  bool AlignsRecords = false;
 };
 
 std::string CWriter::builtin(Builtin Type) const {
@@ -153,7 +159,7 @@ std::string CWriter::declare(const TypeExpr &Type,
       else if (Type.NamedKind == TypeKind::Enum)
         Base += "enum ";
     }
-    return spaced(Base + Type.Name);
+    return spaced(Base + Names.type(Type.Name));
   }
   case TypeExprKind::Pointer: {
     std::string Inner = Type.Reference ? "&" : "*";
@@ -193,8 +199,7 @@ std::string CWriter::declare(const TypeExpr &Type,
     for (const Parameter &Param : Function.Params) {
       if (!Params.empty())
         Params += ", ";
-      Params += Param.Type ? declare(*Param.Type,
-                                     escapedName(Options.Lang, Param.Name))
+      Params += Param.Type ? declare(*Param.Type, Names.member(Param.Name))
                            : builtin(Builtin::Int);
     }
     if (Function.Variadic)
@@ -233,18 +238,31 @@ void CWriter::line(unsigned Indent, llvm::StringRef Code,
   Out += '\n';
 }
 
-std::string CWriter::tagged(const LocalType &Type) const {
+std::string CWriter::keyword(const RecordDef &Record) {
+  std::string Text = Record.Union ? "union" : "struct";
+  if (!Record.Alignment)
+    return Text;
+  // As the Windows headers declare it; C++ has a keyword.
+  const std::string Bytes = std::to_string(Record.Alignment);
   if (Cpp)
-    return Type.Name;
+    return Text + " alignas(" + Bytes + ")";
+  AlignsRecords = true;
+  return Text + " DECLSPEC_ALIGN(" + Bytes + ")";
+}
+
+std::string CWriter::tagged(const LocalType &Type) const {
+  const std::string Name = Names.type(Type.Name);
+  if (Cpp)
+    return Name;
   switch (Type.Kind) {
   case TypeKind::Struct:
-    return "struct " + Type.Name;
+    return "struct " + Name;
   case TypeKind::Union:
-    return "union " + Type.Name;
+    return "union " + Name;
   case TypeKind::Enum:
-    return "enum " + Type.Name;
+    return "enum " + Name;
   default:
-    return Type.Name;
+    return Name;
   }
 }
 
@@ -291,7 +309,8 @@ void CWriter::enumerators(const EnumDef &Enum, unsigned Indent,
     if (!(Signed && static_cast<int64_t>(Value.Value) < 0) &&
         Value.Value >= 0x100)
       Hex = true;
-  for (const Enumerator &Value : Enum.Values) {
+  for (size_t I = 0; I < Enum.Values.size(); ++I) {
+    const Enumerator &Value = Enum.Values[I];
     const int64_t AsSigned = static_cast<int64_t>(Value.Value);
     std::string Number;
     if (Signed && AsSigned < 0)
@@ -301,8 +320,8 @@ void CWriter::enumerators(const EnumDef &Enum, unsigned Indent,
                              : Value.Value);
     else
       Number = std::to_string(Value.Value);
-    Out += std::string(Indent, ' ') + escapedName(Options.Lang, Value.Name) +
-           " = " + Number + ",\n";
+    Out += std::string(Indent, ' ') + Names.enumerator(Enum, I) + " = " +
+           Number + ",\n";
   }
 }
 
@@ -326,7 +345,7 @@ void CWriter::body(const RecordDef &Record, uint32_t Pack, unsigned Indent,
     const uint64_t Bit = Base + Field.BitOffset;
     const uint64_t Size = Library.sizeOf(*Field.Type).value_or(0);
     const uint32_t Align = Library.alignOf(*Field.Type);
-    const std::string Name = escapedName(Options.Lang, Field.Name);
+    const std::string Name = Names.member(Field.Name);
     if (Record.Union) {
       UnionSize = std::max(UnionSize, Size);
       UnionAlign = std::max(UnionAlign, Align);
@@ -334,9 +353,10 @@ void CWriter::body(const RecordDef &Record, uint32_t Pack, unsigned Indent,
       const uint64_t Storage = Field.StorageBitOffset;
       if (!Bits || Bits->Storage != Storage) {
         const std::string Type = declare(*Field.Type, "");
-        // The compiler would go on filling the run before this one; an
-        // unnamed bitfield of width 0 closes it.
-        if (Bits && Bits->Bits == Size * 8 && Bits->Next < Bits->Bits)
+        // A run before this one with room left is closed by an unnamed
+        // bitfield of width 0: MSVC would go on filling it with a field of
+        // its size, and GCC with any field that fits.
+        if (Bits && Bits->Next < Bits->Bits)
           line(Indent, Bits->Type + " : 0;", "", Out);
         if (Storage % 8 == 0) {
           const uint64_t At = Layout.end();
@@ -377,7 +397,7 @@ void CWriter::body(const RecordDef &Record, uint32_t Pack, unsigned Indent,
       if (InnerPack != Pack)
         Out += "#pragma pack(push, " + std::to_string(InnerPack) + ")\n";
       // An anonymous record shows its offset where it opens.
-      line(Indent, qualifiers(*Element) + (Inner.Union ? "union" : "struct"),
+      line(Indent, qualifiers(*Element) + keyword(Inner),
            Field.Name.empty() ? offset(Bit / 8) : "", Out);
       line(Indent, "{", "", Out);
       body(Inner, InnerPack, Indent + 4, Bit, /*Outer=*/false, Out);
@@ -429,7 +449,7 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
   const char *Keyword = Record.Union ? "union" : "struct";
   if (!Record.Defined) {
     Out += "// Declared only: its members are unknown.\n";
-    Out += std::string(Keyword) + " " + Type.Name + ";\n";
+    Out += std::string(Keyword) + " " + Names.type(Type.Name) + ";\n";
     return;
   }
   Digits = offsetDigits(Record.Size);
@@ -441,7 +461,7 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
   Out += Header + "\n";
   if (Record.Pack)
     Out += "#pragma pack(push, " + std::to_string(Record.Pack) + ")\n";
-  Out += std::string(Keyword) + " " + Type.Name + "\n{\n";
+  Out += keyword(Record) + " " + Names.type(Type.Name) + "\n{\n";
   body(Record, Record.Pack, 4, 0, /*Outer=*/true, Out);
   Out += "};\n";
   if (Record.Pack)
@@ -456,7 +476,7 @@ void CWriter::enumeration(const LocalType &Type, std::string &Out) {
          std::to_string(builtinBytes(Enum.Underlying, Library.dataModel())) +
          " bytes\n";
   std::string Head = enumHead(Enum);
-  Head.insert(4, " " + Type.Name);
+  Head.insert(4, " " + Names.type(Type.Name));
   Out += Head + "\n{\n";
   enumerators(Enum, 4, Out);
   Out += "};\n";
@@ -474,8 +494,7 @@ void CWriter::hoisted(
     }
     if (Field.isBitfield() || Field.Name.empty())
       continue;
-    Out.push_back(
-        {escapedName(Options.Lang, Field.Name), (Base + Field.BitOffset) / 8});
+    Out.push_back({Names.member(Field.Name), (Base + Field.BitOffset) / 8});
   }
 }
 
@@ -514,12 +533,13 @@ void CWriter::definition(const LocalType &Type, std::string &Out) {
     return;
   case TypeKind::Typedef:
     if (Type.Target)
-      Out += "typedef " + declare(*Type.Target, Type.Name) + ";\n";
+      Out += "typedef " + declare(*Type.Target, Names.type(Type.Name)) + ";\n";
     return;
   case TypeKind::Function:
     if (Type.Function)
-      Out +=
-          "typedef " + declare(*makeFunction(Type.Function), Type.Name) + ";\n";
+      Out += "typedef " +
+             declare(*makeFunction(Type.Function), Names.type(Type.Name)) +
+             ";\n";
     return;
   }
 }
@@ -527,9 +547,27 @@ void CWriter::definition(const LocalType &Type, std::string &Out) {
 void CWriter::forwardDeclaration(const LocalType &Type,
                                  std::string &Out) const {
   if (Type.Kind == TypeKind::Struct)
-    Out += "struct " + Type.Name + ";\n";
+    Out += "struct " + Names.type(Type.Name) + ";\n";
   else if (Type.Kind == TypeKind::Union)
-    Out += "union " + Type.Name + ";\n";
+    Out += "union " + Names.type(Type.Name) + ";\n";
+}
+
+/// Typedefs for the builtins whose name is no keyword: HRESULT, which the
+/// Windows headers guard as _HRESULT_DEFINED, and in C the character types
+/// <uchar.h> would declare.
+std::string namedBuiltins(const CWriter &Writer, const TypeLibrary &Library,
+                          bool Cpp) {
+  std::string Out;
+  for (Builtin Type : Writer.builtins()) {
+    const std::string Portable = portableBuiltin(Type, Library.dataModel());
+    if (Type == Builtin::HResult)
+      Out += "\n#ifndef _HRESULT_DEFINED\n#define _HRESULT_DEFINED\ntypedef " +
+             Portable + " HRESULT;\n#endif\n";
+    else if (!Cpp && (Type == Builtin::Char8 || Type == Builtin::Char16 ||
+                      Type == Builtin::Char32))
+      Out += "typedef " + Portable + " " + builtinInfo(Type).Keywords + ";\n";
+  }
+  return Out;
 }
 
 /// The declarations the spelling needs ahead of the types.
@@ -541,6 +579,10 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
   Out += Cpp ? "#include <stddef.h>\n#include <stdint.h>\n"
              : "#include <stdbool.h>\n#include <stddef.h>\n#include "
                "<stdint.h>\n";
+  if (Writer.alignsRecords())
+    Out += "\n#ifndef DECLSPEC_ALIGN\n#if defined(_MSC_VER)\n#define "
+           "DECLSPEC_ALIGN(x) __declspec(align(x))\n#else\n#define "
+           "DECLSPEC_ALIGN(x) __attribute__((aligned(x)))\n#endif\n#endif\n";
   switch (Options.Spelling) {
   case BuiltinSpelling::Windows: {
     // The Windows headers declare these; elsewhere they take exact widths.
@@ -548,7 +590,9 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     for (Builtin Type : Writer.builtins()) {
       const BuiltinInfo &Info = builtinInfo(Type);
       const std::string Portable = portableBuiltin(Type, Library.dataModel());
-      if (Portable == Info.Windows)
+      // A keyword, such as char16_t in C++, needs no declaring.
+      if (Portable == Info.Windows ||
+          escapedName(Options.Lang, Info.Windows) != Info.Windows)
         continue;
       if (Type == Builtin::Void)
         Out += "#define VOID void\n";
@@ -561,6 +605,7 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
   case BuiltinSpelling::IDA:
     Out += "\n#ifndef _MSC_VER\n#define __int8 char\n#define __int16 "
            "short\n#define __int32 int\n#define __int64 long long\n#endif\n";
+    Out += namedBuiltins(Writer, Library, Cpp);
     break;
   case BuiltinSpelling::Keywords:
     if (Writer.builtins().count(Builtin::Long) ||
@@ -572,6 +617,7 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
           ", \"these types need a " +
           std::to_string(builtinBytes(Builtin::Long, Library.dataModel()) * 8) +
           "-bit long\");\n";
+    Out += namedBuiltins(Writer, Library, Cpp);
     break;
   case BuiltinSpelling::Portable:
     break;

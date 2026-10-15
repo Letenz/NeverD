@@ -162,10 +162,19 @@ private:
   /// How MSVC aligns a value of \p Index: naturally, but no further than
   /// the #pragma pack of the record it is.
   uint32_t alignOf(cv::TypeIndex Index);
-  /// The #pragma pack a record was laid out under, found from the offsets
-  /// and size the compiler chose: zero when its members sit where they would
-  /// unpacked, else the largest pack that puts them where they are.
-  uint32_t packOf(cv::TypeIndex Definition);
+  /// How a record was laid out, found from the offsets and size the
+  /// compiler chose.
+  struct RecordLayout {
+    /// The #pragma pack: zero when its members sit where they would unpacked,
+    /// else the largest pack that puts them where they are.
+    uint32_t Pack = 0;
+    /// The __declspec(align) a size past its members' alignment asks for:
+    /// the smallest that pads them to that size; zero for none.
+    uint32_t Declared = 0;
+    /// How the record aligns.
+    uint32_t Alignment = 1;
+  };
+  const RecordLayout &layoutOf(cv::TypeIndex Definition);
   std::shared_ptr<const RecordDef> record(cv::TypeIndex Definition);
   std::shared_ptr<const EnumDef> enumeration(cv::TypeIndex Definition);
   std::shared_ptr<const FunctionDef> function(cv::TypeIndex Return,
@@ -183,7 +192,7 @@ private:
   llvm::DenseMap<uint32_t, TypeExprRef> Exprs;
   llvm::DenseMap<uint32_t, uint64_t> Sizes;
   llvm::DenseMap<uint32_t, uint32_t> Alignments;
-  llvm::DenseMap<uint32_t, uint32_t> Packs;
+  llvm::DenseMap<uint32_t, RecordLayout> Layouts;
   /// Records, named or in place, whose nesting did not flatten back.
   unsigned Mismatches = 0;
 };
@@ -336,24 +345,10 @@ uint32_t Importer::alignOf(cv::TypeIndex Index) {
   case cv::LF_STRUCTURE:
   case cv::LF_CLASS:
   case cv::LF_INTERFACE:
-  case cv::LF_UNION: {
-    auto Definition = definition(Index);
-    if (!Definition)
-      break;
-    const cv::CVType Defined = Types.getType(*Definition);
-    cv::TypeIndex List;
-    if (Defined.kind() == cv::LF_UNION) {
-      if (auto Record = deserialize<cv::UnionRecord>(Defined))
-        List = Record->getFieldList();
-    } else if (auto Record = deserialize<cv::ClassRecord>(Defined)) {
-      List = Record->getFieldList();
-    }
-    for (const FieldCollector::Data &Field : fields(List).Fields)
-      Alignment = std::max(Alignment, alignOf(Field.Type));
-    if (const uint32_t Pack = packOf(*Definition))
-      Alignment = std::min(Alignment, Pack);
+  case cv::LF_UNION:
+    if (auto Definition = definition(Index))
+      Alignment = layoutOf(*Definition).Alignment;
     break;
-  }
   default:
     break;
   }
@@ -361,8 +356,8 @@ uint32_t Importer::alignOf(cv::TypeIndex Index) {
   return Alignment;
 }
 
-uint32_t Importer::packOf(cv::TypeIndex Definition) {
-  if (auto Found = Packs.find(Definition.getIndex()); Found != Packs.end())
+const Importer::RecordLayout &Importer::layoutOf(cv::TypeIndex Definition) {
+  if (auto Found = Layouts.find(Definition.getIndex()); Found != Layouts.end())
     return Found->second;
   const cv::CVType Type = Types.getType(Definition);
   cv::TypeIndex List;
@@ -380,27 +375,41 @@ uint32_t Importer::packOf(cv::TypeIndex Definition) {
   const auto divisor = [](uint64_t Value) {
     return static_cast<uint32_t>(std::min<uint64_t>(Value & (~Value + 1), 16));
   };
-  uint32_t Pack = 0;
+  const auto alignUp = [](uint64_t Value, uint64_t Alignment) {
+    return (Value + Alignment - 1) / Alignment * Alignment;
+  };
+  RecordLayout Layout;
   uint32_t Natural = 1;
+  uint64_t End = 0;
   for (const FieldCollector::Data &Field : fields(List).Fields) {
     const uint32_t Alignment = alignOf(Field.Type);
     Natural = std::max(Natural, Alignment);
+    End = std::max(End, Field.Offset + sizeOf(Field.Type));
     // A member, or a bitfield's storage unit, below its alignment.
     if (Alignment > 1 && Field.Offset % Alignment) {
       const uint32_t Allowed = divisor(Field.Offset);
-      if (!Pack || Allowed < Pack)
-        Pack = Allowed;
+      if (!Layout.Pack || Allowed < Layout.Pack)
+        Layout.Pack = Allowed;
     }
   }
   // A size the record's alignment does not divide was packed too.
-  const uint32_t Aligned = Pack ? std::min(Natural, Pack) : Natural;
+  uint32_t Aligned = Layout.Pack ? std::min(Natural, Layout.Pack) : Natural;
   if (Size && Size % Aligned) {
     const uint32_t Allowed = divisor(Size);
-    if (!Pack || Allowed < Pack)
-      Pack = Allowed;
+    if (!Layout.Pack || Allowed < Layout.Pack)
+      Layout.Pack = Allowed;
+    Aligned = std::min(Natural, Layout.Pack);
   }
-  Packs[Definition.getIndex()] = Pack;
-  return Pack;
+  // A size past the members' alignment was declared aligned further.
+  if (Size > alignUp(End, Aligned))
+    for (uint64_t Candidate = uint64_t(Aligned) * 2; Candidate <= 4096;
+         Candidate *= 2)
+      if (alignUp(End, Candidate) == Size) {
+        Layout.Declared = static_cast<uint32_t>(Candidate);
+        break;
+      }
+  Layout.Alignment = Layout.Declared ? Layout.Declared : Aligned;
+  return Layouts[Definition.getIndex()] = Layout;
 }
 
 TypeExprRef Importer::expr(cv::TypeIndex Index) {
@@ -553,7 +562,9 @@ std::shared_ptr<const RecordDef> Importer::record(cv::TypeIndex Definition) {
     Result->Size = Record->getSize();
     List = Record->getFieldList();
   }
-  Result->Pack = packOf(Definition);
+  const RecordLayout &Layout = layoutOf(Definition);
+  Result->Pack = Layout.Pack;
+  Result->Alignment = Layout.Declared;
   FieldCollector Collector = fields(List);
   std::vector<FlatMember> Flat;
   Flat.reserve(Collector.Fields.size());

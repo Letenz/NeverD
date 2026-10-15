@@ -32,26 +32,6 @@ std::string hex(uint64_t Value) {
   return Text;
 }
 
-/// Names Go declares in the universe and file scopes, which a type of the
-/// same name would hide.
-constexpr const char *GoPredeclared[] = {
-    "any",    "append",     "bool",    "byte",      "cap",        "clear",
-    "close",  "comparable", "complex", "complex64", "complex128", "copy",
-    "delete", "error",      "false",   "float32",   "float64",    "imag",
-    "int",    "int8",       "int16",   "int32",     "int64",      "iota",
-    "len",    "make",       "max",     "min",       "new",        "nil",
-    "panic",  "print",      "println", "real",      "recover",    "rune",
-    "string", "true",       "uint",    "uint8",     "uint16",     "uint32",
-    "uint64", "uintptr",    "unsafe",
-};
-
-std::string goTypeName(llvm::StringRef Name) {
-  for (const char *Word : GoPredeclared)
-    if (Name == Word)
-      return Name.str() + "_";
-  return escapedName(Language::Go, Name);
-}
-
 /// How Go writes one place of a structure.
 struct Field {
   std::string Name;
@@ -66,7 +46,7 @@ struct Field {
 class GoWriter {
 public:
   GoWriter(const TypeLibrary &Library, const RenderOptions &Options)
-      : Library(Library), Options(Options),
+      : Library(Library), Options(Options), Names(Library, Language::Go),
         Wide(pointerBytes(Library.dataModel()) == 8),
         Receiver(Library.find("s") ? "s_" : "s") {}
 
@@ -112,6 +92,7 @@ private:
 
   const TypeLibrary &Library;
   const RenderOptions &Options;
+  const NameSpelling Names;
   const bool Wide;
   /// What methods call their receiver: s, unless a type is named so.
   const std::string Receiver;
@@ -236,7 +217,7 @@ std::string GoWriter::function(const FunctionDef &Function) const {
       Text += ", ";
     const Parameter &Param = Function.Params[I];
     if (!Param.Name.empty())
-      Text += escapedName(Language::Go, Param.Name) + " ";
+      Text += Names.member(Param.Name) + " ";
     Text += Param.Type ? type(*Param.Type) : "int32";
   }
   if (Function.Variadic)
@@ -253,7 +234,7 @@ std::string GoWriter::type(const TypeExpr &Type) const {
   case TypeExprKind::Builtin:
     return builtin(Type.TheBuiltin);
   case TypeExprKind::Named:
-    return goTypeName(Type.Name);
+    return Names.type(Type.Name);
   case TypeExprKind::Pointer: {
     if (Type.PointerBytes != pointerBytes(Library.dataModel()))
       return "uint" + std::to_string(Type.PointerBytes * 8);
@@ -346,8 +327,8 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
         Access.Shift ? "<<" + std::to_string(Access.Shift) : "";
     const std::string Stored =
         Access.Signed ? "uint" + Bits + "(value)" : "value";
-    const std::string Getter = unique(Bit->Name, Taken);
-    const std::string Setter = unique("Set" + Bit->Name, Taken);
+    const std::string Getter = unique(Names.member(Bit->Name), Taken);
+    const std::string Setter = unique("Set" + Names.member(Bit->Name), Taken);
     const std::string Where =
         bitText(Access.Shift, Access.Width) + " of " + Place.Name + ".\n";
     Out += "\n// " + Getter + " reads " + Where;
@@ -542,7 +523,8 @@ void GoWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   const bool Signed = builtinInfo(Enum.Underlying).Signed;
   const unsigned Bytes = builtinBytes(Enum.Underlying, Library.dataModel());
   Out += "\nconst (\n";
-  for (const Enumerator &Value : Enum.Values) {
+  for (size_t I = 0; I < Enum.Values.size(); ++I) {
+    const Enumerator &Value = Enum.Values[I];
     std::string Number;
     if (Signed && static_cast<int64_t>(Value.Value) < 0)
       Number = std::to_string(static_cast<int64_t>(Value.Value));
@@ -551,13 +533,14 @@ void GoWriter::enumeration(const std::string &Name, const EnumDef &Enum,
                              : Value.Value);
     else
       Number = std::to_string(Value.Value);
-    Out += "\t" + goTypeName(Value.Name) + " " + Name + " = " + Number + "\n";
+    Out +=
+        "\t" + Names.enumerator(Enum, I) + " " + Name + " = " + Number + "\n";
   }
   Out += ")\n";
 }
 
 void GoWriter::definition(const LocalType &Type, std::string &Out) {
-  const std::string Name = goTypeName(Type.Name);
+  const std::string Name = Names.type(Type.Name);
   switch (Type.Kind) {
   case TypeKind::Struct:
   case TypeKind::Union: {
@@ -571,8 +554,7 @@ void GoWriter::definition(const LocalType &Type, std::string &Out) {
     Digits = offsetDigits(Type.Record->Size);
     Base = 0;
     Parent = Name;
-    record(planRecord(Library, *Type.Record, Name, Type.Record->Pack,
-                      Language::Go),
+    record(planRecord(Library, *Type.Record, Name, Type.Record->Pack, Names),
            /*Outer=*/true, Out);
     return;
   }

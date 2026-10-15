@@ -72,6 +72,39 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Local types boundary
+
+`lib/types` (NeverDTypes) owns a program's named types as a reader sees and
+edits them. `TypeLibrary` holds structures, unions, enumerations, typedefs and
+function types under ordinals that survive replacement. Anonymous unions and
+structures stay in place, member offsets are bits from the record that holds
+them, and builtin sizes follow the data model (`BuiltinTypes.def`).
+Importers fill the library; renderers and frontends only read it.
+
+`importPDBTypes` reads every named record and enumeration of a PDB's TPI
+stream. MSVC flattens anonymous members into their parent, so
+`nestFlatMembers` rebuilds the nesting from offsets, bitfield storage units
+and alignment:
+- members that begin together are a union's alternatives;
+- a member in a union's tail padding belongs to the union;
+- a member that reaches back over earlier ones takes them into its union.
+
+The import infers `#pragma pack` from member offsets and the record size
+before nesting. It reports a record whose nesting does not flatten back to the
+stream's member list, or whose members cannot sit where they say
+(`layoutProblem`).
+
+`renderType` and `renderTypes` spell types as C, C++, Rust or Go
+(`TypeLanguages.def`), each member marked with its offset. Every language
+reproduces the library's layout exactly. An explicit filler moves a member
+that the language's own rules would place earlier. Rust and Go read what they
+cannot express through accessors whose arithmetic follows C, signed bitfields
+included: unions in Go, bitfields, members Go cannot align, and flexible
+arrays. Names a language cannot spell, such as `std::pair<int,int>` or an
+enumerator two enumerations share, take one identifier per language
+(`renamedNames`). With asserts, the output checks every size and offset when
+it compiles.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -5189,6 +5222,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust and Go | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |

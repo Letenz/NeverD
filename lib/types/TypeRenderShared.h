@@ -18,7 +18,11 @@
 #include "neverd/types/LocalTypes.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -37,6 +41,43 @@ std::string bitText(uint64_t BitInUnit, uint32_t Width);
 
 /// \p Name made safe from \p Lang's keywords.
 std::string escapedName(Language Lang, llvm::StringRef Name);
+
+/// How one language spells a library's names.  A name that is an identifier
+/// keeps its spelling, with a keyword escaped; any other takes `_` for each
+/// character the language does not allow (`std::pair<int,int>` as
+/// `std__pair_int_int_`).  Types and enumerators share one namespace, as they
+/// do in C++ and Go: an enumerator whose name a type or an earlier enumerator
+/// took is prefixed with its enumeration's name, and a type whose spelling
+/// another type took gets a number.
+class NameSpelling {
+public:
+  NameSpelling(const TypeLibrary &Library, Language Lang);
+
+  Language language() const { return Lang; }
+  /// The spelling of the type named \p Name.
+  std::string type(llvm::StringRef Name) const;
+  /// The spelling of \p Enum's enumerator \p Index.
+  std::string enumerator(const EnumDef &Enum, size_t Index) const;
+  /// The spelling of a member, a parameter or an accessor named \p Name.
+  std::string member(llvm::StringRef Name) const;
+  /// The names spelled otherwise than they are, with their spellings, in
+  /// the library's order.
+  const std::vector<std::pair<std::string, std::string>> &renamed() const {
+    return Renamed;
+  }
+
+private:
+  std::string identifier(llvm::StringRef Name, bool TypeName) const;
+  void enumeration(const EnumDef &Enum, llvm::StringRef Owner,
+                   llvm::StringSet<> &Taken);
+  void inlineEnums(const RecordDef &Record, llvm::StringRef Owner,
+                   llvm::StringSet<> &Taken);
+
+  Language Lang;
+  llvm::StringMap<std::string> Types;
+  std::map<const EnumDef *, std::vector<std::string>> Enumerators;
+  std::vector<std::pair<std::string, std::string>> Renamed;
+};
 
 /// \p Code followed by "// Comment" at the comment column.
 std::string withComment(std::string Code, llvm::StringRef Comment,
@@ -115,7 +156,8 @@ struct RecordPlan {
 /// \p Record laid out as \p Name under \p Pack, which its anonymous records
 /// share unless they have their own.
 RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
-                      std::string Name, uint32_t Pack, Language Lang);
+                      std::string Name, uint32_t Pack,
+                      const NameSpelling &Names);
 
 /// How a bitfield of \p Type reads: the bytes of its storage unit, and
 /// whether its value is signed, which C extends from its top bit.

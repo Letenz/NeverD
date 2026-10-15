@@ -32,7 +32,7 @@ std::string hex(uint64_t Value) {
 class RustWriter {
 public:
   RustWriter(const TypeLibrary &Library, const RenderOptions &Options)
-      : Library(Library), Options(Options) {}
+      : Library(Library), Options(Options), Names(Library, Language::Rust) {}
 
   void definition(const LocalType &Type, std::string &Out);
 
@@ -54,6 +54,7 @@ private:
 
   const TypeLibrary &Library;
   const RenderOptions &Options;
+  const NameSpelling Names;
   unsigned Digits = 1;
   /// The outer record's offset of the record being written, in bytes.
   uint64_t Base = 0;
@@ -112,7 +113,7 @@ std::string RustWriter::function(const FunctionDef &Function) const {
       Text += ", ";
     const Parameter &Param = Function.Params[I];
     if (!Param.Name.empty())
-      Text += escapedName(Language::Rust, Param.Name) + ": ";
+      Text += Names.member(Param.Name) + ": ";
     Text += Param.Type ? type(*Param.Type) : "i32";
   }
   if (Function.Variadic)
@@ -129,7 +130,7 @@ std::string RustWriter::type(const TypeExpr &Type, bool Pointee) const {
   case TypeExprKind::Builtin:
     return builtin(Type.TheBuiltin, Pointee);
   case TypeExprKind::Named:
-    return Type.Name;
+    return Names.type(Type.Name);
   case TypeExprKind::Pointer: {
     if (!Type.Element)
       return "*mut c_void";
@@ -140,7 +141,7 @@ std::string RustWriter::type(const TypeExpr &Type, bool Pointee) const {
     if (Target.Kind == TypeExprKind::Named) {
       const LocalType *Named = Library.resolve(Target.Name);
       if (Named && Named->Kind == TypeKind::Function)
-        return "Option<" + Target.Name + ">";
+        return "Option<" + Names.type(Target.Name) + ">";
     }
     return std::string(Target.Const ? "*const " : "*mut ") +
            type(Target, /*Pointee=*/true);
@@ -162,9 +163,13 @@ std::string RustWriter::type(const TypeExpr &Type, bool Pointee) const {
 
 void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
   const RecordDef &Record = *Plan.Record;
-  std::string Repr =
-      Plan.Pack ? "#[repr(C, packed(" + std::to_string(Plan.Pack) + "))]"
-                : "#[repr(C)]";
+  // Rust cannot both pack a type and align it further; the packing stays,
+  // and the size check holds the tail.
+  std::string Repr = "#[repr(C)]";
+  if (Plan.Pack)
+    Repr = "#[repr(C, packed(" + std::to_string(Plan.Pack) + "))]";
+  else if (Record.Alignment)
+    Repr = "#[repr(C, align(" + std::to_string(Record.Alignment) + "))]";
   if (Outer)
     Out += "/// " + Plan.Name + ": " + hex(Record.Size) + " (" +
            std::to_string(Record.Size) + ") bytes" +
@@ -289,10 +294,9 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
       Methods += "    /// " + Bit->Name + ", " +
                  bitText(Access.Shift, Access.Width) + " of " + Place.Name +
                  ".\n";
-      Methods += "    pub const fn " +
-                 unique(escapedName(Language::Rust, Bit->Name)) +
+      Methods += "    pub const fn " + unique(Names.member(Bit->Name)) +
                  "(&self) -> " + Value + " {\n        " + Read + "\n    }\n";
-      Methods += "    pub fn " + unique("set_" + Bit->Name) +
+      Methods += "    pub fn " + unique("set_" + Names.member(Bit->Name)) +
                  "(&mut self, value: " + Value + ") {\n        " + Field +
                  " = (" + Field + " & !(" + Access.Mask + Shift + ")) | ((" +
                  Stored + " & " + Access.Mask + ")" + Shift + ");\n    }\n";
@@ -330,7 +334,8 @@ void RustWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   Out += "pub type " + Name + " = " + Underlying + ";\n";
   const bool Signed = builtinInfo(Enum.Underlying).Signed;
   const unsigned Bytes = builtinBytes(Enum.Underlying, Library.dataModel());
-  for (const Enumerator &Value : Enum.Values) {
+  for (size_t I = 0; I < Enum.Values.size(); ++I) {
+    const Enumerator &Value = Enum.Values[I];
     std::string Number;
     if (Signed && static_cast<int64_t>(Value.Value) < 0)
       Number = std::to_string(static_cast<int64_t>(Value.Value));
@@ -339,12 +344,13 @@ void RustWriter::enumeration(const std::string &Name, const EnumDef &Enum,
                              : Value.Value);
     else
       Number = std::to_string(Value.Value);
-    Out += "pub const " + escapedName(Language::Rust, Value.Name) + ": " +
-           Name + " = " + Number + ";\n";
+    Out += "pub const " + Names.enumerator(Enum, I) + ": " + Name + " = " +
+           Number + ";\n";
   }
 }
 
 void RustWriter::definition(const LocalType &Type, std::string &Out) {
+  const std::string Name = Names.type(Type.Name);
   switch (Type.Kind) {
   case TypeKind::Struct:
   case TypeKind::Union: {
@@ -352,29 +358,28 @@ void RustWriter::definition(const LocalType &Type, std::string &Out) {
       return;
     if (!Type.Record->Defined) {
       Out += "/// " + Type.Name + ": declared only; its members are unknown.\n";
-      Out += "#[repr(C)]\npub struct " + Type.Name +
-             " {\n    _opaque: [u8; 0],\n}\n";
+      Out +=
+          "#[repr(C)]\npub struct " + Name + " {\n    _opaque: [u8; 0],\n}\n";
       return;
     }
     Digits = offsetDigits(Type.Record->Size);
     Base = 0;
-    Parent = Type.Name;
-    record(planRecord(Library, *Type.Record, Type.Name, Type.Record->Pack,
-                      Language::Rust),
+    Parent = Name;
+    record(planRecord(Library, *Type.Record, Name, Type.Record->Pack, Names),
            /*Outer=*/true, Out);
     return;
   }
   case TypeKind::Enum:
     if (Type.Enum)
-      enumeration(Type.Name, *Type.Enum, Out);
+      enumeration(Name, *Type.Enum, Out);
     return;
   case TypeKind::Typedef:
     if (Type.Target)
-      Out += "pub type " + Type.Name + " = " + type(*Type.Target) + ";\n";
+      Out += "pub type " + Name + " = " + type(*Type.Target) + ";\n";
     return;
   case TypeKind::Function:
     if (Type.Function)
-      Out += "pub type " + Type.Name + " = " + function(*Type.Function) + ";\n";
+      Out += "pub type " + Name + " = " + function(*Type.Function) + ";\n";
     return;
   }
 }

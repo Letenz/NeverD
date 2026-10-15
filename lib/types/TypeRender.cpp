@@ -8,6 +8,7 @@
 
 #include "TypeRenderShared.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
@@ -100,6 +101,117 @@ std::string escapedName(Language Lang, llvm::StringRef Name) {
       Name != "crate" && Name != "super")
     return "r#" + Name.str();
   return Name.str() + "_";
+}
+
+/// Names Go declares in the universe scope, and the package local types
+/// import, which a type of the same name would hide.
+constexpr const char *GoPredeclared[] = {
+    "any",    "append",     "bool",    "byte",      "cap",        "clear",
+    "close",  "comparable", "complex", "complex64", "complex128", "copy",
+    "delete", "error",      "false",   "float32",   "float64",    "imag",
+    "int",    "int8",       "int16",   "int32",     "int64",      "iota",
+    "len",    "make",       "max",     "min",       "new",        "nil",
+    "panic",  "print",      "println", "real",      "recover",    "rune",
+    "string", "true",       "uint",    "uint8",     "uint16",     "uint32",
+    "uint64", "uintptr",    "unsafe",
+};
+
+/// Rust's primitive types, which a type of the same name would hide.
+constexpr const char *RustPrimitives[] = {
+    "bool",  "char", "f32", "f64", "i8",  "i16", "i32",  "i64",   "i128",
+    "isize", "str",  "u8",  "u16", "u32", "u64", "u128", "usize",
+};
+
+NameSpelling::NameSpelling(const TypeLibrary &Library, Language Lang)
+    : Lang(Lang) {
+  const std::vector<const LocalType *> All = Library.types();
+  llvm::StringSet<> Taken;
+  for (const LocalType *Type : All) {
+    std::string Spelled = identifier(Type->Name, /*TypeName=*/true);
+    if (!Taken.insert(Spelled).second) {
+      unsigned Number = 2;
+      while (!Taken.insert(Spelled + "_" + std::to_string(Number)).second)
+        ++Number;
+      Spelled += "_" + std::to_string(Number);
+    }
+    if (Spelled != Type->Name)
+      Renamed.push_back({Type->Name, Spelled});
+    Types[Type->Name] = std::move(Spelled);
+  }
+  for (const LocalType *Type : All) {
+    if (Type->Enum)
+      enumeration(*Type->Enum, type(Type->Name), Taken);
+    if (Type->Record)
+      inlineEnums(*Type->Record, type(Type->Name), Taken);
+  }
+}
+
+std::string NameSpelling::identifier(llvm::StringRef Name,
+                                     bool TypeName) const {
+  std::string Text;
+  for (char C : Name)
+    Text += llvm::isAlnum(C) || C == '_' ? C : '_';
+  if (Text.empty() || llvm::isDigit(Text.front()))
+    Text.insert(Text.begin(), '_');
+  if (TypeName && Lang == Language::Go)
+    for (const char *Word : GoPredeclared)
+      if (Text == Word)
+        return Text + "_";
+  if (TypeName && Lang == Language::Rust)
+    for (const char *Word : RustPrimitives)
+      if (Text == Word)
+        return Text + "_";
+  return escapedName(Lang, Text);
+}
+
+void NameSpelling::enumeration(const EnumDef &Enum, llvm::StringRef Owner,
+                               llvm::StringSet<> &Taken) {
+  std::vector<std::string> &Spelled = Enumerators[&Enum];
+  for (const Enumerator &Value : Enum.Values) {
+    std::string Name = identifier(Value.Name, /*TypeName=*/true);
+    if (!Taken.insert(Name).second) {
+      Name = Owner.str() + "_" + Name;
+      while (!Taken.insert(Name).second)
+        Name += "_";
+    }
+    if (Name != Value.Name)
+      Renamed.push_back({Owner.str() + "::" + Value.Name, Name});
+    Spelled.push_back(std::move(Name));
+  }
+}
+
+void NameSpelling::inlineEnums(const RecordDef &Record, llvm::StringRef Owner,
+                               llvm::StringSet<> &Taken) {
+  for (const Member &Field : Record.Members) {
+    if (!Field.Type)
+      continue;
+    std::vector<uint64_t> Bounds;
+    const TypeExpr &Element = arrayElement(*Field.Type, Bounds);
+    if (Element.Kind == TypeExprKind::Enum && Element.Enum)
+      enumeration(*Element.Enum, Owner, Taken);
+    else if (Element.Kind == TypeExprKind::Record && Element.Record)
+      inlineEnums(*Element.Record, Owner, Taken);
+  }
+}
+
+std::string NameSpelling::type(llvm::StringRef Name) const {
+  auto Found = Types.find(Name);
+  // A name the library lacks, such as a declared-only reference.
+  return Found != Types.end() ? Found->second
+                              : identifier(Name, /*TypeName=*/true);
+}
+
+std::string NameSpelling::enumerator(const EnumDef &Enum, size_t Index) const {
+  auto Found = Enumerators.find(&Enum);
+  if (Found != Enumerators.end() && Index < Found->second.size())
+    return Found->second[Index];
+  return Index < Enum.Values.size()
+             ? identifier(Enum.Values[Index].Name, /*TypeName=*/true)
+             : std::string("_");
+}
+
+std::string NameSpelling::member(llvm::StringRef Name) const {
+  return Name.empty() ? std::string() : identifier(Name, /*TypeName=*/false);
 }
 
 std::string withComment(std::string Code, llvm::StringRef Comment,
@@ -309,7 +421,8 @@ const TypeExpr &arrayElement(const TypeExpr &Type,
 }
 
 RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
-                      std::string Name, uint32_t Pack, Language Lang) {
+                      std::string Name, uint32_t Pack,
+                      const NameSpelling &Names) {
   RecordPlan Plan;
   Plan.Name = std::move(Name);
   Plan.Record = &Record;
@@ -366,7 +479,7 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
     Slot Place;
     Place.Field = &Field;
     Place.Byte = Field.BitOffset / 8;
-    Place.Name = escapedName(Lang, Field.Name);
+    Place.Name = Names.member(Field.Name);
     const TypeExpr &Element = arrayElement(*Field.Type, Place.Bounds);
     if (Element.Kind == TypeExprKind::Record && Element.Record) {
       Place.NestedType = Plan.Name + "_" + std::to_string(InlineSeen++);
@@ -378,7 +491,7 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
       }
       const RecordDef &Inner = *Element.Record;
       Plan.Nested.push_back(planRecord(Library, Inner, Place.NestedType,
-                                       Inner.Pack ? Inner.Pack : Pack, Lang));
+                                       Inner.Pack ? Inner.Pack : Pack, Names));
     } else if (Element.Kind == TypeExprKind::Enum && Element.Enum) {
       Place.NestedType = Plan.Name + "_" + std::to_string(InlineSeen++);
       Plan.Enums.push_back({Place.NestedType, Element.Enum.get()});
@@ -412,6 +525,11 @@ std::string renderType(const TypeLibrary &Library, const LocalType &Type,
     return render::renderGo(Library, Type, Options);
   }
   return std::string();
+}
+
+std::vector<std::pair<std::string, std::string>>
+renamedNames(const TypeLibrary &Library, Language Lang) {
+  return render::NameSpelling(Library, Lang).renamed();
 }
 
 std::string renderTypes(const TypeLibrary &Library,
