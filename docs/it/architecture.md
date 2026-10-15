@@ -1832,3 +1832,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Acquisizione limitata del contesto chiamante kernel
 
 `WindowsX64Context.def` possiede il layout comune e `WindowsX64Context.cpp` raccolta intera/selettori logici. FP completo utente e limitato kernel restano distinti. `DriverContextCapture.cpp` usa callback sincroni non rientranti sulla CPU corrente; `KernelModelContextCapture.cpp` gestisce controlli, ritorno reale ed effetti. Dopo tutti i controlli aggiorna FLAGS atomicamente e scrive RAM già validata. Non garantisce rollback di errori arbitrari o modifiche concorrenti delle mappature.
+
+### Coordinate di regione simbolica attraverso lo zero
+
+`SymState` usa coordinate relative modulo 2^64 solo per regioni con base simbolica a 64 bit. Una lettura che attraversa lo zero relativo viene divisa in due intervalli senza riavvolgimento, mantenendo ogni origine di input all’interno di un solo intervallo; una scrittura conserva il valore completo. Gli overflow degli intervalli nei banchi di memoria assoluta, registri e temporanei vengono ancora rifiutati. Questa regola di indicizzazione non fornisce premesse sulla validità dell’indirizzo reale, sull’assenza di alias o sulla separazione dei frame; l’invalidazione ordinaria tra regioni e le prove di conservazione per STORE restano invariate. Unicorn, KVM e WHP condividono questa regola di analisi.

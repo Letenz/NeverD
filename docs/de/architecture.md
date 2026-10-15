@@ -1837,3 +1837,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Begrenzte Erfassung des Kernel-Aufruferkontexts
 
 `WindowsX64Context.def` besitzt das gemeinsame Layout, `WindowsX64Context.cpp` die Ganzzahl-Erfassung und logischen Selektoren. Vollständiges Benutzer-FP und begrenztes Kernel-FP bleiben getrennt. `DriverContextCapture.cpp` leiht die CPU synchron ohne Wiedereintritt; `KernelModelContextCapture.cpp` besitzt Speicherprüfung, echten Rückkehrslot und Effekte. Nach allen Prüfungen wird FLAGS atomar gesetzt und vorgeprüftes RAM geschrieben. Beliebige Schreibfehler oder nebenläufige Mapping-Änderungen werden nicht zurückgerollt.
+
+### Symbolische Regionskoordinaten über null hinweg
+
+`SymState` verwendet relative Koordinaten modulo 2^64 nur für Regionen mit einer symbolischen 64-Bit-Basis. Ein Lesezugriff über den relativen Nullpunkt wird in zwei Bereiche ohne Umlauf zerlegt, sodass jede Eingabeherkunft innerhalb eines Bereichs bleibt; Schreibzugriffe speichern den vollständigen Wert. Bereichsüberläufe in absolutem Speicher, Register- und Temporärspeicherbänken werden weiterhin abgelehnt. Diese Indexregel liefert keine Voraussetzung für gültige tatsächliche Adressen, Aliasfreiheit oder getrennte Stackframes. Die übliche regionsübergreifende Invalidierung und die Erhaltungsbeweise je STORE bleiben unverändert. Unicorn, KVM und WHP teilen diese Analyseregel.

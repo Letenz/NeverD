@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
+<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR admite Windows ARM64 C++ FH3 y valida xdata, ABI del marco padre y
 
 | Compilador | Artefacto | Perfil de ejecución del SO verificado |
 |---|---|---|
-| Clang 22.1.6 | IR LLVM | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
-| Clang 22.1.6 | Objeto nativo | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | Objeto nativo | ELF x64/ARM64 C/C++ con runtime Itanium compatible |
+| Clang 22.1.x | IR LLVM | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | Objeto nativo | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | Objeto nativo | ELF x64/ARM64 C/C++ con runtime Itanium compatible; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 modo ordinario | IR LLVM | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 modo ordinario | Objeto nativo | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / objeto nativo | ELF / PE / Mach-O x64/ARM64: fuente C pura |
@@ -166,7 +166,7 @@ La validación de procesos nativos de Windows [a4a5ae3cb](https://github.com/Nev
 
 La validación nativa fija NeverC en `182fd2c5dc`, con originales independientes y el instalador NeverD actual. `check_source_patch_hosted_pe_runtime.py` exige 36 observaciones por arquitectura Windows para IR/objetos/hosted C y propagación a través de dos marcos C. `check_source_patch_elf_runtime.py` exige 120 por arquitectura Linux para C, propagación hosted y nueve escenarios C++ de Clang. Recibos, resúmenes y arquitectura real deben coincidir; esto no afirma que el propio NeverC se ejecutara en el host CI. Linux x64 y ARM64 ejecutan los nueve escenarios para cada vía: IR Clang, objetos nativos Clang y objetos nativos GCC. NeverC sigue limitado a C.
 
-Las 204 observaciones del antiguo perfil de traducción son históricas y no prueban el contrato actual de C puro. Las tres rutas NeverC actuales usan C; Clang C++ FH3 se valida por separado. macOS x64 usa Rosetta 2. Unicorn/QEMU no sustituyen la validación nativa del sistema y del desenrollador.
+Las 204 observaciones del antiguo perfil de traducción son históricas y no prueban el contrato actual de C puro. Las tres rutas NeverC actuales usan C; Clang C++ FH3 se valida por separado. En el Mac de desarrollo con Apple Silicon, macOS x64 usa Rosetta 2. Unicorn/QEMU no sustituyen la validación nativa del sistema y del desenrollador.
 
 Las reubicaciones de instrucciones AArch64 requieren sumandos RELA explícitos. Los sumandos REL implícitos de instrucciones se rechazan antes de publicar; sus campos de bits no se interpretan como datos ordinarios. Las reubicaciones de datos PREL64 admitidas conservan los sumandos completos con signo tanto en REL como en RELA.
 
@@ -179,3 +179,18 @@ La [validación de integración 0a6f6d768](https://github.com/NeverSight/NeverD/
 La [validación ampliada de Linux en 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) superó 429 comprobaciones ejecutadas, sin fallos ni omisiones: los 108 casos originales, 55 de Swift completo, 143 de objetivos CPU, 117 de sesiones nativas, tres de LLVM-C y tres de C++ con Clang/GCC. La batería local completa de parches binarios también superó sus 22.961 casos en esta integración. Los procesos nativos y la cobertura con emulación CPU se contabilizan por separado.
 
 La [validación del instalador de Windows recompilado en 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) superó las 182 comprobaciones específicas y 474 ejecuciones de procesos nativos, sin fallos ni omisiones. Una auditoría independiente de los artefactos verificó cada hash de imagen, arquitectura, escenario y repetición. Tras integrar los cambios de ABI y desenrollado en `e1cac949f`, la batería completa de parches binarios volvió a superar sus 22,961 casos, sin fallos ni omisiones. NeverC sigue limitado a C puro; las sustituciones C++ utilizan Clang/GCC.
+
+<!-- i18n-section: runtime-coverage -->
+## Verificación de procesos macOS y de 32 bits
+
+El flujo de imágenes exige ejecución nativa en macOS ARM64 (`macos-15`) e Intel x64 (`macos-15-intel`). Cada arquitectura ejecuta 96 observaciones que cubren fuentes/objetos C de Clang, estado modificable mediante punteros, argumentos flotantes/en pila, nueve escenarios de excepciones C++ de Clang y las salidas IR/objeto/hosted del NeverC de C puro existente. Las firmas Mach-O se verifican estrictamente antes de ejecutar; el código hosted instalado debe coincidir byte por byte con la carga del compilador.
+
+El mismo flujo exige 30 observaciones Windows x86 en Windows x64, 48 Linux x86 en Linux x64 y 96 Linux ARM32 mediante QEMU en modo usuario, repartidas por igual entre ARM y Thumb. Las pruebas Linux incluyen objetos GCC correspondientes al destino. Cada escenario se repite tres veces. Los informes distinguen `native`, `compatibility`, `rosetta` y `qemu-user`, y registran tanto la arquitectura de destino como la real del anfitrión. Rosetta no satisface un requisito Intel nativo.
+
+Los 14 perfiles CPU siguen cubiertos por la matriz de 154 pruebas de fuente/IR/objeto. PE ARM32, Mach-O i386, ARMv7 iOS y ARMv7k watchOS tienen actualmente verificación CPU, sin afirmar verificación del cargador OS nativo ni del desenrollador C++. NeverC sigue limitado a C puro en x64/ARM64; Clang y los controladores ELF GCC correspondientes producen los destinos de 32 bits. El verificador no compila ni modifica NeverC.
+
+Windows x64 y ARM64 ejecutan también 36 observaciones Clang C++ FH3 cada uno.
+
+Los punteros modificables Mach-O se inicializan durante la ejecución; las direcciones estáticas siguen necesitando un registro de reubicación de carga no admitido y tienen una prueba explícita de rechazo. Las funciones COMDAT ELF de tamaño cero solo se aceptan si la firma es la única función al inicio de su sección ejecutable y la CFI coincide exactamente con toda la sección. Los casos con desplazamiento interior, sección compartida, relleno, sin grupo o sin CFI siguen rechazándose.
+
+ELF ARM y Thumb tienen perfiles distintos. Los productores reciben explícitamente `-marm` o `-mthumb`, y los enlaces de funciones nativas conservan el bit de estado de instrucciones original. Los procesos ELF de 32 bits usan PIE con reubicaciones dinámicas reales. ARM32 QEMU registra un `--loader` glibc explícito y un sysroot: su cálculo AUXV no sigue las cabeceras trasladadas como el núcleo Linux. Esta ruta verifica carga glibc y ejecución bajo QEMU, sin acreditar hardware ARM32 ni el cargador nativo del núcleo.

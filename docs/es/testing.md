@@ -1843,11 +1843,11 @@ El rechazo verificado de desplazamientos dobles informa del contador enmascarado
 
 ## Parches de código fuente y objetos nativos
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` selecciona modo ARM, ABI flotante ELF y subtipo CPU Mach-O desde la imagen. `COFFPatchObject` y `MachOPatchObject` verifican símbolos, definiciones auxiliares／de sección y registros nativos sin inventar identificadores MC. Los instaladores de formato registran las tablas reales. Los 143 casos CPU exigen fuente／IR／objetos, cuatro arquitecturas, tres formatos, estado, argumentos flotantes／de pila y dos cambios de base no nulos. Los contenedores Mach-O antiguos de 32 bits conservan código real del compilador y no certifican un OS.
+`sourcePatchTargetTriple` selecciona modo ARM, ABI flotante ELF y subtipo CPU Mach-O desde la imagen. `COFFPatchObject` y `MachOPatchObject` verifican símbolos, definiciones auxiliares／de sección y registros nativos sin inventar identificadores MC. Los instaladores de formato registran las tablas reales. Los 154 casos CPU exigen fuente／IR／objetos, cuatro arquitecturas, tres formatos, estado, argumentos flotantes／de pila y dos cambios de base no nulos. Los contenedores Mach-O antiguos de 32 bits conservan código real del compilador y no certifican un OS.
 
 [Parches de código fuente y objetos nativos](source-patching.md)
 
@@ -2051,3 +2051,7 @@ La validación nativa de Linux ejecuta también toda la batería `HighSwiftEmitt
 ### Captura acotada del contexto llamante del kernel
 
 `KernelContextCaptureTests` comprueba todos los bytes, guardas, pila, flags, alias, solapamientos, objetos, permisos, IRQL y fallos inyectados. `DriverContextCaptureTests` comprueba GPR/FPCW/MXCSR/XMM vivos, ciclos reubicados de entrada/petición/descarga y dependencias. Doce comparaciones completas tienen presupuesto explícito de 400000 instrucciones; el collector varía FPCW separadamente. Son obligatorias 17 identidades por backend nativo; WHP no disponible en Linux se omite explícitamente. Las pruebas de usuario x64/ARM64 protegen el comportamiento previo.
+
+### Coordenadas de región simbólica que cruzan cero
+
+`SymRegionWrap.*` comprueba ambos órdenes de bytes, accesos completos y parciales que cruzan el cero relativo, orígenes de entrada sin vuelta modular, épocas desconocidas copiadas, presupuestos de conservación exactos e insuficientes y el rechazo de desbordamientos absolutos/escalares. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` exige la forma de dirección simbólica `base - 1` y comprueba los efectos completos del STORE, las palabras de dirección de retorno nativas y el estado restaurado de la pila con un oráculo de bytes independiente. La falta de prueba de separación o de alineación de entrada debe seguir provocando un rechazo.

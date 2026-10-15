@@ -1843,3 +1843,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Capture bornée du contexte appelant noyau
 
 `WindowsX64Context.def` centralise le format et `WindowsX64Context.cpp` la collecte entière/les sélecteurs logiques. FP utilisateur complet et publication noyau limitée restent distincts. `DriverContextCapture.cpp` emprunte le CPU par callbacks synchrones sans réentrance ; `KernelModelContextCapture.cpp` possède admission, vrai retour et effets. Après toute admission, FLAGS est modifié atomiquement puis la RAM prévalidée est écrite. Aucun rollback arbitraire des écritures ou modifications concurrentes des mappings n’est promis.
+
+### Coordonnées de région symbolique traversant zéro
+
+`SymState` utilise des coordonnées relatives modulo 2^64 uniquement pour les régions dont la base symbolique est sur 64 bits. Une lecture traversant le zéro relatif est divisée en deux plages sans rebouclage, afin que chaque origine d’entrée reste dans une seule plage ; une écriture conserve la valeur entière. Les dépassements de plage des banques de mémoire absolue, de registres et de temporaires restent refusés. Cette règle d’indexation ne fournit aucune prémisse de validité de l’adresse réelle, de non-alias ou de séparation des cadres ; l’invalidation habituelle entre régions et les preuves de préservation par STORE restent inchangées. Unicorn, KVM et WHP partagent cette règle d’analyse.

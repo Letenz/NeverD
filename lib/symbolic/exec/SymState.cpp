@@ -95,7 +95,12 @@ bool defersByteViews(std::optional<SymInputKind> Kind) {
   return Kind == SymInputKind::Register || Kind == SymInputKind::Temporary;
 }
 
-bool validBankWrite(const SymContext &Ctx, uint64_t Offset, SymRef Value) {
+bool hasModularCoordinates(const SymContext &Ctx, SymRef RegionBase) {
+  return RegionBase && Ctx.width(RegionBase) == kMaxAddressBits;
+}
+
+bool validBankWrite(const SymContext &Ctx, SymRef RegionBase, uint64_t Offset,
+                    SymRef Value) {
   if (!Value)
     return false;
   const uint32_t Width = Ctx.width(Value);
@@ -103,7 +108,8 @@ bool validBankWrite(const SymContext &Ctx, uint64_t Offset, SymRef Value) {
     return false;
   const uint32_t Bytes = Width / kByteBits;
   return Bytes <= std::numeric_limits<uint16_t>::max() &&
-         Offset <= std::numeric_limits<uint64_t>::max() - (Bytes - 1);
+         (hasModularCoordinates(Ctx, RegionBase) ||
+          Offset <= std::numeric_limits<uint64_t>::max() - (Bytes - 1));
 }
 
 std::string byteName(llvm::StringRef Prefix, uint64_t Offset) {
@@ -178,8 +184,21 @@ SymRef SymState::joinBytes(llvm::ArrayRef<SymRef> Bytes) const {
 }
 
 SymRef SymState::readBank(Bank &B, uint64_t Offset, uint16_t Bytes) {
-  if (Bytes == 0 || Offset > std::numeric_limits<uint64_t>::max() - (Bytes - 1))
+  if (Bytes == 0)
     return {};
+  if (Offset > std::numeric_limits<uint64_t>::max() - (Bytes - 1)) {
+    if (!hasModularCoordinates(*Ctx, B.RegionBase))
+      return {};
+    // The relative coordinate can cross zero without the actual address
+    // overflowing. Split at the key boundary so each input origin still
+    // describes a nonwrapping span, including in shared unknown epochs.
+    const auto FirstBytes = static_cast<uint16_t>(
+        std::numeric_limits<uint64_t>::max() - Offset + 1);
+    const auto First = readBank(B, Offset, FirstBytes);
+    const auto Second = readBank(B, 0, Bytes - FirstBytes);
+    return Order == llvm::endianness::little ? Ctx->mkConcat({Second, First})
+                                             : Ctx->mkConcat({First, Second});
+  }
 
   if (Bytes == 1) {
     const auto View = byteAt(B, Offset);
@@ -256,7 +275,7 @@ SymRef SymState::readBank(Bank &B, uint64_t Offset, uint16_t Bytes) {
 }
 
 bool SymState::writeBank(Bank &B, uint64_t Offset, SymRef Value) {
-  if (!validBankWrite(*Ctx, Offset, Value))
+  if (!validBankWrite(*Ctx, B.RegionBase, Offset, Value))
     return false;
   const uint32_t Width = Ctx->width(Value);
   const uint32_t ByteCount = Width / kByteBits;
@@ -477,7 +496,7 @@ bool SymState::store(SymRef Addr, SymRef Value,
     return false;
   const Location Where = locate(Addr);
   if (Where.Base == Preservation.Base ||
-      !validBankWrite(*Ctx, Where.Offset, Value))
+      !validBankWrite(*Ctx, Where.Base, Where.Offset, Value))
     return false;
 
   const auto Charge = [&](uint64_t Count) {

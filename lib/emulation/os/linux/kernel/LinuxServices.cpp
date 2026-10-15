@@ -78,6 +78,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return Files.extendedAttribute(Kind, Event, Options.LinuxKernel, Result);
   case ServiceKind::PPoll:
     return Files.poll(Event, Options.LinuxKernel, Result);
+  case ServiceKind::Getdents64:
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
   case ServiceKind::Access:
@@ -148,7 +149,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
-    if (Files.isDevice(Event.Arguments[0]))
+    if (Files.isDevice(Event.Arguments[0]) ||
+        Files.isRegularFile(Event.Arguments[0]))
       return Files.handle(Kind, Event, Result);
     if (Options.LinuxFiles) {
       if (auto E = Files.outputError(Event.Arguments[0])) {

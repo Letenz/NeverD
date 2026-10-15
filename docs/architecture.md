@@ -89,10 +89,11 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
-Function preparation uses `neverd_prepare_function`, which shares the source
-route's ARM mode, exception-handler discovery and analysis-scope checks without
-emitting C. Source, IR and CFG views consume that prepared pipeline. Older
-engines retain the decompiler-based preparation fallback. A failed switch
+Function preparation uses `neverd_prepare_function_view`, which shares the
+source route's ARM mode, exception-handler discovery and analysis-scope checks
+without emitting C. Source, IR and CFG views consume that prepared pipeline.
+Older engines retain `neverd_prepare_function` and the decompiler-based
+preparation fallback. A failed switch
 clears the worker's prepared-entry marker before another view can reuse it.
 
 Consecutive restricted x64 analyses may share a session-owned
@@ -148,6 +149,16 @@ targeted constant proofs; `llvm_control_flow: false` explicitly disables that
 pass. Native machine CFG, jump-table, ABI and exception proofs remain
 authoritative and are unaffected. Worker source edits validate
 against the same source options used to display their targets.
+
+The native LLVM IR inspection view requests verified emission with temporary
+slots promoted to SSA only. It preserves the lifted control flow without the
+LLVMC optimization pipeline; the module cache distinguishes these inspection
+modules from optimized source modules. Native CFG, ABI and exception recovery
+still precede emission. EVM and SBF keep their own LLVM emission paths.
+Native LLVM view preparation postpones HighIR construction after the shared
+source MedIR call/return recovery. A later HighC request resumes only that
+projection through the ordinary HighIR completion boundary; it does not relift
+instructions or mutate the MedIR retained by LLVM emission.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only
@@ -3501,6 +3512,15 @@ with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
 
+`LinuxFiles` owns directory cursors, workload-local inode identities and the
+optional live proc FD namespace alongside regular and device descriptions.
+Mutable bytes are one object per granted catalogue path; independent opens
+have independent offsets, while dup shares its open description. Mutation
+invalidates captured stat observations, retaining only unchanged block-size
+facts for libc buffer selection. Directory and stdio buffers belong to Bionic,
+which delegates refill, write, seek and close to this same kernel owner. Neither
+the JSON adapter nor a private workload supplies a second descriptor table.
+
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
 all guest pointer resolution and byte expectations precede output writes and
@@ -6292,3 +6312,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Bounded kernel caller-context capture
 
 `WindowsX64Context.def` owns the common x64 layout/field table. `WindowsX64Context.cpp` shares integer collection and logical selectors while user full-FP and kernel limited-FP publication remain separate. `DriverContextCapture.cpp` borrows the current CPU through synchronous, non-reentrant callbacks. `KernelModelContextCapture.cpp` owns buffer admission, real return-word reading and effects. All admission precedes the atomic FLAGS setter; prevalidated ordinary RAM is then written on the stopped CPU. This is not rollback for arbitrary write failures or concurrent mapping changes. All three transports use this owner.
+
+### Symbolic region coordinates across zero
+
+`SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.

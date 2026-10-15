@@ -54,7 +54,18 @@ LinuxFiles::readLink(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   case PathKind::SymbolicLink:
     break;
   }
-  const auto &Target = Options->SymbolicLinks.at(Path->Name);
+  std::vector<uint8_t> Target;
+  if (Options->DynamicProcFDs && Path->Name == "/proc/self") {
+    const auto PID = std::to_string(ProcessID);
+    Target.assign(PID.begin(), PID.end());
+  } else if (Options->DynamicProcFDs && procDescriptor(Path->Name)) {
+    auto Name = descriptorPath(*procDescriptor(Path->Name));
+    if (!Name)
+      return unsupported(Result, "proc link target has no modeled pathname");
+    Target.assign(Name->begin(), Name->end());
+  } else {
+    Target = Options->SymbolicLinks.at(Path->Name);
+  }
   const auto Bytes = llvm::ArrayRef<uint8_t>(Target).take_front(
       std::min<size_t>(Target.size(), Size));
   auto Stored = writeUserMemory(CPU, Layout, Address, Bytes);

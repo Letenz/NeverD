@@ -333,10 +333,20 @@ TEST_P(LinuxProcess, MemoryFileOpenFlagsKeepUnobservedOpenedFiles) {
       Options.Arguments = {"files", std::string(1, Mode)};
       auto R = llvm::cantFail(
           emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options));
-      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
-      EXPECT_FALSE(R.Services.back().Result);
-      EXPECT_NE(R.Diagnostic.find(Mode == 'R' ? "direct I/O" : "directory"),
-                std::string::npos);
+      if (Mode == 'B') {
+        EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+        EXPECT_EQ(R.ExitStatus, 0u);
+        ASSERT_GE(R.Services.size(), 5u);
+        EXPECT_EQ(R.Services[0].Result, 3u);
+        EXPECT_EQ(R.Services[1].Result, uint64_t(-21));
+        EXPECT_EQ(R.Services[2].Result, 0u);
+        EXPECT_EQ(R.Services[3].Result, 0u);
+      } else {
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_FALSE(R.Services.back().Result);
+        EXPECT_NE(R.Diagnostic.find("direct I/O"), std::string::npos);
+      }
     }
   }
 }

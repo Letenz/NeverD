@@ -61,12 +61,16 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (std::holds_alternative<OpenDevice>(*I->second))
     return unsupported(Result, DeviceOperation);
+  if (std::holds_alternative<OpenDirectory>(*I->second))
+    return std::optional<uint64_t>(uint64_t(0) - IsDirectory);
   auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
     if (std::get<Stream>(*I->second) == Stream::Input)
       return unsupported(Result, FileInputStream);
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   }
+  if ((File->Flags & 3) == 1)
+    return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   auto Value = read(*File, Address, Size);
   if (!Value)
     return Value.takeError();
@@ -85,6 +89,19 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
   if (std::holds_alternative<OpenDevice>(*I->second))
     return unsupported(Result, DeviceOperation);
+  if (auto *D = std::get_if<OpenDirectory>(I->second.get())) {
+    if (Whence > SeekCurrent)
+      return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+    const uint64_t Position = (Whence == SeekCurrent ? D->Offset : 0) + Offset;
+    if (Position > MaxSignedIOSize)
+      return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+    if (Options->DynamicProcFDs && D->Path == "/proc/self/fd" &&
+        Position > UINT32_MAX)
+      return unsupported(Result,
+                         "proc FD cookie exceeds the supported index extent");
+    D->Offset = Position;
+    return std::optional<uint64_t>(Position);
+  }
   auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
     if (std::get<Stream>(*I->second) == Stream::Input)
@@ -105,8 +122,9 @@ llvm::Expected<uint64_t> LinuxFiles::read(OpenFile &File, uint64_t Address,
   // either transfer clamping or EOF can reduce the request.
   if (Size > MaxSignedIOSize - File.Offset)
     return uint64_t(0) - InvalidArgument;
+  const auto Bytes = fileBytes(File);
   const uint64_t Available =
-      File.Bytes.size() - std::min<uint64_t>(File.Offset, File.Bytes.size());
+      Bytes.size() - std::min<uint64_t>(File.Offset, Bytes.size());
   Size = std::min({Size, Available, MaxReadWriteSize & ~(Layout.PageSize - 1)});
   uint64_t Copied = 0;
   while (Copied < Size) {
@@ -118,7 +136,7 @@ llvm::Expected<uint64_t> LinuxFiles::read(OpenFile &File, uint64_t Address,
       return Access.takeError();
     if (!*Access)
       return Copied ? Copied : uint64_t(0) - BadAddress;
-    if (auto E = CPU.write(Start, File.Bytes.slice(File.Offset, Count)))
+    if (auto E = CPU.write(Start, Bytes.slice(File.Offset, Count)))
       return std::move(E);
     Copied += Count;
     File.Offset += Count;
@@ -136,7 +154,7 @@ uint64_t LinuxFiles::seek(OpenFile &File, uint64_t Offset, uint32_t Whence) {
     Base = File.Offset;
     break;
   case SeekEnd:
-    Base = File.Bytes.size();
+    Base = fileBytes(File).size();
     break;
   default:
     llvm_unreachable("seek mode must be admitted by the service owner");

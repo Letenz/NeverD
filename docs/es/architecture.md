@@ -1835,3 +1835,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Captura acotada del contexto llamante del kernel
 
 `WindowsX64Context.def` centraliza el formato y `WindowsX64Context.cpp` la captura entera y selectores lógicos. FP completo de usuario y limitado del kernel siguen separados. `DriverContextCapture.cpp` presta la CPU con callbacks síncronos no reentrantes; `KernelModelContextCapture.cpp` posee validación, retorno real y efectos. Tras toda validación actualiza FLAGS atómicamente y escribe RAM prevalidada. No garantiza rollback de errores arbitrarios ni cambios concurrentes de mapeo.
+
+### Coordenadas de región simbólica que cruzan cero
+
+`SymState` usa coordenadas relativas módulo 2^64 solo en regiones cuya base simbólica tiene 64 bits. Una lectura que cruza el cero relativo se divide en dos intervalos sin vuelta modular, de modo que cada origen de entrada permanezca dentro de un intervalo; una escritura conserva el valor completo. Se siguen rechazando los desbordamientos de los bancos de memoria absoluta, registros y temporales. Esta regla de indexación no aporta ninguna premisa de validez de la dirección real, ausencia de alias o separación de marcos; la invalidación habitual entre regiones y las pruebas de conservación por STORE no cambian. Unicorn, KVM y WHP comparten esta regla de análisis.

@@ -23,11 +23,17 @@ LinuxFiles::descriptorStatus(uint32_t FD, ProcessResult &Result) const {
   if (I == Descriptors.end())
     return uint32_t(BadDescriptor);
   if (const auto *File = std::get_if<OpenFile>(I->second.get()))
-    return DescriptorStatus{0, File->Metadata};
+    return DescriptorStatus{
+        File->Flags & 3,
+        File->Metadata ? std::optional<uint32_t>(File->Metadata->BlockSize)
+                       : std::nullopt,
+        false, bool(File->Flags & OpenAppend)};
+  if (std::holds_alternative<OpenDirectory>(*I->second))
+    return DescriptorStatus{0, std::nullopt, true};
   if (const auto *Device = std::get_if<OpenDevice>(I->second.get()))
-    return DescriptorStatus{(*Device)->Options->AccessMode, nullptr};
+    return DescriptorStatus{(*Device)->Options->AccessMode, std::nullopt};
   if (const auto *S = std::get_if<Stream>(I->second.get()))
-    return DescriptorStatus{*S == Stream::Input ? 0u : 1u, nullptr};
+    return DescriptorStatus{*S == Stream::Input ? 0u : 1u, std::nullopt};
   unsupported(Result, "unmodeled descriptor access mode");
   return std::nullopt;
 }
@@ -68,7 +74,7 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Open:
     return open(A0, A1, Result);
   case ServiceKind::OpenAt:
-    return open(A1, A2, Result);
+    return open(A1, A2, Result, A0);
   case ServiceKind::Close:
     return close(A0, Result);
   case ServiceKind::Dup:
@@ -77,11 +83,13 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return duplicate(Kind, A0, A1, A2, Result);
   case ServiceKind::Read:
     return readDescriptor(A0, A1, A2, Result);
+  case ServiceKind::Getdents64:
+    return directoryEntries(A0, A1, A2, Result);
   case ServiceKind::Ioctl:
     return deviceIoctl(A0, A1, A2, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
-    return unsupported(Result, DeviceOperation);
+    return writeDescriptor(Kind, A0, A1, A2, Result);
   case ServiceKind::Readlink:
     return readLink(AtCurrentDirectory, A0, A1, A2, Result);
   case ServiceKind::ReadlinkAt:

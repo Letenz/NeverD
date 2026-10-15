@@ -1,0 +1,59 @@
+{
+  "language": "c",
+  "commands": [
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=arm64-apple-macos14.0",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/nonleaf.c",
+        "-o",
+        "<fixtures>/producers/macos-arm64-abi/nonleaf-supplied-object.o"
+      ],
+      "object": "producers/macos-arm64-abi/nonleaf-supplied-object.o",
+      "sha256": "f9bc3f9db5c7c0763d9f48acc2765c4fe2233ab4f7397d43d5bfc2649a9a2850"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=arm64-apple-macos14.0",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/writable-pointer-runtime.c",
+        "-o",
+        "<fixtures>/producers/macos-arm64-abi/writable-pointer-supplied-object.o"
+      ],
+      "object": "producers/macos-arm64-abi/writable-pointer-supplied-object.o",
+      "sha256": "f451eed42be77e0de0233aebbd5e00ca72ccb9d88501afe320d7c9787cc312be"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=arm64-apple-macos14.0",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/floating-stack.c",
+        "-o",
+        "<fixtures>/producers/macos-arm64-abi/floating-stack-supplied-object.o"
+      ],
+      "object": "producers/macos-arm64-abi/floating-stack-supplied-object.o",
+      "sha256": "37380df81536d500bb69b8cc6211ca68406dfcbfea5f3ac60a68003841e95338"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
+<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR 路徑接入 Windows ARM64 C++ FH3，驗證 xdata、父框架 ABI 
 
 | 編譯器 | 製品 | 已驗證的作業系統執行設定 |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3 |
-| Clang 22.1.6 | 原生物件 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | 原生物件 | ELF x64/ARM64 C/C++，需要相容的 Itanium 執行階段 |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | 原生物件 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | 原生物件 | ELF x64/ARM64 C/C++，需要相容的 Itanium 執行階段; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生物件 | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / 原生物件 | ELF / PE / Mach-O x64/ARM64: 純 C 原始碼 |
@@ -166,7 +166,7 @@ Windows 原生程序驗收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/acti
 
 原生生產語料固定 NeverC `182fd2c5dc`，搭配獨立原程式與目前 NeverD 安裝器。`check_source_patch_hosted_pe_runtime.py` 每種 Windows 架構要求 36 次 C IR/物件/hosted 與兩層 hosted C 展開觀測；`check_source_patch_elf_runtime.py` 每種 Linux 架構要求 120 次 C、hosted 傳播及九種 Clang C++ 例外情境觀測。憑據、摘要及真實主機架構必須相符；不表示 CI 主機執行了 NeverC 編譯器本身。 Linux 清單在 x64、ARM64 分別涵蓋 Clang IR、Clang 原生物件與 GCC 原生物件各九種例外情境；NeverC 仍僅處理 C。
 
-舊翻譯設定的 204 次觀測僅為歷史記錄，不能證明目前純 C 契約。目前三條 NeverC 路徑均使用 C，Clang C++ FH3 獨立驗證。macOS x64 使用 Rosetta 2；Unicorn/QEMU 的 CPU 結果不能替代原生作業系統與例外展開驗證。
+舊翻譯設定的 204 次觀測僅為歷史記錄，不能證明目前純 C 契約。目前三條 NeverC 路徑均使用 C，Clang C++ FH3 獨立驗證。開發用 Apple Silicon Mac 上的 macOS x64 執行使用 Rosetta 2；Unicorn/QEMU 的 CPU 結果不能替代原生作業系統與例外展開驗證。
 
 AArch64 指令重定位要求顯式 RELA 加數。隱式 REL 指令加數會在發布前遭到拒絕，不會把指令位元欄位當成一般資料。支援的 PREL64 資料重定位在 REL、RELA 下都保留完整有號加數。
 
@@ -179,3 +179,18 @@ AArch64 指令重定位要求顯式 RELA 加數。隱式 REL 指令加數會在�
 [0a6f6d768 的擴充 Linux 驗收](https://github.com/NeverSight/NeverD/actions/runs/38626866257) 執行了 429 項檢查，零失敗、零略過：原始 108 項、完整 Swift 55 項、CPU 目標矩陣 143 項、原生 Session 117 項、LLVM-C 3 項及 Clang/GCC C++ 3 項。該合併版本的本機完整二進位修補迴歸也通過全部 22,961 項。原生程序次數與 CPU 模擬驗證範圍分開統計。
 
 [0a6f6d768 的 Windows 安裝器重建驗證](https://github.com/NeverSight/NeverD/actions/runs/38627581732)通過全部 182 項專項檢查和 474 次原生程序執行，零失敗、零跳過。獨立產物稽核核對了每個映像的雜湊、架構、情境和重複次數。隨後合入 ABI/展開修正的 `e1cac949f` 再次通過全部 22,961 項完整二進位 patch 回歸，零失敗、零跳過。這些結果遵守 NeverC 僅支援純 C 的約定；C++ 替換使用 Clang/GCC。
+
+<!-- i18n-section: runtime-coverage -->
+## macOS 與 32 位元程序驗證
+
+程序映像工作流程要求在 macOS ARM64（`macos-15`）及 Intel x64（`macos-15-intel`）上原生執行。每種架構執行 96 次觀測，涵蓋 Clang C 原始碼／物件安裝、可寫入指標狀態、浮點／堆疊參數、九種 Clang C++ 例外情境，以及現有 NeverC 純 C 的 IR／物件／hosted 輸出。執行前嚴格檢查 Mach-O 簽章；安裝的 hosted 程式碼必須與編譯器負載逐位元組相同。
+
+相同工作流程要求 Windows x64 上的 Windows x86 執行 30 次、Linux x64 上的 Linux x86 執行 48 次，並透過 QEMU 使用者模式執行 96 次 Linux ARM32 觀測，ARM 與 Thumb 各占一半。Linux 檢查包含符合目標的 GCC 物件。每個情境重複三次。報告區分 `native`、`compatibility`、`rosetta` 與 `qemu-user`，並記錄目標及實際宿主架構。Rosetta 不符合 Intel 原生執行要求。
+
+全部 14 個 CPU 目標設定仍由 154 項原始碼／IR／物件矩陣涵蓋。PE ARM32、Mach-O i386、ARMv7 iOS 與 ARMv7k watchOS 目前具備 CPU 驗證，不據此宣稱原生 OS 載入器或 C++ 展開器驗證通過。NeverC 維持僅支援 x64／ARM64 純 C；32 位元編譯由 Clang 與符合目標的 ELF GCC 驅動負責。驗證器不會建置或修改 NeverC。
+
+Windows x64 與 ARM64 也會各自執行 36 次 Clang C++ FH3 觀測。
+
+Mach-O 的可寫入指標用例在執行時建立指標；靜態位址初始化仍需要尚未支援的執行期重定位註冊，並有明確拒絕的回歸測試。ELF 零大小 COMDAT 函式僅在簽名是其可執行節起點處的唯一函式，且 CFI 精確涵蓋整個節時才接受。節內偏移、共用、填補、無群組及缺少 CFI 的情況仍拒絕。
+
+ELF ARM 與 Thumb 使用獨立設定。原始碼編譯器明確接收 `-marm` 或 `-mthumb`，原生函式繫結保留原函式的指令狀態位元。32 位元 ELF 程序使用具備實際動態重定位的 PIE 映像。ARM32 QEMU 執行會記錄明確的 glibc `--loader` 與 sysroot：QEMU 的 AUXV 計算不像 Linux 核心一樣處理遷移後的程式標頭。此路徑驗證 QEMU 下的 glibc 載入與執行，不代表 ARM32 實機或原生核心載入器驗證。

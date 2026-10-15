@@ -114,7 +114,7 @@ jobs:
           from scripts.run_lift_qualification import audit
           output = Path('build-lift-qualification/evidence')
           for owner, pattern, minimum, label in (
-              ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 143, 'source-targets'),
+              ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 154, 'source-targets'),
               ('NeverDSessionCAPITests', 'SessionCAPITest.*', 116, 'native-session'),
           ):
               binary = 'build-lift-qualification/bin/' + owner

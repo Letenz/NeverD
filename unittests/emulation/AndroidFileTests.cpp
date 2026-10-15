@@ -125,10 +125,18 @@ TEST_P(AndroidFiles, ReleasedGKIOpenFlagsSharePathErrorsAndErrno) {
 TEST_P(AndroidFiles, OpenFlagsKeepKnownDirectoryAndDirectIOBoundaries) {
   for (uint64_t Mode = 0; Mode != 3; ++Mode) {
     auto R = run("files_open_unobserved", {Mode});
-    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
-    EXPECT_FALSE(R.Services.back().Result);
-    EXPECT_NE(R.Diagnostic.find(Mode == 0 ? "direct I/O" : "directory"),
-              std::string::npos);
+    if (Mode == 2) {
+      returned(R);
+      ASSERT_EQ(R.Services.size(), 4u);
+      EXPECT_EQ(R.Services[0].Result, 3u);
+      EXPECT_EQ(R.Services[1].Result, uint64_t(-21));
+      EXPECT_EQ(R.Services[2].Result, 0u);
+      EXPECT_EQ(R.Services[3].Result, 0u);
+    } else {
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_FALSE(R.Services.back().Result);
+      EXPECT_NE(R.Diagnostic.find("direct I/O"), std::string::npos);
+    }
   }
 }
 TEST_P(AndroidFiles, ReleasedGKIXAttrsShareRawAndBionicErrorOrder) {
@@ -196,10 +204,31 @@ TEST_P(AndroidFiles, TrailingSeparatorsDoNotInventDirectoryStateOrPermissions) {
   for (uint64_t Mode = 0; Mode < 10; ++Mode) {
     SCOPED_TRACE(Mode);
     auto R = run("files_trailing_unsupported", {Mode});
+    ASSERT_EQ(R.Services.size(), 1u);
+    if (Mode == 0 || Mode == 6) {
+      // A known directory can be opened without inventing its stat or access
+      // permissions. Each run starts with only the three standard descriptors.
+      returned(R, 3);
+      EXPECT_EQ(R.Services.front().Number, 56u);
+      EXPECT_EQ(R.Services.front().Result, 3u);
+      continue;
+    }
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
     EXPECT_FALSE(R.ReturnValue);
-    ASSERT_FALSE(R.Services.empty());
     EXPECT_FALSE(R.Services.back().Result);
+    if (Mode == 1 || Mode == 7) {
+      EXPECT_EQ(R.Services.back().Number, 79u);
+      EXPECT_NE(R.Diagnostic.find("directory status has no explicit metadata"),
+                std::string::npos);
+    } else if (Mode == 2 || Mode == 8) {
+      EXPECT_EQ(R.Services.back().Number, 34u);
+      EXPECT_NE(R.Diagnostic.find("directory creation"), std::string::npos);
+    } else {
+      EXPECT_EQ(R.Services.back().Number, 48u);
+      EXPECT_NE(
+          R.Diagnostic.find(Mode == 3 ? "permission checks" : "path form"),
+          std::string::npos);
+    }
   }
 }
 TEST_P(AndroidFiles, EmptyCatalogueContainsOnlyTheRootDirectory) {
@@ -369,7 +398,7 @@ TEST_P(AndroidFiles, UnknownStatusAndPartialCopiesHaveNoInventedResult) {
   }
 }
 TEST_P(AndroidFiles, AbsentInputsAndUnmodeledFormsCannotFabricateAResult) {
-  for (unsigned Mode = 0; Mode <= 6; ++Mode) {
+  for (unsigned Mode = 0; Mode <= 7; ++Mode) {
     SCOPED_TRACE(Mode);
     if (!Mode)
       Options.LinuxFiles.reset();
@@ -378,10 +407,32 @@ TEST_P(AndroidFiles, AbsentInputsAndUnmodeledFormsCannotFabricateAResult) {
       Options.LinuxFiles->Files["/fixture/data"] = {1};
     }
     auto R = run("files_unsupported", {Mode});
+    ASSERT_EQ(R.Services.size(), Mode == 6 ? 2u : 1u);
+    if (Mode == 1 || Mode == 5) {
+      // O_CREAT on an existing file does not create an object; opening a
+      // known directory likewise needs no unknown metadata or permissions.
+      returned(R, 3);
+      EXPECT_EQ(R.Services.front().Number, 56u);
+      EXPECT_EQ(R.Services.front().Result, 3u);
+      EXPECT_EQ(R.Services.front().Arguments[2], Mode == 1 ? 0100u : 0u);
+      continue;
+    }
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
     EXPECT_FALSE(R.ReturnValue);
-    ASSERT_FALSE(R.Services.empty());
     EXPECT_FALSE(R.Services.back().Result);
+    EXPECT_EQ(R.Services.back().Number, Mode == 4   ? 63u
+                                        : Mode == 6 ? 62u
+                                                    : 56u);
+    if (Mode == 6) {
+      EXPECT_EQ(R.Services.front().Number, 56u);
+      EXPECT_EQ(R.Services.front().Result, 3u);
+    }
+    const char *Boundary = Mode == 0   ? "explicit linux_files"
+                           : Mode == 4 ? "standard input"
+                           : Mode == 6 ? "SEEK_DATA and SEEK_HOLE"
+                           : Mode == 7 ? "creation requires an explicit object"
+                                       : "path form";
+    EXPECT_NE(R.Diagnostic.find(Boundary), std::string::npos);
   }
 }
 TEST_P(AndroidFiles, DynamicFileBindingsRetainProviderIdentityAndLifetime) {

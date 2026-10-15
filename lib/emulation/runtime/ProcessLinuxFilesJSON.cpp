@@ -94,6 +94,25 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
   };
   for (const auto &[Key, V] : *Object) {
     llvm::StringRef Name = Key;
+    if (Name == field::DynamicProcFDs) {
+      auto B = V.getAsBoolean();
+      if (!B)
+        return invalid(Name);
+      Out.DynamicProcFDs = *B;
+      continue;
+    }
+    if (Name == field::FileDirectories) {
+      const auto *Dirs = V.getAsArray();
+      if (!Dirs || Dirs->size() > linux_model::FileCountLimit)
+        return invalid(Name);
+      for (const auto &D : *Dirs) {
+        auto Path = D.getAsString();
+        if (!Path || !Reserve(*Path, {}))
+          return invalid(Name);
+        Out.Directories.push_back(Path->str());
+      }
+      continue;
+    }
     if (Name == field::FileDevices) {
       const auto *Devices = V.getAsArray();
       if (!Devices || Devices->size() > linux_model::FileCountLimit)
@@ -149,8 +168,9 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
       return invalid(Name);
     for (const auto &File : *Files) {
       const auto *F = File.getAsObject();
-      if (!F || (F->size() != 2 && F->size() != 3) ||
-          (F->size() == 3 && !F->get(field::FileMetadata)))
+      if (!F ||
+          F->size() != 2 + unsigned(F->get(field::FileMetadata) != nullptr) +
+                           unsigned(F->get(field::FileWriteLimit) != nullptr))
         return invalid(Name);
       auto Path = F->getString(field::Path);
       auto Bytes = F->getString(field::Bytes);
@@ -163,6 +183,12 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
                         std::vector<uint8_t>(Data.begin(), Data.end()))
                .second)
         return invalid(field::Path);
+      if (const auto *Limit = F->get(field::FileWriteLimit)) {
+        auto N = process_json::integer<uint64_t>(*Limit);
+        if (!N)
+          return invalid(field::FileWriteLimit);
+        Out.WriteLimits.emplace(Path->str(), *N);
+      }
       if (const auto *M = F->get(field::FileMetadata)) {
         auto Parsed = metadata(*M);
         if (!Parsed)

@@ -274,8 +274,9 @@ The supported Bionic subset is:
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or
-  implicit proc data are visible. File writes, directory/relative opens and
-  unmodeled flags stop explicitly.
+  implicit proc data are visible. Explicit write grants allow bounded writes;
+  known directory opens, canonical relative `openat` and opt-in live FD links
+  follow the same Linux catalogue contract. Other path forms and flags stop explicitly.
   File status requires complete explicit `metadata`; it writes the 128-byte
   AArch64 layout and preserves the open cursor. Missing observations and mixed
   writable/inaccessible outputs stop without invented values or partial bytes.
@@ -353,9 +354,10 @@ The independently authored implementation and compiled O0/O2 callers follow
 Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
 and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
 
-### Read-only byte streams
+### Byte streams
 
-`fopen`/`fopen64` and `fdopen` admit read-only modes. `fread`, `fgets`,
+`fopen`/`fopen64` and `fdopen` admit byte read, write and update modes.
+Writing regular files requires an explicit `linux_files.files[].write_limit`. `fread`, `fgets`,
 `fgetc`/`getc`, their unlocked forms, `fileno`, `feof`, `ferror`, `clearerr`,
 `fclose`, `fseek`/`fseeko`/`fseeko64`, `ftell`/`ftello`/`ftello64`,
 `fgetpos`/`fgetpos64`, `fsetpos`/`fsetpos64`, `rewind`, `setvbuf`, `setbuf`,
@@ -380,8 +382,8 @@ object's bytes. Exact-length reads do not infer EOF. In this API 28 contract,
 EOF remains set until cleared, but later reads still retry the descriptor.
 `fseek` clears EOF on success and preserves the error indicator; `rewind`
 clears both. `fflush`/`fflush_unlocked` on a read-only FILE return EOF/EBADF
-without discarding buffered input, while a null argument succeeds because
-there are no modeled output buffers.
+without discarding buffered input. A null argument flushes all output streams
+and retains a failure while continuing with the remaining streams.
 
 `fdopen` adopts the existing FD without duplicating or resetting it. `dup`
 aliases and raw syscalls see the same kernel cursor. Closing the FD does not
@@ -390,12 +392,11 @@ stream even when closing its FD fails. Thread calls share FILE state, complete
 as indivisible model events, and retain separate TLS errno. Explicit
 `flockfile` locking and concurrent unlocked operations are not modeled.
 
-Transfers above the API 28 callback's signed-int extent, write/update modes,
-fdopen's close-on-exec mutation, `ungetc`, wide streams, `freopen`, custom
-callbacks, standard FILE objects, directory iteration, and dynamic procfs
-contents remain unsupported. Buffered copies validate consumed guest memory;
+Transfers above the API 28 callback's signed-int extent, fdopen's close-on-exec
+or append-flag mutation, `ungetc`, wide streams, `freopen`, custom callbacks
+and standard FILE objects remain unsupported. Buffered copies validate consumed guest memory;
 invalid pointers stop the workload. Direct reads preserve the kernel model's
-partial-transfer/EFAULT behavior. This is a bounded input-stream model, not
+partial-transfer/EFAULT behavior. This is a bounded byte-stream model, not
 an implementation of the entire Bionic stdio ABI.
 
 These independently authored models and synthetic callers follow the pinned
@@ -405,6 +406,42 @@ Android 9 [stdio entrypoints](https://github.com/aosp-mirror/platform_bionic/blo
 [mode parsing](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/flags.c)
 and [setvbuf behavior](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/setvbuf.c).
 Host stdio and host filesystem calls do not satisfy guest reads.
+
+`fwrite`, `fputs` and their unlocked aliases share these FILE objects. Full,
+line and unbuffered modes retain actual guest bytes and flush through kernel
+`write`; `fclose` flushes before closing, even when the flush fails. A failed
+flush discards its pending count and sets the error indicator. Direct writes
+preserve partial transfer/EFAULT semantics; invalid buffered memcpy inputs stop
+instead of inventing a kernel errno. Read/write transitions follow API 28:
+refilling flushes pending output, while switching to writing discards read-ahead
+at the current FD offset. Use a seek when the logical read position must be
+preserved. `ftell` flushes output before querying the cursor, including append
+streams; it does not report a stale pre-append position. Refilling a line or
+unbuffered stream flushes other line-buffered writers. Large `fread` requests
+use the API 28 direct FD reader, bypassing these refill transitions. `fdopen` also works for
+captured output FDs with explicit unbuffered mode; it does not materialize
+`stdin`, `stdout` or `stderr` FILE objects.
+
+The output transition contracts are pinned to AOSP's
+[write setup](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/wsetup.c)
+and [byte writer](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/fvwrite.c),
+with independent model code and synthetic tests.
+
+### Directory streams
+
+`opendir`, `fdopendir`, `readdir`/`readdir64`, `closedir`, `dirfd`, `telldir`,
+`seekdir` and `rewinddir` use the shared Linux directory descriptions described
+in [the file contract](process-emulation.md#directories-and-live-fd-links).
+DIR tokens are opaque, and their guest record buffer holds 15 LP64 `dirent`
+slots, matching the pinned [API 28 entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/bionic/dirent.cpp).
+The kernel cursor advances on buffer refill; `telldir` returns the last
+consumed record's cookie. `fdopendir` adopts the FD without resetting it.
+Seek/rewind discard the Bionic cache at their specified success boundaries;
+EOF preserves errno. Closing the underlying FD does not erase buffered records.
+Raw `getdents64`/`__getdents64` and `syscall` use the same kernel owner.
+Scandir, reentrant directory APIs, general symlink traversal and a public DIR
+layout remain unmodeled. Enumeration order and unspecified inode identities
+belong to the virtual workload, not to the host filesystem.
 
 ### Integer scanning
 
