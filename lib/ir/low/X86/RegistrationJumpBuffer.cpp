@@ -1,16 +1,16 @@
-//===- RegistrationJumpBuffer.cpp - Live EH3 capture storage --------------===//
+//===- RegistrationJumpBuffer.cpp - Live SEH capture storage --------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Tracks the initialized fields and lifetime of an EH3 jump buffer.
+/// Tracks the initialized fields and lifetime of an SEH jump buffer.
 
 #include "RegistrationJumpCapture.h"
 
 namespace neverd::registration_state {
 namespace {
-std::array<FrameValue, 10> captureCells(const EH3JumpCapture &Capture) {
+std::array<FrameValue, 10> captureCells(const SEHJumpCapture &Capture) {
   return {Capture.Nonvolatile[0],
           Capture.Nonvolatile[1],
           Capture.Nonvolatile[2],
@@ -24,18 +24,23 @@ std::array<FrameValue, 10> captureCells(const EH3JumpCapture &Capture) {
 }
 } // namespace
 
-void storeEH3JumpCapture(FrameState &Frame, const EH3JumpCapture &Capture) {
+void storeSEHJumpCapture(FrameState &Frame, const SEHJumpCapture &Capture) {
   const auto Cells = captureCells(Capture);
   for (unsigned I = 0; I != Cells.size(); ++I)
     Frame.store(Capture.BufferOffset + 4 * I, 4, Cells[I]);
+  if (Capture.Protocol == RegistrationSEHJumpCapture::Kind::EH4)
+    Frame.store(Capture.BufferOffset + 40, 4,
+                FrameValue::constant(uint32_t(Capture.SecurityCookieVA)));
 }
 
-bool hasEH3JumpCapture(const FrameState &Frame, const EH3JumpCapture &Capture) {
+bool hasSEHJumpCapture(const FrameState &Frame, const SEHJumpCapture &Capture) {
   const auto Cells = captureCells(Capture);
   for (unsigned I = 0; I != Cells.size(); ++I)
     if (Frame.load(Capture.BufferOffset + 4 * I, 4) != Cells[I])
       return false;
-  return true;
+  return Capture.Protocol != RegistrationSEHJumpCapture::Kind::EH4 ||
+         Frame.load(Capture.BufferOffset + 40, 4) ==
+             FrameValue::constant(uint32_t(Capture.SecurityCookieVA));
 }
 
 } // namespace neverd::registration_state

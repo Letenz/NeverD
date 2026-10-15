@@ -20,13 +20,15 @@
 namespace neverd {
 namespace {
 
-void createSEHJumpUnwindBridge(llvm::Module &Module, llvm::Function &Runtime) {
+void createSEHJumpUnwindBridge(llvm::Module &Module, llvm::Function &Runtime,
+                               RegistrationSEHJumpCapture::Kind Protocol) {
   using namespace x86_registration;
-  if (Module.getNamedValue(SEHJumpUnwindName))
+  const auto Name = getSEHJumpUnwindName(Protocol);
+  if (Module.getNamedValue(Name))
     return;
-  auto *Bridge = llvm::Function::Create(Runtime.getFunctionType(),
-                                        llvm::GlobalValue::InternalLinkage,
-                                        SEHJumpUnwindName, Module);
+  auto *Bridge =
+      llvm::Function::Create(Runtime.getFunctionType(),
+                             llvm::GlobalValue::InternalLinkage, Name, Module);
   Bridge->setCallingConv(llvm::CallingConv::X86_StdCall);
   Bridge->addFnAttr(llvm::Attribute::NoInline);
   Bridge->addFnAttr(llvm::Attribute::OptimizeNone);
@@ -108,10 +110,11 @@ void MedLLVMEmitter::declareX86RegistrationJumpRuntimes(const MedFunc &Func) {
       Declare(Call.Capture->TargetVA, "_setjmp3",
               llvm::FunctionType::get(I32, {Ptr, I32}, true));
       if (auto *Unwind = Declare(Call.Capture->UnwindVA,
-                                 x86_registration::SEHSourceJumpUnwindName,
+                                 x86_registration::getSEHSourceJumpUnwindName(
+                                     Call.Capture->Protocol),
                                  llvm::FunctionType::get(Void, {Ptr}, false),
                                  llvm::CallingConv::X86_StdCall))
-        createSEHJumpUnwindBridge(*Mod, *Unwind);
+        createSEHJumpUnwindBridge(*Mod, *Unwind, Call.Capture->Protocol);
     }
   }
 }

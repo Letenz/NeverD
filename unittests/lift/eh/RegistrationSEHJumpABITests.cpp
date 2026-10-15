@@ -57,7 +57,7 @@ struct JumpCallFixture {
     auto &States = Function.RegistrationStates.emplace();
     States.Complete = States.CallbackStatesComplete = true;
     States.RegistrationLifetimeComplete = true;
-    States.HasEH3JumpCaptures = true;
+    States.HasSEHJumpCaptures = true;
     States.SEHJumpCaptures.push_back(
         {0x1010, 0x1015, 10, 0x2000, 0x3000, -96, -128, 0});
     RegistrationSEHJumpResume Resume;
@@ -343,6 +343,43 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
       EXPECT_EQ(Call.ResumeStateMap,
                 (std::map<int32_t, int32_t>{{1, 0}, {2, -1}}));
     }
+  }
+}
+
+TEST(RegistrationSEHJumpABI, EH4RequiresTheCookieProtocolAndDisjointStorage) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &EH = *F.Function.ExceptionMetadata;
+    EH.Personality = ExceptionPersonality::ExceptHandler4;
+    EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+    EH.Registration->RegistrationOffset = -16;
+    EH.Registration->TryLevelOffset = -4;
+    EH.Registration->EHCookieOffset = -28;
+    EH.Registration->GSCookieOffset = -32;
+    auto &States = *F.Function.RegistrationStates;
+    States.SecurityCookiesComplete = true;
+    States.SecurityCookieVA = 0x405000;
+    auto &Capture = States.SEHJumpCaptures.front();
+    Capture.Protocol = RegistrationSEHJumpCapture::Kind::EH4;
+    Capture.SecurityCookieVA = States.SecurityCookieVA;
+    if (Mutation == 1)
+      Capture.Protocol = RegistrationSEHJumpCapture::Kind::EH3;
+    if (Mutation == 2)
+      Capture.SecurityCookieVA += 4;
+    if (Mutation == 3)
+      States.SecurityCookiesComplete = false;
+    if (Mutation == 4)
+      States.SecurityCookieVA = Capture.SecurityCookieVA = 0;
+    if (Mutation == 5)
+      EH.Registration->EHCookieOffset = -36;
+    if (Mutation == 6)
+      EH.Registration->GSCookieOffset = -36;
+    if (Mutation == 7)
+      Capture.StackOffset = Capture.BufferOffset - 16;
+    if (Mutation == 8)
+      EH.Personality = ExceptionPersonality::ExceptHandler3;
+    EXPECT_EQ(bool(getX86RegistrationSEHJumpCalls(F.Function)), Mutation == 0);
   }
 }
 

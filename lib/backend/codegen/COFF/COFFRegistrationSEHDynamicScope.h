@@ -34,7 +34,12 @@ validateDynamicSEHScope(const RegistrationBlockState &Source,
                         const RegistrationFrame &Frame,
                         const SourceSegment &Segment,
                         const llvm::CallInst &Enter, const llvm::CallInst &Exit,
-                        const std::map<int32_t, DynamicSEHScopeCase> &Cases);
+                        const std::map<int32_t, DynamicSEHScopeCase> &Cases,
+                        std::set<const llvm::CallBase *> &Calls);
+
+llvm::Error
+validateDynamicSEHCallMarkers(llvm::ArrayRef<const llvm::Function *> Functions,
+                              const std::set<const llvm::CallBase *> &Calls);
 } // namespace neverd::coff_registration
 
 #endif // NEVERD_COFFREGISTRATIONSEHDYNAMICSCOPE_H

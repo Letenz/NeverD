@@ -21,16 +21,16 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
   for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
     SCOPED_TRACE(Mutation);
     const auto F = makeJumpFrame(Mutation);
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.ImportSlots.insert(0x4100);
     Runtime.Capture = [&](const LowOp &Op, const FrameState &Frame,
                           bool Installed,
-                          size_t &) -> std::optional<EH3JumpCapture> {
+                          size_t &) -> std::optional<SEHJumpCapture> {
       if (Op.Addr != 0x1100 || !Installed || Mutation == 4)
         return std::nullopt;
       EXPECT_EQ(Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset,
                 -192);
-      EH3JumpCapture Capture;
+      SEHJumpCapture Capture;
       Capture.Call = Op.Addr;
       Capture.ReturnPC = Mutation == 5 ? 0x1106 : 0x1105;
       Capture.BufferOffset = -144;
@@ -54,7 +54,7 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
         ADD_FAILURE() << Diagnostic;
       EXPECT_TRUE(Result.Complete);
       EXPECT_TRUE(Result.RegistrationLifetimeComplete);
-      EXPECT_TRUE(Result.HasEH3JumpCaptures);
+      EXPECT_TRUE(Result.HasSEHJumpCaptures);
       EXPECT_TRUE(Result.SEHJumpCapturesComplete);
       ASSERT_EQ(Result.SEHJumpCaptures.size(), 1u);
       const auto &Capture = Result.SEHJumpCaptures.front();
@@ -85,7 +85,7 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
 }
 
 TEST(RegistrationJumpState, CaptureWritesOnlyTheSpecifiedRuntimeFields) {
-  EH3JumpCapture Capture;
+  SEHJumpCapture Capture;
   Capture.BufferOffset = -144;
   Capture.StackOffset = -192;
   Capture.ReturnPC = 0x1105;
@@ -96,16 +96,41 @@ TEST(RegistrationJumpState, CaptureWritesOnlyTheSpecifiedRuntimeFields) {
   for (unsigned Mutation = 0; Mutation != 42; ++Mutation) {
     FrameState Frame;
     Frame.store(-104, 4, FrameValue::constant(7));
-    storeEH3JumpCapture(Frame, Capture);
+    storeSEHJumpCapture(Frame, Capture);
     EXPECT_EQ(Frame.load(-104, 4).Constant, 7u);
-    EXPECT_TRUE(hasEH3JumpCapture(Frame, Capture));
+    EXPECT_TRUE(hasSEHJumpCapture(Frame, Capture));
     if (Mutation < 40)
       Frame.store(-144 + Mutation, 1, FrameValue::constant(0));
     else if (Mutation == 40)
       Frame.forgetCellValues();
     else
       Frame.merge(FrameState{});
-    EXPECT_FALSE(hasEH3JumpCapture(Frame, Capture));
+    EXPECT_FALSE(hasSEHJumpCapture(Frame, Capture));
+  }
+}
+
+TEST(RegistrationJumpState, EH4InitializesAndProtectsItsCookieAddress) {
+  SEHJumpCapture Capture;
+  Capture.Protocol = RegistrationSEHJumpCapture::Kind::EH4;
+  Capture.SecurityCookieVA = 0x405000;
+  Capture.Nonvolatile[0] = FrameValue::frame(0);
+  for (unsigned I = 1; I != Capture.Nonvolatile.size(); ++I)
+    Capture.Nonvolatile[I] = FrameValue::constant(0x11223344 + I);
+  Capture.BufferOffset = -144;
+  Capture.StackOffset = -192;
+  Capture.Level = -2;
+  Capture.ReturnPC = 0x1105;
+  Capture.UnwindTarget = 0x3300;
+  for (unsigned I = 0; I != 44; ++I) {
+    SCOPED_TRACE(I);
+    FrameState Frame;
+    Frame.store(-100, 4, FrameValue::constant(7));
+    storeSEHJumpCapture(Frame, Capture);
+    EXPECT_EQ(Frame.load(-104, 4).Constant, 0x405000u);
+    EXPECT_EQ(Frame.load(-100, 4).Constant, 7u);
+    EXPECT_TRUE(hasSEHJumpCapture(Frame, Capture));
+    Frame.store(-144 + I, 1, {});
+    EXPECT_FALSE(hasSEHJumpCapture(Frame, Capture));
   }
 }
 
@@ -157,12 +182,12 @@ TEST(RegistrationJumpState, RuntimeCallbacksResumeOnlyFromPrivateArguments) {
         for (unsigned I = 0; I != Jump.Ops.size(); ++I)
           Jump.Ops[I].Seq = I;
       }
-      EH3JumpRuntime Runtime;
+      SEHJumpRuntime Runtime;
       Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                           size_t &) -> std::optional<EH3JumpCapture> {
+                           size_t &) -> std::optional<SEHJumpCapture> {
         if (Op.Addr != 0x1100)
           return std::nullopt;
-        EH3JumpCapture Capture;
+        SEHJumpCapture Capture;
         Capture.Call = Op.Addr;
         Capture.ReturnPC = 0x1105;
         Capture.BufferOffset = -144;
@@ -269,12 +294,12 @@ TEST(RegistrationJumpState, AsyncFilterWritesRevokeAParentResumption) {
     Filter.InstructionBoundaries.back().Control = LowInstructionControl::Return;
     Filter.InstructionBoundaries.back().ControlFlags =
         LowInstructionControlFlag::Return;
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                         size_t &) -> std::optional<EH3JumpCapture> {
+                         size_t &) -> std::optional<SEHJumpCapture> {
       if (Op.Addr != 0x1100)
         return std::nullopt;
-      EH3JumpCapture Capture;
+      SEHJumpCapture Capture;
       Capture.Call = Op.Addr;
       Capture.ReturnPC = 0x1105;
       Capture.BufferOffset = -144;
@@ -429,13 +454,13 @@ TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
         Disposition.Ops.front().Inputs[0] = NdVar::cst(0, 4);
       }
     }
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.ImportSlots.insert(0x4100);
     Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                         size_t &) -> std::optional<EH3JumpCapture> {
+                         size_t &) -> std::optional<SEHJumpCapture> {
       if (Op.Addr != 0x1100)
         return std::nullopt;
-      EH3JumpCapture Capture;
+      SEHJumpCapture Capture;
       Capture.Call = Op.Addr;
       Capture.ReturnPC = 0x1105;
       Capture.BufferOffset = -144;
@@ -620,12 +645,12 @@ TEST(RegistrationJumpState, UnwindFinallyKeepsNestedPrivateStacksAndEffects) {
       addFinallyTailJump(Outer, Resume, Controls, Mutation - 11);
     if (Mutation == 20)
       addFinallyCallTrailingEffect(Outer);
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                         size_t &) -> std::optional<EH3JumpCapture> {
+                         size_t &) -> std::optional<SEHJumpCapture> {
       if (Op.Addr != 0x1100)
         return std::nullopt;
-      EH3JumpCapture Capture;
+      SEHJumpCapture Capture;
       Capture.Call = Op.Addr;
       Capture.ReturnPC = 0x1105;
       Capture.BufferOffset = -144;
@@ -695,7 +720,7 @@ TEST(RegistrationCRTCall, ControlFPWritesOnlyADisjointScalarWord) {
     Resume.Succs = {5};
     Resume.EndAddr = 0x110b;
     Resume.InstructionBoundaries = {{0x1108, 3, 0, 1}};
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.ControlFP = [Mutation](const LowOp &Op, size_t &) {
       return Mutation != 5 && Op.Opcode == NdOp::INDIR_CALL &&
              Op.Addr == 0x1100;
@@ -787,12 +812,12 @@ TEST(RegistrationJumpState, CallbackStateReloadControlsDirectResumption) {
     Middle.InstructionBoundaries = {{0x1900, 6, 0, 2}};
     Return(12, 0x1906);
     Return(13, 0x1940);
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                         size_t &) -> std::optional<EH3JumpCapture> {
+                         size_t &) -> std::optional<SEHJumpCapture> {
       if (Op.Addr != 0x1100)
         return std::nullopt;
-      EH3JumpCapture Capture;
+      SEHJumpCapture Capture;
       Capture.Call = Op.Addr;
       Capture.ReturnPC = 0x1105;
       Capture.BufferOffset = -144;

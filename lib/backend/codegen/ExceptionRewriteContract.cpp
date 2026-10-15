@@ -6,6 +6,8 @@
 
 #include "neverd/backend/ExceptionRewriteContract.h"
 
+#include "COFF/COFFRegistrationSEHCall.h"
+
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
@@ -196,7 +198,7 @@ countNativeProtectedCalls(const llvm::Function &Function) {
   }
 
   uint64_t Count = 0;
-  std::set<const llvm::InvokeInst *> CountedInvokes;
+  std::set<const llvm::CallBase *> CountedCalls;
   for (const llvm::BasicBlock &Block : Function)
     for (const llvm::Instruction &Instruction : Block) {
       const auto *Anchor = llvm::dyn_cast<llvm::CallInst>(&Instruction);
@@ -211,6 +213,15 @@ countNativeProtectedCalls(const llvm::Function &Function) {
           Bundle->Inputs[windows_eh_md::ProvenanceRole].get());
       if (!Role || Role->getBitWidth() != 8)
         return std::nullopt;
+      if (Role->getZExtValue() ==
+          static_cast<unsigned>(
+              windows_eh_md::NativeProvenanceRole::RegistrationDynamicCall)) {
+        const auto *Call = coff_registration::dynamicSEHCall(*Anchor);
+        if (!Call || !CountedCalls.insert(Call).second)
+          return std::nullopt;
+        ++Count;
+        continue;
+      }
       if (Role->getZExtValue() !=
           static_cast<unsigned>(
               windows_eh_md::NativeProvenanceRole::ProtectedInvoke))
@@ -232,7 +243,7 @@ countNativeProtectedCalls(const llvm::Function &Function) {
           !AnchorCallee ||
           AnchorCallee->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
           !Invoke || (InvokeCallee && InvokeCallee->isIntrinsic()) ||
-          !CountedInvokes.insert(Invoke).second)
+          !CountedCalls.insert(Invoke).second)
         return std::nullopt;
       ++Count;
     }
@@ -421,9 +432,9 @@ validateCxxGroupRewriteContracts(const llvm::Module &Module,
         return cxxGroupError(CxxGroupContractErrorReason::NonCanonicalOrder,
                              *IdentityValue, *MemberVA);
       if (!SeenContractMembers.insert(*MemberVA).second)
-        return cxxGroupError(
-            CxxGroupContractErrorReason::DuplicateMember, *IdentityValue,
-            *MemberVA, "contract member belongs to more than one group");
+        return cxxGroupError(CxxGroupContractErrorReason::DuplicateMember,
+                             *IdentityValue, *MemberVA,
+                             "contract member belongs to more than one group");
       PreviousMember = *MemberVA;
       HavePreviousMember = true;
       HasCanonicalOwner |= *MemberVA == *CanonicalOwner;
@@ -769,7 +780,7 @@ validateExceptionRewriteContracts(const llvm::Module &Module) {
           Function, ContractErrorReason::CounterMismatch,
           (llvm::Twine("metadata records ") + llvm::Twine(*Lowered) +
            " lowered protected calls but IR authenticates " +
-           llvm::Twine(*ActualProtectedCalls) + " protected invokes")
+           llvm::Twine(*ActualProtectedCalls) + " protected calls")
               .str());
     Result.Functions.push_back({Function.getName().str(), true});
   }
@@ -846,8 +857,7 @@ resolveRequiredFunctionOwners(const Requirements &Requirements,
           ContractErrorReason::MissingCompiledFunction, Function.Name,
           "owner is not inside allocated generated code");
 
-    Owners.push_back(
-        {Function.Name, Match->OwnerSymbol, Match->OwnerVA});
+    Owners.push_back({Function.Name, Match->OwnerSymbol, Match->OwnerVA});
   }
   return Owners;
 }

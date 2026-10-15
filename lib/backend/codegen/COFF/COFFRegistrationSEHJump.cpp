@@ -172,7 +172,7 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
   for (const auto &[Address, Capture] : Captures) {
     const auto *Call = Calls.at(Address);
     const auto &Receipt = *Expected->at(Address).Capture;
-    if (auto Error = validateSEHJumpUnwindBridge(Parent, Receipt.UnwindVA))
+    if (auto Error = validateSEHJumpUnwindBridge(Parent, Receipt))
       return Error;
     if (!Capture.Buffer || !Capture.State)
       return rejectIR(
