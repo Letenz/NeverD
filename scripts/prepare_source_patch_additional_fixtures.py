@@ -226,6 +226,7 @@ def main() -> None:
                     "-o", str(original)], directory / "link.log")
         elif system == "windows":
             pe.run([str(args.linker), str(obj), "/out:" + str(original), "/entry:entry",
+                    "/implib:" + str(directory / "original.lib"),
                     "/subsystem:console", "/nodefaultlib", "/dynamicbase", "/debug:dwarf"], directory / "link.log")
         else:
             start = directory / "start.s"
