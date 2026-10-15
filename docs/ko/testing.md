@@ -1952,3 +1952,5 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 `InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.
 
 `InterpreterSpecialization.Timestamp*`는 독립 값/상태 오라클로 전체 표본, 상위 절반 초기화, 독립/반복 읽기, 레지스터/플래그/메모리/세그먼트 기준 주소 보존, 정확한/부족한 예산, 잘못된 묶음과 알 수 없는 주소 출처를 검사합니다. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery`는 raw 완료와 네이티브 증명/소스 배치 거부를 확인합니다. 기존 `X86_64_Intrinsics` 시계 사례는 소스 출력과 단일 읽기의 전체 비트를 검사하며 `DriverTimestamp`는 Unicorn/KVM/WHP 공통 시계 정책, 상태 보존, 예산, 오버플로를 별도로 검사합니다. 플랫폼 건너뛰기는 해당 백엔드 실행을 입증하지 않습니다.
+
+`KernelObjectTests.cpp`는 알려진 ID, 형식/권한/모드 실패, 핸들 정보, 출력 실패 시 참조 누수 방지, 언로드와 스택 재사용을 검사합니다. `DriverObjectTests.cpp`는 원본 `driver_objects.c`를 사용 가능한 Unicorn/KVM/WHP/HVF, Legacy/CheckedX64, 기본/재배치 주소 및 협력/17 명령 스케줄링에서 실행합니다. `NativeDriverTests.def`는 KVM/WHP 결과를 요구하며 누락과 건너뜀은 검증 공백입니다. ACL, 일반 프로세스 종료 또는 미구현 객체 형식은 입증하지 않습니다.

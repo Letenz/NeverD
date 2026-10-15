@@ -28,28 +28,37 @@ llvm::Error schedulingError(const llvm::Twine &Text) {
 llvm::Expected<uint64_t> KernelModel::currentThreadObject() {
   if (!CurrentExecution || !CurrentThreadKey)
     return schedulingError("current thread requires an active execution");
-  for (const auto &[Object, Thread] : SystemThreads)
-    if (Thread.CallbackID == CurrentThreadKey) {
+  for (const auto &[Object, Thread] : ThreadObjects)
+    if (Thread.System && Thread.CallbackID == CurrentThreadKey) {
       if (Thread.Exited)
         return schedulingError("current thread has already exited");
       return Object;
     }
+  const auto Context = executionProcessContext();
+  const uint32_t ProcessID = Context ? Context->CreatingProcessID : 0;
   if (const auto Found = CurrentThreadObjects.find(CurrentThreadKey);
-      Found != CurrentThreadObjects.end())
-    return Found->second;
+      Found != CurrentThreadObjects.end()) {
+    auto &Thread = ThreadObjects.at(Found->second);
+    if (!Context || !Thread.ProcessID || Thread.ProcessID == ProcessID) {
+      if (Context)
+        Thread.ProcessID = ProcessID;
+      return Found->second;
+    }
+    // Foreground requests can run in different process contexts. A retained
+    // old thread must never acquire the next requestor's process identity.
+    retireBorrowedThread(CurrentThreadKey);
+  }
   auto Object = allocate(profile::ProcessTokenSize);
   if (!Object)
     return Object.takeError();
   CurrentThreadObjects.emplace(CurrentThreadKey, *Object);
+  ThreadObjects.emplace(*Object, ThreadObject{CurrentThreadKey, ProcessID});
+  ReferencedObjects.emplace(*Object, ObjectReferences{ObjectKind::Thread});
   return *Object;
 }
 
 llvm::Expected<uint64_t> KernelModel::threadClientID(uint64_t Object) {
-  const bool Known =
-      SystemThreads.count(Object) ||
-      std::any_of(CurrentThreadObjects.begin(), CurrentThreadObjects.end(),
-                  [&](const auto &Entry) { return Entry.second == Object; });
-  if (!Known)
+  if (!ThreadObjects.contains(Object))
     return schedulingError("thread client ID requires a known thread object");
   if (const auto Found = ThreadClientIDs.find(Object);
       Found != ThreadClientIDs.end())
@@ -137,13 +146,15 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
   if (CallerInUserProcess && !(Attributes & windows::ObjectKernelHandle))
     return schedulingError("system-thread creation outside the system process "
                            "requires OBJ_KERNEL_HANDLE");
-  if (auto E = validateGuestAccess(A[0], 8, true))
+  if (auto E = validateObjectOutput(A[0], 8))
     return E;
   if (A[4])
-    if (auto E = validateGuestAccess(A[4], windows::ClientIDSize, true))
+    if (auto E = validateObjectOutput(A[4], windows::ClientIDSize))
       return E;
-  if (SystemThreads.size() >= profile::MaxConcurrentCallbacks ||
-      NextThreadHandle > profile::SystemThreadHandleLimit)
+  if (std::count_if(ThreadObjects.begin(), ThreadObjects.end(),
+                    [](const auto &Entry) { return Entry.second.System; }) >=
+          profile::MaxConcurrentCallbacks ||
+      NextObjectHandle > profile::SystemThreadHandleLimit)
     return windows::StatusInsufficientResources;
   const uint64_t Aligned = (NextAllocation + windows::PoolAlignment - 1) &
                            ~uint64_t(windows::PoolAlignment - 1);
@@ -160,7 +171,7 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
     return E;
   // The arena and scheduler are preflighted, so a faulting output cannot
   // reserve a thread object or callback identity.
-  if (auto E = Memory.writeInteger(A[0], NextThreadHandle, 8))
+  if (auto E = Memory.writeInteger(A[0], NextObjectHandle, 8))
     return E;
   auto Object = allocate(profile::ProcessTokenSize);
   if (!Object)
@@ -170,9 +181,15 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
   auto ID = Scheduler.enqueueSystemThread(std::move(Callback));
   if (!ID)
     return ID.takeError();
-  ThreadHandles.emplace(NextThreadHandle, *Object);
-  SystemThreads.emplace(*Object, SystemThread{NextThreadHandle, *ID});
-  NextThreadHandle += profile::SystemThreadHandleStride;
+  ReferencedObjects.emplace(*Object, ObjectReferences{ObjectKind::Thread});
+  retainObjectHandle(*Object, uint32_t(A[1]),
+                     Attributes | uint32_t(windows::ObjectKernelHandle),
+                     windows::SystemProcessID);
+  ThreadObject Thread;
+  Thread.CallbackID = *ID;
+  Thread.ProcessID = windows::SystemProcessID;
+  Thread.System = true;
+  ThreadObjects.emplace(*Object, Thread);
   if (A[4]) {
     // CLIENT_ID{UniqueProcess, UniqueThread} for the new system-process thread.
     auto Thread = threadClientID(*Object);
@@ -193,8 +210,8 @@ llvm::Expected<uint64_t> KernelModel::terminateSystemThread(uint32_t Status) {
       CurrentExecution == profile::StackBase || PendingThreadTermination)
     return schedulingError(
         "PsTerminateSystemThread requires the running system thread");
-  auto Thread = SystemThreads.find(Active->Object);
-  if (Thread == SystemThreads.end() ||
+  auto Thread = ThreadObjects.find(Active->Object);
+  if (Thread == ThreadObjects.end() ||
       Thread->second.CallbackID != Active->ID || Thread->second.Exited ||
       Thread->second.Terminating)
     return schedulingError("system thread termination lost its live object");
@@ -211,85 +228,6 @@ llvm::Expected<uint64_t> KernelModel::terminateSystemThread(uint32_t Status) {
 
 std::optional<uint32_t> KernelModel::takeThreadTermination() {
   return std::exchange(PendingThreadTermination, std::nullopt);
-}
-
-llvm::Expected<uint64_t>
-KernelModel::referenceThreadByHandle(llvm::ArrayRef<uint64_t> A) {
-  auto Handle = ThreadHandles.find(A[0]);
-  if (Handle == ThreadHandles.end()) {
-    if (Registry.ownsHandle(A[0]))
-      return schedulingError("registry-key object references are unsupported");
-    return windows::StatusInvalidHandle;
-  }
-  auto Thread = SystemThreads.find(Handle->second);
-  if (Thread == SystemThreads.end())
-    return schedulingError("thread handle lost its object");
-  // Only the modeled thread object type and kernel caller mode are available.
-  if (!A[4])
-    return windows::StatusInvalidParameter;
-  if (A[2] || uint8_t(A[3]) != windows::KernelMode || A[5])
-    return schedulingError(
-        "unsupported object type, access mode or handle-information output");
-  if (uint32_t(A[1]) & ~windows::ThreadAllAccess)
-    return schedulingError("unsupported system-thread reference access mask");
-  if (auto E = validateGuestAccess(A[4], 8, true))
-    return E;
-  if (auto E = Memory.writeInteger(A[4], Handle->second, 8))
-    return E;
-  ++Thread->second.PointerReferences;
-  return uint64_t(0);
-}
-
-llvm::Expected<uint64_t> KernelModel::dereferenceThread(uint64_t Object) {
-  auto Thread = SystemThreads.find(Object);
-  if (Thread == SystemThreads.end() || !Thread->second.PointerReferences)
-    return schedulingError(
-        "ObfDereferenceObject requires a referenced thread object");
-  --Thread->second.PointerReferences;
-  retireThreadIfUnreferenced(Object);
-  // The macro's return value is reserved; driver code must treat it as void.
-  return uint64_t(0);
-}
-
-llvm::Expected<uint64_t> KernelModel::closeHandle(uint64_t Handle) {
-  auto It = ThreadHandles.find(Handle);
-  if (It == ThreadHandles.end()) {
-    if (Registry.ownsHandle(Handle))
-      return Registry.call(*this, kernel_api::ZwClose, {Handle});
-    return windows::StatusInvalidHandle;
-  }
-  const uint64_t Object = It->second;
-  auto Thread = SystemThreads.find(Object);
-  if (Thread == SystemThreads.end() || !Thread->second.HandleOpen)
-    return schedulingError("thread handle lost its live object");
-  Thread->second.HandleOpen = false;
-  ThreadHandles.erase(It);
-  retireThreadIfUnreferenced(Object);
-  return uint64_t(0);
-}
-
-void KernelModel::retireThreadIfUnreferenced(uint64_t Object) {
-  auto Thread = SystemThreads.find(Object);
-  if (Thread != SystemThreads.end() && Thread->second.Exited &&
-      !Thread->second.HandleOpen && !Thread->second.PointerReferences &&
-      !WaitReferences.contains(Object)) {
-    FreedRanges.emplace(Object, profile::ProcessTokenSize);
-    Scheduler.forgetThreadPriority(Thread->second.CallbackID);
-    ThreadClientIDs.erase(Object);
-    SystemThreads.erase(Thread);
-  }
-}
-
-void KernelModel::retireBorrowedThread(uint64_t Key) {
-  Scheduler.forgetThreadPriority(Key);
-  ApcStates.erase(Key);
-  SystemAffinityThreads.erase(Key);
-  if (const auto Object = CurrentThreadObjects.find(Key);
-      Object != CurrentThreadObjects.end()) {
-    FreedRanges.emplace(Object->second, profile::ProcessTokenSize);
-    ThreadClientIDs.erase(Object->second);
-    CurrentThreadObjects.erase(Object);
-  }
 }
 
 llvm::Error KernelModel::queueWorkItem(llvm::ArrayRef<uint64_t> Arguments) {
@@ -584,8 +522,8 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
         "scheduled callback still owns a model continuation");
   const auto Invocation = *Scheduler.active();
   if (Invocation.Kind == KernelScheduler::CallbackKind::SystemThread) {
-    auto Thread = SystemThreads.find(Invocation.Object);
-    if (Thread == SystemThreads.end() || Thread->second.CallbackID != ID ||
+    auto Thread = ThreadObjects.find(Invocation.Object);
+    if (Thread == ThreadObjects.end() || Thread->second.CallbackID != ID ||
         !Thread->second.Terminating)
       return schedulingError(
           "system thread returned without PsTerminateSystemThread");
@@ -610,9 +548,10 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
   ApcStates.erase(ID);
   SystemAffinityThreads.erase(ID);
   if (Invocation.Kind == KernelScheduler::CallbackKind::SystemThread) {
-    SystemThreads.at(Invocation.Object).Exited = true;
-    SystemThreads.at(Invocation.Object).Terminating = false;
-    retireThreadIfUnreferenced(Invocation.Object);
+    ThreadObjects.at(Invocation.Object).Exited = true;
+    ThreadObjects.at(Invocation.Object).ExitPriority =
+        Scheduler.threadPriority(ID);
+    retireObjectIfUnreferenced(Invocation.Object);
     return llvm::Error::success();
   }
   retireBorrowedThread(ID);

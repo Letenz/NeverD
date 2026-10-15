@@ -342,7 +342,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `RtlStringFromGUID`、`RtlGUIDFromString` | 注册表形式的 GUID 文本 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`：格式化把小写数字写入带 `Strg` 标记的 78 字节分页池分配，由 `RtlFreeUnicodeString` 释放；解析要求字段宽度精确、大小写均可，仅在零单元之后允许后续文本，后段不匹配时返回 `STATUS_INVALID_PARAMETER`，此时 `Data1`–`Data3` 已经写入 |
 | `RtlTimeToTimeFields`、`RtlTimeFieldsToTime` | 在自 1601 年起以 100 ns 为单位的系统时间与 `TIME_FIELDS` 之间按公历转换（无已记录的闰秒）；输出时计算星期，输入时忽略星期；超出 1601–30827 年或不是真实日期的字段返回 `FALSE`，负时间会停止 |
 | `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 和内联 `GS:[0x188]` 读取的导出别名，任意 IRQL 均可调用：当前 APC 状态中的进程随进程附加而变化，当前逻辑线程的借用不透明身份则保持不变 |
-| `PsGetCurrentThreadId`、`PsGetThreadId` | 存活线程对象的客户端 ID：首次观察时从 `0x2000` 起以 4 为步长分配，跳过已建模的进程 ID 且永不复用；请求者 ID 与已分配线程 ID 相同的请求会被拒绝。`PsCreateSystemThread` 也通过 `ClientId` 返回系统进程 ID 和线程 ID。前台派发运行在同一个逻辑线程上，因此来自不同请求者进程的请求看到相同的线程 ID，而 `PsGetCurrentProcessId` 跟随请求者。`PsGetThreadId` 要求 IRQL ≤ `DISPATCH_LEVEL` |
+| `PsGetCurrentThreadId`, `PsGetThreadId` | 客户端 ID 从 `0x2000` 起以 4 为步长分配，跳过已知进程 ID 且永不复用。对象被保留期间 ID 有效。前台请求者进程改变时使用新线程身份；嵌套执行保留父线程身份。`PsGetThreadId` 要求 IRQL ≤ `DISPATCH_LEVEL`。 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 抛出来宾异常，无正常 API 返回；真实 C 过滤器／处理器及展开 finally，用户 CPU 访存异常的受限恢复见下文 |
 | `ExAllocatePool2` | 分页／非分页 NX 分配，默认清零；支持未初始化与缓存行对齐标志；无效的必需标志返回 NULL，配额／可执行池以及分配失败引发异常的路径会停止 |
 | `MmGetSystemRoutineAddress` | 通过共享导出清单解析带长度的来宾名称 |
@@ -393,7 +393,9 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 通知／同步事件保留不同信号消耗行为；`KeSetEvent` 仅接受 Increment=0、Wait=FALSE |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 驻留的计数信号量，上限必须为正；每次成功等待消耗一个计数。释放仅接受 Increment=0、Wait=FALSE；超过上限时抛出 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 驻留的 KMUTEX 按逻辑线程持有，支持跨嵌套回调和 SEH 的递归获取；KeReleaseMutex 返回先前的有符号信号状态，要求持有者和匹配的 DISPATCH_LEVEL 获取上下文，且仅接受 Wait=FALSE。持有期间禁止最外层返回、重新初始化或释放存储。非持有者释放触发 `STATUS_MUTANT_NOT_OWNED`。 |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系统进程中的有界线程在 PASSIVE_LEVEL 运行。句柄与不透明线程对象的引用各自持有生命周期；PsTerminateSystemThread 不返回客体代码，并使线程对象可等待且进入信号状态。APC 交付、进程优先级类别和带类型的对象引用尚未建模。 |
+| `PsCreateSystemThread`, `PsTerminateSystemThread` | 系统进程线程使用独立客户栈，在 `PASSIVE_LEVEL` 执行。终止会使对象变为有信号状态且不返回；启动例程普通返回会明确停止。支持 NULL 进程句柄、可选 `ClientId`、NULL 或仅含内核句柄标志的对象属性。尚不支持 APC 投递和在其他进程中创建线程。 |
+| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `PsIsThreadTerminating` | 仅查找已知系统/请求者进程 ID 和已发放线程 ID；未知 ID 返回 `STATUS_INVALID_CID`。被保留线程对象仍可查询创建进程和终止状态。进程身份由会话持有，查找不会恢复已撤销的用户内存。 |
+| `ObGetObjectType`, `ObfReferenceObject`, `ObfDereferenceObject`, `ObReferenceObjectByPointer`, `ObReferenceObjectByHandle`, `ObOpenObjectByPointer`, `ZwClose` | 不透明类型身份、类型化引用和多个句柄由同一生命周期管理方负责。指针引用在两种访问模式下都校验指定类型。句柄引用在 `UserMode` 下检查授予权限并拒绝内核句柄；可选 `OBJECT_HANDLE_INFORMATION` 返回授予权限。`ObOpenObjectByPointer` 支持 `KernelMode`、NULL 访问状态以及零或 `OBJ_KERNEL_HANDLE` 标志。尚不支持通用权限、ACL 检查、伪句柄、注册表/文件对象引用和对象类型数据导入。DriverUnload 前必须释放所有调用者引用和句柄。 |
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | 在 `PASSIVE_LEVEL` 访问运行时优先级；设置接受 1..31 并返回原值，确定性初始值为 8，要求已知线程对象。`scheduling` 启用优先级调度；动态提升与进程优先级类别尚未支持。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeQueryActiveProcessors`, `KeSetSystemAffinityThread`, `KeRevertToUserAffinityThread` | 组 0 只有一个处理器：`KeQueryActiveProcessors` 在任意有效 IRQL 返回掩码 `1`。旧式亲和性设置／恢复对在 IRQL <= DISPATCH_LEVEL 接受掩码 `1`，跨挂起和嵌套调用跟踪逻辑线程所有权，并要求外层返回前恢复。其他掩码和无对应设置的恢复会明确失败。这些依赖环境的调用保留 UNPACK 恢复依赖。 |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 按线程跟踪可嵌套的 APC 禁用状态。临界区及持有的 KMUTEX 禁用普通内核 APC；保护区和 IRQL >= APC_LEVEL 禁用全部 APC。系统线程启动时处于一层临界区内。未匹配的离开和带未平衡状态返回都会失败；尚未实现 APC 投递。 |

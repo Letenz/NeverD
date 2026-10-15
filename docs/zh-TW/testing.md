@@ -1908,3 +1908,5 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 `InterpreterSpecialization.WideIntegerConcat*` 涵蓋兩種位元組序、高低字、常數輸入、重疊輸出、高字控制、非法形狀、精確／不足預算及未知記憶體來源保留。嚴格解碼的 `PSHUFD` 以獨立雙字索引驗證全部 256 種選擇值及相同／不同目的暫存器。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` 保留原生證明與兩種原始碼配置的拒絕。
 
 `InterpreterSpecialization.Timestamp*` 以獨立值與狀態參考實作檢查完整讀數、高半部清零、獨立與重複讀取、暫存器／旗標／記憶體／區段基址保持、精確與不足預算、非法序列及未知位址來源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 檢查原始還原完成並保留原生證明與原始碼配置拒絕。現有 `X86_64_Intrinsics` 時間戳案例檢查原始碼產生與單次讀取的完整位元結果；`DriverTimestamp` 另行檢查 Unicorn/KVM/WHP 共用時鐘策略、狀態保持、預算及溢位。平台略過不代表該後端已執行。
+
+`KernelObjectTests.cpp` 驗證已知 ID、型別/權限/模式失敗、控制代碼資訊、輸出失敗無參照洩漏、卸載及堆疊重用。`DriverObjectTests.cpp` 在可用 Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、偏好/重定位位址及協作/17 指令排程執行原創 `driver_objects.c`。`NativeDriverTests.def` 要求 KVM/WHP 結果；缺失或跳過仍為缺口。這些測試不證明 ACL、一般行程退出或未實作物件類別。

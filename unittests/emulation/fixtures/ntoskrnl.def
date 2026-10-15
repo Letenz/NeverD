@@ -78,6 +78,14 @@ EXPORTS
   KeSetPriorityThread
   ObReferenceObjectByHandle
   ObfDereferenceObject
+  ObfReferenceObject
+  ObReferenceObjectByPointer
+  ObOpenObjectByPointer
+  ObGetObjectType
+  PsLookupProcessByProcessId
+  PsLookupThreadByThreadId
+  PsGetThreadProcess
+  PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
   KeAreApcsDisabled

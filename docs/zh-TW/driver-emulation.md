@@ -342,7 +342,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `RtlStringFromGUID`、`RtlGUIDFromString` | 登錄形式的 GUID 文字 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`：格式化把小寫數字寫入帶 `Strg` 標記的 78 位元組分頁集區配置，由 `RtlFreeUnicodeString` 釋放；剖析要求欄位寬度精確、大小寫皆可，僅在零單元之後允許後續文字，後段不符時回傳 `STATUS_INVALID_PARAMETER`，此時 `Data1`–`Data3` 已寫入 |
 | `RtlTimeToTimeFields`、`RtlTimeFieldsToTime` | 在自 1601 年起以 100 ns 為單位的系統時間與 `TIME_FIELDS` 之間依公曆轉換（無已記錄的閏秒）；輸出時計算星期、輸入時忽略星期；超出 1601–30827 年或不是真實日期的欄位回傳 `FALSE`，負時間會停止 |
 | `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 與內嵌 `GS:[0x188]` 讀取的匯出別名，任意 IRQL 皆可呼叫：目前 APC 狀態中的行程隨行程附加而改變，目前邏輯執行緒的借用不透明身分則維持不變 |
-| `PsGetCurrentThreadId`、`PsGetThreadId` | 存活執行緒物件的用戶端 ID：首次觀察時自 `0x2000` 起以 4 為步長配置，略過已建模的行程 ID 且永不重複使用；請求者 ID 與已配置執行緒 ID 相同的請求會被拒絕。`PsCreateSystemThread` 也透過 `ClientId` 回傳系統行程 ID 與執行緒 ID。前景分派在同一個邏輯執行緒上執行，因此來自不同請求者行程的請求看到相同的執行緒 ID，而 `PsGetCurrentProcessId` 會跟隨請求者。`PsGetThreadId` 需要 IRQL ≤ `DISPATCH_LEVEL` |
+| `PsGetCurrentThreadId`, `PsGetThreadId` | 用戶端 ID 自 `0x2000` 起每次增加 4，略過已知行程 ID 且不重複使用。物件保留期間 ID 有效。前景要求者行程改變時採用新執行緒身分；巢狀執行保留父執行緒身分。`PsGetThreadId` 要求 IRQL ≤ `DISPATCH_LEVEL`。 |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
 | `MmGetSystemRoutineAddress` | 透過共用匯出清單解析客體計數式名稱 |
@@ -393,7 +393,9 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 通知／同步事件保留不同訊號消耗行為；`KeSetEvent` 僅接受 Increment=0、Wait=FALSE |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 常駐的計數號誌，上限必須為正；每次成功等待消耗一個計數。釋放僅接受 Increment=0、Wait=FALSE；超過上限時擲出 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 常駐的 KMUTEX 依邏輯執行緒持有，支援跨巢狀回呼和 SEH 的遞迴取得；KeReleaseMutex 回傳先前的有號訊號狀態，要求持有者與相符的 DISPATCH_LEVEL 取得情境，且僅接受 Wait=FALSE。持有期間禁止最外層返回、重新初始化或釋放儲存。非持有者釋放會觸發 `STATUS_MUTANT_NOT_OWNED`。 |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系統處理程序中的有界執行緒在 PASSIVE_LEVEL 執行。控制代碼與不透明執行緒物件的參照各自維持生命週期；PsTerminateSystemThread 不返回客體程式碼，並使可等待的執行緒物件進入訊號狀態。APC 傳遞、處理程序優先順序類別及具型別的物件參照尚未建模。 |
+| `PsCreateSystemThread`, `PsTerminateSystemThread` | 系統行程執行緒在獨立客體堆疊上以 `PASSIVE_LEVEL` 執行。終止會使物件有信號且不返回；啟動常式一般返回會明確停止。支援 NULL 行程控制代碼、可選 `ClientId`、NULL 或僅含核心控制代碼旗標的物件屬性。尚不支援 APC 傳遞及在其他行程建立執行緒。 |
+| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `PsIsThreadTerminating` | 僅查找已知系統/要求者行程 ID 與已發放執行緒 ID；未知 ID 傳回 `STATUS_INVALID_CID`。保留的執行緒物件仍可查詢建立行程及終止狀態。行程身分由工作階段持有；查找不會還原已撤銷的使用者記憶體。 |
+| `ObGetObjectType`, `ObfReferenceObject`, `ObfDereferenceObject`, `ObReferenceObjectByPointer`, `ObReferenceObjectByHandle`, `ObOpenObjectByPointer`, `ZwClose` | 不透明型別身分、具型別參照及多個控制代碼共用生命週期管理。指標參照在兩種存取模式均驗證指定型別。控制代碼參照在 `UserMode` 檢查授予權限並拒絕核心控制代碼；可選 `OBJECT_HANDLE_INFORMATION` 傳回授予權限。`ObOpenObjectByPointer` 支援 `KernelMode`、NULL 存取狀態及零或 `OBJ_KERNEL_HANDLE` 旗標。尚不支援通用權限、ACL、虛擬控制代碼、登錄/檔案物件參照及物件型別資料匯入。DriverUnload 前必須釋放所有呼叫者參照及控制代碼。 |
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | 在 `PASSIVE_LEVEL` 存取執行階段優先順序；設定接受 1..31 並傳回原值，確定性初始值為 8，要求已知執行緒物件。`scheduling` 啟用優先順序排程；尚未支援動態提升與處理程序優先順序類別。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeQueryActiveProcessors`, `KeSetSystemAffinityThread`, `KeRevertToUserAffinityThread` | 群組 0 只有一個處理器：`KeQueryActiveProcessors` 在任意有效 IRQL 傳回遮罩 `1`。舊式親和性設定／還原對在 IRQL <= DISPATCH_LEVEL 接受遮罩 `1`，跨暫停和巢狀呼叫追蹤邏輯執行緒所有權，並要求外層傳回前還原。其他遮罩和沒有對應設定的還原會明確失敗。這些依賴環境的呼叫保留 UNPACK 還原相依性。 |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 依執行緒追蹤可巢狀的 APC 停用狀態。臨界區及持有的 KMUTEX 停用一般核心 APC；保護區和 IRQL >= APC_LEVEL 停用所有 APC。系統執行緒啟動時處於一層臨界區。未配對的離開及帶有未平衡狀態返回都會失敗；尚未實作 APC 投遞。 |

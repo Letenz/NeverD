@@ -892,19 +892,35 @@ private:
   std::map<uint64_t, Wait> WaitRegistrations;
   std::map<uint64_t, size_t> WaitReferences;
   std::map<std::pair<uint64_t, uint32_t>, size_t> WaitBlockReferences;
-  struct SystemThread {
-    uint64_t Handle = 0;
+  enum class ObjectKind { Process, Thread };
+  struct ObjectReferences {
+    ObjectKind Kind;
+    size_t Pointers = 0;
+    size_t Handles = 0;
+  };
+  struct ObjectHandle {
+    uint64_t Object;
+    uint32_t GrantedAccess;
+    uint32_t Attributes;
+    uint32_t ProcessID;
+  };
+  // External references have one owner. Execution and registered waits keep
+  // their domain-owned holds until completion; they are not caller references.
+  std::map<uint64_t, ObjectReferences> ReferencedObjects;
+  std::map<ObjectKind, uint64_t> ObjectTypes;
+  std::map<uint64_t, ObjectHandle> ObjectHandles;
+  uint64_t NextObjectHandle = profile::SystemThreadHandleBase;
+  struct ThreadObject {
     uint64_t CallbackID = 0;
+    uint32_t ProcessID = 0;
     uint32_t ExitStatus = 0;
-    size_t PointerReferences = 0;
-    bool HandleOpen = true;
+    uint32_t ExitPriority = 0;
+    bool System = false;
     bool Exited = false;
     bool Terminating = false;
   };
-  std::map<uint64_t, SystemThread> SystemThreads;
+  std::map<uint64_t, ThreadObject> ThreadObjects;
   std::map<uint64_t, uint64_t> CurrentThreadObjects;
-  std::map<uint64_t, uint64_t> ThreadHandles;
-  uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
   /// Client IDs of live thread objects, assigned on first observation. Issued
   /// IDs are never reused, and requestor process IDs may not collide with them.
@@ -917,10 +933,24 @@ private:
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> terminateSystemThread(uint32_t Status);
   llvm::Expected<uint64_t>
-  referenceThreadByHandle(llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<uint64_t> dereferenceThread(uint64_t Object);
+  referenceObjectByHandle(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t>
+  referenceObjectByPointer(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> referenceObject(uint64_t Object);
+  llvm::Expected<uint64_t> dereferenceObject(uint64_t Object);
+  llvm::Expected<uint64_t> objectType(uint64_t Object);
+  llvm::Expected<uint64_t>
+  openObjectByPointer(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> lookupProcess(uint64_t ID, uint64_t Output);
+  llvm::Expected<uint64_t> lookupThread(uint64_t ID, uint64_t Output);
+  llvm::Expected<uint64_t> threadProcess(uint64_t Object);
+  llvm::Expected<uint64_t> threadTerminating(uint64_t Object) const;
+  llvm::Error validateObjectOutput(uint64_t Address, uint32_t Size);
+  bool matchesObjectType(ObjectKind Kind, uint64_t Type) const;
+  void retainObjectHandle(uint64_t Object, uint32_t Access, uint32_t Attributes,
+                          uint32_t ProcessID);
   llvm::Expected<uint64_t> closeHandle(uint64_t Handle);
-  void retireThreadIfUnreferenced(uint64_t Object);
+  void retireObjectIfUnreferenced(uint64_t Object);
   void retireBorrowedThread(uint64_t Key);
   llvm::Expected<uint64_t> threadPriorityKey(uint64_t Object,
                                              bool Changing) const;
