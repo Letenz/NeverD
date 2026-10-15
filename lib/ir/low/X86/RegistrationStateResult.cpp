@@ -145,6 +145,12 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
         "SEH jump capture has conflicting source facts");
   }
   const bool FailedJump = !Result.SEHJumpResumptionsComplete;
+  Result.SEHBoundCallsComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.RegistrationLifetimeComplete && !Exhausted;
+  if (Result.SEHBoundCallsComplete && charge(BoundCalls.size()))
+    for (const auto &[Identity, Call] : BoundCalls)
+      Result.SEHBoundCalls.push_back(Call);
   Result.SEHJumpResumptionsComplete &=
       Result.Complete && Result.CallbackStatesComplete;
   if (Result.SEHJumpResumptionsComplete)

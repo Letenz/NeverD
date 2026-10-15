@@ -44,7 +44,7 @@ TEST(RegistrationSEHFinallyResult, FollowsOnlyUnobservablePrivateSpills) {
     B.CreateRet(Result);
     ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
     std::vector<llvm::Instruction *> Dead;
-    EXPECT_EQ(x86_registration::collectDeadFinallyResult(*Call, Dead),
+    EXPECT_EQ(x86_registration::collectDiscardedRegistrationResult(*Call, Dead),
               Mutation == 0);
     if (!Mutation)
       EXPECT_EQ(Dead.size(), 3u);
