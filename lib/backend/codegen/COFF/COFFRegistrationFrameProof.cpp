@@ -549,6 +549,13 @@ llvm::Error validateFramePrivacy(
           if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
             auto Where = Locate(Store->getPointerOperand(), 0);
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
+            if (Scopes && Scopes->CallbackWrites.count(Store) &&
+                (!Where || Where->Root != LogicalFrame ||
+                 Where->Offset != Scopes->Offset ||
+                 !Scopes->Writes.count(Store) ||
+                 Bytes != Scopes->Writes.at(Store)))
+              return Reject(
+                  "callback state write changed its source frame cell");
             if (Scopes && Scopes->Enabled) {
               const bool State = Scopes->Writes.count(Store);
               const bool Overlap =
@@ -557,7 +564,8 @@ llvm::Error validateFramePrivacy(
                   (Where->Offset >= Scopes->Offset ||
                    Bytes > uint64_t(Scopes->Offset - Where->Offset));
               if ((State && (!Where || Where->Root != LogicalFrame ||
-                             Where->Offset != Scopes->Offset || Bytes != 4)) ||
+                             Where->Offset != Scopes->Offset ||
+                             Bytes != Scopes->Writes.at(Store))) ||
                   (Overlap && !State))
                 return Reject("dynamic scope state storage changed");
             }
@@ -765,6 +773,8 @@ llvm::Error validateFramePrivacy(
                 continue;
               }
             }
+            if (Scopes && Scopes->PhysicalWrites.count(Call))
+              continue;
             if (Callee && Callee->isIntrinsic()) {
               switch (Callee->getIntrinsicID()) {
               case llvm::Intrinsic::stacksave:

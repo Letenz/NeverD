@@ -338,6 +338,11 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+`RegistrationStateTryLevel` binds each SEH store to its decoded extent,
+operation identity, width, literal and reaching-state transitions. Finally
+execution partitions frame outcomes by the resulting try level; local unwind
+reloads that level before selecting another cleanup. Joining frames first or
+recomputing narrow-write semantics downstream would lose that correlation.
 The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private
@@ -347,10 +352,43 @@ checked near returns and continuations. Call-ABI recovery and LLVM callback
 lowering consume this one binding, so callback-private pushes cannot become
 cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
+`X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
+MedIR callback stores. Native writes require a checked byte, word or full-word
+constant store with a proved finite set of complete resulting states. Narrow
+writes preserve the untouched high bytes; physical state tokens name complete
+results. The binder orders these results and assigns consecutive write identities
+across source occurrences. The same helper computes
+retained scopes from all parent reaching levels and callback write results,
+including their enclosing scopes; an unexplained scope refuses emission.
+LLVM retains callback-only rows through an indexed entry chain of
+`llvm.donothing` invokes without activating those scopes. The original logical
+store remains available to independent source replay. Multiple results use one
+volatile full-word reload followed by a closed switch, one physical update per
+case, and a common continuation. `MedLLVMRegistrationSEHStateDispatch` emits
+this selection; `COFFRegistrationSEHStateDispatch` independently checks its
+complete domain, exact frame read, update identities and predecessor closure.
+Source-segment validation follows only these authenticated edges when a callback
+block is split, preserving source event order independently of physical block
+layout. Case and continuation addresses cannot escape.
+`X86/RegistrationSEHRuntimeReturn.cpp` proves when a callback's scalar return
+has no observer: the whole body is exclusively a runtime finally, with checked
+physical near returns and no ordinary callers or other entry kinds. The MedIR
+call-result binder uses that proof only for incidental `RaiseException` results;
+all other source observations retain the strict SSA-use checks. LLVM emission
+and independent COFF source replay consume the same decision.
 MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF
 source replay consume those same bindings.
+With `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, LLVM maps each callback
+write's source semantic token to its physical parent registration and generated
+state. MC receipts bind parent/callback ownership, frame layout, write identity,
+instruction span and actual x86 address register. Codegen preserves these
+identities and source order across layout passes; final COFF validation checks
+unique code storage and the exact MOV32 displacement, immediate and base
+register. Rebased addresses and temporary symbols are not source identities.
+The pinned r5 compiler provides this capability; older r4 compilers refuse
+native callback state writes.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
 `MedLLVMRegistrationIncoming` owns the transactional caller-frame projection
@@ -509,7 +547,8 @@ state solver binds its actual registration pointer and target level at the
 source call. CFG construction splits the ordinary continuation at this state
 transition. Each traversed finally gets a bounded callback-stack analysis with
 the parent's established EBP, and every returning path must preserve the
-runtime fields and invocation stack before its frame effects can be joined.
+registration fields other than checked TryLevel writes, and restore its
+invocation stack before its frame effects can be joined.
 SEH filter and finally entries share the private invocation-stack coordinate
 used by C++ catches. A finally may save registers and allocate locals below
 its runtime return PC; loads require initialized bytes in the current
@@ -523,6 +562,26 @@ reaching levels only after those independent transfers. An ordinary parent
 entry into callback code still requires a separate invocation-exit contract;
 moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
+The suspended-finally interpreter partitions filter returns by disposition and
+written TryLevel, including joins at a shared return block. Search keeps the
+cursor captured before each filter call. Continued exceptions resume every
+resulting frame at the next instruction; instruction-local temporaries cannot
+cross an internal split. Ordinary callback propagation uses these same checked
+filter effects after a returning `RaiseException`, including changed parent
+cells. Each returned state supplies its own exceptional roots before the
+frames join, so a filter can establish the proof for a scope absent from
+ordinary parent flow. A failed search cannot publish a complete root proof.
+Handler-selected paths contribute no ordinary returning frame. Ordinary
+propagation can retain a conditional return from an external search, while
+nonlocal unwind still requires every path to resume inside its proved search.
+Unwind records the logical state left at entry or by
+the last completed callback together with the final runtime state. Remaining
+filter-only unwind steps may make those values differ. MedIR binds a variable
+resumption only when these pairs give a complete, unambiguous projection for
+every contributing path. LLVM reads the logical cell once after a returning
+capture and maps that original value to the final state. The independent COFF
+consumer checks the exact volatile read, projection keys/results, zero-return
+selector and contiguous restoration.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
@@ -536,9 +595,9 @@ the invocation's restored ESP and parent EBP. A conditional, malformed or
 unbalanced return cannot establish callback completeness or a continuation.
 The runtime advances the try level before invoking each finally, as described
 by [Wine's independent CRT implementation](https://github.com/wine-mirror/wine/blob/master/dlls/msvcrt/except_i386.c).
-Unknown callback calls, runtime-field writes and nonlocal callback exits still
-refuse this returning-path proof. These state facts grant no native call-frame
-or installation permission.
+Unknown callback calls, runtime-field writes without checked TryLevel receipts,
+and nonlocal callback exits still refuse this returning-path proof. These state
+facts grant no native call-frame or installation permission.
 MedIR distinguishes established parent EBP, private callback
 ESP and a continuation's checked saved ESP. Its shared root-shape and
 entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;

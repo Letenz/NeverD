@@ -61,10 +61,13 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMRegistrationSEHProof.cpp
   X86/MedLLVMRegistrationSEHDynamicScope.cpp
   X86/MedLLVMRegistrationSEHJump.cpp
+  X86/MedLLVMRegistrationSEHJumpState.cpp
   X86/MedLLVMRegistrationSEHBoundCall.cpp
   X86/MedLLVMRegistrationSEHRuntime.cpp
   X86/MedLLVMRegistrationSEHRuntimeCallback.cpp
   X86/MedLLVMRegistrationSEHFinally.cpp
+  X86/MedLLVMRegistrationSEHState.cpp
+  X86/MedLLVMRegistrationSEHStateDispatch.cpp
   X86/MedLLVMRegistrationSEHJumpCallback.cpp
   X86/MedLLVMRegistrationCxxContinuation.cpp
   X86/MedLLVMRegistrationCxxStack.cpp

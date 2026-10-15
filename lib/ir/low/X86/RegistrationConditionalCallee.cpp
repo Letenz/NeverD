@@ -269,6 +269,8 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     States.SEHJumpResumptions.clear();
     States.SEHJumpCapturesComplete = false;
     States.SEHJumpCaptures.clear();
+    States.SEHStateStoresComplete = false;
+    States.SEHStateStores.clear();
     States.SEHBoundCallsComplete = false;
     States.SEHBoundCalls.clear();
     States.SEHExceptionAccesses.clear();

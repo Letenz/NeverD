@@ -7,6 +7,8 @@
 /// Prove unused results from current SSA without inferring a callee prototype.
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationSEHRuntimeReturn.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/X86RegistrationCallResult.h"
@@ -18,7 +20,8 @@
 namespace neverd {
 bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
                                         const RegistrationCallFrameEffect &Call,
-                                        size_t &Work, bool Indirect) {
+                                        size_t &Work, bool Indirect,
+                                        va_t RuntimeFinally) {
   auto Charge = [&](size_t Amount) {
     if (Work > limits::kMaxRegistrationEHStateWork ||
         Amount > limits::kMaxRegistrationEHStateWork - Work) {
@@ -56,6 +59,7 @@ bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
     return false;
   std::deque<MedVar> Pending{Root->Output};
   std::set<std::tuple<int, int, int>> Seen;
+  std::optional<std::set<const MedOp *>> RuntimeReturns;
   while (!Pending.empty()) {
     const auto Value = Pending.front();
     Pending.pop_front();
@@ -110,6 +114,14 @@ bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
           }
         if (!Uses)
           continue;
+        if (Op.Opcode == NdOp::RETURN && RuntimeFinally) {
+          if (!RuntimeReturns)
+            RuntimeReturns = getRuntimeSEHFinallyReturns(Function, *Root,
+                                                         RuntimeFinally, Work);
+          if (!RuntimeReturns || !RuntimeReturns->count(&Op))
+            return false;
+          continue;
+        }
         if (Op.NumInputs != 1 || !Valid(Op.Output) ||
             (Op.Opcode != NdOp::COPY && Op.Opcode != NdOp::INT_ZEXT &&
              Op.Opcode != NdOp::INT_SEXT) ||

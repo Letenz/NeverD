@@ -24,6 +24,7 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
                        const ExceptionFunction &Source,
                        const BinaryImage &Image) {
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+  checkSEHJumpStateEdits(Parent, Source, Image);
   using x86_registration::SEHJumpRole;
   bool HasCallerFrame = false;
   for (const auto &I : Parent.getEntryBlock())

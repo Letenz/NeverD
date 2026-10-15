@@ -12,6 +12,7 @@
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -59,6 +60,12 @@ validateCOFFRegistrationSemanticRows(const llvm::Function &Function,
   const auto &Chain = *Source.Registration;
   const bool EH4 = Source.Personality == ExceptionPersonality::ExceptHandler4;
   const int32_t Sentinel = EH4 ? -2 : -1;
+  const bool HasJumpCapture = llvm::any_of(
+      llvm::instructions(Function), [](const llvm::Instruction &I) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+        const auto *Callee = Call ? Call->getCalledFunction() : nullptr;
+        return Callee && Callee->getName() == "_setjmp3";
+      });
   std::map<uint32_t, const CompiledWinEHSemanticRecord *> ByState, ByRegion;
   uint64_t ContainerVA = 0;
   uint64_t ContainerEndVA = 0;
@@ -78,6 +85,11 @@ validateCOFFRegistrationSemanticRows(const llvm::Function &Function,
         !ByRegion.emplace(Row.Token.Region, &Row).second)
       return rejectIR(
           "generated scope row has no exact source semantic identity");
+    // The CRT's unsigned stop comparison also orders unrelated scope rows.
+    // Preserving enclosing links alone cannot authenticate a nonlocal unwind.
+    if (HasJumpCapture && Row.GeneratedState != Row.Token.Region)
+      return rejectIR("generated scope numbering changed the nonlocal unwind "
+                      "state order");
     if (!ContainerVA) {
       ContainerVA = Row.ContainerVA;
       ContainerEndVA = Row.ContainerEndVA;

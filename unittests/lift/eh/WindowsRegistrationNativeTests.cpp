@@ -6,11 +6,13 @@
 
 #include "../../../lib/backend/codegen/COFF/COFFSourceCallSymbols.h"
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationNativeEmitterTestPeer.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "RegistrationSEHFinallyIRMutations.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
 #include "RegistrationSEHNullAccessTestUtils.h"
+#include "RegistrationSEHStateDispatchTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -58,42 +60,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <set>
-
-namespace neverd {
-class MedLLVMEmitterTestPeer {
-public:
-  static void prepare(MedLLVMEmitter &E, llvm::Module &M, llvm::Function &F,
-                      const MedFunc &Source, llvm::AllocaInst &Frame) {
-    E.Ctx = &M.getContext();
-    E.Mod = &M;
-    E.TargetArch = Arch::X86;
-    E.TargetFormat = BinaryFormat::COFF;
-    E.CurFunc = &F;
-    E.CurMedFunc = &Source;
-    E.FrameAlloca = &Frame;
-    E.FrameEntrySPOffset = 64;
-  }
-  static void chain(MedLLVMEmitter &E, llvm::Instruction &I, va_t Address,
-                    int Seq) {
-    E.RegistrationChainIR.emplace(std::make_pair(Address, Seq), &I);
-  }
-  static void call(MedLLVMEmitter &E, llvm::CallInst &I, va_t Address) {
-    E.CallSiteAddrs.emplace(&I, Address);
-    I.setMetadata(language_eh_md::InternalSourceCallAttachment,
-                  llvm::MDNode::get(
-                      I.getContext(),
-                      {llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-                          llvm::Type::getInt64Ty(I.getContext()), Address))}));
-  }
-  static void forgetCall(MedLLVMEmitter &E, llvm::CallInst &I) {
-    E.CallSiteAddrs.erase(&I);
-  }
-  static bool lower(MedLLVMEmitter &E, const MedFunc &Source, llvm::Function &F,
-                    const std::map<int, llvm::BasicBlock *> &Blocks) {
-    return E.emitNativeX86RegistrationSEH(Source, F, Blocks);
-  }
-};
-} // namespace neverd
 
 namespace {
 using namespace neverd;
@@ -1881,6 +1847,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (Error)
     Module->print(llvm::errs(), nullptr);
   ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  registration_test::checkSEHStateDispatchEdits(*Parent, Med, EH, Image);
   if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
     registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
                                               *Low.RegistrationStates);
@@ -2499,6 +2466,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         "unproved LLVM escape or access");
+  // This added backedge also changes the authenticated callback exit. Source
+  // execution closure now runs before the physical frame/escape proof.
   RejectMutation(
       "callback spill overwritten on a self-loop backedge",
       [](llvm::Function &F) {
@@ -2570,7 +2539,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         }
         return false;
       },
-      "unproved LLVM escape or access");
+      "source execution");
   for (bool WideGEP : {false, true})
     RejectMutation(
         WideGEP ? "inbounds wide-index overflow" : "nonnegative frame cast",
@@ -3877,6 +3846,52 @@ TEST(WindowsRegistrationNative, BindsGeneratedParentsToTheSourceScopeGraph) {
   ASSERT_TRUE(bool(Altered));
   EXPECT_NE(llvm::toString(std::move(Altered)).find("source scope graph"),
             std::string::npos);
+}
+
+TEST(WindowsRegistrationNative, NonlocalUnwindPreservesSiblingStateOrder) {
+  RegistrationNativeFixture F;
+  auto &EH = *F.Source.ExceptionMetadata;
+  EH.CodeRange.End = 0x1050;
+  // Siblings can share their filter and handler. Their enclosing graph does
+  // not constrain their relative order, but the CRT's saved numeric bound does.
+  EH.Registration->Scopes.push_back(EH.Registration->Scopes.front());
+  MedBlock Active;
+  Active.Id = 4;
+  Active.StartAddr = 0x1040;
+  Active.EndAddr = 0x1050;
+  F.Source.Blocks.push_back(Active);
+  F.Source.RegistrationStates->Blocks.push_back(
+      {4, {0x1040, 0x1050}, {1}, false, false, true});
+  auto *Sibling = llvm::BasicBlock::Create(F.Context, "sibling", F.Parent);
+  llvm::IRBuilder<>(Sibling).CreateBr(F.Try);
+  F.Entry->getTerminator()->setSuccessor(0, Sibling);
+  F.Blocks.emplace(4, Sibling);
+  ASSERT_TRUE(F.lower());
+  auto Compiled = compileFixture(F);
+  ASSERT_TRUE(Compiled.Success);
+  ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 2u);
+  // Simulate a producer which permutes these otherwise equivalent rows. Every
+  // physical field and fixup stays valid, and the whole source graph is intact.
+  for (auto &Row : Compiled.WinEHSemanticRecords) {
+    auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
+        EH, Arch::X86, 1 - Row.GeneratedState);
+    ASSERT_TRUE(Token);
+    Row.Token = *Token;
+  }
+  auto Valid = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  llvm::IRBuilder<> B(F.Parent->getEntryBlock().getTerminator());
+  auto Capture = F.Module.getOrInsertFunction(
+      "_setjmp3", llvm::FunctionType::get(
+                      B.getInt32Ty(), {B.getPtrTy(), B.getInt32Ty()}, true));
+  B.CreateCall(Capture,
+               {llvm::ConstantPointerNull::get(B.getPtrTy()), B.getInt32(0)});
+  ASSERT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+  auto Error = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_TRUE(bool(Error));
+  EXPECT_NE(
+      llvm::toString(std::move(Error)).find("nonlocal unwind state order"),
+      std::string::npos);
 }
 
 TEST(WindowsRegistrationNative, CompilerOwnsTheFinallyTableTarget) {
