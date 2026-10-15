@@ -13,6 +13,25 @@ std::optional<uint64_t> LinuxFiles::unsupported(ProcessResult &Result,
   return std::nullopt;
 }
 
+std::optional<std::variant<LinuxFiles::DescriptorStatus, uint32_t>>
+LinuxFiles::descriptorStatus(uint32_t FD, ProcessResult &Result) const {
+  if (!Options) {
+    unsupported(Result, FileInputsMissing);
+    return std::nullopt;
+  }
+  auto I = Descriptors.find(FD);
+  if (I == Descriptors.end())
+    return uint32_t(BadDescriptor);
+  if (const auto *File = std::get_if<OpenFile>(I->second.get()))
+    return DescriptorStatus{0, File->Metadata};
+  if (const auto *Device = std::get_if<OpenDevice>(I->second.get()))
+    return DescriptorStatus{(*Device)->Options->AccessMode, nullptr};
+  if (const auto *S = std::get_if<Stream>(I->second.get()))
+    return DescriptorStatus{*S == Stream::Input ? 0u : 1u, nullptr};
+  unsupported(Result, "unmodeled descriptor access mode");
+  return std::nullopt;
+}
+
 std::optional<uint64_t> LinuxFiles::outputError(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())

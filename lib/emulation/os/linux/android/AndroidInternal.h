@@ -169,6 +169,27 @@ private:
   BionicResult getLinkerError(NativeCallEvent &Call);
   BionicResult unsupportedImport(const NativeCallEvent &Call);
   BionicResult failCall(const NativeCallEvent &Call);
+  struct InputStream {
+    uint32_t FD;
+    uint64_t Token, Buffer = 0, Capacity = 0, Begin = 0, End = 0;
+    bool OwnBuffer = false, EndOfFile = false, Error = false;
+  };
+  std::map<uint64_t, InputStream> InputStreams;
+  BionicResult openStream(const NativeCallEvent &Call);
+  BionicResult streamCall(const NativeCallEvent &Call);
+  BionicResult readStream(const NativeCallEvent &Call);
+  BionicResult bufferStream(const NativeCallEvent &Call);
+  llvm::Expected<InputStream *> inputStream(uint64_t Handle);
+  llvm::Expected<std::optional<uint64_t>> streamBufferSize(uint32_t FD);
+  llvm::Expected<bool> prepareStreamBuffer(InputStream &Stream);
+  llvm::Expected<std::optional<uint64_t>>
+  streamService(linux_model::ServiceKind Kind, uint32_t FD,
+                uint64_t A1 = 0, uint64_t A2 = 0);
+  llvm::Expected<std::optional<uint64_t>>
+  streamRead(InputStream &Stream, uint64_t Output, uint64_t Size);
+  llvm::Expected<bool> refillStream(InputStream &Stream);
+  llvm::Error copyStream(InputStream &Stream, uint64_t Output, uint64_t Size);
+  BionicResult streamError(uint32_t Error, uint64_t ReturnValue);
   BionicResult malloc(const NativeCallEvent &Call);
   BionicResult calloc(const NativeCallEvent &Call);
   BionicResult realloc(const NativeCallEvent &Call);

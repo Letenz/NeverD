@@ -5160,6 +5160,17 @@ model checks; property-service updates, SELinux contexts, long values and native
 Android-device equivalence are not established. Run the full Android native,
 execution-session and process-public suites after callback-owner changes.
 
+`AndroidStdio` executes independent O0/O2 callers with ordinary, APS2 and RELR
+relocations on Unicorn, and O0/O2 RELR callers on HVF when available. It checks
+complete output buffers, raw FD offsets, partial element reads, EOF retries,
+seek/position aliases, fdopen/dup ownership, buffer replacement, allocation
+fallback, direct-read EFAULT versus buffered-pointer faults, descriptor closure,
+opaque handles, errno isolation and dynamic provider retirement. C API/CLI and
+Python cases use the same fixture and compare exact returned memory. All file
+contents and metadata are synthetic explicit inputs; no device or host stdio
+is an oracle for the Android ABI. Run `ctest -R AndroidStdio` after building
+`NeverDAndroidNativeTests`; unsupported backends remain skips, not passes.
+
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only

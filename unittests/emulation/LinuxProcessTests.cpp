@@ -239,6 +239,9 @@ TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
 }
 
 TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
+  // O0 link checks fill a complete page one guest instruction at a time.
+  // Allow contended runners while retaining instruction/event limits.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   Options.LinuxFiles.emplace();
   Options.LinuxFiles->Files["/fixture/data"] = {0,    0xff, 0x41,
                                                 0x0a, 0x80, 0x5a};

@@ -353,6 +353,59 @@ The independently authored implementation and compiled O0/O2 callers follow
 Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
 and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
 
+### Read-only byte streams
+
+`fopen`/`fopen64` and `fdopen` admit read-only modes. `fread`, `fgets`,
+`fgetc`/`getc`, their unlocked forms, `fileno`, `feof`, `ferror`, `clearerr`,
+`fclose`, `fseek`/`fseeko`/`fseeko64`, `ftell`/`ftello`/`ftello64`,
+`fgetpos`/`fgetpos64`, `fsetpos`/`fsetpos64`, `rewind`, `setvbuf`, `setbuf`,
+`setbuffer` and `setlinebuf` share one workload's stream state. Direct imports
+and explicit dynamic providers use the same owner. FILE tokens are opaque:
+field access, forged tokens, retired tokens and detected changes to their
+mapping fail; a returned token is not a materialized Bionic FILE structure.
+
+Supply regular bytes and metadata in `linux_files`. Default buffer capacity
+comes from that live descriptor's explicit `metadata.block_size`; zero selects
+API 28's 1024-byte BUFSIZ. Missing metadata remains unknown, not a fabricated
+failed fstat or default block size. `setvbuf(..., _IONBF, ...)` needs no metadata
+and uses a one-byte buffer. Model-owned allocations count against the guest
+memory limit; buffer allocation failure falls back to one-byte reads and
+retains ENOMEM. Caller-supplied buffers are actual guest memory. Rebuffering
+discards unread bytes at the underlying FD position without rewinding it.
+
+Refills advance the kernel's shared open-description cursor; `ftell` subtracts
+unread bytes. A read larger than the stream buffer bypasses that buffer.
+`fread` returns complete element counts while retaining any final partial
+object's bytes. Exact-length reads do not infer EOF. In this API 28 contract,
+EOF remains set until cleared, but later reads still retry the descriptor.
+`fseek` clears EOF on success and preserves the error indicator; `rewind`
+clears both. `fflush`/`fflush_unlocked` on a read-only FILE return EOF/EBADF
+without discarding buffered input, while a null argument succeeds because
+there are no modeled output buffers.
+
+`fdopen` adopts the existing FD without duplicating or resetting it. `dup`
+aliases and raw syscalls see the same kernel cursor. Closing the FD does not
+erase already buffered bytes; a later refill reports EBADF. `fclose` retires the
+stream even when closing its FD fails. Thread calls share FILE state, complete
+as indivisible model events, and retain separate TLS errno. Explicit
+`flockfile` locking and concurrent unlocked operations are not modeled.
+
+Transfers above the API 28 callback's signed-int extent, write/update modes,
+fdopen's close-on-exec mutation, `ungetc`, wide streams, `freopen`, custom
+callbacks, standard FILE objects, directory iteration, and dynamic procfs
+contents remain unsupported. Buffered copies validate consumed guest memory;
+invalid pointers stop the workload. Direct reads preserve the kernel model's
+partial-transfer/EFAULT behavior. This is a bounded input-stream model, not
+an implementation of the entire Bionic stdio ABI.
+
+These independently authored models and synthetic callers follow the pinned
+Android 9 [stdio entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/stdio/stdio.cpp),
+[refill contract](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/stdio/refill.c),
+[buffer selection](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/makebuf.c),
+[mode parsing](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/flags.c)
+and [setvbuf behavior](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/setvbuf.c).
+Host stdio and host filesystem calls do not satisfy guest reads.
+
 ### Integer scanning
 
 `sscanf` and `vsscanf` share the formatting model's GP argument reader and

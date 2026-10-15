@@ -32,6 +32,9 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ThreadContext *Thread = nullptr);
+  auto descriptorStatus(uint32_t FD) const {
+    return Files.descriptorStatus(FD, Result);
+  }
   LinuxClock &clock() { return Clock; }
   /// Run while the physical owner is stopped, after idle scheduling and before
   /// guest execution or another service observes device memory.

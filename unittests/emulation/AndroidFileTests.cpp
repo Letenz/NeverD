@@ -64,6 +64,8 @@ TEST_P(AndroidFiles, OpensOwnCursorsAndReuseTheLowestAvailableDescriptor) {
   returned(run("files_sequence"));
 }
 TEST_P(AndroidFiles, ReadlinkCopiesObservedBytesThroughRawAndBionicCalls) {
+  // The O0 fixture fills a page before checking the pathname length limit.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   Options.LinuxFiles->SymbolicLinks["/links/raw"] = {'/', 'x', 0xff, 'y'};
   returned(run("files_links"));
   returned(run("files_links_bionic"));

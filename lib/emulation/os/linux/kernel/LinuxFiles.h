@@ -34,6 +34,14 @@ public:
   extendedAttribute(ServiceKind Kind, const ProcessServiceEvent &Event,
                     const std::optional<LinuxKernelOptions> &Kernel,
                     ProcessResult &Result);
+  struct DescriptorStatus {
+    uint32_t AccessMode;
+    const LinuxFileMetadata *Metadata;
+  };
+  /// Live open-description facts, or guest errno. Missing metadata stays
+  /// unknown; libc consumers must not infer it from a pathname or file bytes.
+  std::optional<std::variant<DescriptorStatus, uint32_t>>
+  descriptorStatus(uint32_t FD, ProcessResult &Result) const;
   std::optional<uint64_t> outputError(uint32_t FD) const;
   uint32_t outputTarget(uint32_t FD) const;
   bool isDevice(uint32_t FD) const;

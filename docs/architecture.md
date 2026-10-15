@@ -5423,6 +5423,15 @@ If/else structuring visits existing child lists before rewriting their parent. A
 
 `LinuxServices` owns one workload's Linux memory service state and file descriptor table. Linux process traps and Android Bionic wrappers share this instance; thread identity is supplied at each service boundary. `LinuxMemory` retains mapping ownership, while `LinuxFiles` owns immutable catalogue descriptions, open cursors and descriptor lifetime. Bionic alone owns errno conversion. Explicit `LinuxFileOptions` and strict JSON validation share one Linux contract; neither catalogue lookup nor guest file I/O reaches the host filesystem. Unsupported inputs do not acquire default file contents.
 
+`AndroidStdio` owns read-only FILE identities, unread buffers and EOF/error
+indicators. Its guest buffers and opaque token pages are workload-budgeted
+allocations. `AndroidStdioRead` selects buffered copies versus direct reads;
+all opens, refills, seeks and closes go through the existing `LinuxServices`
+instance. `LinuxFiles::descriptorStatus` borrows live description facts for
+fdopen access checks and buffer sizing; it does not reopen a path or duplicate
+a cursor. Unknown metadata remains unsupported. Each modeled call completes
+atomically within the cooperative scheduler, while errno stays in caller TLS.
+
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
 callback strings share those records; the device API-level query uses the same

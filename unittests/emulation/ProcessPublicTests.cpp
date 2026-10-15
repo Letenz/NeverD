@@ -2588,6 +2588,75 @@ TEST_F(ProcessPublic,
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidStdioStateAndProviderLifetimeMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "stdio-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (bool Close : {false, true}) {
+    auto Metadata =
+        llvm::cantFail(llvm::json::parse(emulation::FileTestMetadataJSON));
+    (*Metadata.getAsObject())["block_size"] = 8;
+    llvm::json::Object Request{
+        {"backend", "unicorn"},
+        {"android",
+         llvm::json::Object{
+             {"entry_symbol", "stdio_dynamic"},
+             {"initialize", false},
+             {"arguments", llvm::json::Array{0x20000000, Close ? 1 : 0}},
+             {"memory", llvm::json::Array{llvm::json::Object{
+                            {"address", "0x20000000"}, {"size", 4096}}}},
+             {"read_memory", llvm::json::Array{llvm::json::Object{
+                                 {"address", "0x20000000"}, {"size", 24}}}},
+             {"libraries",
+              llvm::json::Object{
+                  {"libstreams.so",
+                   llvm::json::Array{"fopen", "fgetc", "fclose"}}}}}},
+        {"linux_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{llvm::json::Object{
+                           {"path", "/fixture/input"},
+                           {"bytes_hex", "616c7068610a626574610a6c617374"},
+                           {"metadata", std::move(Metadata)}}}}}}};
+    const auto Options = jsonText(std::move(Request));
+    const auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop),
+              Close ? "unsupported_service" : "returned");
+    const auto &Android = *Report.getAsObject()->getObject(field::Android);
+    const auto &Calls = *Android.getArray(field::NativeCalls);
+    ASSERT_FALSE(Calls.empty());
+    if (Close) {
+      EXPECT_EQ(Calls.back().getAsObject()->getString(field::Name), "fgetc");
+      EXPECT_EQ(Calls.back().getAsObject()->getString(field::Library),
+                "libstreams.so");
+      EXPECT_TRUE(Calls.back().getAsObject()->get(field::Result)->getAsNull());
+    } else {
+      EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+      ASSERT_EQ(Android.getArray(field::Memory)->size(), 1u);
+      EXPECT_EQ(Android.getArray(field::Memory)
+                    ->front()
+                    .getAsObject()
+                    ->getString(field::Bytes),
+                "610000000000000001000000000000000000000000000000");
+    }
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              Close ? process_cli::Incomplete : process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";
