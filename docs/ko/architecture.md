@@ -1663,3 +1663,7 @@ DarwinFiles retains one declaration admission, namespace publication owner and a
 The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wire field created_symbolic_link_objects are independent of regular/directory creation flags and require complete CreationPolicy.Namespace. The generic creation admission has one Namespace prerequisite shared by directory and symbolic flags. The shared strict provider header accepts the new exact Boolean only for FileSystem; other purposes reject it even when false. Existing required objects, per-purpose parsers and budgets remain authoritative.
 
 DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
+
+### 명시적 커널 VA 섀도 상태 조회
+
+`KernelSystemInformation.cpp`는 클래스와 previous-mode, `KernelModelVaShadow.cpp`는 4바이트 결과를 관리합니다. `KernelQueryBuffer.cpp`는 버전 조회와 객체, 권한, 물리 별칭 검사를 공유합니다. 클래스 11의 동작은 유지되며 선언은 메모리 또는 완화 권한을 부여하지 않습니다.
