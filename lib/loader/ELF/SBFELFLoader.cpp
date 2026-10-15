@@ -766,6 +766,11 @@ llvm::Error addDynamicRelocations(const ELFFile &ELF,
 void enrichStrictDebugMetadata(const ELFFile &ELF, const Elf_Ehdr &Header,
                                sbf::Metadata &Metadata, BinaryImage &Image) {
   using namespace llvm::ELF;
+  // The caller declined the names .symtab carries.
+  if (!Image.ReadsStaticSymbols) {
+    Metadata.DebugEnrichment = sbf::DebugEnrichmentStatus::NotAttempted;
+    return;
+  }
   if (Header.e_shoff == 0 && Header.e_shnum == 0 &&
       Header.e_shstrndx == SHN_UNDEF) {
     Metadata.DebugEnrichment = sbf::DebugEnrichmentStatus::Unavailable;
@@ -967,7 +972,9 @@ llvm::Error loadLegacy(const ELFFile &ELF, const Elf_Ehdr &Header,
   Image.Entry = Entry;
 
   Metadata.DebugEnrichment =
-      addLegacyDebugSymbols(*Catalog, Image.Raw, Metadata.Version, Image);
+      Image.ReadsStaticSymbols
+          ? addLegacyDebugSymbols(*Catalog, Image.Raw, Metadata.Version, Image)
+          : sbf::DebugEnrichmentStatus::NotAttempted;
   // Official lenient loading relocates before it validates entry alignment.
   // ProgramImage applies the relocations and performs that final alignment
   // check in the same order; the loader only enforces validate()'s bounds.

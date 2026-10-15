@@ -11,10 +11,14 @@
 
 namespace neverd {
 bool isMachOLocalFunctionRange(const BinaryImage &Image, va_t Entry,
-                               uint64_t Size, MachOLocalFunctionAliases Aliases) {
+                               uint64_t Size,
+                               MachOLocalFunctionAliases Aliases) {
+  // An image read without its static symbol table has no local symbols to
+  // tell a local function by, as a stripped one has none.
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 || !Size ||
-      Entry > InvalidVA - Size || Image.Segments.size() > 64)
+      !Image.ReadsStaticSymbols || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || !Size || Entry > InvalidVA - Size ||
+      Image.Segments.size() > 64)
     return false;
   const auto Inside = [&](va_t Address) {
     return Address >= Entry && Address - Entry < Size;

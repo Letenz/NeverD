@@ -131,6 +131,7 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   BinaryImage Img;
   initializeImage(Buffer, Img, BinaryFormat::MachO, /*CopyRaw=*/false);
   Img.IsRelocatable = Obj.getHeader().filetype == MH_OBJECT;
+  Img.ReadsStaticSymbols = ReadsStaticSymbols;
   Img.MachOIsDylib = Obj.getHeader().filetype == MH_DYLIB;
   // An executable linked without MH_PIE runs at its link address.
   Img.LoadsAtLinkAddress = Obj.getHeader().filetype == MH_EXECUTE &&
@@ -148,7 +149,8 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
         "macho: unsupported cpu type 0x" + llvm::utohexstr(CpuType),
         llvm::inconvertibleErrorCode());
   if (Img.Arch == Arch::ARM) {
-    auto ModeInfo = macho_arm32::parseModeInfo(Img.Raw);
+    auto ModeInfo = macho_arm32::parseModeInfo(
+        Img.Raw, Img.ReadsStaticSymbols || Img.IsRelocatable);
     if (!ModeInfo)
       return ModeInfo.takeError();
     Img.Mode = ModeInfo->UniformMode;
@@ -424,6 +426,11 @@ MachOLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     // undefined record beside the actual N_SECT metadata symbol. Publishing
     // both as image symbols makes the exact storage identity look ambiguous.
     if ((NType & llvm::MachO::N_TYPE) == llvm::MachO::N_UNDF)
+      continue;
+    // Declined, a linked image keeps what strip leaves: the symbols it
+    // exports.
+    if (!Img.ReadsStaticSymbols && !Img.IsRelocatable &&
+        macho_loader::isStrippedSymbol(NType))
       continue;
 
     bool IsSect = (NType & llvm::MachO::N_TYPE) == llvm::MachO::N_SECT &&

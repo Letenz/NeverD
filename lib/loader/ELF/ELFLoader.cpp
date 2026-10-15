@@ -291,6 +291,7 @@ llvm::Expected<BinaryImage>
 ELFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   BinaryImage Img;
   initializeImage(Buffer, Img, BinaryFormat::ELF);
+  Img.ReadsStaticSymbols = ReadsStaticSymbols;
 
   if (Img.Raw.size() < llvm::ELF::EI_NIDENT)
     return llvm::make_error<llvm::StringError>("elf: file too small",
