@@ -1503,8 +1503,15 @@ std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
 
 bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
                                     va_t Entry, const std::string &Name) {
+  // The callee's tail calls are judged as its calls are, at this build's
+  // proof depth.
+  const auto TailCalleeNeverReturns = [&](va_t Target) {
+    return calleeNeverReturns(Img, Target, NoReturnTargets, NoReturnCallees,
+                              NoReturnCalleeDepth);
+  };
   if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
-    return lowFunctionNeverReturns(build(Img, Dec, Entry, Name), Img.Arch);
+    return lowFunctionNeverReturns(build(Img, Dec, Entry, Name), Img.Arch,
+                                   TailCalleeNeverReturns);
   LowFunc Callee;
   {
     llvm::SaveAndRestore<bool> RawStack(SkipX87StackFixup, true);
@@ -1537,7 +1544,7 @@ bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
   }
   if (NeedsStack)
     Callee = build(Img, Dec, Entry, Name);
-  return lowFunctionNeverReturns(Callee, Img.Arch);
+  return lowFunctionNeverReturns(Callee, Img.Arch, TailCalleeNeverReturns);
 }
 
 void CFGBuilder::recordSkippedFpuFixup(const LowFunc &Func) {

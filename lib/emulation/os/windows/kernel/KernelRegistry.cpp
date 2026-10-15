@@ -178,7 +178,11 @@ void storeName(std::vector<uint8_t> &Bytes, size_t Offset,
 } // namespace
 
 llvm::Error validateDriverRegistry(
-    const std::optional<std::vector<DriverRegistryKey>> &Registry) {
+    const std::optional<std::vector<DriverRegistryKey>> &Registry,
+    std::optional<uint64_t> SystemTime100ns) {
+  if (SystemTime100ns && (!Registry || *SystemTime100ns > INT64_MAX))
+    return registryError("registry system time requires an explicit registry "
+                         "and a nonnegative signed 64-bit Windows time");
   if (!Registry)
     return llvm::Error::success();
   if (Registry->size() > MaxRegistryKeys)
@@ -188,6 +192,9 @@ llvm::Error validateDriverRegistry(
   size_t Values = 0;
   size_t Bytes = 0;
   for (const DriverRegistryKey &Key : *Registry) {
+    if (Key.LastWriteTime100ns && *Key.LastWriteTime100ns > INT64_MAX)
+      return registryError(
+          "registry last-write time exceeds the signed 64-bit limit");
     if (Key.Path.size() > MaxRegistryPathLength || !validPath(Key.Path))
       return registryError(
           "registry path must be bounded ASCII under \\Registry\\Machine or "
@@ -221,8 +228,9 @@ llvm::Error validateDriverRegistry(
 }
 
 llvm::Error KernelRegistry::initialize(
-    const std::optional<std::vector<DriverRegistryKey>> &Registry) {
-  if (auto E = validateDriverRegistry(Registry))
+    const std::optional<std::vector<DriverRegistryKey>> &Registry,
+    std::optional<uint64_t> InitialSystemTime100ns) {
+  if (auto E = validateDriverRegistry(Registry, InitialSystemTime100ns))
     return E;
   Configured = Registry.has_value();
   Keys.clear();
@@ -230,13 +238,15 @@ llvm::Error KernelRegistry::initialize(
   NextHandle = HandleBase;
   ValueCount = 0;
   DataBytes = 0;
+  SystemTime100ns = InitialSystemTime100ns;
   if (!Registry)
     return llvm::Error::success();
   for (const DriverRegistryKey &Input : *Registry) {
     std::string Path = Input.Path;
     while (true) {
       const std::string Folded = folded(Path);
-      Keys.try_emplace(Folded, Key{Path, {}, {}, false, false});
+      Keys.try_emplace(Folded,
+                       Key{Path, {}, {}, false, false, SystemTime100ns});
       if (rootPath(Folded))
         break;
       Path = parentPath(Path);
@@ -244,11 +254,30 @@ llvm::Error KernelRegistry::initialize(
     Key &Entry = Keys.at(folded(Input.Path));
     // Prefer the explicit key spelling over an implicit ancestor spelling.
     Entry.Path = Input.Path;
+    Entry.LastWriteTime100ns =
+        Input.LastWriteTime100ns ? Input.LastWriteTime100ns : SystemTime100ns;
     for (const DriverRegistryValue &Value : Input.Values) {
       Entry.Values.emplace(folded(Value.Name), Value);
       Entry.ValueOrder.push_back(folded(Value.Name));
+      Entry.MaxValueNameLength =
+          std::max(Entry.MaxValueNameLength, uint32_t(Value.Name.size() * 2));
+      Entry.MaxValueDataLength =
+          std::max(Entry.MaxValueDataLength, uint32_t(Value.Data.size()));
       ++ValueCount;
       DataBytes += Value.Data.size();
+    }
+  }
+  // Folded paths sort parents before children. Retain one spelling per
+  // component, including when input paths spell an existing ancestor
+  // differently.
+  for (auto &[Path, Entry] : Keys) {
+    auto Parent = Keys.find(parentPath(Path));
+    if (Parent != Keys.end()) {
+      Entry.Path =
+          Parent->second.Path + Entry.Path.substr(Entry.Path.rfind(Separator));
+      Parent->second.MaxNameLength =
+          std::max(Parent->second.MaxNameLength,
+                   uint32_t((Path.size() - Parent->first.size() - 1) * 2));
     }
   }
   return llvm::Error::success();
@@ -262,11 +291,22 @@ std::optional<std::vector<DriverRegistryKey>> KernelRegistry::snapshot() const {
     if (Entry.Deleted)
       continue;
     DriverRegistryKey Output{Entry.Path, {}};
+    Output.LastWriteTime100ns = Entry.LastWriteTime100ns;
     for (const auto &Name : Entry.ValueOrder)
       Output.Values.push_back(Entry.Values.at(Name));
     Result.push_back(std::move(Output));
   }
   return Result;
+}
+
+llvm::Expected<std::optional<uint64_t>>
+KernelRegistry::mutationTime(const KernelModel &Model) const {
+  if (!SystemTime100ns)
+    return std::optional<uint64_t>();
+  if (Model.now100ns() > uint64_t(INT64_MAX) - *SystemTime100ns)
+    return registryError(
+        "registry system time exceeds the signed 64-bit limit");
+  return std::optional<uint64_t>(*SystemTime100ns + Model.now100ns());
 }
 
 llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
@@ -349,6 +389,13 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
   if (Handles.size() >= MaxRegistryHandles ||
       NextHandle > UINT64_MAX - HandleStride)
     return registryError("registry handle count exceeds the limit");
+  std::optional<uint64_t> CreatedAt;
+  if (!Exists) {
+    auto Time = mutationTime(Model);
+    if (!Time)
+      return Time.takeError();
+    CreatedAt = *Time;
+  }
   // Validate every output before writes, and finish all guest writes before
   // publishing a key or handle. A guest fault cannot leak invisible state.
   if (auto E = Model.validateGuestAccess(A[0], 8, true))
@@ -362,10 +409,20 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
       return E;
   if (auto E = Memory.writeInteger(A[0], NextHandle, 8))
     return E;
-  if (!Exists)
-    Keys.emplace(
-        Folded,
-        Key{Path, {}, {}, false, bool(uint32_t(A[5]) & VolatileOption)});
+  if (!Exists) {
+    Key &Parent = Keys.at(parentPath(Folded));
+    Path = Parent.Path + Path.substr(Path.rfind(Separator));
+    Keys.emplace(Folded, Key{Path,
+                             {},
+                             {},
+                             false,
+                             bool(uint32_t(A[5]) & VolatileOption),
+                             CreatedAt});
+    Parent.LastWriteTime100ns = CreatedAt;
+    Parent.MaxNameLength =
+        std::max(Parent.MaxNameLength,
+                 uint32_t((Path.size() - parentPath(Folded).size() - 1) * 2));
+  }
   Handles.emplace(NextHandle, Handle{Folded, Access});
   NextHandle += HandleStride;
   return Success;
@@ -488,6 +545,130 @@ llvm::Expected<uint64_t> KernelRegistry::query(const KernelModel &Model,
   return Length < Required ? BufferOverflow : Success;
 }
 
+llvm::Expected<uint64_t>
+KernelRegistry::queryKey(const KernelModel &Model, const Key &Entry,
+                         uint32_t Class, uint64_t Buffer, uint32_t Length,
+                         uint64_t ResultLength) {
+  const llvm::StringRef Path(Entry.Path);
+  const auto Name = Class == KeyNameInformation
+                        ? Path
+                        : Path.drop_front(Path.rfind(Separator) + 1);
+  uint32_t Header = 0, NameOffset = 0;
+  switch (Class) {
+  case KeyBasicInformation:
+    Header = NameOffset = KeyBasicHeaderSize;
+    break;
+  case KeyNodeInformation:
+    Header = NameOffset = KeyNodeHeaderSize;
+    break;
+  case KeyFullInformation:
+    Header = KeyFullHeaderSize;
+    break;
+  case KeyNameInformation:
+    Header = NameOffset = KeyNameHeaderSize;
+    break;
+  case KeyCachedInformation:
+    Header = KeyCachedSize;
+    break;
+  default:
+    return registryError("registry key information class is unsupported");
+  }
+  const uint32_t Required = Header + (NameOffset ? Name.size() * 2 : 0);
+  const uint32_t Written = Length < Header ? 0 : std::min(Length, Required);
+  if (Written && Class != KeyNameInformation && !Entry.LastWriteTime100ns)
+    return registryError("registry last-write time is unspecified; supply "
+                         "last_write_time_100ns or registry_system_time_100ns");
+  if (auto E = validateOutput(Model, Memory, ResultLength, 4))
+    return E;
+  if (auto E = validateOutput(Model, Memory, Buffer, Written))
+    return E;
+  if (!Written) {
+    if (auto E = Memory.writeInteger(ResultLength, Required, 4))
+      return E;
+    return BufferTooSmall;
+  }
+  // CachedInformation is sizeof=40 on x64; its four tail padding bytes are
+  // not fields. Basic/Node store complete compressed-ASCII name units, while
+  // NameInformation copies the constructed full path byte by byte.
+  std::vector<uint8_t> Bytes(Class == KeyCachedInformation ? 36 : Header, 0);
+  if (Class == KeyNameInformation)
+    store32(Bytes, 0, Name.size() * 2);
+  else
+    llvm::support::endian::write64le(Bytes.data(), *Entry.LastWriteTime100ns);
+  if (Class == KeyBasicInformation)
+    store32(Bytes, 12, Name.size() * 2);
+  if (Class == KeyNodeInformation) {
+    store32(Bytes, 12, UINT32_MAX); // No key class in this registry profile.
+    store32(Bytes, 20, Name.size() * 2);
+  }
+  if (Class == KeyFullInformation || Class == KeyCachedInformation) {
+    uint32_t Subkeys = 0;
+    const std::string Parent = folded(Entry.Path);
+    for (const auto &[ChildPath, Child] : Keys) {
+      if (Child.Deleted || parentPath(ChildPath) != Parent)
+        continue;
+      ++Subkeys;
+    }
+    if (Class == KeyFullInformation) {
+      store32(Bytes, 12, UINT32_MAX);
+      store32(Bytes, 20, Subkeys);
+      store32(Bytes, 24, Entry.MaxNameLength);
+      store32(Bytes, 32, Entry.Values.size());
+      store32(Bytes, 36, Entry.MaxValueNameLength);
+      store32(Bytes, 40, Entry.MaxValueDataLength);
+    } else {
+      store32(Bytes, 12, Subkeys);
+      store32(Bytes, 16, Entry.MaxNameLength);
+      store32(Bytes, 20, Entry.Values.size());
+      store32(Bytes, 24, Entry.MaxValueNameLength);
+      store32(Bytes, 28, Entry.MaxValueDataLength);
+      store32(Bytes, 32, Name.size() * 2);
+    }
+  }
+  if (auto E = Memory.write(Buffer, Bytes))
+    return E;
+  if (NameOffset) {
+    std::vector<uint8_t> NameBytes(Name.size() * 2, 0);
+    storeName(NameBytes, 0, Name);
+    uint32_t Count = Written - NameOffset;
+    if (Class != KeyNameInformation)
+      Count &= ~1u;
+    if (Count)
+      if (auto E = Memory.write(
+              Buffer + NameOffset,
+              llvm::ArrayRef<uint8_t>(NameBytes).take_front(Count)))
+        return E;
+  }
+  if (auto E = Memory.writeInteger(ResultLength, Required, 4))
+    return E;
+  if (Length < Required)
+    return BufferOverflow;
+  // NameInformation still copies the retained path for a deleted handle.
+  return Entry.Deleted ? KeyDeleted : Success;
+}
+
+llvm::Expected<uint64_t>
+KernelRegistry::enumerateKey(const KernelModel &Model, llvm::StringRef Path,
+                             llvm::ArrayRef<uint64_t> A) {
+  std::vector<const Key *> Children;
+  for (const auto &[ChildPath, Child] : Keys)
+    if (!Child.Deleted && parentPath(ChildPath) == Path)
+      Children.push_back(&Child);
+  // Registry subkeys use the uppercase name collation, unlike value indices.
+  llvm::sort(Children, [](const Key *L, const Key *R) {
+    return std::lexicographical_compare(
+        L->Path.begin(), L->Path.end(), R->Path.begin(), R->Path.end(),
+        [](unsigned char A, unsigned char B) {
+          return llvm::toUpper(A) < llvm::toUpper(B);
+        });
+  });
+  const uint32_t Index = A[1];
+  if (Index >= Children.size())
+    return NoMoreEntries;
+  return queryKey(Model, *Children[Index], uint32_t(A[2]), A[3], uint32_t(A[4]),
+                  A[5]);
+}
+
 llvm::Expected<uint64_t> KernelRegistry::set(const KernelModel &Model,
                                              Key &Entry,
                                              llvm::ArrayRef<uint64_t> A) {
@@ -517,6 +698,13 @@ llvm::Expected<uint64_t> KernelRegistry::set(const KernelModel &Model,
   auto Bytes = readBytes(Model, Memory, A[4], Size);
   if (!Bytes)
     return Bytes.takeError();
+  // The unchanged-value fast path does not update the kernel's timestamp.
+  if (Old != Entry.Values.end() && Old->second.Type == Value.Type &&
+      Old->second.Data == *Bytes)
+    return Success;
+  auto Time = mutationTime(Model);
+  if (!Time)
+    return Time.takeError();
   Value.Data = std::move(*Bytes);
   if (Old != Entry.Values.end())
     Value.Name = Old->second.Name;
@@ -526,6 +714,10 @@ llvm::Expected<uint64_t> KernelRegistry::set(const KernelModel &Model,
   }
   DataBytes = DataBytes - OldBytes + Size;
   Entry.Values.insert_or_assign(Name, std::move(Value));
+  Entry.MaxValueNameLength =
+      std::max(Entry.MaxValueNameLength, uint32_t(Name.size() * 2));
+  Entry.MaxValueDataLength = std::max(Entry.MaxValueDataLength, Size);
+  Entry.LastWriteTime100ns = *Time;
   return Success;
 }
 
@@ -542,6 +734,10 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
   if (Function == API::ZwEnumerateValueKey &&
       uint32_t(A[2]) > PartialInformation)
     return InvalidParameter;
+  if (Function == API::ZwEnumerateKey && uint32_t(A[2]) > KeyFullInformation)
+    return InvalidParameter;
+  if (Function == API::ZwQueryKey && uint32_t(A[1]) >= KeyMaxInformationClass)
+    return InvalidParameter;
   if (Function == API::ZwOpenKey || Function == API::ZwCreateKey)
     return open(Model, A, Function == API::ZwCreateKey);
   auto H = Handles.find(A[0]);
@@ -557,17 +753,27 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
       Keys.erase(Path);
     return Success;
   }
-  if (Entry.Deleted)
+  if (Entry.Deleted &&
+      !(Function == API::ZwQueryKey && uint32_t(A[1]) == KeyNameInformation))
     return KeyDeleted;
   uint32_t Required =
-      (Function == API::ZwQueryValueKey || Function == API::ZwEnumerateValueKey)
+      (Function == API::ZwQueryValueKey ||
+       Function == API::ZwEnumerateValueKey || Function == API::ZwQueryKey)
           ? QueryValueAccess
           : SetValueAccess;
   if (Function == API::ZwDeleteKey)
     Required = DeleteAccess;
+  if (Function == API::ZwEnumerateKey)
+    Required = EnumerateSubKeysAccess;
+  if (Function == API::ZwQueryKey && uint32_t(A[1]) == KeyNameInformation)
+    Required = AllAccess; // Any granted key access suffices for its name.
   if (!(H->second.Access & Required))
     return AccessDenied;
   switch (Function) {
+  case API::ZwQueryKey:
+    return queryKey(Model, Entry, uint32_t(A[1]), A[2], uint32_t(A[3]), A[4]);
+  case API::ZwEnumerateKey:
+    return enumerateKey(Model, Path, A);
   case API::ZwQueryValueKey:
   case API::ZwEnumerateValueKey:
     return query(Model, Entry, A, Function == API::ZwEnumerateValueKey);
@@ -580,18 +786,29 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
     auto Value = Entry.Values.find(folded(*ValueName));
     if (Value == Entry.Values.end())
       return ObjectNameNotFound;
+    auto Time = mutationTime(Model);
+    if (!Time)
+      return Time.takeError();
     DataBytes -= Value->second.Data.size();
     --ValueCount;
     std::erase(Entry.ValueOrder, Value->first);
     Entry.Values.erase(Value);
+    if (Entry.Values.empty()) {
+      Entry.MaxValueNameLength = 0;
+      Entry.MaxValueDataLength = 0;
+    }
+    Entry.LastWriteTime100ns = *Time;
     return Success;
   }
-  case API::ZwDeleteKey:
+  case API::ZwDeleteKey: {
     if (rootPath(Path))
       return CannotDelete;
     for (const auto &[OtherPath, Other] : Keys)
       if (!Other.Deleted && OtherPath != Path && atOrBelow(OtherPath, Path))
         return CannotDelete;
+    auto Time = mutationTime(Model);
+    if (!Time)
+      return Time.takeError();
     for (const auto &[ValueName, Value] : Entry.Values) {
       --ValueCount;
       DataBytes -= Value.Data.size();
@@ -599,7 +816,15 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
     Entry.Values.clear();
     Entry.ValueOrder.clear();
     Entry.Deleted = true;
+    const auto ParentPath = parentPath(Path);
+    Key &Parent = Keys.at(ParentPath);
+    Parent.LastWriteTime100ns = *Time;
+    if (llvm::none_of(Keys, [&](const auto &Other) {
+          return !Other.second.Deleted && parentPath(Other.first) == ParentPath;
+        }))
+      Parent.MaxNameLength = 0;
     return Success;
+  }
   default:
     llvm_unreachable("handled registry API");
   }

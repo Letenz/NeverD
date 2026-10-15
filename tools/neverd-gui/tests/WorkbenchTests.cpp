@@ -4316,6 +4316,180 @@ private slots:
              qPrintable(bench.session.lastError()));
   }
 
+  void editFunctionRenamesAndStatesInTwoSteps() {
+    // IDA's Edit function, offered by the disassembly's and the Functions
+    // window's context menus.  The frame sizes and the flags NeverD does not
+    // keep are shown disabled; a new name and the flags are two steps of the
+    // history, undone and redone in turn, and a name the worker refuses
+    // applies neither.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    auto *functions = bench.functions();
+    QTRY_COMPARE_WITH_TIMEOUT(functions->model().total(), 600, OpenTimeoutMs);
+    const Address entry = Base + 0x140;
+    const auto listedName = [&] {
+      return functions->model().rowObject(20).value("name").toString();
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(listedName(), QStringLiteral("function_20"),
+                              OpenTimeoutMs);
+    disassembly->navigate(entry);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentFunction(),
+                              std::optional<Address>(entry), OpenTimeoutMs);
+    QAction *edit = bench.action(ActionId::EditFunction);
+    QTRY_VERIFY(edit->isEnabled());
+
+    // The enabled entries of the context menu \p open shows, then closed.
+    const auto offered = [&](const std::function<void()> &open) {
+      QStringList texts;
+      QTimer probe;
+      connect(&probe, &QTimer::timeout, this, [&] {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu)
+          return;
+        probe.stop();
+        for (const QAction *action : menu->actions())
+          if (action->isEnabled() && !action->isSeparator())
+            texts << action->text();
+        menu->close();
+      });
+      probe.start(5);
+      open();
+      return texts;
+    };
+    QVERIFY(offered([&] {
+              emit disassembly->contextMenuRequested(
+                  disassembly->mapToGlobal(QPoint(40, 40)));
+            }).contains(edit->text()));
+    const QModelIndex row = functions->model().index(20, 0);
+    functions->table()->scrollTo(row);
+    QVERIFY(offered([&] {
+              emit functions->table()->customContextMenuRequested(
+                  functions->table()->visualRect(row).center());
+            }).contains(edit->text()));
+
+    const auto stated = [&] {
+      for (const auto &row :
+           QJsonDocument::fromJson(readAll(path + ".neverd-functions.json"))
+               .array())
+        if (addressValue(row.toObject().value("addr")) == entry)
+          return row.toObject();
+      return QJsonObject();
+    };
+    // Answers the dialog once it is active: \p check reads and sets its
+    // fields, then OK closes it.
+    const auto answerEditor =
+        [&](std::function<void(FunctionEditDialog *)> check) {
+          auto *editor = new QTimer(&bench.session);
+          connect(editor, &QTimer::timeout, editor, [editor, check] {
+            auto *dialog = qobject_cast<FunctionEditDialog *>(
+                QApplication::activeModalWidget());
+            if (!dialog || !dialog->isActiveWindow())
+              return;
+            editor->stop();
+            editor->deleteLater();
+            check(dialog);
+            QTest::mouseClick(
+                dialog->findChild<QPushButton *>(QStringLiteral("ok")),
+                Qt::LeftButton);
+          });
+          editor->start(10);
+        };
+    const auto field = [](FunctionEditDialog *dialog, const char *name) {
+      return dialog->findChild<QLineEdit *>(QLatin1String(name));
+    };
+    const auto flag = [](FunctionEditDialog *dialog, const char *name) {
+      return dialog->findChild<QCheckBox *>(QLatin1String(name));
+    };
+
+    QStringList unmodeled;
+    int shownOnly = 0;
+    answerEditor([&](FunctionEditDialog *dialog) {
+      for (const QCheckBox *box : dialog->findChildren<QCheckBox *>())
+        if (!box->isEnabled())
+          unmodeled << box->text();
+      for (const QLineEdit *line : dialog->findChildren<QLineEdit *>())
+        shownOnly += line->isReadOnly();
+      field(dialog, "name")->setText(QStringLiteral("parse_header"));
+      flag(dialog, "library")->setChecked(true);
+      flag(dialog, "static")->setChecked(true);
+    });
+    edit->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(listedName(), QStringLiteral("parse_header"),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(stated().value("library").toBool() &&
+                                 stated().value("static").toBool(),
+                             OpenTimeoutMs);
+    QCOMPARE(unmodeled, (QStringList{QStringLiteral("&Far function"),
+                                     QStringLiteral("&BP based frame"),
+                                     QStringLiteral("BP e&quals to SP"),
+                                     QStringLiteral("Fuzzy SP"),
+                                     QStringLiteral("Outlined code")}));
+    // The bounds and the four frame sizes.
+    QCOMPARE(shownOnly, 6);
+
+    // Undo takes the flags back, then the name; redo makes them again.
+    QTRY_VERIFY(bench.session.canUndo());
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(stated().isEmpty(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(listedName(), QStringLiteral("parse_header"),
+                              OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.canUndo());
+    bench.session.undo();
+    QTRY_COMPARE_WITH_TIMEOUT(listedName(), QStringLiteral("function_20"),
+                              OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.canRedo());
+    bench.session.redo();
+    QTRY_COMPARE_WITH_TIMEOUT(listedName(), QStringLiteral("parse_header"),
+                              OpenTimeoutMs);
+    QVERIFY(stated().isEmpty());
+    QTRY_VERIFY(bench.session.canRedo());
+    bench.session.redo();
+    QTRY_VERIFY_WITH_TIMEOUT(stated().value("library").toBool(), OpenTimeoutMs);
+
+    // A name the worker refuses, here one in an automatic form, is refused
+    // with the flag.
+    QSignalSpy messages(&bench.session, &Session::message);
+    answerEditor([&](FunctionEditDialog *dialog) {
+      field(dialog, "name")->setText(QStringLiteral("sub_10"));
+      flag(dialog, "noreturn")->setChecked(true);
+    });
+    edit->trigger();
+    const auto refused = [&] {
+      for (const auto &arguments : messages)
+        if (arguments.at(0).toString().contains(
+                QLatin1String("is an automatic name")))
+          return true;
+      return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(refused(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(listedName(), QStringLiteral("parse_header"),
+                              OpenTimeoutMs);
+    QVERIFY(!stated().contains(QLatin1String("noreturn")));
+
+    // Default takes a stated color away.
+    bench.session.editFunction(entry, {{"color", "#20A0FF"}});
+    QTRY_COMPARE_WITH_TIMEOUT(stated().value("color").toString(),
+                              QStringLiteral("#20A0FF"), OpenTimeoutMs);
+    QString shownColor;
+    answerEditor([&](FunctionEditDialog *dialog) {
+      auto *color = dialog->findChild<QPushButton *>(QStringLiteral("color"));
+      shownColor = color->text();
+      for (QAction *action : color->menu()->actions())
+        if (action->text() == QStringLiteral("&Default"))
+          action->trigger();
+    });
+    edit->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!stated().contains(QLatin1String("color")),
+                             OpenTimeoutMs);
+    QCOMPARE(shownColor, QStringLiteral("#20A0FF"));
+    QVERIFY(stated().value("library").toBool());
+  }
+
   void sessionChangesAreExplicit() {
     QTemporaryDir directory;
     const auto first = writeFixture(directory, QStringLiteral("first.bin"));

@@ -131,6 +131,7 @@ llvm::Expected<uint64_t> KernelModel::call(
       Kind != KernelAPIKind::IoGetRequestorProcess &&
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
+      Kind != KernelAPIKind::PsGetThreadProcess &&
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
       Kind != KernelAPIKind::ExGetPreviousMode &&
       Kind != KernelAPIKind::KeGetCurrentIrql &&
@@ -186,10 +187,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return createSystemThread(A);
   case KernelAPIKind::PsTerminateSystemThread:
     return terminateSystemThread(uint32_t(A[0]));
-  case KernelAPIKind::ObReferenceObjectByHandle:
-    return referenceThreadByHandle(A);
-  case KernelAPIKind::ObfDereferenceObject:
-    return dereferenceThread(A[0]);
+#define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelObjectAPIs.def"
+#undef NEVERD_KERNEL_OBJECT_API
   case KernelAPIKind::IoGetRequestorProcessId: {
     const auto *Request = requestForIRP(A[0]);
     if (!Request || Request->Completed)
@@ -252,6 +254,21 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
+#define NEVERD_KERNEL_LOOKASIDE_API(Name, Arity, IRQL, Operation)              \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelLookasideAPIs.def"
+#undef NEVERD_KERNEL_LOOKASIDE_API
+#define NEVERD_KERNEL_FAST_MUTEX_API(Name, Arity, IRQL, Operation)             \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelFastMutexAPIs.def"
+#undef NEVERD_KERNEL_FAST_MUTEX_API
+#define NEVERD_KERNEL_RESOURCE_API(Name, Arity, IRQL, Operation)               \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelExecutiveResourceAPIs.def"
+#undef NEVERD_KERNEL_RESOURCE_API
 #define NEVERD_KERNEL_INTERLOCKED_API(Name, Arity, IRQL, Operation)            \
   case KernelAPIKind::Name:                                                    \
     return Operation;
@@ -296,6 +313,16 @@ llvm::Expected<uint64_t> KernelModel::call(
 #define NEVERD_KERNEL_DISPATCHER_API(Name, Arity) case KernelAPIKind::Name:
 #include "KernelDispatcherAPIs.def"
 #undef NEVERD_KERNEL_DISPATCHER_API
+    if (Kind == KernelAPIKind::KeReleaseMutex &&
+        !Dispatcher.ownsMutex(CurrentThreadKey, A[0])) {
+      const auto State = ApcStates.find(CurrentThreadKey);
+      if (auto E = validateExecutiveResourceContext(
+              CurrentIRQL,
+              State == ApcStates.end() ? 0 : State->second.CriticalDepth,
+              State == ApcStates.end() ? 0 : State->second.GuardedDepth, 0, 0,
+              true))
+        return E;
+    }
     return Dispatcher.call(Name, A, CurrentIRQL, CurrentThreadKey);
 #define NEVERD_KERNEL_REGISTRY_API(Name, Arity) case KernelAPIKind::Name:
 #include "KernelRegistryAPIs.def"

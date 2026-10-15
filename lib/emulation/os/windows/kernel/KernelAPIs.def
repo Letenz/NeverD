@@ -103,8 +103,10 @@ NEVERD_KERNEL_API(PsGetCurrentProcessId, 0, Export)
 NEVERD_KERNEL_API(PsGetProcessId, 1, Export)
 NEVERD_KERNEL_API(PsCreateSystemThread, 7, Export)
 NEVERD_KERNEL_API(PsTerminateSystemThread, 1, Export)
-NEVERD_KERNEL_API(ObReferenceObjectByHandle, 6, Export)
-NEVERD_KERNEL_API(ObfDereferenceObject, 1, Export)
+#define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelObjectAPIs.def"
+#undef NEVERD_KERNEL_OBJECT_API
 NEVERD_KERNEL_API(KeStackAttachProcess, 2, Export)
 NEVERD_KERNEL_API(KeUnstackDetachProcess, 1, Export)
 #define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
@@ -140,6 +142,18 @@ NEVERD_KERNEL_API(KeGetCurrentIrql, 0, Export)
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelRundownAPIs.def"
 #undef NEVERD_KERNEL_RUNDOWN_API
+#define NEVERD_KERNEL_LOOKASIDE_API(Name, Arity, IRQL, Operation)              \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelLookasideAPIs.def"
+#undef NEVERD_KERNEL_LOOKASIDE_API
+#define NEVERD_KERNEL_FAST_MUTEX_API(Name, Arity, IRQL, Operation)             \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelFastMutexAPIs.def"
+#undef NEVERD_KERNEL_FAST_MUTEX_API
+#define NEVERD_KERNEL_RESOURCE_API(Name, Arity, IRQL, Operation)               \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelExecutiveResourceAPIs.def"
+#undef NEVERD_KERNEL_RESOURCE_API
 NEVERD_KERNEL_API(IoAllocateWorkItem, 1, Export)
 NEVERD_KERNEL_API(IoQueueWorkItem, 4, Export)
 NEVERD_KERNEL_API(IoFreeWorkItem, 1, Export)

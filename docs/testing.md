@@ -388,7 +388,13 @@ ordinary warm and cold builds both reject the newly unknown tag state.
 floating-return callees, restore binary80 call/return definitions on builder
 reuse, and preserve the full path for local x87 operations, resets and FXAM.
 Returning, terminating and unresolved exception handlers retain their original
-no-return verdicts on x86 and x64.
+no-return verdicts on x86 and x64. A function the user states never returns
+reaches its callers' callers to the proof depth, even through callees that
+hold an unreachable `ret`, but not around a path that still returns; the
+screen sends a callee to the proof only when each of its returns follows such
+a call, so one that calls the function on an error path costs no proof. A
+tail jump into a function that is stated, named or proved never to return
+ends its path, and a statement that the target returns decides over both.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
@@ -2356,6 +2362,8 @@ binary completion while retaining native-proof and both source-layout refusals.
 
 `InterpreterSpecialization.WideIntegerConcat*` checks both byte orders, high/low words, constant inputs, overlapping output, high-word control, malformed shapes, exact/short budgets and retained unknown-memory provenance. Strictly decoded `PSHUFD` covers all 256 selectors with aliased and distinct destinations against independent dword indexing. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` retains native-proof and both source-layout refusals.
 
+`InterpreterSpecialization.Timestamp*` checks complete samples, zero upper halves, independent and repeated reads, preserved registers/flags/memory/segment bases, exact and insufficient budgets, malformed bundles and unknown address origins with independent value/state oracles. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` checks raw completion and continued native-proof/source-layout refusals. Existing `X86_64_Intrinsics` timestamp cases check source emission and single-read full-bit results; `DriverTimestamp` separately checks the shared Unicorn/KVM/WHP clock policy, state preservation, budgets and overflow. Platform skips do not establish backend execution.
+
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 
 Physical-return regressions cover direct and indirect calls that skip invalid inline bytes, feasible bad continuations, complete target enumeration and exact/short budgets. Full-state refinement rejects altered results. Independently compiled C at O1/O2 must also preserve the complete frame write; matching return values cannot hide a changed return-slot byte.
@@ -3001,6 +3009,35 @@ that external pins reject completion without changing IRP or MDL state.
 Additional fixtures cover driver-owned nonpaged pool MDLs, independent descriptor
 and buffer lifetimes, registry query layouts and short buffers, handle rights,
 deletion and leaks, and full-width `information_hex` for zero-output IOCTLs.
+`DriverKernelRegistry` also covers Basic/Node/Full/Name/Cached key layouts,
+explicit and unknown timestamps, overflow before mutation, identical-value
+writes, retained maxima and live subkey indices. Original
+`driver_registry_values.c` and `driver_registry_keys.c` execute query,
+enumeration and deletion through Unicorn/KVM/WHP/HVF with legacy/checked-x64
+contracts at preferred/rebased addresses; unavailable host backends skip
+explicitly.
+`driver_cstring_writes.c` uses the same backend/contract/base matrix for eight
+C string writers. Model tests cover copy padding versus append termination,
+zero-count narrow/wide differences, exact source boundaries, full-width counts,
+overlap, write preflight, paged IRQL restrictions and expired pool storage.
+`driver_lookaside.c` exercises the public x64 inline cache paths, default pool
+callbacks, cache hits/misses and full unload across that matrix.
+`KernelLookaside` checks registration links and reserved bytes, cached-pool
+lifetimes, corruption, IRQL, missing exports, MDL borrowing in either order,
+and deletion preflight with held locks, pinned pages and read-only storage.
+`driver_fast_mutex.c` covers both WDK initialization forms, all eleven fast/guarded
+mutex exports, failed Try calls, APC_LEVEL entry, Unsafe regions and unload
+across the same backend/contract/base matrix. `KernelFastMutex` checks logical
+thread ownership, nested holds and callbacks, IRQL/region restoration, padding,
+corruption, read-only and paged storage, MDL borrowing in either order and
+failure before mutation. Contended waits remain explicit unsupported paths.
+`driver_eresource.c` executes all 22 legacy resource exports across that matrix,
+including three system threads holding shared ownership while parked on an event,
+table growth, recursive acquisition, downgrade, owner-pointer transfer and unload.
+`KernelExecutiveResource` covers table placement for different shared-acquisition
+forms, registration unlink preflight, APC/IRQL and mutex restoration, foreign
+release, owner-pointer lifetime, MDL borrowing, read-only/corrupt storage and
+thread/unload guards. Blocking contention is rejected before registering a waiter.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 
@@ -6660,6 +6697,8 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Sequential raw compare-and-exchange
 
 `SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.
+
+`KernelObjectTests.cpp` checks known-ID lookup, type/access/mode failures, optional handle information, failed outputs without leaked references, unload, and retained identities across stack reuse. `DriverObjectTests.cpp` executes original `driver_objects.c` on available Unicorn/KVM/WHP/HVF backends, Legacy/CheckedX64, preferred/rebased images and cooperative/17-instruction scheduling. KVM/WHP outcomes are mandatory in `NativeDriverTests.def`; missing or skipped execution is a gap. These fixtures do not certify ACLs, general process exit or unimplemented object classes.
 
 ### Live proc and maintained file metadata
 

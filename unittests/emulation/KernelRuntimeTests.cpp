@@ -10,16 +10,20 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HvfTestPolicy.h"
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
 #include "os/windows/kernel/KernelModel.h"
+
+#include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/FormatVariadic.h"
 
 #include <initializer_list>
 #include <map>
 #include <string_view>
+#include <tuple>
 
 namespace neverd::emulation {
 namespace {
@@ -1518,6 +1522,228 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesCRuntimeStringHelpers) {
   EXPECT_EQ(Calls["strspn"], 1u);
   EXPECT_EQ(Calls["wcscspn"], 1u);
 }
+
+class KernelCStringWriteExecution
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(KernelCStringWriteExecution, OriginalDriverCopiesPadsAndAppends) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                                  "driver_cstring_writes.sys",
+                              Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name : {"strcpy", "strncpy", "strcat", "strncat", "wcscpy",
+                           "wcsncpy", "wcscat", "wcsncat"})
+    EXPECT_GT(Calls[Name], 0u) << Name;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, KernelCStringWriteExecution,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
+
+class KernelLookasideExecution
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(KernelLookasideExecution, OriginalDriverUsesInlineCacheAcrossUnload) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  Options.Unload = true;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                                  "driver_lookaside.sys",
+                              Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
+  EXPECT_TRUE(Result->UnloadCompleted);
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name :
+       {"ExInitializeNPagedLookasideList", "ExInitializePagedLookasideList",
+        "ExDeleteNPagedLookasideList", "ExDeletePagedLookasideList",
+        "ExpInterlockedPushEntrySList", "ExpInterlockedPopEntrySList"})
+    EXPECT_GT(Calls[Name], 0u) << Name;
+  EXPECT_EQ(Calls["ExAllocatePoolWithTag"], 21u);
+  EXPECT_EQ(Calls["ExFreePool"], 9u);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, KernelLookasideExecution,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
+
+class KernelFastMutexExecution
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(KernelFastMutexExecution,
+       OriginalDriverPreservesOwnershipIrqlAndUnsafeRegions) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  Options.Unload = true;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                                  "driver_fast_mutex.sys",
+                              Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
+  EXPECT_TRUE(Result->UnloadCompleted);
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name :
+       {"KeInitializeGuardedMutex", "ExAcquireFastMutex",
+        "ExTryToAcquireFastMutex", "ExReleaseFastMutex",
+        "ExAcquireFastMutexUnsafe", "ExReleaseFastMutexUnsafe",
+        "KeAcquireGuardedMutex", "KeTryToAcquireGuardedMutex",
+        "KeReleaseGuardedMutex", "KeAcquireGuardedMutexUnsafe",
+        "KeReleaseGuardedMutexUnsafe", "KeInitializeEvent"})
+    EXPECT_GT(Calls[Name], 0u) << Name;
+  EXPECT_EQ(Calls["ExAllocatePoolWithTag"], 2u);
+  EXPECT_EQ(Calls["ExFreePool"], 2u);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, KernelFastMutexExecution,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
+
+class KernelExecutiveResourceExecution
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(KernelExecutiveResourceExecution,
+       OriginalDriverSharesResourcesAcrossParkedSystemThreads) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  Options.Unload = true;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                                  "driver_eresource.sys",
+                              Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
+  EXPECT_TRUE(Result->UnloadCompleted);
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  for (const char *Name :
+       {"ExInitializeResourceLite",
+        "ExReinitializeResourceLite",
+        "ExDeleteResourceLite",
+        "ExAcquireResourceExclusiveLite",
+        "ExTryToAcquireResourceExclusiveLite",
+        "ExAcquireResourceSharedLite",
+        "ExAcquireSharedStarveExclusive",
+        "ExAcquireSharedWaitForExclusive",
+        "ExConvertExclusiveToSharedLite",
+        "ExReleaseResourceLite",
+        "ExReleaseResourceForThreadLite",
+        "ExIsResourceAcquiredExclusiveLite",
+        "ExIsResourceAcquiredSharedLite",
+        "ExGetExclusiveWaiterCount",
+        "ExGetSharedWaiterCount",
+        "ExDisableResourceBoostLite",
+        "ExEnterCriticalRegionAndAcquireResourceExclusive",
+        "ExEnterCriticalRegionAndAcquireResourceShared",
+        "ExEnterCriticalRegionAndAcquireSharedWaitForExclusive",
+        "ExReleaseResourceAndLeaveCriticalRegion",
+        "ExSetResourceOwnerPointer",
+        "ExSetResourceOwnerPointerEx"})
+    EXPECT_GT(Calls[Name], 0u) << Name;
+  EXPECT_EQ(Calls["ExAllocatePoolWithTag"], 2u);
+  EXPECT_EQ(Calls["ExFreePool"], 2u);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, KernelExecutiveResourceExecution,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
 
 TEST(KernelRuntimeExecution, CompiledDriverGuardsWithAnInStackQueuedSpinLock) {
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /

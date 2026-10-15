@@ -81,7 +81,11 @@ public:
   llvm::Expected<std::optional<uint32_t>>
   tryAcquireSet(llvm::ArrayRef<WaitCondition> Conditions, bool All,
                 uint64_t ThreadKey, uint8_t CurrentIRQL);
-  bool ownsMutex(uint64_t ThreadKey) const;
+  bool ownsMutex(uint64_t ThreadKey, uint64_t ReleasingAddress = 0) const;
+  /// Embedded fast-mutex events share this owner's event identity. The
+  /// guarded initializer also publishes its target-specific byte layout.
+  llvm::Error initializeFastMutexEvent(uint64_t Address);
+  llvm::Error validateFastMutexEvent(uint64_t Address) const;
 
   /// Framework wait locks share dispatcher ownership and opaque storage. An
   /// interrupt reservation exists before its guest thread begins execution.
@@ -127,7 +131,8 @@ private:
   uint64_t Thread = 0;
   std::map<uint64_t, Object> Objects;
 
-  llvm::Error initialize(uint64_t Address, Object State);
+  llvm::Error initialize(uint64_t Address, Object State,
+                         llvm::ArrayRef<uint8_t> InitialBytes = {});
   llvm::Expected<Object *> object(uint64_t Address, Kind Type, bool IsWrite);
   llvm::Error canRelease(uint64_t Address, const Object &State) const;
   bool hasArmedTimerReference(uint64_t DPC) const;

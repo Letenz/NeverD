@@ -25,7 +25,18 @@ bool isArchitecturalNoReturn(const LowOp &Op) {
           : std::nullopt);
 }
 
-bool lowFunctionNeverReturns(const LowFunc &Func, Arch TheArch) {
+bool lowFunctionNeverReturns(
+    const LowFunc &Func, Arch TheArch,
+    llvm::function_ref<bool(va_t)> TailCalleeNeverReturns) {
+  // A tail call stands for `call target; ret`: the return is reached only
+  // if the target returns.
+  const auto endsInTailCall = [&](const LowInstructionBoundary &Insn) {
+    return TailCalleeNeverReturns &&
+           Insn.Control == LowInstructionControl::TailCall &&
+           !hasLowInstructionControlFlag(Insn.ControlFlags,
+                                         LowInstructionControlFlag::Indirect) &&
+           Insn.Immediate && TailCalleeNeverReturns(*Insn.Immediate);
+  };
   std::map<int, const LowBlock *> BlocksById;
   const LowBlock *Entry = nullptr;
   for (const LowBlock &Block : Func.Blocks) {
@@ -45,7 +56,7 @@ bool lowFunctionNeverReturns(const LowFunc &Func, Arch TheArch) {
     // not returning or an architectural trap ends the path.
     bool PathEnds = false;
     for (const LowInstructionBoundary &Insn : Block.InstructionBoundaries) {
-      if (isUnconditionalNoReturn(Insn)) {
+      if (isUnconditionalNoReturn(Insn) || endsInTailCall(Insn)) {
         PathEnds = true;
         break;
       }

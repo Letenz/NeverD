@@ -1356,6 +1356,15 @@ incomplete rather than supplying an unconstrained value or a negative dependency
 certificate. Validation debits the same shared graph work account on cold and
 cached queries; unsupported opcodes acquire no semantics from this check.
 
+An immutable resolver graph may retain completed backward definition searches
+in a bounded, lazily allocated table. Exact block, use position, register view
+and target-register identity bind each entry. Value and affine-frame proofs
+reuse only the next possible definition, then perform their ordinary byte-lane,
+ABI, predicate and value checks. Calls remain candidates; an exhausted search is
+never retained. Hits debit every operation the original scan would visit,
+including the returned candidate, so reuse preserves evidence-budget outcomes.
+Short prefixes keep their ordinary scan. Graph replacement retires the table.
+
 Frame-memory reaching values include an unknown entry arm at every active proof
 root, including roots with loop predecessors. A future back-edge STORE cannot
 certify first-iteration contents or an authenticated writer. Definite writers
@@ -2914,6 +2923,8 @@ native-proof contract.
 
 Raw specialization also accepts exact 8+8-byte `CONCAT` into a writable 16-byte scalar. The first input supplies the high 64 bits and the second supplies the low 64 bits, independently of storage byte order. Both inputs must be complete scalar locations or constants. The existing explicit, nonfaulting, default-space and unordered-operation restrictions remain; `SymExec` owns evaluation, and aliasing outputs read both original inputs before writing. This adds no source layout or native-proof contract.
 
+For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
@@ -4260,7 +4271,10 @@ completion preflights dependencies before automatic unlock/free. Partial MDLs
 retain independent descriptor, root-lock and borrowed-alias ownership.
 
 `KernelRegistry` owns the explicitly configured session tree, per-handle access
-rights and lifetime, value serialization, and mutations. Scenario preflight and
+rights and lifetime, key/value serialization, and mutations. Its explicit
+registry epoch is combined with the shared scheduler's elapsed time; it owns
+per-key timestamp validity and cached maximum lengths. Missing time never
+falls back to host time. Scenario preflight and
 runtime operations share its validation limits. The model does not consult a
 host registry; reports distinguish original configuration from the final live
 key/value snapshot. Closing a registry handle does not delete its key, and
@@ -4298,6 +4312,27 @@ finalize. This does not provide general
 thread/APC/spinlock scheduling, arbitrary concurrent request arrival, PnP
 cancellation, full PnP/power or general hardware. API IRQL ceilings come from `KernelAPIIRQL.def`, with
 argument-dependent checks in the owning model.
+
+`KernelModelLookaside` owns paged/nonpaged lookaside registration and the kernel-owned fields of the x64 header. WDK inline cache contents and counters remain in guest bytes; the existing SLIST operations and pool allocator retain their ownership. Default callback addresses come from the session export registry. Deletion preflights the entire cache and both registration neighbors before retiring anything; storage retirement and unload share the live-list and cached-entry guards. MDL admission prevents aliases and DMA borrows from bypassing header ownership. These bounded lifetimes retain an explicit unpack dependency.
+
+`KernelModelFastMutex` owns fast/guarded mutex holds by logical thread and validates
+IRQL/APC-region restoration against all remaining holds. `KernelDispatcher`
+remains the sole owner of the embedded synchronization event, including the
+verified initializer bytes; the fast-mutex layer never creates a second event
+state. Initialization/acquisition and MDL admission share storage-borrow guards
+with lookaside lists, so aliases cannot bypass held-object ownership. Guest
+returns, thread termination, memory retirement and unload check the same hold
+inventory. AutoBoost waiting and contended blocking acquisition stop explicitly;
+the uncontended model retains an unpack dependency.
+
+`KernelModelExecutiveResources` owns legacy ERESOURCE registration, logical-thread
+recursion, exclusive/shared mode, tagged owner transfers and private owner tables.
+The opaque guest bytes serialize that state, including table growth, reuse and
+retirement. Initialization and deletion preflight registration neighbors; MDL and
+storage-retirement guards cover both records and private tables. APC-region,
+IRQL, fast-mutex and final KMUTEX releases validate the remaining resource holds
+before changing state. Blocking contention and thread-referenced transfers are
+explicitly unsupported. Resource operations retain a recovery dependency.
 
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
@@ -6337,6 +6372,8 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Sequential raw compare-and-exchange
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
+
+`KernelModelObjects.cpp` owns process/thread pointer references, handle metadata and retirement. Scheduling owns execution holds and exit; waits retain their existing domain holds. Referenced borrowed threads survive callback/stack retirement. Reused stacks get new identities and priorities, while retained old objects preserve their exit priority. Process identities remain session-owned; registry handles still route to the registry owner pending integration.
 
 ### Live proc and maintained file metadata
 

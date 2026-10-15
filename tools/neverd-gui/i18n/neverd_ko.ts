@@ -1509,8 +1509,8 @@ Double-click to go to the declaration.</source>
         <translation>현재 함수 변환</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>이 함수를 기호적으로 단순화</translation>
+        <source>Symbolic simplification</source>
+        <translation>기호 단순화</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

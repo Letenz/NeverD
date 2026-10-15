@@ -721,6 +721,100 @@ private:
   llvm::Expected<uint64_t> popEntrySList(uint64_t Header);
   llvm::Expected<uint64_t> flushSList(uint64_t Header);
   llvm::Expected<uint64_t> querySList(uint64_t Header, bool FirstEntry);
+
+  struct Lookaside {
+    bool Paged;
+    uint32_t Type, EntrySize, Tag;
+    uint64_t Allocate, Free;
+  };
+  std::map<uint64_t, Lookaside> Lookasides;
+  uint64_t LookasideHeads[2] = {};
+  llvm::Expected<uint64_t> initializeLookaside(llvm::ArrayRef<uint64_t> A,
+                                               bool Paged);
+  llvm::Expected<uint64_t> deleteLookaside(uint64_t Address, bool Paged);
+  llvm::Error validateLookasideAccess(uint64_t Address, uint32_t Size,
+                                      bool IsWrite) const;
+  llvm::Error canReleaseLookasideRange(uint64_t Address, uint64_t Size,
+                                       uint64_t Retiring) const;
+  llvm::Expected<std::vector<uint64_t>>
+  lookasideEntries(uint64_t Address) const;
+  llvm::Error writableLookasideStorage(uint64_t Address, uint32_t Size) const;
+  llvm::Error validateKernelObjectBorrow(uint64_t Address, uint64_t Size) const;
+  llvm::Error validateUnborrowedKernelStorage(uint64_t Address,
+                                              uint64_t Size) const;
+  enum class FastMutexMode { Normal, Unsafe, UnsafeGuarded };
+  struct FastMutexHold {
+    uint64_t Thread, Object;
+    uint8_t OldIRQL;
+    FastMutexMode Mode;
+  };
+  std::map<uint64_t, FastMutexHold> FastMutexHolds;
+  llvm::Expected<uint64_t> initializeFastMutex(uint64_t Address);
+  llvm::Expected<uint64_t> acquireFastMutex(uint64_t Address,
+                                            FastMutexMode Mode, bool Try);
+  llvm::Expected<uint64_t> releaseFastMutex(uint64_t Address, bool Unsafe);
+  llvm::Error validateFastMutexStorage(uint64_t Address, bool Initialize) const;
+  llvm::Error validateFastMutexAccess(uint64_t Address, uint32_t Size,
+                                      bool IsWrite) const;
+  llvm::Error validateFastMutexContext(uint8_t IRQL, uint16_t Critical,
+                                       uint16_t Guarded,
+                                       uint64_t Retiring = 0) const;
+  bool threadHoldsFastMutex(uint64_t Thread) const;
+  enum class ExecutiveResourceMode {
+    Exclusive,
+    Shared,
+    SharedWaitForExclusive
+  };
+  struct ExecutiveResourceOwner {
+    uint64_t Thread = 0, Value = 0;
+    uint32_t Count = 0;
+  };
+  struct ExecutiveResource {
+    uint64_t Flink = 0, Blink = 0, Table = 0;
+    bool Exclusive = false, BoostDisabled = false;
+    // Slot zero is the inline owner. A table has an unused header slot zero
+    // and the remaining owners at the same indices as this vector.
+    std::vector<ExecutiveResourceOwner> Owners{1};
+  };
+  std::map<uint64_t, ExecutiveResource> ExecutiveResources;
+  uint64_t ExecutiveResourceHead = 0;
+  llvm::Error validateExecutiveResourceAccess(uint64_t Address,
+                                              uint64_t Size) const;
+  llvm::Error canReleaseExecutiveResourceRange(uint64_t Address,
+                                               uint64_t Size) const;
+  llvm::Error validateExecutiveResourceMemory(uint64_t Address, uint32_t Size,
+                                              bool Write) const;
+  llvm::Expected<ExecutiveResource *>
+  executiveResource(uint64_t Address, bool Write,
+                    bool AllowTransferred = false);
+  std::vector<uint8_t> executiveResourceBytes(const ExecutiveResource &State,
+                                              bool Table) const;
+  llvm::Error validateExecutiveResourceRegistry() const;
+  llvm::Error publishExecutiveResource(uint64_t Address,
+                                       const ExecutiveResource &State);
+  llvm::Error validateExecutiveResourceContext(uint8_t IRQL, uint16_t Critical,
+                                               uint16_t Guarded,
+                                               uint64_t Retiring = 0,
+                                               uint64_t Owner = 0,
+                                               bool IgnoreMutex = false) const;
+  llvm::Error validateExecutiveResourceRestoreIRQL(uint8_t IRQL) const;
+  bool threadHoldsExecutiveResource(uint64_t Thread) const;
+  llvm::Expected<uint64_t> initializeExecutiveResource(uint64_t Address);
+  llvm::Expected<uint64_t> resetExecutiveResource(uint64_t Address,
+                                                  bool Delete);
+  llvm::Expected<uint64_t> acquireExecutiveResource(uint64_t Address,
+                                                    ExecutiveResourceMode Mode,
+                                                    bool Wait,
+                                                    bool EnterCritical = false);
+  llvm::Expected<uint64_t> releaseExecutiveResource(uint64_t Address,
+                                                    uint64_t Owner,
+                                                    bool LeaveCritical);
+  llvm::Expected<uint64_t> queryExecutiveResource(uint64_t Address,
+                                                  bool Exclusive, bool Waiters);
+  llvm::Expected<uint64_t> convertExecutiveResource(uint64_t Address);
+  llvm::Expected<uint64_t> disableExecutiveResourceBoost(uint64_t Address);
+  llvm::Expected<uint64_t>
+  transferExecutiveResource(uint64_t Address, uint64_t Owner, uint32_t Flags);
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
@@ -798,19 +892,35 @@ private:
   std::map<uint64_t, Wait> WaitRegistrations;
   std::map<uint64_t, size_t> WaitReferences;
   std::map<std::pair<uint64_t, uint32_t>, size_t> WaitBlockReferences;
-  struct SystemThread {
-    uint64_t Handle = 0;
+  enum class ObjectKind { Process, Thread };
+  struct ObjectReferences {
+    ObjectKind Kind;
+    size_t Pointers = 0;
+    size_t Handles = 0;
+  };
+  struct ObjectHandle {
+    uint64_t Object;
+    uint32_t GrantedAccess;
+    uint32_t Attributes;
+    uint32_t ProcessID;
+  };
+  // External references have one owner. Execution and registered waits keep
+  // their domain-owned holds until completion; they are not caller references.
+  std::map<uint64_t, ObjectReferences> ReferencedObjects;
+  std::map<ObjectKind, uint64_t> ObjectTypes;
+  std::map<uint64_t, ObjectHandle> ObjectHandles;
+  uint64_t NextObjectHandle = profile::SystemThreadHandleBase;
+  struct ThreadObject {
     uint64_t CallbackID = 0;
+    uint32_t ProcessID = 0;
     uint32_t ExitStatus = 0;
-    size_t PointerReferences = 0;
-    bool HandleOpen = true;
+    uint32_t ExitPriority = 0;
+    bool System = false;
     bool Exited = false;
     bool Terminating = false;
   };
-  std::map<uint64_t, SystemThread> SystemThreads;
+  std::map<uint64_t, ThreadObject> ThreadObjects;
   std::map<uint64_t, uint64_t> CurrentThreadObjects;
-  std::map<uint64_t, uint64_t> ThreadHandles;
-  uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
   /// Client IDs of live thread objects, assigned on first observation. Issued
   /// IDs are never reused, and requestor process IDs may not collide with them.
@@ -823,10 +933,24 @@ private:
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> terminateSystemThread(uint32_t Status);
   llvm::Expected<uint64_t>
-  referenceThreadByHandle(llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<uint64_t> dereferenceThread(uint64_t Object);
+  referenceObjectByHandle(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t>
+  referenceObjectByPointer(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> referenceObject(uint64_t Object);
+  llvm::Expected<uint64_t> dereferenceObject(uint64_t Object);
+  llvm::Expected<uint64_t> objectType(uint64_t Object);
+  llvm::Expected<uint64_t>
+  openObjectByPointer(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> lookupProcess(uint64_t ID, uint64_t Output);
+  llvm::Expected<uint64_t> lookupThread(uint64_t ID, uint64_t Output);
+  llvm::Expected<uint64_t> threadProcess(uint64_t Object);
+  llvm::Expected<uint64_t> threadTerminating(uint64_t Object) const;
+  llvm::Error validateObjectOutput(uint64_t Address, uint32_t Size);
+  bool matchesObjectType(ObjectKind Kind, uint64_t Type) const;
+  void retainObjectHandle(uint64_t Object, uint32_t Access, uint32_t Attributes,
+                          uint32_t ProcessID);
   llvm::Expected<uint64_t> closeHandle(uint64_t Handle);
-  void retireThreadIfUnreferenced(uint64_t Object);
+  void retireObjectIfUnreferenced(uint64_t Object);
   void retireBorrowedThread(uint64_t Key);
   llvm::Expected<uint64_t> threadPriorityKey(uint64_t Object,
                                              bool Changing) const;
@@ -846,7 +970,8 @@ private:
   llvm::Error validateRemoveLockOwner(uint64_t Lock) const;
   llvm::Error canReleaseRemoveLockStorage(uint64_t Base, uint64_t Size) const;
   llvm::Error canReleaseRange(uint64_t Base, uint64_t Size,
-                              uint64_t IgnoredDMAPin = 0) const;
+                              uint64_t IgnoredDMAPin = 0,
+                              uint64_t RetiringLookaside = 0) const;
   llvm::Expected<uint64_t> beginWait(llvm::ArrayRef<uint64_t> Arguments,
                                      bool Delay);
   llvm::Expected<uint64_t>
@@ -857,7 +982,8 @@ private:
   llvm::Error releaseWaitReferences(const Wait &Pending);
   llvm::Error
   canRevokeVirtualRange(uint64_t Base, uint64_t Size,
-                        std::optional<UsbIdleKey> RetiringUsbIdle = {}) const;
+                        std::optional<UsbIdleKey> RetiringUsbIdle = {},
+                        uint64_t RetiringLookaside = 0) const;
   llvm::Error prepareRevokeVirtualRange(uint64_t Base, uint64_t Size);
   llvm::Error prepareReleaseRange(uint64_t Base, uint64_t Size,
                                   uint64_t IgnoredDMAPin = 0);

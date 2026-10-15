@@ -1524,8 +1524,8 @@ Double-click to go to the declaration.</source>
         <translation>تحويل الدالة الحالية</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>تبسيط هذه الدالة رمزيًا</translation>
+        <source>Symbolic simplification</source>
+        <translation>التبسيط الرمزي</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

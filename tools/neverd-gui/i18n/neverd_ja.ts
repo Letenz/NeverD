@@ -1509,8 +1509,8 @@ Double-click to go to the declaration.</source>
         <translation>現在の関数を変換します</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>この関数をシンボリックに簡約します</translation>
+        <source>Symbolic simplification</source>
+        <translation>シンボリック簡約</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

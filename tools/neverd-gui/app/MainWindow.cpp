@@ -2751,8 +2751,9 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     code->addSourceActions(menu);
     if (text->hasPrelude()) {
       const bool folded = text->preludeFolded();
-      auto *declarations = menu.addAction(folded ? tr("Expand declarations")
-                                                 : tr("Collapse declarations"));
+      auto *declarations = menu.addAction(
+          icon(folded ? QStringLiteral("expand") : QStringLiteral("collapse")),
+          folded ? tr("Expand declarations") : tr("Collapse declarations"));
       declarations->setStatusTip(
           tr("Show or hide the includes and declarations before the function "
              "(Keypad + / Keypad -)"));
@@ -2762,7 +2763,8 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (text->foldableCount() > 0) {
       const bool folded = text->libraryFolded();
       auto *library =
-          menu.addAction(folded ? tr("Expand library operations")
+          menu.addAction(icon(QStringLiteral("function_library")),
+                         folded ? tr("Expand library operations")
                                 : tr("Collapse library operations"));
       connect(library, &QAction::triggered, text,
               [text, folded] { text->setFolded(!folded); });
@@ -2823,11 +2825,17 @@ void MainWindow::editFunction(Address entry) {
         if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
           return;
         // A new name is a rename, and the attributes an edit of their own:
-        // each is a step of the history.
+        // each is a step of the history.  The edit follows the rename, so a
+        // name the worker refuses applies neither.
+        const auto edit = [this, entry, epoch,
+                           changed = dialog.changedAttributes()] {
+          session_.editFunction(entry, changed, epoch);
+        };
         if (const auto name = dialog.name();
             !name.isEmpty() && name != attributes.value("name").toString())
-          session_.rename(entry, name, epoch);
-        session_.editFunction(entry, dialog.changedAttributes(), epoch);
+          session_.rename(entry, name, epoch, edit);
+        else
+          edit();
       });
 }
 
