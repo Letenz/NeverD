@@ -192,9 +192,10 @@ direct callees must have checked caller-cleanup stack behavior. Indirect or
 unproved cleanup conventions remain rejected.
 
 Native callback TryLevel writes additionally require
-`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, which the r4 compiler does not
-provide. The current path accepts checked constant 8-, 16- and 32-bit stores
-when every reaching transition produces one complete resulting level. Narrow
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
+compiler and absent from r4. The current path accepts checked constant 8-, 16-
+and 32-bit stores when every reaching transition produces one complete resulting
+level. Narrow
 writes preserve untouched high bytes; different possible full results still
 require a separate runtime selection plan. Each generated write binds the exact
 source occurrence, owning callback, recovered parent frame and scope semantic

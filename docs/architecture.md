@@ -346,7 +346,8 @@ instruction span and actual x86 address register. Codegen preserves these
 identities and source order across layout passes; final COFF validation checks
 unique code storage and the exact MOV32 displacement, immediate and base
 register. Rebased addresses and temporary symbols are not source identities.
-The r4 compiler lacks this capability and refuses native callback state writes.
+The pinned r5 compiler provides this capability; older r4 compilers refuse
+native callback state writes.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
 `MedLLVMRegistrationIncoming` owns the transactional caller-frame projection

@@ -2721,7 +2721,7 @@ jobs:
             --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Execute reconstructed SEH3 and EH4 source through both CLI modes and rebasing
         env:
-          REGISTRATION_SOURCE_PROFILE: ${{ inputs.windows_eh_llvm_artifact_run != '' && 'all' || 'r4' }}
+          REGISTRATION_SOURCE_PROFILE: all
         run: |
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*:RegistrationEntryABI.InputPE32*:RegistrationRelift.InputPE32* \
@@ -2809,7 +2809,7 @@ jobs:
           name: windows-eh-x86-runtime-arm32-contracts
           path: build-windows-eh
       - name: Replay identical original and rewritten PE32 images on Windows
-        run: python scripts/replay_windows_registration.py --source-only --source-profile ${{ inputs.windows_eh_llvm_artifact_run != '' && 'all' || 'r4' }} --evidence-root build-windows-eh/evidence --output build-windows-eh/native-seh-source.json
+        run: python scripts/replay_windows_registration.py --source-only --source-profile all --evidence-root build-windows-eh/evidence --output build-windows-eh/native-seh-source.json
       - name: Preserve native SEH execution evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

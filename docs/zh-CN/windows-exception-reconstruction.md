@@ -135,7 +135,8 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 或无法证明的栈清理约定仍被拒绝。
 
 callback 内 TryLevel 写入的原生重建还要求
-`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`，r4 编译器不提供这一能力。
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`；固定的 r5 编译器已提供这一能力，
+r4 编译器仍不具备。
 当前路径接受经过检查的常量 8、16、32 位写入，但要求所有到达迁移产生同一个完整
 目标 level。窄写入保留未覆盖的高位；若存在多个不同的完整输出，仍需要单独的运行时
 选择方案。

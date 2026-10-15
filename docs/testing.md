@@ -3970,7 +3970,7 @@ installation.
 Native installation needs the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
-`LLVM_NEVERD_X86_REGISTRATION_GS`. The pinned r4 packages and their matching
+`LLVM_NEVERD_X86_REGISTRATION_GS`. The pinned r5 packages and their matching
 source commit provide these receipts, including the C++ catch-subfield,
 function-range and handler receipts needed by native C++ reconstruction.
 
@@ -4058,8 +4058,11 @@ receipt transport through layout changes and final ownership/range closure;
 `CompiledSEHStateStoreBytes.*` checks every architectural address register,
 displacements and rejection of extra instructions or indexed addresses.
 The native receipt tests require
-`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`; r4 builds retain analysis and
-refusal coverage but cannot run the new compiler-protocol tests.
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
+packages. Older r4 builds retain analysis and refusal coverage but cannot run
+these compiler-protocol tests. The focused Wine job and native Windows source
+replay use the complete `all` profile with the published compiler; an LLVM
+workflow artifact override is no longer needed for these 61 source scenarios.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
