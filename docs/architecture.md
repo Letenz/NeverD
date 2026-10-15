@@ -6483,5 +6483,13 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
+`AndroidJNIMethods` owns the finite intrinsic method catalogue, descriptor binding
+and execution; all JNI call forms reuse it and Bionic's GP argument reader.
+`LinuxBinderTransactions` routes object-free messages between guest-owned opens;
+LinuxMemory owns their read-only arenas and every service body remains guest code.
+`LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
+MemoryView physical pins and the existing KGSL context/memstore owner. JSON
+adapters declare these contracts and never infer methods, services or commands.
+
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.

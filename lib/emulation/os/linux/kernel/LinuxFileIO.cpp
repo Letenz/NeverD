@@ -26,7 +26,7 @@ std::optional<uint64_t> LinuxFiles::duplicate(ServiceKind Kind, uint32_t Old,
   if (Target != Descriptors.end() && Target->second != I->second &&
       !canRelease(Target->second))
     return unsupported(
-        Result, "GPU descriptor replacement cannot retire a busy context");
+        Result, "Device descriptor replacement cannot retire pending work");
   // Save before replacement, including Old == New. No observer can see an
   // intermediate close/reallocation or a different open-description identity.
   if (Old == New)
@@ -49,7 +49,7 @@ LinuxFiles::close(uint32_t FD, ProcessResult &Result) {
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (!canRelease(I->second))
-    return unsupported(Result, "GPU last close cannot retire a busy context");
+    return unsupported(Result, "Device last close cannot retire pending work");
   Descriptors.erase(I);
   CloseOnExec.erase(FD);
   return std::optional<uint64_t>(0);

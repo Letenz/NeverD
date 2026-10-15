@@ -6860,3 +6860,19 @@ native transports remain skips, not execution evidence.
 `KernelNamespaceTests.cpp` checks typed names, root-relative and case-sensitive lookup, buffer sizing/copy order, captured link tails, permissions, process scope, IRQL, failed-output reference safety and held deletion. `DriverNamespaceTests.cpp` runs original `driver_namespace.c` on available Unicorn/KVM/WHP/HVF, both contracts, both load addresses and cooperative/17-instruction scheduling. `NativeDriverTests.def` requires native outcomes. Unavailable backends and unsupported information/security classes remain coverage gaps.
 
 `KernelRegistryTests.cpp` covers independent opens, typed references, cloned handles, process scope, generic mapping, deleted identities, odd/short name buffers, aliased output ordering and failure/capacity boundaries. Original `fixtures/driver_registry_objects.c` runs through `DriverRegistryObjectTests.cpp` on each available backend, both execution contracts and image bases, with cooperative and 17-instruction scheduling. A deliberate pointer leak verifies unload rejection. Native acceptance requires all four contract/base outcomes.
+
+
+### Android method, transaction and command execution
+
+Build the Android/Linux/process-public/execution-session targets in Release.
+`AndroidJNI` validates ordinary/V/A intrinsic calls, UTF-16 results, constructor
+copies, virtual/nonvirtual identity, cached names, exception ordering and invalid
+IDs/types. `AndroidBinder` executes guest service replies on cooperative threads;
+`LinuxBinder` separately checks full LP64 records and read-only buffer ownership
+on x64 and AArch64. `AndroidDevices` and `LinuxProcess` run original PM4 callers,
+including retained physical memory after CPU address reuse and refused programs
+with no earlier writes. Run focused `ctest -R 'AndroidJNI|Binder|GPUCommands|RejectedGPU|StatefulDescriptorsPages|StatefulDevicesValidate'`,
+then the four owning labels. Process-public C API/CLI and Python integration
+exercise the same paths; transport unavailability is a skip, never evidence of
+execution. These authored workloads do not establish arbitrary application,
+Android service or shader coverage.

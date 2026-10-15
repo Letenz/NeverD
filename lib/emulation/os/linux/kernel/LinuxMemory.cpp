@@ -354,7 +354,7 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
         validRange(Event.Arguments[0], *Size) &&
         !canRetireDevices(Event.Arguments[0], *Size)) {
       Result.Stop = ProcessStopReason::UnsupportedService;
-      Result.Diagnostic = "GPU last mapping cannot retire a busy context";
+      Result.Diagnostic = "Device last mapping cannot retire pending work";
       return std::optional<uint64_t>();
     }
     return Reply(unmap(Event));

@@ -735,15 +735,16 @@ Pending-exception cleanup preserves both exception identity and borrowed values.
 Slots not implemented stop with their standard JNI table index in the diagnostic.
 
 The supported class set comprises Object, Class, String, Throwable, Exception,
-Error, RuntimeException, IllegalArgumentException, IndexOutOfBoundsException,
+Error, RuntimeException, NullPointerException, IllegalArgumentException, IndexOutOfBoundsException,
 ArrayIndexOutOfBoundsException, StringIndexOutOfBoundsException,
 NegativeArraySizeException, ArrayStoreException and OutOfMemoryError, plus the
 primitive and Object/String array classes. Unknown classes stop rather than
 inventing an application class or assuming ClassNotFoundException. `ThrowNew`
 admits only a null message for these intrinsic throwable classes.
 
-There is no Java method/field execution, class loader, native-method
-registration, monitor, weak-reference, critical/direct-buffer, GC or JIT model.
+Java execution is limited to the intrinsic methods below. There is no field
+execution, DEX/class loader, native-method registration, monitor, weak-reference,
+critical/direct-buffer, GC or JIT model.
 Attachment names/groups and VM destruction also remain unsupported. The model
 retains at most 4096 objects and 4096 live references/borrows, with object storage
 bounded by half the memory limit and 512 unique attachment identities per
@@ -771,3 +772,40 @@ object-array initializer are JNI abort boundaries, represented by `runtime_failu
 not recoverable Java exceptions. Array-region bounds and `SetObjectArrayElement`
 type mismatches produce pending Java exceptions. Negative local-frame capacity
 returns `JNI_ERR` without pushing a frame. These distinctions are tested separately.
+
+
+### Intrinsic Java method execution
+
+GetMethodID/GetStaticMethodID resolve opaque, VM-owned method IDs. Ordinary,
+`V` and `A` calls share the same descriptor, receiver, invocation-kind and
+return-type checks. GP varargs reuse the Bionic AAPCS64 reader, including stack
+arguments; `A` calls read eight-byte jvalue carriers and consume only declared
+primitive bits. Method IDs survive deletion of the lookup reference. A zero-arg
+method does not read its argument pointer. Unknown method bodies stop with the
+class, method and signature; they are not evidence for NoSuchMethodError.
+
+The independently implemented, value-based subset is:
+
+- Object.getClass/equals, including String's virtual equals override and explicit
+  nonvirtual Object identity; Class.getName/isArray, with cached name identity.
+- String.length/isEmpty/charAt/hashCode/equals/toString, concat, substring with
+  one or two integer indices, compareTo(String), startsWith with optional offset,
+  endsWith, indexOf(String) with optional starting index, getChars and toCharArray.
+- String constructors for empty, String and char[] (whole array or offset/count),
+  plus static valueOf for int, long, boolean, char and char[].
+
+The operations compute UTF-16 values from the actual arguments and preserve
+copy/alias behavior, 32-bit hash overflow, bounds and null exception ordering.
+Boolean and minimum-integer literal identities, and Android's cached int strings
+for -99 through 99, are retained separately from newly allocated value strings.
+getChars validates its destination before writing and preserves it on exception.
+Allocation shares the JNI object budget. String search also has a finite work
+budget. Float/double methods, application methods and arbitrary class
+initializers remain unsupported. This is not a DEX interpreter.
+
+Semantic references are the pinned Android 9
+[String](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/String.java),
+[Class](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Class.java),
+[Integer](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Integer.java),
+[Long](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Long.java)
+and JNI invocation contracts linked above. No host Java runtime is invoked.

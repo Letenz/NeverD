@@ -119,6 +119,44 @@ TEST_P(AndroidDevices, ContextOwnershipAndTimestampQueriesShareMappedBytes) {
     EXPECT_EQ(R.ReturnValue, 0u);
   }
 }
+TEST_P(AndroidDevices, GPUCommandsWritePinnedRAMAndRetireOwnedTimestamps) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  for (uint64_t Route = 0; Route != 4; ++Route) {
+    SCOPED_TRACE(Route);
+    auto R = run("devices_gpu_commands", {Route});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidDevices, RejectedGPUProgramsCannotPublishEarlierWrites) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles->Devices.at("/fixture/control") = D;
+  for (uint64_t Mode = 0; Mode != 4; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Memory = {
+        {Buffer, 8192, std::vector<uint8_t>(8192, 0xa5), false}};
+    Options.Android->ReadMemory = {{Buffer, 4096},
+                                   {Buffer + 4096 + 20, 4},
+                                   {0x22000000 + 40, 4},
+                                   {0x22000000 + 48, 4}};
+    auto R = run("devices_gpu_rejected", {Mode, Buffer});
+    EXPECT_EQ(R.Stop, Mode == 1 ? ProcessStopReason::RuntimeFailure
+                                : ProcessStopReason::UnsupportedService)
+        << R.Diagnostic;
+    ASSERT_EQ(R.MemorySnapshots.size(), 4u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(4096, 0xa5));
+    EXPECT_EQ(R.MemorySnapshots[1].Bytes,
+              (std::vector<uint8_t>{0xef, 0xbe, 0xad, 0xde}));
+    EXPECT_EQ(R.MemorySnapshots[2].Bytes, std::vector<uint8_t>(4, 0));
+    EXPECT_EQ(R.MemorySnapshots[3].Bytes, std::vector<uint8_t>(4, 0));
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
 
 TEST_P(AndroidDevices, ContextRefusalsDoNotInventOutputs) {
   Options.LinuxFiles->Devices.at("/fixture/control") = contextDeviceTestInput();

@@ -219,7 +219,7 @@ int jni_stale_ref(void) {
 int jni_unknown_method(void) {
   Handle e = attach();
   Ref cls = C(e, Ref, 6, "java/lang/String");
-  return (int)C(e, Ref, 33, cls, "length", "()I");
+  return (int)C(e, Ref, 33, cls, "intern", "()Ljava/lang/String;");
 }
 int jni_invalid_utf8(void) {
   Handle e = attach();
@@ -355,4 +355,196 @@ int jni_bad_array_initializer(void) {
   Ref cls = C(e, Ref, 6, "java/lang/String");
   Ref array = C(e, Ref, 176, 1);
   return (int)C(e, Ref, 172, 1, cls, array);
+}
+
+/* Method execution uses independently authored standard JNI calls. */
+static Ref method(Handle e, Ref c, const char *n, const char *s) {
+  return C(e, Ref, 33, c, n, s);
+}
+static U16 char_v(Handle e, Ref s, Ref m, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, m);
+  U16 v = C(e, U16, 44, s, m, args);
+  __builtin_va_end(args);
+  return v;
+}
+static U16 char_v_stack(Handle e, Ref s, Ref m, int a, int b, int c, int d,
+                        int last, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, last);
+  U16 v = C(e, U16, 44, s, m, args);
+  __builtin_va_end(args);
+  return v;
+}
+int jni_method_values(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref root = C(e, Ref, 6, "java/lang/Object");
+  Ref s = C(e, Ref, 167, "A\300\200\355\240\275\355\270\200Z");
+  Ref same = C(e, Ref, 167, "A\300\200\360\237\230\200Z");
+  Ref length = method(e, cls, "length", "()I");
+  CHECK(length && length == method(e, cls, "length", "()I"));
+  CHECK(C(e, int, 49, s, length) == 5);
+  CHECK(C(e, int, 51, s, length, (void *)1) == 5); /* No argument reads. */
+  CHECK(!C(e, U8, 37, s, method(e, cls, "isEmpty", "()Z")));
+  Ref ch = method(e, cls, "charAt", "(I)C");
+  CHECK(C(e, U16, 43, s, ch, 2) == 0xd83d);
+  CHECK(char_v(e, s, ch, 3) == 0xde00);
+  CHECK(char_v_stack(e, s, ch, 0, 0, 0, 0, 0, 1) == 0);
+  U64 args[4] = {0xdeadbeef00000004ULL, 0, 0, 0};
+  CHECK(C(e, U16, 45, s, ch, args) == 90);
+  CHECK(C(e, int, 49, s, method(e, cls, "hashCode", "()I")) == 114988824);
+  Ref eq = method(e, root, "equals", "(Ljava/lang/Object;)Z");
+  CHECK(C(e, U8, 37, s, eq, same));        /* Virtual override. */
+  CHECK(!C(e, U8, 67, s, root, eq, same)); /* Object identity. */
+  CHECK(C(e, U8, 67, s, root, eq, s));
+  CHECK(!C(e, U8, 37, s, eq, (Ref)0));
+  Ref identity =
+      C(e, Ref, 34, s, method(e, cls, "toString", "()Ljava/lang/String;"));
+  CHECK(C(e, U8, 24, s, identity));
+  Ref sub = method(e, cls, "substring", "(II)Ljava/lang/String;");
+  args[0] = 2;
+  args[1] = 4;
+  Ref pair = C(e, Ref, 36, s, sub, args);
+  CHECK(C(e, int, 164, pair) == 2);
+  U16 units[8] = {0x7e7e, 0x7e7e, 0x7e7e, 0x7e7e,
+                  0x7e7e, 0x7e7e, 0x7e7e, 0x7e7e};
+  C(e, void, 220, pair, 0, 2, units + 1);
+  CHECK(units[0] == 0x7e7e && units[1] == 0xd83d && units[2] == 0xde00 &&
+        units[3] == 0x7e7e);
+  identity = C(e, Ref, 34, s, sub, 0, 5);
+  CHECK(C(e, U8, 24, s, identity));
+  Ref suffix = C(e, Ref, 167, "Z");
+  Ref concat =
+      C(e, Ref, 34, pair,
+        method(e, cls, "concat", "(Ljava/lang/String;)Ljava/lang/String;"),
+        suffix);
+  CHECK(C(e, int, 164, concat) == 3);
+  CHECK(C(e, int, 49, s, method(e, cls, "indexOf", "(Ljava/lang/String;)I"),
+          concat) == 2);
+  CHECK(C(e, int, 49, s, method(e, cls, "indexOf", "(Ljava/lang/String;I)I"),
+          pair, 3) == -1);
+  Ref empty = C(e, Ref, 167, "");
+  CHECK(C(e, int, 49, s, method(e, cls, "indexOf", "(Ljava/lang/String;I)I"),
+          empty, 99) == 5);
+  CHECK(C(e, U8, 37, s, method(e, cls, "startsWith", "(Ljava/lang/String;I)Z"),
+          pair, 2));
+  CHECK(!C(e, U8, 37, s, method(e, cls, "startsWith", "(Ljava/lang/String;I)Z"),
+           pair, -1));
+  CHECK(C(e, U8, 37, s, method(e, cls, "endsWith", "(Ljava/lang/String;)Z"),
+          suffix));
+  CHECK(C(e, int, 49, s, method(e, cls, "compareTo", "(Ljava/lang/String;)I"),
+          suffix) == -25);
+  Ref array = C(e, Ref, 34, s, method(e, cls, "toCharArray", "()[C"));
+  CHECK(C(e, int, 171, array) == 5);
+  Ref ctor = method(e, cls, "<init>", "([CII)V");
+  args[0] = array;
+  args[1] = 2;
+  args[2] = 2;
+  Ref constructed = C(e, Ref, 30, cls, ctor, args);
+  CHECK(C(e, U8, 37, pair, eq, constructed));
+  CHECK(!C(e, U8, 24, pair, constructed));
+  Ref copy = method(e, cls, "getChars", "(II[CI)V");
+  C(e, void, 61, suffix, copy, 0, 1, array, 0);
+  C(e, void, 202, array, 0, 5, units + 1);
+  CHECK(units[1] == 90 && units[2] == 0 && units[3] == 0xd83d &&
+        units[4] == 0xde00 && units[5] == 90 && units[6] == 0x7e7e);
+  C(e, void, 220, s, 0, 1, units);
+  CHECK(units[0] ==
+        65); /* toCharArray and constructor copies are independent. */
+  Ref classClass = C(e, Ref, 6, "java/lang/Class");
+  Ref name = C(e, Ref, 34, cls,
+               method(e, classClass, "getName", "()Ljava/lang/String;"));
+  Ref name_again = C(e, Ref, 34, cls,
+                     method(e, classClass, "getName", "()Ljava/lang/String;"));
+  CHECK(C(e, U8, 24, name, name_again));
+  Ref expect = C(e, Ref, 167, "java.lang.String");
+  CHECK(C(e, U8, 37, name, eq, expect));
+  CHECK(!C(e, U8, 37, cls, method(e, classClass, "isArray", "()Z")));
+  Ref actualClass =
+      C(e, Ref, 34, s, method(e, root, "getClass", "()Ljava/lang/Class;"));
+  CHECK(C(e, U8, 24, cls, actualClass));
+  Ref value = C(e, Ref, 113, cls, "valueOf", "(J)Ljava/lang/String;");
+  Ref number = C(e, Ref, 114, cls, value, (U64)0x8000000000000000ULL);
+  expect = C(e, Ref, 167, "-9223372036854775808");
+  CHECK(C(e, U8, 37, number, eq, expect));
+  Ref integer = C(e, Ref, 113, cls, "valueOf", "(I)Ljava/lang/String;");
+  Ref small = C(e, Ref, 114, cls, integer, -99);
+  identity = C(e, Ref, 114, cls, integer, -99);
+  CHECK(C(e, U8, 24, small, identity));
+  small = C(e, Ref, 114, cls, integer, -100);
+  identity = C(e, Ref, 114, cls, integer, -100);
+  CHECK(!C(e, U8, 24, small, identity) && C(e, U8, 37, small, eq, identity));
+  Ref boolean = C(e, Ref, 113, cls, "valueOf", "(Z)Ljava/lang/String;");
+  small = C(e, Ref, 114, cls, boolean, 1);
+  identity = C(e, Ref, 114, cls, boolean, 1);
+  expect = C(e, Ref, 167, "true");
+  CHECK(C(e, U8, 24, small, identity) && C(e, U8, 37, small, eq, expect));
+  Ref character = C(e, Ref, 113, cls, "valueOf", "(C)Ljava/lang/String;");
+  args[0] = 0xffff00000000005aULL;
+  small = C(e, Ref, 116, cls, character, args);
+  CHECK(C(e, U8, 37, small, eq, suffix));
+  constructed = C(e, Ref, 28, cls, method(e, cls, "<init>", "()V"));
+  CHECK(C(e, U8, 37, constructed, method(e, cls, "isEmpty", "()Z")));
+  constructed =
+      C(e, Ref, 28, cls, method(e, cls, "<init>", "(Ljava/lang/String;)V"), s);
+  CHECK(!C(e, U8, 24, s, constructed) && C(e, U8, 37, s, eq, constructed));
+  Ref array_class =
+      C(e, Ref, 34, array, method(e, root, "getClass", "()Ljava/lang/Class;"));
+  CHECK(C(e, U8, 37, array_class, method(e, classClass, "isArray", "()Z")));
+  /* Method IDs outlive the local reference used to resolve them. */
+  C(e, void, 23, cls);
+  CHECK(C(e, int, 49, s, length) == 5);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_method_exceptions(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref cls = C(e, Ref, 6, "java/lang/String"), s = C(e, Ref, 167, "abc");
+  Ref ch = method(e, cls, "charAt", "(I)C");
+  CHECK(!C(e, U16, 43, s, ch, -1));
+  CHECK(C(e, U8, 228));
+  C(e, void, 17);
+  Ref copy = method(e, cls, "getChars", "(II[CI)V");
+  C(e, void, 61, s, copy, -1, 99, (Ref)0, -1);
+  Ref ex = C(e, Ref, 15);
+  C(e, void, 17);
+  Ref exception_class = C(e, Ref, 6, "java/lang/NullPointerException");
+  CHECK(C(e, U8, 32, ex, exception_class));
+  Ref a = C(e, Ref, 177, 2);
+  U16 input[] = {11, 22};
+  C(e, void, 210, a, 0, 2, input);
+  C(e, void, 61, s, copy, 0, 3, a, 0);
+  CHECK(C(e, U8, 228));
+  C(e, void, 17);
+  U16 out[] = {0, 0};
+  C(e, void, 202, a, 0, 2, out);
+  CHECK(out[0] == 11 && out[1] == 22);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_method_wrong_return(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref s = C(e, Ref, 167, "abc");
+  return C(e, U8, 37, s, method(e, cls, "length", "()I"));
+}
+int jni_method_wrong_receiver(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref array = C(e, Ref, 176, 2);
+  return C(e, int, 49, array, method(e, cls, "length", "()I"));
+}
+int jni_method_forged_id(void) {
+  Handle e = attach();
+  Ref s = C(e, Ref, 167, "abc");
+  return C(e, int, 49, s, s);
+}
+int jni_method_unreadable_arguments(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref s = C(e, Ref, 167, "abc");
+  return C(e, U16, 45, s, method(e, cls, "charAt", "(I)C"), (void *)1);
 }

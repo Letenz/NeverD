@@ -279,11 +279,17 @@ TEST_P(LinuxProcess, StatefulDescriptorsPagesAndContextsShareOneKernelOwner) {
   for (const char *Optimization : {"O0", "O2"}) {
     auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
                                             Optimization + ".elf");
-    for (char Mode : {'d', 'u', 'k', 'b'}) {
+    for (char Mode : {'d', 'u', 'k', 'b', 'g'}) {
       SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
       Options.Arguments = {"devices", std::string(1, Mode)};
       Options.LinuxFiles->Devices["/fixture/control"] =
-          Mode == 'k' ? contextDeviceTestInput() : updatingDeviceTestInput();
+          Mode == 'k' || Mode == 'g' ? contextDeviceTestInput()
+                                     : updatingDeviceTestInput();
+      if (Mode == 'g') {
+        auto &D = Options.LinuxFiles->Devices.at("/fixture/control");
+        D.ReadOnlyMappings[0].Updates.clear();
+        D.KGSL->SynchronousA3xx = true;
+      }
       Options.LinuxTime->NanosecondsPerInstruction = Mode == 'b' ? 100 : 0;
       Options.InstructionQuantum = 1024;
       if (Mode == 'b')

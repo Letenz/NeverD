@@ -41,7 +41,7 @@ protected:
     auto &D = Options.LinuxFiles.emplace().Devices["/dev/binder"];
     D.AccessMode = 2;
     D.Binder = true;
-    Options.Android->ThreadLimit = 2;
+    Options.Android->ThreadLimit = 3;
     Options.InstructionQuantum = 83;
     Options.Limits.Instructions = 200000;
     Options.Limits.Events = 5000;
@@ -70,12 +70,24 @@ TEST_P(AndroidBinder, KernelThreadsHaveSeparateLoopers) {
   EXPECT_EQ(R.ReturnValue, 0u);
 }
 TEST_P(AndroidBinder, MissingPeersAndTransactionsDoNotSucceed) {
-  for (const char *Entry : {"binder_unknown_transaction", "binder_blocking",
-                            "binder_partial_command"}) {
+  for (const char *Entry :
+       {"binder_unknown_transaction", "binder_blocking",
+        "binder_partial_command", "binder_object_transaction",
+        "binder_oneway_transaction"}) {
     auto R = run(Entry);
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
     EXPECT_NE(R.Diagnostic.find("Binder"), std::string::npos) << R.Diagnostic;
   }
+}
+TEST_P(AndroidBinder, GuestServicesExecuteSynchronousTransactionsAndReplies) {
+  auto R = run("binder_service_transactions");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidBinder, MissingTargetErrorsRemainQueuedUntilReadCapacityFits) {
+  auto R = run("binder_missing_targets");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
 }
 INSTANTIATE_TEST_SUITE_P(
     Backends, AndroidBinder,

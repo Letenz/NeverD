@@ -127,6 +127,27 @@ TEST_P(AndroidJNI, JavaMethodExecutionIsNotInvented) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
   EXPECT_NE(R.Diagnostic.find("JNIEnv.33"), std::string::npos);
 }
+TEST_P(AndroidJNI, IntrinsicJavaMethodsExecuteArgumentsAndPreserveIdentity) {
+  auto R = run("jni_method_values");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, MethodExceptionsPreserveArrayAndExceptionPrecedence) {
+  auto R = run("jni_method_exceptions");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, InvalidMethodInvocationCannotSupplyAResult) {
+  for (const char *Entry :
+       {"jni_method_wrong_return", "jni_method_wrong_receiver",
+        "jni_method_forged_id", "jni_method_unreadable_arguments"}) {
+    auto R = run(Entry);
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure)
+        << Entry << R.Diagnostic;
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_FALSE(R.NativeCalls.back().Result.has_value());
+  }
+}
 TEST_P(AndroidJNI, EnvironmentIsExplicitlyEnabled) {
   Options.Android->JNI = false;
   auto R = run("jni_vm_lifecycle");

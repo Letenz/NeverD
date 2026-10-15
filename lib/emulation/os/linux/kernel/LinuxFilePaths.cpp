@@ -274,6 +274,14 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
     auto Description =
         std::make_shared<LinuxDeviceState>(LinuxDeviceState{&Device});
     Description->OpenFlags = Flags;
+    if (Device.KGSL && Device.KGSL->SynchronousA3xx) {
+      for (const auto &Weak : DeviceDescriptions)
+        if (auto Open = Weak.lock())
+          if (Open->Options == &Device)
+            Description->GPU = Open->GPU;
+      if (!Description->GPU)
+        Description->GPU = std::make_shared<KGSLProcess>();
+    }
     DeviceDescriptions.push_back(Description);
     Descriptors.emplace(FD,
                         std::make_shared<Descriptor>(std::move(Description)));

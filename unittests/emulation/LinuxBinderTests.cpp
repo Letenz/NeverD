@@ -129,6 +129,68 @@ TEST_P(LinuxBinder, OverlappingOutputsKeepKernelCopyOrder) {
   ASSERT_EQ(call(ServiceKind::Ioctl, FD, 0xc0306201, Base + 256), 0u);
   EXPECT_EQ(read(Base + 256, 48), Expected);
 }
+TEST_P(LinuxBinder, TransactionBuffersKeepLP64LayoutAndPeerOwnership) {
+  const uint64_t Server = open(), Client = open();
+  auto Map = [&](uint64_t FD) {
+    return llvm::cantFail(Kernel->handle(ServiceKind::Mmap,
+                                         {0, 0, {0, 4096, 1, 2, FD, 0}, {}}))
+        .value();
+  };
+  const uint64_t ServerMap = Map(Server), ClientMap = Map(Client);
+  ASSERT_NE(ServerMap, ClientMap);
+  ASSERT_EQ(call(ServiceKind::Ioctl, Server, 0x40046207, 1), 0u);
+  auto Send = [&](uint64_t FD, uint32_t Command, uint64_t Body,
+                  unsigned Count) {
+    std::vector<uint8_t> Bytes(4 + Count);
+    llvm::support::endian::write32le(Bytes.data(), Command);
+    if (Count)
+      llvm::cantFail(
+          cpu().read(Body, llvm::MutableArrayRef(Bytes).drop_front(4)));
+    llvm::cantFail(cpu().write(Base + 512, Bytes));
+    record(Bytes.size(), 0, Base + 512, 0, 0);
+    return call(ServiceKind::Ioctl, FD, 0xc0306201, Base + 256);
+  };
+  std::vector<uint8_t> Tx(64);
+  llvm::support::endian::write32le(Tx.data() + 16, 0x12345678);
+  llvm::support::endian::write64le(Tx.data() + 32, 3);
+  llvm::support::endian::write64le(Tx.data() + 48, Base + 2048);
+  llvm::cantFail(cpu().write(Base + 1024, Tx));
+  const uint8_t Payload[] = {0x00, 0xff, 0x61};
+  llvm::cantFail(cpu().write(Base + 2048, Payload));
+  ASSERT_EQ(Send(Client, 0x40406300, Base + 1024, 64), 0u);
+  ASSERT_EQ(Send(Server, 0x630c, 0, 0), 0u);
+  llvm::cantFail(cpu().write(Base + 768, std::vector<uint8_t>(128, 0xa5)));
+  record(0, 0, 0, 128, Base + 768);
+  ASSERT_EQ(call(ServiceKind::Ioctl, Server, 0xc0306201, Base + 256), 0u);
+  auto R = read(Base + 768, 128);
+  std::vector<uint8_t> Expected(128, 0xa5);
+  std::fill(Expected.begin(), Expected.begin() + 72, 0);
+  llvm::support::endian::write32le(Expected.data(), 0x720c);
+  llvm::support::endian::write32le(Expected.data() + 4, 0x80407202);
+  llvm::support::endian::write32le(Expected.data() + 24, 0x12345678);
+  llvm::support::endian::write32le(Expected.data() + 32,
+                                   linux_model::ProcessID);
+  llvm::support::endian::write32le(Expected.data() + 36, linux_model::UserID);
+  llvm::support::endian::write64le(Expected.data() + 40, 3);
+  llvm::support::endian::write64le(Expected.data() + 56, ServerMap);
+  llvm::support::endian::write64le(Expected.data() + 64, ServerMap + 8);
+  EXPECT_EQ(R, Expected);
+  EXPECT_EQ(read(ServerMap, 3), std::vector<uint8_t>({0x00, 0xff, 0x61}));
+  // The sender's storage is independent of the receiver's copied payload.
+  const uint8_t Answer[] = {0x78, 0x56, 0x34};
+  llvm::cantFail(cpu().write(Base + 2048, Answer));
+  EXPECT_EQ(read(ServerMap, 3), std::vector<uint8_t>({0x00, 0xff, 0x61}));
+  ASSERT_EQ(Send(Server, 0x40406301, Base + 1024, 64), 0u);
+  record(0, 0, 0, 128, Base + 768);
+  ASSERT_EQ(call(ServiceKind::Ioctl, Client, 0xc0306201, Base + 256), 0u);
+  R = read(Base + 768, 128);
+  EXPECT_EQ(llvm::support::endian::read32le(R.data() + 4), 0x7206u);
+  EXPECT_EQ(llvm::support::endian::read32le(R.data() + 8), 0x80407203u);
+  EXPECT_EQ(llvm::support::endian::read64le(R.data() + 60), ClientMap);
+  EXPECT_EQ(read(ClientMap, 3), std::vector<uint8_t>({0x78, 0x56, 0x34}));
+  EXPECT_FALSE(
+      llvm::cantFail(cpu().canAccess(ClientMap, 3, Write | UserAccessible)));
+}
 TEST_P(LinuxBinder, ModelCannotMixCapturedTransactionsOrMappings) {
   for (unsigned Case = 0; Case < 3; ++Case) {
     auto Input = *Options.LinuxFiles;
