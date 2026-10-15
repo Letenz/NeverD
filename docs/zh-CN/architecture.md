@@ -1694,3 +1694,7 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 `RegistrationMemberCalleeABI` 负责普通成员调用的标量栈参数，不改变 CRT 析构回调的零弹栈策略。`RegistrationStateCallArguments` 统一检查父栈帧或当前 catch 私有栈中完整初始化、无指针来源的参数字，并在被调用者弹栈后撤销存储权限。初始化函数复用这一参数检查，正常返回后的必写集合仍由独立规则管理。LLVM 发射和 COFF 安装分别重新解码当前成员 ABI，并检查实际标量参数及接收者。
 
 `WindowsRegistrationStackCopies` 独立检查 PHI 合流中的发射器私有 ESP 副本。所有定义必须保留同一已推导位移；每次读取必须在所有前驱上已有定义，或由已检查的回调入口定义覆盖。缺失路径、未知值、不同位移和未证明的恢复入口均被拒绝。
+
+### 显式内核虚拟地址隔离状态查询
+
+`KernelSystemInformation.cpp` 统一负责信息类和 previous-mode 分派，`KernelModelVaShadow.cpp` 负责四字节结果。`KernelQueryBuffer.cpp` 与版本查询共用对象、权限和物理别名检查；类 11 保持原行为。声明解析不授予内存或缓解措施权限。

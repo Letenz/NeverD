@@ -973,6 +973,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_dwarf_reference_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_session_set_load_options",
     "int",
     ["neverd_session_t", "const char *"],
@@ -1065,6 +1071,11 @@ _declare(
 )
 _declare(
     "neverd_session_set_pdb_search",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_dwarf_search",
     "void",
     ["neverd_session_t", "int"],
 )

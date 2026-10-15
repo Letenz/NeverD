@@ -137,8 +137,17 @@ TEST_F(WebWindowsHost, EnumeratedIdentityDetectsReplacementBeforeOpen) {
   auto Directory = win::openRoot(path(Root), true);
   const auto Entries = win::entries(Directory.get(), 1);
   ASSERT_EQ(Entries.size(), 1u);
+  const auto DirectoryID = win::inspect(Directory.get()).id();
+  // The retained enumeration directory prevents a path-based writer opening
+  // its target parent. Check identity after releasing and reopening that lock.
+  std::error_code Locked;
+  fs::rename(Root / "input", Root / "old", Locked);
+  ASSERT_TRUE(Locked);
+  Directory = {};
   fs::rename(Root / "input", Root / "old");
   write(Root / "input", "new");
+  Directory = win::openRoot(path(Root), true);
+  ASSERT_EQ(win::inspect(Directory.get()).id(), DirectoryID);
   auto New = win::openChild(Directory.get(), "input");
   EXPECT_FALSE(Entries[0].matches(win::inspect(New.get())));
 }
@@ -152,6 +161,44 @@ TEST_F(WebWindowsHost, UTF8NamesAndRelocationPreserveSnapshotIdentity) {
   EXPECT_EQ(A.ID, B.ID);
   EXPECT_EQ(A.Artifacts[1].MemberPath, win::utf8(Name));
   EXPECT_EQ(A.Artifacts[1].Content.read(0, 10), "const x=1;");
+}
+TEST_F(WebWindowsHost, DirectoryEnumerationAndHandleRevisionRemainDistinct) {
+  write(Root / "selected" / "one", "a");
+  write(Root / "selected" / "two", "bad");
+  write(Root / "selected" / "four" / "child", "abc");
+  const auto S = capture(path(Root), Limits{});
+  ASSERT_EQ(S.Artifacts.size(), 6u);
+  auto Parent = win::openRoot(path(Root), true);
+  const auto Entries = win::entries(Parent.get(), 1);
+  ASSERT_EQ(Entries.size(), 1u);
+  auto Directory = win::openChild(Parent.get(), "selected");
+  const auto Before = win::inspect(Directory.get());
+  auto Cached = Entries[0];
+  Cached.WriteTime.QuadPart = Before.Times.LastWriteTime.QuadPart - 100000000;
+  Cached.ChangeTime.QuadPart = Before.Times.ChangeTime.QuadPart - 100000000;
+  EXPECT_TRUE(Cached.matches(Before));
+  Cached.ID ^= 1;
+  EXPECT_FALSE(Cached.matches(Before));
+  Directory = {};
+  Parent = {};
+  {
+    win::Handle Writer(CreateFileW(
+        (Root / "selected").c_str(), FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+    ASSERT_TRUE(Writer);
+    ULARGE_INTEGER Stamp;
+    Stamp.QuadPart = Before.Times.LastWriteTime.QuadPart + 100000000;
+    const FILETIME Time{Stamp.LowPart, Stamp.HighPart};
+    ASSERT_TRUE(SetFileTime(Writer.get(), nullptr, nullptr, &Time));
+  }
+  Directory = win::openRoot(path(Root / "selected"), true);
+  const auto After = win::inspect(Directory.get());
+  EXPECT_EQ(Before.id(), After.id());
+  EXPECT_EQ(Before.Identity.dwFileAttributes, After.Identity.dwFileAttributes);
+  EXPECT_NE(Before.Times.LastWriteTime.QuadPart,
+            After.Times.LastWriteTime.QuadPart);
+  EXPECT_FALSE(Before.same(After));
 }
 TEST_F(WebWindowsHost, SpoolIsUnlinkedPrivateNonInheritedAndReadOnlyAfterSeal) {
   auto F = win::privateSpool();
@@ -225,8 +272,8 @@ TEST_F(WebWindowsHost, StoreRequiresExactLengthSealAndCumulativeBudget) {
 TEST_F(WebWindowsHost, ExportIsVerifiedPrivateAndManifestDoesNotClobber) {
   {
     ExportDirectory E(path(Root / "output"));
-    E.write("source.js", "const x=1;");
-    E.complete("{}");
+    ASSERT_NO_THROW(E.write("source.js", "const x=1;"));
+    ASSERT_NO_THROW(E.complete("{}"));
     EXPECT_FALSE(
         MoveFileExW((Root / "output").c_str(), (Root / "moved").c_str(), 0));
   }

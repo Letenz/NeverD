@@ -103,3 +103,11 @@ EXPORTS
   RtlFreeUnicodeString
   RtlFreeAnsiString
   MmGetPhysicalMemoryRanges
+  RtlInitUnicodeStringEx
+  RtlCopyString
+  RtlEqualString
+  RtlCompareString
+  RtlTimeToTimeFields
+  RtlTimeFieldsToTime
+  RtlStringFromGUID
+  RtlGUIDFromString

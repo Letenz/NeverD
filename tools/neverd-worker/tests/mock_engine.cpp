@@ -73,6 +73,8 @@ struct MockSession {
   bool pdbSearch = true;
   bool pdbFound = false;
   bool pdbLoaded = false;
+  /// Whether a load reads the DWARF of the DWARF fixtures.
+  bool dwarfSearch = true;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
@@ -168,6 +170,13 @@ std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
          FixturePdb;
 }
 
+/// dwarf-embedded.bin carries DWARF in its own sections; dwarf-split.bin
+/// has it in the .debug file beside it, when the test writes one.
+bool dwarfFixture(const std::filesystem::path &input) {
+  const auto name = input.filename().string();
+  return name == "dwarf-embedded.bin" || name == "dwarf-split.bin";
+}
+
 bool matchingFixturePdb(const std::filesystem::path &path) {
   std::ifstream input(path, std::ios::binary);
   const std::string bytes((std::istreambuf_iterator<char>(input)), {});
@@ -216,6 +225,33 @@ const char *neverd_pdb_reference_json(const char *path, const char *) {
 
 void neverd_session_set_pdb_search(neverd_session_t s, int enabled) {
   session(s)->pdbSearch = enabled != 0;
+}
+
+const char *neverd_dwarf_reference_json(const char *path) {
+  const auto input = std::filesystem::u8path(path);
+  if (!std::filesystem::is_regular_file(input))
+    return copy(
+        Json{{"dwarf", nullptr}, {"error", std::string("cannot read ") + path}}
+            .dump());
+  const auto utf8 = [](const std::filesystem::path &p) {
+    const auto text = std::filesystem::absolute(p).u8string();
+    return std::string(text.begin(), text.end());
+  };
+  if (input.filename() == "dwarf-embedded.bin")
+    return copy(
+        Json{{"dwarf", {{"path", utf8(input)}, {"location", "input"}}}}.dump());
+  auto companion = input;
+  companion += ".debug";
+  if (input.filename() == "dwarf-split.bin" &&
+      std::filesystem::is_regular_file(companion))
+    return copy(
+        Json{{"dwarf", {{"path", utf8(companion)}, {"location", "beside"}}}}
+            .dump());
+  return copy(Json{{"dwarf", nullptr}}.dump());
+}
+
+void neverd_session_set_dwarf_search(neverd_session_t s, int enabled) {
+  session(s)->dwarfSearch = enabled != 0;
 }
 
 int neverd_session_load(neverd_session_t s, const char *path) {
@@ -397,6 +433,12 @@ const char *neverd_headers_json(neverd_session_t s) {
          session(s)->pdbLoaded || session(s)->pdbFound ? "pdb" : "none"}};
     result["dynamic"]["pdb_symbol"] = {
         {"file", "fixture.pdb"}, {"key", "123456789ABCDEF0123456789ABCDEF01"}};
+  }
+  if (dwarfFixture(std::filesystem::u8path(session(s)->path))) {
+    const bool read = session(s)->debugInfo && session(s)->dwarfSearch;
+    result["debug_info"] = {{"enabled", session(s)->debugInfo},
+                            {"kind", read ? "dwarf" : "none"},
+                            {"path", read ? session(s)->path : ""}};
   }
   return copy(result.dump());
 }

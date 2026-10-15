@@ -110,6 +110,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       Options.Contract != ExecutionContract::CheckedX64)
     return failure(
         "driver physical_memory_inventory requires checked-x64 execution");
+  if (Options.KernelVaShadowQuery &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return failure(
+        "driver kernel_va_shadow_query requires checked-x64 execution");
   KernelExportRegistry Exports;
   if (auto E = Exports.initialize(Options))
     return std::move(E);

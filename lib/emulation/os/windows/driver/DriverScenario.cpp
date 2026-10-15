@@ -13,12 +13,14 @@
 
 #include "../kernel/KernelLoaderView.h"
 #include "../kernel/KernelPhysicalInventory.h"
+#include "../kernel/KernelVaShadowQuery.h"
 #include "../kernel/KernelVersionQuery.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
 #include "DriverLoaderViewJSON.h"
 #include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
+#include "DriverVaShadowQueryJSON.h"
 #include "DriverVersionQueryJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
@@ -2077,6 +2079,9 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
   if (Options.LoaderView)
     if (auto E = kernel_loader_view::validate(*Options.LoaderView))
       return E;
+  if (Options.KernelVaShadowQuery)
+    if (auto E = kernel_va_shadow_query::validate(*Options.KernelVaShadowQuery))
+      return E;
   if (Options.VersionQuery)
     if (auto E = kernel_version_query::validate(*Options.VersionQuery))
       return E;
@@ -2500,6 +2505,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!Parsed)
       return Parsed.takeError();
     Base.LoaderView = std::move(*Parsed);
+  }
+  if (const auto *Query = Object->get(KernelVaShadowQueryField)) {
+    auto Parsed = driver_va_shadow_query::parse(*Query);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.KernelVaShadowQuery = std::move(*Parsed);
   }
   if (const auto *Query = Object->get(VersionQueryField)) {
     auto Parsed = driver_version_query::parse(*Query);

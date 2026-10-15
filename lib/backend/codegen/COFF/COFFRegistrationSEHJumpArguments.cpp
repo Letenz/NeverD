@@ -81,6 +81,19 @@ llvm::Error validateSEHJumpArguments(
       Offset.getZExtValue() != uint64_t(ExpectedOffset) ||
       Value->getParent() != Call.getParent() || !Value->comesBefore(&Call))
     return rejectIR("native jump value changed its original argument slot");
+  // Preserve the read at its runtime call. Protected invokes carry one
+  // separately authenticated provenance anchor between the two.
+  const auto *Following = next(*Value);
+  if (Following != &Call) {
+    const auto *Anchor = llvm::dyn_cast_or_null<llvm::IntrinsicInst>(Following);
+    if (!llvm::isa<llvm::InvokeInst>(Call) || !Anchor ||
+        Anchor->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
+        Anchor->arg_size() || Anchor->getNumOperandBundles() != 1 ||
+        Anchor->countOperandBundlesOfType(windows_eh_md::ProvenanceBundle) !=
+            1 ||
+        next(*Anchor) != &Call)
+      return rejectIR("native jump value moved across source execution");
+  }
   return llvm::Error::success();
 }
 

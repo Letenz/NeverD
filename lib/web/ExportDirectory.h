@@ -54,7 +54,7 @@ class ExportDirectory {
 public:
   explicit ExportDirectory(std::string_view Path) {
 #ifdef _WIN32
-    Destination = win::newDirectory(Path);
+    Destination = win::newDirectory(Path, win::DirectoryAccess::Traverse);
 #else
     if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
       throw Error("invalid_path");

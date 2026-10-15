@@ -18,7 +18,11 @@ the included ICU 77.1 Unicode data and runtime dependencies. Run:
 ```
 
 Input capture walks retained handles and binds directory enumeration to file
-identity and revision. Ordinary writers and renames conflict with retained
+identity. The opened handle's revision is checked before and after capture;
+NTFS may retain stale directory timestamps in enumeration records even when
+all input writers have closed. See Microsoft's description of
+[NTFS directory metadata replication](https://devblogs.microsoft.com/oldnewthing/20111226-00/?p=8813).
+Ordinary writers and renames conflict with retained
 input handles. The spool name is removed while empty, before any input bytes
 are copied. Sealing flushes and checks length, replaces the writable handle
 with a non-inheritable read-only handle, and serializes independent range

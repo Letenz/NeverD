@@ -46,6 +46,7 @@ bool readable(const QString &operation) {
                                         "identify",
                                         "pdb_inspect",
                                         "pdb_reference",
+                                        "dwarf_reference",
                                         "function_attributes",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
