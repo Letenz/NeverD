@@ -199,8 +199,11 @@ public:
   /// hand it back to analysis.  Commits at once, like a rename.
   void editFunction(Address entry, const QJsonObject &attributes,
                     std::optional<quint64> epoch = {});
+  /// Name \p function \p name; \p then runs once the rename is made, never
+  /// when the worker refuses the name.
   void rename(Address function, const QString &name,
-              std::optional<quint64> epoch = {});
+              std::optional<quint64> epoch = {},
+              std::function<void()> then = {});
   void editCode(const QJsonObject &edit, quint64 epoch);
   void setComment(Address address, const QString &text,
                   std::optional<quint64> epoch = {});

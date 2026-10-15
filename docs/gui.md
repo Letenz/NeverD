@@ -460,7 +460,10 @@ so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key. Menus, buttons and labels
 underline their access keys while Alt is held, as on Windows and GNOME, and a
 menu that Alt and its letter opened keeps them until it closes; Alt and the
-letter work either way.
+letter work either way. In a dialog, Return presses the default button, usually
+**OK**, from a check box or radio button too, as in IDA and on Windows, where
+GNOME would toggle the box; Space toggles it. Alt+P, Alt+O, Return thus states
+that a function does not return.
 
 A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 `cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
@@ -796,7 +799,8 @@ NeverD shows the bytes x86's `ret imm` purges; the other sizes and the flags
 **Outlined code** describe IDA's frame model, which NeverD does not keep,
 and show disabled. The statements are kept in the function edits sidecar and
 go with a deleted function. A rename and a change of the flags are two steps
-of the history. The command line shows and states the same
+of the history; a name the worker refuses, such as an automatic name or one
+another address has, applies neither. The command line shows and states the same
 (`neverd function-edits <input> --show <address>`, `--edit <address> --set
 noreturn=true`, `--set color=#RRGGBB`, `--set library=default`).
 
