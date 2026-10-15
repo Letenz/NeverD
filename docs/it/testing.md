@@ -1892,6 +1892,8 @@ Le 204 osservazioni del vecchio profilo di traduzione sono storiche e non provan
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` verifica che la cronologia in cache non venga addebitata di nuovo, che le costanti larghe aggiunte mantengano il costo di ammissione, che budget insufficienti di lavoro e nodi rifiutino e che le copie della cache di leggibilità restino indipendenti.
 
 ## Qualificazione nativa di Lift

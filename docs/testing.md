@@ -6667,6 +6667,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
 
 ## Native Lift qualification
