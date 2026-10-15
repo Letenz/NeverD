@@ -88,8 +88,8 @@ TEST_P(AndroidJNI, InvalidIdentitiesAndBorrowsFailClearly) {
        {"jni_stale_env", "jni_stale_ref", "jni_wrong_thread",
         "jni_invalid_utf8", "jni_double_release", "jni_frame_underflow",
         "jni_detach_borrow", "jni_wrong_borrow_object",
-        "jni_wrong_reference_kind", "jni_pending_illegal",
-        "jni_table_replaced"}) {
+        "jni_wrong_reference_kind", "jni_pending_illegal", "jni_table_replaced",
+        "jni_named_env_spoof", "jni_named_vm_spoof"}) {
     auto R = run(Entry);
     EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure)
         << Entry << R.Diagnostic;

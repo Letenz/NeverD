@@ -70,6 +70,7 @@ struct LinkedImage {
   std::map<std::string, std::map<std::string, uint64_t>> Libraries;
   PropertyTable Properties;
   std::vector<uint8_t> JNIImage;
+  uint64_t JNIThunkBegin = 0, JNIThunkEnd = 0;
 };
 llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked);
 llvm::Expected<PropertyTable>

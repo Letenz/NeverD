@@ -299,3 +299,14 @@ int jni_invalid_copyout(void) {
   Ref s = C(e, Ref, 167, "guard");
   return (int)(U64)C(e, const char *, 169, s, (void *)1);
 }
+
+int jni_named_env_spoof(void) {
+  extern int fake_version(Handle) __asm__("JNIEnv.4");
+  Handle e = attach();
+  return fake_version(e);
+}
+int jni_named_vm_spoof(void) {
+  extern int fake_detach(Handle) __asm__("JavaVM.DetachCurrentThread");
+  attach();
+  return fake_detach(vm);
+}

@@ -723,6 +723,8 @@ strict Boolean defaults to false. `JNI_GetCreatedJavaVMs` exposes one guest VM;
 Threads initially have no JNIEnv. A successful attachment creates a distinct
 identity; an environment from another thread or a previous attachment fails.
 The function tables are immutable guest storage, checked before each call.
+Internal JNI entry names are not accepted as arbitrary ELF imports; calls must
+enter a thunk owned by the prepared interface table.
 
 This native value model supports intrinsic class identity, local/global
 references, local frames, pending exceptions, UTF-16 and modified UTF-8 strings,

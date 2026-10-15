@@ -11,8 +11,15 @@
 #include "llvm/Support/Endian.h"
 
 namespace neverd::emulation::android_model {
+namespace {
+bool isJNIEntry(const LinkedImage &Linked, uint64_t PC) {
+  return PC >= Linked.JNIThunkBegin && PC < Linked.JNIThunkEnd &&
+         (PC - Linked.JNIThunkBegin) % 8 == 0;
+}
+} // namespace
 llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked) {
   auto &Bytes = Linked.JNIImage;
+  Linked.JNIThunkBegin = ThunkBase + (Linked.Imports.size() + 1) * 8;
   Bytes.resize(jni_abi::ArenaSize);
   auto Put = [&](uint64_t Address, uint64_t Value) {
     llvm::support::endian::write64le(Bytes.data() + Address - jni_abi::Base,
@@ -34,6 +41,7 @@ llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked) {
   // one of those entries reaches an explicit unsupported-service stop.
   for (unsigned I = 4; I != jni_abi::EnvSlots; ++I)
     Put(jni_abi::EnvTable + I * 8, Trap("JNIEnv." + std::to_string(I)));
+  Linked.JNIThunkEnd = ThunkBase + (Linked.Imports.size() + 1) * 8;
   for (unsigned I = 0; I != jni_abi::AttachmentLimit; ++I)
     Put(jni_abi::Environments + I * 8, jni_abi::EnvTable);
   if (auto E = Space.map(jni_abi::Base, Bytes.size(), Read | Write))
@@ -100,6 +108,8 @@ BionicResult Bionic::jniVM(const NativeCallEvent &Call) {
     return Status(0);
   }
   const bool GetEnv = Call.Name == "JavaVM.GetEnv";
+  if (!isJNIEntry(Linked, Call.PC))
+    return failure("JNI invocation did not enter its owned function table");
   const bool Attach = Call.Name == "JavaVM.AttachCurrentThread" ||
                       Call.Name == "JavaVM.AttachCurrentThreadAsDaemon";
   const bool Detach = Call.Name == "JavaVM.DetachCurrentThread";
@@ -160,6 +170,8 @@ BionicResult Bionic::jniVM(const NativeCallEvent &Call) {
 BionicResult Bionic::jniCall(const NativeCallEvent &Call) {
   if (!Options.Android->JNI)
     return unsupportedImport(Call);
+  if (!isJNIEntry(Linked, Call.PC))
+    return failure("JNI operation did not enter its owned function table");
   llvm::StringRef Name = Call.Name;
   unsigned Slot = 0;
   if (!Name.consume_front("JNIEnv.") || Name.getAsInteger(10, Slot))
