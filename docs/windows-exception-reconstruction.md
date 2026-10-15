@@ -213,8 +213,20 @@ leave only through a nonlocal jump. Search filters recover their parent through
 `llvm.eh.recoverfp` with the exact owning function and runtime frame depth.
 Literal null reads keep their actual volatile memory effect and asynchronous
 scope. Installation checks each source occurrence, address, width and ordering;
-a changed or missing read fails closed. Cross-callee resumptions and EH4 jump
-buffers require additional native contracts.
+a changed or missing read fails closed. EH4 jump buffers require an additional
+native contract.
+
+Preserved EH3 helpers can borrow a generated parent buffer and resume it across
+their own registration frame. Each exact caller occurrence binds the helper's
+immutable code, cdecl argument slots, initialized four-byte parent objects and
+opaque capture identities. The helper must retire its local scopes before
+resuming the borrowed capture. Ordinary returning helpers use the same object
+projection. Their incidental EAX result must be unobserved in both current source
+SSA and generated IR. Native admission rejects dependencies on physical frame
+addresses, incoming register values, return PCs or the previous chain, including
+partial aliases. Exception code/flags comparisons retain their scalar semantics
+without losing conservative address-alias taint. Installation replays the source
+proof and checks every argument, target, call attribute and private buffer use.
 
 Call-free parent blocks reached at several proved scope levels select their
 asynchronous SEH interval from the protected logical state slot. The body runs

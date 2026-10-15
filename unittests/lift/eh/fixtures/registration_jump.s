@@ -71,6 +71,25 @@ _registration_entry:
 .Lfault:
   mov eax,dword ptr [0]
   jmp .Lfault
+#elif REGISTRATION_CASE == 20 || REGISTRATION_CASE == 21
+  mov dword ptr [ebp-4],0
+  mov dword ptr [ebp-100],0
+  mov ebx,9
+  sub esp,160
+  lea eax,[ebp-100]
+  push eax
+  lea eax,[ebp-96]
+  push eax
+  call _registration_jump_callee
+  add esp,168
+#if REGISTRATION_CASE == 21
+  push 42
+  lea eax,[ebp-96]
+  push eax
+  call __longjmpex
+  ud2
+#endif
+  jmp .Lbad
 #else
   mov dword ptr [ebp-4],1
   mov ebx,9
@@ -201,7 +220,7 @@ _registration_entry:
   .long -1,0,.Lfinally
 #else
   .long -1,.Lfilter,.Lhandler
-#if !FILTER_JUMP
+#if !FILTER_JUMP && REGISTRATION_CASE != 20 && REGISTRATION_CASE != 21
 #if REGISTRATION_CASE == 19
   .long 0,.Lfilter,.Linner_handler
 #elif REGISTRATION_CASE == 11

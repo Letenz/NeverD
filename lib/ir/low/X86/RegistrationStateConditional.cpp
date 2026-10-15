@@ -76,8 +76,10 @@ bool RegistrationStateSolver::checkConditionalMemory(
   }
   if (*Address.Offset == 4)
     return (Op.Opcode == NdOp::LOAD && Memory.AccessSize == 4) || Refuse();
-  if (Conditional->Arguments.count(*Address.Offset))
+  if (Conditional->Arguments.count(*Address.Offset)) {
+    Conditional->UsedArguments.insert(*Address.Offset);
     return (Op.Opcode == NdOp::LOAD && Memory.AccessSize == 4) || Refuse();
+  }
   if (End > INT32_MAX ||
       !llvm::any_of(Conditional->Objects, [&](const auto &Object) {
         return Object.Begin <= *Address.Offset && End <= Object.End;

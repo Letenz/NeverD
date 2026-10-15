@@ -99,7 +99,8 @@ llvm::Error validateSEHJumpBufferUses(
       continue;
     }
     const auto *Call = llvm::dyn_cast<llvm::CallBase>(User);
-    if (!Call || !Calls.count(Call) || Call->getArgOperand(0) != &Buffer)
+    if (!Call || !Calls.count(Call) ||
+        !llvm::is_contained(Call->args(), &Buffer))
       return rejectIR("native jump buffer escapes its checked invocations");
   }
   for (const auto &[Key, Callback] : Callbacks)

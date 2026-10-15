@@ -73,6 +73,16 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
       }
     const auto Object = Parent.Cells.find(*Value.Offset);
     const int64_t Offset = int64_t(*Value.Offset) - Base;
+    if (Captures &&
+        !registration_abi::chargeCalleeWork(Inputs.Work, Captures->size()))
+      return std::nullopt;
+    if (Captures && llvm::any_of(*Captures, [&](const auto &Entry) {
+          const int64_t Begin = Entry.second.BufferOffset;
+          return int64_t(*Value.Offset) <
+                     Begin + RegistrationSEHJumpCapture::BufferBytes &&
+                 Begin < int64_t(*Value.Offset) + 4;
+        }))
+      continue;
     if (Object == Parent.Cells.end() || Object->second.MayBeFrame ||
         *Value.Offset < *SP + 128 || Offset > INT32_MAX - 4 || Offset < 136 ||
         *Value.Offset >= -24 || int64_t(*Value.Offset) + 4 > -24)
@@ -81,7 +91,7 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
     Inputs.Objects.push_back({int32_t(Offset), int32_t(Offset + 4)});
     Inputs.ObjectCells.emplace(int32_t(Offset), Object->second);
   }
-  if (Inputs.Objects.empty())
+  if (Inputs.Objects.empty() && Inputs.JumpBuffers.empty())
     return std::nullopt;
   Inputs.ProveCall = [&](const LowOp &Call, const FrameState &State) {
     return registration_abi::hasConditionalCallFrame(Image, Call, State,
@@ -165,6 +175,32 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
     Effect.Reads.push_back({int32_t(Base + Begin), int32_t(Base + End)});
   for (const auto &[Begin, End] : Inputs.Writes)
     Effect.Writes.push_back({int32_t(Base + Begin), int32_t(Base + End)});
+  if (Inputs.NativeFramePrivate) {
+    RegistrationSEHBoundCall Native;
+    Native.Address = Op.Addr;
+    Native.OpSeq = Op.Seq;
+    Native.TargetVA = Target;
+    Native.StackOffset = *SP;
+    Native.HasOrdinaryReturn = HasParentReturn;
+    if (!Inputs.UsedArguments.empty())
+      Native.Arguments.resize((*Inputs.UsedArguments.rbegin() - 8) / 4 + 1);
+    for (const auto Offset : Inputs.UsedArguments) {
+      const auto &Value = Inputs.Arguments.at(Offset);
+      auto &Argument = Native.Arguments[(Offset - 8) / 4];
+      using Kind = RegistrationSEHBoundArgument::Kind;
+      if (Value.JumpCapture) {
+        Argument.ArgumentKind = Kind::JumpBuffer;
+        Argument.Capture = *Value.JumpCapture;
+      } else if (Value.Offset) {
+        Argument.ArgumentKind = Kind::Object;
+        Argument.Offset = int32_t(Base + *Value.Offset);
+      } else {
+        Argument.ArgumentKind = Kind::Scalar;
+        Argument.Offset = *SP + Offset - 8;
+      }
+    }
+    Effect.NativeCall = std::move(Native);
+  }
   return Effect;
 }
 } // namespace neverd::registration_state
@@ -223,6 +259,8 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     States.SEHJumpResumptions.clear();
     States.SEHJumpCapturesComplete = false;
     States.SEHJumpCaptures.clear();
+    States.SEHBoundCallsComplete = false;
+    States.SEHBoundCalls.clear();
     States.SEHExceptionAccesses.clear();
     States.Diagnostics.push_back("SEH callee state proof budget exhausted");
   }

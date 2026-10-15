@@ -9,6 +9,7 @@
 #include "WindowsRegistrationFramePrivate.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
 #include "neverd/backend/llvm/X86RegistrationSEHControl.h"
 #include "neverd/backend/llvm/X86RegistrationSEHException.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
@@ -121,7 +122,8 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
   for (const auto &Value : RuntimeScalars)
     FrameValues.erase(Value);
   const auto Jumps = getX86RegistrationSEHJumpCalls(Func);
-  if (!Jumps)
+  const auto Bound = getX86RegistrationSEHBoundCalls(Func);
+  if (!Jumps || !Bound)
     return std::nullopt;
   for (const MedCallInfo &Call : Func.CallInfos) {
     const auto Block = llvm::find_if(
@@ -144,6 +146,7 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
         Call.Args.size() == 1 && Call.Args.front().Size == 4;
     for (size_t I = 0; I < Call.Args.size(); ++I)
       if (IsFrame(Call.Args[I]) &&
+          !(Operation && Bound->count(Operation->Addr)) &&
           (I != 0 || (Jump == Jumps->end() && !CookieCheck)))
         return std::nullopt;
   }
@@ -267,7 +270,8 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
   const auto &States = *Func.RegistrationStates;
   // Ordinary near returns use the outlined callback's C return ABI. Other
   // nonlocal exits still require their own replacement continuation contract.
-  if (States.HasBoundSEHCallees || !getX86RegistrationSEHJumpCalls(Func))
+  if (!getX86RegistrationSEHBoundCalls(Func) ||
+      !getX86RegistrationSEHJumpCalls(Func))
     return std::nullopt;
   const auto ExceptionAccesses = getX86RegistrationSEHExceptionAccesses(Func);
   if (!ExceptionAccesses)
@@ -340,8 +344,8 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
                              std::move(CookieCheckCalls)};
 }
 
-bool collectDeadFinallyResult(llvm::CallInst &Call,
-                              std::vector<llvm::Instruction *> &Dead) {
+bool collectDiscardedRegistrationResult(
+    llvm::CallInst &Call, std::vector<llvm::Instruction *> &Dead) {
   std::set<llvm::Instruction *> Seen;
   std::vector<llvm::Value *> Pending{&Call};
   size_t Work = 0;

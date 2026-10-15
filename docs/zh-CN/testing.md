@@ -1859,6 +1859,10 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 `check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
 `longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+`longjmp-callee` 与 `longjmp-returning-callee` 分别执行跨注册帧恢复和普通返回的
+父栈对象借用；独立反例拒绝物理帧观察、错误缓冲区或对象、调用属性变化及被观察的附带
+返回值。共享帧测试检查异常标量经过部分 spill 后仍保留地址别名检查，且不能掩盖混入的
+物理指针位。
 通过 `--runtime-root` 指定捕获的微软 x86 CRT 目录；报告保存 provider 清单及 SHA-256，
 输出目录保存同一份 DLL。内层作用域测试在 Wine 下必须使用该参数，因为 Wine 9 内置
 CRT 的局部展开停止规则不同。focused CI 使用原生 CRT 跑完全部源测试，然后通过

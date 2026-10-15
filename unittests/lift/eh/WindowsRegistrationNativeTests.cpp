@@ -1825,8 +1825,11 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   auto &Image = *Loaded;
   for (const auto &Diagnostic : Image.ExceptionMetadata.Diagnostics)
     llvm::errs() << Diagnostic << '\n';
-  ASSERT_EQ(Image.ExceptionMetadata.Functions.size(), 1u);
-  const auto &EH = Image.ExceptionMetadata.Functions.front();
+  const auto *Export = Image.findExport("registration_entry");
+  ASSERT_TRUE(Export);
+  const auto *Entry = Image.ExceptionMetadata.findFunction(Export->Addr);
+  ASSERT_TRUE(Entry);
+  const auto &EH = *Entry;
   for (const auto &Diagnostic : EH.Diagnostics)
     llvm::errs() << Diagnostic << '\n';
   ASSERT_TRUE(EH.Registration);
@@ -1879,7 +1882,10 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
     registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
                                               *Low.RegistrationStates);
-  if (!Low.RegistrationStates->SEHJumpCaptures.empty())
+  if (!Low.RegistrationStates->SEHBoundCalls.empty()) {
+    registration_test::checkSEHBoundEdits(*Parent, EH, Image);
+    registration_test::checkSEHBoundSourceEdits(*Parent, EH, Image);
+  } else if (!Low.RegistrationStates->SEHJumpCaptures.empty())
     registration_test::checkSEHJumpEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
@@ -2939,8 +2945,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           continue;
         auto Address = rewrite_source::getOriginalVA(*Callee);
         ASSERT_TRUE(bool(Address)) << llvm::toString(Address.takeError());
-        if (*Address) {
-          ASSERT_TRUE(!OriginalCallee || OriginalCallee == Callee);
+        if (*Address && !OriginalCallee) {
           OriginalCallee = Callee;
         }
       }
