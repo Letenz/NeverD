@@ -13,7 +13,7 @@ permissions:
 jobs:
   session-capi:
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       SCCACHE_GHA_ENABLED: 'true'
       NEVERD_THREADS: '1'
@@ -86,7 +86,7 @@ jobs:
           }, indent=2))
           PYCODE
       - name: Build and link the owning executable
-        timeout-minutes: 20
+        timeout-minutes: 30
         shell: bash
         run: cmake --build build-ci --target NeverDSessionCAPITests --parallel 4
       - name: Execute affected methods and related source-cache checks
