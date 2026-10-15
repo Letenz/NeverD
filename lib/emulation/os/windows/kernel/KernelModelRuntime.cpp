@@ -75,6 +75,29 @@ llvm::Expected<CountedString> readCountedString(const KernelModel &Model,
                        static_cast<uint16_t>(*Maximum), *Buffer};
 }
 
+// STRING shares the UNICODE_STRING layout but counts bytes.
+llvm::Expected<CountedString> readCountedBytes(const KernelModel &Model,
+                                               GuestMemory &Memory,
+                                               uint64_t Address) {
+  if (!Address)
+    return runtimeError("STRING record must not be null");
+  if (auto E = Model.validateGuestAccess(Address, UnicodeRecordSize, false))
+    return E;
+  auto Length = Memory.readInteger(Address, 2);
+  if (!Length)
+    return Length.takeError();
+  auto Maximum = Memory.readInteger(Address + UnicodeMaximumOffset, 2);
+  if (!Maximum)
+    return Maximum.takeError();
+  auto Buffer = Memory.readInteger(Address + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (*Length > *Maximum || (*Length && !*Buffer))
+    return runtimeError("invalid counted 8-bit string length or buffer");
+  return CountedString{static_cast<uint16_t>(*Length),
+                       static_cast<uint16_t>(*Maximum), *Buffer};
+}
+
 llvm::Expected<std::vector<uint8_t>> readBytes(const KernelModel &Model,
                                                GuestMemory &Memory,
                                                uint64_t Address,
@@ -561,6 +584,109 @@ llvm::Expected<uint64_t> initializeAnsiString(const KernelModel &Model,
   if (auto E = Memory.writeInteger(A[0] + UnicodeBufferOffset, A[1], 8))
     return E;
   return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
+                                                   GuestMemory &Memory,
+                                                   llvm::ArrayRef<uint64_t> A) {
+  // RVA 0x32eb60 clears the record and stores Buffer before measuring; a
+  // source over 0x7FFE units fails with both lengths left zero.
+  uint64_t Length = 0;
+  if (A[1])
+    for (;; Length += 2) {
+      if (auto E = checkBufferRange(A[1], Length + 2))
+        return E;
+      auto Unit = readInteger(Model, Memory, A[1] + Length, 2);
+      if (!Unit)
+        return Unit.takeError();
+      if (!*Unit)
+        break;
+    }
+  if (auto E = Model.validateGuestAccess(A[0], UnicodeRecordSize, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[0], 0, 8))
+    return E;
+  if (auto E = Memory.writeInteger(A[0] + UnicodeBufferOffset, A[1], 8))
+    return E;
+  if (!A[1])
+    return StatusSuccess;
+  if (Length > MaxUnicodeBytes)
+    return StatusNameTooLong;
+  if (auto E = Memory.writeInteger(A[0], Length, 2))
+    return E;
+  if (auto E = Memory.writeInteger(A[0] + UnicodeMaximumOffset, Length + 2, 2))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> copyAnsiString(const KernelModel &Model,
+                                        GuestMemory &Memory,
+                                        llvm::ArrayRef<uint64_t> A) {
+  // RtlCopyString copies what fits and, unlike the UTF-16 copy, never writes
+  // a terminator. A null source only clears Length.
+  if (!A[0])
+    return runtimeError("STRING record must not be null");
+  if (auto E = Model.validateGuestAccess(A[0], UnicodeRecordSize, true))
+    return E;
+  uint64_t Length = 0;
+  if (A[1]) {
+    auto Source = readCountedBytes(Model, Memory, A[1]);
+    if (!Source)
+      return Source.takeError();
+    auto Maximum = Memory.readInteger(A[0] + UnicodeMaximumOffset, 2);
+    if (!Maximum)
+      return Maximum.takeError();
+    Length = std::min<uint64_t>(Source->Length, *Maximum);
+    auto Bytes = readBytes(Model, Memory, Source->Buffer, Length);
+    if (!Bytes)
+      return Bytes.takeError();
+    auto Buffer = Memory.readInteger(A[0] + UnicodeBufferOffset, 8);
+    if (!Buffer)
+      return Buffer.takeError();
+    if (auto E = Model.validateGuestAccess(*Buffer, Bytes->size(), true))
+      return E;
+    if (!Bytes->empty())
+      if (auto E = Memory.write(*Buffer, *Bytes))
+        return E;
+  }
+  if (auto E = Memory.writeInteger(A[0], Length, 2))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
+                                            GuestMemory &Memory,
+                                            llvm::ArrayRef<uint64_t> A,
+                                            bool EqualityOnly) {
+  // RtlEqualString and RtlCompareString compare unsigned bytes; the shorter
+  // length orders an equal prefix. Only unequal bytes consult the case table.
+  auto First = readCountedBytes(Model, Memory, A[0]);
+  if (!First)
+    return First.takeError();
+  auto Second = readCountedBytes(Model, Memory, A[1]);
+  if (!Second)
+    return Second.takeError();
+  if (EqualityOnly && First->Length != Second->Length)
+    return 0;
+  const unsigned Common = std::min(First->Length, Second->Length);
+  auto Left = readBytes(Model, Memory, First->Buffer, Common);
+  if (!Left)
+    return Left.takeError();
+  auto Right = readBytes(Model, Memory, Second->Buffer, Common);
+  if (!Right)
+    return Right.takeError();
+  for (unsigned I = 0; I < Common; ++I)
+    if ((*Left)[I] != (*Right)[I]) {
+      if (static_cast<uint8_t>(A[2]))
+        return runtimeError("case-insensitive 8-bit string comparison "
+                            "requires an unmodeled Windows case table");
+      if (EqualityOnly)
+        return 0;
+      return static_cast<uint32_t>(int32_t((*Left)[I]) - (*Right)[I]);
+    }
+  if (EqualityOnly)
+    return 1;
+  return static_cast<uint32_t>(int32_t(First->Length) - Second->Length);
 }
 
 llvm::Expected<uint64_t> appendUnicodeString(const KernelModel &Model,

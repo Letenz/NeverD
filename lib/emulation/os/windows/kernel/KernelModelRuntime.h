@@ -42,6 +42,17 @@ llvm::Expected<uint64_t> unicodeOperation(const KernelModel &Model,
 llvm::Expected<uint64_t> initializeAnsiString(const KernelModel &Model,
                                               GuestMemory &Memory,
                                               llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
+                                                   GuestMemory &Memory,
+                                                   llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> copyAnsiString(const KernelModel &Model,
+                                        GuestMemory &Memory,
+                                        llvm::ArrayRef<uint64_t> A);
+/// RtlEqualString when \p EqualityOnly is true, otherwise RtlCompareString.
+llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
+                                            GuestMemory &Memory,
+                                            llvm::ArrayRef<uint64_t> A,
+                                            bool EqualityOnly);
 /// RtlAppendUnicodeStringToString when \p CountedSource is true, otherwise
 /// RtlAppendUnicodeToString with a null-terminated source.
 llvm::Expected<uint64_t> appendUnicodeString(const KernelModel &Model,
