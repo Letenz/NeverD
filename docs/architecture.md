@@ -172,7 +172,11 @@ addresses only from authoritative identities: NeverD's mirrors by their
 `__nd_data_`/`__nd_codeptr_` spelling plus constant offsets, functions by their
 source identity. Data is named as the listing names it (user names, import
 slots with the suffix `DataNames.def` shares with the listing, debug and image
-symbols, strings). Pages publish where the prelude ends and the epilogue
+symbols, strings). Each mirror's declaration goes under a comment that says
+which image bytes it stands for and which addresses the body reaches through
+it, from a walk of the body before printing; the annotation writer offers no
+hook before a global, so these comments go in after printing and every later
+offset moves by their length. Pages publish where the prelude ends and the epilogue
 begins, and, line by line, the image address each spelled global stands for.
 A mirror an instruction reaches at several offsets maps its spellings in
 printing order only when the counts agree, otherwise to its first byte. The

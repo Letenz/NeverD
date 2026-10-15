@@ -9,8 +9,10 @@
 /// of its own, as `llvm-extract` leaves it: the types, globals and functions
 /// it refers to are declared before it, and the attribute groups and metadata
 /// it uses follow it, so the text reads and assembles on its own.  Comments
-/// give the image addresses behind NeverD's image mirrors and functions, and
-/// the view records line by line the image address each such name stands for.
+/// give the image addresses behind NeverD's image mirrors and functions: each
+/// mirror is declared under a comment that says which image bytes it stands
+/// for and which of them the function uses.  The view records line by line
+/// the image address each such name stands for.
 ///
 //===----------------------------------------------------------------------===//
 
