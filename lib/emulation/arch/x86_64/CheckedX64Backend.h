@@ -51,7 +51,7 @@ private:
            (Value & x64::InitialMXCSR) == x64::InitialMXCSR;
   }
   bool canonicalRange(uint64_t, uint64_t) const override;
-  bool supportsDeviceMappings() const override { return !UserMode; }
+  bool supportsDeviceMappings() const override { return !UserMode && !Direct; }
   uint64_t programCounter() const override { return CPU.reg(X64Register::PC); }
   void setProgramCounter(uint64_t PC) override {
     CPU.reg(X64Register::PC) = PC;
@@ -70,7 +70,9 @@ private:
   }
   llvm::Error executeDirect() override;
   /// Retire one instruction through a temporary watch overlay, then rearm it.
-  llvm::Error stepWatchedInstruction(bool WatchWrites = true);
+  llvm::Error stepWatchedInstruction(bool WatchWrites = true,
+                                     bool WatchInitialization = true);
+  llvm::Error stepInitializationStore(uint64_t FaultAddress);
   llvm::Error stepDirectInstruction(uint64_t Root);
   /// Run decoded control-flow regions between private execution stops. A
   /// temporary write guard invalidates the plan before code can change.
@@ -80,7 +82,8 @@ private:
   llvm::Error
   publishDirectException(const X64Exception &Raised, bool AllowSplit,
                          bool &Resume, bool WritesProtected = true,
-                         std::optional<uint64_t> OpenPage = std::nullopt);
+                         std::optional<uint64_t> OpenPage = std::nullopt,
+                         bool InitializationProtected = true);
   std::optional<uint64_t> RegionPage, RegionPhysical;
   X64PageTableCache WatchTables;
   std::vector<ExecutionWatch> FetchWatchPages;

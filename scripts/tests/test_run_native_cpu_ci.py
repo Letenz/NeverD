@@ -187,13 +187,36 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.assertEqual(self.summary()["required_native_unexecuted"], [self.records[-1].name])
 
     def test_repository_backends_require_identical_driver_outcomes(self):
+        direct_cases = {
+            "ChangedIRQLAndGSFailBeforeObserversOrModeledAPIs",
+            "UnobservedDriverDispatchRegistrationSurvivesRequests",
+            "SameValueDispatchStoresKeepExactInitializationWidths",
+            "PackedDriverUsesExistingAPIsCallbacksAndReturnGates",
+            "RepeatedWatchResumesRetainOpaquePrefixDependencies",
+            "WriteWatchesObserveCommittedAndSameValueStores",
+            "ProcessorViewIsPreparedBeforeOriginalGSAndCR8Reads",
+            "InteriorServiceGatesAndRawProcessorFaultsFailExplicitly",
+            "ProcessorIdentityAndTimestampRemainRuntimeDependencies",
+            "DriverEntryReturnStillChecksTheNativeABI",
+            "TimeoutAndAPIEventLimitsRemainEnforced",
+        }
+        direct_prefix = "Native/DirectDriver."
+        direct_kvm = {direct_prefix + case + "/Kvm" for case in direct_cases}
         outcomes = {}
         for backend in ("kvm", "whp"):
             _, cpu = native.declared_inventory(native.ROOT, backend=backend)
             _, combined = native.declared_inventory(native.ROOT, with_drivers=True, backend=backend)
+            drivers = combined - cpu
+            # The supervisor direct contract is KVM-only. Require every named
+            # outcome there, reject extras, and forbid registration on WHP.
+            self.assertFalse(any(name.startswith(direct_prefix) for name in cpu))
+            self.assertEqual(
+                {name for name in drivers if name.startswith(direct_prefix)},
+                direct_kvm if backend == "kvm" else set(),
+            )
             outcomes[backend] = {name.replace("/" + backend + "_", "/{backend}_")
                                  .replace("/" + backend.title(), "/{backend_title}")
-                                 for name in combined - cpu}
+                                 for name in drivers - direct_kvm}
             self.assertTrue(any("/{backend}_Original_" in name for name in outcomes[backend]))
             self.assertTrue(any("/{backend}_Rebased_" in name for name in outcomes[backend]))
         imagehlp = "DriverChecksum.NativeImageHlpValidatesOddAndEvenFileExtents"

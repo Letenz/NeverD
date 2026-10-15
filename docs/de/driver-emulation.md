@@ -27,6 +27,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
 
+`direct-driver-x64-v1` verwendet das vorhandene Treiber- und Kernelmodell mit direkter Supervisor-Ausführung auf x64 KVM. Kernel-Exporte, Callback-Rückgaben, Guard-Thunks und Beobachter bleiben explizite Ausführungsgrenzen. Zeit und API-Ereignisse begrenzen den Lauf; die nicht verfügbare Befehlszahl wird als null gemeldet. Befehlsbasierte Planung, einzelne Schreibzugriffsprotokolle und eigene CPUID-Tabellen werden abgelehnt. Prozessoridentität und Zeitstempel stammen vom Backend und bleiben erfasste Umgebungsabhängigkeiten. Nicht unterstützte Änderungen spezieller Register führen zu einem ausdrücklichen Fehler. Dieser Vertrag allein stellt noch kein erfasstes SYS-Abbild wieder her.
+
+Die Initialisierungsüberwachung von Kernelfeldern benötigt genaue Bereiche der ausgeführten Schreibzugriffe. Auf überwachten Seiten akzeptiert die direkte Ausführung derzeit skalare MOV/MOVABS/XOR und die unterstützten klassischen SSE-Speicherbefehle; andere Schreibformen scheitern ausdrücklich. Schreibzugriffe mit gleichem Wert und teilweise geschriebene Felder unterliegen weiterhin den bisherigen Initialisierungsprüfungen.
+
+Physische schreibgeschützte KVM-Slots schützen überwachte RAM-Seiten zusätzlich vor einer vorübergehenden Änderung von CR0.WP. Ein abgelehnter Schreibzugriff der zweiten Ebene beendet die Ausführung ohne Abschluss der ausstehenden MMIO-Operation; der diagnostische RIP ist kein vollständig bestätigter CPU-Kontext. Zu wenige Slots führen zu einem expliziten Fehler. Spezialzustände werden an Ausführungsgrenzen geprüft; dies beweist nicht, dass CR3 oder Abbildungen nie vorübergehend geändert wurden.
+
 ## Bauen und ausführen
 
 Die Funktion muss ausdrücklich aktiviert werden und ist unabhängig von `BUILD_TESTING`:

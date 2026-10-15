@@ -373,3 +373,36 @@ NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "unittests/emulation/DriverBackendParityCases.def",
     "NEVERD_PARITY_SCENARIO")
 #endif
+
+#ifdef NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.ChangedIRQLAndGSFailBeforeObserversOrModeledAPIs/Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.PackedDriverUsesExistingAPIsCallbacksAndReturnGates/"
+    "Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.RepeatedWatchResumesRetainOpaquePrefixDependencies/"
+    "Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.WriteWatchesObserveCommittedAndSameValueStores/Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.ProcessorViewIsPreparedBeforeOriginalGSAndCR8Reads/"
+    "Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/"
+    "DirectDriver.InteriorServiceGatesAndRawProcessorFaultsFailExplicitly/Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/"
+    "DirectDriver.ProcessorIdentityAndTimestampRemainRuntimeDependencies/Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.DriverEntryReturnStillChecksTheNativeABI/Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.TimeoutAndAPIEventLimitsRemainEnforced/Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.UnobservedDriverDispatchRegistrationSurvivesRequests/"
+    "Kvm")
+NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
+    "Native/DirectDriver.SameValueDispatchStoresKeepExactInitializationWidths/"
+    "Kvm")
+
+#endif

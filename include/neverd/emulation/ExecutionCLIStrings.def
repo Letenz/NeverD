@@ -8,7 +8,8 @@ NEVERD_EXECUTION_CLI_STRING(BackendHelp,
                             "CPU backend: auto, unicorn, kvm, whp, hvf")
 NEVERD_EXECUTION_CLI_STRING(ContractOption, "execution-contract")
 NEVERD_EXECUTION_CLI_STRING(
-    ContractHelp, "Execution contract: driver-strict or checked-x64-v1")
+    ContractHelp, "Execution contract: driver-strict, checked-x64-v1 or "
+                  "direct-driver-x64-v1 (KVM)")
 NEVERD_EXECUTION_CLI_STRING(CapabilitiesCommand, "cpu-capabilities")
 NEVERD_EXECUTION_CLI_STRING(CapabilitiesHelp,
                             "Query CPU configuration, semantic capabilities "

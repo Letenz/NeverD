@@ -27,6 +27,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
 
+`direct-driver-x64-v1` réutilise le modèle de pilote et de noyau avec une exécution superviseur directe sur KVM x64. Les exports du noyau, les retours de rappel, les thunks de garde et les observations à l’arrêt restent des limites explicites. Le temps et les événements API bornent l’exécution ; le nombre d’instructions indisponible est indiqué par zéro. L’ordonnancement par instruction, la trace de chaque écriture et les tables CPUID personnalisées sont refusés. L’identité du processeur et les horodatages proviennent du moteur et restent des dépendances de l’environnement capturé. Les changements non pris en charge des registres spéciaux échouent explicitement. Ce contrat ne restaure pas à lui seul une image SYS capturée.
+
+Le suivi de l’initialisation des champs du noyau exige les plages exactes des écritures validées. Sur les pages surveillées, l’exécution directe accepte actuellement les MOV/MOVABS/XOR scalaires et les instructions de stockage SSE classiques prises en charge ; les autres formes échouent explicitement. Les écritures de même valeur et les champs partiels conservent les vérifications habituelles d’initialisation.
+
+Les emplacements physiques en lecture seule de KVM protègent aussi les pages RAM surveillées contre une modification temporaire de CR0.WP. Une écriture refusée au second niveau termine l’exécution sans achever l’opération MMIO en attente ; le RIP du diagnostic ne représente pas un contexte CPU complet validé. Le manque d’emplacements échoue explicitement. La validation des états spéciaux se fait aux frontières d’exécution et ne prouve pas l’absence de changements temporaires de CR3 ou des mappings.
+
 ## Compiler et exécuter
 
 La fonctionnalité nécessite une activation explicite, indépendante de `BUILD_TESTING` :

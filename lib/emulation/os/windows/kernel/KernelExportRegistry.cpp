@@ -13,9 +13,11 @@
 
 #include "../driver/DriverImage.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 namespace neverd::emulation {
@@ -71,17 +73,25 @@ KernelExportRegistry::moduleBase(llvm::StringRef Module) {
 }
 
 bool KernelExportRegistry::overlapsThunk(uint64_t Address, uint64_t Size) {
-  const auto Overlaps = [&](uint64_t Base) {
-    return Size && Address < Base + profile::ThunkSize &&
-           (Address >= Base || Size > Base - Address);
-  };
-  if (Overlaps(profile::ThunkBase))
-    return true;
-  for (unsigned I = 0; I < profile::KernelModuleCount; ++I)
-    if (Overlaps(profile::KernelModuleBase + I * profile::KernelModuleStride +
-                 profile::KernelModuleCodeRVA))
+  for (const auto &Range : executionWatches())
+    if (Size && Address < Range.Address + Range.Size &&
+        (Address >= Range.Address || Size > Range.Address - Address))
       return true;
   return false;
+}
+
+llvm::ArrayRef<ExecutionWatch> KernelExportRegistry::executionWatches() {
+  static const auto Ranges = [] {
+    std::array<ExecutionWatch, profile::KernelModuleCount + 1> Result{};
+    Result[0] = {profile::ThunkBase, profile::ThunkSize};
+    for (unsigned I = 0; I < profile::KernelModuleCount; ++I)
+      Result[I + 1] = {profile::KernelModuleBase +
+                           I * profile::KernelModuleStride +
+                           profile::KernelModuleCodeRVA,
+                       profile::ThunkSize};
+    return Result;
+  }();
+  return Ranges;
 }
 
 llvm::Error KernelExportRegistry::initialize(const DriverOptions &Options) {

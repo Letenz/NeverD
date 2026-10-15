@@ -206,14 +206,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "MaterializedRuntimePreservesOwnedObjectsOnNativeWindows/"
     "{backend_title}DirectX64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/UnpackGenerated."
-    "MaterializationRequiresKnownSupportedState/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/UnpackGenerated."
-    "MaterializationRequiresKnownSupportedState/"
-    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "MaterializationRequiresKnownSupportedState/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "MaterializationRequiresKnownSupportedState/"
+                                "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated.DirectServiceBindingsRequireAnExplicitSnapshot/"
     "{backend_title}X64")
@@ -274,14 +272,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "GeneratedOperandAcrossAPageBoundaryEstablishesAnEntry/"
     "{backend_title}DirectX64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/UnpackGenerated."
-    "LoaderGeneratesItsEntryInThePageItIsExecuting/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/UnpackGenerated."
-    "LoaderGeneratesItsEntryInThePageItIsExecuting/"
-    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "LoaderGeneratesItsEntryInThePageItIsExecuting/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "LoaderGeneratesItsEntryInThePageItIsExecuting/"
+                                "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "LoaderRewritesACallbackInItsOwnPageBeforeEnteringIt/"
@@ -330,10 +326,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/RuntimeSession."
     "StoppedInstructionInspectionHasNoExecutionEffects/"
     "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/RuntimeSession."
-    "CancelledStoreCannotPublishAWriteWatch/"
-    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/RuntimeSession."
+                                "CancelledStoreCannotPublishAWriteWatch/"
+                                "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64."
     "CommittedWriteStopsBeforeTheFollowingInstruction/"
@@ -349,10 +344,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64."
     "WriteWatchesFollowPhysicalAliasesAndMappingChanges/"
     "{backend}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Transports/DirectX64."
-    "RealWriteProtectionFaultOutranksAWriteWatch/"
-    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Transports/DirectX64."
+                                "RealWriteProtectionFaultOutranksAWriteWatch/"
+                                "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64."
     "RepWriteWatchPreservesPartialProgressBeforeARealFault/"
@@ -448,7 +442,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.PartialWatchCanRunALongLoopInTheSamePage/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Transports/DirectX64.FragmentedWatchesAllowRepeatedPageCrossings/{backend}")
+    "Transports/DirectX64.FragmentedWatchesAllowRepeatedPageCrossings/"
+    "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.FullNamespacePageCoverDoesNotWrap/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -457,7 +452,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.AliasedCodeWriteInvalidatesAPlannedBranch/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Transports/DirectX64.InactivePagePlansRevalidateWritesThroughPhysicalAliases/"
+    "Transports/"
+    "DirectX64.InactivePagePlansRevalidateWritesThroughPhysicalAliases/"
     "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.UnwatchedPageCanReturnToAPartialPageWatch/{backend}")
@@ -466,11 +462,13 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.IndirectFrontierDoesNotLeakASingleStepFlag/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Transports/DirectX64.ManyControlFlowFrontiersPreservePushedFlags/{backend}")
+    "Transports/DirectX64.ManyControlFlowFrontiersPreservePushedFlags/"
+    "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.ResumedPushFlagsWritesOnlyTheGuestFlags/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Transports/DirectX64.ResumedPopFlagsPreservesTheNextGuestDebugTrap/{backend}")
+    "Transports/DirectX64.ResumedPopFlagsPreservesTheNextGuestDebugTrap/"
+    "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/"
     "DirectX64.ResumedWatchCanRetireOneInstructionAcrossTwoWatchedPages/"
@@ -1906,10 +1904,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Integer.BitScanPreservesWidthsAndDefinedFlags/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
+    "ExplicitBackends/"
+    "X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
+    "ExplicitBackends/"
+    "X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Integer.BitScanReadStopPreservesDestinationAndFlags/"
@@ -1924,16 +1924,20 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Integer.BitScanCrossPageReadChecksCompleteSpan/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
+    "ExplicitBackends/"
+    "X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
+    "ExplicitBackends/"
+    "X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
+    "ExplicitBackends/"
+    "X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
     "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
+    "ExplicitBackends/"
+    "X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Integer.BitScanDeviceSourceRejectsWithoutCallbacks/"
@@ -2529,7 +2533,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.ExecutesOriginalSystemModuleScenarios/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsSystem.ExplicitVersionBytesReachGuestCodeWithoutTruncation/"
+    "Backends/"
+    "WindowsSystem.ExplicitVersionBytesReachGuestCodeWithoutTruncation/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.FLSExitCallbacksAreNotProgramInvocations/"
@@ -4813,4 +4818,48 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "Backends/UnpackFixture.DirectContractRecoversTheSameImage/"
     "{backend_title}_",
     "unittests/unpack/UnpackCases.def", "NEVERD_UNPACK_TEST_FIXTURE")
+#endif
+
+#ifdef NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.SupervisorCodeRunsWithoutCheckedInstructionAdmission")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.CanonicalSupervisorWatchPreservesCommittedRAM")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.PageFaultPreservesTheCommittedStringPrefix")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.FSBaseWriteSurvivesAWatchAndResume")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.UnretainedMSRStopsBeforeAccessWithCommittedContext")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.ChangedCR0IsRejectedAtTheOriginalExceptionBoundary")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.ChangedCR0IsRejectedWhenTheDeadlineInterruptsExecution")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.ChangedDebugRegisterIsRejected")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.ChangedDescriptorTableIsRejected")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.DeadlineCapturesStableSupervisorContext")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationTracksSameValuePartialAndAliasedStores")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.TemporaryWriteProtectionChangesCannotBypassInitialization")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.TemporaryWriteProtectionChangesCannotBypassWriteWatches")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationTracksScalarXorWritesAndNativeFlags")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationMarksOneStoreAcrossDifferentPhysicalPages")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationDoesNotMarkAFaultingCrossPageStore")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationRejectsAnUnknownStoreBeforeItsEffects")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationWatchCreationAndRemovalInvalidateProjection")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.InitializationTracksTheCompleteUnalignedVectorStore")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "DirectDriverX64.PublicWriteStepKeepsOtherInitializationPagesProtected")
+
 #endif

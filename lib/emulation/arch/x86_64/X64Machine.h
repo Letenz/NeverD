@@ -58,13 +58,14 @@ struct X64PageTableCache;
 /// makes every alias of a watched RAM page read-only for direct execution.
 /// \p WriteGuard additionally protects one physical code page while its
 /// decoded control-flow plan is in use; changes require a new watch epoch.
-llvm::Expected<uint64_t>
-buildX64PageTables(MemoryProjection &Memory, bool UserMode = false,
-                   bool ExceptionMonitor = false,
-                   llvm::ArrayRef<ExecutionWatch> NoExecutePages = {},
-                   uint64_t WatchEpoch = 0, bool WatchWrites = false,
-                   std::optional<uint64_t> WriteGuard = std::nullopt,
-                   X64PageTableCache *Cache = nullptr);
+/// \p WatchInitialization independently protects physical initialization
+/// watches, including while a public write watch is temporarily opened.
+llvm::Expected<uint64_t> buildX64PageTables(
+    MemoryProjection &Memory, bool UserMode = false,
+    bool ExceptionMonitor = false,
+    llvm::ArrayRef<ExecutionWatch> NoExecutePages = {}, uint64_t WatchEpoch = 0,
+    bool WatchWrites = false, std::optional<uint64_t> WriteGuard = std::nullopt,
+    X64PageTableCache *Cache = nullptr, bool WatchInitialization = false);
 struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};

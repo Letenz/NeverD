@@ -39,6 +39,30 @@ const DriverAPIEvent *findCall(const DriverResult &Result, const char *Name) {
   return Found == Result.Calls.end() ? nullptr : &*Found;
 }
 
+TEST(DriverSession, DirectRejectsUnobservableScenarioOptionsBeforeLoading) {
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    DriverOptions Options;
+    Options.Contract = ExecutionContract::DirectDriverX64;
+    Options.TraceMemoryWrites = false;
+    const char *Expected = nullptr;
+    if (Mode == 0) {
+      Options.Scheduling = DriverScheduling{1, 1};
+      Expected = "instruction-driven scheduling";
+    } else if (Mode == 1) {
+      Options.TraceMemoryWrites = true;
+      Expected = "trace_memory_writes=false";
+    } else {
+      Options.CPUID = {{0, std::nullopt, {0, 0, 0, 0}}};
+      Expected = "cannot apply scenario cpuid";
+    }
+    auto Result = emulateDriver("missing-direct-driver.sys", Options);
+    ASSERT_FALSE(bool(Result));
+    EXPECT_NE(llvm::toString(Result.takeError()).find(Expected),
+              std::string::npos);
+  }
+}
+
 TEST(DriverSession, RejectsPendingInitializationBeforeDeliveringScenario) {
   DriverOptions Options;
   Options.Requests.push_back({DriverRequestKind::Create});

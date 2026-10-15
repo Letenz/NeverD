@@ -101,6 +101,8 @@ add_neverd_unittest(NeverDDirectX64Tests
   NO_PRETTY_VALUES
   TIMEOUT 15
   LINK_COMPONENTS EmulationRuntime)
+target_include_directories(NeverDDirectX64Tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64MemoryUpdateTests.cpp

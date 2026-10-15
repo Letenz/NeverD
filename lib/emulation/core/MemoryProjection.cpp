@@ -7,6 +7,7 @@
 
 #include "ExecutionDiagnostics.h"
 #include "MemoryLayout.h"
+#include "RAMInitializationWatch.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
@@ -108,17 +109,41 @@ MemoryProjection::bind(std::shared_ptr<AddressSpace> Next,
 }
 llvm::Error MemoryProjection::beginRun(RAMWriteTracking Tracking) {
   auto &RAM = *Space->State->Memory->State;
-  if (!RAM.Mutex.try_lock())
+  std::unique_lock Lease(RAM.Mutex, std::try_to_lock);
+  if (!Lease.owns_lock())
     return diagnostic::error(diagnostic::Running);
-  if (RAM.Running) {
-    RAM.Mutex.unlock();
+  if (RAM.Running)
     return diagnostic::error(diagnostic::Running);
+  std::vector<MemoryWriteWatch> Initialization;
+  if (Tracking == RAMWriteTracking::Opaque)
+    for (const auto &Weak : RAM.InitializationWatches)
+      if (auto Watch = Weak.lock())
+        for (const auto &Part : Watch->Parts)
+          Initialization.push_back({Part.Physical, Part.Size});
+  llvm::sort(Initialization, [](const auto &A, const auto &B) {
+    return A.Address < B.Address;
+  });
+  size_t Count = 0;
+  for (const auto W : Initialization) {
+    if (Count && W.Address - Initialization[Count - 1].Address <=
+                     Initialization[Count - 1].Size) {
+      auto &Last = Initialization[Count - 1];
+      Last.Size = std::max(Last.Size, W.Address - Last.Address + W.Size);
+    } else
+      Initialization[Count++] = W;
+  }
+  Initialization.resize(Count);
+  if (InitializationWatches != Initialization) {
+    InitializationWatches = std::move(Initialization);
+    invalidateProjection();
   }
   RAM.Running = true;
   WatchedWrite = false;
   WriteTracking = Tracking;
   if (Tracking == RAMWriteTracking::Opaque)
     RAM.invalidateReservations();
+  // endRun releases this execution lease after the CPU has stopped.
+  (void)Lease.release();
   return llvm::Error::success();
 }
 void MemoryProjection::endRun() {
@@ -198,6 +223,18 @@ bool MemoryProjection::hasInitializationWatches() const {
   // Keeping the hook when another owner is busy is conservative. Never read
   // the mutable weak registry outside the physical lease.
   return !Lock.owns_lock() || !RAM.InitializationWatches.empty();
+}
+
+bool MemoryProjection::initializationWatched(uint64_t Physical,
+                                             uint64_t Size) const {
+  if (!Size)
+    return false;
+  const auto I = llvm::upper_bound(
+      InitializationWatches, Physical + Size - 1,
+      [](uint64_t A, const MemoryWriteWatch &W) { return A < W.Address; });
+  return I != InitializationWatches.begin() &&
+         (Physical < std::prev(I)->Address ||
+          Physical - std::prev(I)->Address < std::prev(I)->Size);
 }
 
 bool MemoryProjection::setWriteWatches(

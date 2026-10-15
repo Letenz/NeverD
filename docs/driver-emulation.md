@@ -67,6 +67,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 ARM64 CPU execution is available through the independent [C++ CPU interface](architecture.md#cpu-execution).
 This driver CLI still requires the x64 Windows ABI and rejects ARM64 driver images.
 
+`direct-driver-x64-v1` reuses this driver and kernel model with direct supervisor execution on x64 KVM. Kernel exports, callback returns, guard thunks and stopped observers remain explicit execution gates. The run is bounded by time and API events; its instruction count is unavailable and reported as zero. Instruction-driven scheduling, per-write tracing and custom CPUID rows are rejected. Processor identity and timestamps come from the transport and remain captured environment dependencies. Unsupported special-register changes fail explicitly. This execution contract alone does not restore a captured SYS image.
+
+Kernel fields with initialization tracking need exact committed write ranges. On their monitored pages, direct execution currently accepts scalar MOV/MOVABS/XOR and the supported legacy SSE stores; other store forms fail explicitly. Same-value writes and partial fields retain their ordinary initialization checks.
+
+KVM physical read-only slots additionally protect watched RAM pages against temporary CR0.WP changes. A rejected second-level write terminates execution without completing its pending MMIO operation; its diagnostic RIP is not a complete committed CPU context. Slot exhaustion fails explicitly. Special-state validation occurs at execution boundaries and does not prove the absence of temporary CR3 or mapping changes.
+
 ## Build and run
 
 The feature is opt-in and independent of `BUILD_TESTING`:

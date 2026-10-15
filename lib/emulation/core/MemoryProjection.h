@@ -101,6 +101,19 @@ public:
   /// Conservative invalidation and pre-write observers never call this.
   void recordRAMInitialization(uint64_t Physical, uint64_t Size);
   bool hasInitializationWatches() const;
+  /// Exact physical ranges frozen under the execution lease at beginRun.
+  llvm::ArrayRef<MemoryWriteWatch> physicalInitializationWatches() const {
+    return InitializationWatches;
+  }
+  /// Physical write guards selected by the current ISA projection. A native
+  /// supervisor transport must enforce these independently of guest paging.
+  void setProjectionWriteGuards(llvm::ArrayRef<MemoryWriteWatch> Guards) {
+    ProjectionWriteGuards.assign(Guards.begin(), Guards.end());
+  }
+  llvm::ArrayRef<MemoryWriteWatch> projectionWriteGuards() const {
+    return ProjectionWriteGuards;
+  }
+  bool initializationWatched(uint64_t Physical, uint64_t Size) const;
   bool setWriteWatches(const std::vector<MemoryWriteWatch> &Watches);
   /// Tests physical bytes, so writes through an unobserved alias still match.
   bool writeWatched(uint64_t Physical, uint64_t Size);
@@ -191,6 +204,8 @@ private:
   uint64_t TransportBase = 0;
   std::optional<std::pair<uint64_t, uint64_t>> DeviceOperand;
   std::vector<MemoryWriteWatch> WriteWatches, PhysicalWriteWatches;
+  std::vector<MemoryWriteWatch> InitializationWatches;
+  std::vector<MemoryWriteWatch> ProjectionWriteGuards;
   std::weak_ptr<AddressSpace> WriteWatchSpace;
   uint64_t WriteWatchGeneration = 0;
   bool WatchedWrite = false;
