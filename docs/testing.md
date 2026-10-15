@@ -3001,6 +3001,13 @@ that external pins reject completion without changing IRP or MDL state.
 Additional fixtures cover driver-owned nonpaged pool MDLs, independent descriptor
 and buffer lifetimes, registry query layouts and short buffers, handle rights,
 deletion and leaks, and full-width `information_hex` for zero-output IOCTLs.
+`DriverKernelRegistry` also covers Basic/Node/Full/Name/Cached key layouts,
+explicit and unknown timestamps, overflow before mutation, identical-value
+writes, retained maxima and live subkey indices. Original
+`driver_registry_values.c` and `driver_registry_keys.c` execute query,
+enumeration and deletion through Unicorn/KVM/WHP/HVF with legacy/checked-x64
+contracts at preferred/rebased addresses; unavailable host backends skip
+explicitly.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 

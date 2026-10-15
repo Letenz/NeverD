@@ -8,6 +8,8 @@ EXPORTS
   ZwCreateKey
   ZwQueryValueKey
   ZwEnumerateValueKey
+  ZwQueryKey
+  ZwEnumerateKey
   ZwSetValueKey
   ZwDeleteValueKey
   ZwDeleteKey

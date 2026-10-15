@@ -4258,7 +4258,10 @@ completion preflights dependencies before automatic unlock/free. Partial MDLs
 retain independent descriptor, root-lock and borrowed-alias ownership.
 
 `KernelRegistry` owns the explicitly configured session tree, per-handle access
-rights and lifetime, value serialization, and mutations. Scenario preflight and
+rights and lifetime, key/value serialization, and mutations. Its explicit
+registry epoch is combined with the shared scheduler's elapsed time; it owns
+per-key timestamp validity and cached maximum lengths. Missing time never
+falls back to host time. Scenario preflight and
 runtime operations share its validation limits. The model does not consult a
 host registry; reports distinguish original configuration from the final live
 key/value snapshot. Closing a registry handle does not delete its key, and
