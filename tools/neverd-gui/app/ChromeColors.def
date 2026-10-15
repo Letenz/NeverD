@@ -107,9 +107,11 @@ NEVERD_CHROME_COLOR(ButtonPrimary, "#007ACC", "#0E639C")
 NEVERD_CHROME_COLOR(ButtonPrimaryHover, "#0062A3", "#1177BB")
 NEVERD_CHROME_COLOR(ButtonPrimaryText, "#FFFFFF", "#FFFFFF")
 // Quick start: file outlines share the action glyphs' clear blue accent.
-// Labels identify the format; missing files are dimmed.
-NEVERD_CHROME_COLOR(RecentBadgeText, "#246CC5", "#5DA9F6")
-NEVERD_CHROME_COLOR(RecentBadgeSelectedText, "#185CAD", "#7CB9FF")
+// Labels identify the format; missing files are dimmed.  Thin strokes read
+// darker than their color, so the dark theme draws them in Visual Studio
+// Code's icon blue, lighter than its link blue.
+NEVERD_CHROME_COLOR(RecentBadgeText, "#246CC5", "#75BEFF")
+NEVERD_CHROME_COLOR(RecentBadgeSelectedText, "#185CAD", "#91CEFF")
 // Quick start: the side pane, action rows and line glyphs, shortcut hints,
 // and the recent file the list selected.
 NEVERD_CHROME_COLOR(QuickStartSide, "#F3F3F3", "#252526")
@@ -118,13 +120,13 @@ NEVERD_CHROME_COLOR(QuickStartSecondaryText, "#58636D", "#A3ABB4")
 NEVERD_CHROME_COLOR(QuickStartMetadataText, "#65727E", "#8F9BA7")
 NEVERD_CHROME_COLOR(QuickStartDefaultAction, "#EAF0F4", "#2A2F34")
 NEVERD_CHROME_COLOR(QuickStartActionHover, "#E5EBF0", "#2F3439")
-NEVERD_CHROME_COLOR(QuickStartDefaultGlyph, "#185CAD", "#7CB9FF")
-NEVERD_CHROME_COLOR(QuickStartGlyph, "#246CC5", "#5DA9F6")
+NEVERD_CHROME_COLOR(QuickStartDefaultGlyph, "#185CAD", "#91CEFF")
+NEVERD_CHROME_COLOR(QuickStartGlyph, "#246CC5", "#75BEFF")
 NEVERD_CHROME_COLOR(QuickStartFocus, "#707070", "#9AA4AE")
 NEVERD_CHROME_COLOR(QuickStartPressed, "#DAE3EB", "#343C44")
 NEVERD_CHROME_COLOR(QuickStartKeyBorder, "#CED5DB", "#424A52")
 NEVERD_CHROME_COLOR(QuickStartKeyText, "#65727E", "#A8B4C0")
-NEVERD_CHROME_COLOR(QuickStartSelection, "#E6EEF5", "#293B4B")
+NEVERD_CHROME_COLOR(QuickStartSelection, "#E6EEF5", "#2A4461")
 NEVERD_CHROME_COLOR(QuickStartSelectionText, "#202B33", "#F0F4F8")
 
 #undef NEVERD_CHROME_COLOR

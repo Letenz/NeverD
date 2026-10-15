@@ -131,7 +131,10 @@ A shared bounding box alone does not guarantee equal visual weight.
 
 Quick Start uses line glyphs drawn on a 24-pixel grid, without individual rounded
 background tiles, beside outlined file icons. Keep them crisp at normal and
-fractional DPI. File labels must fit their outline, including longer labels
+fractional DPI. Run straight strokes along pixel centers: a thin stroke split
+across two pixels renders as a darker, duller tint of its color, which the user
+saw as a heavy blue. For the same reason the dark theme draws line glyphs in
+an icon blue lighter than link text, as Visual Studio Code does (`#75BEFF`). File labels must fit their outline, including longer labels
 such as MACH, NDDB, and WASM. Follow `IconSet.def` for asset provenance and
 palette conventions; do not copy a third-party icon set merely to imitate an IDE.
 
