@@ -107,3 +107,7 @@ EXPORTS
   RtlCopyString
   RtlEqualString
   RtlCompareString
+  RtlTimeToTimeFields
+  RtlTimeFieldsToTime
+  RtlStringFromGUID
+  RtlGUIDFromString

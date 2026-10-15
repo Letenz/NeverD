@@ -15,6 +15,8 @@
 #include "os/windows/driver/DriverImage.h"
 #include "os/windows/kernel/KernelModel.h"
 
+#include "llvm/Support/FormatVariadic.h"
+
 #include <initializer_list>
 #include <map>
 #include <string_view>
@@ -978,6 +980,164 @@ TEST_F(KernelRuntime, StringConversionAndReleaseFollowTheirIRQLContracts) {
   invoke("KeLowerIrql", {Dispatch});
 }
 
+TEST_F(KernelRuntime, TimeFieldsMatchRecordedKernelConversions) {
+  // Recorded from the 19041.6456 kernel's RtlTimeToTimeFields and
+  // RtlTimeFieldsToTime executed in isolation, without leap seconds.
+  struct Forward {
+    uint64_t Time;
+    int16_t Fields[8];
+  };
+  static constexpr Forward Times[] = {
+      {0x0ULL, {1601, 1, 1, 0, 0, 0, 0, 1}},
+      {0x270fULL, {1601, 1, 1, 0, 0, 0, 0, 1}},
+      {0x2710ULL, {1601, 1, 1, 0, 0, 0, 1, 1}},
+      {0xc92a69bfffULL, {1601, 1, 1, 23, 59, 59, 999, 1}},
+      {0xc92a69c000ULL, {1601, 1, 2, 0, 0, 0, 0, 2}},
+      {0x743551217a5eef5eULL, {28136, 2, 29, 20, 23, 59, 411, 3}},
+      {0x7fffffffffffffffULL, {30828, 9, 14, 2, 48, 5, 477, 4}},
+  };
+  for (const auto &Case : Times) {
+    SCOPED_TRACE(Case.Time);
+    check(Memory->writeInteger(Scratch, Case.Time, 8));
+    check(Memory->write(Scratch + 0x20, std::vector<uint8_t>(16, 0xee)));
+    invoke("RtlTimeToTimeFields", {Scratch, Scratch + 0x20});
+    for (unsigned I = 0; I < 8; ++I)
+      EXPECT_EQ(static_cast<int16_t>(integer(Scratch + 0x20 + I * 2, 2)),
+                Case.Fields[I])
+          << I;
+  }
+  struct Backward {
+    int16_t Fields[8];
+    bool Valid;
+    uint64_t Time;
+  };
+  static constexpr Backward Inputs[] = {
+      {{1601, 1, 1, 0, 0, 0, 0, 5}, true, 0x0ULL},
+      {{30827, 12, 31, 23, 59, 59, 999, 0}, true, 0x7fff35f4f06c58f0ULL},
+      {{2024, 2, 29, 0, 0, 0, 0, 0}, true, 0x1da6aa23ce90000ULL},
+      {{2000, 2, 29, 0, 0, 0, 0, 0}, true, 0x1bf8247ebcc8000ULL},
+      // Weekday is ignored on input.
+      {{2026, 10, 15, 12, 34, 56, 789, 9}, true, 0x1dd5ca1960cbc50ULL},
+      {{2023, 2, 29, 0, 0, 0, 0, 0}, false, 0},
+      {{1900, 2, 29, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 4, 31, 0, 0, 0, 0, 0}, false, 0},
+      {{1600, 12, 31, 0, 0, 0, 0, 0}, false, 0},
+      {{30828, 1, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{-1, 1, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 0, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 13, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 0, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, 24, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, -1, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, 0, 60, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, 0, 0, 60, 0, 0}, false, 0},
+      {{2026, 1, 1, 0, 0, 0, 1000, 0}, false, 0},
+      {{2026, 1, 1, 0, 0, 0, -1, 0}, false, 0},
+  };
+  for (const auto &Input : Inputs) {
+    SCOPED_TRACE(Input.Fields[0]);
+    for (unsigned I = 0; I < 8; ++I)
+      check(
+          Memory->writeInteger(Scratch + I * 2, uint16_t(Input.Fields[I]), 2));
+    check(Memory->writeInteger(Scratch + 0x40, 0xeeeeeeeeeeeeeeeeULL, 8));
+    EXPECT_EQ(invoke("RtlTimeFieldsToTime", {Scratch, Scratch + 0x40}),
+              Input.Valid ? 1u : 0u);
+    // A rejected conversion leaves the output untouched.
+    EXPECT_EQ(integer(Scratch + 0x40),
+              Input.Valid ? Input.Time : 0xeeeeeeeeeeeeeeeeULL);
+  }
+}
+
+TEST_F(KernelRuntime, GUIDFormattingAllocatesLowercaseRegistryText) {
+  // RtlStringFromGUID (RVA 0x6f34d0) formats into a 78-byte paged 'Strg'
+  // allocation that RtlFreeUnicodeString releases.
+  const std::vector<uint8_t> Guid = {0x67, 0xe9, 0x36, 0x4d, 0x25, 0xe3,
+                                     0xce, 0x11, 0xbf, 0xc1, 0x08, 0x00,
+                                     0x2b, 0xe1, 0x03, 0x18};
+  check(Memory->write(Scratch, Guid));
+  check(Memory->write(Scratch + 0x20, std::vector<uint8_t>(16, 0xee)));
+  EXPECT_EQ(invoke("RtlStringFromGUID", {Scratch, Scratch + 0x20}), 0u);
+  EXPECT_EQ(integer(Scratch + 0x20, 2), 76u);
+  EXPECT_EQ(integer(Scratch + 0x22, 2), 78u);
+  const uint64_t Buffer = integer(Scratch + 0x28);
+  EXPECT_EQ(units(Buffer, 39),
+            std::u16string(u"{4d36e967-e325-11ce-bfc1-08002be10318}\0", 39));
+  EXPECT_NE(failure("ExFreePoolWithTag", {Buffer, Tag}).find("tag"),
+            std::string::npos);
+  invoke("RtlFreeUnicodeString", {Scratch + 0x20});
+  EXPECT_EQ(integer(Scratch + 0x28), 0u);
+  check(Memory->write(Scratch, std::vector<uint8_t>(16, 0xff)));
+  invoke("RtlStringFromGUID", {Scratch, Scratch + 0x20});
+  EXPECT_EQ(units(integer(Scratch + 0x28), 38),
+            u"{ffffffff-ffff-ffff-ffff-ffffffffffff}");
+  invoke("RtlFreeUnicodeString", {Scratch + 0x20});
+}
+
+TEST_F(KernelRuntime, GUIDParsingMatchesTheKernelScanner) {
+  // RtlGUIDFromString (RVA 0x6bd650): exact widths in either case. Data1
+  // through Data3 are stored while scanning, Data4 only after a full match,
+  // and text may follow only after a zero unit.
+  struct Case {
+    std::u16string_view Text;
+    uint64_t Status;
+    const char *Guid;
+  };
+  const Case Cases[] = {
+      {u"{4d36e967-e325-11ce-bfc1-08002be10318}", 0,
+       "67e9364d25e3ce11bfc108002be10318"},
+      {u"{4D36E967-E325-11CE-BFC1-08002BE10318}", 0,
+       "67e9364d25e3ce11bfc108002be10318"},
+      {std::u16string_view(u"{4d36e967-e325-11ce-bfc1-08002be10318}\0x", 40), 0,
+       "67e9364d25e3ce11bfc108002be10318"},
+      {u"{4d36e967-e325-11ce-bfc1-08002be10318}x", 0xc000000d,
+       "67e9364d25e3ce11eeeeeeeeeeeeeeee"},
+      {u"{4d36e967-e325-11ce-bfc108002be10318}", 0xc000000d,
+       "67e9364d25e3ce11eeeeeeeeeeeeeeee"},
+      {u"{4d36e967-e3z5-11ce-bfc1-08002be10318}", 0xc000000d,
+       "67e9364deeeeeeeeeeeeeeeeeeeeeeee"},
+      {u"{4d36e96g-e325-11ce-bfc1-08002be10318}", 0xc000000d,
+       "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+      {u"4d36e967-e325-11ce-bfc1-08002be10318}", 0xc000000d,
+       "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+      {u"", 0xc000000d, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(std::string(Case.Text.begin(), Case.Text.end()));
+    unicode(Scratch, Case.Text);
+    check(Memory->write(Scratch + 0x100, std::vector<uint8_t>(16, 0xee)));
+    EXPECT_EQ(invoke("RtlGUIDFromString", {Scratch, Scratch + 0x100}),
+              Case.Status);
+    std::string Hex;
+    for (unsigned I = 0; I < 16; ++I)
+      Hex += llvm::formatv("{0:x-2}", integer(Scratch + 0x100 + I, 1)).str();
+    EXPECT_EQ(Hex, Case.Guid);
+  }
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {1});
+  EXPECT_NE(failure("RtlGUIDFromString", {Scratch, Scratch + 0x100})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  EXPECT_NE(failure("RtlStringFromGUID", {Scratch + 0x100, Scratch + 0x20})
+                .find("PASSIVE_LEVEL"),
+            std::string::npos);
+  invoke("KeLowerIrql", {Previous});
+}
+
+TEST_F(KernelRuntime, TimeFieldsRefuseNegativeTimesAndAllowAnyIRQL) {
+  check(Memory->writeInteger(Scratch, UINT64_MAX, 8));
+  EXPECT_NE(failure("RtlTimeToTimeFields", {Scratch, Scratch + 0x20})
+                .find("non-negative"),
+            std::string::npos);
+  check(Memory->writeInteger(Scratch, 0, 8));
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {15});
+  invoke("RtlTimeToTimeFields", {Scratch, Scratch + 0x20});
+  EXPECT_EQ(invoke("RtlTimeFieldsToTime", {Scratch + 0x20, Scratch + 0x40}),
+            1u);
+  EXPECT_EQ(integer(Scratch + 0x40), 0u);
+  invoke("KeLowerIrql", {Previous});
+}
+
 TEST_F(KernelRuntime, BoundedUnicodeInitializationRejectsLongSources) {
   // RtlInitUnicodeStringEx (RVA 0x32eb60) clears the record before measuring.
   wide(Scratch + 0x100, u"abc");
@@ -1241,7 +1401,7 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
   ASSERT_TRUE(Result->NTStatus.has_value());
   EXPECT_EQ(*Result->NTStatus, 0u);
-  ASSERT_EQ(Result->Messages.size(), 4u);
+  ASSERT_EQ(Result->Messages.size(), 5u);
   EXPECT_EQ(Result->Messages[0], "strings \\Device\\Sample42 42 -42 driver 32");
   // The overflow still stores the formatted length in the short record.
   EXPECT_EQ(Result->Messages[1], "status c0000023 80000005 10");
@@ -1249,6 +1409,9 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   EXPECT_EQ(Result->Messages[2], "convert 80000005 3 \\De");
   // A byte copy without a terminator compares by unsigned bytes and length.
   EXPECT_EQ(Result->Messages[3], "bytes 6 -6");
+  // Registry-form GUID text is lowercase and parses back to the same GUID.
+  EXPECT_EQ(Result->Messages[4],
+            "guid {4d36e967-e325-11ce-bfc1-08002be10318} 76 1");
   std::map<std::string, unsigned> Calls;
   for (const auto &Call : Result->Calls)
     ++Calls[Call.Name];
@@ -1262,11 +1425,31 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   EXPECT_EQ(Calls["RtlUnicodeStringToAnsiString"], 2u);
   EXPECT_EQ(Calls["RtlAnsiStringToUnicodeString"], 1u);
   EXPECT_EQ(Calls["RtlFreeAnsiString"], 1u);
-  EXPECT_EQ(Calls["RtlFreeUnicodeString"], 1u);
+  // The converted copy and the GUID text are both released.
+  EXPECT_EQ(Calls["RtlFreeUnicodeString"], 2u);
   EXPECT_EQ(Calls["RtlInitUnicodeStringEx"], 1u);
   EXPECT_EQ(Calls["RtlCopyString"], 1u);
   EXPECT_EQ(Calls["RtlEqualString"], 1u);
   EXPECT_EQ(Calls["RtlCompareString"], 2u);
+  EXPECT_EQ(Calls["RtlStringFromGUID"], 1u);
+  EXPECT_EQ(Calls["RtlGUIDFromString"], 1u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverRoundTripsCalendarTimes) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_time_fields.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // 2024-02-29 was a Thursday; the impossible date is rejected untouched.
+  EXPECT_EQ(Result->Messages[0], "time 2024-02-29 23:59:58.999 weekday 4 0 1");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["RtlTimeFieldsToTime"], 3u);
+  EXPECT_EQ(Calls["RtlTimeToTimeFields"], 1u);
 }
 
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {

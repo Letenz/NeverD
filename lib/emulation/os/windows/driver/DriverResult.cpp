@@ -13,6 +13,7 @@
 #include "DriverLoaderViewJSON.h"
 #include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
+#include "DriverVaShadowQueryJSON.h"
 #include "DriverVersionQueryJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
@@ -779,6 +780,10 @@ std::string driverResultJSON(const DriverResult &Result) {
   if (Result.Configuration.LoaderView)
     (*Root[field::Configuration].getAsObject())[field::LoaderView] =
         driver_loader_view::toJSON(*Result.Configuration.LoaderView);
+  if (Result.Configuration.KernelVaShadowQuery)
+    (*Root[field::Configuration].getAsObject())[field::KernelVaShadowQuery] =
+        driver_va_shadow_query::toJSON(
+            *Result.Configuration.KernelVaShadowQuery);
   if (Result.Configuration.VersionQuery)
     (*Root[field::Configuration].getAsObject())[field::VersionQuery] =
         driver_version_query::toJSON(*Result.Configuration.VersionQuery);

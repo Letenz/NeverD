@@ -362,35 +362,41 @@ struct DWARFDebugContext::Impl {
 
 DWARFDebugContext::~DWARFDebugContext() = default;
 
-static std::filesystem::path findDSYM(const std::filesystem::path &BinPath) {
-  auto DSYMBundle = BinPath;
-  DSYMBundle += ".dSYM";
-  auto DwarfDir = DSYMBundle / "Contents" / "Resources" / "DWARF";
-  if (std::filesystem::exists(DwarfDir)) {
-    for (auto &Entry : std::filesystem::directory_iterator(DwarfDir)) {
-      if (Entry.is_regular_file())
-        return Entry.path();
-    }
-  }
+std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
+  // A directory that cannot be read holds no bundle: the queries that ask
+  // before a load must not throw.
+  const auto firstFile = [](const std::filesystem::path &DwarfDir) {
+    std::error_code EC;
+    for (std::filesystem::directory_iterator It(DwarfDir, EC), End;
+         !EC && It != End; It.increment(EC))
+      if (std::error_code FileEC; It->is_regular_file(FileEC))
+        return It->path();
+    return std::filesystem::path();
+  };
+  std::error_code EC;
 
-  auto Parent = BinPath.parent_path();
+  auto Bundle = BinaryPath;
+  Bundle += ".dSYM";
+  const auto BundleDwarf = Bundle / "Contents" / "Resources" / "DWARF";
+  if (std::filesystem::exists(BundleDwarf, EC))
+    if (auto File = firstFile(BundleDwarf); !File.empty())
+      return File;
+
+  auto Parent = BinaryPath.parent_path();
   if (Parent.empty())
     Parent = ".";
-  auto Stem = BinPath.stem();
-  if (!std::filesystem::exists(Parent))
-    return {};
-  for (auto &Entry : std::filesystem::directory_iterator(Parent)) {
-    if (Entry.path().extension() == ".dSYM" && Entry.is_directory()) {
-      auto DSYMStem = Entry.path().stem();
-      if (DSYMStem != Stem)
-        continue;
-      auto Inner = Entry.path() / "Contents" / "Resources" / "DWARF";
-      if (std::filesystem::exists(Inner)) {
-        for (auto &F : std::filesystem::directory_iterator(Inner))
-          if (F.is_regular_file())
-            return F.path();
-      }
-    }
+  const auto Stem = BinaryPath.stem();
+  for (std::filesystem::directory_iterator It(Parent, EC), End;
+       !EC && It != End; It.increment(EC)) {
+    std::error_code EntryEC;
+    if (It->path().extension() != ".dSYM" || !It->is_directory(EntryEC) ||
+        It->path().stem() != Stem)
+      continue;
+    const auto Inner = It->path() / "Contents" / "Resources" / "DWARF";
+    std::error_code InnerEC;
+    if (std::filesystem::exists(Inner, InnerEC))
+      if (auto File = firstFile(Inner); !File.empty())
+        return File;
   }
   return {};
 }
@@ -438,6 +444,18 @@ static std::unique_ptr<llvm::object::ObjectFile> getObjectFromBuffer(
     llvm::consumeError(ObjOr.takeError());
   }
   return Fallback;
+}
+
+bool hasDWARFUnits(const std::filesystem::path &Path) {
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
+                                            /*RequiresNullTerminator=*/false);
+  if (!Buffer)
+    return false;
+  const auto Object = getObjectFromBuffer(**Buffer);
+  if (!Object)
+    return false;
+  const auto Context = llvm::DWARFContext::create(*Object);
+  return Context && Context->getNumCompileUnits() > 0;
 }
 
 static bool objectBytesEqual(const llvm::object::ObjectFile &Obj,
@@ -545,7 +563,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
       HasDwarf && Trust == DWARFLoadTrust::InImage && SnapshotMatches;
 
   if (!HasDwarf && Format == BinaryFormat::MachO) {
-    auto DSYMPath = findDSYM(BinaryPath);
+    auto DSYMPath = findDSYMFile(BinaryPath);
     if (!DSYMPath.empty()) {
       LLVM_DEBUG(llvm::dbgs() << "debug: loading dSYM from "
                               << pathToUTF8(DSYMPath) << "\n");

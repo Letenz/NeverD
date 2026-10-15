@@ -177,6 +177,11 @@ constexpr std::string_view LoadOptionsSuffix = ".neverd-load.json";
 using PdbReferenceFunction = const char *(*)(const char *, const char *);
 /// Whether the next load searches for the PDB a PE names.
 using PdbSearchFunction = void (*)(neverd_session_t, int);
+/// The DWARF of an ELF or Mach-O image and where it is, before or after the
+/// image is open.
+using DwarfReferenceFunction = const char *(*)(const char *);
+/// Whether the next load reads the DWARF of an ELF or Mach-O image.
+using DwarfSearchFunction = void (*)(neverd_session_t, int);
 
 using IdentifyFunction = const char *(*)(const char *);
 IdentifyFunction identifyFunction() {
@@ -547,6 +552,10 @@ bool Engine::loadsPdbFiles() {
 bool Engine::findsPdbFiles() {
   return engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json") &&
          engineSymbol<PdbSearchFunction>("neverd_session_set_pdb_search");
+}
+bool Engine::findsDwarf() {
+  return engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json") &&
+         engineSymbol<DwarfSearchFunction>("neverd_session_set_dwarf_search");
 }
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
@@ -1096,6 +1105,10 @@ Json Engine::metadata() const {
           {"loader_diagnostics", std::move(diagnostics)},
           {"pdb", pdbInput_},
           {"pdb_download", mayDownload ? symbol : Json()},
+          {"dwarf", dwarfInput_},
+          // What the load read: {"enabled","kind","path"}, kind "dwarf",
+          // "pdb", "map" or "none".
+          {"debug_info", debug},
           {"function_count",
            deferred ? Json(nullptr) : Json(neverd_func_count(session_))},
           {"segment_count", neverd_session_segment_count(session_)},
@@ -1197,6 +1210,7 @@ Json Engine::analysisSnapshot() {
           {"state", userState()},
           {"signatures", signatureInputs_},
           {"pdb", pdbInput_},
+          {"dwarf", dwarfInput_},
           {"string_options", stringOptions_.empty()
                                  ? Json::object()
                                  : Json::parse(stringOptions_)}};
@@ -1218,6 +1232,9 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
       pdb.is_object() && pdb.value("mode", Json("")) == "none";
   if (pdbDeclined)
     options["pdb"] = pdb;
+  // And the DWARF it declined.
+  if (const auto dwarf = snapshot.value("dwarf", Json()); dwarf.is_object())
+    options["dwarf"] = dwarf;
   execute("open", options);
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
@@ -1290,6 +1307,19 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("unsupported", "This engine cannot find PDB files");
     const auto path = stringField(p, "path", {}, 32768);
     auto result = backendJson(reference(path.c_str(), nullptr));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
+  if (operation == "dwarf_reference") {
+    // The DWARF of an ELF or Mach-O image and where it is, before the image
+    // is opened as after.
+    const auto reference =
+        engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json");
+    if (!reference)
+      throw Error("unsupported", "This engine cannot find DWARF");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
       throw Error("invalid_request", result.value("error", std::string()));
     return result;
@@ -1404,6 +1434,13 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     // image without one, or the file to load once the image is.
     const bool pdbDeclined =
         p.contains("pdb") && p.at("pdb").value("mode", Json("")) == "none";
+    // The user's answer for the DWARF of an ELF or Mach-O image: none, which
+    // leaves the image without it, is the only one there is.
+    if (p.contains("dwarf") &&
+        (!p.at("dwarf").is_object() ||
+         p.at("dwarf").value("mode", Json("")) != "none"))
+      throw Error("invalid_request", "DWARF selection is {\"mode\":\"none\"}");
+    const bool dwarfDeclined = p.contains("dwarf");
     const bool readOnly = p.value("read_only", false);
     // The loader the load dialog chose when the file names none itself: EVM
     // bytecode, or a binary file with its processor and placement, as the
@@ -1475,6 +1512,15 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         throw Error("unsupported",
                     "This engine cannot open a PE without its PDB");
     }
+    // Reading would load the DWARF the user declined.
+    if (dwarfDeclined) {
+      const auto search =
+          engineSymbol<DwarfSearchFunction>("neverd_session_set_dwarf_search");
+      if (!search)
+        throw Error("unsupported",
+                    "This engine cannot open an image without its DWARF");
+      search(next.get(), 0);
+    }
     if (!chosenLoader.empty() &&
         loadOptions().set(next.get(), chosenLoader.c_str()) != 0)
       throw Error("invalid_request",
@@ -1496,8 +1542,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     readOnly_ = readOnly;
     openOptions_ = p;
     openOptions_.erase("pdb");
+    openOptions_.erase("dwarf");
     signatureInputs_ = Json::array();
     pdbInput_ = nullptr;
+    dwarfInput_ = dwarfDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
     dirty_ = false;

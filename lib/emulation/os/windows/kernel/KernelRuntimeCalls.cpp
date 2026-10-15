@@ -7,6 +7,8 @@
 #include "KernelModelRuntime.h"
 #include "WindowsKernelLayout.h"
 
+#include "llvm/Support/FormatVariadic.h"
+
 namespace neverd::emulation {
 namespace {
 using namespace windows;
@@ -16,6 +18,20 @@ llvm::Error modelError(const llvm::Twine &Message) {
 // Every Windows ANSI code page and UTF-8 encode ASCII identically. Other text,
 // including its converted length, depends on the unmodeled system code page.
 constexpr uint8_t MaxASCIIUnit = 0x7f;
+// A GUID is a little-endian Data1/Data2/Data3 followed by eight Data4 bytes,
+// written in registry form as {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}.
+constexpr unsigned GUIDSize = 16;
+constexpr unsigned GUIDTextUnits = 38;
+
+int hexValue(uint16_t Unit) {
+  if (Unit >= '0' && Unit <= '9')
+    return Unit - '0';
+  if (Unit >= 'a' && Unit <= 'f')
+    return Unit - 'a' + 10;
+  if (Unit >= 'A' && Unit <= 'F')
+    return Unit - 'A' + 10;
+  return -1;
+}
 } // namespace
 
 llvm::Expected<uint64_t>
@@ -184,6 +200,122 @@ KernelModel::unicodeToAnsiString(llvm::ArrayRef<uint64_t> A) {
   if (auto E = Memory.write(Buffer, Narrow))
     return E;
   return Status;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::stringFromGUID(llvm::ArrayRef<uint64_t> A) {
+  // RtlStringFromGUID (RVA 0x6f34d0) stores MaximumLength and Buffer before
+  // checking the allocation and Length only once it succeeded.
+  std::vector<uint8_t> Guid(GUIDSize);
+  if (auto E = validateGuestAccess(A[0], GUIDSize, false))
+    return E;
+  if (auto E = Memory.read(A[0], Guid))
+    return E;
+  if (auto E = validateGuestAccess(A[1], UnicodeRecordSize, true))
+    return E;
+  const uint64_t Size = (GUIDTextUnits + 1) * 2;
+  auto Pointer = allocatePool({PoolPaged, Size, RuntimeStringPoolTag}, false);
+  if (!Pointer)
+    return Pointer.takeError();
+  if (auto E = Memory.writeInteger(A[1] + UnicodeMaximumOffset, Size, 2))
+    return E;
+  if (auto E = Memory.writeInteger(A[1] + UnicodeBufferOffset, *Pointer, 8))
+    return E;
+  if (!*Pointer)
+    return StatusNoMemory;
+  const uint32_t Data1 =
+      Guid[0] | Guid[1] << 8 | Guid[2] << 16 | uint32_t(Guid[3]) << 24;
+  const unsigned Data2 = Guid[4] | Guid[5] << 8;
+  const unsigned Data3 = Guid[6] | Guid[7] << 8;
+  std::string Text =
+      llvm::formatv("{{{0:x-8}-{1:x-4}-{2:x-4}-", Data1, Data2, Data3).str();
+  for (unsigned I = 8; I < GUIDSize; ++I) {
+    if (I == 10)
+      Text += '-';
+    Text += llvm::formatv("{0:x-2}", Guid[I]).str();
+  }
+  Text += '}';
+  std::vector<uint8_t> Wide(Size);
+  for (size_t I = 0; I < Text.size(); ++I)
+    Wide[I * 2] = static_cast<uint8_t>(Text[I]);
+  if (auto E = Memory.writeInteger(A[1], GUIDTextUnits * 2, 2))
+    return E;
+  if (auto E = validateGuestAccess(*Pointer, Wide.size(), true))
+    return E;
+  if (auto E = Memory.write(*Pointer, Wide))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::guidFromString(llvm::ArrayRef<uint64_t> A) {
+  // RtlGUIDFromString (RVA 0x6bd650) scans the registry form with exact field
+  // widths in either case. Data1 through Data3 are stored as soon as they are
+  // scanned, so a later mismatch leaves them written; Data4 is copied only
+  // after the whole form matched. Text may follow only after a zero unit.
+  if (auto E = validateGuestAccess(A[0], UnicodeRecordSize, false))
+    return E;
+  auto Length = Memory.readInteger(A[0], 2);
+  if (!Length)
+    return Length.takeError();
+  auto Source = Memory.readInteger(A[0] + UnicodeBufferOffset, 8);
+  if (!Source)
+    return Source.takeError();
+  std::vector<uint8_t> Bytes(*Length & ~uint64_t(1));
+  if (!Bytes.empty()) {
+    if (auto E = validateGuestAccess(*Source, Bytes.size(), false))
+      return E;
+    if (auto E = Memory.read(*Source, Bytes))
+      return E;
+  }
+  if (auto E = validateGuestAccess(A[1], GUIDSize, true))
+    return E;
+  const size_t Units = Bytes.size() / 2;
+  size_t Next = 0;
+  auto Unit = [&](size_t Index) -> uint16_t {
+    return Bytes[Index * 2] | Bytes[Index * 2 + 1] << 8;
+  };
+  auto Literal = [&](char16_t Expected) {
+    if (Next >= Units || Unit(Next) != Expected)
+      return false;
+    ++Next;
+    return true;
+  };
+  auto Hex = [&](unsigned Digits, uint32_t &Value) {
+    Value = 0;
+    for (unsigned I = 0; I < Digits; ++I) {
+      const int Digit = Next < Units ? hexValue(Unit(Next)) : -1;
+      if (Digit < 0)
+        return false;
+      Value = Value * 16 + Digit;
+      ++Next;
+    }
+    return true;
+  };
+  uint32_t Field = 0;
+  if (!Literal(u'{') || !Hex(8, Field))
+    return StatusInvalidParameter;
+  if (auto E = Memory.writeInteger(A[1], Field, 4))
+    return E;
+  for (unsigned Offset : {4u, 6u}) {
+    if (!Literal(u'-') || !Hex(4, Field))
+      return StatusInvalidParameter;
+    if (auto E = Memory.writeInteger(A[1] + Offset, Field, 2))
+      return E;
+  }
+  std::vector<uint8_t> Data4(8);
+  for (unsigned I = 0; I < Data4.size(); ++I) {
+    if ((I == 0 || I == 2) && !Literal(u'-'))
+      return StatusInvalidParameter;
+    if (!Hex(2, Field))
+      return StatusInvalidParameter;
+    Data4[I] = static_cast<uint8_t>(Field);
+  }
+  if (!Literal(u'}') || (Next < Units && Unit(Next)))
+    return StatusInvalidParameter;
+  if (auto E = Memory.write(A[1] + 8, Data4))
+    return E;
+  return StatusSuccess;
 }
 
 llvm::Expected<uint64_t>

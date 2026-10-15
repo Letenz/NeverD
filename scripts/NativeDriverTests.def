@@ -10,6 +10,44 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.DeclaredFlagsAndExactFootprintsOnBothEntrypoints")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.ShortResultsOnlyWriteOptionalLength")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.ULONGArgumentsTruncateAndUnmappedTailIsUntouched")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.MissingDeclarationIRQLAndNtContextPreserveBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.WritableLengthNeedsNoReadPermission")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.InvalidEitherOutputCannotPartiallyWriteTheOther")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.OverlappingDestinationsRejectBeforeAnyWrite")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.EitherOutputAliasRejectsUntilRetired")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.GuardedObjectsAndUserAliasesCannotBecomeOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.BorrowedFieldsCannotBecomeEitherOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.DeviceMemoryAndFreedPoolsCannotPublishOutput")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.UniqueCrossPageOutputsAllowUnrelatedAliases")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.CopiedDeclarationAndBaselineKeepDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelVaShadowQuery.InvalidDeclarationsFailBeforeAllocation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverVaShadowQueryDeclaration.RoundTripsAndPreservesExplicitZero")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverVaShadowQueryDeclaration.RejectsMalformedAndLegacyBeforeLoading")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverVaShadowQueryExecution.ImportsAndDynamicQueriesSurviveRebasedLifecycle/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverVaShadowQueryExecution.MissingDeclarationAndInvalidOutputsStop/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.UnusedVaShadowQueryCannotAuthorizeRuntimeRecovery/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelPhysicalInventory.ExactByteRangesAndTerminatorInOwnedPool")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelPhysicalInventory.LiveResultsAreIndependentAndFreeExactlyOnce")
