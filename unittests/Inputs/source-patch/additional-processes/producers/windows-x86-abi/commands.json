@@ -16,7 +16,7 @@
         "<fixtures>/producers/windows-x86-abi/nonleaf-supplied-object.o"
       ],
       "object": "producers/windows-x86-abi/nonleaf-supplied-object.o",
-      "sha256": "60ac6c3e3a632b72caa06af0726e1e048bea63d93c0f33d7374c2e01b7689cbe"
+      "sha256": "03d5fd9c4b7e4bb0cef68626675715f1702c60047e2042e0743eff94dd6a0b0c"
     },
     {
       "producer": "clang",
@@ -33,7 +33,7 @@
         "<fixtures>/producers/windows-x86-abi/writable-pointer-supplied-object.o"
       ],
       "object": "producers/windows-x86-abi/writable-pointer-supplied-object.o",
-      "sha256": "3d756564b349e1afc3010b9450b4f9457774a703532d560d1dbfcb9cb77288d3"
+      "sha256": "166a4cb641cfefa09bc79458e7cbd20b6b35b4d03a82be34b7e4f85ec042461c"
     },
     {
       "producer": "clang",
@@ -50,7 +50,7 @@
         "<fixtures>/producers/windows-x86-abi/floating-stack-supplied-object.o"
       ],
       "object": "producers/windows-x86-abi/floating-stack-supplied-object.o",
-      "sha256": "f27931fb6079764622ac681f6bb5ddfc78404f3ce93f6cd34e2f2aef909386c4"
+      "sha256": "f525eb55701f5499a7ae6c9f4ec670ce30534727ec65cbb6b79a37a2e5ca86a5"
     }
   ]
 }
