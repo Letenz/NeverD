@@ -200,8 +200,8 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
                        "O_CREAT with O_DIRECTORY is kernel-version dependent");
   const uint32_t AccessMask =
       3 | OpenCreate | OpenExclusive | OpenTruncate | OpenAppend;
-  if ((Flags &
-       ~(OpenCloseOnExec | LargeFile | Directory | Direct | AccessMask)) ||
+  if ((Flags & ~(OpenCloseOnExec | OpenNonBlock | LargeFile | Directory |
+                 Direct | AccessMask)) ||
       (Flags & 3) == 3)
     return unsupported(Result, FileOpenFlags);
   auto Imported = readPath(Address);
@@ -225,6 +225,9 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
     return unsupported(Result, FilePathForm);
 
   Path->Name = procPath(Path->Name);
+  if ((Flags & OpenNonBlock) && (!Options->Devices.contains(Path->Name) ||
+                                 !Options->Devices.at(Path->Name).Binder))
+    return unsupported(Result, FileOpenFlags);
   uint32_t FD = nextDescriptor();
   if (FD == Options->DescriptorLimit)
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);

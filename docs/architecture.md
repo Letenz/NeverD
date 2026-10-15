@@ -172,7 +172,11 @@ addresses only from authoritative identities: NeverD's mirrors by their
 `__nd_data_`/`__nd_codeptr_` spelling plus constant offsets, functions by their
 source identity. Data is named as the listing names it (user names, import
 slots with the suffix `DataNames.def` shares with the listing, debug and image
-symbols, strings). Pages publish where the prelude ends and the epilogue
+symbols, strings). Each mirror's declaration goes under a comment that says
+which image bytes it stands for and which addresses the body reaches through
+it, from a walk of the body before printing; the annotation writer offers no
+hook before a global, so these comments go in after printing and every later
+offset moves by their length. Pages publish where the prelude ends and the epilogue
 begins, and, line by line, the image address each spelled global stands for.
 A mirror an instruction reaches at several offsets maps its spellings in
 printing order only when the counts agree, otherwise to its first byte. The
@@ -6411,5 +6415,14 @@ fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
 AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
 labels on unmap. JSON supplies explicit identity/provider declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
+
+`AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI
+function tables. Object identity, references, frames and pending exceptions
+remain in that owner; string/array helpers implement value and copy-back
+semantics. Guest storage uses the existing allocator and address-space authority.
+`LinuxBinder` owns LP64 control/looper state within each device open description,
+shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
+alternate semantics or service responses. JNI object limits and Binder stream
+admission fail explicitly rather than borrowing a host VM or driver.
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.

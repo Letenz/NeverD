@@ -396,6 +396,16 @@ U64 devices_contexts(U64 Route) {
   Query[0] = 1;
   CHECK(invoke(Route, 3, ReadTimestamp, (U64)Query), 0);
   CHECK(Query[2], 0);
+  Query[0] = 2;
+  Query[1] = 3; // no producer updates context 2; its queue remains empty
+  CHECK(invoke(Route, 3, ReadTimestamp, (U64)Query), 0);
+  CHECK(Query[2], 0);
+  Query[1] = 99;
+  Query[2] = 0xdeadbeef;
+  CHECK(invoke(Route, 3, ReadTimestamp, (U64)Query), Route ? -1 : -22);
+  CHECK(Query[2], 0); // invalid type still copies a sanitized timestamp
+  Query[0] = 1;
+  Query[1] = 2;
   U64 A = mapping(Route, 3, 4096, 4096, 1);
   U64 B = mapping(Route, 4, 4096, 4096, 0);
   CHECK(*(volatile U32 *)(A + 40), 0);

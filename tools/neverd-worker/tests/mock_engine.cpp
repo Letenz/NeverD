@@ -1088,8 +1088,15 @@ std::string llvmViewPage(std::uint64_t address, std::size_t offset,
       "; ModuleID = 'neverd_output'\n",
       "target triple = \"x86_64-unknown-linux-gnu\"\n",
       "\n",
-      mirror + " = external global [64 x i8] ; 0xFFFF800012343000, 64 "
-               "bytes: .data\n",
+      "; NeverD's mirror of the 64 image bytes at 0xFFFF800012343000 (.data), "
+      "which\n",
+      "; hold pointers the loader relocates. An offset into it is an image "
+      "address,\n",
+      "; 0xFFFF800012343000 + offset. This function uses:\n",
+      ";   +8 = 0xFFFF800012343008 data_slot\n",
+      ";   +16 = 0xFFFF800012343010\n",
+      ";   +24 = 0xFFFF800012343018\n",
+      mirror + " = external global [64 x i8]\n",
       "\n",
       "declare i64 @llvm.example(i64)\n",
       "\n",
@@ -1112,15 +1119,15 @@ std::string llvmViewPage(std::uint64_t address, std::size_t offset,
       "attributes #0 = { nounwind }\n",
       "\n",
       "!0 = !{}\n"};
-  constexpr std::size_t Definition = 7, Epilogue = 19;
+  constexpr std::size_t Definition = 13, Epilogue = 25;
   const Json references = Json::array(
-      {{{"line", 3}, {"name", mirror}, {"address", hexAddress(DataBase)}},
-       {{"line", 8}, {"name", function}, {"address", hexAddress(address)}},
-       {{"line", 10}, {"name", mirror}, {"address", hexAddress(DataBase + 8)}},
-       {{"line", 11},
+      {{{"line", 9}, {"name", mirror}, {"address", hexAddress(DataBase)}},
+       {{"line", 14}, {"name", function}, {"address", hexAddress(address)}},
+       {{"line", 16}, {"name", mirror}, {"address", hexAddress(DataBase + 8)}},
+       {{"line", 17},
         {"name", mirror},
         {"address", hexAddress(DataBase + 0x10)}},
-       {{"line", 11},
+       {{"line", 17},
         {"name", mirror},
         {"address", hexAddress(DataBase + 0x18)}}});
   const auto bytesBefore = [&](std::size_t line) {

@@ -74,8 +74,11 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
   const auto *Mappings = Value.getArray(field::DeviceReadOnlyMappings);
   const bool HasKGSL = Value.get(field::DeviceKGSL);
   const auto *KGSL = Value.getObject(field::DeviceKGSL);
-  if (Value.size() != 4 + unsigned(HasMappings) + unsigned(HasKGSL) ||
-      (HasKGSL && !KGSL) ||
+  const bool HasBinder = Value.get(field::DeviceBinder);
+  auto Binder = Value.getBoolean(field::DeviceBinder);
+  if (Value.size() !=
+          4 + unsigned(HasMappings) + unsigned(HasKGSL) + unsigned(HasBinder) ||
+      (HasBinder && !Binder) || (HasKGSL && !KGSL) ||
       (HasMappings &&
        (!Mappings || Mappings->size() > linux_model::DeviceMappingLimit)) ||
       !Value.getString(field::Path) || !Mode || !Error || !Ioctls ||
@@ -83,6 +86,7 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
     return invalid();
   Transactions += Ioctls->size();
   LinuxDeviceOptions Out{*Mode, *Error, {}};
+  Out.Binder = Binder.value_or(false);
   for (const auto &V : *Ioctls) {
     const auto *Object = V.getAsObject();
     if (!Object)

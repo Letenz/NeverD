@@ -57,13 +57,14 @@ checks integer and floating call results, unchanged LLVM/source output and
 resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
 prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
 builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
-the GOT's mirror before the definition and name the `__libc_start_main` slot as
-the listing does; pages keep the prelude, epilogue and by-line references
+the GOT's mirror before the definition under a comment saying what it stands
+for, and name the `__libc_start_main` slot as the listing does; pages keep the prelude, epilogue and by-line references
 through small pages, a rename of the slot reaches the comment, and `main`'s
 strings read beside their references.
 `LLVMViewMapsEachSpellingOfAMirrorToItsOwnOffset` renders a hand-written
 module: a mirror spelled at two offsets on one line, and on a call whose
-callee prints before its arguments, maps each spelling to its own address. Worker source-cache tests also check
+callee prints before its arguments, maps each spelling to its own address, and
+each mirror's comment lists the offsets used, a bare name as +0. Worker source-cache tests also check
 that preparation receives the requested LLVM representation.
 `HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
@@ -125,7 +126,8 @@ LLVM C and IR windows, multiple windows, pinned views and back/forward history.
 `llvmIrNamesGoWhereTheyStandFor` opens LLVM IR between its folded prelude and
 epilogue, jumps to the lines defining values, blocks, parameters, attribute
 groups and metadata, shows the declaration of a name the binary lacks, resolves
-a comment's address, and sends an image mirror to its first byte where declared,
+a comment's address, shows the comment over a mirror's declaration on hover,
+and sends an image mirror to its first byte where declared,
 to the byte its constant offset reaches on a load, and each of two spellings on
 one line to its own offset.
 Cross-reference cases query the name under the code cursor while assembly is
@@ -6727,6 +6729,21 @@ real cooperative thread creation/join and libc DIR/FILE reads. Run
 Android and process-public test targets, then the four OS/session suites for
 shared-owner changes. `test_android_live_proc_and_maintained_stat` checks Python
 against the built SDK; unavailable backends are skips, not successful coverage.
+
+### Native JNI and Binder contracts
+
+`AndroidJNI` executes independent O0/O2 callers with ordinary/APS2/RELR
+relocations, validating complete string/array bytes, copy-back modes, exception
+cleanup, local/global lifetime, thread attachment and invalid identity/borrow
+controls. `AndroidBinder` covers control records, looper responses, shared-open
+ownership and per-thread state. `LinuxBinder` checks both LP64 kernel ABIs,
+including full records, guards, output aliases and rejected model combinations.
+Process-public tests compare complete C API/CLI reports, and Python integration
+runs the same guest functions. Build the Android, Linux, process-public and
+execution-session targets, run `ctest -R 'AndroidJNI|Binder'`, then their complete
+owner labels for changes to shared models. GPU context fixtures also check known
+empty queues, unknown external queues and invalid timestamp copy-out. Missing
+native transports remain skips, not execution evidence.
 
 `KernelNamespaceTests.cpp` checks typed names, root-relative and case-sensitive lookup, buffer sizing/copy order, captured link tails, permissions, process scope, IRQL, failed-output reference safety and held deletion. `DriverNamespaceTests.cpp` runs original `driver_namespace.c` on available Unicorn/KVM/WHP/HVF, both contracts, both load addresses and cooperative/17-instruction scheduling. `NativeDriverTests.def` requires native outcomes. Unavailable backends and unsupported information/security classes remain coverage gaps.
 
