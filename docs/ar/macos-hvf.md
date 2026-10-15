@@ -1,6 +1,6 @@
 **اللغات**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](macos-hvf.md)
 
-<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
+<!-- i18n-source: c6842dbcde7494478da5d1a0035e88fb073d2764b43e2a30400a470727685ec4 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -18,7 +18,7 @@
 
 يقتصر ربط إطار العمل وتوقيع hypervisor على هدف بناء macOS (`CMAKE_SYSTEM_NAME=Darwin`). لا تُضاف هذه التبعية أو الصلاحية إلى أهداف Apple المحمولة، ومنها iOS. يظل بإمكان ملف ضيف iOS استخدام HVF عندما يعمل NeverD نفسه على Mac ذي ISA مطابقة.
 
-يجب أن يحمل **الملف التنفيذي للعملية** الاستحقاق [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). توقيع `libneverd.dylib` وحده غير كافٍ. يوقّع CMake واجهة CLI وworker والاختبارات باستخدام `resources/macos/neverd-hypervisor.entitlements`. القيمة الافتراضية لـ `NEVERD_HVF_SIGN_IDENTITY` هي `-` للتوقيع المخصص، ويمكن اختيار هوية توقيع موجودة. يعيد التغليف تطبيق الاستحقاق والتحقق منه بعد إصلاح تبعيات Mach-O.
+يجب أن يحمل **الملف التنفيذي للعملية** الاستحقاق [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). توقيع `libneverd.dylib` وحده غير كافٍ. يوقّع CMake واجهة CLI وworker وأداة فحص العملية والاختبارات باستخدام `resources/macos/neverd-hypervisor.entitlements`. القيمة الافتراضية لـ `NEVERD_HVF_SIGN_IDENTITY` هي `-` للتوقيع المخصص، ويمكن اختيار هوية توقيع موجودة. يعيد التغليف تطبيق الاستحقاق والتحقق منه بعد إصلاح تبعيات Mach-O.
 
 التطبيق الذي يدمج المكتبة مسؤول عن توقيع ملفه التنفيذي؛ لا يعيد NeverD توقيع Python المثبّت. يفحص `cpu-capabilities --configuration=JSON --probe-host` العملية الفعلية. يُوقّع worker المستقل افتراضياً؛ استخدم `NEVERD_WORKER_SIGN_HVF=OFF` فقط عندما لا يحتاج إلى HVF.
 
