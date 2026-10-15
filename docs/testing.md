@@ -3780,7 +3780,8 @@ done
 
 The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
 `longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
-`longjmp-unwind-callback` and `longjmp-callback-zero`. These fixtures check a resumed
+`longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
+and `longjmp-search-filter-zero`. These fixtures check a resumed
 nonvolatile register and try level, the requested jump value (including zero
 becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four

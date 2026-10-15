@@ -135,7 +135,7 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 让指针逸出都会拒绝安装。该契约覆盖经过检查的 EH3、EH4 和 EH4+GS 栈帧；其他
 exception/context 字段和非局部续接仍需各自的原生契约。
 
-经过检查的 EH3 父函数可用 `_setjmp3` 捕获私有的 64 字节跳转缓冲区，并在同一父函数或其经过检查的 finally callback 内
+经过检查的 EH3 父函数可用 `_setjmp3` 捕获私有的 64 字节跳转缓冲区，并在同一父函数或其经过检查的 finally callback、搜索 filter 内
 通过 `_longjmpex` 恢复。源证明绑定捕获点、缓冲区生命周期、unwind import、续接点、
 参数槽和 scope 状态。LLVM 生成新的续接地址及 registration 状态；原生 lowering 另外
 恢复逻辑寄存器 spill 和捕获时的源 try level，并保留 finally 对源栈帧的写入。
@@ -144,8 +144,10 @@ exception/context 字段和非局部续接仍需各自的原生契约。
 寄存器快照及每个捕获/恢复调用。读取原始物理缓冲区表示仍被拒绝。独立 finally callback
 从所属父帧恢复精确的原生缓冲区，并从经过检查的私有参数栈读取跳转值；普通 finally 调用
 与运行时 unwind 分发都支持这一恢复，包括将零跳转值转换为 1。仅通过非局部跳转离开的
-callback 仍保留源 CFG 身份和外层 scope 行。filter 内或跨被调函数的恢复，以及 EH4
-跳转缓冲区，还需要补充各自的原生契约。
+callback 仍保留源 CFG 身份和外层 scope 行。搜索 filter 通过 `llvm.eh.recoverfp`
+恢复父帧，并核对精确的所属函数与运行时帧深度。字面地址 0 的读取保留实际 volatile
+内存操作及异步 scope；安装器逐一核对源操作身份、地址、宽度和顺序，拒绝被修改或
+缺失的读取。跨被调函数的恢复及 EH4 跳转缓冲区仍需补充各自的原生契约。
 
 cdecl 的传入栈槽在原内存操作发生处映射到真实调用者栈帧，独立 callback 中的读写也
 使用这一映射。保留 callee 的整个调用图必须证明栈帧私有：读取已初始化的栈字节，

@@ -115,9 +115,9 @@ bool RegistrationStateSolver::transferJumpResume(size_t I, Domain &After,
       !After.JumpBindingsIntact || Function.Entry != EH.CodeRange.Begin ||
       !EH.CodeRange.contains(Op.Addr) || Op.Addr > UINT32_MAX - 5 ||
       Op.Addr + 5 > EH.CodeRange.End || !After.Installed || After.Uninstalled ||
-      After.Levels.empty() || After.Activation.SearchFilter ||
-      Chain.RealignedFrame || Chain.RegistrationOffset != -16 ||
-      Chain.TryLevelOffset != -4 || !Function.hasCompleteLiftCoverage() ||
+      After.Levels.empty() || Chain.RealignedFrame ||
+      Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
+      !Function.hasCompleteLiftCoverage() ||
       After.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset != 0)
     return Refuse();
   const auto SP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];

@@ -427,6 +427,8 @@ llvm::Error validateFramePrivacy(
           if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I)) {
             if (ChainProtocolReads.count(Load))
               continue;
+            if (SEH && SEH->NullReads.count(Load))
+              continue;
             auto Where = Locate(Load->getPointerOperand(), 0);
             if (SEH && (SEH->Reads.count(Load) ||
                         (Where && SEH->Roots.count(Where->Root)))) {

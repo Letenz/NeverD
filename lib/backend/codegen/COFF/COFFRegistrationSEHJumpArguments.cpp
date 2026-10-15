@@ -45,12 +45,14 @@ llvm::Error validateSEHJumpArguments(
   const auto *Storage = Frame.Slot;
   int64_t Base = int64_t(Frame.EntrySP) - 4;
   if (Resume && Resume->EntryVA) {
-    const auto Owner = Callbacks.find({Resume->EntryVA, true});
+    const auto Owner = Callbacks.lower_bound({Resume->EntryVA, false});
     const auto *Recover =
         llvm::dyn_cast<llvm::IntrinsicInst>(Call.getArgOperand(0));
-    if (Owner == Callbacks.end() || Call.getFunction() != Owner->second ||
-        !Recover || !recovers(*Recover, Parent, escape(Parent), Buffer) ||
-        Recover->getArgOperand(1) != Owner->second->getArg(1))
+    if (Owner == Callbacks.end() || Owner->first.first != Resume->EntryVA ||
+        Call.getFunction() != Owner->second || !Recover ||
+        !recovers(*Recover, Parent, escape(Parent), Buffer) ||
+        Recover->getArgOperand(1) !=
+            getX86RegistrationSEHJumpParentFrame(*Owner->second, Parent))
       return rejectIR("callback jump lost its exact parent buffer recovery");
     const auto Stack = getX86RegistrationSEHJumpStack(*Owner->second);
     if (!Stack)
@@ -110,7 +112,7 @@ llvm::Error validateSEHJumpBufferUses(
         if (!Recover || !recovers(*Recover, Parent, Escape, Buffer))
           continue;
         Recovered = true;
-        if (!Key.second || Recover->use_empty())
+        if (Recover->use_empty())
           return rejectIR(
               "native jump buffer has an unowned callback recovery");
         for (const auto *User : Recover->users()) {

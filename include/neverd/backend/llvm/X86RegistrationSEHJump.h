@@ -17,6 +17,7 @@
 namespace llvm {
 class AllocaInst;
 class Function;
+class Value;
 } // namespace llvm
 
 namespace neverd {
@@ -57,6 +58,12 @@ struct X86RegistrationSEHJumpStack {
 /// Source ownership and the root's scalar use closure are checked separately.
 std::optional<X86RegistrationSEHJumpStack>
 getX86RegistrationSEHJumpStack(const llvm::Function &Callback);
+
+/// Recover the physical parent frame through the callback's checked ABI.
+/// Source ownership and the complete callback protocol are checked separately.
+const llvm::Value *
+getX86RegistrationSEHJumpParentFrame(const llvm::Function &Callback,
+                                     const llvm::Function &Parent);
 
 } // namespace neverd
 

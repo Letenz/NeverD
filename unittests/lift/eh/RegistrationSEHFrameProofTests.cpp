@@ -1,5 +1,4 @@
-//===- RegistrationSEHFrameProofTests.cpp - Source call frame privacy
-//------===//
+//===- RegistrationSEHFrameProofTests.cpp - PE32 frame proofs ------------===//
 //
 // NeverD Decompiler
 //
@@ -9,9 +8,12 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 
 using namespace neverd;
 
@@ -144,6 +146,46 @@ TEST(RegistrationSEHFrameProof, CallbackStoresRequireBoundedPrivateScratch) {
       EXPECT_TRUE(Stores->count(Scratch));
       EXPECT_FALSE(Stores->count(Outside));
     }
+  }
+}
+
+TEST(RegistrationSEHFrameProof, CallbackJumpFramesRequireTheExactParent) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    llvm::LLVMContext Context;
+    llvm::Module Module("callback-jump-parent", Context);
+    auto *I32 = llvm::Type::getInt32Ty(Context);
+    auto *Parent = llvm::Function::Create(llvm::FunctionType::get(I32, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "parent", Module);
+    auto *Other = llvm::Function::Create(Parent->getFunctionType(),
+                                         llvm::GlobalValue::ExternalLinkage,
+                                         "other", Module);
+    auto *Callback = llvm::Function::Create(Parent->getFunctionType(),
+                                            llvm::GlobalValue::InternalLinkage,
+                                            "filter", Module);
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Callback);
+    llvm::IRBuilder<> B(Entry);
+    auto *Runtime = B.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, llvm::Intrinsic::frameaddress, {B.getPtrTy()}),
+        {B.getInt32(Mutation == 1 ? 0 : 1)});
+    if (Mutation == 5) {
+      auto *Body = llvm::BasicBlock::Create(Context, "body", Callback);
+      B.CreateBr(Body);
+      B.SetInsertPoint(Body);
+    }
+    auto *Recover = B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+                                     &Module, llvm::Intrinsic::eh_recoverfp),
+                                 {Mutation == 2 ? Other : Parent, Runtime});
+    if (Mutation == 3)
+      B.CreateCall(Recover->getCalledFunction(), {Parent, Runtime});
+    if (Mutation == 4)
+      Recover->setArgOperand(1, llvm::ConstantPointerNull::get(B.getPtrTy()));
+    B.CreateRet(B.getInt32(1));
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    EXPECT_EQ(getX86RegistrationSEHJumpParentFrame(*Callback, *Parent),
+              Mutation ? nullptr : Recover);
   }
 }
 
