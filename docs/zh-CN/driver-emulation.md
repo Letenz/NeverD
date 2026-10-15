@@ -360,6 +360,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 用户／系统映射继承物理页缓存属性及各自权限；非分页池 MDL 通过安全辅助函数复用原系统映射 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 独立或 IRP 关联的非分页池／用户描述符；可修改链指针，锁页与系统别名独立；不支持配额 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 显式配置的会话注册表、逐句柄权限与生命周期、查询缓冲区大小及修改；不访问宿主注册表 |
+| `ZwEnumerateValueKey` | 按创建顺序枚举 Basic、Full、Partial 值信息；替换保留索引，删除压缩索引，重建追加到末尾。需要 `KEY_QUERY_VALUE`，越界返回 `STATUS_NO_MORE_ENTRIES`。与值查询共用序列化：x64 Full 数据按 8 字节对齐，空数据偏移为 `0xffffffff`，填充和不完整 UTF-16 单元保持原值 |
 | `ExAllocatePool` | 旧版双参数接口，支持池类型 `0`、`1`、`512` 的数据分配；共用对齐、未初始化字节模型及大小／IRQL 检查，耗尽时返回 NULL。通过 `ExFreePool` 或零标签的 `ExFreePoolWithTag` 释放；存活分配仍属于内核依赖。 |
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | 对池类型 `0`、`1`、`512` 提供数据分配；大小／标签必须为正，带标签释放必须匹配，地址不复用 |
 | `IoCreateDevice`、`IoDeleteDevice` | 设备类型为 `0x22`，characteristics 为 `0` 或 `0x100`，扩展大小有界，名称为 ASCII `\Device\Name` |

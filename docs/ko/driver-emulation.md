@@ -357,6 +357,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | 사용자/시스템 매핑은 물리 페이지 캐시 속성과 각 권한을 유지하며 비페이지 풀 MDL은 안전 도우미로 원래 시스템 매핑을 재사용 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 독립 또는 IRP 연결 비페이지 풀/사용자 MDL, 변경 가능한 체인 링크, 독립 잠금과 시스템 별칭. 할당량은 미지원 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 명시적인 세션 레지스트리, 핸들별 권한과 수명, 쿼리 버퍼 크기와 변경. 호스트 레지스트리에 접근하지 않음 |
+| `ZwEnumerateValueKey` | 생성 순서로 Basic, Full, Partial 값 정보를 열거. 교체는 인덱스를 유지하고 삭제는 인덱스를 압축하며 재생성은 끝에 추가. `KEY_QUERY_VALUE` 필요, 범위 밖은 `STATUS_NO_MORE_ENTRIES`. 값 조회와 직렬화를 공유하며 x64 Full 데이터는 8바이트 정렬, 빈 데이터 오프셋은 `0xffffffff`. 패딩과 불완전한 UTF-16 단위는 유지 |
 | `ExAllocatePool` | 기존 두 인수 인터페이스로 풀 유형 `0`, `1`, `512`의 데이터를 할당합니다. 정렬, 초기화되지 않은 바이트 모델, 크기/IRQL 검사를 공유하고 고갈 시 NULL을 반환합니다. `ExFreePool` 또는 태그가 0인 `ExFreePoolWithTag`로 해제하며 남은 할당은 커널 종속 상태로 유지됩니다. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | 풀 유형 `0`, `1`, `512`의 데이터 할당. 크기/태그는 양수이며, 태그가 있는 해제는 일치해야 하고 주소를 재사용하지 않음 |
 | `IoCreateDevice`, `IoDeleteDevice` | 장치 유형 `0x22`, 특성 `0` 또는 `0x100`, 제한된 확장, ASCII `\Device\Name` 이름 |
