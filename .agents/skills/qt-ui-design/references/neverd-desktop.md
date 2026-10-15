@@ -174,11 +174,12 @@ navigation band's cursor.
 - In the dark theme, thin glyphs take a lighter tone than text of the same hue,
   as Visual Studio Code paints colored icons `#75BEFF` and links `#4DAAFC`.
   Judge a thin stroke's color in a capture at 100%, not by its hex value.
-- To audit, render each SVG with `QSvgRenderer` at its drawn size and look for
-  straight runs where two neighboring pixels both have partial coverage with
-  empty pixels outside them. For a filled icon, check the coordinates of its
-  inner lines against the rules above. For one glyph, compare the share of its
-  drawn pixels at full coverage before and after a change.
+- `scripts/check_gui_icons.py` enforces these rules for every icon at its
+  viewBox size, and the GUI workflow runs it. It reads the path geometry, so it
+  sees inner lines over fills and ignores curves, whose extremes always
+  antialias. `NEVERD_ICON_SOFT_LINE` in `IconSet.def` records an exception
+  with its reason. To judge a single glyph, compare the share of its drawn
+  pixels at full coverage in a capture before and after a change.
 
 ## Resizing is part of the design
 
