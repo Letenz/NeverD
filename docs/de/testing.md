@@ -1858,11 +1858,11 @@ Die geprüfte Ablehnung doppelter Verschiebungen meldet den maskierten Zähler u
 
 ## Quellcode- und native Objektpatches
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen. Die 143 CPU-Prüfungen verlangen Quellcode／IR／Objekte, vier Architekturen, drei Formate, Zustand, Fließkomma／Stackargumente und zwei von null verschiedene Basisverschiebungen. Alte 32-Bit-Mach-O-Container behalten echten Compiler-Code, bestätigen jedoch kein OS.
+`sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen. Die 154 CPU-Prüfungen verlangen Quellcode／IR／Objekte, vier Architekturen, drei Formate, Zustand, Fließkomma／Stackargumente und zwei von null verschiedene Basisverschiebungen. Alte 32-Bit-Mach-O-Container behalten echten Compiler-Code, bestätigen jedoch kein OS.
 
 [Quellcode- und native Objektpatches](source-patching.md)
 

@@ -1,0 +1,122 @@
+{
+  "language": "c",
+  "commands": [
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=armv7-unknown-linux-gnueabihf",
+        "-marm",
+        "-mfpu=vfpv3-d16",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/nonleaf.c",
+        "-o",
+        "<fixtures>/producers/linux-arm32-arm/nonleaf-supplied-object.o"
+      ],
+      "object": "producers/linux-arm32-arm/nonleaf-supplied-object.o",
+      "sha256": "fa9c56c8bc14cea1a6f97fef20eb04de7361758ce3c1a5b1c8e94479d6cdff26"
+    },
+    {
+      "producer": "gcc_arm32",
+      "arguments": [
+        "coverage-gcc-arm32",
+        "-marm",
+        "-mfpu=vfpv3-d16",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/nonleaf.c",
+        "-o",
+        "<fixtures>/producers/linux-arm32-arm/nonleaf-gcc-object.o"
+      ],
+      "object": "producers/linux-arm32-arm/nonleaf-gcc-object.o",
+      "sha256": "6749523d2817ed9d7ac34bb3e9b46f6a6fb751ae6cf57ff87652e05fc2517c1d"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=armv7-unknown-linux-gnueabihf",
+        "-marm",
+        "-mfpu=vfpv3-d16",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/writable-pointer.c",
+        "-o",
+        "<fixtures>/producers/linux-arm32-arm/writable-pointer-supplied-object.o"
+      ],
+      "object": "producers/linux-arm32-arm/writable-pointer-supplied-object.o",
+      "sha256": "55bf8ac1e2650232465dcec0a169c96d87554d272ae8af7a1a43c7972260a661"
+    },
+    {
+      "producer": "gcc_arm32",
+      "arguments": [
+        "coverage-gcc-arm32",
+        "-marm",
+        "-mfpu=vfpv3-d16",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/writable-pointer.c",
+        "-o",
+        "<fixtures>/producers/linux-arm32-arm/writable-pointer-gcc-object.o"
+      ],
+      "object": "producers/linux-arm32-arm/writable-pointer-gcc-object.o",
+      "sha256": "4e9323d06e5830c2513eb30841f1728656cf43847aec564c3975ac985492f66a"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=armv7-unknown-linux-gnueabihf",
+        "-marm",
+        "-mfpu=vfpv3-d16",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/floating-stack.c",
+        "-o",
+        "<fixtures>/producers/linux-arm32-arm/floating-stack-supplied-object.o"
+      ],
+      "object": "producers/linux-arm32-arm/floating-stack-supplied-object.o",
+      "sha256": "7a64569e9aad60f7bf60a97ebfcdae05ce562b0443d5c616035efb4a35110a3c"
+    },
+    {
+      "producer": "gcc_arm32",
+      "arguments": [
+        "coverage-gcc-arm32",
+        "-marm",
+        "-mfpu=vfpv3-d16",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-fPIC",
+        "-c",
+        "<fixtures>/floating-stack.c",
+        "-o",
+        "<fixtures>/producers/linux-arm32-arm/floating-stack-gcc-object.o"
+      ],
+      "object": "producers/linux-arm32-arm/floating-stack-gcc-object.o",
+      "sha256": "5f09197604850deb44506d71a4b90af87f97865b40376b689b11b41b134ea25b"
+    }
+  ]
+}

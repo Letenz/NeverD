@@ -1838,11 +1838,11 @@ Il rifiuto controllato degli shift doppi indica il conteggio mascherato e la lar
 
 ## Patch da sorgenti e oggetti nativi
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive. I 143 controlli CPU richiedono sorgente／IR／oggetti, quattro architetture, tre formati, stato, argomenti floating point／di stack e due spostamenti di base non nulli. I vecchi contenitori Mach-O a 32 bit conservano vero codice compilato ma non certificano un OS.
+`sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive. I 154 controlli CPU richiedono sorgente／IR／oggetti, quattro architetture, tre formati, stato, argomenti floating point／di stack e due spostamenti di base non nulli. I vecchi contenitori Mach-O a 32 bit conservano vero codice compilato ma non certificano un OS.
 
 [Patch da sorgenti e oggetti nativi](source-patching.md)
 

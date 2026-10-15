@@ -1688,11 +1688,11 @@ MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實�
 
 ## 原始碼與原生物件 patch
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-目前矩陣要求 143 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
+目前矩陣要求 154 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
 
 [原始碼與原生物件 patch](source-patching.md)
 

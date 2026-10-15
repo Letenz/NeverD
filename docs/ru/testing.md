@@ -1810,11 +1810,11 @@ bulk-attributes проверяет полные группы, множество
 
 ## Патчи из исходного кода и нативных объектов
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` определяет режим ARM, ABI плавающей точки ELF и подтип CPU Mach-O по образу. `COFFPatchObject` и `MachOPatchObject` проверяют собственные символы, вспомогательные／секционные определения и записи объекта без вымышленных ID MC. Форматные установщики регистрируют реальные таблицы. 143 CPU-проверок требуют исходники／IR／объекты, четыре архитектуры, три формата, состояние, аргументы с плавающей точкой／в стеке и два ненулевых сдвига базы. Старые 32-битные контейнеры Mach-O сохраняют реальный код компилятора, но не подтверждают ОС.
+`sourcePatchTargetTriple` определяет режим ARM, ABI плавающей точки ELF и подтип CPU Mach-O по образу. `COFFPatchObject` и `MachOPatchObject` проверяют собственные символы, вспомогательные／секционные определения и записи объекта без вымышленных ID MC. Форматные установщики регистрируют реальные таблицы. 154 CPU-проверок требуют исходники／IR／объекты, четыре архитектуры, три формата, состояние, аргументы с плавающей точкой／в стеке и два ненулевых сдвига базы. Старые 32-битные контейнеры Mach-O сохраняют реальный код компилятора, но не подтверждают ОС.
 
 [Патчи из исходного кода и нативных объектов](source-patching.md)
 

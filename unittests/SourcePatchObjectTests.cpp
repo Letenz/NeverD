@@ -397,6 +397,73 @@ TEST_F(SourcePatchObject, NativeCompilerAndPrecompiledInputShareTheInstaller) {
   EXPECT_EQ(read(Output), First);
 }
 
+TEST_F(SourcePatchObject, ZeroSizedComdatFunctionsRequireExactSectionAndCFI) {
+  struct Variant {
+    const char *Name;
+    bool Group;
+    const char *Before;
+    const char *After;
+    bool CFI;
+    bool Accepted;
+  };
+  for (const auto &Case :
+       {Variant{"owned", true, "", "", true, true},
+        Variant{"ordinary", false, "", "", true, false},
+        Variant{"interior", true, "nop\n", "", true, false},
+        Variant{"shared", true, "",
+                ".type other,@function\nother:\nnop\n.size other,.-other\n",
+                true, false},
+        Variant{"padding", true, "", ".p2align 4\n", true, false},
+        Variant{"missing-cfi", true, "", "", false, false}}) {
+    SCOPED_TRACE(Case.Name);
+    const auto Assembly = Directory / (std::string(Case.Name) + ".s");
+    std::ofstream Stream(Assembly);
+    Stream << ".section .text.replacement,\"ax" << (Case.Group ? "G" : "")
+           << "\",@progbits" << (Case.Group ? ",replacement,comdat" : "")
+           << "\n.global replacement\n.type replacement,@function\n"
+           << Case.Before << "replacement:\n"
+           << (Case.CFI ? ".cfi_startproc\n" : "")
+           << "leal 40(%rdi),%eax\nret\n"
+           << (Case.CFI ? ".cfi_endproc\n" : "") << Case.After;
+    Stream.close();
+    ASSERT_EQ(run({NEVERD_TEST_CLANG, "--target=x86_64-unknown-linux-gnu", "-c",
+                   Assembly.string(), "-o", Object.string()}),
+              0);
+    const auto Bytes = read(Object);
+    auto Input = llvm::object::ELFFile<ELF>::create(Bytes);
+    ASSERT_TRUE(bool(Input));
+    auto Sections = Input->sections();
+    ASSERT_TRUE(bool(Sections));
+    bool ZeroSize = false;
+    for (const auto &Section : *Sections) {
+      if (Section.sh_type != llvm::ELF::SHT_SYMTAB)
+        continue;
+      auto Symbols = Input->symbols(&Section);
+      ASSERT_TRUE(bool(Symbols));
+      for (const auto &Symbol : *Symbols)
+        if (Symbol.getType() == llvm::ELF::STT_FUNC && Symbol.st_size == 0)
+          ZeroSize = true;
+    }
+    ASSERT_TRUE(ZeroSize);
+    Output = Directory / (std::string(Case.Name) + "-patched");
+    if (Case.Accepted) {
+      ASSERT_EQ(patch(Bytes), 1) << error();
+#if defined(__linux__) && defined(__x86_64__)
+      EXPECT_EQ(run({Output.string()}), 42);
+#endif
+    } else {
+      EXPECT_EQ(patch(Bytes), 0);
+      EXPECT_FALSE(std::filesystem::exists(Output));
+      EXPECT_NE(error().find(!Case.CFI
+                                 ? "compiler-generated CFI"
+                             : std::string(Case.Name) == "padding"
+                                 ? "FDE range"
+                                 : "bounded executable symbol"),
+                std::string::npos);
+    }
+  }
+}
+
 TEST_F(SourcePatchObject, SourceCompilerCannotExpandResponseFileValues) {
   const auto Response = Directory / "extra arguments.rsp";
   std::ofstream(Response) << "unused-directory -DBASE=37\n";

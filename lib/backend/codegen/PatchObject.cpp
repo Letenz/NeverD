@@ -249,6 +249,7 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
     return Names.takeError();
   if (Symbols->size() > 1024 * 1024)
     return fail("excessive symbol count");
+  std::map<uint32_t, unsigned> FunctionCounts;
   for (const auto &Symbol : *Symbols) {
     auto Name = Symbol.getName(*Names);
     if (!Name)
@@ -274,6 +275,8 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
           !rangeInBounds(Item.Offset, Item.Size,
                          (*Sections)[Item.Section].sh_size))
         return fail("symbol exceeds its section: " + Item.Name);
+      if (Item.Type == llvm::ELF::STT_FUNC)
+        ++FunctionCounts[Item.Section];
     }
     if (!Item.Name.empty() && Item.Type != llvm::ELF::STT_FILE &&
         Item.Type != llvm::ELF::STT_SECTION &&
@@ -289,6 +292,7 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
   // together, without archive selection or cross-object ODR coalescing.
   std::set<uint32_t> GroupMembers;
   std::set<std::string> GroupSignatures;
+  std::set<uint32_t> COMDATFunctions;
   for (uint32_t I = 0; I < Sections->size(); ++I) {
     const auto &Section = (*Sections)[I];
     if (Section.sh_type == llvm::ELF::SHT_GROUP) {
@@ -300,16 +304,21 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
           Contents->size() % 4 ||
           readLE<uint32_t>(Contents->data()) != llvm::ELF::GRP_COMDAT)
         return fail("malformed or unsupported section group");
-      const auto &Signature = Result.Symbols[Section.sh_info].Name;
+      const auto &SignatureSymbol = Result.Symbols[Section.sh_info];
+      const auto &Signature = SignatureSymbol.Name;
       if (Signature.empty() || !GroupSignatures.insert(Signature).second)
         return fail("ambiguous COMDAT signature");
+      bool OwnsSignatureSection = false;
       for (size_t O = 4; O < Contents->size(); O += 4) {
         const auto Member = readLE<uint32_t>(Contents->data() + O);
         if (!Member || Member >= Sections->size() || Member == I ||
             !((*Sections)[Member].sh_flags & llvm::ELF::SHF_GROUP) ||
             !GroupMembers.insert(Member).second)
           return fail("invalid or multiply owned COMDAT member");
+        OwnsSignatureSection |= Member == SignatureSymbol.Section;
       }
+      if (OwnsSignatureSection && SignatureSymbol.Type == llvm::ELF::STT_FUNC)
+        COMDATFunctions.insert(Section.sh_info);
     }
     if (Section.sh_type != llvm::ELF::SHT_RELA &&
         Section.sh_type != llvm::ELF::SHT_REL)
@@ -417,6 +426,22 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
     if (((*Sections)[I].sh_flags & llvm::ELF::SHF_GROUP) &&
         !GroupMembers.count(I))
       return fail("section group membership is missing");
+  // GCC's i386 PIC thunks omit st_size. A COMDAT signature that is the sole
+  // function at offset zero owns its complete executable section. The later
+  // DWARF check must still match that extent exactly; no next-symbol or
+  // instruction-decoding guess supplies a function boundary. ARM EHABI has
+  // no explicit end range, so its existing nonzero-symbol contract remains.
+  if (Original.Arch != Arch::ARM)
+    for (uint32_t Index : COMDATFunctions) {
+      auto &Symbol = Result.Symbols[Index];
+      auto Section = Result.SectionIndices.find(Symbol.Section);
+      if (Symbol.Size || Symbol.Offset || FunctionCounts[Symbol.Section] != 1 ||
+          Section == Result.SectionIndices.end())
+        continue;
+      const auto &Storage = Result.Storage.Sections[Section->second];
+      if (Storage.Kind == SectionKind::Code && Storage.Size)
+        Symbol.Size = Storage.Size;
+    }
   return Result;
 }
 
@@ -536,7 +561,17 @@ llvm::Expected<ResolvedSymbol> resolveObjectSymbol(
   if (auto Binding = Bindings.find(Symbol.Name); Binding != Bindings.end()) {
     if (Callable && Binding->second.Kind != SourcePatchBindingKind::Function)
       return fail("data binding used as a callable target: " + Symbol.Name);
-    return ResolvedSymbol{Binding->second.OriginalVA, 0};
+    uint64_t VA = Binding->second.OriginalVA;
+    if (Original.Arch == Arch::ARM &&
+        Binding->second.Kind == SourcePatchBindingKind::Function) {
+      const auto Mode = Original.instructionModeAt(VA);
+      if (!Mode || (*Mode != InstructionMode::ARM &&
+                    *Mode != InstructionMode::Thumb))
+        return fail("bound ARM function has no authenticated instruction state");
+      if (*Mode == InstructionMode::Thumb)
+        VA |= 1;
+    }
+    return ResolvedSymbol{VA, 0};
   }
   if (Symbol.Binding == llvm::ELF::STB_WEAK)
     return fail("unresolved weak symbol: " + Symbol.Name);
