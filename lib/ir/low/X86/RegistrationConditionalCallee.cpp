@@ -278,7 +278,7 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
           ? Image.Base + Image.DynInfo.SecurityCookieRVA
           : 0,
       CookieCheckVA, nullptr, nullptr, Stacks, LocalUnwinds, Controls, nullptr,
-      CheckBoundCalls && !EH4 ? &Prove : nullptr, &Jumps);
+      CheckBoundCalls ? &Prove : nullptr, &Jumps);
   auto States = Solver.run();
   if (Index && !Index->chargeStateWork(Solver.workUsed())) {
     States.Complete = States.CallbackStatesComplete =

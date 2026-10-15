@@ -13,7 +13,12 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(eh4_jumps), 28)
+        self.assertEqual(len(current), 103)
+        self.assertEqual(len(eh4_jumps), 34)
+        for prefix in ("eh4-", "eh4-gs-"):
+            for case in ("longjmp-callee", "longjmp-returning-callee",
+                         "longjmp-scalar-callee"):
+                self.assertEqual(current[prefix + case], current[case])
         self.assertEqual(set(current) - set(r5) - eh4_jumps, {
             "longjmp-shared-parent-call", "shared-parent-throwing-call",
             "longjmp-private-parent-call", "longjmp-private-parent-graph",

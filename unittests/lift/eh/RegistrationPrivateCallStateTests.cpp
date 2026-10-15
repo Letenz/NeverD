@@ -10,50 +10,9 @@
 
 #include "neverd/lift/X86Regs.h"
 
-#include <utility>
-
 using namespace neverd;
 using namespace neverd::registration_state;
 using namespace neverd::registration_test;
-
-namespace {
-void initializeEH4JumpFrame(LowFunc &F) {
-  auto &EH = *F.ExceptionMetadata;
-  EH.Personality = ExceptionPersonality::ExceptHandler4;
-  EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
-  auto &Chain = *EH.Registration;
-  Chain.SeededTryLevel = -2;
-  Chain.ScopeTableVA = 0x3000;
-  Chain.EHCookieOffset = -28;
-  Chain.GSCookieOffset = -2;
-  Chain.Scopes.front().EnclosingLevel = -2;
-  Chain.TryLevelStores.front().Level = -2;
-  F.Blocks[5].Ops.back().Inputs[1] = NdVar::cst(uint32_t(-2), 4);
-  // Allocate the cookie before installation, keeping the final capture SP.
-  F.Blocks[1].Ops.front().Inputs[1] = NdVar::cst(144, 4);
-  auto &Entry = F.Blocks.front();
-  auto Install = Entry.Ops.back();
-  Entry.Ops.pop_back();
-  emitOp(Entry, 0x1000, NdOp::COPY, NdVar::tmp(20, 4),
-         {NdVar::reg(x86reg::RSP, 4)});
-  emitOp(Entry, 0x1000, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
-  emitOp(Entry, 0x1000, NdOp::LOAD, NdVar::tmp(21, 4), {NdVar::cst(0x4000, 4)});
-  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(22, 4),
-         {NdVar::tmp(21, 4), NdVar::cst(0x3000, 4)});
-  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(23, 4),
-         {NdVar::tmp(21, 4), NdVar::reg(x86reg::RBP, 4)});
-  for (const auto &[Offset, Value] :
-       {std::pair{-8, NdVar::tmp(22, 4)}, {-28, NdVar::tmp(23, 4)}}) {
-    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(24, 4),
-           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Offset), 4)});
-    emitOp(Entry, 0x1000, NdOp::STORE, {}, {NdVar::tmp(24, 4), Value});
-  }
-  Install.Seq = Entry.Ops.size();
-  Install.Inputs[1] = NdVar::tmp(20, 4);
-  Entry.Ops.push_back(Install);
-}
-} // namespace
 
 TEST(RegistrationPrivateCallState,
      RetainsOnlyAllocatedBuffersAcrossProvedCalls) {

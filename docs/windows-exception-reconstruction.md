@@ -272,8 +272,11 @@ Single- and multi-state captures, zero values, parent/finally/filter resumptions
 and retired scopes are covered, including EH4 frames with GS checks. Borrowed
 buffer helper protocols still require their own proofs.
 
-Preserved EH3 helpers can borrow a generated parent buffer and resume it across
-their own registration frame. Each exact caller occurrence binds the helper's
+Preserved EH3 helpers can borrow a generated EH3 or EH4 parent buffer and resume
+it across their own registration frame, including EH4 parents with GS cookies.
+The caller proves its live cookie state before the call and excludes registration
+and cookie storage from every borrowed read, write and object-address argument,
+including partial overlaps. Each exact caller occurrence binds the helper's
 immutable code, cdecl argument slots, initialized four-byte parent objects and
 opaque capture identities. The helper must retire its local scopes before
 resuming the borrowed capture. Ordinary returning helpers use the same object

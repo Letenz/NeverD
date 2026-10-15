@@ -28,6 +28,11 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
       !States.HasBoundSEHCallees || States.SEHBoundCalls.empty() ||
       !Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return std::nullopt;
+  if (Function.ExceptionMetadata->Personality ==
+          ExceptionPersonality::ExceptHandler4 &&
+      (!States.SecurityCookiesComplete || !States.SecurityCookieVA ||
+       States.SecurityCookieVA > UINT32_MAX - 3))
+    return std::nullopt;
   size_t Work = 0;
   for (const auto &Call : States.SEHBoundCalls) {
     using CalleeKind = RegistrationSEHBoundCall::Kind;
