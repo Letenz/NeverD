@@ -10,12 +10,11 @@
 
 #include "RegistrationABIPrivate.h"
 #include "RegistrationJumpRuntime.h"
+#include "RegistrationSourceCall.h"
 
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
-#include "neverd/loader/ReadOnlyBytes.h"
-#include "neverd/support/BinaryEncoding.h"
 
 namespace neverd::registration_state {
 
@@ -46,43 +45,8 @@ prepareEH3JumpCapture(const BinaryImage &Image, const LowFunc &Function,
   const auto Runtime = checkedJumpRuntime(Image, Op.Inputs[0].Offset, false);
   if (!Runtime || Runtime->Routine != JumpRuntimeBinding::Kind::Capture)
     return std::nullopt;
-  bool SourceFound = false;
-  for (const auto &Block : Function.Blocks)
-    for (size_t I = 0; I != Block.Ops.size(); ++I) {
-      if (!registration_abi::chargeCalleeWork(Work, 1))
-        return std::nullopt;
-      if (&Block.Ops[I] != &Op)
-        continue;
-      if (auto Error = validateLowInstructionBoundaries(
-              Block, LowInstructionBoundaryRequirement::Required)) {
-        llvm::consumeError(std::move(Error));
-        return std::nullopt;
-      }
-      for (const auto &Insn : Block.InstructionBoundaries)
-        if (!registration_abi::chargeCalleeWork(Work, 1))
-          return std::nullopt;
-        else if (Insn.Address == Op.Addr && I >= Insn.FirstOp &&
-                 I - Insn.FirstOp < Insn.OpCount) {
-          if (Insn.Size != 5 || Insn.Control != LowInstructionControl::Call ||
-              Insn.Immediate != Op.Inputs[0].Offset ||
-              Insn.Mode != InstructionMode::Default ||
-              Insn.TargetMode != LowInstructionTargetMode::Preserve ||
-              isUnconditionalNoReturn(Insn) ||
-              hasLowInstructionControlFlag(
-                  Insn.ControlFlags, LowInstructionControlFlag::Conditional) ||
-              hasLowInstructionControlFlag(
-                  Insn.ControlFlags,
-                  LowInstructionControlFlag::InstructionGuard))
-            return std::nullopt;
-          SourceFound = true;
-        }
-    }
-  if (!SourceFound || Op.Addr > UINT32_MAX - 5)
-    return std::nullopt;
-  const auto Bytes = readImmutableCodeBytes(Image, Op.Addr, 5);
-  if (!Bytes || (*Bytes)[0] != 0xe8 ||
-      uint32_t(Op.Addr + 5 + int64_t(readLE<int32_t>(Bytes->data() + 1))) !=
-          Runtime->Target)
+  const auto *Source = checkedRegistrationDirectCall(Image, Function, Op, Work);
+  if (!Source || isUnconditionalNoReturn(*Source))
     return std::nullopt;
   const auto SP =
       Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;

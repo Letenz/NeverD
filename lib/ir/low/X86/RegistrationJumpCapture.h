@@ -50,6 +50,10 @@ struct EH3JumpRuntime {
   std::function<bool(const LowOp &, size_t &)> Resume;
   std::function<bool(const LowOp &, const FrameState &, size_t &)> Raise;
   std::function<bool(const LowOp &, size_t &)> ControlFP;
+  /// An authenticated ordinary call with zero stack cleanup and no parent
+  /// frame borrow. This grants capture preservation only; its volatile
+  /// registers, result and native caller ABI remain separate obligations.
+  std::function<bool(const LowOp &, size_t &)> PrivateCall;
   /// Proves image storage disjoint from suspended callback/parent frames.
   /// Contents remain runtime values; writes cannot replace import bindings.
   std::function<bool(va_t, uint16_t, bool, size_t &)> ImageMemory;

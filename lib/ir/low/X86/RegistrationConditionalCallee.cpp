@@ -9,6 +9,7 @@
 #include "RegistrationABIPrivate.h"
 #include "RegistrationCRTFrame.h"
 #include "RegistrationJumpRuntime.h"
+#include "RegistrationSEHPrivateCall.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
@@ -228,7 +229,12 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
           const std::map<int32_t, EH3JumpCapture> &Captures) {
         return proveBoundSEHCallee(Image, Op, State, Work, &Captures);
       };
+  SEHPrivateCallProof PrivateCalls(Image, Function);
   EH3JumpRuntime Jumps;
+  if (CheckBoundCalls)
+    Jumps.PrivateCall = [&](const LowOp &Op, size_t &Work) {
+      return PrivateCalls.preservesFrame(Op, Work);
+    };
   for (const auto &Imported : Image.Imports)
     if (checkedJumpRuntime(Image, Imported.IATAddr, true) ||
         isCheckedControlFPSlot(Image, Imported.IATAddr) ||

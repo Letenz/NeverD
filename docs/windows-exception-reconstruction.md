@@ -336,6 +336,13 @@ source segment, noinline/notail requirements and unique dynamic body, and
 rejects a marker copied onto a callee or another instruction. This preserves
 one source occurrence without cloning its effects per possible state.
 Multi-state source jump captures still require their own lifetime proof.
+An ordinary private leaf or bounded acyclic helper graph may preserve an
+already captured parent jump buffer when it has no parent-frame or object
+borrow, no stack arguments, and zero callee cleanup. Code must remain immutable;
+image writes cannot overlap scope metadata or imports. Volatile registers and
+results remain unknown, and native admission still checks the complete caller
+closure and return-address readback. Stack balance alone cannot preserve a
+capture, and cells below the current call SP lose their exact values.
 Finally return values may
 flow through private spill chains only when the complete chain is unobservable.
 The `longjmp-retired-scope` and `longjmp-retired-inner-scope` fixtures distinguish

@@ -456,6 +456,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,
                                 CallException))
       break;
+    if (!CallSP && !JumpCapture && !JumpResume)
+      CallSP = transferPrivateSEHCall(After, Op, Facts);
     if (!JumpCapture && !JumpResume && !CallSP && !Facts.InvocationAtExit &&
         (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
          (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)))) {

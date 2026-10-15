@@ -182,6 +182,9 @@ private:
   std::optional<int32_t> parentStackOffset(const Domain &State) const;
   void preserveCxxFrameCells(Domain &Root, const Domain &Source);
   bool initializeContracts();
+  std::optional<FrameValue> transferPrivateSEHCall(Domain &State,
+                                                   const LowOp &Op,
+                                                   const BlockFacts &Facts);
   bool bindRuntimeObjectBorrow(const Domain &State,
                                const RegistrationCalleeFrameContract &Callee,
                                RegistrationCallFrameEffect &Effect);

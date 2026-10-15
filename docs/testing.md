@@ -4152,6 +4152,16 @@ liveness regression checks a value observed only after handler entry, including
 a nonreturning call and optimized IR. The runtime handler-selection fixture
 reproduced a stale frame address in EDI before this compiler fix.
 
+`longjmp-private-parent-call` and `longjmp-private-parent-graph` place a private
+leaf or a two-level helper before the shared nonlocal jump. The live capture,
+one helper effect, finally count, restored state, registers and FS chain must
+agree in all 20 original/generated executions per fixture.
+`RegistrationSEHPrivateCall` rejects caller-frame access, object borrowing,
+callee cleanup, code/table/import writes, recursive calls, changed instruction
+bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
+stack-only facts cannot preserve a capture, deallocated buffers refuse and a
+frame-preserving call supplies no scalar result authority.
+
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
 inside a finally block and reordered edges. Selected handlers, unknown results,

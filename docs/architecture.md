@@ -409,6 +409,13 @@ independently checks selector storage, complete scope choices, source boundaries
 and every call marker; a marker on a function or outside the checked body grants
 no installation permission. Source-call identity, argument binding and frame
 privacy keep their existing owners.
+`RegistrationSourceCall` authenticates the owned PE32 E8 occurrence shared by
+jump-runtime and private-callee proofs. `RegistrationSEHPrivateCall` reuses the
+bounded private object graph with no object borrow or stack arguments to retain
+live parent captures across ordinary calls. Code, scope-table and import-write
+checks remain mandatory. The state transfer drops cells below call SP and keeps
+volatile results unknown; it grants no bound-helper or native argument ABI.
+Native admission independently replays the caller closure and caller-PC readback.
 `COFFRegistrationSEHCall` binds each dynamic call to its adjacent source receipt.
 The generic exception counter and PE32 replay share this check; the counted call
 set must equal the calls inside authenticated dynamic scope bodies.

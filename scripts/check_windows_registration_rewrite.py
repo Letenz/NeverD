@@ -80,7 +80,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-finally-incidental-result": (44, 2),
               "longjmp-deep-scope-chain": (45, 2),
               "longjmp-shared-parent-call": (46, 2),
-              "shared-parent-throwing-call": (47, 2)})
+              "shared-parent-throwing-call": (47, 2),
+              "longjmp-private-parent-call": (48, 2),
+              "longjmp-private-parent-graph": (49, 2)})
 
 
 class PE32:
@@ -280,12 +282,14 @@ def main(argv: list[str] | None = None) -> int:
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
                    else ["registration_shared_calls.s" if case == 47 else
-                         "registration_deep_scopes.s" if case in (45, 46) else
+                         "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
                          "registration_state_dispatch.s" if case in (43, 44) else
                          "registration_filter_state.s" if case >= 36 else
                          "registration_state.s" if case >= 30 else
                          "registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
+        if case == 49:
+            sources.append("registration_private_graph.s")
         if args.case in ("longjmp-callee", "longjmp-returning-callee",
                          "longjmp-scalar-callee"):
             sources.append("registration_jump_callee.s")
