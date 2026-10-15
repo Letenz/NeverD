@@ -53,24 +53,6 @@ bool takesFrame(const QDialog &dialog) {
          type != Qt::ToolTip && type != Qt::SplashScreen;
 }
 
-/// Give \p dialog the width its title bar needs to show the whole title
-/// centered.  A message box sizes itself to its text, and to a native title
-/// bar's title, once it shows; its text then takes the missing width.
-void fitTitle(QDialog &dialog, const TitleBar &bar) {
-  const int needed = bar.sizeHint().width();
-  auto *box = qobject_cast<QMessageBox *>(&dialog);
-  auto *text = box ? box->findChild<QLabel *>(QStringLiteral("qt_msgbox_label"))
-                   : nullptr;
-  if (!text || !dialog.layout()) {
-    dialog.setMinimumWidth(std::max(dialog.minimumWidth(), needed));
-    return;
-  }
-  dialog.layout()->activate();
-  const int missing = needed - dialog.layout()->totalMinimumSize().width();
-  if (missing > 0)
-    text->setMinimumWidth(text->minimumSizeHint().width() + missing);
-}
-
 /// Frames each dialog as it is first polished: Qt has created its native
 /// window by then, but shows it only after the dialog has taken its size.
 class DialogFrames final : public QObject {
@@ -86,7 +68,7 @@ protected:
         dialog->setSizeGripEnabled(false);
         auto *bar = new TitleBar(*dialog);
         if (WindowFrame::attach(*dialog, bar))
-          fitTitle(*dialog, *bar);
+          WindowFrame::fitTitle(*dialog, bar->sizeHint().width());
       }
     return QObject::eventFilter(object, event);
   }
@@ -132,6 +114,28 @@ WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
   if (!handle)
     return nullptr;
   return new WindowFrame(window, *handle, titleBar, frameless, drawsShadow);
+}
+
+void WindowFrame::fitTitle(QDialog &dialog, int width) {
+  auto *box = qobject_cast<QMessageBox *>(&dialog);
+  auto *text = box ? box->findChild<QLabel *>(QStringLiteral("qt_msgbox_label"))
+                   : nullptr;
+  if (!text || !dialog.layout()) {
+    dialog.setMinimumWidth(std::max(dialog.minimumWidth(), width));
+    return;
+  }
+  // Measure the text unwrapped, as the box does.  A rich text wraps from the
+  // start: measured wrapped, its widest word would have become the text's
+  // minimum width, and the box, which reads that minimum as the unwrapped
+  // width, would have shown the text unwrapped and cut off at the title's
+  // width.
+  const bool wraps = text->wordWrap();
+  text->setWordWrap(false);
+  dialog.layout()->activate();
+  const int missing = width - dialog.layout()->totalMinimumSize().width();
+  if (missing > 0)
+    text->setMinimumWidth(text->minimumSizeHint().width() + missing);
+  text->setWordWrap(wraps);
 }
 
 void WindowFrame::frameDialogs(QApplication &app) {
