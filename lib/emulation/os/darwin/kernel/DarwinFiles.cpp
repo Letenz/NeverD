@@ -15,6 +15,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
+#include <type_traits>
 
 namespace neverd::emulation::darwin_model {
 using namespace value;
@@ -379,9 +380,13 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
         !Options.CreationPolicy)
       return failure(diagnostic::FileCreationPolicy);
     bool NamespaceProvider = false;
-    if constexpr (requires { Environment->CreatedDirectoryObjects; })
+    using Provider =
+        typename std::remove_cvref_t<decltype(Environment)>::value_type;
+    // A requires-local parameter avoids Clang 18 trying to capture the outer
+    // generic-lambda parameter while instantiating a nested admission call.
+    if constexpr (requires(Provider P) { P.CreatedDirectoryObjects; })
       NamespaceProvider |= Environment && Environment->CreatedDirectoryObjects;
-    if constexpr (requires { Environment->CreatedSymbolicLinkObjects; })
+    if constexpr (requires(Provider P) { P.CreatedSymbolicLinkObjects; })
       NamespaceProvider |=
           Environment && Environment->CreatedSymbolicLinkObjects;
     if (NamespaceProvider &&
