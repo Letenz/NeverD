@@ -32,6 +32,7 @@
 #include <QSvgRenderer>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -315,12 +316,15 @@ public:
   }
 
   /// Wide enough to show the title, the description and the key cap whole.
+  /// Painting elides by the text's fractional width, so the width rounds up
+  /// and keeps a pixel more.
   QSize sizeHint() const override {
-    const QFontMetrics title(sized(font(), TitlePixels, QFont::Medium));
-    const QFontMetrics body(sized(font(), BodyPixels));
-    const int text = std::max(title.horizontalAdvance(title_),
-                              body.horizontalAdvance(description_));
-    return {4 * ActionPadding + ActionGlyphSlot + text + capWidth(),
+    const QFontMetricsF title(sized(font(), TitlePixels, QFont::Medium));
+    const QFontMetricsF body(sized(font(), BodyPixels));
+    const int text = static_cast<int>(
+        std::ceil(std::max(title.horizontalAdvance(title_),
+                           body.horizontalAdvance(description_))));
+    return {4 * ActionPadding + ActionGlyphSlot + text + capWidth() + 1,
             ActionHeight};
   }
   QSize minimumSizeHint() const override { return {0, ActionHeight}; }
@@ -601,11 +605,8 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
 
   // The product, its ways to start, and whether it greets the next start.
   auto *side = new SidePane(this);
-  // The side is as wide as its actions need, which a translation may make
-  // wider than English, up to MaximumSideWidth; the actions then elide.
-  side->setMinimumWidth(SideWidth);
-  side->setMaximumWidth(MaximumSideWidth);
-  side->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+  side_ = side;
+  side->setFixedWidth(SideWidth);
   auto *sideLayout = new QVBoxLayout(side);
   sideLayout->setContentsMargins(16, SideTop, 17, 20);
   sideLayout->setSpacing(0);
@@ -777,6 +778,17 @@ void QuickStartDialog::keyPressEvent(QKeyEvent *event) {
 void QuickStartDialog::resizeEvent(QResizeEvent *event) {
   QDialog::resizeEvent(event);
   dropTarget_->setGeometry(rect());
+}
+
+void QuickStartDialog::showEvent(QShowEvent *event) {
+  // The actions measure their text in the fonts the style sheet gave them as
+  // the dialog polished.  The side takes the width they need, which a
+  // translation may make wider than English, up to MaximumSideWidth; the
+  // recent files give way.
+  side_->layout()->invalidate();
+  side_->setFixedWidth(
+      std::clamp(side_->sizeHint().width(), SideWidth, MaximumSideWidth));
+  QDialog::showEvent(event);
 }
 
 void QuickStartDialog::choose(Start start) {

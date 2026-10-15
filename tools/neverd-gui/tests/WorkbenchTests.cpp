@@ -3524,6 +3524,9 @@ private slots:
     QuickStartDialog dialog([](QWidget *) { return QString(); });
     dialog.show();
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // Even at its smallest the dialog keeps the side's width.
+    dialog.resize(dialog.minimumSize());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
     const auto actions =
         dialog.findChildren<QPushButton *>(QStringLiteral("quickStartAction"));
     QCOMPARE(actions.size(), 3);

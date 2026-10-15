@@ -40,6 +40,7 @@ public:
 protected:
   void keyPressEvent(QKeyEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
+  void showEvent(QShowEvent *event) override;
 
 private:
   void choose(Start start);
@@ -50,6 +51,7 @@ private:
   void fillRecent();
 
   FilePicker pickFile_;
+  QWidget *side_ = nullptr;
   QListWidget *recent_ = nullptr;
   QPushButton *previous_ = nullptr;
   QWidget *dropTarget_ = nullptr;
