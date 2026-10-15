@@ -4293,8 +4293,9 @@ primary replacement and secondary append preserve IRP association. Terminal
 completion preflights dependencies before automatic unlock/free. Partial MDLs
 retain independent descriptor, root-lock and borrowed-alias ownership.
 
-`KernelRegistry` owns the explicitly configured session tree, per-handle access
-rights and lifetime, key/value serialization, and mutations. Its explicit
+`KernelRegistry` owns the explicitly configured session tree, key/body
+associations, key/value serialization, and mutations. `KernelModelObjects.cpp`
+owns handle rights and lifetime. Its explicit
 registry epoch is combined with the shared scheduler's elapsed time; it owns
 per-key timestamp validity and cached maximum lengths. Missing time never
 falls back to host time. Scenario preflight and
@@ -6396,7 +6397,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
 
-`KernelModelObjects.cpp` owns process/thread pointer references, handle metadata and retirement. Scheduling owns execution holds and exit; waits retain their existing domain holds. Referenced borrowed threads survive callback/stack retirement. Reused stacks get new identities and priorities, while retained old objects preserve their exit priority. Process identities remain session-owned; registry handles still route to the registry owner pending integration.
+Scheduling and waits retain their own execution holds. Referenced exited threads preserve identity and exit priority, reused stacks get new identities, and processes remain session-owned. `KernelRegistry` owns live key data and per-open body associations; shared data storage does not introduce a second pointer/handle counter. `KernelModelObjects.cpp` alone owns caller references, handle access, process scope and retirement. Deleted data outlives its live path only through retained bodies. Reset requires all key bodies to retire, and opaque body storage rejects guest access.
 
 `KernelDataExports.def` owns the kernel data inventory and layout outside the PE forwarder span. `KernelExportRegistry` separates data addresses from function gates without consuming thunk slots. `KernelModelDataExports.cpp` initializes identities through the object owner and protects data pages before entry. `KernelModelMemory` observes successful model reads; CPU read hooks cover guest instructions. Preflight and diagnostic snapshots remain pure. Declared debugger facts and consumed data retain recovery dependencies; retained data pointers remain borrowed state.
 

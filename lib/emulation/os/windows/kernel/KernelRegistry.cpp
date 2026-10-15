@@ -232,10 +232,10 @@ llvm::Error KernelRegistry::initialize(
     std::optional<uint64_t> InitialSystemTime100ns) {
   if (auto E = validateDriverRegistry(Registry, InitialSystemTime100ns))
     return E;
+  if (!KeyBodies.empty())
+    return registryError("registry reset requires released key objects");
   Configured = Registry.has_value();
   Keys.clear();
-  Handles.clear();
-  NextHandle = HandleBase;
   ValueCount = 0;
   DataBytes = 0;
   SystemTime100ns = InitialSystemTime100ns;
@@ -246,12 +246,13 @@ llvm::Error KernelRegistry::initialize(
     while (true) {
       const std::string Folded = folded(Path);
       Keys.try_emplace(Folded,
-                       Key{Path, {}, {}, false, false, SystemTime100ns});
+                       std::make_shared<Key>(
+                           Key{Path, {}, {}, false, false, SystemTime100ns}));
       if (rootPath(Folded))
         break;
       Path = parentPath(Path);
     }
-    Key &Entry = Keys.at(folded(Input.Path));
+    Key &Entry = *Keys.at(folded(Input.Path));
     // Prefer the explicit key spelling over an implicit ancestor spelling.
     Entry.Path = Input.Path;
     Entry.LastWriteTime100ns =
@@ -270,13 +271,14 @@ llvm::Error KernelRegistry::initialize(
   // Folded paths sort parents before children. Retain one spelling per
   // component, including when input paths spell an existing ancestor
   // differently.
-  for (auto &[Path, Entry] : Keys) {
+  for (auto &[Path, Data] : Keys) {
+    auto &Entry = *Data;
     auto Parent = Keys.find(parentPath(Path));
     if (Parent != Keys.end()) {
       Entry.Path =
-          Parent->second.Path + Entry.Path.substr(Entry.Path.rfind(Separator));
-      Parent->second.MaxNameLength =
-          std::max(Parent->second.MaxNameLength,
+          Parent->second->Path + Entry.Path.substr(Entry.Path.rfind(Separator));
+      Parent->second->MaxNameLength =
+          std::max(Parent->second->MaxNameLength,
                    uint32_t((Path.size() - Parent->first.size() - 1) * 2));
     }
   }
@@ -287,7 +289,8 @@ std::optional<std::vector<DriverRegistryKey>> KernelRegistry::snapshot() const {
   if (!Configured)
     return std::nullopt;
   std::vector<DriverRegistryKey> Result;
-  for (const auto &[Path, Entry] : Keys) {
+  for (const auto &[Path, Data] : Keys) {
+    const auto &Entry = *Data;
     if (Entry.Deleted)
       continue;
     DriverRegistryKey Output{Entry.Path, {}};
@@ -309,13 +312,89 @@ KernelRegistry::mutationTime(const KernelModel &Model) const {
   return std::optional<uint64_t>(*SystemTime100ns + Model.now100ns());
 }
 
-llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
+bool KernelRegistry::hasOpenHandles() const {
+  return llvm::any_of(Owner.ObjectHandles, [&](const auto &Handle) {
+    return KeyBodies.contains(Handle.second.Object);
+  });
+}
+
+llvm::Error KernelRegistry::checkHandleCapacity() const {
+  const auto Count =
+      llvm::count_if(Owner.ObjectHandles, [&](const auto &Handle) {
+        return KeyBodies.contains(Handle.second.Object);
+      });
+  if (Count >= MaxRegistryHandles)
+    return registryError("registry handle count exceeds the limit");
+  return llvm::Error::success();
+}
+
+llvm::Expected<uint64_t>
+KernelRegistry::queryObjectName(KernelModel &Model, uint64_t Object,
+                                uint64_t Buffer, uint32_t Length,
+                                uint64_t ReturnLength, bool RequiredLength) {
+  const auto &Entry = *KeyBodies.at(Object);
+  if (Entry.Deleted) {
+    // NtQueryObject initializes its local result length and publishes it even
+    // on a failed name procedure; ObQueryNameString leaves it untouched.
+    if (!RequiredLength && ReturnLength) {
+      if (auto E = Model.validateObjectOutput(ReturnLength, 4))
+        return E;
+      if (auto E = Memory.writeInteger(ReturnLength, 0, 4))
+        return E;
+    }
+    return KeyDeleted;
+  }
+  const uint32_t Required = 18 + Entry.Path.size() * 2;
+  const uint32_t Written = Length >= 18 ? std::min(Length, Required) - 18 : 0;
+  if (RequiredLength || ReturnLength)
+    if (auto E = Model.validateObjectOutput(ReturnLength, 4))
+      return E;
+  if (Length >= 18) {
+    // The target key-name routine preserves UNICODE_STRING padding, reports
+    // MaximumLength equal to Length, and may return a truncated odd byte count.
+    for (auto [Offset, Size] :
+         {std::pair(0u, 4u), {8u, 8u}, {16u, Written + 2 - (Written & 1)}})
+      if (auto E = Model.validateObjectOutput(Buffer + Offset, Size))
+        return E;
+  }
+  if (Length >= Required)
+    if (auto E = Model.validateObjectOutput(Buffer + 4, 4))
+      return E;
+  if (RequiredLength && ReturnLength)
+    if (auto E = Memory.writeInteger(ReturnLength, Required, 4))
+      return E;
+  if (Length >= 18) {
+    std::vector<uint8_t> Text(Entry.Path.size() * 2);
+    storeName(Text, 0, Entry.Path);
+    if (Written)
+      if (auto E = Memory.write(
+              Buffer + 16, llvm::ArrayRef<uint8_t>(Text).take_front(Written)))
+        return E;
+    if (auto E = Memory.writeInteger(Buffer + 16 + (Written & ~1u), 0, 2))
+      return E;
+    if (auto E = Memory.writeInteger(Buffer, Written, 2))
+      return E;
+    if (auto E = Memory.writeInteger(Buffer + 2, Written, 2))
+      return E;
+    if (auto E = Memory.writeInteger(Buffer + 8, Buffer + 16, 8))
+      return E;
+  }
+  if (Length >= Required)
+    if (auto E = Memory.writeInteger(Buffer + 4, 0, 4))
+      return E;
+  if (!RequiredLength && ReturnLength)
+    if (auto E = Memory.writeInteger(ReturnLength, Required, 4))
+      return E;
+  return Length < Required ? windows::StatusInfoLengthMismatch : Success;
+}
+
+llvm::Expected<uint64_t> KernelRegistry::open(KernelModel &Model,
                                               llvm::ArrayRef<uint64_t> A,
                                               bool Create) {
-  const uint32_t Access = A[1];
-  if (Access & ~AllAccess)
-    return registryError("unsupported registry access mask (generic, "
-                         "maximum-allowed, or alternate-view access)");
+  auto Access =
+      Model.mapObjectAccess(KernelModel::ObjectKind::Key, uint32_t(A[1]));
+  if (!Access)
+    return Access.takeError();
   if (Create && (uint32_t(A[3]) || A[4] || (uint32_t(A[5]) & ~VolatileOption)))
     return registryError(
         "unsupported registry title, class, or creation options");
@@ -342,13 +421,17 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
   if (!Text)
     return Text.takeError();
   std::string Path = *Text;
-  const Handle *RootHandle = nullptr;
+  const KernelModel::ObjectHandle *RootHandle = nullptr;
+  std::string RootPath;
   if (Root) {
-    auto H = Handles.find(Root);
-    if (H == Handles.end())
+    RootHandle = Model.findObjectHandle(Root);
+    if (!RootHandle)
       return InvalidHandle;
-    RootHandle = &H->second;
-    const Key &Parent = Keys.at(H->second.Path);
+    const auto Body = KeyBodies.find(RootHandle->Object);
+    if (Body == KeyBodies.end())
+      return windows::StatusObjectTypeMismatch;
+    const Key &Parent = *Body->second;
+    RootPath = folded(Parent.Path);
     if (Parent.Deleted)
       return KeyDeleted;
     if (llvm::StringRef(Path).starts_with(Separator))
@@ -366,29 +449,36 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
   const std::string Folded = folded(Path);
   auto It = Keys.find(Folded);
   const bool Exists = It != Keys.end();
-  if (Exists && It->second.Deleted)
-    return KeyDeleted;
   if (!Exists) {
     if (!Create)
       return ObjectNameNotFound;
     auto Parent = Keys.find(parentPath(Folded));
     if (Parent == Keys.end())
       return ObjectPathNotFound;
-    if (Parent->second.Deleted)
+    if (Parent->second->Deleted)
       return KeyDeleted;
-    if (RootHandle && !(RootHandle->Access & CreateSubKeyAccess))
+    if (RootHandle && !(RootHandle->GrantedAccess & CreateSubKeyAccess))
       return AccessDenied;
-    if (RootHandle && RootHandle->Path != Parent->first)
+    if (RootHandle && RootPath != Parent->first)
       return registryError(
           "relative registry creation requires an immediate parent handle");
-    if (Parent->second.Volatile && !(uint32_t(A[5]) & VolatileOption))
+    if (Parent->second->Volatile && !(uint32_t(A[5]) & VolatileOption))
       return ChildMustBeVolatile;
     if (Keys.size() >= MaxRegistryKeys)
       return registryError("registry key count exceeds the limit");
   }
-  if (Handles.size() >= MaxRegistryHandles ||
-      NextHandle > UINT64_MAX - HandleStride)
-    return registryError("registry handle count exceeds the limit");
+  const auto Context = Model.executionProcessContext();
+  const uint32_t ProcessID = Context ? Context->ProcessID : 0;
+  if (ProcessID != windows::SystemProcessID &&
+      !(Flags & windows::ObjectKernelHandle))
+    return registryError(
+        "registry open outside the system process requires OBJ_KERNEL_HANDLE");
+  if (auto E = checkHandleCapacity())
+    return E;
+  if (KeyBodies.size() >= MaxRegistryHandles)
+    return registryError("registry key object count exceeds the limit");
+  if (Model.NextObjectHandle > profile::SystemThreadHandleLimit)
+    return InsufficientResources;
   std::optional<uint64_t> CreatedAt;
   if (!Exists) {
     auto Time = mutationTime(Model);
@@ -398,33 +488,46 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
   }
   // Validate every output before writes, and finish all guest writes before
   // publishing a key or handle. A guest fault cannot leak invisible state.
-  if (auto E = Model.validateGuestAccess(A[0], 8, true))
+  if (auto E = Model.validateObjectOutput(A[0], 8))
     return E;
   if (Create && A[6])
-    if (auto E = Model.validateGuestAccess(A[6], 4, true))
+    if (auto E = Model.validateObjectOutput(A[6], 4))
       return E;
-  if (Create && A[6])
-    if (auto E = Memory.writeInteger(
-            A[6], Exists ? OpenedExistingKey : CreatedNewKey, 4))
-      return E;
-  if (auto E = Memory.writeInteger(A[0], NextHandle, 8))
+  auto Body = Model.allocate(profile::ProcessTokenSize);
+  if (!Body)
+    return Body.takeError();
+  auto WriteOutputs = [&]() -> llvm::Error {
+    if (Create && A[6])
+      if (auto E = Memory.writeInteger(
+              A[6], Exists ? OpenedExistingKey : CreatedNewKey, 4))
+        return E;
+    return Memory.writeInteger(A[0], Model.NextObjectHandle, 8);
+  };
+  if (auto E = WriteOutputs()) {
+    Model.FreedRanges.emplace(*Body, profile::ProcessTokenSize);
     return E;
+  }
   if (!Exists) {
-    Key &Parent = Keys.at(parentPath(Folded));
+    Key &Parent = *Keys.at(parentPath(Folded));
     Path = Parent.Path + Path.substr(Path.rfind(Separator));
-    Keys.emplace(Folded, Key{Path,
-                             {},
-                             {},
-                             false,
-                             bool(uint32_t(A[5]) & VolatileOption),
-                             CreatedAt});
+    Keys.emplace(
+        Folded, std::make_shared<Key>(Key{Path,
+                                          {},
+                                          {},
+                                          false,
+                                          bool(uint32_t(A[5]) & VolatileOption),
+                                          CreatedAt}));
     Parent.LastWriteTime100ns = CreatedAt;
     Parent.MaxNameLength =
         std::max(Parent.MaxNameLength,
                  uint32_t((Path.size() - parentPath(Folded).size() - 1) * 2));
   }
-  Handles.emplace(NextHandle, Handle{Folded, Access});
-  NextHandle += HandleStride;
+  KeyBodies.emplace(*Body, Keys.at(Folded));
+  Model.ReferencedObjects.emplace(
+      *Body, KernelModel::ObjectReferences{
+                 KernelModel::ObjectKind::Key, 0, 0, {}, this});
+  Model.retainObjectHandle(*Body, *Access, Flags & windows::ObjectKernelHandle,
+                           ProcessID);
   return Success;
 }
 
@@ -605,7 +708,7 @@ KernelRegistry::queryKey(const KernelModel &Model, const Key &Entry,
     uint32_t Subkeys = 0;
     const std::string Parent = folded(Entry.Path);
     for (const auto &[ChildPath, Child] : Keys) {
-      if (Child.Deleted || parentPath(ChildPath) != Parent)
+      if (Child->Deleted || parentPath(ChildPath) != Parent)
         continue;
       ++Subkeys;
     }
@@ -652,8 +755,8 @@ KernelRegistry::enumerateKey(const KernelModel &Model, llvm::StringRef Path,
                              llvm::ArrayRef<uint64_t> A) {
   std::vector<const Key *> Children;
   for (const auto &[ChildPath, Child] : Keys)
-    if (!Child.Deleted && parentPath(ChildPath) == Path)
-      Children.push_back(&Child);
+    if (!Child->Deleted && parentPath(ChildPath) == Path)
+      Children.push_back(Child.get());
   // Registry subkeys use the uppercase name collation, unlike value indices.
   llvm::sort(Children, [](const Key *L, const Key *R) {
     return std::lexicographical_compare(
@@ -721,9 +824,9 @@ llvm::Expected<uint64_t> KernelRegistry::set(const KernelModel &Model,
   return Success;
 }
 
-llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
-                                              llvm::StringRef Name,
+llvm::Expected<uint64_t> KernelRegistry::call(llvm::StringRef Name,
                                               llvm::ArrayRef<uint64_t> A) {
+  auto &Model = Owner;
   const auto *Descriptor = lookupAPI(Name);
   if (!Descriptor || A.size() != Descriptor->ArgumentCount)
     return registryError("unknown registry API or incorrect argument count");
@@ -740,20 +843,18 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
     return InvalidParameter;
   if (Function == API::ZwOpenKey || Function == API::ZwCreateKey)
     return open(Model, A, Function == API::ZwCreateKey);
-  auto H = Handles.find(A[0]);
-  if (H == Handles.end())
+  const auto H = Model.findObjectHandle(A[0]);
+  if (!H)
     return InvalidHandle;
-  const std::string Path = H->second.Path;
-  Key &Entry = Keys.at(Path);
-  if (Function == API::ZwClose) {
-    Handles.erase(H);
-    if (Entry.Deleted && llvm::none_of(Handles, [&](const auto &Other) {
-          return Other.second.Path == Path;
-        }))
-      Keys.erase(Path);
-    return Success;
-  }
-  if (Entry.Deleted &&
+  const auto Body = KeyBodies.find(H->Object);
+  if (Body == KeyBodies.end())
+    return windows::StatusObjectTypeMismatch;
+  const auto Data = Body->second;
+  Key &Entry = *Data;
+  const std::string Path = folded(Entry.Path);
+  if (Function == API::ZwClose)
+    return Model.closeHandle(A[0]);
+  if (Entry.Deleted && Function != API::ZwDeleteKey &&
       !(Function == API::ZwQueryKey && uint32_t(A[1]) == KeyNameInformation))
     return KeyDeleted;
   uint32_t Required =
@@ -766,8 +867,9 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
   if (Function == API::ZwEnumerateKey)
     Required = EnumerateSubKeysAccess;
   if (Function == API::ZwQueryKey && uint32_t(A[1]) == KeyNameInformation)
-    Required = AllAccess; // Any granted key access suffices for its name.
-  if (!(H->second.Access & Required))
+    Required =
+        windows::KeyAllAccess; // Any granted key access suffices for its name.
+  if (!(H->GrantedAccess & Required))
     return AccessDenied;
   switch (Function) {
   case API::ZwQueryKey:
@@ -801,10 +903,12 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
     return Success;
   }
   case API::ZwDeleteKey: {
+    if (Entry.Deleted)
+      return Success;
     if (rootPath(Path))
       return CannotDelete;
     for (const auto &[OtherPath, Other] : Keys)
-      if (!Other.Deleted && OtherPath != Path && atOrBelow(OtherPath, Path))
+      if (!Other->Deleted && OtherPath != Path && atOrBelow(OtherPath, Path))
         return CannotDelete;
     auto Time = mutationTime(Model);
     if (!Time)
@@ -816,11 +920,13 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
     Entry.Values.clear();
     Entry.ValueOrder.clear();
     Entry.Deleted = true;
+    Keys.erase(Path);
     const auto ParentPath = parentPath(Path);
-    Key &Parent = Keys.at(ParentPath);
+    Key &Parent = *Keys.at(ParentPath);
     Parent.LastWriteTime100ns = *Time;
     if (llvm::none_of(Keys, [&](const auto &Other) {
-          return !Other.second.Deleted && parentPath(Other.first) == ParentPath;
+          return !Other.second->Deleted &&
+                 parentPath(Other.first) == ParentPath;
         }))
       Parent.MaxNameLength = 0;
     return Success;
