@@ -346,6 +346,7 @@ extern llvm::cl::opt<std::string> TypesSpelling;
 extern llvm::cl::opt<bool> TypesAsserts;
 extern llvm::cl::opt<bool> TypesDecimalOffsets;
 extern llvm::cl::opt<bool> TypesNoOffsets;
+extern llvm::cl::list<std::string> TypesDeclare;
 
 // Xrefs.
 extern llvm::cl::opt<std::string> XrefAddr;

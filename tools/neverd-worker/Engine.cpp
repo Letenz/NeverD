@@ -219,6 +219,12 @@ constexpr std::string_view LoadOptionsSuffix = ".neverd-load.json";
 using PdbReferenceFunction = const char *(*)(const char *, const char *);
 // Additive C ABI capability: the program's local types.
 using LocalTypesFunction = const char *(*)(neverd_session_t, const char *);
+// neverd_local_types_forget: the session and a JSON list of names.
+using LocalTypeNamesFunction = const char *(*)(neverd_session_t, const char *);
+// The most source one declaration reads.
+constexpr std::size_t MaxDeclarationBytes = 4u << 20;
+// The user's type declarations beside the input, as the engine reads them.
+constexpr std::string_view TypeDeclarationsSuffix = ".neverd-types.json";
 using LocalTypeFunction = const char *(*)(neverd_session_t, const char *,
                                           const char *);
 /// Whether the next load searches for the PDB a PE names.
@@ -604,6 +610,13 @@ bool Engine::listsLocalTypes() {
   return engineSymbol<LocalTypesFunction>("neverd_local_types_json") &&
          engineSymbol<LocalTypeFunction>("neverd_local_type_json") &&
          engineSymbol<LocalTypesFunction>("neverd_local_types_source");
+}
+bool Engine::declaresLocalTypes() {
+  return listsLocalTypes() &&
+         engineSymbol<LocalTypeFunction>("neverd_local_types_declare") &&
+         engineSymbol<LocalTypeNamesFunction>("neverd_local_types_forget") &&
+         engineSymbol<SessionJsonFunction>("neverd_type_declarations_json") &&
+         engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
 }
 bool Engine::findsPdbFiles() {
   return engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json") &&
@@ -2088,6 +2101,54 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     result["address_name"] = listing().nameAt(address);
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
     result["import"] = listing().isImport(address);
+    return result;
+  }
+  if (operation == "local_types_declare" || operation == "local_types_forget") {
+    requireWriter();
+    if (!declaresLocalTypes())
+      throw Error("unsupported", "This engine cannot declare local types");
+    static const auto declare =
+        engineSymbol<LocalTypeFunction>("neverd_local_types_declare");
+    static const auto forget =
+        engineSymbol<LocalTypeNamesFunction>("neverd_local_types_forget");
+    static const auto rows =
+        engineSymbol<SessionJsonFunction>("neverd_type_declarations_json");
+    static const auto load =
+        engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
+    std::string reply;
+    if (operation == "local_types_declare") {
+      const auto source = stringField(p, "source", {}, MaxDeclarationBytes);
+      const Json options{{"language", stringField(p, "language", "c", 16)}};
+      reply = ownedString(
+          declare(session_, source.c_str(), options.dump().c_str()));
+    } else {
+      const auto names = p.value("names", Json());
+      if (!names.is_array() || names.empty() || names.size() > 4096)
+        throw Error("invalid_request", "Name the types to remove in a list");
+      reply = ownedString(forget(session_, names.dump().c_str()));
+    }
+    if (reply.empty())
+      throw Error("local_types_failed", error());
+    Json result;
+    try {
+      result = Json::parse(reply);
+    } catch (const Json::exception &) {
+      throw Error("engine_error", "Engine returned malformed JSON");
+    }
+    // The project keeps what the user declared at once, as a rename, under
+    // the writer lock this session holds; the sidecar unchanged, so are the
+    // types.
+    if (result.value("problems", Json::array()).empty()) {
+      try {
+        fs::path sidecar =
+            utf8Path(ownedString(neverd_session_file_path(session_)));
+        sidecar += std::string(TypeDeclarationsSuffix);
+        atomicWrite(sidecar, backendJson(rows(session_)));
+      } catch (...) {
+        (void)load(session_);
+        throw;
+      }
+    }
     return result;
   }
   if (operation == "local_types" || operation == "local_type" ||

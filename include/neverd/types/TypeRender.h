@@ -82,6 +82,10 @@ std::string renderTypes(const TypeLibrary &Library,
 std::vector<std::pair<std::string, std::string>>
 renamedNames(const TypeLibrary &Library, Language Lang);
 
+/// The names of the types \p Type mentions: its members', target's and
+/// parameters' types, through pointers, arrays and records in place.
+std::vector<std::string> mentionedTypeNames(const LocalType &Type);
+
 } // namespace neverd::types
 
 #endif // NEVERD_TYPES_TYPERENDER_H

@@ -2,6 +2,7 @@ add_neverd_unittest(NeverDTypesTests
   LocalTypesTests.cpp
   PDBTypeImportTests.cpp
   TypeJSONTests.cpp
+  TypeParseTests.cpp
   TypeRenderTests.cpp
 
   LINK_COMPONENTS
