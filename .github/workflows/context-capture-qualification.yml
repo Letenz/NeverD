@@ -1,0 +1,130 @@
+name: Temporary context capture qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - unittests/emulation/fixtures/driver_context_capture.c
+      - .github/workflows/context-capture-qualification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  context-capture:
+    name: Context capture (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            runner: macos-15
+            parallel: 3
+          - name: Linux x64
+            runner: ubuntu-24.04
+            parallel: 4
+    env:
+      TEST_PARALLEL: ${{ matrix.parallel }}
+      SCCACHE_GHA_ENABLED: 'true'
+      NEVERD_THREADS: '1'
+      NEVERD_SIGNATURE_CACHE: 'off'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 32
+          submodules: recursive
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: 'v0.16.0'
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake lld ninja llvm@22
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang cmake lld ninja-build gcc-multilib
+          printf '%s\n' /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+      - name: Record source and toolchain
+        shell: bash
+        run: |
+          mkdir -p build-ci/evidence
+          git rev-parse HEAD > build-ci/evidence/head.txt
+          git submodule status --recursive > build-ci/evidence/submodules.txt
+          uname -a > build-ci/evidence/toolchain.txt
+          clang --version >> build-ci/evidence/toolchain.txt
+          cmake --version >> build-ci/evidence/toolchain.txt
+          lld-link --version >> build-ci/evidence/toolchain.txt
+      - name: Configure Release with the failing run's prebuilt LLVM mode
+        shell: bash
+        run: |
+          cmake -S . -B build-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=ON \
+            -DNEVERD_ENABLE_CPU_EMULATION=ON \
+            -DNEVERD_ENABLE_DRIVER_EMULATION=ON \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
+            -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=OFF \
+            -DNEVERD_ENABLE_WEB_ANALYSIS=OFF -DNEVERD_ENABLE_Z3=OFF \
+            -DNEVERD_BUILD_SHARED=OFF
+      - name: Build the owning target
+        shell: bash
+        run: cmake --build build-ci --target NeverDNativeDriverTests --parallel 2
+      - name: Repeat exact software tests and original parallel cases
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          from pathlib import Path
+          import json, subprocess, xml.etree.ElementTree as ET
+          root = Path('build-ci/evidence')
+          binary = str(Path('build-ci/bin/NeverDNativeDriverTests').resolve())
+          names = ['CollectorUsesLiveRegistersAndLogicalSelectors',
+                   'CompleteImportedAndDynamicRecordsAcrossLifecycle',
+                   'InvalidDestinationsAndLegacyFailClearly',
+                   'ConcreteCaptureRetainsRecoveryDependency']
+          expected = {'Native/DriverContextCapture.' + n + '/unicorn' for n in names}
+          rows = []
+          for repeat in range(5):
+              xml = root / f'serial-{repeat}.xml'
+              result = subprocess.run([binary, '--gtest_filter=Native/DriverContextCapture.*/unicorn',
+                                       '--gtest_output=xml:' + str(xml)],
+                                      capture_output=True, timeout=120)
+              (root / f'serial-{repeat}.stdout').write_bytes(result.stdout)
+              (root / f'serial-{repeat}.stderr').write_bytes(result.stderr)
+              cases = list(ET.parse(xml).getroot().iter('testcase'))
+              actual = {c.attrib['classname'] + '.' + c.attrib['name'] for c in cases}
+              assert result.returncode == 0 and len(cases) == 4 and actual == expected
+              assert all(c.find('failure') is None and c.find('skipped') is None for c in cases)
+              rows.append({'repeat': repeat, 'passed': sorted(actual)})
+          (root / 'serial-receipt.json').write_text(json.dumps(rows, indent=2))
+          PYCODE
+          ctest --test-dir build-ci/unittests/emulation \
+            --build-config Release --no-tests=error --parallel "$TEST_PARALLEL" \
+            -R '^Native/DriverContextCapture\..*/unicorn$' \
+            --output-on-failure --output-junit "$PWD/build-ci/evidence/parallel.xml" \
+            --output-log "$PWD/build-ci/evidence/parallel.log"
+      - name: Upload bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: context-capture-${{ runner.os }}
+          path: |
+            build-ci/evidence/
+            build-ci/CMakeCache.txt
+            build-ci/Testing/Temporary/LastTest.log
+            build-ci/Testing/Temporary/LastTestsFailed.log
+            build-ci/unittests/emulation/Testing/Temporary/LastTest.log
+            build-ci/unittests/emulation/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: error
+          retention-days: 14
