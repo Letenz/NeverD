@@ -187,6 +187,9 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,
   const uint32_t LargeFile = ARM64 ? OpenLargeFileARM64 : OpenLargeFileX64;
   const uint32_t Directory = ARM64 ? OpenDirectoryARM64 : OpenDirectoryX64;
   const uint32_t Direct = ARM64 ? OpenDirectARM64 : OpenDirectX64;
+  if ((Flags & Directory) && (Flags & OpenCreate))
+    return unsupported(Result,
+                       "O_CREAT with O_DIRECTORY is kernel-version dependent");
   const uint32_t AccessMask =
       3 | OpenCreate | OpenExclusive | OpenTruncate | OpenAppend;
   if ((Flags &

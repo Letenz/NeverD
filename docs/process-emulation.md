@@ -550,10 +550,13 @@ not assert real DAC/SELinux permissions or disk capacity. `O_WRONLY`, `O_RDWR`,
 all opens; cursor and flags remain per open description. `dup` shares both.
 `write` overwrites, zero-fills holes, preserves readable-page prefixes on a
 partial input fault, and chooses the current object end for append. Kernel
-reads and newly opened descriptors observe the resulting bytes. Missing write
+validation checks the original signed cursor and count before append selects
+EOF, following the [VFS write contract](https://github.com/torvalds/linux/blob/v5.10/fs/read_write.c).
+Reads and newly opened descriptors observe the resulting bytes. Missing write
 grants and exhausted reservations stop explicitly; they are not fabricated
 EACCES/ENOSPC results. `O_CREAT` can open an existing entry; `O_EXCL` returns
-EEXIST before truncation. Creating absent objects remains unmodeled.
+EEXIST before truncation. Creating absent objects remains unmodeled. `O_CREAT | O_DIRECTORY` also stops
+explicitly because its behavior depends on the Linux release.
 
 Any write or truncation invalidates captured stat observations. A later stat
 stops rather than returning stale size, block counts or timestamps. The known

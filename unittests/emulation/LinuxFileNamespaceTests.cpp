@@ -147,6 +147,12 @@ TEST_P(LinuxFileNamespace, ProcCookiesSkipClosedSlotsAndEOFRequiresRewind) {
     EXPECT_EQ(std::string(reinterpret_cast<char *>(B.data() + 24 * I + 19)),
               Names[I]);
   }
+  llvm::cantFail(
+      cpu().write(Base, {'/', 'p', 'r', 'o', 'c', '/', 's', 'e', 'l', 'f', 0}));
+  llvm::cantFail(cpu().write(Base + 512, std::vector<uint8_t>(8, 0xa5)));
+  EXPECT_EQ(call(ServiceKind::ReadlinkAt, UINT64_MAX, Base, Base + 512, 8), 4u);
+  EXPECT_EQ(bytes(Base + 512, 8),
+            (std::vector<uint8_t>{'1', '0', '0', '0', 0xa5, 0xa5, 0xa5, 0xa5}));
   EXPECT_EQ(call(ServiceKind::Dup, F), 1u);
   EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 256, 1024), 0u);
   EXPECT_EQ(call(ServiceKind::Lseek, D, 3, 0), 3u);
@@ -156,6 +162,10 @@ TEST_P(LinuxFileNamespace, ProcCookiesSkipClosedSlotsAndEOFRequiresRewind) {
 TEST_P(LinuxFileNamespace,
        BudgetRefusalAndExclusiveOpenDoNotTruncateOrAdvance) {
   const auto F = open("/files/data", 2);
+  EXPECT_FALSE(
+      call(ServiceKind::OpenAt, uint64_t(-100), Base,
+           0100 | (GetParam() == GuestArchitecture::X64 ? 00200000 : 040000)));
+
   EXPECT_EQ(open("/files/data", 0100 | 0200 | 01000 | 1), uint64_t(-17));
   EXPECT_EQ(call(ServiceKind::Lseek, F, 8191, 0), 8191u);
   EXPECT_FALSE(call(ServiceKind::Write, F, Base, 2));
@@ -163,6 +173,24 @@ TEST_P(LinuxFileNamespace,
   EXPECT_EQ(call(ServiceKind::Lseek, F, 0, 0), 0u);
   EXPECT_EQ(call(ServiceKind::Read, F, Base + 512, 8), 3u);
   EXPECT_EQ(bytes(Base + 512, 3), (std::vector<uint8_t>{'a', 'b', 'c'}));
+}
+TEST_P(LinuxFileNamespace, AppendValidatesOriginalCursorBeforeSelectingEOF) {
+  const auto F = open("/files/data", 1 | 02000),
+             Alias = *call(ServiceKind::Dup, F), Reader = open("/files/data");
+  ASSERT_EQ(call(ServiceKind::Lseek, F, INT64_MAX, 0), uint64_t(INT64_MAX));
+  EXPECT_EQ(call(ServiceKind::Write, F, Base, 1), uint64_t(-22));
+  EXPECT_EQ(call(ServiceKind::Lseek, Alias, 0, 1), uint64_t(INT64_MAX));
+  EXPECT_EQ(call(ServiceKind::Read, Reader, Base + 512, 8), 3u);
+  EXPECT_EQ(bytes(Base + 512, 3), (std::vector<uint8_t>{'a', 'b', 'c'}));
+  // Refusal leaves captured metadata valid and no bytes or cursor committed.
+  EXPECT_EQ(call(ServiceKind::Fstat, Reader, Base + 512), 0u);
+  EXPECT_EQ(call(ServiceKind::Write, F, UINT64_MAX, 1), uint64_t(-14));
+  ASSERT_EQ(call(ServiceKind::Lseek, Alias, 100, 0), 100u);
+  llvm::cantFail(cpu().write(Base + 256, {'Z'}));
+  EXPECT_EQ(call(ServiceKind::Write, F, Base + 256, 1), 1u);
+  EXPECT_EQ(call(ServiceKind::Lseek, Alias, 0, 1), 4u);
+  EXPECT_EQ(call(ServiceKind::Read, Reader, Base + 512, 8), 1u);
+  EXPECT_EQ(bytes(Base + 512, 1), (std::vector<uint8_t>{'Z'}));
 }
 INSTANTIATE_TEST_SUITE_P(LP64, LinuxFileNamespace,
                          testing::Values(GuestArchitecture::X64,

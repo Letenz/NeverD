@@ -52,18 +52,6 @@ Bionic::prepareStreamRead(InputStream &Stream) {
       return Flushed;
     Stream.Writing = false;
   }
-  if (Stream.BufferMode) {
-    for (auto &[Token, Other] : InputStreams) {
-      if (&Other == &Stream || Other.BufferMode != 1)
-        continue;
-      auto Flushed = flushStream(Other);
-      if (!Flushed)
-        return Flushed.takeError();
-      if (!*Flushed)
-        return Reply();
-      // The Bionic refill path deliberately ignores other streams' IO errors.
-    }
-  }
   return Reply(true);
 }
 

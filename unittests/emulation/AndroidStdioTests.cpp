@@ -486,6 +486,41 @@ TEST_P(AndroidStdio, DirectoryCacheSurvivesFDClosureUntilTheNextRefill) {
          {{512, "."}, {528, ".."}, {544, "input"}});
 }
 
+TEST_P(AndroidStdio, OnlyRefillsFlushOtherLineBufferedWriters) {
+  Options.LinuxFiles->Files["/fixture/output"] = {};
+  Options.LinuxFiles->WriteLimits["/fixture/output"] = 64;
+  auto Metadata = Options.LinuxFiles->Metadata.at("/fixture/input");
+  Metadata.Size = 0;
+  Options.LinuxFiles->Metadata["/fixture/output"] = Metadata;
+  for (uint64_t Direct : {0, 1}) {
+    for (uint64_t Closed : {0, 1}) {
+      SCOPED_TRACE(testing::Message()
+                   << "direct=" << Direct << ", closed=" << Closed);
+      auto R = run("stdio_cross_stream_read", {Buffer, Direct, Closed});
+      returned(R);
+      memory(R,
+             {0, 0, 2, 0, Direct ? 9u : 1u, Closed && !Direct ? 9u : 717u,
+              Closed && !Direct ? 1u : 0u, 0,
+              Closed   ? UINT64_MAX
+              : Direct ? 0u
+                       : 2u,
+              0, Closed ? UINT64_MAX : 0u},
+             {{512, Direct ? "alpha\nbet" : "a"},
+              {768, "xy"},
+              {800, Direct ? "" : "alpha\nbe"}});
+    }
+  }
+}
+
+TEST_P(AndroidStdio, DirectReadPreservesPendingOutputUntilAnActualRefill) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_direct_update", {Buffer});
+  returned(R);
+  memory(
+      R, {0, 3, 5, 5, 0, 1, 12, 9, 0, 15, 0},
+      {{512, "alpha"}, {528, "t"}, {544, "alphaabcta\nlast"}, {768, "ta\nl"}});
+}
+
 INSTANTIATE_TEST_SUITE_P(
     PackedAndOptimization, AndroidStdio,
     testing::Combine(testing::Values("stdio-O0-none", "stdio-O0-android",

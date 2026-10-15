@@ -36,10 +36,12 @@ LinuxFiles::writeDescriptor(ServiceKind Kind, uint32_t FD, uint64_t Address,
     return unsupported(Result, "vectored mutable-file writes are unmodeled");
   if (Address > Layout.UserLimit || Size > Layout.UserLimit - Address)
     return Reply(uint64_t(0) - BadAddress);
+  // The VFS validates the original cursor and count before the file operation
+  // chooses EOF for an append. A small EOF must not hide signed overflow.
+  if (Size > MaxSignedIOSize - F->Offset)
+    return Reply(uint64_t(0) - InvalidArgument);
   auto &Object = MutableFiles.at(F->Path);
   uint64_t Position = (F->Flags & OpenAppend) ? Object.Bytes.size() : F->Offset;
-  if (Size > MaxSignedIOSize - Position)
-    return Reply(uint64_t(0) - InvalidArgument);
   Size = std::min(Size, MaxReadWriteSize & ~(Layout.PageSize - 1));
   const auto Limit = Options->WriteLimits.at(F->Path);
   if (Size && (Position > Limit || Size > Limit - Position))

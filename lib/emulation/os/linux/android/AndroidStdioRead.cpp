@@ -14,13 +14,8 @@
 namespace neverd::emulation::android_model {
 llvm::Expected<std::optional<uint64_t>>
 Bionic::streamRead(InputStream &Stream, uint64_t Output, uint64_t Size) {
-  auto Ready = prepareStreamRead(Stream);
-  if (!Ready)
-    return Ready.takeError();
-  if (!*Ready)
-    return std::optional<uint64_t>();
-  if (!**Ready)
-    return std::optional<uint64_t>(0);
+  // API 28's large fread path calls the FD reader directly. Only __srefill
+  // switches stream direction or flushes other line-buffered writers.
   auto Read =
       streamService(linux_model::ServiceKind::Read, Stream.FD, Output, Size);
   if (!Read)
@@ -51,6 +46,18 @@ llvm::Expected<bool> Bionic::refillStream(InputStream &Stream) {
     return Ready.takeError();
   if (!*Ready)
     return false;
+  if (Stream.BufferMode) {
+    for (auto &[Token, Other] : InputStreams) {
+      if (&Other == &Stream || Other.BufferMode != 1)
+        continue;
+      auto Flushed = flushStream(Other);
+      if (!Flushed)
+        return Flushed.takeError();
+      if (!*Flushed)
+        return false;
+      // The Bionic refill path deliberately ignores other streams' IO errors.
+    }
+  }
   auto Count = streamRead(Stream, Stream.Buffer, Stream.Capacity);
   if (!Count)
     return Count.takeError();

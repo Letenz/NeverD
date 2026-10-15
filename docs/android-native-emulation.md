@@ -274,8 +274,9 @@ The supported Bionic subset is:
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or
-  implicit proc data are visible. File writes, directory/relative opens and
-  unmodeled flags stop explicitly.
+  implicit proc data are visible. Explicit write grants allow bounded writes;
+  known directory opens, canonical relative `openat` and opt-in live FD links
+  follow the same Linux catalogue contract. Other path forms and flags stop explicitly.
   File status requires complete explicit `metadata`; it writes the 128-byte
   AArch64 layout and preserves the open cursor. Missing observations and mixed
   writable/inaccessible outputs stop without invented values or partial bytes.
@@ -412,11 +413,12 @@ line and unbuffered modes retain actual guest bytes and flush through kernel
 flush discards its pending count and sets the error indicator. Direct writes
 preserve partial transfer/EFAULT semantics; invalid buffered memcpy inputs stop
 instead of inventing a kernel errno. Read/write transitions follow API 28:
-reading flushes pending output, while switching to writing discards read-ahead
+refilling flushes pending output, while switching to writing discards read-ahead
 at the current FD offset. Use a seek when the logical read position must be
 preserved. `ftell` flushes output before querying the cursor, including append
-streams; it does not report a stale pre-append position. Reading a line or
-unbuffered stream flushes other line-buffered writers. `fdopen` also works for
+streams; it does not report a stale pre-append position. Refilling a line or
+unbuffered stream flushes other line-buffered writers. Large `fread` requests
+use the API 28 direct FD reader, bypassing these refill transitions. `fdopen` also works for
 captured output FDs with explicit unbuffered mode; it does not materialize
 `stdin`, `stdout` or `stderr` FILE objects.
 

@@ -633,3 +633,44 @@ int filesystem_closed_dir(u64 *o) {
   o[4] = *__errno();
   return 0;
 }
+
+int stdio_cross_stream_read(u64 *o, int direct, int closed) {
+  char *b = (char *)o;
+  FILE *writer = fopen("/fixture/output", "w");
+  FILE *reader = fopen("/fixture/input", "r");
+  o[0] = setvbuf(writer, b + 768, 1, 8);
+  o[1] = setvbuf(reader, b + 800, 1, 8);
+  o[2] = fwrite("xy", 1, 2, writer);
+  int fd = fileno(writer);
+  o[3] = closed ? close(fd) : 0;
+  *__errno() = 717;
+  o[4] = fread(b + 512, 1, direct ? 9 : 1, reader);
+  o[5] = *__errno();
+  o[6] = ferror(writer);
+  o[7] = ferror(reader);
+  o[8] = lseek(fd, 0, 1);
+  o[9] = fclose(reader);
+  o[10] = fclose(writer);
+  return 0;
+}
+
+int stdio_direct_update(u64 *o) {
+  char *b = (char *)o;
+  int fd = open("/fixture/input", 2);
+  FILE *f = fdopen(fd, "r+");
+  o[0] = setvbuf(f, b + 768, 0, 4);
+  o[1] = fwrite("abc", 1, 3, f);
+  // Observe API 28's direct-read shortcut before an actual refill changes
+  // direction. The pending output remains attached to the FILE until then.
+  o[2] = fread(b + 512, 1, 5, f);
+  o[3] = lseek(fd, 0, 1);
+  o[4] = ferror(f);
+  o[5] = fread(b + 528, 1, 1, f);
+  o[6] = lseek(fd, 0, 1);
+  o[7] = ftell(f);
+  o[8] = fclose(f);
+  fd = open("/fixture/input", 0);
+  o[9] = read(fd, b + 544, 15);
+  o[10] = close(fd);
+  return 0;
+}
