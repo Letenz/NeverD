@@ -11,6 +11,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <limits>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::symbolic;
@@ -256,6 +257,343 @@ TEST(SymStorePreservation, AbsentAdditionalRangesStillValidateWithoutReading) {
   EXPECT_EQ(S.numMemoryRegions(), 1u); // only the STORE's external bank
   EXPECT_EQ(S.numLiveBytes(), 4u);
   EXPECT_TRUE(S.constantRegionBytes(Root).empty());
+}
+
+LowOp preservingCmpxchg(NdVar Output, NdVar Address, NdVar Expected,
+                        NdVar Desired) {
+  LowOp Op;
+  Op.Opcode = NdOp::ATOMIC_CMPXCHG;
+  Op.Output = Output;
+  Op.addInput(Address);
+  Op.addInput(Expected);
+  Op.addInput(Desired);
+  Op.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  return Op;
+}
+
+// Construct input words from independently specified memory bytes. The oracle
+// chooses a whole byte vector by equality, without using symbolic operations.
+llvm::APInt atomicByteWord(llvm::ArrayRef<uint8_t> Bytes,
+                           llvm::endianness Order) {
+  llvm::APInt Word(Bytes.size() * 8, 0);
+  for (unsigned I = 0; I != Bytes.size(); ++I) {
+    const unsigned Lane =
+        Order == llvm::endianness::little ? I : Bytes.size() - I - 1;
+    Word |= llvm::APInt(Word.getBitWidth(), Bytes[I]).shl(Lane * 8);
+  }
+  return Word;
+}
+
+TEST(SymAtomicCmpxchg,
+     SymbolicComparisonPreservesCompleteBytesAndOnlyKnownCells) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      SCOPED_TRACE(Bytes);
+      SCOPED_TRACE(Order == llvm::endianness::little ? "little" : "big");
+      SymContext C;
+      SymState S(C, Order);
+      SymExec E(C, S);
+      const auto Root = C.mkVar("frame", 64);
+      const auto Base = C.mkVar("object", 64);
+      const auto At = [&](SymRef R, int64_t Offset) {
+        return C.mkAdd(R, C.mkConst(64, static_cast<uint64_t>(Offset)));
+      };
+      const std::vector<uint8_t> Frame{0x10, 0x32, 0x54, 0x76,
+                                       0x98, 0xba, 0xdc, 0xfe};
+      S.store(Root, C.mkConst(atomicByteWord(Frame, Order)));
+      std::vector<uint8_t> Old, Desired;
+      for (unsigned I = 0; I != Bytes; ++I) {
+        Old.push_back(0x31 + 7 * I);
+        Desired.push_back(0xe2 - 9 * I);
+      }
+      std::vector<uint8_t> Initial{0xa6};
+      Initial.insert(Initial.end(), Old.begin(), Old.end());
+      Initial.push_back(0x5d);
+      SymStorePreservation Seed{Root, 0, 8, 24};
+      S.store(At(Base, -2), C.mkConst(atomicByteWord(Initial, Order)), Seed);
+      ASSERT_EQ(Seed.Status, SymStorePreservationStatus::Applied);
+      const auto ExpectedInput = C.mkVar("expected", Bytes * 8);
+      const auto DesiredInput = C.mkVar("desired", Bytes * 8);
+      S.write(SymSpace::Register, 8, At(Base, -1));
+      S.write(SymSpace::Register, 16, ExpectedInput);
+      S.write(SymSpace::Register, 24, DesiredInput);
+      const auto Op =
+          preservingCmpxchg(NdVar::reg(0, Bytes), NdVar::reg(8, 8),
+                            NdVar::reg(16, Bytes), NdVar::reg(24, Bytes));
+      const SymStorePreservationRange More[] = {{6, 10}};
+      SymStorePreservation P{Root, 0, 2, 23};
+      P.AdditionalRanges = More;
+      const auto BeforeLive = S.numLiveBytes();
+      ASSERT_EQ(E.step(Op, nullptr, &P), StepResult::Continue);
+      ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+      // One range, eight inspected bytes, six secondary checks, four saves
+      // and four restores. No missing protected byte is initialized.
+      EXPECT_EQ(P.WorkUsed, 23u);
+      EXPECT_EQ(E.opaqueOperationCount(), 0u);
+      EXPECT_EQ(S.numLiveBytes(), BeforeLive + Bytes - 4);
+      for (unsigned I = 0; I != 8; ++I) {
+        const auto Byte = S.load(At(Root, I), 1);
+        if (I < 2 || I >= 6)
+          EXPECT_EQ(Byte, C.mkConst(8, Frame[I]));
+        else
+          EXPECT_FALSE(C.isConst(Byte));
+      }
+      EXPECT_EQ(S.load(At(Base, -2), 1), C.mkConst(8, Initial.front()));
+      EXPECT_EQ(S.load(At(Base, Bytes - 1), 1), C.mkConst(8, Initial.back()));
+      for (unsigned I = 0; I != Bytes; ++I)
+        EXPECT_EQ(S.read(SymSpace::Register, I, 1), C.mkConst(8, Old[I]));
+      for (bool Match : {false, true}) {
+        auto Expected = Old;
+        if (!Match)
+          Expected.back() ^= 0x80;
+        const auto &Oracle = Expected == Old ? Desired : Old;
+        const uint64_t ExpectedWord =
+            atomicByteWord(Expected, Order).getZExtValue();
+        const uint64_t DesiredWord =
+            atomicByteWord(Desired, Order).getZExtValue();
+        for (unsigned I = 0; I != Bytes; ++I) {
+          const auto Byte = S.load(At(Base, int64_t(I) - 1), 1);
+          ASSERT_TRUE(Byte);
+          SymEvalPlan Plan(C, Byte);
+          const auto Actual = Plan.evalU64With([&](uint32_t Id) {
+            if (Id == C.varId(ExpectedInput))
+              return ExpectedWord;
+            if (Id == C.varId(DesiredInput))
+              return DesiredWord;
+            ADD_FAILURE() << "unexpected input in the stored byte: " << Id;
+            return uint64_t{0};
+          });
+          EXPECT_EQ(Actual, Oracle[I]);
+        }
+      }
+    }
+}
+
+TEST(SymAtomicCmpxchg, SnapshotsAliasedInputsBeforePublishingOld) {
+  constexpr uint64_t Old = 0x1111111111111111;
+  constexpr uint64_t Desired = 0x2222222222222222;
+  struct AliasCase {
+    uint64_t Output;
+    uint64_t Expected;
+  };
+  // Address, expected, desired, then a result overlapping both value inputs.
+  for (const auto Case :
+       {AliasCase{8, Old}, AliasCase{16, Old ^ 1}, AliasCase{24, Old},
+        AliasCase{20, Old ^ (uint64_t{1} << 40)}}) {
+    SCOPED_TRACE(Case.Output);
+    SymContext C;
+    SymState S(C);
+    SymExec E(C, S);
+    const auto Root = C.mkVar("frame", 64);
+    const auto Address = C.mkConst(64, 0x4000);
+    S.store(Root, C.mkConst(64, 0xa5a5a5a5a5a5a5a5));
+    SymStorePreservation Seed{Root, 0, 8, 24};
+    S.store(Address, C.mkConst(64, Old), Seed);
+    ASSERT_EQ(Seed.Status, SymStorePreservationStatus::Applied);
+    S.write(SymSpace::Register, 8, Address);
+    S.write(SymSpace::Register, 16, C.mkConst(64, Case.Expected));
+    S.write(SymSpace::Register, 24, C.mkConst(64, Desired));
+    const auto Op =
+        preservingCmpxchg(NdVar::reg(Case.Output, 8), NdVar::reg(8, 8),
+                          NdVar::reg(16, 8), NdVar::reg(24, 8));
+    SymStorePreservation P{Root, 0, 8, 24};
+    ASSERT_EQ(E.step(Op, nullptr, &P), StepResult::Continue);
+    ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+    EXPECT_EQ(S.read(SymSpace::Register, Case.Output, 8), C.mkConst(64, Old));
+    EXPECT_EQ(S.load(Address, 8),
+              C.mkConst(64, Case.Expected == Old ? Desired : Old));
+    EXPECT_EQ(S.load(Root, 8), C.mkConst(64, 0xa5a5a5a5a5a5a5a5));
+  }
+}
+
+TEST(SymAtomicCmpxchg, ExactBudgetCommitsAndShortBudgetPublishesNoOldResult) {
+  SymContext C;
+  SymState Initial(C);
+  const auto Root = C.mkVar("frame", 64);
+  const auto Address = C.mkConst(64, 0x4000);
+  Initial.store(Root, C.mkConst(64, 19));
+  SymStorePreservation Seed{Root, 0, 8, 24};
+  Initial.store(Address, C.mkConst(32, 7), Seed);
+  ASSERT_EQ(Seed.Status, SymStorePreservationStatus::Applied);
+  Initial.write(SymSpace::Register, 0, C.mkConst(32, 0xdeadbeef));
+  const auto Op = preservingCmpxchg(NdVar::reg(0, 4), NdVar::scalar(0x4000, 8),
+                                    NdVar::scalar(7, 4), NdVar::scalar(11, 4));
+  for (uint64_t Budget : {24, 23}) {
+    SCOPED_TRACE(Budget);
+    auto S = Initial;
+    SymExec E(C, S);
+    SymStorePreservation P{Root, 0, 8, Budget};
+    const auto Flow = E.step(Op, nullptr, &P);
+    if (Budget == 24) {
+      EXPECT_EQ(Flow, StepResult::Continue);
+      EXPECT_EQ(P.Status, SymStorePreservationStatus::Applied);
+      EXPECT_EQ(P.WorkUsed, 24u);
+      EXPECT_EQ(S.read(SymSpace::Register, 0, 4), C.mkConst(32, 7));
+      EXPECT_EQ(S.load(Address, 4), C.mkConst(32, 11));
+      EXPECT_EQ(S.load(Root, 8), C.mkConst(64, 19));
+      EXPECT_EQ(E.opaqueOperationCount(), 0u);
+    } else {
+      EXPECT_EQ(Flow, StepResult::Unmodelled);
+      EXPECT_EQ(P.Status, SymStorePreservationStatus::BudgetExceeded);
+      EXPECT_LE(P.WorkUsed, Budget);
+      EXPECT_EQ(E.opaqueOperationCount(), 1u);
+      const auto Output = S.read(SymSpace::Register, 0, 4);
+      EXPECT_FALSE(C.isConst(Output));
+      EXPECT_NE(Output, C.mkConst(32, 7));
+      EXPECT_FALSE(C.isConst(S.load(Address, 4)));
+      EXPECT_TRUE(S.memoryIsUnknown());
+      // Refusal may havoc memory and output. It is not a transaction rollback.
+    }
+  }
+}
+
+TEST(SymAtomicCmpxchg, InvalidPreservationShapesAndContractsFailClosed) {
+  enum class Invalid {
+    NoOrdering,
+    Relaxed,
+    UnknownOrdering,
+    Segment,
+    NarrowAddress,
+    OddWidth,
+    WideValue,
+    MissingInput,
+    ExtraInput,
+    DifferentWidth,
+    RamAddress,
+    RamExpected,
+    RamDesired,
+    ConstantOutput,
+    InputLocationOverflow,
+    OutputLocationOverflow,
+    AbsoluteOverflow,
+    ProtectedBase,
+    EmptyRange,
+    ConstantBase,
+  };
+  for (auto Case : {Invalid::NoOrdering,
+                    Invalid::Relaxed,
+                    Invalid::UnknownOrdering,
+                    Invalid::Segment,
+                    Invalid::NarrowAddress,
+                    Invalid::OddWidth,
+                    Invalid::WideValue,
+                    Invalid::MissingInput,
+                    Invalid::ExtraInput,
+                    Invalid::DifferentWidth,
+                    Invalid::RamAddress,
+                    Invalid::RamExpected,
+                    Invalid::RamDesired,
+                    Invalid::ConstantOutput,
+                    Invalid::InputLocationOverflow,
+                    Invalid::OutputLocationOverflow,
+                    Invalid::AbsoluteOverflow,
+                    Invalid::ProtectedBase,
+                    Invalid::EmptyRange,
+                    Invalid::ConstantBase}) {
+    SCOPED_TRACE(static_cast<unsigned>(Case));
+    SymContext C;
+    SymState S(C);
+    SymExec E(C, S);
+    const auto Root = C.mkVar("frame", 64);
+    S.store(Root, C.mkConst(64, 19));
+    SymStorePreservation Seed{Root, 0, 8, 24};
+    S.store(C.mkConst(64, 0x4000), C.mkConst(64, 7), Seed);
+    ASSERT_EQ(Seed.Status, SymStorePreservationStatus::Applied);
+    ASSERT_TRUE(S.setX64MemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS,
+                                               C.mkConst(64, 0)));
+    auto Op = preservingCmpxchg(NdVar::reg(0, 4), NdVar::scalar(0x4000, 8),
+                                NdVar::scalar(7, 4), NdVar::scalar(11, 4));
+    SymStorePreservation P{Root, 0, 8, 100};
+    switch (Case) {
+    case Invalid::NoOrdering:
+      Op.MemoryOrdering = NdMemoryOrdering::None;
+      break;
+    case Invalid::Relaxed:
+      Op.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case Invalid::UnknownOrdering:
+      Op.MemoryOrdering = static_cast<NdMemoryOrdering>(255);
+      break;
+    case Invalid::Segment:
+      Op.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      break;
+    case Invalid::NarrowAddress:
+      Op.Inputs[0].Size = 4;
+      break;
+    case Invalid::OddWidth:
+    case Invalid::WideValue:
+      Op.Output.Size = Op.Inputs[1].Size = Op.Inputs[2].Size =
+          Case == Invalid::OddWidth ? 3 : 16;
+      break;
+    case Invalid::MissingInput:
+      Op.NumInputs = 2;
+      break;
+    case Invalid::ExtraInput:
+      Op.addInput(NdVar::scalar(13, 4));
+      break;
+    case Invalid::DifferentWidth:
+      Op.Inputs[1].Size = 2;
+      break;
+    case Invalid::RamAddress:
+      Op.Inputs[0] = NdVar::ram(0x4000, 8);
+      break;
+    case Invalid::RamExpected:
+      Op.Inputs[1] = NdVar::ram(0x4000, 4);
+      break;
+    case Invalid::RamDesired:
+      Op.Inputs[2] = NdVar::ram(0x4000, 4);
+      break;
+    case Invalid::ConstantOutput:
+      Op.Output = NdVar::scalar(0, 4);
+      break;
+    case Invalid::InputLocationOverflow:
+      Op.Inputs[1] = NdVar::reg(UINT64_MAX - 1, 4);
+      break;
+    case Invalid::OutputLocationOverflow:
+      Op.Output = NdVar::reg(UINT64_MAX - 1, 4);
+      break;
+    case Invalid::AbsoluteOverflow:
+      Op.Inputs[0].Offset = UINT64_MAX - 1;
+      break;
+    case Invalid::ProtectedBase:
+      S.write(SymSpace::Register, 8, Root);
+      Op.Inputs[0] = NdVar::reg(8, 8);
+      break;
+    case Invalid::EmptyRange:
+      P.End = P.Begin;
+      break;
+    case Invalid::ConstantBase:
+      P.Base = C.mkConst(64, 0x5000);
+      break;
+    }
+    EXPECT_EQ(E.step(Op, nullptr, &P), StepResult::Unmodelled);
+    EXPECT_EQ(P.Status, SymStorePreservationStatus::Invalid);
+    EXPECT_EQ(E.opaqueOperationCount(), 1u);
+    const auto Output = S.read(SymSpace::Register, 0, Op.Output.Size);
+    EXPECT_FALSE(C.isConst(Output));
+    EXPECT_TRUE(S.memoryIsUnknown());
+  }
+}
+
+TEST(SymAtomicCmpxchg, NoDescriptorRetainsExistingAtomicValueBehavior) {
+  for (bool Match : {false, true})
+    for (bool MemoryOutput : {false, true}) {
+      SymContext C;
+      SymState S(C);
+      SymExec E(C, S);
+      const auto Address = C.mkConst(64, 0x4000);
+      S.store(Address, C.mkConst(32, 7));
+      auto Op = preservingCmpxchg(
+          MemoryOutput ? NdVar::ram(0x4000, 4) : NdVar::reg(0, 4),
+          NdVar::scalar(0x4000, 8), NdVar::scalar(Match ? 7 : 9, 4),
+          NdVar::scalar(11, 4));
+      Op.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      ASSERT_EQ(E.step(Op), StepResult::Continue);
+      if (!MemoryOutput)
+        EXPECT_EQ(S.read(SymSpace::Register, 0, 4), C.mkConst(32, 7));
+      EXPECT_EQ(S.load(Address, 4), C.mkConst(32, Match ? 11 : 7));
+      EXPECT_EQ(E.opaqueOperationCount(), 0u);
+    }
 }
 
 } // namespace

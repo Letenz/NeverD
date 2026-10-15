@@ -6640,3 +6640,7 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Symbolic region coordinates across zero
 
 `SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.
+
+### Sequential raw compare-and-exchange
+
+`SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.
