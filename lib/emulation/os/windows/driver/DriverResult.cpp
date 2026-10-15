@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DriverCPUID.h"
+#include "DriverFileSystemJSON.h"
 #include "DriverLoaderViewJSON.h"
 #include "DriverPhysicalInventoryJSON.h"
 #include "DriverSchedulingJSON.h"
@@ -753,6 +754,7 @@ std::string driverResultJSON(const DriverResult &Result) {
       Root[field::Profile] = execution::CheckedX64;
   }
   Root[field::Registry] = registryJSON(Result.Registry);
+  Root[field::FileSystem] = driver_filesystem::stateJSON(Result.FileSystem);
   llvm::json::Object Exports;
   for (const auto &[Name, Present] : Result.Configuration.KernelExports)
     Exports[Name] = Present;
@@ -767,6 +769,8 @@ std::string driverResultJSON(const DriverResult &Result) {
       {field::LoadAddress, Address(Result.Configuration.LoadAddress)},
       {field::Unload, Result.Configuration.Unload},
       {field::Registry, registryJSON(Result.Configuration.Registry)},
+      {field::FileSystem,
+       driver_filesystem::configurationJSON(Result.Configuration.FileSystem)},
       {field::PnpDevices, pnpConfigurationJSON(Result.Configuration)},
       {interruptField::InterruptEvents,
        interruptEventConfigurationJSON(Result.Configuration)},

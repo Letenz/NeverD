@@ -227,11 +227,11 @@ void KernelModel::configureFrameworkPowerPolicyHost() {
   };
   Host.Children =
       [this](uint64_t PDO) -> llvm::Expected<std::vector<uint64_t>> {
-    if (!isProviderDevice(PDO))
+    if (!isPnpProviderDevice(PDO))
       return policyError("child lookup requires a live parent provider");
     std::vector<uint64_t> Children;
     for (const auto &[ID, Provider] : PnpDevices)
-      if (Provider.ParentPDO == PDO && isProviderDevice(Provider.PDO))
+      if (Provider.ParentPDO == PDO && isPnpProviderDevice(Provider.PDO))
         Children.push_back(Provider.PDO);
     return Children;
   };

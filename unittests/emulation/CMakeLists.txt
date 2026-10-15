@@ -688,7 +688,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_handles driver_file_objects driver_file_queries driver_processors driver_int64_strings driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_handles driver_file_objects driver_file_queries driver_processors driver_int64_strings driver_filesystem_provider driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -1393,6 +1393,20 @@ foreach(_integer_fixture NEVERD_WDM_INT64_STRINGS_FIXTURE
   endif()
 endforeach()
 
+set(NEVERD_WDM_FILESYSTEM_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK declared filesystem fixture")
+set(NEVERD_WDM_FILESYSTEM_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK declared filesystem fixture with active CFG")
+set(_driver_wdm_filesystem_definitions)
+foreach(_filesystem_fixture NEVERD_WDM_FILESYSTEM_FIXTURE
+    NEVERD_WDM_FILESYSTEM_CFG_FIXTURE)
+  if(EXISTS "${${_filesystem_fixture}}" AND NOT IS_DIRECTORY "${${_filesystem_fixture}}")
+    get_filename_component(_filesystem_path "${${_filesystem_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_filesystem_definitions
+      "${_filesystem_fixture}=\"${_filesystem_path}\"")
+  endif()
+endforeach()
+
 set(_driver_execution_fixture_definitions
   NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
   NEVERD_DRIVER_SCENARIOS="${CMAKE_SOURCE_DIR}/docs/examples"
@@ -1403,6 +1417,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_file_queries_definitions}
   ${_driver_wdm_processors_definitions}
   ${_driver_wdm_int64_strings_definitions}
+  ${_driver_wdm_filesystem_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}
@@ -1427,6 +1442,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverFileObjectTests.cpp
   DriverProcessorTests.cpp
   DriverIntegerFormattingTests.cpp
+  DriverFileSystemExecutionTests.cpp
   DriverNamespaceTests.cpp
   DriverDataExportTests.cpp
   NO_PRETTY_VALUES
@@ -1459,6 +1475,8 @@ add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
 add_neverd_unittest(NeverDKernelSnapshotTests
   NO_PRETTY_VALUES
   KernelSnapshotTests.cpp
+  DriverFileSystemTests.cpp
+  KernelFileSystemTests.cpp
   KernelUnpackStateTests.cpp
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp
@@ -1658,6 +1676,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   ${_driver_wdm_file_queries_definitions}
   ${_driver_wdm_processors_definitions}
   ${_driver_wdm_int64_strings_definitions}
+  ${_driver_wdm_filesystem_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}

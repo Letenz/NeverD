@@ -944,7 +944,7 @@ Bei PASSIVE_LEVEL liefert eine Länge unter 4 `STATUS_INFO_LENGTH_MISMATCH` ohne
 
 `RtlCaptureContext` nutzt für importierte/dynamische Aufrufe unter checked-x64 Unicorn/KVM/WHP dieselbe Implementierung bei IRQL <= DISPATCH_LEVEL. Der 1232-Byte-Kernel-Datensatz muss auf 16 Byte ausgerichtet und vollständig les-/schreibbar sein. Nur `[48,72)`, `[120,262)`, `[280,284)` und `[416,672)` werden geschrieben; übrige Bytes, x87-Daten/Zeiger und MXCSR mask bleiben erhalten. ContextFlags=`0x10000f`, Aufrufer-RSP=Eintritts-RSP+8, RIP stammt aus dem echten Rückkehrslot. Acht Flag-Bytes landen bei Eintritts-RSP-8; RAX erhält nullerweitertes EFLAGS, arithmetische Flags folgen ADD(Eintritts-RSP-8,8). DS/ES/FS/GS nutzen logisches checked SS, keine Host- oder rohen Transportwerte. Datensatz, Rückkehr und Scratch verlangen gewöhnliches Kernel-RAM, lebende Objekte, Rechte und eindeutige physische Zuordnung; Datensatzüberlappung ist unzulässig, Eintritts-RSP modulo 16 muss 8 sein. Erfassungs-/Zulassungsfehler lassen CPU/RAM unverändert, legacy wird abgewiesen. Das begrenzte Modell beschreibt nicht alle Windows-Implementierungen; die Umgebungsabhängigkeit bleibt nach Überschreiben bestehen und erlaubt weder UNPACK-Wiederherstellung noch symbolische Prämissen.
 
-Dateikörper besitzen eine gemeinsame Adressidentität für Szenariohandles, zusätzliche Handles und Zeiger. ObOpenObjectByPointer öffnet bereits erzeugte FILE_OBJECTs im Kernelmodus mit optionalem OBJ_KERNEL_HANDLE und bildet generische Rechte ab. Der letzte Handle eines Prozesses erzeugt IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL, solange andere Prozesse Handles halten; der global letzte erzeugt CLEANUP. Verzögerter CLEANUP behält die deklarierte Providerantwort. CLOSE wartet auf letzte Handles, Zeiger und laufende Fortsetzungen, auch bei wiederverwendeter Szenarionummer. Kernelhandles gehören dem Systemprozess: CLEANUP wechselt vorübergehend den effektiven Prozess, behält Thread, Erzeugerprozess und PreviousMode; CLOSE stellt den freigebenden Prozess wieder her. Ausstehende Callbacks lassen den Aufrufer warten. Fehlgeschlagenes CREATE hält nur referenzierten Speicher ohne Gerätezuordnung. Jeder zugeordnete Körper zählt einmal zu DEVICE_OBJECT.ReferenceCount. WDM und KMDF teilen diese Lebensdauer; normale KMDF-Geräte beenden LOCK_CONTROL mit STATUS_INVALID_DEVICE_REQUEST. Erneutes Öffnen im Schließcallback, Schließen bei laufender Datei-I/O, LOCK_CONTROL-Weiterleitung durch KMDF-Filter, Namensabfragen und deklarierte Dateisysteme bleiben ununterstützt.
+Dateikörper besitzen eine gemeinsame Adressidentität für Szenariohandles, zusätzliche Handles und Zeiger. ObOpenObjectByPointer öffnet bereits erzeugte FILE_OBJECTs im Kernelmodus mit optionalem OBJ_KERNEL_HANDLE und bildet generische Rechte ab. Der letzte Handle eines Prozesses erzeugt IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL, solange andere Prozesse Handles halten; der global letzte erzeugt CLEANUP. Verzögerter CLEANUP behält die deklarierte Providerantwort. CLOSE wartet auf letzte Handles, Zeiger und laufende Fortsetzungen, auch bei wiederverwendeter Szenarionummer. Kernelhandles gehören dem Systemprozess: CLEANUP wechselt vorübergehend den effektiven Prozess, behält Thread, Erzeugerprozess und PreviousMode; CLOSE stellt den freigebenden Prozess wieder her. Ausstehende Callbacks lassen den Aufrufer warten. Fehlgeschlagenes CREATE hält nur referenzierten Speicher ohne Gerätezuordnung. Jeder zugeordnete Körper zählt einmal zu DEVICE_OBJECT.ReferenceCount. WDM und KMDF teilen diese Lebensdauer; normale KMDF-Geräte beenden LOCK_CONTROL mit STATUS_INVALID_DEVICE_REQUEST. Erneutes Öffnen im Schließcallback, Schließen bei laufender Datei-I/O, LOCK_CONTROL-Weiterleitung durch KMDF-Filter, Namensabfragen und Datei-I/O des Anbieters bleiben ununterstützt.
 
 ## IRPs für Dateiinformationsabfragen
 
@@ -959,3 +959,40 @@ Synchrone Abfragen halten die kritische Region bis zum letzten CLOSE und stellen
 Das Einprozessorprofil bietet `KeGetCurrentProcessorNumberEx` bei jedem modellierten IRQL: Index null und optional genau vier Ausgabebytes für Gruppe null, Prozessor null und ein reserviertes Nullbyte. Ungültige Ausgaben werden abgelehnt, Nachbarbytes bleiben erhalten. `KeRaiseIrqlToDpcLevel` akzeptiert IRQL 0, 1 oder 2, liefert den vorherigen Wert und teilt den ausführungsgebundenen Verschachtelungsstapel mit `KfRaiseIrql` und `KeLowerIrql`. Import und dynamische Suche verwenden denselben Vertrag. Der x64-WDK-Inlinewrapper ruft `KfRaiseIrql(2)` auf; der separate Export ist ebenfalls dynamisch verfügbar.
 
 `RtlInt64ToUnicodeString` formatiert bei PASSIVE_LEVEL den vollständigen vorzeichenlosen 64-Bit-Wert. Unterstützt werden die Basen 2, 8, 10 und 16; null wählt die Dezimaldarstellung. `RtlIntegerToUnicodeString` behält seine ULONG-Kürzung bei. Beide schreiben `Length` vor `STATUS_BUFFER_OVERFLOW`, benötigen Platz für das Abschlusszeichen und erhalten unbenutzte Bytes. Nach den Ziffern lesen sie `Buffer` für das Abschlusszeichen erneut, auch bei überlappenden Ausgaben. Ein späterer Schreibfehler am Abschlusszeichen lässt bereits geschriebene Ziffern bestehen.
+
+
+## Deklariertes Dateisysteminventar
+
+Das optionale Feld `filesystem` deklariert Sitzungsvolumes vor DriverEntry. Ohne das Feld bleibt die Verfügbarkeit unbekannt; `[]` deklariert keine Anbieter. Ein leeres Volume enthält ausdrücklich sein Stammverzeichnis. Hostdateien und erfolgreiche Datei-I/O werden nicht vorausgesetzt. Gerätesuche, Zeigerreferenzen und Filteranbindung teilen kanonische Identitäten. Erstellen/Öffnen, Metadaten, Lesen/Schreiben, Verzeichnisauflistung und Steueroperationen bleiben ununterstützt. Routen mit einem deklarierten Volume werden vor Dateierstellung oder IRP-Übergabe abgewiesen.
+
+Namen und Pfade verwenden druckbares ASCII ohne Beachtung der Großschreibung, explizite Elternverzeichnisse und eindeutige 64-Bit-IDs je Volume. Aliase, Streams, Links, Reparse-Punkte und Unicode sind ausgeschlossen. Typ, Attribute, Zuweisung und vier nichtnegative signed64-Zeitstempel sind auch bei Null erforderlich. Dateien benötigen exakte Hexbytes in `data`; EOF ist deren Anzahl. Verzeichnisse haben kein data und Zuweisung null. Sektoren: Zweierpotenzen 512–4096; Zuweisung sektorausgerichtet und mindestens EOF; Maske 2^n−1 kleiner als der Sektor. `full_access` schließt nur ACL-Verweigerungen aus.
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem` behält die Eingabe; `filesystem` meldet unabhängigen Zustand mit `device_object` und `end_of_file`, auch nach Ausführungs- oder Projektionsfehlern. `devices` enthält nur Gastgeräte. Sitzungsvolumes dürfen das Entladen überleben, Gastreferenzen, Handles, Anbindungen und IRPs müssen enden. Jede Deklaration, auch `[]`, verhindert ausführbare UNPACK-Wiederherstellung. Altes Unicorn kann abgewiesene Schreibzugriffe vor dem Stopp ausführen; der Projektionsfehler bleibt diagnostiziert.

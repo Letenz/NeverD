@@ -1740,3 +1740,6 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 `KernelModelNamespace.cpp` 通过统一引用和句柄管理方解析名称。设备记录拥有设备名称；对象记录拥有不可变的驱动/目录/链接名称。链接保存捕获的目标字节，并区分永久状态与名称绑定。最后句柄关闭先移除临时名称，指针引用随后决定对象回收。设备 I/O 保留独立控制驱动列表移除，指针引用控制存储寿命；后端不另建命名空间或引用计数。
 
 KernelModelObjects 在共用对象表中管理文件句柄和指针计数。KernelModelFileObjects 选择每进程解锁或全局清理，在消耗句柄前准备请求，并管理延后 CLOSE 和调用方等待。KernelModelIO 保留场景参数，只在请求完成且派送与续调返回后销毁对象。KernelFramework 只为内部文件生命周期回调携带可选有效进程覆盖。DriverSession 保持调用线程和创建进程身份，激活继承的地址空间，并在最终释放前恢复来源上下文。独立调度回调保留自己的上下文。设备及 PnP 保留检查对象本身而非场景编号。
+
+
+`KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` 保存输入；顶层 `filesystem` 来自独立状态所有者，增加 `device_object` 和节点 `end_of_file`，执行或投影校验停止后仍保留。通用 `devices` 只包含来宾设备。会话卷可在卸载后保留，但来宾对象、引用、句柄、挂接和 IRP 必须释放。任何声明，包括 `[]`，都保留未重建依赖并阻止可执行 UNPACK 恢复。旧 Unicorn 模式可能在停止前提交已拒绝的设备写入；诊断保留投影失败，文件状态仍可观察。

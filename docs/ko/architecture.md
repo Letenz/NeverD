@@ -1709,3 +1709,6 @@ raw 특수화는 쓰기 가능한 16바이트 스칼라로 만드는 정확한 8
 `KernelModelNamespace.cpp`는 공유 참조/핸들 소유자를 통해 이름을 찾습니다. 장치 기록은 장치 이름을, 객체 기록은 불변 드라이버/디렉터리/링크 이름을 소유합니다. 링크는 캡처한 바이트와 영구/이름 상태를 분리합니다. 마지막 핸들 종료 시 임시 이름을 제거하고 포인터 참조가 수명을 결정합니다. I/O 보유에 따른 목록 제거와 저장 공간 수명은 독립적입니다.
 
 KernelModelObjects는 공통 객체 표에서 파일 핸들과 포인터 수를 관리합니다. KernelModelFileObjects는 프로세스별 잠금 해제와 전체 정리를 선택하고 핸들을 소비하기 전에 요청을 준비하며 지연 CLOSE와 대기를 소유합니다. KernelModelIO는 시나리오 인자를 보존하고 완료와 디스패치·후속 호출 반환 후 본체를 폐기합니다. KernelFramework는 내부 파일 수명 콜백에만 선택적 유효 프로세스를 전달합니다. DriverSession은 스레드와 생성 프로세스를 보존하고 상속 주소 공간을 활성화하며 최종 해제 전에 원래 문맥을 복구합니다. 독립 예약 콜백은 자체 문맥을 유지합니다. 장치와 PnP 보유는 본체를 검사합니다.
+
+
+`KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem`은 입력이며 최상위 `filesystem`은 독립 상태에 `device_object`와 노드 `end_of_file`을 추가합니다. 실행 또는 투영 검증 중지 후에도 상태는 남습니다. `devices`는 게스트 장치만 포함합니다. 언로드 후 세션 볼륨은 남을 수 있지만 게스트 참조, 핸들, 연결 및 IRP는 해제해야 합니다. `[]`를 포함한 선언은 복원되지 않은 의존성을 남기며 실행 가능한 UNPACK 복원을 막습니다. 구형 Unicorn은 중지 전 거부된 쓰기를 반영할 수 있으며 진단에 투영 오류가 남습니다.

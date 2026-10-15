@@ -6671,3 +6671,6 @@ interprets instructions or stores caller-provided successful results. JSON only
 accepts strict explicit hex images. There is no host JVM, implicit classpath,
 network or phone dependency. The initial supported class contract excludes
 stateful initialization, fields, hierarchy dispatch, objects and handlers.
+
+
+`KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
