@@ -4095,7 +4095,7 @@ The native receipt tests require
 packages. Older r4 builds retain analysis and refusal coverage but cannot run
 these compiler-protocol tests. The focused Wine job and native Windows source
 replay use the complete `all` profile with the published compiler; an LLVM
-workflow artifact override is no longer needed for these 63 source scenarios.
+workflow artifact override is no longer needed for these 64 source scenarios.
 
 `registration_state_dispatch.s` adds `longjmp-state-byte-high-bits`: the same
 filter byte store produces complete states 0 and 256. Four alternating invocations
@@ -4120,6 +4120,20 @@ kinds, ordinary call/branch edges and exact physical near returns must agree.
 An ordinary caller, shared filter/handler entry, parent return, memory write or
 other scalar use remains observable. This proof is shared by emission and COFF
 source replay through the MedIR call-result binder.
+
+`longjmp-deep-scope-chain` uses 259 nested scope rows and walks 254 search-only
+rows during nonlocal unwind. Its 20 runtime images check both cleanup counts,
+resumed EAX/EBX, final state and FS:[0]. Distinct call sites isolate scope depth
+from the separate parent-call state-selection contract.
+`RegistrationSEHTryLevel.DeepUnwindKeepsTheDefaultProofBudget` and
+`RegistrationDispatch.SharedFinallyRetainsEveryLevelWithinDefaultBudget` cover
+1,024 levels without changing the work cap, including reversed block order.
+`RegistrationDispatch.ManyDistinctFramesStayWithinDefaultBudget` checks 1,024
+different parent cells with otherwise equal registers, in both block orders.
+The corpus filter-thunk HighC test guards readable `xcpt4` output against
+snapshot-index budget regressions.
+Companion tests preserve distinct source snapshots, converging sibling paths,
+recurrent-path rejection and observable finally writes.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
