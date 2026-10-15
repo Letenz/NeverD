@@ -100,66 +100,70 @@ paths, native ABI requirements and behavior sensitive to source text or
 locations. All transformations are derived outputs; rollback means discarding
 that newly created project directory while retaining original evidence.
 
-Status: metadata retention, syntax relocation, imported-require alias evidence
-and candidate export are implemented. All 22 project/source/alias focused cases
-pass; real metadata checks pass for all eight captured Claude platform packages.
-Self-authored isolation probes pass, including network/file/process denial.
-Exact macOS original version/help/unknown-option baselines pass under that
-isolation after allowing one ICU data file. The original contains runtime
-revision `1.4.3+eecfd55de`; the independently pinned compiler is official Bun
-`1.4.3+c6da4a4d3`. Matching version is not matching runtime revision.
+## Current evidence
 
-The first recovered macOS project compiles to a 114,189,938-byte executable
-without the original executable or cached bytecode. Its version output matches
-the original, but help and unknown-option cases fail because the compiler did
-not include a runtime-required JavaScript module. This is an unresolved build
-closure failure. Self-authored loader experiments also find that compiling
-ordinary `require` for a text asset changes its namespace shape, while direct
-`import.meta.require` is not automatically bundled. Do not replace callees or
-eagerly import modules to hide these differences. A fourth candidate retains
-102 proven imported-require literal relocations, including three references
-from the largest module after module analysis was made consistent with the
-existing explicit Large work profile. It contains 2,364 verified readable
-views, 245 assets and 440 unresolved runtime literals. The project-wide
-metadata budgets and independent diagnostic totals pass.
+Metadata retention, syntax relocation, imported-require alias evidence,
+project export and semantic navigation are implemented at `d32411dd2`.
+The 50 focused reconstruction/shared-module checks pass. The Web suite has
+898 cases: 841 pass and 57 optional fixture cases skip in that invocation;
+separate real metadata receipts cover all eight captured distributions.
+Available MCP, worker, SDK and feature-omission checks pass.
 
-Running the flat source project with the pinned runtime preserves version
-output, but help fails at an unchanged absolute Bun virtual resource path.
-Self-authored experiments show that keeping the entire JavaScript graph in
-runtime loading preserves tested lazy evaluation, cycles and cache identity;
-mixing bundled and raw assets duplicates module instances. Preserving safe
-relative directory layouts in compiler assets retains original virtual resource
-names, including nested workers. Text-module namespace identity remains a
-separate loader qualification: runtime plugin wrappers change observable
-identity. Runtime equivalence and the broader behavior matrix remain open.
+The private macOS ARM64 project has 2,364 JavaScript modules and 245 assets.
+All JavaScript has a same-parser-tree readable view. The navigator retains
+228,497 anchored evidence records; one direct-eval module has partial lexical
+analysis. Erased TypeScript information remains unproven.
 
-The next private build preserves original virtual names and stages every
-JavaScript module as retained source. A self-authored, cache-free graph adapter
-restores captured text-loader encoding/side metadata after an independent Bun
-compile; it verifies raw storage hashes and UTF-16 alignment before signing.
-Native addon semantics, original JIT settings and bootstrap reflection remain
-explicitly unqualified. Two clean builds produce the same 124,511,568-byte
-executable with SHA-256
-`f69d96fa1bd7975ed1e26e6b8b31bce47a9e947bed576ec4fecb8ad1f50b002c`.
-Version/help/unknown-option observations match the original, including exits,
-output and the tested filesystem side effects.
+The independently compiled, cache-free client now preserves all 2,609 module
+names, table order, loader/encoding/side metadata, the original entry, seven
+startup modules, default autoload flags and the captured JIT-policy bytes.
+The added bootstrap record is removed from the virtual filesystem. A separate
+self-authored fixture qualifies entry identity, live bindings, module identity,
+worker paths, embedded file listings and UTF-8/Latin-1/UTF-16 text behavior,
+plus refusal of unsupported metadata. The native addons retain their captured
+bytes and loader roles. A separately qualified exact-file mapping capability
+now loads all three macOS addons under the independent Bun runtime and records
+their export descriptors. No exported device-control function is invoked.
+Embedded native-file materialization and hardware behavior remain unqualified.
 
-Original headless initialization required one additional macOS system timezone
-dataset. Native stack sampling and a self-authored Intl fixture isolated the
-boundary before adding only that exact read permission. Seven original and
-candidate configuration cases then pass, covering precedence, disabled ambient
-sources and malformed local settings. All initialize/get_settings responses
-match after normalization of the fresh stage path and process ID. Other
-generated UI events/state files are retained but are not declared identical.
+Two independent compilation runs, followed by the qualified metadata adapter,
+produce the same 124,511,568-byte client with SHA-256
+`90868bc9180ed9240fe96974c4973bec9dd358ed83a2b5da69e52d67e65ca9fa`.
+A relocatable private delivery directory with source, navigation, compiler and
+build script has also reproduced that exact hash from a fresh output directory.
+NeverD independently admits the rebuilt graph with the expected module count,
+entry and runtime-option record. No original executable prefix, cached
+bytecode, module-info cache or prelinked cache is used as a build input.
 
-The source navigator analyzes all 2,364 JavaScript modules and retains 228,497
-anchored evidence records across entry, tool, configuration, permission, hook,
-MCP, session, UI and module domains. One module retains partial lexical evidence
-because of direct eval; this is an honest semantic boundary. Original TypeScript
-names and erased types are not reconstructed by these navigation cues.
-The current Web suite has 898 discovered cases: 841 pass and 57 optional fixture
-cases are skipped in that invocation; the separate real metadata receipt
-already covers the eight captured distributions. The 50 focused reconstruction
-and shared-module cases pass, as do the available MCP, worker and availability
-checks. Loopback protocol, tool, hook, MCP and session behavior acceptance is
-still in progress; these milestones do not complete the goal.
+Version/help/unknown-option smoke observations match the fixed original.
+All 29 current offline invocations pass and match original records: seven
+configuration cases and 22 permission, hook, MCP, stream/error and session
+cases. The comparison preserves semantic errors and decisions; only explicit
+fresh paths, generated identifiers, process IDs and timing fields are
+normalized. HTTP headers and generated state files remain available in raw
+receipts but are not declared globally identical.
+
+Earlier failures remain evidence. A raw-graph candidate once exceeded an
+eight-second initialization deadline; later runs and the complete fidelity run
+passed. Original SessionStart itself varied between cancelled and success.
+The passing latest pair does not prove timing stability. Invalid hook text
+continues as ordinary output in the original, whereas a valid JSON hook response
+with an invalid schema blocks under the tested failure policy; both behaviors
+are now represented explicitly in the matrix.
+
+The independently pinned runtime is official Bun `1.4.3+c6da4a4d3`; the original
+contains `1.4.3+eecfd55de`. Matching the version and policy bytes does not prove
+runtime or performance equivalence. Native hardware behavior and embedded-file materialization, other platforms,
+and erased source information remain outside completed acceptance.
+
+Linux x64 now has an available local amd64 Docker environment. Its own sample
+exports 2,345 readable JavaScript modules and 244 assets, with project manifest
+SHA-256 `40a95d08a22c9baddd6801c39f2057c773c9cd176cad0f5f59187e02697fd46f`.
+The Linux isolation and cross-container adapter fixtures pass, including text
+encodings, worker paths, module identity and explicit external-network denial.
+Two independent builds produce the same 140,675,040-byte ELF executable with
+SHA-256 `51e64bded17171c28261a2452b8aa152371ec00f6164188297a9ebbab006e232`.
+Version/help/unknown-option observations match the Linux original. NeverD
+independently admits its 2,589 modules, entry and runtime-option record.
+The full Linux behavior matrix and relocatable Linux delivery remain open.
+The overall goal remains open.
