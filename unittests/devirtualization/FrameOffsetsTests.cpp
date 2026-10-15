@@ -752,10 +752,18 @@ TEST(FrameOffsets, NormalizationRetryPreservesPredicateAndFiniteDomains) {
       EXPECT_EQ(Queries, Case == 2 ? 1u : 2u);
       EXPECT_GT(Work.WorkUsed, 0u);
       EXPECT_LE(Work.WorkUsed, Work.MaxWork);
-      EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {CacheValue}, 1));
+      const auto Cached = Cache.lookup(Ctx, Predicate, {CacheValue}, 1);
+      ASSERT_TRUE(Cached);
+      EXPECT_EQ(Cached->Status, Case == 0 || Case == 2
+                                    ? FiniteValueStatus::Complete
+                                    : FiniteValueStatus::TooManyValues);
+      if (Case == 0)
+        EXPECT_EQ(Cached->Tuples,
+                  (std::vector<std::vector<uint64_t>>{{uint64_t{0} - 86}}));
+      else
+        EXPECT_TRUE(Cached->Tuples.empty());
       const auto Before = Queries;
-      EXPECT_EQ(Prove(nullptr, Before).Status,
-                FrameOffsetStatus::BudgetExceeded);
+      EXPECT_EQ(Prove(nullptr, Before).Status, Result.Status);
       EXPECT_EQ(Queries, Before);
       if (Case == 0) {
         EXPECT_EQ(Result.Offset, uint64_t{0} - 75);
@@ -1081,6 +1089,94 @@ TEST(FrameOffsets, NormalizationChargesOnlyTheUncachedReadabilityPrefix) {
   const auto [NodeLimit, NodeWork] = Run(true, 65536, true);
   EXPECT_EQ(NodeLimit.Status, FrameOffsetStatus::BudgetExceeded);
   EXPECT_EQ(NodeWork, 0u);
+}
+
+TEST(FrameOffsets, NormalizationRetryReusesOriginalTranslatedQuery) {
+  for (bool Bound : {false, true})
+    for (bool ReuseEncoding : {false, true}) {
+      SCOPED_TRACE(Bound);
+      SCOPED_TRACE(ReuseEncoding);
+      SymContext Ctx;
+      const auto Root = Ctx.mkVar("frame", 64);
+      const auto Input = Ctx.mkVar("data", 64);
+      const auto Base =
+          Ctx.mkAnd(mbaFrameAddress(Ctx, Root, Input, uint64_t{0} - 73),
+                    Ctx.mkConst(64, -16));
+      const auto Predicate = residue(Ctx, Root, 15, 6);
+      auto Cache = Bound ? std::make_unique<FiniteQueryCache>(65536, Ctx)
+                         : std::make_unique<FiniteQueryCache>(65536);
+      neverd::solver::SolverOptions Settings;
+      Settings.Blast.MaxGates = 256;
+      FiniteDomainEncoding Encoding(Ctx, Settings);
+      uint64_t Queries = 0;
+      const auto Prove = [&](SymRef P, SymRef Value, uint64_t Limit,
+                             uint64_t Nodes, FrameOffsetNormalization &Work) {
+        return ReuseEncoding
+                   ? proveFrameOffset(Encoding, P, Value, Root, Limit, Nodes,
+                                      Queries, Cache.get(), &Work)
+                   : proveFrameOffset(Ctx, P, Value, Root, Settings, Limit,
+                                      Nodes, Queries, Cache.get(), &Work);
+      };
+      FrameOffsetNormalization Work{65536};
+      const auto Initial = Prove(
+          Predicate, Ctx.mkAdd(Base, Ctx.mkConst(64, 11)), 100, 65536, Work);
+      ASSERT_EQ(Initial.Status, FrameOffsetStatus::Exact);
+      ASSERT_EQ(Queries, 2u);
+      ASSERT_GT(Work.WorkUsed, 0u);
+      for (uint64_t Bias : {uint64_t{0}, uint64_t{1}, uint64_t{0} - 11,
+                            uint64_t{1} << 63, UINT64_MAX}) {
+        const auto Address = Ctx.mkAdd(Base, Ctx.mkConst(64, Bias));
+        Work.MaxWork = 0;
+        Work.WorkUsed = 99;
+        const auto Result = Prove(Predicate, Address, Queries, 65536, Work);
+        ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+        EXPECT_EQ(Result.Offset, uint64_t{0} - 86 + Bias);
+        EXPECT_EQ(Queries, 2u);
+        EXPECT_EQ(Work.WorkUsed, 0u);
+        // Cached proofs still answer only their exact predicate and respect
+        // the caller's current context-node ceiling.
+        EXPECT_EQ(
+            Prove(Predicate, Address, Queries, Ctx.numNodes() - 1, Work).Status,
+            FrameOffsetStatus::BudgetExceeded);
+        EXPECT_EQ(
+            Prove(residue(Ctx, Root, 15, 7), Address, Queries, 65536, Work)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+        EXPECT_EQ(Queries, 2u);
+      }
+    }
+}
+
+TEST(FrameOffsets, IncompleteNormalizationRetryNeverSuppliesCachedEvidence) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("frame", 64);
+  const auto Input = Ctx.mkVar("data", 64);
+  const auto Base =
+      Ctx.mkAnd(mbaFrameAddress(Ctx, Root, Input, uint64_t{0} - 73),
+                Ctx.mkConst(64, -16));
+  const auto Value = Ctx.mkAdd(Base, Ctx.mkConst(64, 11));
+  const auto Predicate = residue(Ctx, Root, 15, 6);
+  const auto Key = Ctx.mkSub(Base, Root);
+  neverd::solver::SolverOptions Settings;
+  Settings.Blast.MaxGates = 256;
+  FiniteQueryCache Cache(65536, Ctx);
+  uint64_t Queries = 0;
+  FrameOffsetNormalization Work{65536};
+  // A single SAT request cannot establish uniqueness. Repeating the original
+  // query with no new allowance must not acquire a cached singleton.
+  EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Value, Root, Settings, 1, 65536,
+                             Queries, &Cache, &Work)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1u);
+  EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {Key}, 1));
+  Work.MaxWork = 0;
+  EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Value, Root, Settings, 1, 65536,
+                             Queries, &Cache, &Work)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1u);
+  EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {Key}, 1));
 }
 
 } // namespace
