@@ -193,6 +193,9 @@ std::vector<GToken> lexGo(llvm::StringRef Source,
   return Tokens;
 }
 
+/// What a blank field lays out as until it goes: no identifier.
+constexpr llvm::StringLiteral BlankField = "_ blank";
+
 /// A Go type as written.
 struct GType {
   enum Kind : uint8_t { Name, Pointer, Array, Slice, Function, Struct };
@@ -920,12 +923,12 @@ private:
           if (!Type)
             return nullptr;
         }
-        const bool Filler = Field.Name == "_";
-        Draft.Members.push_back(
-            {Filler ? "_filler" + std::to_string(Draft.Members.size())
-             : anonymous(Field.Name, *Type) ? std::string()
-                                            : unescaped(Name),
-             Type, false, 0, ""});
+        // A blank field is padding: it places what follows, then goes.
+        Draft.Members.push_back({Field.Name == "_" ? std::string(BlankField)
+                                 : anonymous(Field.Name, *Type)
+                                     ? std::string()
+                                     : unescaped(Name),
+                                 Type, false, 0, ""});
       }
       // A flexible array past the fields.
       for (const GMethod &M : Methods)
@@ -945,6 +948,8 @@ private:
       fail(Struct.Line, Struct.Column, llvm::toString(Layout.takeError()));
       return nullptr;
     }
+    llvm::erase_if(Layout->Members,
+                   [](const Member &Laid) { return Laid.Name == BlankField; });
     auto Def = std::make_shared<RecordDef>(std::move(*Layout));
     Laid[Struct.Name] = Def;
     if (!Nested.contains(Struct.Name)) {

@@ -467,10 +467,10 @@ private:
         ++Depth;
       } else if (isPunct("}")) {
         take();
-        if (--Depth <= 0) {
-          accept(";");
+        // The declarators after a record's body belong to the declaration
+        // too: } NAME, *PNAME;
+        if (--Depth < 0)
           return;
-        }
         continue;
       } else if (isPunct(";") && Depth <= 0) {
         take();

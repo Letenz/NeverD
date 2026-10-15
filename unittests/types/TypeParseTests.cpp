@@ -195,6 +195,20 @@ TEST(TypeParse, ReportsWhereAndChangesNothingOnAProblem) {
   EXPECT_EQ(Library.find("Good"), nullptr);
 }
 
+TEST(TypeParse, ReportsAProblemOnceInATypedefOfARecord) {
+  TypeLibrary Library;
+  const ParseResult Result =
+      parseCTypes("typedef struct _A {\n  PVOID p;\n  ULONG n;\n} A, *PA;\n"
+                  "typedef struct _B { HANDLE h; } B;",
+                  Library);
+  // Each declaration's first problem, none from the declarators after the
+  // body a problem left.
+  ASSERT_EQ(Result.Problems.size(), 2u);
+  EXPECT_EQ(Result.Problems[0].Line, 2u);
+  EXPECT_EQ(Result.Problems[1].Line, 5u);
+  EXPECT_EQ(Result.Problems[1].Message, "'HANDLE' names no type");
+}
+
 TEST(TypeParse, ReadsCpp) {
   ParseOptions Options;
   Options.Lang = Language::Cpp;
@@ -299,6 +313,69 @@ TEST(TypeParse, ReadsRust) {
   EXPECT_EQ(Device.Members[5].Type->TheBuiltin, Builtin::Int);
   EXPECT_EQ(Library.find("Mode")->Enum->Values[1].Value, 0x10u);
   EXPECT_EQ(recordOf(Library, "Packed").Size, 5u);
+}
+
+TEST(TypeParse, ReadsGo) {
+  ParseOptions Options;
+  Options.Lang = Language::Go;
+  const TypeLibrary Library = parsed(R"(
+    package types
+
+    import "unsafe"
+
+    // Device: 0x30 (48) bytes.
+    type Device struct {
+    	Kind      uint16
+    	_         [6]byte
+    	Anonymous Device_0
+    	Next      *Device
+    	Dispatch  uintptr
+    	_bitfield uint32 // 0x20 Locked bit 0, Count bits 4..10
+    	_         [4]byte
+    	Name_     [8]byte // 0x28 uint64, unaligned
+    }
+
+    // Device_0: the anonymous union at Device+0x08, 0x8 bytes; read it
+    // through its accessors.
+    type Device_0 struct {
+    	raw [1]uint64
+    }
+
+    func (s *Device_0) Value() *uint64 { return (*uint64)(unsafe.Pointer(s)) }
+    func (s *Device_0) Bytes() *[8]uint8 { return (*[8]uint8)(unsafe.Pointer(s)) }
+    func (s *Device) Count() int32 { return int32(s._bitfield<<21) >> 25 }
+    func (s *Device) Name() *uint64 { return (*uint64)(unsafe.Pointer(&s.Name_)) }
+
+    type Mode int32
+
+    const (
+    	Off Mode = 0
+    	On  Mode = 0x10
+    )
+
+    // Packed: 0x5 (5) bytes, packed to 1.
+    type Packed struct {
+    	Tag    uint8
+    	Value_ [4]byte // 0x1 uint32, unaligned
+    }
+
+    func (s *Packed) Value() *uint32 { return (*uint32)(unsafe.Pointer(&s.Value_)) }
+
+    var _ = [1]int{}[unsafe.Sizeof(Packed{})-0x5]
+  )",
+                                     Options);
+  const RecordDef &Device = recordOf(Library, "Device");
+  EXPECT_EQ(shapeOf(Device),
+            "struct{Kind@0 union@8{Value@0 Bytes@0} Next@16 Dispatch@24 "
+            "Locked@256b:1 Count@260b:7 Name@40}");
+  EXPECT_EQ(Library.find("Device_0"), nullptr);
+  EXPECT_EQ(Device.Size, 48u);
+  // The accessor reads Count signed.
+  EXPECT_EQ(Device.Members[5].Type->TheBuiltin, Builtin::Int);
+  EXPECT_EQ(Library.find("Mode")->Enum->Values[1].Value, 0x10u);
+  const RecordDef &Packed = recordOf(Library, "Packed");
+  EXPECT_EQ(Packed.Size, 5u);
+  EXPECT_EQ(shapeOf(Packed), "struct{Tag@0 Value@1}");
 }
 
 TEST(TypeParse, ReadsBackTheFixtureAsRendered) {
