@@ -1,0 +1,55 @@
+{
+  "original_sha256": "605e478c481e97a606ecefa283177664414d5fe245649944ec35b5fa0fca1d77",
+  "sha256": "8003745c44126f89dc90f3b01b6ca892f6fdc4907230b73348ac880d24e7ce34",
+  "size": 6656,
+  "writes": [
+    {
+      "offset": 126,
+      "data": "eJxjAQAABQAF"
+    },
+    {
+      "offset": 149,
+      "data": "eJwTAgAAEwAT"
+    },
+    {
+      "offset": 201,
+      "data": "eJwLAAAAUQBR"
+    },
+    {
+      "offset": 488,
+      "data": "eJzTy0spSa0oAQAKNALG"
+    },
+    {
+      "offset": 497,
+      "data": "eJwTAAAAEQAR"
+    },
+    {
+      "offset": 501,
+      "data": "eJxzAAAAQQBB"
+    },
+    {
+      "offset": 505,
+      "data": "eJwTAAAAEQAR"
+    },
+    {
+      "offset": 509,
+      "data": "eJzjAgAACwAL"
+    },
+    {
+      "offset": 524,
+      "data": "eJxTAAAAIQAh"
+    },
+    {
+      "offset": 527,
+      "data": "eJxLAAAAYQBh"
+    },
+    {
+      "offset": 1216,
+      "data": "eJx7aa3PwAAABgsBVA=="
+    },
+    {
+      "offset": 2560,
+      "data": "eJwL+F+iwvHi2/n//5uPsHSyqHSzqDQfUI88zDAKRsEoGAWjYBSMglEwCkbBKBgFo2AUjIJhAwCQFwvQ"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
+<!-- i18n-source: f6164ac8ef486eb2c66955e050837848e52b161cf15ba12dd08e42c9a3bc2591 -->
 
 [← Documentation Index](README.md)
 
@@ -179,3 +179,18 @@ C 専用の生成元検証 [cc91afb3b](https://github.com/NeverSight/NeverD/acti
 [0a6f6d768 の拡張 Linux 検証](https://github.com/NeverSight/NeverD/actions/runs/38626866257) は、元の 108 件、Swift 全体 55 件、CPU ターゲット 143 件、ネイティブセッション 117 件、LLVM-C 3 件、Clang/GCC C++ 3 件の計 429 件を、失敗・スキップなしで実行しました。この統合版ではローカルの全バイナリパッチ回帰 22,961 件もすべて成功しました。ネイティブプロセス数と CPU エミュレーションの検証範囲は区別して記録します。
 
 [0a6f6d768 の Windows インストーラー再ビルド検証](https://github.com/NeverSight/NeverD/actions/runs/38627581732)では、182 件の重点チェックと 474 回のネイティブプロセス実行がすべて成功し、失敗もスキップもありませんでした。独立した成果物監査で、各イメージのハッシュ、アーキテクチャ、シナリオ、反復回数を照合しました。その後の ABI/アンワインド修正を統合した `e1cac949f` でも、完全なバイナリパッチスイート 22,961 件が再度すべて成功し、失敗もスキップもありませんでした。NeverC は純粋な C のみを扱い、C++ の置換には Clang/GCC を使用します。
+
+<!-- i18n-section: runtime-coverage -->
+## macOS と 32 ビットプロセスの検証
+
+プロセスイメージのワークフローは、macOS ARM64（`macos-15`）と Intel x64（`macos-15-intel`）でのネイティブ実行を必須とします。各アーキテクチャで 96 回の観測を行い、Clang C のソース／オブジェクト導入、書き込み可能なポインタ状態、浮動小数点／スタック引数、9 種の Clang C++ 例外シナリオ、および既存 NeverC の純粋な C の IR／オブジェクト／hosted 出力を検証します。実行前に Mach-O 署名を厳密に検査し、導入した hosted コードと生成ペイロードの全バイト一致を要求します。
+
+同じワークフローで、Windows x64 上の Windows x86 を 30 回、Linux x64 上の Linux x86 を 48 回、QEMU ユーザーモードの Linux ARM32 を 96 回観測します。ARM32 は ARM と Thumb が半数ずつで、Linux では対応する GCC オブジェクトも検証します。各シナリオを 3 回実行します。報告では `native`、`compatibility`、`rosetta`、`qemu-user` を区別し、対象と実際のホストのアーキテクチャを記録します。Rosetta は Intel ネイティブ実行の要件を満たしません。
+
+全 14 CPU 対象プロファイルは、引き続き 154 件のソース／IR／オブジェクト行列で検証します。PE ARM32、Mach-O i386、ARMv7 iOS、ARMv7k watchOS は現在 CPU 検証であり、ネイティブ OS ローダーや C++ アンワインダーの保証ではありません。NeverC は x64／ARM64 の純粋な C 専用のままです。32 ビットの生成には Clang と対応する ELF GCC ドライバーを使用します。検証器は NeverC をビルドも変更もしません。
+
+Windows x64 と ARM64 でも、それぞれ 36 回の Clang C++ FH3 観測を実行します。
+
+Mach-O の書き込み可能ポインタは実行時に初期化します。静的なアドレス初期化は未対応のロード時再配置登録を必要とするため、明示的な拒否テストで検証します。ELF のサイズゼロ COMDAT 関数は、署名が実行可能セクションの先頭にある唯一の関数で、CFI がセクション全体と厳密に一致する場合のみ受け入れます。内部オフセット、共有、末尾パディング、グループなし、CFI 欠落は拒否します。
+
+ELF ARM と Thumb は別プロファイルです。ソース生成器へ `-marm` または `-mthumb` を明示し、ネイティブ関数のバインドは元の命令状態ビットを保持します。32 ビット ELF は実際の動的再配置を持つ PIE を使用します。ARM32 QEMU では glibc の明示的な `--loader` と sysroot を記録します。QEMU の AUXV 計算は、移動したプログラムヘッダーを Linux カーネルと同じ方法では扱わないためです。この経路は QEMU 上の glibc ロードと実行の検証であり、ARM32 実機やネイティブカーネルローダーの証明ではありません。

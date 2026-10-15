@@ -1771,7 +1771,7 @@ guest/Python5,000,000us / quantum1024 / public10s
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-يحدد `sourcePatchTargetTriple` وضع ARM وABI الفاصلة العائمة ELF والنوع الفرعي CPU في Mach-O من الصورة. يتحقق `COFFPatchObject` و`MachOPatchObject` من رموز الكائن وتعريفاته المساعدة／الأقسام وسجلاته الأصلية دون اختلاق معرفات MC، وتسجل مثبتات التنسيق الجداول الفعلية. تتطلب اختبارات CPU البالغ عددها 143 المصدر／IR／الكائنات وأربع معماريات وثلاثة تنسيقات وحالة ووسائط فاصلة عائمة／مكدس وتغييرين غير صفريين للقاعدة. تحتفظ حاويات Mach-O القديمة ذات 32 بت بشيفرة مترجم حقيقية، ولا تصادق على OS.
+يحدد `sourcePatchTargetTriple` وضع ARM وABI الفاصلة العائمة ELF والنوع الفرعي CPU في Mach-O من الصورة. يتحقق `COFFPatchObject` و`MachOPatchObject` من رموز الكائن وتعريفاته المساعدة／الأقسام وسجلاته الأصلية دون اختلاق معرفات MC، وتسجل مثبتات التنسيق الجداول الفعلية. تتطلب اختبارات CPU البالغ عددها 154 المصدر／IR／الكائنات وأربع معماريات وثلاثة تنسيقات وحالة ووسائط فاصلة عائمة／مكدس وتغييرين غير صفريين للقاعدة. تحتفظ حاويات Mach-O القديمة ذات 32 بت بشيفرة مترجم حقيقية، ولا تصادق على OS.
 
 [تصحيحات المصدر والكائنات الأصلية](source-patching.md)
 

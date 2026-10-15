@@ -1,0 +1,55 @@
+{
+  "original_sha256": "605e478c481e97a606ecefa283177664414d5fe245649944ec35b5fa0fca1d77",
+  "sha256": "690238980aa2e28653c996a4802ad7209fcdc057de062f10fae221d2a7ac504e",
+  "size": 117248,
+  "writes": [
+    {
+      "offset": 126,
+      "data": "eJxjAQAABQAF"
+    },
+    {
+      "offset": 149,
+      "data": "eJw7xAgAAYcAxA=="
+    },
+    {
+      "offset": 201,
+      "data": "eJxjYAIAAAQAAw=="
+    },
+    {
+      "offset": 488,
+      "data": "eJzTy0spSa0oAQAKNALG"
+    },
+    {
+      "offset": 497,
+      "data": "eJw7wAgAAYMAwg=="
+    },
+    {
+      "offset": 501,
+      "data": "eJxzAAAAQQBB"
+    },
+    {
+      "offset": 505,
+      "data": "eJw7wAgAAYMAwg=="
+    },
+    {
+      "offset": 509,
+      "data": "eJzjAgAACwAL"
+    },
+    {
+      "offset": 524,
+      "data": "eJxTAAAAIQAh"
+    },
+    {
+      "offset": 527,
+      "data": "eJxLAAAAYQBh"
+    },
+    {
+      "offset": 1216,
+      "data": "eJx7aa3PwAAABgsBVA=="
+    },
+    {
+      "offset": 2560,
+      "data": "eJztyb0KQXEcx+G/OiGbxXyGUzbFYDIajFYjOkl5KcQFmOSmFLvVJVgt1uPkZXQHz1Of+vb79bNNUr4/r1m2v0SHKDlGyf5UH5zDV5T3yOvmVUKh+ru3Q+e9S6EWCqGYr9vg8+kt5+lole7i8Wy4mMTbdLWeLhdxq9VoNtoBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgnxe/zhjI"
+    }
+  ]
+}

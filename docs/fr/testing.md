@@ -1857,11 +1857,11 @@ Le refus contrôlé des doubles décalages indique le compteur masqué et la lar
 
 ## Correctifs de source et objets natifs
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles. Les 143 tests CPU exigent source／IR／objets, quatre architectures, trois formats, état, arguments flottants／de pile et deux rebasages non nuls. Les conteneurs Mach-O 32 bits anciens gardent du vrai code compilateur ; ils ne certifient pas un OS.
+`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles. Les 154 tests CPU exigent source／IR／objets, quatre architectures, trois formats, état, arguments flottants／de pile et deux rebasages non nuls. Les conteneurs Mach-O 32 bits anciens gardent du vrai code compilateur ; ils ne certifient pas un OS.
 
 [Correctifs de source et objets natifs](source-patching.md)
 

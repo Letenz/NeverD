@@ -398,6 +398,14 @@ TEST_F(SourcePatchWithStorage,
         }
       });
   EXPECT_EQ(WritableSegments, 1u);
+  Output = Directory / "unregistered-pointer";
+  EXPECT_EQ(patch("static volatile int state=40; "
+                  "static volatile int *volatile pointer=&state; "
+                  "int replacement(int x) { return ++*pointer + x; }"),
+            0);
+  EXPECT_NE(error().find("load-time relocation registration"),
+            std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(Output));
 #endif
 }
 

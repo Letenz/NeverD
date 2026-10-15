@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
+<!-- i18n-source: f6164ac8ef486eb2c66955e050837848e52b161cf15ba12dd08e42c9a3bc2591 -->
 
 [← Documentation Index](README.md)
 
@@ -179,3 +179,18 @@ AArch64 指令重定位要求显式 RELA 加数。隐式 REL 指令加数会在�
 [0a6f6d768 的扩展 Linux 验收](https://github.com/NeverSight/NeverD/actions/runs/38626866257) 执行了 429 项检查，零失败、零跳过：原始 108 项、完整 Swift 55 项、CPU 目标矩阵 143 项、原生 Session 117 项、LLVM-C 3 项及 Clang/GCC C++ 3 项。该合并版本的本地完整二进制 patch 回归也通过全部 22,961 项。原生进程次数与 CPU 模拟验证范围分别统计。
 
 [0a6f6d768 的 Windows 安装器重建验证](https://github.com/NeverSight/NeverD/actions/runs/38627581732)通过全部 182 项专项检查和 474 次原生进程执行，零失败、零跳过。独立产物审计核对了每个镜像的哈希、架构、场景和重复次数。随后合入 ABI/展开修复的 `e1cac949f` 再次通过全部 22,961 项完整二进制 patch 回归，零失败、零跳过。这些结果遵守 NeverC 仅支持纯 C 的约定；C++ 替换使用 Clang/GCC。
+
+<!-- i18n-section: runtime-coverage -->
+## macOS 与 32 位进程验证
+
+进程镜像工作流要求在 macOS ARM64（`macos-15`）和 Intel x64（`macos-15-intel`）上原生执行。每种架构执行 96 次观测，覆盖 Clang C 源码／对象安装、可写指针状态、浮点／栈参数、九种 Clang C++ 异常场景，以及现有 NeverC 纯 C 的 IR／对象／hosted 输出。执行前严格检查 Mach-O 签名；安装的 hosted 代码必须与编译器载荷逐字节相同。
+
+同一工作流要求 Windows x64 上的 Windows x86 执行 30 次、Linux x64 上的 Linux x86 执行 48 次，并通过 QEMU 用户模式执行 96 次 Linux ARM32 观测，ARM 与 Thumb 各占一半。Linux 检查包含匹配目标的 GCC 对象。每种场景重复三次。报告区分 `native`、`compatibility`、`rosetta` 和 `qemu-user`，同时记录目标架构与实际宿主架构。Rosetta 不能满足 Intel 原生执行要求。
+
+全部 14 个 CPU 目标配置仍由 154 项源码／IR／对象矩阵覆盖。PE ARM32、Mach-O i386、ARMv7 iOS 和 ARMv7k watchOS 目前有 CPU 验证，不据此宣称原生 OS 加载器或 C++ 展开器验证通过。NeverC 继续只支持 x64／ARM64 纯 C；32 位编译由 Clang 和匹配目标的 ELF GCC 驱动承担。验证器不会构建或修改 NeverC。
+
+Windows x64 和 ARM64 还会各自执行 36 次 Clang C++ FH3 观测。
+
+Mach-O 的可写指针用例在执行时建立指针；静态地址初始化仍需尚不支持的运行时重定位注册，并有明确拒绝的回归测试。ELF 零大小 COMDAT 函数仅在签名是其可执行节起点处的唯一函数、且 CFI 精确覆盖整个节时才被接受。节内偏移、共享、填充、无分组和缺少 CFI 的情况继续拒绝。
+
+ELF ARM 与 Thumb 使用独立配置。源码编译器明确接收 `-marm` 或 `-mthumb`，原生函数绑定保留原函数的指令状态位。32 位 ELF 进程使用具有真实动态重定位的 PIE 镜像。ARM32 QEMU 执行会记录显式 glibc `--loader` 和 sysroot：QEMU 的 AUXV 计算没有像 Linux 内核那样处理迁移后的程序头。该路径验证 QEMU 下的 glibc 加载与执行，不代表 ARM32 真机或原生内核加载器验证。

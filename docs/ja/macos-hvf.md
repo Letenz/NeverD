@@ -1,6 +1,6 @@
 **言語**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
+<!-- i18n-source: c6842dbcde7494478da5d1a0035e88fb073d2764b43e2a30400a470727685ec4 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -18,7 +18,7 @@ macOS 11 以降とハードウェア仮想化が必要です。他の依存関�
 
 フレームワークのリンクと hypervisor 署名は macOS ビルドターゲット（`CMAKE_SYSTEM_NAME=Darwin`）に限定します。iOS などの Apple モバイルターゲットには、このフレームワーク依存関係や権限を追加しません。NeverD 自体を ISA が一致する Mac で実行する場合、iOS ゲストプロファイルも HVF を利用できます。
 
-**プロセスの実行ファイル**に [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) が必要です。`libneverd.dylib` だけの署名では足りません。CMake は `resources/macos/neverd-hypervisor.entitlements` で CLI、worker、テストを署名します。`NEVERD_HVF_SIGN_IDENTITY` の既定値はアドホック署名の `-` で、既存の署名 ID も指定できます。パッケージ処理は Mach-O 依存関係の修復後に権限を再適用し、検証します。
+**プロセスの実行ファイル**に [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) が必要です。`libneverd.dylib` だけの署名では足りません。CMake は `resources/macos/neverd-hypervisor.entitlements` で CLI、worker、プロセスプローブ、テストを署名します。`NEVERD_HVF_SIGN_IDENTITY` の既定値はアドホック署名の `-` で、既存の署名 ID も指定できます。パッケージ処理は Mach-O 依存関係の修復後に権限を再適用し、検証します。
 
 組み込みアプリケーションは自分の実行ファイルを署名します。NeverD はインストール済み Python を再署名しません。`cpu-capabilities --configuration=JSON --probe-host` で実際のプロセスを確認できます。独立した worker も既定で署名します。`NEVERD_WORKER_SIGN_HVF=OFF` は HVF が不要な場合のみ使用します。
 

@@ -136,7 +136,7 @@ report = session.patch_source(
 
 Use a compatible source producer through `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (Clang 22.1.6 was checked). Integrated LLVM receives a scoped correction in a build-directory copy; the submodule and shared prebuilt cache remain unchanged. The r3/r4 prebuilt x64 PLT bug can cause an IR patch to be refused; native objects avoid that MC path. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires the exact corrected PLT producer.
 
-`NeverDSourcePatchTests` contains native C/API/object/EH cases; `NeverDSourcePatchMatrixTests` requires 143 checks across the thirteen target profiles through Unicorn. `SourcePatchPE` runs seven C++ scenarios when `NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and `NEVERD_TEST_WINDOWS_SDK_LIB` are supplied. Non-Windows hosts also need `NEVERD_TEST_WINDOWS_RUNNER`. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing runtime inputs fail. The dedicated Windows workflow requires native execution and rejects skipped cases.
+`NeverDSourcePatchTests` contains native C/API/object/EH cases; `NeverDSourcePatchMatrixTests` requires 154 checks across fourteen target profiles through Unicorn. `SourcePatchPE` runs seven C++ scenarios when `NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and `NEVERD_TEST_WINDOWS_SDK_LIB` are supplied. Non-Windows hosts also need `NEVERD_TEST_WINDOWS_RUNNER`. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing runtime inputs fail. The dedicated Windows workflow requires native execution and rejects skipped cases.
 
 Linux evidence from the development Mac uses Docker and an explicit Linux loader; PE evidence uses Wine 11. Mach-O ARM64 runs on the Mac itself. Native Windows CI results must be checked separately; a configured job is not a passing run. Historical counts, baseline failures and emulator limits are in [the detailed contracts and validation record](source-patching-details.md).
 
@@ -177,3 +177,18 @@ Integration qualification [0a6f6d768](https://github.com/NeverSight/NeverD/actio
 Expanded [Linux qualification at 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) passed 429 executed checks with zero failures or skips: the original 108 cases, 55 complete Swift checks, 143 CPU target checks, 117 native session checks, three LLVM-C checks and three Clang/GCC C++ checks. The local full binary patch suite also passed all 22,961 cases at this integration. Native process counts and CPU emulation coverage remain separate.
 
 The rebuilt [Windows installer qualification at 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) passed all 182 focused checks and 474 native process observations, with zero failures or skips. An independent artifact audit checked every image hash, architecture, scenario and repetition. After the subsequent ABI/unwind integration at `e1cac949f`, the full binary patch suite again passed all 22,961 cases with zero failures or skips. These results retain the C-only NeverC contract; C++ replacements use Clang/GCC.
+
+<!-- i18n-section: runtime-coverage -->
+## macOS and 32-bit process qualification
+
+The process-image workflow requires native macOS ARM64 (`macos-15`) and Intel x64 (`macos-15-intel`) execution. Each architecture executes 96 observations covering Clang C source/object installation, writable pointer state, floating-point/stack arguments, nine Clang C++ exception scenarios, and existing NeverC pure C IR/object/hosted output. Mach-O signatures are checked strictly before execution. Hosted code must match the producer payload byte for byte.
+
+The same workflow requires 30 Windows x86 observations on Windows x64, 48 Linux x86 observations on Linux x64, and 96 Linux ARM32 observations through QEMU user mode, split equally between ARM and Thumb. The Linux checks include matching GCC objects. Every scenario repeats three times. Reports distinguish `native`, `compatibility`, `rosetta` and `qemu-user`, and retain both target and actual host architectures. Rosetta cannot satisfy a native Intel requirement.
+
+All 14 CPU target profiles remain covered by the 154-case source/IR/object matrix. PE ARM32, Mach-O i386, ARMv7 iOS and ARMv7k watchOS currently have CPU qualification, without a native OS loader or C++ unwinder claim. NeverC remains pure C on x64/ARM64; Clang and matching ELF GCC drivers cover the 32-bit producers. The verifier does not build or modify NeverC.
+
+Windows x64 and ARM64 each also execute 36 Clang C++ FH3 observations.
+
+Mach-O writable-pointer cases initialize the pointer during execution; static address initializers still require unsupported load-time relocation registration and are covered by an explicit refusal test. ELF zero-sized COMDAT functions are accepted only when the signature is the sole function at the start of its executable section and CFI matches the complete section exactly. Interior, shared, padded, ungrouped and missing-CFI cases remain rejected.
+
+ELF ARM and Thumb have separate profiles. Source producers receive explicit `-marm` or `-mthumb`, and native function bindings preserve the original instruction-state bit. The 32-bit ELF processes use PIE images with real dynamic relocations. ARM32 QEMU execution records an explicit glibc `--loader` and sysroot: QEMU’s AUXV calculation does not follow relocated program headers as the Linux kernel does. This route verifies glibc loading and execution under QEMU; it is not physical ARM32 or native kernel-loader evidence.

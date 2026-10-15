@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
+<!-- i18n-source: f6164ac8ef486eb2c66955e050837848e52b161cf15ba12dd08e42c9a3bc2591 -->
 
 [← Documentation Index](README.md)
 
@@ -179,3 +179,18 @@ Die [Integrationsqualifikation 0a6f6d768](https://github.com/NeverSight/NeverD/a
 Die erweiterte [Linux-Qualifikation bei 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) bestand 429 ausgeführte Prüfungen ohne Fehler oder Überspringen: die ursprünglichen 108 Fälle, 55 vollständige Swift-Prüfungen, 143 CPU-Zielprüfungen, 117 native Sitzungsprüfungen sowie je drei LLVM-C- und Clang/GCC-C++-Prüfungen. Auch der vollständige lokale Binärpatch-Testbestand bestand bei dieser Integration alle 22.961 Fälle. Native Prozesszahlen und CPU-Emulationsabdeckung bleiben getrennt.
 
 Die [Qualifikation des neu gebauten Windows-Installers bei 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) bestand alle 182 gezielten Prüfungen und 474 nativen Prozessausführungen, ohne Fehler oder übersprungene Tests. Eine unabhängige Artefaktprüfung kontrollierte jeden Image-Hash, jede Architektur, jedes Szenario und jede Wiederholung. Nach der ABI-/Unwind-Integration bei `e1cac949f` bestand die vollständige Binärpatch-Suite erneut alle 22,961 Fälle, ohne Fehler oder übersprungene Tests. NeverC bleibt auf reines C beschränkt; C++-Ersetzungen verwenden Clang/GCC.
+
+<!-- i18n-section: runtime-coverage -->
+## Prozessqualifikation für macOS und 32 Bit
+
+Der Workflow für Prozessabbilder verlangt native Ausführung auf macOS ARM64 (`macos-15`) und Intel x64 (`macos-15-intel`). Jede Architektur führt 96 Beobachtungen aus: Clang-C-Quelltext und Objekte, veränderlicher Zeigerzustand, Gleitkomma-/Stackargumente, neun Clang-C++-Ausnahmeszenarien sowie vorhandene reine C-Ausgaben von NeverC als IR/Objekt/hosted. Mach-O-Signaturen werden vor der Ausführung streng geprüft; installierter hosted-Code muss bytegenau der Compiler-Nutzlast entsprechen.
+
+Derselbe Workflow verlangt 30 Windows-x86-Beobachtungen auf Windows x64, 48 Linux-x86-Beobachtungen auf Linux x64 und 96 Linux-ARM32-Beobachtungen über QEMU im Benutzermodus, je zur Hälfte ARM und Thumb. Die Linux-Prüfungen umfassen passende GCC-Objekte. Jedes Szenario wird dreimal ausgeführt. Berichte unterscheiden `native`, `compatibility`, `rosetta` und `qemu-user` und halten Ziel- und tatsächliche Hostarchitektur fest. Rosetta erfüllt keine native Intel-Anforderung.
+
+Alle 14 CPU-Zielprofile bleiben durch die Matrix mit 154 Quelltext-/IR-/Objektprüfungen abgedeckt. PE ARM32, Mach-O i386, ARMv7 iOS und ARMv7k watchOS haben derzeit CPU-Qualifikation, ohne Nachweis für native OS-Lader oder C++-Unwinder. NeverC bleibt auf reines C für x64/ARM64 beschränkt; Clang und passende ELF-GCC-Treiber erzeugen die 32-Bit-Ausgaben. Der Prüfer baut oder verändert NeverC nicht.
+
+Windows x64 und ARM64 führen außerdem jeweils 36 Clang-C++-FH3-Beobachtungen aus.
+
+Veränderliche Mach-O-Zeiger werden während der Ausführung initialisiert; statische Adressinitialisierer benötigen weiterhin nicht unterstützte Laufzeit-Rebase-Registrierung und werden mit einem ausdrücklichen Ablehnungstest geprüft. ELF-COMDAT-Funktionen ohne Größenangabe werden nur akzeptiert, wenn die Signatur die einzige Funktion am Anfang ihres ausführbaren Abschnitts ist und CFI exakt den gesamten Abschnitt abdeckt. Innere Offsets, gemeinsame Abschnitte, Padding, fehlende Gruppen und fehlende CFI werden weiter abgelehnt.
+
+ELF ARM und Thumb haben getrennte Profile. Quellcodeproduzenten erhalten explizit `-marm` oder `-mthumb`; native Funktionsbindungen erhalten das ursprüngliche Befehlszustandsbit. Die 32-Bit-ELF-Prozesse verwenden PIE-Abbilder mit echten dynamischen Relokationen. ARM32-QEMU-Ausführung zeichnet einen expliziten glibc-`--loader` und Sysroot auf: QEMUs AUXV-Berechnung folgt verschobenen Programmheadern anders als der Linux-Kernel. Dieser Weg prüft glibc-Laden und Ausführung unter QEMU, nicht physische ARM32-Hardware oder den nativen Kernel-Lader.
