@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import json
 import os
 from pathlib import Path
@@ -91,6 +93,29 @@ def macho_bytes(path: Path, va: int, size: int) -> bytes:
     return matches[0]
 
 
+def macos_process_translated() -> bool:
+    # Query this Python process: a separately launched universal sysctl tool
+    # can select a different architecture. Apple defines ENOENT as native.
+    try:
+        query = ctypes.CDLL(None, use_errno=True).sysctlbyname
+    except (OSError, AttributeError) as error:
+        raise RuntimeError("could not query macOS process translation") from error
+    query.argtypes = [ctypes.c_char_p, ctypes.c_void_p,
+                      ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
+    query.restype = ctypes.c_int
+    translated = ctypes.c_int(-1)
+    size = ctypes.c_size_t(ctypes.sizeof(translated))
+    ctypes.set_errno(0)
+    status = query(b"sysctl.proc_translated", ctypes.byref(translated),
+                   ctypes.byref(size), None, 0)
+    if status == -1 and ctypes.get_errno() == errno.ENOENT:
+        return False
+    if (status != 0 or size.value != ctypes.sizeof(translated) or
+        translated.value not in (0, 1)):
+        raise RuntimeError("could not establish macOS process translation")
+    return bool(translated.value)
+
+
 def runtime_identity(system: str, arch: str, runner: Path | None) -> dict:
     os_name = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     host = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64",
@@ -101,13 +126,11 @@ def runtime_identity(system: str, arch: str, runner: Path | None) -> dict:
     if system == "windows":
         host = {0x8664: "x64", 0xaa64: "arm64", 0x14c: "x86"}.get(pe.native_machine())
     elif system == "macos":
-        # platform.machine() describes a translated Python process on Rosetta.
-        result = subprocess.run(["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
-                                capture_output=True, text=True, timeout=5)
-        if result.returncode == 0 and result.stdout.strip() == "1":
-            host = "arm64"
-        elif host != "x64":
+        translated = macos_process_translated()
+        if host not in ("x64", "arm64") or (translated and host != "x64"):
             raise RuntimeError("could not establish the physical macOS architecture")
+        if translated:
+            host = "arm64"
     result = {"host_system": system, "host_architecture": host}
     if runner:
         expected = {"arm32": "qemu-arm", "x86": "qemu-i386"}.get(arch)

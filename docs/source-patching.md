@@ -63,9 +63,9 @@ The Clang LLVM-IR route also admits Windows ARM64 C++ FH3, checking compiler-own
 
 | Producer | Artifact | Verified OS runtime profile |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3 |
-| Clang 22.1.6 | Native object | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | Native object | ELF x64/ARM64 C/C++ with a compatible Itanium runtime |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | Native object | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | Native object | ELF x64/ARM64 C/C++ with a compatible Itanium runtime; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 | NeverC 3389.1.5 ordinary C | LLVM IR / native object | ELF / PE / Mach-O x64/ARM64: C source |
@@ -164,7 +164,7 @@ Native Windows process qualification at [a4a5ae3cb](https://github.com/NeverSigh
 
 Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C IR/object/hosted results and a throwing callback through two hosted C frames. `check_source_patch_elf_runtime.py` requires 120 native Linux observations per architecture for C IR/objects/hosted, hosted propagation and nine Clang C++ exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real C producer outputs; they do not claim a NeverC executable ran on the CI host. The Linux inventory includes nine exception scenarios for each of Clang IR, Clang native objects and GCC native objects on x64 and ARM64. NeverC remains C-only.
 
-Historical qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) recorded 204 observations under the former translation profile; it is not evidence for the current C-only compiler contract. The current fixtures use C for all three NeverC routes and keep Clang C++ exceptions separate. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64. macOS x64 execution uses Rosetta 2; CPU emulators do not establish native OS or unwinder coverage.
+Historical qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) recorded 204 observations under the former translation profile; it is not evidence for the current C-only compiler contract. The current fixtures use C for all three NeverC routes and keep Clang C++ exceptions separate. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64. On the development Apple Silicon Mac, macOS x64 execution uses Rosetta 2; CPU emulators do not establish native OS or unwinder coverage.
 
 AArch64 instruction relocations require explicit RELA addends. Implicit REL instruction addends are rejected before publication; their instruction bitfields are not interpreted as plain data. Supported PREL64 data relocations retain their full signed addends in both REL and RELA.
 

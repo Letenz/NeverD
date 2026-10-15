@@ -1736,7 +1736,7 @@ MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다. 143개 CPU 검사는 소스／IR／객체, 네 아키텍처, 세 형식, 상태, 부동소수점／스택 인수, 두 비영점 주소 변경을 요구합니다. 구형 32비트 Mach-O 컨테이너는 실제 컴파일러 코드를 유지하지만 OS 인증은 아닙니다.
+`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다. 154개 CPU 검사는 소스／IR／객체, 네 아키텍처, 세 형식, 상태, 부동소수점／스택 인수, 두 비영점 주소 변경을 요구합니다. 구형 32비트 Mach-O 컨테이너는 실제 컴파일러 코드를 유지하지만 OS 인증은 아닙니다.
 
 [소스 및 네이티브 오브젝트 패치](source-patching.md)
 

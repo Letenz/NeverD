@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f6164ac8ef486eb2c66955e050837848e52b161cf15ba12dd08e42c9a3bc2591 -->
+<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR поддерживает Windows ARM64 C++ FH3 с проверко
 
 | Компилятор | Артефакт | Проверенный профиль выполнения ОС |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3 |
-| Clang 22.1.6 | Нативный объект | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | Нативный объект | ELF x64/ARM64 C/C++ с совместимой средой Itanium |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | Нативный объект | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | Нативный объект | ELF x64/ARM64 C/C++ с совместимой средой Itanium; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 обычный режим | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 обычный режим | Нативный объект | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / нативный объект | ELF / PE / Mach-O x64/ARM64: чистый исходный C |
@@ -166,7 +166,7 @@ ctest --test-dir build-source -L \
 
 Нативная квалификация фиксирует NeverC `182fd2c5dc`, независимые исходные программы и текущий установщик NeverD. `check_source_patch_hosted_pe_runtime.py` требует 36 наблюдений для каждой архитектуры Windows: C IR/объекты/hosted и раскрутка двух кадров C. `check_source_patch_elf_runtime.py` требует 120 наблюдений для каждой архитектуры Linux: C, hosted-передача и девять сценариев исключений Clang C++. Квитанции, хеши и реальная архитектура должны совпадать; запуск самого NeverC на CI-хосте этим не подтверждается. В Linux x64 и ARM64 девять сценариев проверяются отдельно для IR Clang, нативных объектов Clang и нативных объектов GCC. NeverC по-прежнему принимает только C.
 
-204 наблюдения прежнего профиля трансляции остаются историческими и не подтверждают текущий контракт чистого C. Все три текущих пути NeverC используют C; Clang C++ FH3 проверяется отдельно. macOS x64 использует Rosetta 2. Unicorn/QEMU не заменяют нативную проверку ОС и механизма раскрутки.
+204 наблюдения прежнего профиля трансляции остаются историческими и не подтверждают текущий контракт чистого C. Все три текущих пути NeverC используют C; Clang C++ FH3 проверяется отдельно. На Mac разработчика с Apple Silicon macOS x64 использует Rosetta 2. Unicorn/QEMU не заменяют нативную проверку ОС и механизма раскрутки.
 
 Перемещения инструкций AArch64 требуют явных слагаемых RELA. Неявные слагаемые REL для инструкций отклоняются до публикации; битовые поля инструкций не трактуются как обычные данные. Поддерживаемые перемещения данных PREL64 сохраняют полные знаковые слагаемые и в REL, и в RELA.
 

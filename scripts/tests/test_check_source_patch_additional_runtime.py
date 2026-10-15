@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
+import errno
 import hashlib
 import json
 from pathlib import Path
@@ -9,7 +11,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zlib
 
 from scripts import check_source_patch_additional_runtime as checker
@@ -17,14 +19,70 @@ from scripts import check_source_patch_snapshot_runtime as snapshot
 
 
 class ExecutionIdentityTests(unittest.TestCase):
-    def test_rosetta_is_never_a_matching_intel_host(self):
+    def macos_identity(self, machine="x86_64", value=0, status=0,
+                       error=0, size=ctypes.sizeof(ctypes.c_int)):
+        def probe(name, output, length, new_value, new_length):
+            self.assertEqual(name, b"sysctl.proc_translated")
+            self.assertIsNone(new_value)
+            self.assertEqual(new_length, 0)
+            ctypes.cast(output, ctypes.POINTER(ctypes.c_int))[0] = value
+            ctypes.cast(length, ctypes.POINTER(ctypes.c_size_t))[0] = size
+            ctypes.set_errno(error)
+            return status
+
+        library = Mock()
+        library.sysctlbyname.side_effect = probe
         with patch.object(checker.platform, "system", return_value="Darwin"), \
-             patch.object(checker.platform, "machine", return_value="x86_64"), \
-             patch.object(checker.subprocess, "run", return_value=
-                          subprocess.CompletedProcess([], 0, stdout="1\n")):
-            identity = checker.runtime_identity("macos", "x64", None)
+             patch.object(checker.platform, "machine", return_value=machine), \
+             patch.object(checker.ctypes, "CDLL", return_value=library) as load, \
+             patch.object(checker.subprocess, "run", side_effect=
+                          AssertionError("identity must query the current process")):
+            identity = checker.runtime_identity(
+                "macos", "arm64" if machine == "arm64" else "x64", None)
+        load.assert_called_once_with(None, use_errno=True)
+        library.sysctlbyname.assert_called_once()
+        return identity
+
+    def test_rosetta_is_never_a_matching_intel_host(self):
+        identity = self.macos_identity(value=1)
         self.assertEqual(identity["host_architecture"], "arm64")
         self.assertEqual(identity["execution_kind"], "rosetta")
+
+    def test_native_macos_processes_retain_the_matching_host(self):
+        for machine, host in (("x86_64", "x64"), ("arm64", "arm64")):
+            with self.subTest(machine=machine):
+                identity = self.macos_identity(machine=machine)
+                self.assertEqual(identity["host_architecture"], host)
+                self.assertEqual(identity["execution_kind"], "native")
+
+    def test_missing_translation_attribute_is_native_as_defined_by_apple(self):
+        for machine, host in (("x86_64", "x64"), ("arm64", "arm64")):
+            with self.subTest(machine=machine):
+                identity = self.macos_identity(machine=machine, status=-1,
+                                               error=errno.ENOENT, value=-1)
+                self.assertEqual(identity["host_architecture"], host)
+                self.assertEqual(identity["execution_kind"], "native")
+
+    def test_failed_or_malformed_translation_queries_cannot_claim_native(self):
+        for result in ({"status": -1, "error": errno.EPERM},
+                       {"status": -1, "error": 0},
+                       {"status": 1, "error": errno.ENOENT},
+                       {"value": -1}, {"value": 2}, {"size": 0}, {"size": 8}):
+            with self.subTest(result=result):
+                with self.assertRaisesRegex(RuntimeError, "process translation"):
+                    self.macos_identity(**result)
+
+    def test_missing_system_query_cannot_claim_native(self):
+        with patch.object(checker.ctypes, "CDLL", side_effect=OSError("unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "query macOS"):
+                checker.macos_process_translated()
+        with patch.object(checker.ctypes, "CDLL", return_value=object()):
+            with self.assertRaisesRegex(RuntimeError, "query macOS"):
+                checker.macos_process_translated()
+
+    def test_arm64_process_cannot_report_x64_translation(self):
+        with self.assertRaisesRegex(RuntimeError, "physical macOS architecture"):
+            self.macos_identity(machine="arm64", value=1)
 
     def test_32_bit_processes_retain_the_64_bit_host_identity(self):
         with patch.object(checker.platform, "system", return_value="Linux"), \

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f6164ac8ef486eb2c66955e050837848e52b161cf15ba12dd08e42c9a3bc2591 -->
+<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang 的 LLVM IR 路径也接入 Windows ARM64 C++ FH3，核对编译器拥有�
 
 | 编译器 | 制品 | 已验证的操作系统运行配置 |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3 |
-| Clang 22.1.6 | 原生对象 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | 原生对象 | ELF x64/ARM64 C/C++，需要兼容的 Itanium 运行库 |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | 原生对象 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | 原生对象 | ELF x64/ARM64 C/C++，需要兼容的 Itanium 运行库; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生对象 | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / 原生对象 | ELF / PE / Mach-O x64/ARM64: 纯 C 源代码 |
@@ -166,7 +166,7 @@ Windows 原生进程验收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/acti
 
 原生生产语料固定 NeverC `182fd2c5dc`，使用独立原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 在每种 Windows 架构要求 36 次 C IR/对象/hosted 结果与两层 hosted C 展开观测；`check_source_patch_elf_runtime.py` 在每种 Linux 架构要求 120 次 C、hosted 传播和九种 Clang C++ 异常场景观测。凭据、文件摘要及真实主机架构必须一致；这些检查不代表 CI 主机执行了 NeverC 编译器本身。 Linux 清单在 x64、ARM64 上分别覆盖 Clang IR、Clang 原生对象和 GCC 原生对象各九种异常场景；NeverC 仍仅处理 C。
 
-旧翻译配置的 204 次观测凭据仅保留为历史记录，不能证明当前纯 C 编译契约。当前三条 NeverC 路径都使用 C，Clang C++ FH3 另行验证。macOS x64 使用 Rosetta 2；Unicorn/QEMU 的 CPU 结果不能代替原生操作系统与异常展开验证。
+旧翻译配置的 204 次观测凭据仅保留为历史记录，不能证明当前纯 C 编译契约。当前三条 NeverC 路径都使用 C，Clang C++ FH3 另行验证。开发用 Apple Silicon Mac 上的 macOS x64 执行使用 Rosetta 2；Unicorn/QEMU 的 CPU 结果不能代替原生操作系统与异常展开验证。
 
 AArch64 指令重定位要求显式 RELA 加数。隐式 REL 指令加数会在发布前被拒绝，不会把指令位域当成普通数据。受支持的 PREL64 数据重定位在 REL、RELA 下均保留完整有符号加数。
 

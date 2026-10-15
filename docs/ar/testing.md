@@ -1767,7 +1767,7 @@ guest/Python5,000,000us / quantum1024 / public10s
 
 ## تصحيحات المصدر والكائنات الأصلية
 
-تعني `CPU` تثبيت المصدر وتنفيذ الدالة المعزولة، وتعني `REFUSED` رفضاً صريحاً لغياب عقد التثبيت. تحتاج ARM32 ELF إلى تسجيل EHABI؛ وتحتاج Mach-O ذات 32 بت إلى عقود محمل وواجهة ترجمة وفك مكدس متحققة؛ ويتطلب تثبيت مصدر PE حالياً x64.
+تعني `CPU` تثبيت المصدر وIR والكائنات وإعادة تحميل الصورة وتنفيذ الدالة بدقة. تتطلب المصفوفة 154 اختبارًا عبر 14 ملف هدف، بما فيها ELF ARM وThumb المنفصلان، وأربع معماريات مع ELF وPE وMach-O. لا يثبت تنفيذ CPU صحة محمل نظام التشغيل أو آلية فك استثناءات C++؛ وتظل أهداف PE ARM32 وMach-O ذات 32 بت ضمن تحقق CPU دون ادعاء تشغيل نظام أصلي.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 

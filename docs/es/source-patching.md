@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f6164ac8ef486eb2c66955e050837848e52b161cf15ba12dd08e42c9a3bc2591 -->
+<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR admite Windows ARM64 C++ FH3 y valida xdata, ABI del marco padre y
 
 | Compilador | Artefacto | Perfil de ejecución del SO verificado |
 |---|---|---|
-| Clang 22.1.6 | IR LLVM | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
-| Clang 22.1.6 | Objeto nativo | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | Objeto nativo | ELF x64/ARM64 C/C++ con runtime Itanium compatible |
+| Clang 22.1.x | IR LLVM | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | Objeto nativo | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | Objeto nativo | ELF x64/ARM64 C/C++ con runtime Itanium compatible; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 modo ordinario | IR LLVM | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 modo ordinario | Objeto nativo | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / objeto nativo | ELF / PE / Mach-O x64/ARM64: fuente C pura |
@@ -166,7 +166,7 @@ La validación de procesos nativos de Windows [a4a5ae3cb](https://github.com/Nev
 
 La validación nativa fija NeverC en `182fd2c5dc`, con originales independientes y el instalador NeverD actual. `check_source_patch_hosted_pe_runtime.py` exige 36 observaciones por arquitectura Windows para IR/objetos/hosted C y propagación a través de dos marcos C. `check_source_patch_elf_runtime.py` exige 120 por arquitectura Linux para C, propagación hosted y nueve escenarios C++ de Clang. Recibos, resúmenes y arquitectura real deben coincidir; esto no afirma que el propio NeverC se ejecutara en el host CI. Linux x64 y ARM64 ejecutan los nueve escenarios para cada vía: IR Clang, objetos nativos Clang y objetos nativos GCC. NeverC sigue limitado a C.
 
-Las 204 observaciones del antiguo perfil de traducción son históricas y no prueban el contrato actual de C puro. Las tres rutas NeverC actuales usan C; Clang C++ FH3 se valida por separado. macOS x64 usa Rosetta 2. Unicorn/QEMU no sustituyen la validación nativa del sistema y del desenrollador.
+Las 204 observaciones del antiguo perfil de traducción son históricas y no prueban el contrato actual de C puro. Las tres rutas NeverC actuales usan C; Clang C++ FH3 se valida por separado. En el Mac de desarrollo con Apple Silicon, macOS x64 usa Rosetta 2. Unicorn/QEMU no sustituyen la validación nativa del sistema y del desenrollador.
 
 Las reubicaciones de instrucciones AArch64 requieren sumandos RELA explícitos. Los sumandos REL implícitos de instrucciones se rechazan antes de publicar; sus campos de bits no se interpretan como datos ordinarios. Las reubicaciones de datos PREL64 admitidas conservan los sumandos completos con signo tanto en REL como en RELA.
 
