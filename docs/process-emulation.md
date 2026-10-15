@@ -512,7 +512,7 @@ ordinary file reuse; writes through a closed slot or read-only file return
 `EBADF`. Reading stdin remains unsupported; it is never assumed to be empty.
 Descriptors, open flags and seek modes consume their low 32 bits.
 
-### Directories and live FD links
+**Directories and live FD links**
 
 Catalogue parents and `/` are enumerable directories. `directories` optionally
 adds canonical empty directory paths. They share the 256-entry catalogue limit.
@@ -541,7 +541,7 @@ and [FD iteration](https://github.com/torvalds/linux/blob/v5.10/fs/proc/fd.c).
 This option does not supply dynamic maps, task, status or fdinfo files, nor
 PID aliases, proc mount metadata or general proc symlink traversal.
 
-### Bounded writes to existing files
+**Bounded writes to existing files**
 
 An entry's `write_limit` grants mutable content with that maximum extent.
 The full reservation counts against the 16 MiB file budget. The grant does

@@ -565,9 +565,10 @@ llvm::Expected<ResolvedSymbol> resolveObjectSymbol(
     if (Original.Arch == Arch::ARM &&
         Binding->second.Kind == SourcePatchBindingKind::Function) {
       const auto Mode = Original.instructionModeAt(VA);
-      if (!Mode || (*Mode != InstructionMode::ARM &&
-                    *Mode != InstructionMode::Thumb))
-        return fail("bound ARM function has no authenticated instruction state");
+      if (!Mode ||
+          (*Mode != InstructionMode::ARM && *Mode != InstructionMode::Thumb))
+        return fail(
+            "bound ARM function has no authenticated instruction state");
       if (*Mode == InstructionMode::Thumb)
         VA |= 1;
     }

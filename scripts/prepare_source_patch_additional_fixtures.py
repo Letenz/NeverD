@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Publish reproducible macOS and 32-bit process fixtures using a built NeverD.
 
-Run on macOS with Clang/LLD, an existing C-only NeverC, and matching ELF GCC
-drivers. NeverC's repository is neither built nor modified by this script.
+Run on macOS with Clang/LLD, the repository's pinned clang-format, an existing
+C-only NeverC, and matching ELF GCC drivers. NeverC's repository is neither
+built nor modified by this script.
 Outputs must be new directories; failed attempts remain available for diagnosis.
 """
 from __future__ import annotations
@@ -25,6 +26,7 @@ from scripts import check_source_patch_additional_runtime as runtime
 from scripts import check_source_patch_cpp_runtime as cpp
 from scripts import check_source_patch_pe_runtime as pe
 from scripts import check_source_patch_snapshot_runtime as snapshot
+from scripts.check_clang_format import PINNED_CLANG_FORMAT_VERSION
 
 START = {
     "x86": ".text\n.global _start\n.type _start,@function\n_start:\n"
@@ -44,6 +46,28 @@ int replacement(int x) {
   return *pointer + original_helper(x);
 }
 """
+
+
+def write_source(path: Path, text: str, formatter: Path, style: Path,
+                 purpose: str = "Source patch runtime fixture") -> None:
+    if path.suffix not in (".c", ".cpp"):
+        raise ValueError("only C/C++ sources may pass through the formatter")
+    if path.suffix == ".cpp":
+        # Keep any original source/license notices intact below the new banner.
+        text = (f"//===- {path.name} - {purpose} ---===//\n"
+                "//\n// NeverD Decompiler\n//\n"
+                "//===----------------------------------------------------------------------===//\n"
+                f"///\n/// \\file\n/// {purpose}.\n///\n"
+                "//===----------------------------------------------------------------------===//\n\n" + text)
+    result = subprocess.run([str(formatter), "--style=file:" + str(style),
+                             "--assume-filename=" + str(path), "--Werror"],
+                            input=text, capture_output=True, text=True,
+                            encoding="utf-8", timeout=60, check=True)
+    if path.exists():
+        if path.read_text(encoding="utf-8") != result.stdout:
+            raise ValueError("source changed after its first publication: " + path.name)
+        return
+    path.write_text(result.stdout, encoding="utf-8")
 
 
 def portable_receipt(receipt: dict, repository: Path, work: Path, output: Path) -> bytes:
@@ -76,7 +100,7 @@ def portable_receipt(receipt: dict, repository: Path, work: Path, output: Path) 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("neverd", "library", "clang", "neverc", "linker", "elf_linker",
+    for name in ("neverd", "library", "clang", "formatter", "neverc", "linker", "elf_linker",
                  "nm", "gcc_x86", "gcc_arm32", "output", "work"):
         parser.add_argument("--" + name.replace("_", "-"), type=Path, required=True)
     args = parser.parse_args()
@@ -89,29 +113,48 @@ def main() -> None:
     work.mkdir(parents=True, exist_ok=False)
     (output / "originals").mkdir()
     os.chdir(output)
+    style = repository / ".clang-format"
+    formatter = args.formatter.resolve()
+    formatter_version = pe.run([str(formatter), "--version"], work / "formatter-version.log")
+    match = re.search(r"\bversion\s+(\d+\.\d+\.\d+)\b", formatter_version.stdout)
+    if match is None or match.group(1) != PINNED_CLANG_FORMAT_VERSION:
+        raise ValueError("source fixtures require clang-format " + PINNED_CLANG_FORMAT_VERSION)
+    windows_source = repository / "unittests/Inputs/source-patch/native-processes/windows-original.cpp"
+    if windows_source.read_text(encoding="utf-8") != cpp.ORIGINAL:
+        raise ValueError("pinned Windows original source differs from the runtime control")
     neverc_digest = pe.digest(args.neverc)
     manifest = {"schema": snapshot.SCHEMA, "producer_commit": "binary-sha256:" + neverc_digest,
                 "engine_source_commit": subprocess.check_output(
                     ["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip(),
                 "engine_source_digest": snapshot.engine_digest(repository),
                 "engine_sha256": pe.digest(args.library), "original_paths": "fixture",
-                "receipt_paths": "portable", "producers": {}, "images": []}
+                "receipt_paths": "portable", "producers": {}, "images": [],
+                "source_formatter": {"version": formatter_version.stdout.splitlines()[0],
+                                     "executable_sha256": pe.digest(formatter),
+                                     "style": ".clang-format", "style_sha256": pe.digest(style)},
+                "producer_inputs": {windows_source.relative_to(repository).as_posix(): pe.digest(windows_source),
+                                    ".clang-format": pe.digest(style)}}
     for name in ("clang", "neverc", "gcc_x86", "gcc_arm32"):
         executable = getattr(args, name).resolve()
         version = pe.run([str(executable), "--version"], work / (name + "-version.log"))
         manifest["producers"][name] = {"version": version.stdout.splitlines()[0],
                                        "executable_sha256": pe.digest(executable)}
     inputs = repository / "unittests/Inputs/source-patch/neverc-linux"
-    for name in ("original-eh.cpp", "original-callback.cpp", "replacement.c", "hosted.c", "exceptions.cpp"):
-        shutil.copyfile(inputs / name, output / name)
+    for name, purpose in (("original-eh.cpp", "Original C++ exception runtime fixture"),
+                          ("original-callback.cpp", "Original throwing callback fixture"),
+                          ("replacement.c", "Pure C replacement fixture"),
+                          ("hosted.c", "Hosted C callback fixture"),
+                          ("exceptions.cpp", "C++ exception replacement fixture")):
+        write_source(output / name, (inputs / name).read_text(encoding="utf-8"),
+                     formatter, style, purpose)
     abi_original = pe.ORIGINAL.replace("int _fltused = 0;", "").replace(
         "__declspec(dllexport)", "").replace("__declspec(noinline)", "__attribute__((noinline))")
-    (output / "abi-original.c").write_text(abi_original, encoding="utf-8")
+    write_source(output / "abi-original.c", abi_original, formatter, style)
     linux_original = abi_original.replace(
         "int entry(void)", "int (*volatile original_call)(int) = original_helper;\nint entry(void)").replace(
         "original_helper(4)", "original_call(4)")
-    (output / "abi-linux.c").write_text(linux_original, encoding="utf-8")
-    (output / "abi-windows.c").write_text(pe.ORIGINAL, encoding="utf-8")
+    write_source(output / "abi-linux.c", linux_original, formatter, style)
+    write_source(output / "abi-windows.c", pe.ORIGINAL, formatter, style)
     sys.path.insert(0, str(repository / "pluginsdk/python"))
     from neverd_plugin.ffi import HostAPI
     host = HostAPI(ctypes.CDLL(str(args.library)))
@@ -220,7 +263,8 @@ def main() -> None:
                 "-c", str(source), "-o", str(obj)], directory / "compile.log")
         if system == "macos":
             main = directory / "main.c"
-            main.write_text("int entry(void); int main(void) { return entry(); }\n")
+            write_source(main, "int entry(void); int main(void) { return entry(); }\n",
+                         formatter, style)
             pe.run([str(args.clang), "--target=" + triple, str(main), str(obj),
                     "-Wl,-headerpad,0x1000", "-Wl,-segalign,0x4000", "-Wl,-adhoc_codesign",
                     "-o", str(original)], directory / "link.log")
@@ -247,7 +291,7 @@ def main() -> None:
             if runtime_pointer:
                 text = MACHO_WRITABLE_POINTER
             source = output / (case + ("-runtime" if runtime_pointer else "") + ".c")
-            source.write_text(text, encoding="utf-8")
+            write_source(source, text, formatter, style)
             binding = "original_fp" if case == "floating-stack" else "original_helper"
             bindings = [f"function:{binding}={original_symbols[binding]:#x}"]
             artifacts = pe.ARTIFACTS + (("gcc-source", "gcc-object") if system == "linux" else ())
@@ -274,8 +318,8 @@ def main() -> None:
             {"language": "c", "commands": native_commands}, repository, work, output))
         print(system, arch, prefix, "C ABI fixtures published", flush=True)
 
-    (output / "windows-original-eh.cpp").write_text(cpp.ORIGINAL, encoding="utf-8")
-    (output / "windows-exceptions.cpp").write_text(cpp.REPLACEMENT, encoding="utf-8")
+    write_source(output / "windows-exceptions.cpp", cpp.REPLACEMENT, formatter, style,
+                 "Windows C++ exception replacement fixture")
     for arch in cpp.ARCHES:
         original = output / "originals" / ("windows-" + arch + "-original-eh.exe")
         shutil.copyfile(repository / "unittests/Inputs/source-patch/native-processes" /

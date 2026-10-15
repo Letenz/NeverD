@@ -454,8 +454,7 @@ TEST_F(SourcePatchObject, ZeroSizedComdatFunctionsRequireExactSectionAndCFI) {
     } else {
       EXPECT_EQ(patch(Bytes), 0);
       EXPECT_FALSE(std::filesystem::exists(Output));
-      EXPECT_NE(error().find(!Case.CFI
-                                 ? "compiler-generated CFI"
+      EXPECT_NE(error().find(!Case.CFI ? "compiler-generated CFI"
                              : std::string(Case.Name) == "padding"
                                  ? "FDE range"
                                  : "bounded executable symbol"),
