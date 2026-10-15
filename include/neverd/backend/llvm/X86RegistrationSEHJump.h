@@ -42,6 +42,7 @@ struct X86RegistrationSEHJumpCall {
   const RegistrationSEHJumpResume *Resume = nullptr;
   const MedOp *Operation = nullptr;
   int Block = -1;
+  int32_t ResumeLevel = -1;
 };
 
 /// Bind complete source buffer lifetimes to exact MedIR call occurrences.

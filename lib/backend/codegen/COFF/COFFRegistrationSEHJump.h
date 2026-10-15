@@ -13,6 +13,7 @@ namespace neverd::coff_registration {
 
 struct RegistrationSEHJumpContract {
   std::set<const llvm::CallBase *> Calls;
+  std::set<const llvm::StoreInst *> StateRestores;
   std::vector<std::pair<int64_t, int64_t>> SourceBuffers;
   bool readsSourceBuffer(int64_t Offset, uint64_t Bytes) const;
 };

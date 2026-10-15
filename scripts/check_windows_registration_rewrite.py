@@ -23,9 +23,11 @@ import xml.etree.ElementTree as ET
 if __package__:
     from .check_windows_registration_eh import run_image
     from .check_windows_registration_frame import KERNEL32, MSVCRT, undecorate_kernel32_imports
+    from .windows_registration_runtime import load_runtime, validate_runtime
 else:
     from check_windows_registration_eh import run_image
     from check_windows_registration_frame import KERNEL32, MSVCRT, undecorate_kernel32_imports
+    from windows_registration_runtime import load_runtime, validate_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "unittests/lift/eh/fixtures"
@@ -48,7 +50,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-unwind-callback": (14, 23),
               "longjmp-callback-zero": (15, 23),
               "longjmp-search-filter": (16, 23),
-              "longjmp-search-filter-zero": (17, 23)})
+              "longjmp-search-filter-zero": (17, 23),
+              "longjmp-retired-scope": (18, 23),
+              "longjmp-retired-inner-scope": (19, 23)})
 
 
 class PE32:
@@ -192,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--linker", default="lld-link")
     parser.add_argument("--wine")
     parser.add_argument("--wine-prefix", type=Path)
+    parser.add_argument("--runtime-root", type=Path,
+                        help="captured Microsoft x86 CRT directory with runtime.json")
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--case", choices=CASES, default="filter")
     args = parser.parse_args(argv)
@@ -221,9 +227,23 @@ def main(argv: list[str] | None = None) -> int:
             prefix.mkdir(parents=True, exist_ok=True)
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
-        definitions = (("kernel32", KERNEL32),
-                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "") +
-                        ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else "")))
+        runtime_exports = ("_except_handler3\n" +
+                           ("_except_handler4_common\n" if eh4 else "") +
+                           ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else ""))
+        definitions = [("kernel32", KERNEL32)]
+        if args.runtime_root:
+            runtime, report["seh_runtime"] = load_runtime(args.runtime_root.resolve())
+            shutil.copy2(runtime, output / runtime.name)
+            validate_runtime(output, report["seh_runtime"])
+            environment["WINEDLLOVERRIDES"] = "vcruntime140=n"
+            definitions.extend((("msvcrt", "LIBRARY msvcrt.dll\nEXPORTS\nprintf\n"),
+                                ("vcruntime", "LIBRARY vcruntime140.dll\nEXPORTS\n" +
+                                 runtime_exports)))
+        else:
+            if args.case == "longjmp-retired-inner-scope" and launcher:
+                raise ValueError("retired inner scopes require --runtime-root: Wine's builtin CRT uses a different unwind bound")
+            definitions.append(("msvcrt", MSVCRT.replace("_except_handler3\n", "") +
+                                runtime_exports))
         for name, definition in definitions:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
@@ -249,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                          *( ["/export:registration_eh4_personality=_except_handler4"] if eh4 else []),
                          f"/out:{original}",
                          *(str(output / (name + ".obj")) for name in sources),
-                         str(output / "kernel32.lib"), str(output / "msvcrt.lib")])
+                         *(str(output / (name + ".lib")) for name, _ in definitions)])
         environment.update(NEVERD_REGISTRATION_INPUT_PE32=str(original),
                            NEVERD_REGISTRATION_OUTPUT_PE32=str(patched),
                            NEVERD_REGISTRATION_OUTPUT_IR=str(output / "registration.ll"))

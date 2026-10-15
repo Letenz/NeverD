@@ -227,6 +227,9 @@ struct RegistrationSEHJumpResume {
   /// calls, or relative to EntryVA's private callback entry ESP. Cross-function
   /// callees require a separate stack owner and do not publish this projection.
   std::optional<int32_t> ValueOffset;
+  /// Actual source states after local unwind. A capture inside a retired
+  /// scope does not reactivate that scope when the continuation resumes.
+  std::vector<int32_t> ResumedLevels;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 

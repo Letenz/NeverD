@@ -2156,7 +2156,7 @@ jobs:
 
   windows-eh-cxx-fixtures:
     name: Windows EH (MSVC source runtime fixtures)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_protocol_only || inputs.windows_eh_llvm_artifact_run != '') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' }}
     runs-on: windows-2025
     timeout-minutes: 25
     steps:
@@ -2235,7 +2235,7 @@ jobs:
   windows-eh-focused:
     name: Windows EH (x86 Wine and ARM32 PE contracts)
     needs: windows-eh-cxx-fixtures
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && !inputs.windows_eh_protocol_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_llvm_artifact_run == '' || needs.windows-eh-cxx-fixtures.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && !inputs.windows_eh_protocol_only && inputs.windows_eh_replay_artifact_run == '' && needs.windows-eh-cxx-fixtures.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
@@ -2270,9 +2270,8 @@ jobs:
           wineserver -p
           wine wineboot --init
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_destructor_graphs scripts.tests.test_windows_registration_destructor_results scripts.tests.test_windows_registration_reference_members scripts.tests.test_windows_registration_member_arguments scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_destructor_graphs scripts.tests.test_windows_registration_destructor_results scripts.tests.test_windows_registration_reference_members scripts.tests.test_windows_registration_member_arguments scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime scripts.tests.test_replay_windows_registration -v
       - name: Fetch genuine MSVC C++ source inputs
-        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         uses: actions/download-artifact@v4
         with:
           name: windows-eh-msvc-pe32-cxx-sources
@@ -2724,11 +2723,12 @@ jobs:
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*:RegistrationEntryABI.InputPE32*:RegistrationRelift.InputPE32* \
             --gtest_output=xml:build-windows-eh/evidence/native.xml
-          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write eh4-gs-filter eh4-gs-nested-finally eh4-gs-continue-search eh4-gs-continue-execution eh4-gs-normal-finally eh4-gs-cdecl-parameter eh4-gs-cdecl-parameter-write exception-code exception-flags eh4-exception-code eh4-exception-flags eh4-gs-exception-code eh4-gs-exception-flags longjmp-finally longjmp-zero longjmp-filter longjmp-parameter longjmp-callback longjmp-unwind-callback longjmp-callback-zero longjmp-search-filter longjmp-search-filter-zero; do
+          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write eh4-gs-filter eh4-gs-nested-finally eh4-gs-continue-search eh4-gs-continue-execution eh4-gs-normal-finally eh4-gs-cdecl-parameter eh4-gs-cdecl-parameter-write exception-code exception-flags eh4-exception-code eh4-exception-flags eh4-gs-exception-code eh4-gs-exception-flags longjmp-finally longjmp-zero longjmp-filter longjmp-parameter longjmp-callback longjmp-unwind-callback longjmp-callback-zero longjmp-search-filter longjmp-search-filter-zero longjmp-retired-scope longjmp-retired-inner-scope; do
             python scripts/check_windows_registration_rewrite.py \
               --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
               --patch-binary build-windows-eh/bin/neverd --case "$registration_case" \
               --output "build-windows-eh/evidence/source-${registration_case}" \
+              --runtime-root build-windows-eh/cxx-source-inputs/runtime-libs \
               --wine-prefix "$RUNNER_TEMP/neverd-wine32"
           done
       - name: Reconstruct two generations of source C++ with ordered cleanups and reference effects
@@ -2782,6 +2782,37 @@ jobs:
             build-windows-eh/evidence/
             build-windows-eh/CMakeCache.txt
             build-windows-eh/unittests/lift/test_patch_coff_arm_seh.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-eh-source-replay:
+    name: Windows EH (native reconstructed SEH source)
+    needs: windows-eh-focused
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && needs.windows-eh-focused.result == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-eh-x86-runtime-arm32-contracts
+          path: build-windows-eh
+      - name: Replay identical original and rewritten PE32 images on Windows
+        run: python scripts/replay_windows_registration.py --source-only --evidence-root build-windows-eh/evidence --output build-windows-eh/native-seh-source.json
+      - name: Preserve native SEH execution evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-eh-native-seh-source
+          path: build-windows-eh/native-seh-source.json
           if-no-files-found: error
           retention-days: 14
 

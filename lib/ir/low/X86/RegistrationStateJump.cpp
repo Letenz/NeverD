@@ -12,6 +12,8 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
+
 namespace neverd::registration_state {
 
 void RegistrationStateSolver::invalidateJumpRuntimeBindings(
@@ -244,11 +246,23 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
       SP.CallbackAddress && SP.CallbackAddress->Entry == Receipt.EntryVA &&
       SP.CallbackAddress->Offset <= -8)
     Receipt.ValueOffset = SP.CallbackAddress->Offset + 4;
+  Receipt.ResumedLevels.assign(Resume.Levels.begin(), Resume.Levels.end());
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
   const auto [It, New] = JumpResumptions.emplace(Identity, Receipt);
-  if (!New && It->second != Receipt)
-    return Refuse();
+  if (!New) {
+    auto Previous = It->second;
+    Previous.ResumedLevels = Receipt.ResumedLevels;
+    if (Previous != Receipt)
+      return Refuse();
+    auto &Levels = It->second.ResumedLevels;
+    if (!charge(Levels.size() + Receipt.ResumedLevels.size()))
+      return Refuse();
+    Levels.insert(Levels.end(), Receipt.ResumedLevels.begin(),
+                  Receipt.ResumedLevels.end());
+    llvm::sort(Levels);
+    Levels.erase(std::unique(Levels.begin(), Levels.end()), Levels.end());
+  }
   merge(Entries.at(Saved.ReturnPC), Resume);
   Facts.InvocationAtExit = true;
   return true;

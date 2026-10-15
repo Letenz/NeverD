@@ -6,6 +6,7 @@
 
 #include "../eh/MedLLVMEHHelpers.h"
 #include "MedLLVMRegistrationIncoming.h"
+#include "MedLLVMRegistrationSEHDynamicScope.h"
 #include "MedLLVMRegistrationSEHJump.h"
 #include "MedLLVMRegistrationSEHProof.h"
 
@@ -16,6 +17,7 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+#include "neverd/backend/llvm/X86RegistrationSEHScope.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -124,6 +126,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     if (!BlockStates.emplace(State.BlockId, &State).second)
       return false;
   std::map<llvm::BasicBlock *, int32_t> Active;
+  std::map<llvm::BasicBlock *, std::vector<int32_t>> Dynamic;
   std::set<llvm::BasicBlock *> CallbackBlocks;
   const int32_t Sentinel = *Chain.SeededTryLevel;
   for (const MedBlock &Block : Func.Blocks) {
@@ -140,8 +143,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       CallbackBlocks.insert(IR->second);
       continue;
     }
-    if (State->second->Levels.size() > 1)
-      return false;
+    if (State->second->Levels.size() > 1) {
+      for (int32_t Level : State->second->Levels)
+        if (Level != Sentinel &&
+            (Level < 0 || uint32_t(Level) >= Chain.Scopes.size()))
+          return false;
+      for (const auto &I : *IR->second)
+        if (llvm::isa<llvm::PHINode>(I) || (llvm::isa<llvm::CallBase>(I) &&
+                                            !llvm::isa<llvm::IntrinsicInst>(I)))
+          return false;
+      Dynamic.emplace(IR->second, State->second->Levels);
+      Active.emplace(IR->second, x86_registration::DynamicScopeLevel);
+      continue;
+    }
     const int32_t Level = State->second->Levels.empty()
                               ? Sentinel
                               : State->second->Levels.front();
@@ -613,7 +627,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     Call->eraseFromParent();
   }
 
-  for (auto *Instruction : llvm::reverse(DeadFinallyResults))
+  std::set<llvm::Instruction *> DeadFinally(DeadFinallyResults.begin(),
+                                            DeadFinallyResults.end());
+  for (auto *Instruction : DeadFinally)
+    Instruction->dropAllReferences();
+  for (auto *Instruction : DeadFinally)
     Instruction->eraseFromParent();
 
   std::map<va_t, llvm::Function *> JumpCallbacks;
@@ -717,6 +735,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       }
     };
     Volatilize(*Block);
+    if (const auto Choice = Dynamic.find(Block); Choice != Dynamic.end()) {
+      std::map<int32_t, llvm::BasicBlock *> Unwinds;
+      for (int32_t Level : Choice->second)
+        if (Level >= 0)
+          Unwinds.emplace(Level, Regions[Level].Unwind);
+      x86_registration::emitDynamicSEHScope(
+          *Block, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
+          SourceBlock, Choice->second, Unwinds, *TryBegin, *TryEnd);
+      continue;
+    }
     if (State->second < 0) {
       llvm::IRBuilder<> B(&*Block->getFirstInsertionPt());
       med_llvm_eh::emitWindowsEHProvenanceAnchor(
