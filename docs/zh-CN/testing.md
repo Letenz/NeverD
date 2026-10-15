@@ -1939,3 +1939,5 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 `KernelRegistryTests.cpp` 覆盖独立打开、类型引用、复制句柄、进程作用域、通用权限、删除身份、短/奇数字节名称缓冲区、输出别名顺序及失败/容量边界。`DriverRegistryObjectTests.cpp` 在可用后端、两种执行契约和两个加载地址下，以协作调度及17条指令调度执行原创 `fixtures/driver_registry_objects.c`；故意泄漏指针验证卸载拒绝。原生验收要求全部四种契约/地址组合。
 
 `KernelDeviceStackTests.cpp` 检查当前邻居、借用与持有结果、输入或邻居的删除状态、最后引用退休、无效或损坏输入，以及在增加引用前拒绝过高 IRQL。原创 `fixtures/driver_device_queries.c` 通过 `DriverDeviceQueryTests.cpp` 在可用后端、两种契约及两个装载地址上执行，覆盖协作调度和 17 条指令抢占调度。测试验证 detach/delete 后的存储保留，并用故意泄漏的引用验证卸载拒绝；原生验收要求四种契约/地址组合。
+
+KernelFileObjectTests 覆盖 CREATE 期间引用、类型不匹配、编号复用、挂起 CLOSE、设备删除、创建失败和高 IRQL 最后释放拒绝。原创 driver_file_objects.c 与 DriverFileObjectTests 在可用后端、两种执行契约和基址、协作式及 17 指令调度下验证同步与挂起关闭、创建失败及故意泄漏。嵌套关闭检查实际线程、进程和 PreviousMode。原生验收要求全部四种契约及基址组合；文件句柄和文件系统操作仍需单独覆盖。

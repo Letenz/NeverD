@@ -1978,3 +1978,5 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 `KernelRegistryTests.cpp` は独立オープン、型付き参照、複製ハンドル、プロセス範囲、汎用権限、削除済み識別子、短い/奇数長バッファ、出力エイリアス、失敗・容量境界を検証します。`DriverRegistryObjectTests.cpp` は独自の `fixtures/driver_registry_objects.c` を利用可能なバックエンド、両契約、両基底で、協調実行および17命令スケジューリングで実行します。意図的な参照リークでアンロード拒否を検証し、ネイティブ受入れには4組合せすべてが必要です。
 
 `KernelDeviceStackTests.cpp` は現在の隣接関係、借用と保持、入力または隣接デバイスの削除、最後の参照の解放、不正・破損入力、参照追加前の IRQL 拒否を検証します。独自の `fixtures/driver_device_queries.c` を `DriverDeviceQueryTests.cpp` で実行し、利用可能なバックエンド、両契約、両ロードアドレス、協調および 17 命令のプリエンプティブ実行を網羅します。detach/delete 後の領域保持と意図的な参照リークによるアンロード拒否を確認し、ネイティブ受け入れには 4 種の契約/アドレス結果が必要です。
+
+KernelFileObjectTests は CREATE 中の参照、型不一致、番号再利用、保留 CLOSE、削除、CREATE 失敗、高 IRQL の最終解放拒否を確認します。独自の driver_file_objects.c と DriverFileObjectTests は利用可能なバックエンド、両契約、両基底、協調実行と 17 命令スケジューリングで同期・保留 CLOSE、作成失敗、意図的なリークを検証します。入れ子の CLOSE は実際のスレッド、プロセス、PreviousMode を確認します。ネイティブ検証では契約と基底の四組を必須とし、ハンドルとファイルシステムは別途検証が必要です。

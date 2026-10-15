@@ -165,10 +165,12 @@ void KernelModel::configureFrameworkDeviceHost() {
       return frameworkDeviceError(
           "framework deletion requires its own live WDM device");
     const uint64_t PDO = Object->second.PnpDevice;
-    if (std::any_of(Files.begin(), Files.end(), [&](const auto &File) {
-          return File.second.Address && (File.second.Device == Device ||
-                                         (PDO && File.second.PnpDevice == PDO));
-        }))
+    if (std::any_of(FileObjects.begin(), FileObjects.end(),
+                    [&](const auto &File) {
+                      return File.second.Address &&
+                             (File.second.Device == Device ||
+                              (PDO && File.second.PnpDevice == PDO));
+                    }))
       return frameworkDeviceError(
           "framework device deletion with live files is outside this profile");
     if (std::any_of(WorkItems.begin(), WorkItems.end(),

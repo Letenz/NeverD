@@ -1924,3 +1924,5 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 `KernelRegistryTests.cpp` 涵蓋獨立開啟、型別參照、複製控制代碼、行程範圍、通用權限、刪除身分、短/奇數位元組名稱緩衝區、輸出別名順序及失敗/容量邊界。`DriverRegistryObjectTests.cpp` 在可用後端、兩種執行契約及兩個載入位址下，以協作排程及17條指令排程執行原創 `fixtures/driver_registry_objects.c`；刻意洩漏指標驗證解除載入拒絕。原生驗收要求全部四種契約/位址組合。
 
 `KernelDeviceStackTests.cpp` 檢查目前鄰居、借用與持有結果、輸入或鄰居的刪除狀態、最後參考退役、無效或損壞輸入，以及在增加參考前拒絕過高 IRQL。原創 `fixtures/driver_device_queries.c` 透過 `DriverDeviceQueryTests.cpp` 在可用後端、兩種契約及兩個載入位址上執行，涵蓋協作排程和 17 條指令搶占排程。測試驗證 detach/delete 後的儲存保留，並以刻意洩漏的參考驗證卸載拒絕；原生驗收要求四種契約/位址組合。
+
+KernelFileObjectTests 涵蓋 CREATE 期間參考、型別不符、編號重用、暫止 CLOSE、裝置刪除、建立失敗及高 IRQL 最後釋放拒絕。原創 driver_file_objects.c 與 DriverFileObjectTests 在可用後端、兩種執行契約與基址、協作式及 17 指令排程下驗證同步與暫止關閉、建立失敗及刻意洩漏。巢狀關閉檢查實際執行緒、行程與 PreviousMode。原生驗收要求全部四種契約及基址組合；檔案控制代碼與檔案系統操作仍需另外涵蓋。

@@ -107,7 +107,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 啟用的控制流程防護（CFG）會驗證 PE 旗標、指標槽與已排序的可執行目標表。檢查與分派輔助函式僅允許已宣告的映像進入點或已登記的 API 跳板，保留 Win64 呼叫狀態，並拒絕未宣告的目標。只有插樁而未啟用 CFG 時，保留原始客體後援指標。啟用的 XFG、匯出抑制和其他未建模的防護策略仍遭拒絕；位址位於可執行記憶體不代表它是合法目標。
 
-WDM 裝置堆疊可以包含同一客體驅動程式擁有的多個裝置物件。`IoAttachDeviceToDeviceStack` 將獨立來源裝置附加到目標的目前堆疊頂端，傳回原頂端，並設定 `StackSize` 和 `AlignmentRequirement`；它不修改驅動程式的 `NextDevice` 串列，也不複製緩衝旗標。`IoDetachDevice` 接收儲存的下層裝置，要求 `PASSIVE_LEVEL`；附加允許 IRQL 不高於 `DISPATCH_LEVEL`。開啟具名下層裝置時，請求派送至目前頂端，而 `FILE_OBJECT.DeviceObject` 和報告保留具名裝置身分。READ/WRITE 使用所選頂端的緩衝旗標。儲存的請求路徑在解除附加、刪除後仍保留各層裝置，直到派送傳回；內部參考不增加表示開啟控制代碼數的 `ReferenceCount`。
+WDM 裝置堆疊可以包含同一客體驅動程式擁有的多個裝置物件。`IoAttachDeviceToDeviceStack` 將獨立來源裝置附加到目標的目前堆疊頂端，傳回原頂端，並設定 `StackSize` 和 `AlignmentRequirement`；它不修改驅動程式的 `NextDevice` 串列，也不複製緩衝旗標。`IoDetachDevice` 接收儲存的下層裝置，要求 `PASSIVE_LEVEL`；附加允許 IRQL 不高於 `DISPATCH_LEVEL`。開啟具名下層裝置時，請求派送至目前頂端，而 `FILE_OBJECT.DeviceObject` 和報告保留具名裝置身分。READ/WRITE 使用所選頂端的緩衝旗標。儲存的請求路徑在解除附加、刪除後仍保留各層裝置，直到派送傳回；內部參考不增加`DEVICE_OBJECT.ReferenceCount`。
 
 對於已建模的裝置堆疊，`IoGetAttachedDevice` 借用目前頂層裝置，不增加參考；`IoGetAttachedDeviceReference` 和 `IoGetDeviceAttachmentBaseRef` 分別傳回帶指標參考的頂層和基底裝置。`IoGetLowerDeviceObject` 參考下一層裝置；沒有下層裝置或輸入裝置等待刪除時傳回空值，僅下層裝置等待刪除不會阻止傳回。每個帶參考的結果都須透過 `ObDereferenceObject` 釋放。參考在 detach/delete 後保留儲存空間，不改變 `DEVICE_OBJECT.ReferenceCount`。四個查詢都會驗證所屬拓撲，並要求 IRQL 不高於 `DISPATCH_LEVEL`。
 
@@ -683,3 +683,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 ## 有界核心呼叫者內容擷取
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 共用匯入與動態實作，要求 IRQL <= DISPATCH_LEVEL。記錄須為 16 位元組對齊、完整可讀寫的 1232 位元組核心 RAM。只寫入 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，保留其餘位元組及 x87 資料/指標、MXCSR mask。ContextFlags=`0x10000f`，呼叫者 RSP=入口 RSP+8，RIP 來自實際返回槽；入口 RSP-8 寫入 8 位元組旗標，RAX 為零擴展 EFLAGS，算術旗標依 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 邏輯 SS，不代表主機或原始後端值。完整記錄、返回槽與暫存槽須通過普通核心 RAM、有效物件、權限與唯一實體映射檢查，記錄不可重疊返回/暫存範圍；入口 RSP 模 16 為 8。擷取或驗證失敗不改 CPU/RAM，legacy 明確拒絕。此有界模型不代表所有 Windows 實作；即使覆寫擷取內容仍保留環境相依性，不授予 UNPACK 還原或符號前提。
+
+檔案物件以位址維持唯一身分，使用共用指標參考管理，包含 CREATE 期間取得的參考。舊物件仍被保留時可重用情境檔案編號。CLEANUP 關閉情境控制代碼；CLOSE 釋放剩餘的情境保留。若驅動程式仍持有指標，CLOSE 結果的 IRP 為零且尚未完成，直到最後一次釋放在 PASSIVE_LEVEL 派送實際回呼。暫止的 CLOSE 會暫停釋放它的執行緒。CREATE 失敗時，帶參考的物件保留儲存空間但清除裝置關聯，不傳送 CLOSE。每個關聯檔案物件在最終銷毀前保留裝置，並計入 DEVICE_OBJECT.ReferenceCount。巢狀回呼繼承呼叫端的執行緒、行程及 PreviousMode。檔案控制代碼建立及複製、檔案系統名稱查詢與宣告式檔案系統提供者仍未實作。

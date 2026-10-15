@@ -684,7 +684,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_objects driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -1366,6 +1366,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverObjectTests.cpp
   DriverRegistryObjectTests.cpp
   DriverDeviceQueryTests.cpp
+  DriverFileObjectTests.cpp
   DriverNamespaceTests.cpp
   DriverDataExportTests.cpp
   NO_PRETTY_VALUES
@@ -1485,6 +1486,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverScenarioTests.cpp
   KernelModelTests.cpp
   KernelObjectTests.cpp
+  KernelFileObjectTests.cpp
   KernelNamespaceTests.cpp
   KernelDataExportTests.cpp
   KernelLookasideTests.cpp

@@ -213,6 +213,13 @@ llvm::Error KernelModel::releaseWaitReferences(const Wait &Pending) {
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::FileClose) {
+    if (InternalFileCloses.contains(Pending.Object))
+      return std::optional<uint32_t>{};
+    if (!FinalizedRequests.contains(Pending.Object))
+      return waitError("file CLOSE wait lost its retained request");
+    return std::optional<uint32_t>{windows::StatusSuccess};
+  }
   if (Pending.Registration) {
     const auto Registration = WaitRegistrations.find(Pending.Registration);
     if (Registration == WaitRegistrations.end() ||

@@ -1654,3 +1654,5 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 `KernelDataExports.def` 統一定義核心資料清單及布局，位址在 PE 轉送器範圍之外。`KernelExportRegistry` 區分資料與函式入口，資料不占用 thunk 槽。`KernelModelDataExports.cpp` 透過物件管理初始化身分，並在入口執行前保護資料頁。`KernelModelMemory` 記錄模型成功讀取，CPU 讀取掛鉤記錄客體指令。預檢及診斷快照不產生副作用。偵錯器宣告和已讀取資料保留還原相依性；保留的資料指標仍為借用狀態。
 
 `KernelModelNamespace.cpp` 透過統一參照及控制代碼擁有者解析名稱。裝置紀錄擁有裝置名稱；物件紀錄擁有不可變的驅動/目錄/連結名稱。連結保存捕獲目標位元組，區分永久狀態與名稱綁定。最後控制代碼關閉移除臨時名稱，指標參照決定回收。裝置 I/O 保留控制清單移除，物件參照控制儲存生命週期；後端不另設計數。
+
+KernelModel 分離情境編號與依位址索引的檔案物件。KernelModelObjects 管理呼叫端指標計數；KernelModelFileObjects 管理延後的 CLOSE 派送與等待。KernelModelIO 僅在請求完成且派送及續調返回後釋放物件。裝置與 PnP 保留檢查物件本身，包括已無情境編號的物件。DriverSession 讓同步巢狀回呼繼承實際父上下文；獨立排程回呼保留自己的上下文。

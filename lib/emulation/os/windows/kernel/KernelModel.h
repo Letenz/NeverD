@@ -208,7 +208,8 @@ public:
       FrameworkInterruptLock,
       FrameworkWaitLock,
       FrameworkCallback,
-      FrameworkCallbackLock
+      FrameworkCallbackLock,
+      FileClose
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -265,7 +266,7 @@ public:
       CancelLock.CallbackExecution = Identity;
     }
   }
-  /// A synchronous exception callback retains its parent's user-memory
+  /// A synchronous nested callback retains its parent's process and memory
   /// authority while keeping its own execution and resource ownership.
   llvm::Error inheritExecutionContext(uint64_t Child, uint64_t Parent);
   llvm::Error setUserRequestContext(
@@ -1198,7 +1199,12 @@ private:
     bool Named = true;
   };
   std::map<uint64_t, SymbolicLinkObject> SymbolicLinks;
-  enum class FileState { Closed, Opening, Open, Cleaned };
+  enum class FileState { Failed, Opening, Open, Cleaned, Closing };
+  struct DeferredFileClose {
+    DriverRequest Input;
+    size_t ResultIndex;
+    std::optional<size_t> SourceIndex;
+  };
   struct OpenFile {
     uint64_t Address = 0;
     uint64_t Device = 0;
@@ -1206,8 +1212,22 @@ private:
     uint64_t PnpDevice = 0;
     bool Asynchronous = false;
     FileState State = FileState::Opening;
+    std::optional<DeferredFileClose> DeferredClose;
   };
-  std::map<uint32_t, OpenFile> Files;
+  // Scenario identifiers name an open instance, not its object-manager body.
+  // A new CREATE may reuse an identifier while an older body remains held.
+  std::map<uint32_t, uint64_t> Files;
+  std::map<uint64_t, OpenFile> FileObjects;
+  llvm::Expected<Invocation> beginFileRequest(const DriverRequest &Input,
+                                              std::optional<size_t> SourceIndex,
+                                              size_t Index,
+                                              uint64_t RetainedFile = 0);
+  llvm::Error retireFileIfUnreferenced(uint64_t Object);
+  llvm::Error tryFinalizeFileClose(uint64_t IRP);
+  llvm::Error waitForFileClose(uint64_t IRP);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileCloseDispatch(uint64_t Token, uint64_t ResultValue);
+  std::set<uint64_t> InternalFileCloses;
   bool Unloading = false;
   bool Unloaded = false;
   struct RequestedPower {
@@ -1333,7 +1353,8 @@ private:
     Completion,
     PowerDispatch,
     PowerCompletion,
-    Cancel
+    Cancel,
+    FileClose
   };
   struct IRPCall {
     IRPCallKind Kind;
@@ -1342,6 +1363,7 @@ private:
     bool AwaitingCallback = false;
     uint64_t ReturnValue = 0;
     std::optional<uint64_t> ProviderReceiptIRP;
+    std::optional<uint32_t> FrameworkDispatchStatus;
   };
   struct ProviderReceipt {
     uint64_t Device = 0;
