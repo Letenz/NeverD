@@ -505,6 +505,10 @@ bool supportedWideOperation(const LowOp &Op,
   case NdOp::INT_ZEXT:
   case NdOp::INT_SEXT:
     return Output && Op.NumInputs == 1 && validValue(Op.Inputs[0]);
+  case NdOp::CONCAT:
+    return Output && Op.NumInputs == 2 && Op.Inputs[0].Size == 8 &&
+           Op.Inputs[1].Size == 8 && validValue(Op.Inputs[0]) &&
+           validValue(Op.Inputs[1]);
   case NdOp::INT_AND:
   case NdOp::INT_OR:
   case NdOp::INT_XOR:
@@ -546,6 +550,9 @@ bool supportedWideOperation(const LowOp &Op,
 /// division model does not certify architectural division faults, and naming an
 /// opaque result is not permission to publish a replacement of its instruction.
 bool supported(const LowOp &Op, const SpecializationOptions &Options) {
+  if (Op.Opcode == NdOp::ATOMIC_CMPXCHG)
+    return Options.ExplicitMachineState && Options.NormalNonfaultingExecution &&
+           supportsCmpxchgPreservation(Op);
   if (Op.NumInputs > 6 || Op.MemoryOrdering != NdMemoryOrdering::None)
     return false;
   if (Op.Output.Size > 8 ||
@@ -2332,6 +2339,12 @@ bool Specializer::evaluate(int Id) {
                       UsesReservedTemporary))
         return fail(SpecializationStatus::InvalidInput,
                     "native temporary overlaps the reserved dispatch range");
+    const NdVar TimestampSample = NdVar::tmp(FrameValueTemp, 8);
+    const auto Timestamp =
+        Options.ExplicitMachineState && Options.NormalNonfaultingExecution &&
+                Options.ByteOrder == llvm::endianness::little
+            ? x64::lowerRuntimeTimestampRead(Instruction, TimestampSample)
+            : std::nullopt;
     std::vector<LowOp> Operations = Instruction.Ops;
     std::optional<SpecializationExternalExit> ExternalExit;
     if (Instruction.TerminalImport) {
@@ -2458,7 +2471,8 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::BudgetExceeded,
                     "specialization symbolic-node budget exhausted");
       LowOp Original = Operations[I];
-      if (!supported(Original, Options))
+      const bool TimestampOperation = Timestamp && I == 0;
+      if (!TimestampOperation && !supported(Original, Options))
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
                         ndOpName(Original.Opcode));
@@ -2592,16 +2606,18 @@ bool Specializer::evaluate(int Id) {
       const bool EnvironmentRead =
           SegmentedRead ||
           PriorityOperation == detail::X64TaskPriorityOperation::Read;
+      const bool CompareExchange = Original.Opcode == NdOp::ATOMIC_CMPXCHG;
       // An offset's provenance says nothing about the value read through an
       // arbitrary base. Keep that value unsafe through copies and frame spills.
-      bool OutputUnsafe = EnvironmentRead;
+      bool OutputUnsafe = EnvironmentRead || CompareExchange;
       bool ExactFrameAddress = false;
       std::optional<SymStorePreservation> StorePreservation;
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
       if (FrameRoot && !SegmentedRead &&
-          (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE)) {
+          (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE ||
+           CompareExchange)) {
         const auto Memory = lowMemoryOperands(Original);
         const auto Displacement = frameOffset(
             Ctx, Exec.pathPredicate(), Exec.operandValue(*Memory.Address),
@@ -2615,7 +2631,18 @@ bool Specializer::evaluate(int Id) {
           Evaluated.Inputs[Memory.Address - Original.Inputs] =
               NdVar::tmp(FrameAddressTemp, 8);
         }
-        if (Original.Opcode == NdOp::STORE) {
+        if (Original.Opcode == NdOp::LOAD || CompareExchange) {
+          // CMPXCHG returns the pre-write memory value. Capture its origin
+          // before the conditional write changes frame-byte metadata.
+          OutputUnsafe = true;
+          if (Displacement) {
+            OutputUnsafe = false;
+            for (unsigned B = 0; B < Memory.AccessSize; ++B)
+              OutputUnsafe |=
+                  !Origins.ExternalFrameBytes.count(*Displacement + B);
+          }
+        }
+        if (Original.Opcode == NdOp::STORE || CompareExchange) {
           if (!Displacement && Options.ExternalStoresDisjointEntryFrame &&
               !unsafeOrigin(*Memory.Address, Origins)) {
             const auto &Bounds = *Options.EntryFrameBounds;
@@ -2700,7 +2727,7 @@ bool Specializer::evaluate(int Id) {
               else
                 ++It;
             }
-            if (Memory.AccessSize == 8) {
+            if (Memory.AccessSize == 8 && !CompareExchange) {
               if (const auto Value = frameOffset(
                       Ctx, Exec.pathPredicate(),
                       Exec.operandValue(*Memory.StoredValue), FrameRoot)) {
@@ -2777,7 +2804,12 @@ bool Specializer::evaluate(int Id) {
                           "nonalias contract");
             }
           }
-          const bool ValueUnsafe = unsafeOrigin(*Memory.StoredValue, Origins);
+          // Desired alone does not describe a conditional write: on failure
+          // the original bytes remain, and Expected controls that choice.
+          const bool ValueUnsafe =
+              unsafeOrigin(*Memory.StoredValue, Origins) ||
+              (CompareExchange &&
+               (OutputUnsafe || unsafeOrigin(*Memory.ExpectedValue, Origins)));
           if (Displacement) {
             for (unsigned B = 0; B < Memory.AccessSize; ++B) {
               const uint64_t Offset = *Displacement + B;
@@ -2803,14 +2835,6 @@ bool Specializer::evaluate(int Id) {
           // An unknown write of external-origin bytes may change known frame
           // values, but cannot turn already-external bytes into root pointers.
           // SymState still invalidates their constant values independently.
-        } else {
-          OutputUnsafe = true;
-          if (Displacement) {
-            OutputUnsafe = false;
-            for (unsigned B = 0; B < Memory.AccessSize; ++B)
-              OutputUnsafe |=
-                  !Origins.ExternalFrameBytes.count(*Displacement + B);
-          }
         }
       }
       if (FrameRoot) {
@@ -2933,7 +2957,29 @@ bool Specializer::evaluate(int Id) {
       // Do not seed certified reads by pretending a guest STORE happened:
       // that would clobber retained frame facts under the correct alias rules.
       StepResult Flow = StepResult::Continue;
-      if (PriorityOperation) {
+      if (TimestampOperation) {
+        State.write(SymSpace::Temporary, TimestampSample.Offset,
+                    State.freshInput("x64_rdtsc", 64));
+        for (const auto &Scalar : Timestamp->Ops) {
+          if (++Result.EvaluatedOperations > Options.MaxOperations)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "timestamp transition operation budget exhausted");
+          if (Exec.step(Scalar) != StepResult::Continue)
+            return fail(SpecializationStatus::Unsupported,
+                        "symbolic timestamp transition was not exact");
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "timestamp transition symbolic-node budget exhausted");
+        }
+        // Only these two outputs are defined by this native occurrence. Their
+        // clock-derived bits grant no external-pointer or frame-alias fact.
+        for (const NdVar &Output : Timestamp->PlaceholderOutputs) {
+          setUnsafeOrigin(Output, true, Origins);
+          for (uint16_t B = 0; B < Output.Size; ++B)
+            DefinedTemporaries.insert(Output.Offset + B);
+        }
+        OutputUnsafe = true;
+      } else if (PriorityOperation) {
         // Scratch is live only for this transition. Keeping the resulting
         // SymRef locally avoids collision with later string/frame scratch.
         const auto PrioritySlot = NdVar::tmp(FrameValueTemp, 8);
@@ -3638,8 +3684,9 @@ bool Specializer::publish() {
       if (Slice.ExternalExit) {
         auto Exit = *Slice.ExternalExit;
         Exit.ResidualAddress = Address;
-        Exit.ResidualOperationDigest = lowUndefinedOperationDigest(
-            llvm::ArrayRef<LowOp>(Block.Ops).slice(Slice.FirstOp, Slice.OpCount));
+        Exit.ResidualOperationDigest =
+            lowUndefinedOperationDigest(llvm::ArrayRef<LowOp>(Block.Ops).slice(
+                Slice.FirstOp, Slice.OpCount));
         Exit.IdentityDigest = externalExitDigest(Exit);
         Result.ExternalExits.push_back(std::move(Exit));
       }
@@ -3780,9 +3827,12 @@ SpecializationResult Specializer::run() {
     return std::move(Result);
   }
   if (!Options.X64TerminalImports.empty() &&
-      (!Options.FrameBaseRegister || Options.FrameBaseRegister->Offset != x64::StackPointer ||
-       Options.FrameBaseRegister->Bytes != 8 || !Options.RequireRestoredFrameAtReturn)) {
-    fail(SpecializationStatus::InvalidInput, "terminal imports require the verified entry RSP root");
+      (!Options.FrameBaseRegister ||
+       Options.FrameBaseRegister->Offset != x64::StackPointer ||
+       Options.FrameBaseRegister->Bytes != 8 ||
+       !Options.RequireRestoredFrameAtReturn)) {
+    fail(SpecializationStatus::InvalidInput,
+         "terminal imports require the verified entry RSP root");
     return std::move(Result);
   }
   // A prepared raw domain already validated the unchanged terminal list.
@@ -3964,8 +4014,9 @@ SpecializationResult Specializer::run() {
 
 } // namespace
 
-llvm::Error validateSpecializationExternalExits(
-    const SpecializationResult &Result, const SpecializationOptions &Options) {
+llvm::Error
+validateSpecializationExternalExits(const SpecializationResult &Result,
+                                    const SpecializationOptions &Options) {
   const auto Invalid = [](const char *Message) {
     return llvm::createStringError(llvm::errc::invalid_argument, "%s", Message);
   };
@@ -3976,7 +4027,8 @@ llvm::Error validateSpecializationExternalExits(
     return Error;
   std::map<va_t, const LowInstructionBoundary *> Origins;
   for (const auto &Origin : Result.Origins)
-    if (!Origins.emplace(Origin.ResidualAddress, &Origin.NativeInstruction).second)
+    if (!Origins.emplace(Origin.ResidualAddress, &Origin.NativeInstruction)
+             .second)
       return Invalid("duplicate residual origin");
   std::map<va_t, const SpecializationExternalExit *> Exits;
   for (const auto &Exit : Result.ExternalExits)
@@ -3991,18 +4043,19 @@ llvm::Error validateSpecializationExternalExits(
       const auto Span = llvm::ArrayRef<LowOp>(Block.Ops).slice(
           Boundary.FirstOp, Boundary.OpCount);
       const auto Found = Exits.find(Boundary.Address);
-      const bool Indirect = llvm::any_of(Span, [](const LowOp &Op) {
-        return Op.Opcode == NdOp::INDIR_BR;
-      });
+      const bool Indirect = llvm::any_of(
+          Span, [](const LowOp &Op) { return Op.Opcode == NdOp::INDIR_BR; });
       if (Found == Exits.end()) {
         if (Indirect)
-          return Invalid("residual indirect transfer lacks an external-exit receipt");
+          return Invalid(
+              "residual indirect transfer lacks an external-exit receipt");
         continue;
       }
       const auto &Exit = *Found->second;
       if (Span.empty() || Span.back().Opcode != NdOp::INDIR_BR ||
           Boundary.FirstOp + Boundary.OpCount != Block.Ops.size() ||
-          !Block.Succs.empty() || Boundary.Control != LowInstructionControl::Branch ||
+          !Block.Succs.empty() ||
+          Boundary.Control != LowInstructionControl::Branch ||
           Boundary.ControlFlags != (LowInstructionControlFlag::Branch |
                                     LowInstructionControlFlag::Indirect) ||
           Boundary.Immediate ||
@@ -4023,19 +4076,22 @@ llvm::Error validateSpecializationExternalExits(
                      Options.X64TerminalImports.end(), Binding) != 1)
         return Invalid("external exit has no unique declared terminal domain");
       auto Expanded = expandNativeStackControl(
-          Exit.Original, NdVar::reg(x64::StackPointer, 8), Exit.ExpansionScratch,
-          NativeReturnExpansion::InternalTransfer);
+          Exit.Original, NdVar::reg(x64::StackPointer, 8),
+          Exit.ExpansionScratch, NativeReturnExpansion::InternalTransfer);
       if (!Expanded)
         return Expanded.takeError();
-      if (Expanded->Receipt.OriginalOperationDigest != Exit.OriginalOperationDigest ||
-          Expanded->Receipt.ExpandedOperationDigest != Exit.ExpandedOperationDigest)
+      if (Expanded->Receipt.OriginalOperationDigest !=
+              Exit.OriginalOperationDigest ||
+          Expanded->Receipt.ExpandedOperationDigest !=
+              Exit.ExpandedOperationDigest)
         return Invalid("external exit has stale physical expansion evidence");
       std::vector<LowOp> NativeSpan(Span.begin(), Span.end());
       for (size_t I = 0; I < NativeSpan.size(); ++I) {
         NativeSpan[I].Addr = Exit.Original.Origin.Address;
         NativeSpan[I].Seq = static_cast<int>(I);
       }
-      if (lowUndefinedOperationDigest(NativeSpan) != Exit.ExpandedOperationDigest)
+      if (lowUndefinedOperationDigest(NativeSpan) !=
+          Exit.ExpandedOperationDigest)
         return Invalid("external exit does not retain its exact physical call");
       Exits.erase(Found);
     }

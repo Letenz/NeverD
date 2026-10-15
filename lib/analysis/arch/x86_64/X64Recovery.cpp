@@ -150,6 +150,76 @@ bool runtimeFlagsIntrinsic(const LowOp &Op) {
   return false;
 }
 
+// Intel SDM Vol.2B, RDTSC: the low/high words go to EAX/EDX and both
+// upper halves clear. The existing multi-output bundle keeps the runtime read;
+// these scalar operations only connect its placeholders during raw analysis.
+std::optional<RuntimeTimestampRead>
+lowerRuntimeTimestampRead(const SpecializationInstruction &I, NdVar Sample) {
+  const auto &B = I.Origin;
+  if (I.NativeBytes.size() != 2 || I.NativeBytes[0] != 0x0f ||
+      I.NativeBytes[1] != 0x31 || B.Size != 2 ||
+      B.Mode != InstructionMode::Default || B.FirstOp != 0 || B.OpCount != 5 ||
+      B.Control != LowInstructionControl::None ||
+      B.ControlFlags != LowInstructionControlFlag::None || B.Immediate ||
+      B.TargetMode != LowInstructionTargetMode::Preserve ||
+      B.Address > InvalidVA - 2 ||
+      I.Fallthrough != SpecializationCursor{B.Address + 2, B.Mode} ||
+      I.IsNativeCall || I.TerminalImport ||
+      I.NativeStackControl != SpecializationNativeStackControl::None ||
+      I.ProfileProjection != InterpreterProfileProjection::None ||
+      I.Ops.size() != 5 ||
+      I.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      I.UndefinedEffects.OpCount != 5 || !I.UndefinedEffects.Effects.empty() ||
+      I.UndefinedEffects.OperationDigest !=
+          lowUndefinedOperationDigest(I.Ops) ||
+      !Sample.isTemp() || Sample.Size != 8 || Sample.Offset > InvalidVA - 7)
+    return std::nullopt;
+  for (size_t N = 0; N < I.Ops.size(); ++N)
+    if (I.Ops[N].Addr != B.Address || I.Ops[N].Seq != static_cast<int>(N) ||
+        I.Ops[N].MemoryOrdering != NdMemoryOrdering::None ||
+        I.Ops[N].MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+  const auto &Read = I.Ops[0];
+  if (Read.Opcode != NdOp::INTRINSIC || Read.NumInputs != 1 ||
+      !Read.Inputs[0].isConst() || Read.Inputs[0].Size != 2 ||
+      Read.Inputs[0].Offset != static_cast<uint64_t>(Intrinsic::Rdtsc) ||
+      Read.Output != NdVar::reg(x86reg::RAX, 8))
+    return std::nullopt;
+  const auto Overlap = [](NdVar A, NdVar C) {
+    return A.Offset <= C.Offset ? C.Offset - A.Offset < A.Size
+                                : A.Offset - C.Offset < C.Size;
+  };
+  const std::array<NdVar, 2> Outputs{I.Ops[1].Inputs[0], I.Ops[2].Inputs[0]};
+  for (unsigned N = 0; N != 2; ++N) {
+    const auto Register = N ? x86reg::RDX : x86reg::RAX;
+    const auto &Copy = I.Ops[1 + N];
+    const auto &Clear = I.Ops[3 + N];
+    const auto Value = Outputs[N];
+    if (Copy.Opcode != NdOp::COPY || Copy.NumInputs != 1 ||
+        Copy.Output != NdVar::reg(Register, 4) || !Value.isTemp() ||
+        Value.Size != 4 || Value.Offset > InvalidVA - 3 ||
+        Overlap(Value, Sample) || Clear.Opcode != NdOp::INT_ZEXT ||
+        Clear.NumInputs != 1 || Clear.Output != NdVar::reg(Register, 8) ||
+        Clear.Inputs[0] != NdVar::reg(Register, 4))
+      return std::nullopt;
+  }
+  if (Overlap(Outputs[0], Outputs[1]))
+    return std::nullopt;
+  RuntimeTimestampRead Result;
+  Result.PlaceholderOutputs = Outputs;
+  for (unsigned N = 0; N != Result.Ops.size(); ++N) {
+    auto &Op = Result.Ops[N];
+    Op.Addr = B.Address;
+    Op.Seq = N;
+    Op.Opcode = N ? NdOp::SUBBYTES : NdOp::COPY;
+    Op.Output = N ? Outputs[N - 1] : Read.Output;
+    Op.addInput(Sample);
+    if (N)
+      Op.addInput(NdVar::scalar(4 * (N - 1), 8));
+  }
+  return Result;
+}
+
 // A retained trap has exact semantics even though its exception-state outputs
 // have no undefined-effect audit. It may only be collected, never executed in
 // this nonfaulting proof. Do not turn its Missing sidecar into Complete.
@@ -212,9 +282,9 @@ bool isCetDisabledProjection(const SpecializationInstruction &Insn) {
               Op.Inputs[0].Offset !=
                   static_cast<uint64_t>(Intrinsic::CetIncSsp)))
     return false;
-  return x86cet::canonicalEncoding(
-      Insn.NativeBytes,
-      Read ? x86cet::Operation::Read : x86cet::Operation::Increment);
+  return x86cet::canonicalEncoding(Insn.NativeBytes,
+                                   Read ? x86cet::Operation::Read
+                                        : x86cet::Operation::Increment);
 }
 
 bool bindCetDisabledPreservedState(SpecializationInstruction &Insn) {

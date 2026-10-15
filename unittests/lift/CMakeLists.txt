@@ -6,6 +6,7 @@ add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   eh/RegistrationConditionalFrameTests.cpp
   eh/RegistrationJumpRuntimeTests.cpp
   eh/RegistrationJumpCaptureTests.cpp
+  eh/RegistrationCallbackImageTests.cpp
   LINK_COMPONENTS Pipeline)
 target_include_directories(NeverDSEHRuntimeMemoryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/pipeline)
@@ -1137,6 +1138,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 add_neverd_unittest(NeverDJumpTableTests
   core/AffineFrameStateTests.cpp
   core/ResolverGraphCacheTests.cpp
+  core/ResolverDefinitionCacheTests.cpp
   core/ResolverLaneViewTests.cpp
   core/JumpTableCountLaneTests.cpp
   core/IndirectTailFrameTests.cpp
@@ -1486,11 +1488,13 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHReturnTests.cpp
   eh/RegistrationSEHExceptionNativeTests.cpp
   eh/RegistrationSEHJumpNativeTests.cpp
+  eh/RegistrationSEHJumpABITests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
   eh/RegistrationSEHDynamicScopeTests.cpp
   eh/RegistrationSEHFinallyResultTests.cpp
+  eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
   eh/RegistrationSEHNullAccessTests.cpp

@@ -92,6 +92,11 @@ struct SymCallEffect {
   std::vector<SymRef> Constraints;
 };
 
+/// Shape accepted for a single CMPXCHG preservation commit: default memory,
+/// a 64-bit address, scalar 1/2/4/8-byte values and sequential consistency.
+/// This checks neither access validity nor the caller's separation contract.
+bool supportsCmpxchgPreservation(const LowOp &Op);
+
 class SymExec {
 public:
   SymExec(SymContext &Ctx, SymState &State) : Ctx(Ctx), State(State) {}
@@ -106,10 +111,11 @@ public:
   /// fail-closed default used by \c step(const LowOp&).
   StepResult step(const LowOp &Op, const SymCallEffect *CallEffect);
 
-  /// A preservation contract applies to this STORE occurrence only. Other
-  /// opcodes execute normally and leave its status Invalid. Malformed STORE
-  /// contracts and budget failures are unmodelled. The descriptor records the
-  /// exact preservation status and charged work.
+  /// A preservation contract applies to this STORE or supported CMPXCHG write
+  /// occurrence only. Other opcodes execute normally and leave its status
+  /// Invalid. Invalid CMPXCHG shapes, malformed contracts and budget failures
+  /// are unmodelled; a refused CMPXCHG does not publish its old value. The
+  /// descriptor records the exact preservation status and charged work.
   StepResult step(const LowOp &Op, const SymCallEffect *CallEffect,
                   SymStorePreservation *Preservation);
 

@@ -78,6 +78,7 @@
           "neverd_lift_module",
           "neverd_lift_to_obj",
           "neverd_load_options_save",
+          "neverd_name_check",
           "neverd_operand_format_set",
           "neverd_operand_formats_json",
           "neverd_operand_formats_load",

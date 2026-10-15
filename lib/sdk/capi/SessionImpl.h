@@ -63,6 +63,8 @@
 namespace neverd {
 namespace sdk {
 
+struct LLVMFunctionView;
+
 struct FuncInfo {
   va_t Entry;
   uint64_t Size;
@@ -124,6 +126,9 @@ struct Session {
     SourceViewOptions Options;
     std::unique_ptr<llvm::Module> Module;
     std::shared_ptr<LLVMSourceMap> Sources;
+    /// The LLVM IR view of an inspection module's function, made when first
+    /// shown (functionLlvmView).  Its comments read the user's names.
+    mutable std::shared_ptr<const LLVMFunctionView> View;
   };
   /// The modules of the functions shown last, the newest first.
   std::list<FunctionLlvmModule> FunctionLlvmModules;
@@ -551,11 +556,15 @@ struct Session {
   /// are modified, and a failed/withdrawn match cannot leave a stale label.
   void refreshFunctionNames();
 
-  /// Drop the kept C of every function.  A change to anything the C emitters
-  /// read beyond the pipeline, such as the user's names
-  /// (CEmitterOptions::UserNames), must call this, or a view keeps showing
-  /// what was emitted before it.
-  void forgetEmittedSources() { FunctionSources.clear(); }
+  /// Drop the kept C of every function and the kept LLVM IR views.  A change
+  /// to anything the C emitters or the views' comments read beyond the
+  /// pipeline, such as the user's names (CEmitterOptions::UserNames), must
+  /// call this, or a view keeps showing what was emitted before it.
+  void forgetEmittedSources() {
+    FunctionSources.clear();
+    for (FunctionLlvmModule &Kept : FunctionLlvmModules)
+      Kept.View.reset();
+  }
 
   /// The widths of the reads and writes the code of every function states at
   /// each address (collectDataAccessWidths), which name unnamed image data in

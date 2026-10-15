@@ -2,6 +2,7 @@
 #include "ActionRegistry.h"
 #include "Address.h"
 #include "AddressSpace.h"
+#include "DialogReturnKey.h"
 #include "Docking.h"
 #include "Expression.h"
 #include "Icons.h"
@@ -34,6 +35,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPainter>
@@ -1192,6 +1194,39 @@ private slots:
     QTRY_VERIFY(button("closeButton")->isVisible());
   }
 
+  void titleFitLeavesAMessageBoxItsWrapping() {
+    // A rich text wraps from the start, as About NeverD's does.  Fitting the
+    // title measured it wrapped, so the box then showed it unwrapped and cut
+    // off at the title's width, with no way to resize it.
+    const QString text = QStringLiteral(
+        "<h3>NeverD 1.0</h3><p>Interactive disassembler and decompiler "
+        "workbench.</p><p>Licensed under the GNU Affero General Public "
+        "License v3. Icons are original NeverD artwork.</p>");
+    QMessageBox plain(QMessageBox::Information, QStringLiteral("About"), text);
+    QMessageBox fitted(QMessageBox::Information, QStringLiteral("About"), text);
+    WindowFrame::fitTitle(fitted, 240);
+    plain.show();
+    fitted.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&fitted));
+    QCOMPARE(fitted.size(), plain.size());
+    const auto *label =
+        fitted.findChild<QLabel *>(QStringLiteral("qt_msgbox_label"));
+    QVERIFY(label && label->wordWrap());
+    QVERIFY(label->heightForWidth(label->width()) <= label->height());
+  }
+
+  void titleFitWidensAShortMessage() {
+    // A text narrower than the title still widens to show the title whole.
+    for (const QString &text :
+         {QStringLiteral("Done."), QStringLiteral("<b>Done.</b>")}) {
+      QMessageBox box(QMessageBox::Information, QStringLiteral("Saved"), text);
+      WindowFrame::fitTitle(box, 420);
+      box.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&box));
+      QVERIFY2(box.width() >= 420, qPrintable(text));
+    }
+  }
+
   void nativeFrameKeepsTheTitleBarOnScreen() {
     // Windows and macOS keep the system frame without its caption, so the
     // window system decides where a maximized or full-screen window's client
@@ -1326,6 +1361,50 @@ private slots:
     QCOMPARE(opened, QStringList{QStringLiteral("second")});
     QTest::keyClick(&list, Qt::Key_Enter, Qt::KeypadModifier);
     QCOMPARE(opened.size(), 2);
+  }
+
+  void returnInADialogPressesItsDefaultButton() {
+    // Qt's GNOME platform theme makes Return press the focused check box,
+    // as this one does: after Alt+O checked "Does not return", Return
+    // cleared it and the dialog stayed open.
+    class ReturnPressedCheckBox final : public QCheckBox {
+    public:
+      using QCheckBox::QCheckBox;
+
+    protected:
+      void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+          toggle();
+        else
+          QCheckBox::keyPressEvent(event);
+      }
+    };
+    const std::unique_ptr<QObject> filter(acceptDialogsOnReturn(*qApp));
+    QDialog dialog;
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *box =
+        new ReturnPressedCheckBox(QStringLiteral("D&oes not return"), &dialog);
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(box);
+    layout->addWidget(buttons);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    box->setFocus();
+    QTest::keyClick(box, Qt::Key_Space);
+    QVERIFY(box->isChecked());
+    QTest::keyClick(box, Qt::Key_Return);
+    QVERIFY(box->isChecked());
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(!dialog.isVisible());
+    // Outside a dialog the button keeps the key.
+    ReturnPressedCheckBox alone(QStringLiteral("Alone"));
+    alone.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&alone));
+    QTest::keyClick(&alone, Qt::Key_Return);
+    QVERIFY(alone.isChecked());
   }
 
   void themeDrawsFlatControls() {

@@ -153,8 +153,21 @@ bool hasRegistrationCallFrameABI(
              Function.ExceptionMetadata->Registration->Scopes)
           if (Scope.IsFinally && Scope.HandlerVA == Op.Inputs[0].Offset)
             for (const auto &State : Function.RegistrationStates->Blocks)
-              if (State.BlockId == Block.Id && State.CallbackOnly)
-                return false;
+              if (State.BlockId == Block.Id && State.CallbackOnly) {
+                if (!States->Complete || !States->CallbackStatesComplete ||
+                    !States->RegistrationLifetimeComplete ||
+                    !States->SEHInvocationExitsComplete ||
+                    !chargeCalleeWork(Work,
+                                      States->SEHInvocationExits.size()) ||
+                    llvm::none_of(
+                        States->SEHInvocationExits, [&](const auto &Exit) {
+                          return Exit.Exit == RegistrationSEHInvocationExit::
+                                                  Kind::NearReturn &&
+                                 Exit.CallVA == Op.Addr &&
+                                 Exit.EntryVA == Scope.HandlerVA;
+                        }))
+                  return false;
+              }
       if (UseReachability) {
         const auto *Call = States->callFrameEffect(Op.Addr, Op.Seq);
         const auto *Contract =

@@ -153,6 +153,13 @@ struct DriverKernelVaShadowQuery {
   std::string Evidence;
 };
 
+/// Explicit debugger data, never inferred from the host. Omitting the whole
+/// declaration leaves KdDebuggerEnabled/KdDebuggerNotPresent inaccessible.
+struct DriverDebuggerState {
+  bool Enabled = false;
+  bool NotPresent = true;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
@@ -186,6 +193,9 @@ struct DriverOptions {
   /// An explicitly populated registry namespace. Omission leaves registry
   /// availability unspecified; an empty inventory models an empty namespace.
   std::optional<std::vector<DriverRegistryKey>> Registry;
+  /// Registry system time at virtual time zero, in Windows 100 ns units.
+  /// Mutations use this epoch plus the shared scheduler's elapsed time.
+  std::optional<uint64_t> RegistrySystemTime100ns;
   std::vector<DriverPnpDevice> PnpDevices;
   /// Omission retains cooperative scheduling and idle-only clock advancement.
   /// An explicit policy permits instruction-boundary thread preemption below
@@ -204,6 +214,7 @@ struct DriverOptions {
   /// Optional diagnostic query; even unused declarations retain an
   /// unreconstructed environment dependency. Requires checked-x64 execution.
   std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  std::optional<DriverDebuggerState> DebuggerState;
 };
 
 enum class DriverStopReason {

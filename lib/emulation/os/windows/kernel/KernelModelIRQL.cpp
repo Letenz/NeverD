@@ -56,6 +56,14 @@ llvm::Expected<uint64_t> KernelModel::lowerIRQL(uint8_t RequestedIRQL) {
   if (auto Required = Interrupts.manualHoldIRQL(CurrentExecution);
       Required && RequestedIRQL < *Required)
     return irqlError("cannot lower IRQL while holding an interrupt spin lock");
+  const auto State = ApcStates.find(CurrentThreadKey);
+  if (auto E = validateFastMutexContext(
+          RequestedIRQL,
+          State == ApcStates.end() ? 0 : State->second.CriticalDepth,
+          State == ApcStates.end() ? 0 : State->second.GuardedDepth))
+    return E;
+  if (auto E = validateExecutiveResourceRestoreIRQL(RequestedIRQL))
+    return E;
   RaisedIRQLs.erase(std::next(Raise).base());
   CurrentIRQL = RequestedIRQL;
   return 0;

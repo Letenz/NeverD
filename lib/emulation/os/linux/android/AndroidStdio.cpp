@@ -30,7 +30,7 @@ Bionic::streamService(linux_model::ServiceKind Kind, uint32_t FD, uint64_t A1,
   if (auto E = access(0, 0, 0))
     return std::move(E);
   ProcessServiceEvent Event{0, 0, {FD, A1, A2, 0, 0, 0}, std::nullopt};
-  auto R = Kernel.handle(Kind, Event);
+  auto R = kernelService(Kind, Event);
   if (!R)
     return R.takeError();
   if (*R && failed(**R))
@@ -157,7 +157,7 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
     }
   } else {
     ProcessServiceEvent Event{0, 0, {A[0], Flags, 0666, 0, 0, 0}, std::nullopt};
-    auto Opened = Kernel.handle(linux_model::ServiceKind::Open, Event);
+    auto Opened = kernelService(linux_model::ServiceKind::Open, Event);
     if (!Opened)
       return Opened.takeError();
     if (!*Opened)
@@ -181,7 +181,7 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
   }
   ProcessServiceEvent Protect{
       0, 0, {*Token, PageSize, 0, 0, 0, 0}, std::nullopt};
-  auto Protected = Kernel.handle(linux_model::ServiceKind::Mprotect, Protect);
+  auto Protected = kernelService(linux_model::ServiceKind::Mprotect, Protect);
   if (!Protected)
     return Protected.takeError();
   if (!*Protected || **Protected)

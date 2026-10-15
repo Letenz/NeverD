@@ -183,7 +183,7 @@ hiding a pane stops its requests; showing it again resumes its own function.
 
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
-right-click **Symbolically simplify this function** to enable it. C through LLVM
+right-click **Symbolic simplification** to enable it. C through LLVM
 defaults to control-flow recovery and O2, with basic scalar cleanup, O0, O1, O3,
 and a custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE available
 in the same menu. Symbolic simplification is a separate choice for every LLVM
@@ -206,6 +206,25 @@ Machine control-flow, ABI and exception recovery still run before emission;
 the inspection and optimized source views keep separate cached modules.
 LLVM views construct HighIR only if a later source view needs it, while keeping
 shared ABI and return recovery in the initial preparation.
+
+The LLVM IR view shows the function in a module of its own, as `llvm-extract`
+leaves it, so the text reads and assembles alone. The target, types, globals
+and functions it refers to are declared before it and fold into one line; the
+attribute groups and metadata it uses follow it and fold into another. Comments
+give the image behind what the IR names: each function's address, with the
+listing's name where the IR names it otherwise (`; Address: 0x117F check`), the
+bytes and sections an image mirror such as `@__nd_codeptr_3DB0` holds, and
+beside an instruction each address it reaches through a mirror, with what the
+listing calls it or the string there (`; 0x3FD8 __libc_start_main_ptr`,
+`; 0x2004 "%d\n"`). Double-clicking a global goes where it stands for: a
+function to that function, and a mirror on an instruction to the byte its
+constant offset reaches, such as the GOT slot `_start` calls
+`__libc_start_main` through; hovering it shows its declaration and that
+address. A name the binary does not have, such as an LLVM intrinsic, goes to
+its declaration. Double-clicking a value, block label, parameter, attribute
+group (`#0`) or metadata node (`!4`) goes to the line that defines it, and an
+address or name in a comment resolves as it reads.
+`neverd export --format ir --func` writes the same module.
 
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
@@ -460,7 +479,10 @@ so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key. Menus, buttons and labels
 underline their access keys while Alt is held, as on Windows and GNOME, and a
 menu that Alt and its letter opened keeps them until it closes; Alt and the
-letter work either way.
+letter work either way. In a dialog, Return presses the default button, usually
+**OK**, from a check box or radio button too, as in IDA and on Windows, where
+GNOME would toggle the box; Space toggles it. Alt+P, Alt+O, Return thus states
+that a function does not return.
 
 A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 `cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
@@ -783,7 +805,11 @@ Functions window, as in IDA) opens IDA's Edit function dialog on the current
 function: its name, its start and end, its color, the frame sizes IDA lists
 and its flags. A new name is a rename. **Does not return** states that the
 function never returns, which ends every call to it, over its name and what
-analysis proves of its body, in either direction. **Library func**, **Static
+analysis proves of its body, in either direction. As IDA passes the flag on,
+a caller whose every path ends in such a call, or in a jump to the function,
+never returns either: analysis of a single function proves it of the
+functions it calls, as the whole program's analysis does, and the dialog
+shows it checked for that caller. **Library func**, **Static
 func** and the color are notes the dialog and the command line keep;
 analysis does not read them, and the listing does not paint the color yet.
 The bounds come from analysis and cannot be changed here. Of the frame sizes
@@ -792,7 +818,8 @@ NeverD shows the bytes x86's `ret imm` purges; the other sizes and the flags
 **Outlined code** describe IDA's frame model, which NeverD does not keep,
 and show disabled. The statements are kept in the function edits sidecar and
 go with a deleted function. A rename and a change of the flags are two steps
-of the history. The command line shows and states the same
+of the history; a name the worker refuses, such as an automatic name or one
+another address has, applies neither. The command line shows and states the same
 (`neverd function-edits <input> --show <address>`, `--edit <address> --set
 noreturn=true`, `--set color=#RRGGBB`, `--set library=default`).
 
@@ -801,9 +828,12 @@ show it: a name under the cursor renames what it denotes, otherwise the item
 the cursor is on. A data name replaces `qword_A410` in its label, every operand
 (`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
 name has no spaces, leads to one address and is never an automatic name such
-as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
-command line reads and writes too (`neverd rename <input> --addr <address>
---to <name>`, `--clear`).
+as `sub_1234`; the engine keeps these rules for every front end
+(`neverd_name_check`), and the listing adds its own names, such as a string's.
+A local copy may take an import's name, as a PDB or a map file names one,
+although the listing, which jumps by name, refuses it. Names are kept in
+`<input>.neverd-renames.json`, which the command line reads and writes too
+(`neverd rename <input> --addr <address> --to <name>`, `--clear`).
 
 **Edit → Code** (C) defines native instructions from the selected byte through
 one basic block, ending at a branch, return, unmodelled control transfer or

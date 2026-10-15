@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: ee36c902e90a2f26bd648acf020212b2720bc29bd414bdada2c8c96bf4479130 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR 경로는 Windows ARM64 C++ FH3를 지원하며 xdata, 부모 프�
 
 | 컴파일러 | 산출물 | 검증된 OS 실행 프로파일 |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | 네이티브 오브젝트 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | 네이티브 오브젝트 | 호환되는 Itanium 런타임의 ELF x64/ARM64 C/C++; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| Clang 22.1.6 | 네이티브 오브젝트 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| GCC/G++ 13.3.0 | 네이티브 오브젝트 | 호환되는 Itanium 런타임의 ELF x64/ARM64 C/C++; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
 | NeverC 3389.1.5 일반 모드 | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 일반 모드 | 네이티브 오브젝트 | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / 네이티브 객체 | ELF / PE / Mach-O x64/ARM64: 순수 C 소스 |
@@ -194,3 +194,11 @@ Windows x64와 ARM64에서도 각각 Clang C++ FH3 관측 36회를 실행합니�
 Mach-O 쓰기 가능 포인터는 실행 중 초기화합니다. 정적 주소 초기화는 아직 지원하지 않는 로드 시 재배치 등록이 필요하므로 명시적 거부 회귀 테스트로 확인합니다. ELF 크기 0 COMDAT 함수는 서명이 실행 가능 섹션의 시작에 있는 유일한 함수이고 CFI가 섹션 전체와 정확히 일치할 때만 허용합니다. 내부 오프셋, 공유, 패딩, 그룹 없음, CFI 누락은 계속 거부합니다.
 
 ELF ARM과 Thumb는 별도 프로필입니다. 소스 생성기에 `-marm` 또는 `-mthumb`를 명시하며 네이티브 함수 바인딩은 원래 명령 상태 비트를 유지합니다. 32비트 ELF 프로세스는 실제 동적 재배치가 있는 PIE 이미지를 사용합니다. ARM32 QEMU 실행은 glibc의 명시적 `--loader`와 sysroot를 기록합니다. QEMU AUXV 계산이 이동된 프로그램 헤더를 Linux 커널과 같은 방식으로 처리하지 않기 때문입니다. 이 경로는 QEMU에서 glibc 로딩과 실행을 검증하며 ARM32 실기기나 네이티브 커널 로더의 증거가 아닙니다.
+
+이 패치된 ELF 이미지에서는 Linux x86과 ARM32의 `qemu-user` 경로 모두 대상 아키텍처에 맞는 sysroot 안의 glibc `--loader`를 명시해야 합니다. Linux x86의 `compatibility` 경로는 Linux x64 호스트 커널의 32비트 호환 기능을 사용하며 QEMU 실행과 별도로 기록됩니다. 이는 네이티브 32비트 x86 호스트에서 실행되었다는 증거가 아닙니다.
+
+[`fcee81c9a5e2f20a71090ade23ae833175f64c59` 프로세스 검증](https://github.com/NeverSight/NeverD/actions/runs/38694434082)은 모든 750회 관측에 통과했습니다. 일치하는 네이티브 호스트에서 576회, x86 호환 모드에서 78회, QEMU 사용자 모드의 ARM/Thumb에서 96회 실행했습니다. 독립적인 산출물 감사에서 126개 이미지의 해시, 실행 환경, 전체 시나리오 목록을 확인했습니다. [Windows 재빌드 검증](https://github.com/NeverSight/NeverD/actions/runs/38694628242)은 전용 검사 194개와 Windows/Linux 프로세스 관측 474회에 통과했습니다. [Linux 재빌드 검증](https://github.com/NeverSight/NeverD/actions/runs/38694638358)은 기존 실패 62개와 건너뛴 46개를 모두 포함한 444개 검사에 실패나 건너뛰기 없이 통과했습니다. 위의 하드웨어 및 로더 검증 범위는 그대로 유지됩니다. NeverC는 순수 C 전용이며 저장소를 변경하지 않았습니다.
+
+추가 [ARM/Thumb 검증](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263)은 `ubuntu-24.04-arm`에서 `fcee81c9a5e2f20a71090ade23ae833175f64c59`의 C 테스트 이미지 32개를 실행하여 96회 관측 모두 통과했습니다(ARM과 Thumb 각각 48회). Linux 커널은 QEMU나 명시적인 로더 명령 없이 `/lib/ld-linux-armhf.so.3`을 통해 각 이미지를 직접 로드했습니다. 이는 ARM64 호스트의 `compatibility`이며 네이티브 32비트 호스트 검증은 아닙니다. 테스트 하네스 커밋 `3ad17ac9608d6bd9f5a4d44953ec375524e5730b`와 이미지 커밋은 별도로 기록됩니다. 독립적인 산출물 감사로 이미지 해시, 게시 영수증 30개 전체, 모든 시나리오와 반복 횟수, 그리고 일치하는 `binfmt_misc` 인터프리터 규칙이 없음을 확인했습니다.
+
+별도의[호스팅 runner 조사](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719)에서 제공된 Windows 11 ARM64 runner는 ARM32 프로그램 실행을 `WinError 216`으로 거부했습니다. macOS 15.7.9와 Xcode 16.4 환경에서는 제공된 SDK로 macOS i386 또는 iOS ARMv7 프로그램을 링크할 수 없었습니다. watchOS ARMv7k 프로그램은 링크에 성공했지만 실제 기기 실행 증거는 확보되지 않았습니다. 조사 작업의 성공은 해당 플랫폼의 검증 완료를 뜻하지 않으며 네이티브 하드웨어 검증은 아직 남아 있습니다. NeverC는 빌드하거나 변경하지 않았습니다.

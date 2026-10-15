@@ -50,6 +50,9 @@ struct EH3JumpRuntime {
   std::function<bool(const LowOp &, size_t &)> Resume;
   std::function<bool(const LowOp &, const FrameState &, size_t &)> Raise;
   std::function<bool(const LowOp &, size_t &)> ControlFP;
+  /// Proves image storage disjoint from suspended callback/parent frames.
+  /// Contents remain runtime values; writes cannot replace import bindings.
+  std::function<bool(va_t, uint16_t, bool, size_t &)> ImageMemory;
 };
 
 /// Only the ten DWORDs written by the two-argument EH3 capture protocol are

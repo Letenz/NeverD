@@ -1455,6 +1455,40 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>التضمينات وأنواع الدعم والتصريحات التي يُترجَم بها هذا الكود؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n سطر من التصريحات</numerusform>
+            <numerusform>%n سطر من التصريحات</numerusform>
+            <numerusform>%n سطران من التصريحات</numerusform>
+            <numerusform>%n أسطر من التصريحات</numerusform>
+            <numerusform>%n سطرًا من التصريحات</numerusform>
+            <numerusform>%n سطر من التصريحات</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n سطر من السمات والبيانات الوصفية</numerusform>
+            <numerusform>%n سطر من السمات والبيانات الوصفية</numerusform>
+            <numerusform>%n سطران من السمات والبيانات الوصفية</numerusform>
+            <numerusform>%n أسطر من السمات والبيانات الوصفية</numerusform>
+            <numerusform>%n سطرًا من السمات والبيانات الوصفية</numerusform>
+            <numerusform>%n سطر من السمات والبيانات الوصفية</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>الهدف والأنواع والمتغيرات العامة والدوال التي تشير إليها هذه الدالة؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>مجموعات السمات والبيانات الوصفية التي تستخدمها هذه الدالة؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>انقر نقرًا مزدوجًا للانتقال إلى %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -1524,8 +1558,8 @@ Double-click to go to the declaration.</source>
         <translation>تحويل الدالة الحالية</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>تبسيط هذه الدالة رمزيًا</translation>
+        <source>Symbolic simplification</source>
+        <translation>التبسيط الرمزي</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>
@@ -2266,6 +2300,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Expression or command (help)</source>
         <translation>تعبير أو أمر (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>نسخ(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>تحديد الكل(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>مسح(&amp;L)</translation>
     </message>
     <message>
         <source>Commands:</source>

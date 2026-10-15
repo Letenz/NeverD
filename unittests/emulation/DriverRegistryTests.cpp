@@ -9,13 +9,16 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
 
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
+#include <tuple>
 
 namespace neverd::emulation {
 namespace {
@@ -78,6 +81,53 @@ TEST(DriverRegistry, RejectsAmbiguousMalformedAndUnboundedInventories) {
   EXPECT_EQ(llvm::toString(Run.takeError()).find("driver scenario:"), 0u);
 }
 
+TEST(DriverRegistry, ExplicitClockAndHistoricalTimesRoundTripWithoutDefaults) {
+  auto Options = driverOptionsFromScenarioJSON(R"({
+    "registry_system_time_100ns":1000,
+    "registry":[{"path":"\\Registry\\Machine","last_write_time_100ns":0}]
+  })");
+  ASSERT_TRUE(bool(Options)) << llvm::toString(Options.takeError());
+  EXPECT_EQ(Options->RegistrySystemTime100ns, 1000u);
+  EXPECT_EQ(Options->Registry->front().LastWriteTime100ns, 0u);
+  auto Inherited = driverOptionsFromScenarioJSON("{}", *Options);
+  ASSERT_TRUE(bool(Inherited)) << llvm::toString(Inherited.takeError());
+  EXPECT_EQ(Inherited->RegistrySystemTime100ns, 1000u);
+  DriverResult Report;
+  Report.Configuration = *Options;
+  Report.Registry = Options->Registry;
+  const auto JSON = llvm::cantFail(llvm::json::parse(driverResultJSON(Report)));
+  const auto *Configuration = JSON.getAsObject()->getObject("configuration");
+  ASSERT_NE(Configuration, nullptr);
+  EXPECT_EQ(Configuration->getInteger("registry_system_time_100ns"), 1000);
+  const auto *Keys = JSON.getAsObject()->getArray("registry");
+  ASSERT_NE(Keys, nullptr);
+  EXPECT_EQ(Keys->front().getAsObject()->getInteger("last_write_time_100ns"),
+            0);
+  for (
+      const char *Bad :
+      {R"({"registry_system_time_100ns":1})",
+       R"({"registry":[],"registry_system_time_100ns":null})",
+       R"({"registry":[],"registry_system_time_100ns":true})",
+       R"({"registry":[],"registry_system_time_100ns":1.0})",
+       R"({"registry":[],"registry_system_time_100ns":-1})",
+       R"({"registry":[],"registry_system_time_100ns":9223372036854775808})",
+       R"({"registry":[{"path":"\\Registry\\Machine","last_write_time_100ns":null}]})",
+       R"({"registry":[{"path":"\\Registry\\Machine","last_write_time_100ns":true}]})",
+       R"({"registry":[{"path":"\\Registry\\Machine","last_write_time_100ns":-1}]})",
+       R"({"registry":[{"path":"\\Registry\\Machine","last_write_time_100ns":9223372036854775808}]})"}) {
+    SCOPED_TRACE(Bad);
+    auto Result = driverOptionsFromScenarioJSON(Bad);
+    ASSERT_FALSE(bool(Result));
+    llvm::consumeError(Result.takeError());
+  }
+  DriverOptions Bad;
+  Bad.RegistrySystemTime100ns = 1;
+  auto Result = emulateDriver("missing-registry-clock.sys", Bad);
+  ASSERT_FALSE(bool(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("explicit registry"),
+            std::string::npos);
+}
+
 TEST(DriverRegistry, ExecutesQueriesMutationsAndHandleCleanup) {
   auto Options = driverOptionsFromScenarioJSON(Scenario);
   ASSERT_TRUE(static_cast<bool>(Options))
@@ -115,6 +165,97 @@ TEST(DriverRegistry, ExecutesQueriesMutationsAndHandleCleanup) {
   ASSERT_NE(Initial, nullptr);
   ASSERT_EQ(Initial->size(), 1u);
   EXPECT_EQ(Initial->front().getAsObject()->getArray("values")->size(), 1u);
+}
+
+class DriverRegistryEnumeration
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(DriverRegistryEnumeration,
+       CompiledValuesAndDeletionPreserveLiveIndices) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  Options.Registry = std::vector<DriverRegistryKey>{
+      {"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\NeverDDriver",
+       {{"Zulu", 4, {3, 0, 0, 0}}, {"Alpha", 4, {7, 0, 0, 0}}}}};
+  auto Run = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                               "driver_registry_values.sys",
+                           Options);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+  EXPECT_EQ(Run->NTStatus, 0u);
+  ASSERT_TRUE(Run->Registry);
+  const auto &Values = Run->Registry->back().Values;
+  ASSERT_EQ(Values.size(), 2u);
+  EXPECT_EQ(Values[0].Name, "Alpha");
+  EXPECT_EQ(Values[1].Name, "Zulu");
+  EXPECT_EQ(Values[1].Data, (std::vector<uint8_t>{10, 0, 0, 0}));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, DriverRegistryEnumeration,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
+
+TEST_P(DriverRegistryEnumeration, CompiledKeyQueriesObserveChildDeletion) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  Options.RegistrySystemTime100ns = 1000;
+  const std::string Path =
+      "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\NeverDDriver";
+  Options.Registry =
+      std::vector<DriverRegistryKey>{{Path, {{"Mode", 4, {1, 0, 0, 0}}}, 123},
+                                     {Path + "\\Longest", {}},
+                                     {Path + "\\A", {}}};
+  auto Run = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                               "driver_registry_keys.sys",
+                           Options);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+  EXPECT_EQ(Run->NTStatus, 0u);
+  ASSERT_TRUE(Run->Registry);
+  bool Found = false;
+  for (const auto &Key : *Run->Registry) {
+    EXPECT_NE(Key.Path, Path + "\\Longest");
+    if (Key.Path == Path) {
+      Found = true;
+      EXPECT_EQ(Key.LastWriteTime100ns, 1000u);
+    }
+  }
+  EXPECT_TRUE(Found);
 }
 
 TEST(DriverRegistry,

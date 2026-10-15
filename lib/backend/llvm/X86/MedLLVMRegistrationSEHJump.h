@@ -52,6 +52,10 @@ struct SEHJumpCallbackCall {
   X86RegistrationSEHJumpStack Stack;
 };
 
+/// Retain each invocation-local load while rebinding its outlined stack slot.
+void bindSEHRuntimeCallbackArguments(
+    const SEHJumpPlan &Plan, const std::map<va_t, llvm::Function *> &Callbacks);
+
 /// Bind cloned calls and recover their capture buffers after callback commit.
 std::map<llvm::CallInst *, SEHJumpCallbackCall>
 emitSEHJumpCallbackBindings(const SEHJumpPlan &Plan, llvm::Function &Parent,

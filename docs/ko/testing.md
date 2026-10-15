@@ -1944,3 +1944,17 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 ### 0을 가로지르는 기호 영역 좌표
 
 `SymRegionWrap.*`는 두 바이트 순서, 상대 좌표 0을 가로지르는 전체 및 부분 접근, 순환하지 않는 입력 출처, 복사된 미지 상태 세대, 정확하거나 부족한 보존 예산, 절대／스칼라 범위 오버플로 거부를 검사합니다. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero`는 기호 주소가 `base - 1` 형태를 유지하는지 확인하고, 독립적인 바이트 참조 실행으로 전체 STORE 효과, 네이티브 반환 주소 워드, 복원된 스택 상태를 검사합니다. 분리 증명이나 진입 정렬이 없으면 계속 거부해야 합니다.
+
+### 순차 raw 실행의 비교 교환
+
+`SymAtomicCmpxchg.*`와 `InterpreterSpecialization.AtomicCmpxchg*`는 전체 바이트 효과, 두 바이트 순서, 이전 값 출처, 입출력 별칭, 네이티브 반환 셀, 병합을 가로지르는 아핀 스필 무효화, 순서 지정 연산의 발생 유지, 엄격한 허용과 정확한/부족한 예산을 다룹니다. 독립 바이트 오라클은 순차 값 의미론만 모델링합니다. 소스 래핑 대조군은 초기화되고 구조적으로 유효한 그래프에 대해 순서 지정 메모리 경계의 거부를 요구합니다. 독립 LowIR 대조군은 완전한 sidecar도 결합하며 인증서가 없어야 합니다. 네이티브 바이너리 증명은 LOCK CMPXCHG의 아키텍처 미정의 출력 감사가 완전하지 않아 더 이른 단계에서 거부될 수 있습니다. raw 영수증 검사는 순서, 주소 공간과 새 값 피연산자를 결합합니다. 지원을 선언하기 전에 소유 테스트 모음을 실행해야 합니다. 테스트 정의만으로 실행 증거가 되지는 않습니다.
+
+`InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.
+
+`InterpreterSpecialization.Timestamp*`는 독립 값/상태 오라클로 전체 표본, 상위 절반 초기화, 독립/반복 읽기, 레지스터/플래그/메모리/세그먼트 기준 주소 보존, 정확한/부족한 예산, 잘못된 묶음과 알 수 없는 주소 출처를 검사합니다. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery`는 raw 완료와 네이티브 증명/소스 배치 거부를 확인합니다. 기존 `X86_64_Intrinsics` 시계 사례는 소스 출력과 단일 읽기의 전체 비트를 검사하며 `DriverTimestamp`는 Unicorn/KVM/WHP 공통 시계 정책, 상태 보존, 예산, 오버플로를 별도로 검사합니다. 플랫폼 건너뛰기는 해당 백엔드 실행을 입증하지 않습니다.
+
+`KernelObjectTests.cpp`는 알려진 ID, 형식/권한/모드 실패, 핸들 정보, 출력 실패 시 참조 누수 방지, 언로드와 스택 재사용을 검사합니다. `DriverObjectTests.cpp`는 원본 `driver_objects.c`를 사용 가능한 Unicorn/KVM/WHP/HVF, Legacy/CheckedX64, 기본/재배치 주소 및 협력/17 명령 스케줄링에서 실행합니다. `NativeDriverTests.def`는 KVM/WHP 결과를 요구하며 누락과 건너뜀은 검증 공백입니다. ACL, 일반 프로세스 종료 또는 미구현 객체 형식은 입증하지 않습니다.
+
+`KernelDataExportTests.cpp`는 ID, 가용성, thunk 용량, 읽기 전용/NX, 미선언 디버거 및 복구를 검사합니다. `DriverDataExportTests.cpp`는 원본 `driver_data.c`의 실제 DATA 가져오기를 사용하여 가용 백엔드, 두 계약과 기준 주소에서 실행, 언로드 및 쓰기/실행 거부를 검사합니다. 시나리오, C ABI, CLI와 Python은 불리언과 보고서 전달을 검증합니다. `NativeDriverTests.def`가 네이티브 결과를 요구하며 사용할 수 없는 백엔드는 검증 공백으로 남습니다.
+
+`KernelNamespaceTests.cpp`는 형식, 상대 이름, 대소문자, 크기/복사 순서, 꼬리 바이트, 권한, 프로세스 범위, IRQL, 실패 출력 및 보유 중 삭제를 검증합니다. `DriverNamespaceTests.cpp`는 독립 `driver_namespace.c`를 가용 Unicorn/KVM/WHP/HVF, 두 계약과 로드 주소, 협력/17 명령 스케줄링으로 실행합니다. `NativeDriverTests.def`는 네이티브 결과를 요구합니다. 미가용 백엔드와 미지원 정보/보안 클래스는 여전히 검증 공백입니다.

@@ -59,6 +59,16 @@ public:
   }
 };
 
+/// Whether the function at \p Target never returns, so that a tail call into
+/// it ends its path: what the user states, else the name list (\p Names may
+/// be null), else \p Prover's proof at \p Depth where its screen finds the
+/// function worth one.  A direct call applies the same order
+/// (CFGBuilder::isNoReturnCall), with the padding a compiler leaves after a
+/// call it knew never returns as a further reason to try the proof.
+bool calleeNeverReturns(const BinaryImage &Img, va_t Target,
+                        const libc::NoReturnTargetIndex *Names,
+                        const NoReturnCalleeProver *Prover, unsigned Depth);
+
 namespace detail {
 struct ResolverGraphCacheTestAccess;
 struct X87CallGraphCacheTestAccess;

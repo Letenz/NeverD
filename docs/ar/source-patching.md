@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: ee36c902e90a2f26bd648acf020212b2720bc29bd414bdada2c8c96bf4479130 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ neverd patch app --from-source=replacement.c --compiler=neverc \
 
 | المترجم | الناتج | ملف تنفيذ نظام التشغيل المتحقق |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | كائن أصلي | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | كائن أصلي | ELF x64/ARM64 C/C++ مع بيئة Itanium متوافقة; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| Clang 22.1.6 | كائن أصلي | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| GCC/G++ 13.3.0 | كائن أصلي | ELF x64/ARM64 C/C++ مع بيئة Itanium متوافقة; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
 | NeverC 3389.1.5 الوضع العادي | LLVM IR | ELF x64 C؛ Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / كائن أصلي | ELF / PE / Mach-O x64/ARM64: مصدر C خالص |
@@ -194,3 +194,11 @@ ctest --test-dir build-source -L \
 تُهيأ مؤشرات Mach-O القابلة للكتابة أثناء التنفيذ؛ وما زالت تهيئة العناوين الثابتة تحتاج إلى تسجيل إعادة تموضع وقت التحميل غير المدعوم، مع اختبار صريح للرفض. لا تُقبل دوال COMDAT في ELF ذات الحجم الصفري إلا إذا كان رمز التوقيع هو الدالة الوحيدة عند بداية قسمها التنفيذي وطابقت CFI القسم كاملًا بدقة. وتظل حالات الإزاحة الداخلية والقسم المشترك والحشو وغياب المجموعة أو CFI مرفوضة.
 
 لـ ELF ARM وThumb ملفا تحقق منفصلان. تتلقى أدوات إنتاج المصدر صراحةً `-marm` أو `-mthumb`، وتحافظ روابط الدوال الأصلية على بت حالة التعليمات. تستخدم عمليات ELF ذات 32 بت صور PIE بإعادة تموضع ديناميكية فعلية. يسجل تشغيل ARM32 عبر QEMU محمل glibc صريحًا `--loader` وsysroot؛ فحساب AUXV في QEMU لا يتبع رؤوس البرنامج المنقولة بالطريقة نفسها التي تتبعها نواة Linux. يتحقق هذا المسار من تحميل glibc والتنفيذ تحت QEMU، ولا يثبت التنفيذ على عتاد ARM32 أو بمحمل نواة أصلي.
+
+بالنسبة إلى صور ELF هذه بعد تطبيق التصحيحات، يتطلب كل من مساري Linux x86 وARM32 عبر `qemu-user` محمل glibc صريحًا `--loader` من sysroot المطابق لبنية الهدف. يستخدم مسار Linux x86 في وضع `compatibility` دعم 32 بت في نواة مضيف Linux x64، ويُسجَّل منفصلًا عن تنفيذ QEMU؛ ولا يثبت التنفيذ على مضيف x86 أصلي ذي 32 بت.
+
+اجتاز [تحقق العمليات](https://github.com/NeverSight/NeverD/actions/runs/38694434082) للإصدار `fcee81c9a5e2f20a71090ade23ae833175f64c59` جميع المشاهدات البالغ عددها 750: منها 576 على مضيفين أصليين بمعمارية مطابقة، و78 في وضع توافق x86، و96 لمعمارية ARM/Thumb عبر وضع المستخدم في QEMU. تحقق تدقيق مستقل من بصمات الصور الـ126، وبيئات التنفيذ، وقائمة السيناريوهات كاملة. اجتازت [إعادة البناء على Windows](https://github.com/NeverSight/NeverD/actions/runs/38694628242) عدد 194 من الاختبارات المركزة و474 مشاهدة لعمليات Windows/Linux. واجتازت [إعادة البناء على Linux](https://github.com/NeverSight/NeverD/actions/runs/38694638358) عدد 444 من الاختبارات، بما فيها جميع الحالات الأصلية البالغ عددها 62 حالة فشل و46 حالة تخطٍ، دون فشل أو تخطٍ. تظل حدود التحقق من العتاد ومحمّلات النظام المذكورة أعلاه سارية. يبقى NeverC مخصصًا للغة C الخالصة ولم يُعدّل مستودعه.
+
+نجح [التحقق الإضافي من ARM/Thumb](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263) في جميع الملاحظات البالغ عددها 96 (48 لكل من ARM وThumb) للصور الاختبارية الـ32 الخاصة بلغة C من `fcee81c9a5e2f20a71090ade23ae833175f64c59` على `ubuntu-24.04-arm`. حمّلت نواة Linux كل صورة مباشرة عبر `/lib/ld-linux-armhf.so.3`، دون QEMU أو أمر تحميل صريح. هذا وضع `compatibility` على مضيف ARM64، وليس تحققًا على مضيف أصلي من فئة 32 بت. يُسجَّل التزام برنامج الاختبار `3ad17ac9608d6bd9f5a4d44953ec375524e5730b` والتزام الصور كلٌّ على حدة. تحققت عمليات تدقيق مستقلة من بصمات الصور، وإيصالات النشر الثلاثين كاملة، وجميع السيناريوهات والتكرارات، وعدم وجود قواعد مفسّر `binfmt_misc` مطابقة.
+
+أظهرت [فحوص بيئات التشغيل المستضافة المنفصلة](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719) أن بيئة Windows 11 ARM64 المقدَّمة ترفض برامج ARM32 بالخطأ `WinError 216`. في macOS 15.7.9 مع Xcode 16.4، لم تتمكن حزم SDK المتاحة من ربط برامج macOS i386 أو iOS ARMv7. نجح ربط برنامج watchOS ARMv7k، لكن لم يُثبت تشغيله على جهاز فعلي. نجاح مهام الفحص لا يعني اعتماد هذه المنصات؛ فما زالت تغطية العتاد الأصلي غير مكتملة. لم يُبنَ NeverC ولم يُعدَّل.

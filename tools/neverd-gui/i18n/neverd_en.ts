@@ -1447,6 +1447,32 @@ Recognized library operation; click to show its code.</translation>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n lines of declarations</numerusform>
+            <numerusform>%n lines of declarations</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n lines of attributes and metadata</numerusform>
+            <numerusform>%n lines of attributes and metadata</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>Double-click to go to %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -1512,8 +1538,8 @@ Double-click to go to the declaration.</translation>
         <translation>Transform the current function</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>Symbolically simplify this function</translation>
+        <source>Symbolic simplification</source>
+        <translation>Symbolic simplification</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>
@@ -2250,6 +2276,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Expression or command (help)</source>
         <translation>Expression or command (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Copy</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>Select &amp;all</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>C&amp;lear</translation>
     </message>
     <message>
         <source>Commands:</source>

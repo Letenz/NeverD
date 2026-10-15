@@ -1445,6 +1445,30 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>이 코드가 컴파일에 사용하는 include, 지원 타입, 선언입니다. 클릭하면 표시하고, 숫자 키패드 -로 다시 접습니다.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>선언 %n줄</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>속성 및 메타데이터 %n줄</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>이 함수가 참조하는 대상, 타입, 전역 변수, 함수입니다. 클릭하면 표시하고, 숫자 키패드 -로 다시 접습니다.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>이 함수가 사용하는 속성 그룹과 메타데이터입니다. 클릭하면 표시하고, 숫자 키패드 -로 다시 접습니다.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>두 번 클릭하면 %1(으)로 이동합니다.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -1509,8 +1533,8 @@ Double-click to go to the declaration.</source>
         <translation>현재 함수 변환</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>이 함수를 기호적으로 단순화</translation>
+        <source>Symbolic simplification</source>
+        <translation>기호 단순화</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>
@@ -2246,6 +2270,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Expression or command (help)</source>
         <translation>식 또는 명령 (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>복사(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>모두 선택(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>지우기(&amp;L)</translation>
     </message>
     <message>
         <source>Commands:</source>

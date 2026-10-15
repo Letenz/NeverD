@@ -1569,6 +1569,9 @@ _declare(
     "neverd_rename_func", "int", ["neverd_session_t", "const char *", "const char *"]
 )
 _declare(
+    "neverd_name_check", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
+)
+_declare(
     "neverd_rename_addr", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
 )
 _declare(

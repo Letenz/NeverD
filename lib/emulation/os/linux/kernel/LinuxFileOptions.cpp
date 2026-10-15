@@ -53,6 +53,42 @@ llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
         return failure(FileOptionPath);
     }
   }
+  if (Options.DynamicProc) {
+    const auto &P = *Options.DynamicProc;
+    if (P.Name.empty() || P.Name.size() > 15 ||
+        llvm::any_of(
+            P.Name,
+            [](unsigned char C) { return C < 32 || C == 127 || C == '\\'; }) ||
+        P.ParentPID > INT32_MAX)
+      return failure("invalid live proc identity");
+    auto Reserved = [](llvm::StringRef Path, llvm::StringRef Prefix) {
+      return Path == Prefix ||
+             (Path.consume_front(Prefix) && Path.starts_with('/'));
+    };
+    for (const auto &Path : Paths)
+      if (Path == "/proc" || Reserved(Path, "/proc/self") ||
+          Reserved(Path, "/proc/thread-self") ||
+          Reserved(Path, procProcessPath()))
+        return failure("dynamic proc namespace conflicts with catalogue");
+    if (P.Mappings.size() > FileCountLimit)
+      return failure("proc backing identity budget exhausted");
+    uint64_t PathBytes = 0;
+    std::vector<std::pair<uint64_t, uint64_t>> Ranges;
+    for (const auto &M : P.Mappings) {
+      if (!M.Size || M.Size > UINT64_MAX - M.Address ||
+          M.Size > UINT64_MAX - M.Offset || M.Path.size() >= FilePathLimit ||
+          (!M.Path.empty() && !isCanonicalFilePath(M.Path)))
+        return failure("invalid proc backing identity");
+      PathBytes += M.Path.size() + 1;
+      Ranges.emplace_back(M.Address, M.Address + M.Size);
+    }
+    if (PathBytes > FileByteLimit)
+      return failure("proc backing identity budget exhausted");
+    std::sort(Ranges.begin(), Ranges.end());
+    for (size_t I = 1; I < Ranges.size(); ++I)
+      if (Ranges[I].first < Ranges[I - 1].second)
+        return failure("overlapping proc backing identities");
+  }
   if (Options.DynamicProcFDs)
     for (const auto &Path : Paths)
       if (Path == "/proc" || Path == "/proc/self" || Path == "/proc/self/fd" ||
@@ -98,6 +134,17 @@ llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
         !isNormalizedTimespec(Metadata.ModificationTime) ||
         !isNormalizedTimespec(Metadata.ChangeTime))
       return failure(FileMetadataOption);
+  }
+  for (const auto &Path : Options.TrackWriteMetadata) {
+    auto I = Options.Metadata.find(Path);
+    if (!Options.WriteLimits.contains(Path) || I == Options.Metadata.end())
+      return failure("tracked file metadata requires bytes, write reservation "
+                     "and metadata");
+    const auto &M = I->second;
+    if (M.Size != Options.Files.at(Path).size() ||
+        M.Blocks != ((M.Size + 4095) / 4096) * 8 || (M.Mode & 06000))
+      return failure("tracked file metadata requires dense initial pages and "
+                     "no set-ID bits");
   }
   return llvm::Error::success();
 }

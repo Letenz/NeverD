@@ -60,6 +60,7 @@ public:
   /// owner. False classifies all-finished or a wait cycle in Result.
   llvm::Expected<bool> schedule(Bionic &LibC);
   void report();
+  std::vector<linux_model::ProcTask> procTasks() const;
 
 private:
   struct Join {

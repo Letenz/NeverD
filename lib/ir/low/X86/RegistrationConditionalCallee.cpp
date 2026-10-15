@@ -141,6 +141,11 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   Jumps.ControlFP = [&](const LowOp &Op, size_t &Used) {
     return isCheckedControlFPCall(Image, Op, Used);
   };
+  Jumps.ImageMemory = [&](va_t Address, uint16_t Width, bool Write,
+                          size_t &Used) {
+    return registration_abi::hasSEHCallbackImageMemory(Image, Address, Width,
+                                                       Write, Used);
+  };
   RegistrationStateSolver Solver(Function, 0, 0, nullptr, nullptr, &*Stacks,
                                  &*Unwinds, &*Controls, &Inputs, nullptr,
                                  &Jumps);
@@ -244,6 +249,11 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
   };
   Jumps.ControlFP = [&](const LowOp &Op, size_t &Work) {
     return isCheckedControlFPCall(Image, Op, Work);
+  };
+  Jumps.ImageMemory = [&](va_t Address, uint16_t Width, bool Write,
+                          size_t &Work) {
+    return registration_abi::hasSEHCallbackImageMemory(Image, Address, Width,
+                                                       Write, Work);
   };
   RegistrationStateSolver Solver(Function, 0, 0, nullptr, nullptr, Stacks,
                                  LocalUnwinds, Controls, nullptr,

@@ -85,7 +85,8 @@ struct SymStorePreservationRange {
   int64_t End = 0;
 };
 
-/// Caller-established separation for one STORE: none of its accessed bytes
+/// Caller-established separation for one STORE or one atomic write phase:
+/// none of its accessed bytes
 /// can equal a byte in the union of the primary and additional root-relative
 /// ranges. Addresses use modulo-2^64 arithmetic. This interface does not prove
 /// separation or grant accessibility; callers supply a proof or an explicit

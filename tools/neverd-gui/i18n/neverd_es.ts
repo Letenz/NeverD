@@ -1447,6 +1447,32 @@ Operación de biblioteca reconocida; haz clic para mostrar su código.</translat
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Los includes, tipos auxiliares y declaraciones con los que compila este código; haz clic para mostrarlos y pulsa - del teclado numérico para plegarlos de nuevo.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n línea de declaraciones</numerusform>
+            <numerusform>%n líneas de declaraciones</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n línea de atributos y metadatos</numerusform>
+            <numerusform>%n líneas de atributos y metadatos</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>El destino, los tipos, las variables globales y las funciones a los que hace referencia esta función; haz clic para mostrarlos y pulsa - del teclado numérico para plegarlos de nuevo.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>Los grupos de atributos y los metadatos que usa esta función; haz clic para mostrarlos y pulsa - del teclado numérico para plegarlos de nuevo.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>Haz doble clic para ir a %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -1512,8 +1538,8 @@ Haz doble clic para ir a la declaración.</translation>
         <translation>Transformar la función actual</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>Simplificar simbólicamente esta función</translation>
+        <source>Symbolic simplification</source>
+        <translation>Simplificación simbólica</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>
@@ -2250,6 +2276,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Expression or command (help)</source>
         <translation>Expresión o comando (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Copiar</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>Seleccionar &amp;todo</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>&amp;Borrar</translation>
     </message>
     <message>
         <source>Commands:</source>

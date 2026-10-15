@@ -213,6 +213,8 @@ bool isBranch(Flow flow) {
 #include "ListingVocabulary.def"
 #define NEVERD_DATA_ITEM_NAME(Id, Prefix)                                      \
   constexpr std::string_view Id = Prefix;
+#define NEVERD_IMPORT_SLOT_SUFFIX(Suffix)                                      \
+  constexpr std::string_view ImportSlotSuffix = Suffix;
 #include "neverd/DataNames.def"
 
 struct Region {
@@ -1199,7 +1201,7 @@ struct Listing::Impl {
           }
         noteImportTarget(row, thunk ? thunk : address);
         ImportSlot slot{name, row.value("module", std::string()),
-                        elf ? name + "_ptr" : name};
+                        elf ? name + std::string(ImportSlotSuffix) : name};
         listingNames.emplace(slot.label, address);
         slots.emplace(address, std::move(slot));
       }
@@ -1213,7 +1215,8 @@ struct Listing::Impl {
             functionAtEntry(address))
           continue;
         noteImportTarget(row, address);
-        ImportSlot slot{name, std::string(), elf ? name + "_ptr" : name};
+        ImportSlot slot{name, std::string(),
+                        elf ? name + std::string(ImportSlotSuffix) : name};
         listingNames.emplace(slot.label, address);
         slots.emplace(address, std::move(slot));
       }
@@ -4008,6 +4011,10 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   d.build();
   if (auto it = d.listingNames.find(name); it != d.listingNames.end())
     return it->second;
+  // listingNames keeps only the names the listing gives functions; the others
+  // show their engine's, a symbol's or the user's name.
+  if (const auto *function = d.functionNamed(name))
+    return function->entry;
   if (auto it = d.importTargets.find(name); it != d.importTargets.end())
     return it->second;
   if (auto it = d.exportAliases.find(name); it != d.exportAliases.end())

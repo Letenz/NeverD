@@ -1445,6 +1445,30 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>このコードのコンパイルに使うインクルード、補助型、宣言です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>宣言 %n 行</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>属性とメタデータ %n 行</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>この関数が参照するターゲット、型、グローバル、関数です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>この関数が使う属性グループとメタデータです。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>ダブルクリックで %1 に移動します。</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -1509,8 +1533,8 @@ Double-click to go to the declaration.</source>
         <translation>現在の関数を変換します</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>この関数をシンボリックに簡約します</translation>
+        <source>Symbolic simplification</source>
+        <translation>シンボリック簡約</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>
@@ -2246,6 +2270,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Expression or command (help)</source>
         <translation>式またはコマンド (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>コピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>すべて選択(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>クリア(&amp;L)</translation>
     </message>
     <message>
         <source>Commands:</source>

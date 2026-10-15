@@ -7,6 +7,9 @@ EXPORTS
   ZwOpenKey
   ZwCreateKey
   ZwQueryValueKey
+  ZwEnumerateValueKey
+  ZwQueryKey
+  ZwEnumerateKey
   ZwSetValueKey
   ZwDeleteValueKey
   ZwDeleteKey
@@ -75,10 +78,19 @@ EXPORTS
   KeSetPriorityThread
   ObReferenceObjectByHandle
   ObfDereferenceObject
+  ObfReferenceObject
+  ObReferenceObjectByPointer
+  ObOpenObjectByPointer
+  ObGetObjectType
+  PsLookupProcessByProcessId
+  PsLookupThreadByThreadId
+  PsGetThreadProcess
+  PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
   KeAreApcsDisabled
   KeAreAllApcsDisabled
+  KeEnterCriticalRegion
   KeLeaveCriticalRegion
   KeEnterGuardedRegion
   KeLeaveGuardedRegion
@@ -151,3 +163,78 @@ EXPORTS
   KeReleaseInStackQueuedSpinLock
   KeAcquireInStackQueuedSpinLockAtDpcLevel
   KeReleaseInStackQueuedSpinLockFromDpcLevel
+  ExInitializeRundownProtection
+  ExReInitializeRundownProtection
+  ExAcquireRundownProtection
+  ExReleaseRundownProtection
+  ExWaitForRundownProtectionRelease
+  ExRundownCompleted
+  ExAcquireRundownProtectionEx
+  ExReleaseRundownProtectionEx
+
+strcpy
+wcscpy
+strncpy
+wcsncpy
+strcat
+wcscat
+strncat
+wcsncat
+ExInitializeNPagedLookasideList
+ExInitializePagedLookasideList
+ExDeleteNPagedLookasideList
+ExDeletePagedLookasideList
+
+KeInitializeGuardedMutex
+ExAcquireFastMutex
+ExTryToAcquireFastMutex
+ExReleaseFastMutex
+ExAcquireFastMutexUnsafe
+ExReleaseFastMutexUnsafe
+KeAcquireGuardedMutex
+KeTryToAcquireGuardedMutex
+KeReleaseGuardedMutex
+KeAcquireGuardedMutexUnsafe
+KeReleaseGuardedMutexUnsafe
+
+ExInitializeResourceLite
+ExReinitializeResourceLite
+ExDeleteResourceLite
+ExAcquireResourceExclusiveLite
+ExTryToAcquireResourceExclusiveLite
+ExAcquireResourceSharedLite
+ExAcquireSharedStarveExclusive
+ExAcquireSharedWaitForExclusive
+ExConvertExclusiveToSharedLite
+ExReleaseResourceLite
+ExReleaseResourceForThreadLite
+ExIsResourceAcquiredExclusiveLite
+ExIsResourceAcquiredSharedLite
+ExGetExclusiveWaiterCount
+ExGetSharedWaiterCount
+ExDisableResourceBoostLite
+ExEnterCriticalRegionAndAcquireResourceExclusive
+ExEnterCriticalRegionAndAcquireResourceShared
+ExEnterCriticalRegionAndAcquireSharedWaitForExclusive
+ExReleaseResourceAndLeaveCriticalRegion
+ExSetResourceOwnerPointer
+ExSetResourceOwnerPointerEx
+  PsProcessType DATA
+  PsThreadType DATA
+  IoDriverObjectType DATA
+  IoFileObjectType DATA
+  ExEventObjectType DATA
+  ExSemaphoreObjectType DATA
+  PsJobType DATA
+  SeTokenObjectType DATA
+  PsInitialSystemProcess DATA
+  KeNumberProcessors DATA
+  KdDebuggerEnabled DATA
+  KdDebuggerNotPresent DATA
+
+  ObQueryNameString
+  ObReferenceObjectByName
+  ZwOpenDirectoryObject
+  ZwOpenSymbolicLinkObject
+  ZwQuerySymbolicLinkObject
+  ZwQueryObject

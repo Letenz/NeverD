@@ -1113,6 +1113,133 @@ TEST_F(DriverKernelModel, CRuntimeStringsFoldOnlyAsciiAndRefuseBadBuffers) {
   EXPECT_EQ(invoke("_wcsnicmp", {0, 0, 0}), 0u);
 }
 
+TEST_F(DriverKernelModel, CRuntimeStringWritesCopyPadTruncateAndAppend) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Source = Scratch + 0x101, Dest = Scratch + 0x401;
+  for (unsigned Width : {1, 2}) {
+    SCOPED_TRACE(Width);
+    const char *Copy = Width == 1 ? "strcpy" : "wcscpy";
+    const char *NCopy = Width == 1 ? "strncpy" : "wcsncpy";
+    const char *Cat = Width == 1 ? "strcat" : "wcscat";
+    const char *NCat = Width == 1 ? "strncat" : "wcsncat";
+    std::vector<uint8_t> Input;
+    for (uint16_t Unit :
+         {uint16_t('A'), uint16_t(0xe9), uint16_t(0x263a), uint16_t(0)}) {
+      Input.push_back(uint8_t(Unit));
+      if (Width == 2)
+        Input.push_back(uint8_t(Unit >> 8));
+    }
+    success(Memory->write(Source, Input));
+    auto Reset = [&]() {
+      success(Memory->write(Dest, std::vector<uint8_t>(32, 0xcc)));
+    };
+    Reset();
+    EXPECT_EQ(invoke(Copy, {Dest, Source}), Dest);
+    auto Expected = Input;
+    Expected.resize(32, 0xcc);
+    EXPECT_EQ(bytes(Dest, 32), Expected);
+    for (unsigned Count = 0; Count <= 6; ++Count) {
+      SCOPED_TRACE(Count);
+      Reset();
+      EXPECT_EQ(invoke(NCopy, {Dest, Source, Count}), Dest);
+      Expected = Input;
+      Expected.resize(Count * Width, 0);
+      Expected.resize(32, 0xcc);
+      EXPECT_EQ(bytes(Dest, 32), Expected);
+      Reset();
+      success(Memory->writeInteger(Dest, 'P', Width));
+      success(Memory->writeInteger(Dest + Width, 0, Width));
+      EXPECT_EQ(invoke(NCat, {Dest, Source, Count}), Dest);
+      Expected.assign(Width, 0);
+      Expected[0] = 'P';
+      Expected.insert(Expected.end(), Input.begin(),
+                      Input.begin() + std::min(Count, 3u) * Width);
+      Expected.resize(Expected.size() + Width, 0);
+      Expected.resize(32, 0xcc);
+      EXPECT_EQ(bytes(Dest, 32), Expected);
+    }
+    Reset();
+    success(Memory->writeInteger(Dest, 'P', Width));
+    success(Memory->writeInteger(Dest + Width, 0, Width));
+    EXPECT_EQ(invoke(Cat, {Dest, Source}), Dest);
+    EXPECT_EQ(bytes(Dest + Width, Input.size()), Input);
+    Reset();
+    success(Memory->writeInteger(Dest, 0, Width));
+    EXPECT_EQ(invoke(NCat, {Dest, Source, 0x100000001}), Dest);
+    EXPECT_EQ(bytes(Dest, Input.size()), Input); // size_t is not truncated.
+  }
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringWriteZeroCountsAndReadBoundaries) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint64_t Invalid = 0x90000000;
+  for (const char *Name : {"strncpy", "wcsncpy", "strncat"})
+    EXPECT_EQ(invoke(Name, {Invalid, Invalid, 0}), Invalid);
+  utf16(Scratch, u"P");
+  EXPECT_EQ(invoke("wcsncat", {Scratch, Invalid, 0}), Scratch);
+  success(Memory->protect(Scratch, 0x1000, Read));
+  EXPECT_NE(failure("wcsncat", {Scratch, Invalid, 0}).find("writable"),
+            std::string::npos);
+  success(Memory->protect(Scratch, 0x1000, Read | Write));
+  for (unsigned Width : {1, 2}) {
+    const uint64_t Source = Scratch + 0x10000 - Width;
+    const uint64_t Dest = Scratch + 0x100;
+    const char *NCopy = Width == 1 ? "strncpy" : "wcsncpy";
+    const char *NCat = Width == 1 ? "strncat" : "wcsncat";
+    success(Memory->writeInteger(Source, 'X', Width));
+    EXPECT_EQ(invoke(NCopy, {Dest, Source, 1}), Dest);
+    EXPECT_EQ(integer(Dest, Width), 'X');
+    success(Memory->writeInteger(Dest, 0, Width));
+    EXPECT_EQ(invoke(NCat, {Dest, Source, 1}), Dest);
+    EXPECT_EQ(integer(Dest, Width), 'X');
+    EXPECT_EQ(integer(Dest + Width, Width), 0u);
+  }
+  // A real read fault retires the backend; do not reuse it for later calls.
+  EXPECT_FALSE(failure("wcsncat", {Invalid, Invalid, 0}).empty());
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringCopyReadFaultPreservesDestination) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Source = Scratch + 0xfffe, Dest = Scratch + 0x100;
+  success(Memory->writeInteger(Source, 'X', 2));
+  success(Memory->writeInteger(Dest, 0x1122334455667788, 8));
+  EXPECT_FALSE(failure("wcsncpy", {Dest, Source, 2}).empty());
+  EXPECT_EQ(integer(Dest), 0x1122334455667788u);
+}
+
+TEST_F(DriverKernelModel,
+       CRuntimeStringWritesRejectOverlapFaultsAndHugeCounts) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Source = Scratch + 0x100, Dest = Scratch + 0x200;
+  ascii(Source, "abcdef");
+  const auto Before = bytes(Source, 16);
+  for (const char *Name : {"strcpy", "strcat"})
+    EXPECT_NE(failure(Name, {Source, Source}).find("overlapping"),
+              std::string::npos);
+  EXPECT_NE(failure("strncpy", {Source + 1, Source, 4}).find("overlapping"),
+            std::string::npos);
+  EXPECT_EQ(bytes(Source, 16), Before);
+  EXPECT_NE(failure("wcsncpy", {Dest, Source, UINT64_MAX}).find("overflows"),
+            std::string::npos);
+  EXPECT_NE(failure("strncpy", {Dest, Source, 0x100000001}).find("limit"),
+            std::string::npos);
+  EXPECT_FALSE(failure("strcpy", {UINT64_MAX, Source}).empty());
+  const uint64_t Partial = Scratch + 0xffff;
+  success(Memory->writeInteger(Partial, 0xcc, 1));
+  EXPECT_FALSE(failure("strcpy", {Partial, Source}).empty());
+  EXPECT_EQ(integer(Partial, 1), 0xccu); // Preflight refuses the whole write.
+  const uint64_t Pool = invoke("ExAllocatePoolWithTag", {1, 32, 0x1234});
+  ascii(Pool, "paged");
+  invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("strcpy", {Dest, Pool}).find("paged pool"),
+            std::string::npos);
+  EXPECT_NE(failure("strcpy", {Pool, Source}).find("paged pool"),
+            std::string::npos);
+  invoke("KeLowerIrql", {0});
+  invoke("ExFreePool", {Pool});
+  EXPECT_NE(failure("strcpy", {Pool, Source}).find("freed"), std::string::npos);
+}
+
 TEST_F(DriverKernelModel, QueuedSpinLocksRaiseStoreAndRestoreLikeTheKernel) {
   Model->enterExecution(profile::StackBase);
   constexpr uint32_t Tag = 0x4b51534c; // 'KQSL'
@@ -1185,6 +1312,103 @@ TEST_F(DriverKernelModel, QueuedSpinLocksAtDpcLevelAndRefuseMismatches) {
             "queued spin lock is not owned by this thread");
   invoke("ExFreePoolWithTag", {Lock, Tag});
   invoke("ExFreePoolWithTag", {Handle, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionCountsReferencesLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252; // 'RRUN'
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  // Initialization clears the whole word regardless of prior contents.
+  success(Memory->writeInteger(Ref, ~uint64_t(0), 8));
+  invoke("ExInitializeRundownProtection", {Ref});
+  EXPECT_EQ(integer(Ref), 0u);
+  // Each acquisition adds two and returns TRUE; release subtracts two.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(integer(Ref), 4u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 0u);
+  // With nothing outstanding the wait runs the object down in place.
+  EXPECT_EQ(invoke("ExWaitForRundownProtectionRelease", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // Further acquisitions fail while run-down is in effect and write nothing.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // A repeat wait on an already run-down object is a no-op.
+  EXPECT_EQ(invoke("ExWaitForRundownProtectionRelease", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // Reinitialization makes it usable again.
+  invoke("ExReInitializeRundownProtection", {Ref});
+  EXPECT_EQ(integer(Ref), 0u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionRefusesUnreachableCooperativePaths) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252;
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  invoke("ExInitializeRundownProtection", {Ref});
+  // A release with nothing outstanding underflows, so it is refused and the
+  // count is untouched.
+  EXPECT_EQ(failure("ExReleaseRundownProtection", {Ref}),
+            "run-down protection release without a matching acquisition");
+  EXPECT_EQ(integer(Ref), 0u);
+  // Waiting while a reference is still outstanding would block on an event.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(failure("ExWaitForRundownProtectionRelease", {Ref}),
+            "cannot wait for outstanding run-down references on this "
+            "cooperative processor");
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  // Releasing after run-down has completed follows the kernel's null wait-block
+  // path and is refused.
+  invoke("ExRundownCompleted", {Ref});
+  EXPECT_EQ(integer(Ref), 1u);
+  EXPECT_EQ(failure("ExReleaseRundownProtection", {Ref}),
+            "cannot release run-down protection once run-down has started on "
+            "this cooperative processor");
+  EXPECT_EQ(integer(Ref), 1u);
+  // A null record is a clear refusal.
+  EXPECT_EQ(failure("ExAcquireRundownProtection", {0}),
+            "run-down protection requires 8-byte aligned kernel storage");
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionCountedFormsStepByTwiceTheCount) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252;
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  invoke("ExInitializeRundownProtection", {Ref});
+  // A counted acquisition adds twice the count; a counted release removes it.
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 3}), 1u);
+  EXPECT_EQ(integer(Ref), 6u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtectionEx", {Ref, 2}), 0u);
+  EXPECT_EQ(integer(Ref), 2u);
+  // Releasing more than is outstanding underflows and is refused untouched.
+  EXPECT_EQ(failure("ExReleaseRundownProtectionEx", {Ref, 2}),
+            "run-down protection release without a matching acquisition");
+  EXPECT_EQ(integer(Ref), 2u);
+  // The ULONG doubles in 32 bits, so 0x80000000 steps by zero, and only the
+  // low 32 bits of the argument register count.
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 0x80000000}), 1u);
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 0xffffffff00000001}),
+            1u);
+  EXPECT_EQ(integer(Ref), 4u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtectionEx", {Ref, 2}), 0u);
+  EXPECT_EQ(integer(Ref), 0u);
+  // After run-down, a counted acquisition fails without writing.
+  invoke("ExRundownCompleted", {Ref});
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 5}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  invoke("ExFreePoolWithTag", {Ref, Tag});
 }
 
 } // namespace

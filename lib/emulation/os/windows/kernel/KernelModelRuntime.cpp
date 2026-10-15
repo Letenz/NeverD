@@ -1131,6 +1131,71 @@ llvm::Expected<uint64_t> cStringCompare(const KernelModel &Model,
   return 0;
 }
 
+llvm::Expected<uint64_t> cStringWrite(const KernelModel &Model,
+                                      GuestMemory &Memory,
+                                      llvm::ArrayRef<uint64_t> A,
+                                      unsigned UnitWidth, bool Append) {
+  const bool Counted = A.size() == 3;
+  const uint64_t Count = Counted ? A[2] : UINT64_MAX;
+  // Unlike strncat, the wide kernel routine still scans and stores the
+  // destination terminator when Count is zero. Neither reads the source.
+  if (Counted && !Count && (!Append || UnitWidth == 1))
+    return A[0];
+  if (Counted && !Append) {
+    if (Count > UINT64_MAX / UnitWidth)
+      return runtimeError("C string count overflows its byte size");
+    if (auto E = checkBufferRange(A[0], Count * UnitWidth))
+      return E;
+  }
+  uint64_t PrefixBytes = 0;
+  if (Append) {
+    auto Length = cStringLength(Model, Memory, {A[0]}, UnitWidth);
+    if (!Length)
+      return Length.takeError();
+    PrefixBytes = *Length * UnitWidth;
+  }
+  std::vector<uint8_t> Output;
+  bool Terminated = false;
+  for (uint64_t I = 0; I < Count; ++I) {
+    auto Unit = readScanUnit(Model, Memory, A[1], I, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    Output.push_back(uint8_t(*Unit));
+    if (UnitWidth == 2)
+      Output.push_back(uint8_t(*Unit >> 8));
+    if (!*Unit) {
+      Terminated = true;
+      break;
+    }
+  }
+  const uint64_t SourceBytes = Output.size();
+  if (Counted && !Append)
+    Output.resize(Count * UnitWidth, 0);
+  else if (!Terminated)
+    Output.resize(Output.size() + UnitWidth, 0);
+  const uint64_t TotalBytes = PrefixBytes + Output.size();
+  if (auto E = checkBufferRange(A[0], TotalBytes))
+    return E;
+  // C defines no overlapping copy/append behavior. Include the destination
+  // prefix in that check, but only source units actually consumed by the call.
+  if (SourceBytes &&
+      (A[0] <= A[1] ? A[1] - A[0] < TotalBytes : A[0] - A[1] < SourceBytes))
+    return runtimeError("overlapping buffers passed to a C string write API");
+  const uint64_t Destination = A[0] + PrefixBytes;
+  if (auto E = Model.validateGuestAccess(Destination, Output.size(), true))
+    return E;
+  auto Writable = Memory.canAccess(Destination, Output.size(), Write);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return runtimeError("C string destination requires writable memory");
+  if (auto E = Memory.validateBacking(Destination, Output.size()))
+    return E;
+  if (auto E = Memory.write(Destination, Output))
+    return E;
+  return A[0];
+}
+
 llvm::Expected<uint64_t> cStringFindChar(const KernelModel &Model,
                                          GuestMemory &Memory,
                                          llvm::ArrayRef<uint64_t> A,
