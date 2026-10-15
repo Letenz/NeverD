@@ -42,6 +42,9 @@ struct LoadOptions {
   /// {"mode":"none"} when the user declined the DWARF of an ELF or Mach-O
   /// image; empty reads it.
   QJsonObject dwarf;
+  /// {"mode":"none"} when the user declined the image's static symbol table,
+  /// which loads it as if stripped; empty reads it.
+  QJsonObject symbols;
 };
 
 /// The project's writable worker and a bounded read-only analysis pool.
@@ -126,6 +129,11 @@ public:
   /// opening it (dwarf_reference), and opens the image without it.
   bool findsDwarf() const {
     return capabilities_.contains(QStringLiteral("dwarf_reference"));
+  }
+  /// Whether the worker finds an image's static symbol table before opening
+  /// it (symbol_table_reference), and opens the image without it.
+  bool findsSymbolTables() const {
+    return capabilities_.contains(QStringLiteral("symbol_table_reference"));
   }
   void loadPdb(const QJsonObject &selection);
   void closeFile();

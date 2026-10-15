@@ -252,6 +252,8 @@ Json hello() {
     result["capabilities"].push_back("pdb_reference");
   if (Engine::findsDwarf())
     result["capabilities"].push_back("dwarf_reference");
+  if (Engine::findsSymbolTables())
+    result["capabilities"].push_back("symbol_table_reference");
   result["web"] = WebEngine::capabilities();
   return result;
 }

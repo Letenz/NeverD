@@ -591,6 +591,13 @@ struct BinaryImage {
   /// neighbors so CFG can clip; it does not ingest the rest of `.pdata`.
   /// `hasKnownFunctionEntryAt` still binary-searches `COFFPDataRecords`.
   std::set<va_t> LoadOnlyFunctionEntries;
+  /// Whether the load read the image's static symbol table, which strip
+  /// removes: an ELF image's .symtab, also the names an SBF program carries
+  /// there, a PE's COFF symbol table, or a Mach-O image's symbols that it
+  /// does not export.  False when the caller declined it, so the image reads
+  /// as if stripped.  The symbols dynamic linking needs are read either way,
+  /// and an object file is never read without its table.
+  bool ReadsStaticSymbols = true;
   /// Compact x64 `.pdata` index used when LoadOnlyFunctionEntries is set so
   /// unrequested RUNTIME_FUNCTION bodies are not materialized as
   /// ExceptionFunction records.  Sorted by BeginRVA.  Empty on a full load.

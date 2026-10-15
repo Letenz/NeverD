@@ -151,10 +151,16 @@ private:
   QString askForFile(QWidget *parent) const;
   /// Open \p path, first asking how to load it when NeverD keeps no project
   /// for it, as IDA's "Load a new file" dialog does.
-  /// Open \p path once the user answered whether to load its debug
-  /// information, as IDA asks when it loads a PE that names a PDB or an
-  /// image with DWARF.
+  /// Open \p path once the user answered whether to load its symbol table
+  /// and its debug information, as IDA asks when it loads a PE that names a
+  /// PDB or an image with DWARF.
   void openAskingForDebugInfo(const QString &path, LoadOptions options);
+  /// Ask whether to load the image's static symbol table, if it has one,
+  /// then about its debug information.
+  void openAskingForSymbols(const QString &path, LoadOptions options);
+  /// Open \p path once the user answered whether to load the PDB a PE
+  /// names or the DWARF of an ELF or Mach-O image.
+  void openAskingForDebugFiles(const QString &path, LoadOptions options);
   /// Open \p path once the user answered whether to load the DWARF of the
   /// ELF or Mach-O image, if it has any.
   void openAskingForDwarf(const QString &path, LoadOptions options);

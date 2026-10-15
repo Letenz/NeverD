@@ -134,6 +134,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dwarf_reference_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerDwarfReference PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerSymbolTableReference
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/symbol_table_reference_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerSymbolTableReference PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerPEFunctionParts
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pe_function_parts_test.py"
                 "$<TARGET_FILE:neverd-worker>")

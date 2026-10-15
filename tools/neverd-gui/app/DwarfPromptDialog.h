@@ -10,14 +10,13 @@
 
 #pragma once
 
-#include <QDialog>
-#include <QJsonObject>
+#include "LoadQuestionDialog.h"
 
-class QLabel;
+#include <QJsonObject>
 
 namespace neverd::gui {
 
-class DwarfPromptDialog final : public QDialog {
+class DwarfPromptDialog final : public LoadQuestionDialog {
   Q_OBJECT
 public:
   /// \p reference is the "dwarf" of the worker's dwarf_reference for the
@@ -26,15 +25,8 @@ public:
   explicit DwarfPromptDialog(const QJsonObject &reference,
                              QWidget *parent = nullptr);
 
-protected:
-  void resizeEvent(QResizeEvent *event) override;
-
 private:
-  /// Show the path line's middle elided to the room it has.
-  void elidePath();
-
-  /// The file that holds the DWARF when it is not the input, else null.
-  QLabel *path_ = nullptr;
+  static Text textFor(const QJsonObject &reference);
 };
 
 } // namespace neverd::gui

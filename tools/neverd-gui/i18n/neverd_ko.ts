@@ -2232,6 +2232,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has DWARF: %2</source>
         <translation>%1에 DWARF가 있는지 확인할 수 없습니다: %2</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a symbol table: %2</source>
+        <translation>%1에 기호 테이블이 있는지 확인할 수 없습니다: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2524,6 +2528,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Opened without its DWARF debug information, as chosen</source>
         <translation>선택한 대로 DWARF 디버그 정보 없이 열었습니다</translation>
+    </message>
+    <message>
+        <source>Opened without its symbol table, as chosen</source>
+        <translation>선택한 대로 기호 테이블 없이 열었습니다</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -3071,6 +3079,25 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Load DWARF debug information?</source>
         <translation>DWARF 디버그 정보를 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolTablePromptDialog</name>
+    <message>
+        <source>Symbol table found</source>
+        <translation>기호 테이블을 찾았습니다</translation>
+    </message>
+    <message>
+        <source>Load the symbol table?</source>
+        <translation>기호 테이블을 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>(%1: %2)</source>
+        <translation>(%1: %2)</translation>
     </message>
     <message>
         <source>(%1)</source>

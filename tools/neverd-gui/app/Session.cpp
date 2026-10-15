@@ -26,9 +26,10 @@ constexpr char StringMinLengthKey[] = "strings/minLength";
 constexpr int MaxRecentFiles = 10;
 /// The project's record of the user's answers about its debug information:
 /// the PDB to load or {"mode":"none"}, and {"mode":"none"} for declined
-/// DWARF.
+/// DWARF or a declined symbol table.
 constexpr char PdbInputState[] = "pdb-input.json";
 constexpr char DwarfInputState[] = "dwarf-input.json";
+constexpr char SymbolsInputState[] = "symbols-input.json";
 
 /// Keep \p options' answers about debug information with the project.
 void insertChoices(QHash<QString, QByteArray> &state,
@@ -39,6 +40,9 @@ void insertChoices(QHash<QString, QByteArray> &state,
   if (!options.dwarf.isEmpty())
     state.insert(QLatin1String(DwarfInputState),
                  QJsonDocument(options.dwarf).toJson(QJsonDocument::Compact));
+  if (!options.symbols.isEmpty())
+    state.insert(QLatin1String(SymbolsInputState),
+                 QJsonDocument(options.symbols).toJson(QJsonDocument::Compact));
 }
 
 bool isEdit(const QString &operation) {
@@ -450,6 +454,10 @@ void Session::sendOpen(const QString &requested, const QString &path,
     options.dwarf =
         QJsonDocument::fromJson(state.value(QLatin1String(DwarfInputState)))
             .object();
+  if (options.symbols.isEmpty())
+    options.symbols =
+        QJsonDocument::fromJson(state.value(QLatin1String(SymbolsInputState)))
+            .object();
   QJsonObject payload{{"path", path},
                       {"debug_info", options.debugInfo},
                       {"analysis", options.analysis}};
@@ -457,6 +465,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
     payload.insert(QStringLiteral("pdb"), options.pdb);
   if (!options.dwarf.isEmpty())
     payload.insert(QStringLiteral("dwarf"), options.dwarf);
+  if (!options.symbols.isEmpty())
+    payload.insert(QStringLiteral("symbols"), options.symbols);
   if (!options.loader.isEmpty())
     payload.insert(QStringLiteral("loader"), options.loader);
   if (options.loader == QLatin1String("binary")) {
@@ -526,6 +536,9 @@ void Session::sendOpen(const QString &requested, const QString &path,
                        0);
         else if (!pdb.isEmpty())
           reportPdb(pdb);
+        if (payload.value("symbols").toObject().value("mode").toString() ==
+            QLatin1String("none"))
+          emit message(tr("Opened without its symbol table, as chosen"), 0);
         if (payload.value("dwarf").toObject().value("mode").toString() ==
             QLatin1String("none"))
           emit message(tr("Opened without its DWARF debug information, as "

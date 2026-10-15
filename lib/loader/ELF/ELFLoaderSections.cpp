@@ -134,6 +134,10 @@ llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
   auto AddSymbolsFrom = [&](const Elf_Shdr &SH) -> llvm::Error {
     if (SH.sh_type != SHT_SYMTAB && SH.sh_type != SHT_DYNSYM)
       return llvm::Error::success();
+    // A linked image read without its static symbol table keeps what strip
+    // leaves: .dynsym, which dynamic linking needs.
+    if (SH.sh_type == SHT_SYMTAB && !IsRelocatable && !Img.ReadsStaticSymbols)
+      return llvm::Error::success();
     if (!rangeInBounds(SH.sh_offset, SH.sh_size, Size) || SH.sh_entsize == 0)
       return llvm::Error::success();
 

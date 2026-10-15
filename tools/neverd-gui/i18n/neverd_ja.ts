@@ -2232,6 +2232,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has DWARF: %2</source>
         <translation>%1 に DWARF があるかどうか判別できませんでした：%2</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has a symbol table: %2</source>
+        <translation>%1 にシンボル テーブルがあるかどうか判別できませんでした：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2524,6 +2528,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Opened without its DWARF debug information, as chosen</source>
         <translation>選択どおり、DWARF デバッグ情報を読み込まずに開きました</translation>
+    </message>
+    <message>
+        <source>Opened without its symbol table, as chosen</source>
+        <translation>選択どおり、シンボル テーブルを読み込まずに開きました</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -3071,6 +3079,25 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Load DWARF debug information?</source>
         <translation>DWARF デバッグ情報を読み込みますか？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolTablePromptDialog</name>
+    <message>
+        <source>Symbol table found</source>
+        <translation>シンボル テーブルが見つかりました</translation>
+    </message>
+    <message>
+        <source>Load the symbol table?</source>
+        <translation>シンボル テーブルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>(%1: %2)</source>
+        <translation>（%1：%2）</translation>
     </message>
     <message>
         <source>(%1)</source>

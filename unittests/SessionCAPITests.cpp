@@ -3609,6 +3609,73 @@ TEST_F(SessionCAPITest, DWARFReferenceNamesWhatALoadReads) {
   EXPECT_TRUE(Missing.getString("error"));
 }
 
+TEST_F(SessionCAPITest, SymbolTableReferenceNamesWhatADeclinedLoadSkips) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  std::ifstream Input(Fixtures / "safety_cases_elf_x64", std::ios::binary);
+  std::string Bytes(std::istreambuf_iterator<char>(Input), {});
+  const std::string Image = write("app", Bytes);
+  // The same image with its .symtab turned into plain bytes, as if stripped.
+  using ELFT = llvm::object::ELF64LE;
+  ELFT::Ehdr Header;
+  std::memcpy(&Header, Bytes.data(), sizeof(Header));
+  for (unsigned Index = 0; Index < Header.e_shnum; ++Index) {
+    ELFT::Shdr Section;
+    const size_t At = Header.e_shoff + Index * Header.e_shentsize;
+    std::memcpy(&Section, Bytes.data() + At, sizeof(Section));
+    if (Section.sh_type == llvm::ELF::SHT_SYMTAB) {
+      Section.sh_type = llvm::ELF::SHT_PROGBITS;
+      std::memcpy(Bytes.data() + At, &Section, sizeof(Section));
+    }
+  }
+  const std::string Stripped = write("stripped", Bytes);
+
+  auto Parsed = llvm::json::parse(
+      takeString(neverd_symbol_table_reference_json(Image.c_str())));
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << llvm::toString(Parsed.takeError());
+  const auto *Table = Parsed->getAsObject()->getObject("symbols");
+  ASSERT_TRUE(Table);
+  EXPECT_EQ(Table->getString("table"), ".symtab");
+  EXPECT_GT(Table->getInteger("count").value_or(0), 0);
+  const auto *Offered = Table->getArray("names");
+  ASSERT_TRUE(Offered && !Offered->empty());
+  EXPECT_EQ(takeString(neverd_symbol_table_reference_json(Stripped.c_str())),
+            "{\"symbols\":null}");
+
+  const auto symbolNames = [&](const std::string &Path, int Table) {
+    neverd_session_set_symbol_table(Session, Table);
+    EXPECT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    std::set<std::string> Names;
+    auto Rows = llvm::json::parse(takeString(neverd_symbols_json(Session)));
+    EXPECT_TRUE(static_cast<bool>(Rows)) << llvm::toString(Rows.takeError());
+    if (Rows && Rows->getAsArray())
+      for (const auto &Row : *Rows->getAsArray())
+        Names.insert(Row.getAsObject()->getString("name")->str());
+    return Names;
+  };
+  // Read, the table names what it offers; declined, the image reads as the
+  // copy without the table does, which lacks names the table held.
+  const auto Read = symbolNames(Image, 1);
+  for (const auto &Name : *Offered)
+    EXPECT_TRUE(Read.count(Name.getAsString()->str()))
+        << Name.getAsString()->str();
+  const auto Declined = symbolNames(Image, 0);
+  EXPECT_EQ(Declined, symbolNames(Stripped, 1));
+  EXPECT_LT(Declined.size(), Read.size());
+  for (const auto &Name : Declined)
+    EXPECT_TRUE(Read.count(Name)) << Name;
+
+  // A file of no format has no table, and a missing one says why.
+  const std::string Text = write("notes.txt", "plain text");
+  EXPECT_EQ(takeString(neverd_symbol_table_reference_json(Text.c_str())),
+            "{\"symbols\":null}");
+  auto Missing = llvm::json::parse(takeString(
+      neverd_symbol_table_reference_json((Image + ".missing").c_str())));
+  ASSERT_TRUE(static_cast<bool>(Missing));
+  EXPECT_TRUE(Missing->getAsObject()->getString("error"));
+}
+
 TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
   const std::string Path = write("requires-shanghai.evm", "5f00");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

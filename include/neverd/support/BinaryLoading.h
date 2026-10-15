@@ -41,6 +41,10 @@ struct BinaryLoadOptions {
   /// Caller-asserted instruction state at exact AArch32 function entries.
   /// Use only when the binary lacks mode evidence; conflicting evidence fails.
   std::map<va_t, InstructionMode> ARMFunctionModes;
+  /// Read the image's static symbol table (BinaryImage::ReadsStaticSymbols).
+  /// Declining it for an object file, whose relocations name its symbols,
+  /// fails the load.
+  bool ReadStaticSymbols = true;
 };
 
 /// Normalize every externally sourced text field in an already loaded image so
