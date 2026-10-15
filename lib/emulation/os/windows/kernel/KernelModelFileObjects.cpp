@@ -37,11 +37,13 @@ llvm::Error KernelModel::retireFileIfUnreferenced(uint64_t Object) {
     return llvm::Error::success();
   if (PendingWdmCall || PendingWait)
     return fileError("file CLOSE requires the preceding continuation to start");
+  const auto Process = executionProcessContext();
+  if (!Process)
+    return fileError(
+        "file CLOSE requires the releasing thread's process context");
   auto Close = std::move(*File.DeferredClose);
   File.DeferredClose.reset();
-  const auto Process = executionProcessContext();
-  Close.Input.RequestorProcessID =
-      Process ? Process->ProcessID : windows::SystemProcessID;
+  Close.Input.RequestorProcessID = Process->ProcessID;
   Result.Requests[Close.ResultIndex].RequestorProcessID =
       Close.Input.RequestorProcessID;
   auto Call = beginFileRequest(Close.Input, Close.SourceIndex,

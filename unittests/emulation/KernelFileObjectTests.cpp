@@ -221,5 +221,20 @@ TEST_F(KernelFileObjects, ElevatedFinalReleaseFailsBeforeConsumingReference) {
   complete(Call.Arguments[1]);
   take(Model->finishGuestCall(Call.Token, 0));
 }
+
+TEST_F(KernelFileObjects, UnknownReleaseContextDoesNotInventSystemProcess) {
+  const uint64_t File = open();
+  call("ObfReferenceObject", {File});
+  close();
+  Model->enterExecution(profile::CallbackStackBase);
+  auto Released = Model->call("ObfDereferenceObject", {File});
+  ASSERT_FALSE(bool(Released));
+  rejects(Released.takeError(), "known process context");
+  Model->enterExecution(profile::StackBase);
+  const auto Call = release(File);
+  ASSERT_NE(Call.PC, 0u);
+  complete(Call.Arguments[1]);
+  take(Model->finishGuestCall(Call.Token, 0));
+}
 } // namespace
 } // namespace neverd::emulation

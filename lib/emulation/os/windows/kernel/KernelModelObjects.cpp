@@ -86,10 +86,18 @@ llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
   auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end() || !Found->second.Pointers)
     return objectError("ObfDereferenceObject requires a referenced object");
-  if (const auto File = FileObjects.find(Object);
-      File != FileObjects.end() && File->second.DeferredClose &&
-      Found->second.Pointers == 1 && CurrentIRQL != scheduler::PassiveLevel)
-    return objectError("final file reference release requires PASSIVE_LEVEL");
+  if (const auto File = FileObjects.find(Object); File != FileObjects.end() &&
+                                                  File->second.DeferredClose &&
+                                                  Found->second.Pointers == 1) {
+    if (CurrentIRQL != scheduler::PassiveLevel)
+      return objectError("final file reference release requires PASSIVE_LEVEL");
+    if (!executionProcessContext())
+      return objectError(
+          "final file reference release requires a known process context");
+    if (PendingWdmCall || PendingWait || NextIRPCall == UINT64_MAX)
+      return objectError(
+          "final file reference release cannot start its continuation");
+  }
   --Found->second.Pointers;
   if (Found->second.Kind == ObjectKind::Device) {
     if (auto E = retireDeviceIfUnreferenced(Object))
