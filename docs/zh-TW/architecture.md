@@ -1640,3 +1640,5 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 循序執行範圍內的原始比較交換
 
 `SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。
+
+原始特化亦接受嚴格的 8+8 位元組 `CONCAT`，輸出為可寫的 16 位元組純量。第一個輸入提供高 64 位元，第二個提供低 64 位元，與儲存位元組序無關。輸入須為完整純量位置或常數。仍要求顯式、無故障機器狀態、預設位址空間及無記憶體序操作；`SymExec` 負責值語義，重疊輸出會先讀取兩個原始輸入再寫入。此能力不擴充原始碼配置或原生證明契約。

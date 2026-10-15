@@ -2903,6 +2903,8 @@ remain separate; whole memory accesses and existing alias checks are retained.
 Raw completeness grants neither an undefined-output audit nor a wider source or
 native-proof contract.
 
+Raw specialization also accepts exact 8+8-byte `CONCAT` into a writable 16-byte scalar. The first input supplies the high 64 bits and the second supplies the low 64 bits, independently of storage byte order. Both inputs must be complete scalar locations or constants. The existing explicit, nonfaulting, default-space and unordered-operation restrictions remain; `SymExec` owns evaluation, and aliasing outputs read both original inputs before writing. This adds no source layout or native-proof contract.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
