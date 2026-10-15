@@ -280,6 +280,12 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
         Result.FrameValues.push_back(
             {Identity.first, Identity.second, Value.Offset});
   }
+  Result.SEHStateStoresComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.RegistrationLifetimeComplete && !Exhausted;
+  if (Result.SEHStateStoresComplete && charge(SEHStateStores.size()))
+    for (const auto &[Identity, Store] : SEHStateStores)
+      Result.SEHStateStores.push_back(Store);
   return std::move(Result);
 }
 

@@ -2719,6 +2719,86 @@ TEST_F(ProcessPublic, AndroidMutableFilesAndLiveProcMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidJNIObjectsAndThreadsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "jni-O2-relr.so")
+             .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto Request = llvm::cantFail(llvm::json::parse(R"({
+    "backend":"unicorn", "android":{"entry_symbol":"jni_vm_lifecycle",
+    "initialize":false,"thread_limit":2,"jni":true}})"));
+  for (const char *Entry :
+       {"jni_vm_lifecycle", "jni_string_values", "jni_arrays", "jni_references",
+        "jni_threads", "jni_art_string_edges"}) {
+    (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
+    const auto Options = jsonText(*Request.getAsObject());
+    const auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned") << Text;
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+  (*Request.getAsObject()->getObject("android"))["jni"] = 1;
+  EXPECT_TRUE(takeString(neverd_emulate_process_json(
+                             Session, Path.c_str(), AndroidNativeAArch64,
+                             jsonText(*Request.getAsObject()).c_str()))
+                  .empty());
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidBinderProtocolMatchesSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "binder-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto Request = llvm::cantFail(llvm::json::parse(R"({
+    "backend":"unicorn", "android":{"entry_symbol":"binder_control",
+    "initialize":false,"thread_limit":2},
+    "linux_files":{"files":[],"devices":[{"path":"/dev/binder",
+      "access_mode":2,"open_errno":0,"ioctls":[],"binder":true}]}})"));
+  for (const char *Entry :
+       {"binder_control", "binder_descriptions", "binder_threads"}) {
+    (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
+    const auto Options = jsonText(*Request.getAsObject());
+    const auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned") << Text;
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+  (*Request.getAsObject()
+        ->getObject("linux_files")
+        ->getArray("devices")
+        ->front()
+        .getAsObject())["binder"] = 1;
+  EXPECT_TRUE(takeString(neverd_emulate_process_json(
+                             Session, Path.c_str(), AndroidNativeAArch64,
+                             jsonText(*Request.getAsObject()).c_str()))
+                  .empty());
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidLiveProcAndMaintainedStatMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android fixtures unavailable";

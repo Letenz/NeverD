@@ -1023,28 +1023,11 @@ bool CodeText::event(QEvent *event) {
         QToolTip::showText(help->globalPos(), text, this);
         return true;
       }
-    // A global of LLVM IR shows the image address it stands for there.
+    // A global of LLVM IR says what it is and where it goes.
     if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
-      if (const auto address =
-              globalReferenceAt(line, columnAt(line, local.x()))) {
-        QString text;
-        if (const auto declared =
-                declarationLine(tokenAt(line, columnAt(line, local.x())))) {
-          // A mirror's declaration spells its whole layout.
-          constexpr int Shown = 160;
-          text = QStringView(source_)
-                     .split(QLatin1Char('\n'))
-                     .at(*declared)
-                     .trimmed()
-                     .toString();
-          if (text.size() > Shown)
-            text = text.left(Shown - 1) + QChar(0x2026);
-          text += QLatin1Char('\n');
-        }
-        QToolTip::showText(
-            help->globalPos(),
-            text + tr("Double-click to go to %1.").arg(hexAddress(*address)),
-            this);
+      if (const QString text = globalHoverText(line, columnAt(line, local.x()));
+          !text.isEmpty()) {
+        QToolTip::showText(help->globalPos(), text, this);
         return true;
       }
     // A type or macro the code declares shows its declaration.
@@ -1861,6 +1844,36 @@ std::optional<Address> CodeText::globalReferenceAt(int line, int column) const {
       last = reference.address;
     }
   return last;
+}
+
+QString CodeText::globalHoverText(int line, int column) const {
+  const auto address = globalReferenceAt(line, column);
+  if (!address)
+    return {};
+  QString text;
+  if (const auto declared = declarationLine(tokenAt(line, column))) {
+    const auto source = QStringView(source_).split(QLatin1Char('\n'));
+    // The comments over the declaration say what the global is: a mirror's
+    // image bytes and the offsets this function uses, a function's address.
+    int first = *declared;
+    while (first > 0 && source.at(first - 1).trimmed().startsWith(u';'))
+      --first;
+    for (int i = first; i < *declared; ++i) {
+      QStringView comment = source.at(i).trimmed().mid(1);
+      if (comment.startsWith(u' '))
+        comment = comment.mid(1);
+      text += comment;
+      text += QLatin1Char('\n');
+    }
+    // A mirror's declaration spells its whole layout.
+    constexpr int Shown = 160;
+    QString declaration = source.at(*declared).trimmed().toString();
+    if (declaration.size() > Shown)
+      declaration = declaration.left(Shown - 1) + QChar(0x2026);
+    text += declaration + QLatin1Char('\n');
+  }
+  return text + tr("Double-click to go to %1.")
+                    .arg(QStringLiteral("0x") + displayAddress(*address));
 }
 
 bool CodeText::showUnresolvedDeclaration(const QString &name) {

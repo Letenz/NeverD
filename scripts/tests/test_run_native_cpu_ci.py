@@ -214,7 +214,8 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 {name for name in drivers if name.startswith(direct_prefix)},
                 direct_kvm if backend == "kvm" else set(),
             )
-            outcomes[backend] = {re.sub("/" + backend + r"(?=[A-Z_]|$)", "/{backend}", name)
+            # Parameter names use both underscore and CamelCase suffixes.
+            outcomes[backend] = {re.sub("/" + backend + r"(?=_|[A-Z]|$)", "/{backend}", name)
                                  .replace("/" + backend.title(), "/{backend_title}")
                                  for name in drivers - direct_kvm}
             self.assertTrue(any("/{backend}_Original_" in name for name in outcomes[backend]))

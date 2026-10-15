@@ -18,6 +18,66 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_jni_values_and_thread_identity(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for entry in ("jni_vm_lifecycle", "jni_string_values", "jni_arrays",
+                      "jni_references", "jni_threads", "jni_primitive_bits",
+                      "jni_art_string_edges"):
+            with self.subTest(entry=entry):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": entry, "initialize": False,
+                    "thread_limit": 2, "jni": True}}
+                result = session.emulate_process(str(Path(fixtures) / "jni-O2-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                self.assertEqual(result["return_value"], "0")
+
+    def test_android_binder_control_and_thread_identity(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        for entry in ("binder_control", "binder_descriptions", "binder_threads"):
+            with self.subTest(entry=entry):
+                options = {"backend": "unicorn", "android": {
+                    "entry_symbol": entry, "initialize": False,
+                    "thread_limit": 2}, "linux_files": {"files": [], "devices": [
+                        {"path": "/dev/binder", "access_mode": 2, "open_errno": 0,
+                         "ioctls": [], "binder": True}]}}
+                result = session.emulate_process(str(Path(fixtures) / "binder-O2-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                self.assertEqual(result["return_value"], "0")
+
     def test_android_live_proc_and_maintained_stat(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

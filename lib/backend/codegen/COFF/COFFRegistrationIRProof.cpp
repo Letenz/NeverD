@@ -5,8 +5,11 @@
 //===----------------------------------------------------------------------===//
 #include "COFFRegistrationIRProof.h"
 
+#include "COFFRegistrationSEHStateDispatch.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/X86RegistrationSEHControl.h"
+#include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 
 #include "llvm/IR/CFG.h"
 namespace neverd::coff_registration {
@@ -34,11 +37,20 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
   std::map<int, std::vector<Event>> Expected;
   std::map<int, const llvm::Function *> Owners;
   std::map<int, va_t> FinallyReturns;
+  std::optional<std::vector<X86RegistrationSEHStateStoreBinding>> StateStores;
+  std::map<Key, const X86RegistrationSEHStateStoreBinding *> DynamicStores;
   if (!ReachedCxxSource) {
     auto Returns = getX86RegistrationSEHReturnBlocks(Source);
     if (!Returns)
       return rejectIR("source finally return has no checked CALL continuation");
     FinallyReturns = std::move(*Returns);
+    StateStores = getX86RegistrationSEHStateStores(Source);
+    if (!StateStores)
+      return rejectIR("source state stores have no complete result domain");
+    for (const auto &Store : *StateStores)
+      if (Store.TargetLevels.size() > 1)
+        DynamicStores.emplace(Key{Store.Source->Address, Store.Source->OpSeq},
+                              &Store);
   }
   size_t Work = 0;
   auto Charge = [&](size_t Amount = 1) {
@@ -186,6 +198,7 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
           llvm::Twine(Id));
     const llvm::Instruction *I = next(*Segment.Enter);
     std::set<const llvm::BasicBlock *> SeenParts;
+    std::map<const llvm::SwitchInst *, const llvm::Instruction *> Dispatches;
     size_t EventIndex = 0;
     const bool TerminalExit = ReachedCxxSource &&
                               llvm::isa<llvm::CallBase>(Segment.Exit) &&
@@ -230,10 +243,29 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
           return rejectIR("source memory or call changed its execution segment "
                           "or occurrence order");
         ++EventIndex;
+        const auto Dynamic = DynamicStores.find(Key{*Address, int(*Seq)});
+        if (Store && Dynamic != DynamicStores.end()) {
+          auto Sequence = bindSEHCallbackStateSequence(*Store, *Dynamic->second,
+                                                       Source, Parent);
+          if (!Sequence)
+            return Sequence.takeError();
+          if (!Sequence->Dispatch || !Sequence->Resume ||
+              !Dispatches.emplace(Sequence->Dispatch, Sequence->Resume).second)
+            return rejectIR("callback state selection has no unique path");
+        }
       }
       if (I == Segment.Exit)
         break;
       if (I->isTerminator()) {
+        const auto Dispatch =
+            Dispatches.find(llvm::dyn_cast<llvm::SwitchInst>(I));
+        if (Dispatch != Dispatches.end()) {
+          if (Owners.at(Id) == &Parent ||
+              !SeenParts.insert(I->getParent()).second)
+            return rejectIR("callback state selection leaves its source block");
+          I = Dispatch->second;
+          continue;
+        }
         const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(I);
         if (!Invoke || Owners.at(Id) != &Parent ||
             !SeenParts.insert(I->getParent()).second ||
@@ -248,7 +280,8 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
       return rejectIR(
           "source execution segment has an incomplete operation set");
     if (Owners.at(Id) != &Parent) {
-      if (Segment.Enter->getParent() != Segment.Exit->getParent())
+      if (Segment.Enter->getParent() != Segment.Exit->getParent() &&
+          Dispatches.empty())
         return rejectIR("callback source execution segment was split");
       std::set<const llvm::BasicBlock *> ExpectedSuccessors, ActualSuccessors;
       for (int Successor : Blocks.at(Id)->Succs) {

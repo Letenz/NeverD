@@ -1784,6 +1784,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*`은 정확한 항등식, 추가 입력, 루트 식별, 증인을 캐시하지 않는 도달 불가능 조건, 기본 동작, 구조 및 측정 비용, 호출 후 노드 한도 거부를 검사합니다. `FrameNormalizationPreservesStoresAndNativeReturns`와 `RawCodeFrameNormalization*`은 독립 바이트 판정기로 원래 메모리 효과와 실제 반환 주소, 해당되는 양쪽 바이트 순서, 정확하거나 부족한 연산 예산 및 영수증 변조를 확인합니다. `FrameNormalizationStrategyBindsIndependentProof`는 두 바이너리 증명 식별을 검사합니다.
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 는 캐시된 이력을 다시 청구하지 않고, 추가된 넓은 상수는 계속 청구하며, 작업 및 노드 예산 부족은 거부하고, 복사된 가독성 캐시가 독립적으로 유지되는지 확인합니다.
+
 ## 네이티브 Lift 검증
 
 `Lift native qualification` 워크플로는 이전에 검증하지 못한 108개 사례(실패 62개, 건너뜀 46개)를 담당합니다. 네이티브 Linux x86-64 실행기에 Clang 23 이상, GNU GCC, i386 개발 라이브러리를 설치하고 고정된 바이너리 코퍼스를 초기화합니다. `unittests/Inputs/lift-qualification.json`은 원래 테스트 식별자를 모두 유지합니다. `scripts/run_lift_qualification.py`는 누락, 중복, 비활성화, 건너뜀, 실패와 0이 아닌 프로세스 종료를 거부합니다. `qualification.json`은 개별 통과 결과, 소스 및 코퍼스 리비전, 컴파일러 버전과 바이너리 해시를 기록합니다.
@@ -1958,3 +1960,5 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 `KernelDataExportTests.cpp`는 ID, 가용성, thunk 용량, 읽기 전용/NX, 미선언 디버거 및 복구를 검사합니다. `DriverDataExportTests.cpp`는 원본 `driver_data.c`의 실제 DATA 가져오기를 사용하여 가용 백엔드, 두 계약과 기준 주소에서 실행, 언로드 및 쓰기/실행 거부를 검사합니다. 시나리오, C ABI, CLI와 Python은 불리언과 보고서 전달을 검증합니다. `NativeDriverTests.def`가 네이티브 결과를 요구하며 사용할 수 없는 백엔드는 검증 공백으로 남습니다.
 
 `KernelNamespaceTests.cpp`는 형식, 상대 이름, 대소문자, 크기/복사 순서, 꼬리 바이트, 권한, 프로세스 범위, IRQL, 실패 출력 및 보유 중 삭제를 검증합니다. `DriverNamespaceTests.cpp`는 독립 `driver_namespace.c`를 가용 Unicorn/KVM/WHP/HVF, 두 계약과 로드 주소, 협력/17 명령 스케줄링으로 실행합니다. `NativeDriverTests.def`는 네이티브 결과를 요구합니다. 미가용 백엔드와 미지원 정보/보안 클래스는 여전히 검증 공백입니다.
+
+`KernelRegistryTests.cpp`는 독립 열기, 형식 참조, 복제 핸들, 프로세스 범위, 일반 권한, 삭제 ID, 짧거나 홀수인 버퍼, 출력 별칭과 실패/용량 경계를 검사합니다. `DriverRegistryObjectTests.cpp`는 독자 작성한 `fixtures/driver_registry_objects.c`를 사용 가능한 백엔드, 두 계약과 두 베이스에서 협력형 및 17명령 스케줄링으로 실행합니다. 의도적인 포인터 누수로 언로드 거부를 확인하며 네이티브 수용에는 네 조합 모두가 필요합니다.

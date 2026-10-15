@@ -45,12 +45,14 @@ class KernelExportRegistry;
 struct KernelContextCapture;
 enum class KernelAPIKind;
 class KernelModel {
+  friend class KernelRegistry;
+
 public:
   KernelModel(GuestMemory &Backing, DriverResult &Result,
               KernelExportRegistry *Exports = nullptr)
       : ObservedMemory(Backing, [this] { recordUnpackEnvironmentRead(); }),
         Memory(ObservedMemory), Result(Result), Exports(Exports),
-        Registry(Memory),
+        Registry(*this, Memory),
         Dispatcher(Memory, Scheduler,
                    [this](uint64_t Address, uint32_t Size, bool IsWrite) {
                      return validateDispatcherStorage(Address, Size, IsWrite);
@@ -907,13 +909,15 @@ private:
     Token,
     Device,
     Directory,
-    SymbolicLink
+    SymbolicLink,
+    Key
   };
   struct ObjectReferences {
     ObjectKind Kind;
     size_t Pointers = 0;
     size_t Handles = 0;
     std::string Name;
+    KernelRegistry *RegistryOwner = nullptr;
   };
   struct ObjectHandle {
     uint64_t Object;

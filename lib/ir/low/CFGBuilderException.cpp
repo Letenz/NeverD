@@ -89,6 +89,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           SEHControls ? &*SEHControls : nullptr);
     if (CurrentImg && !SEHControls) {
       Func.RegistrationStates->Complete = false;
+      Func.RegistrationStates->SEHStateStoresComplete = false;
+      Func.RegistrationStates->SEHStateStores.clear();
       Func.RegistrationStates->SEHInvocationExitsComplete = false;
       Func.RegistrationStates->Diagnostics.push_back(
           "SEH physical-control proof budget exhausted");

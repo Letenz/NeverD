@@ -200,6 +200,14 @@ TEST_F(KernelNamespace, DirectoryRootsCasesAndErrorsUseRealHandleTypes) {
                  {Root, 0x20003, 0, 0, Scratch, Scratch + 16}),
             0u);
   const auto Object = read(Scratch);
+  EXPECT_EQ(
+      call("ObQueryNameString", {Object, Scratch + 0x800, 64, Scratch + 0x800}),
+      0u);
+  EXPECT_EQ(read(Scratch + 0x800, 4), 0x00040002u);
+  EXPECT_EQ(
+      call("ZwQueryObject", {Root, 1, Scratch + 0x800, 64, Scratch + 0x800}),
+      0u);
+  EXPECT_EQ(read(Scratch + 0x800, 4), 20u);
   EXPECT_EQ(read(Scratch + 16, 4), 0u);
   EXPECT_EQ(read(Scratch + 20, 4), 0x20003u);
   EXPECT_EQ(queryName(Object), "\\");

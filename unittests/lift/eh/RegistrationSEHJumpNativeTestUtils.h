@@ -14,6 +14,9 @@ namespace neverd {
 struct BinaryImage;
 struct ExceptionFunction;
 namespace registration_test {
+void checkSEHJumpStateEdits(const llvm::Function &Parent,
+                            const ExceptionFunction &Source,
+                            const BinaryImage &Image);
 void checkSEHJumpEdits(const llvm::Function &Parent,
                        const ExceptionFunction &Source,
                        const BinaryImage &Image);

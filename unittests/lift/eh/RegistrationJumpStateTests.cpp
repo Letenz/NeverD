@@ -17,112 +17,10 @@ using namespace neverd;
 using namespace neverd::registration_state;
 using namespace neverd::registration_test;
 
-namespace {
-LowFunc jumpFrame(unsigned Mutation) {
-  auto F = makeBranchingFrame();
-  F.Blocks.resize(7);
-  F.Blocks[0].Succs = {1};
-  for (unsigned I = 1; I != F.Blocks.size(); ++I) {
-    F.Blocks[I] = {};
-    F.Blocks[I].Id = I;
-  }
-  auto &Setup = F.Blocks[1];
-  Setup.StartAddr = 0x1080;
-  Setup.EndAddr = 0x1088;
-  Setup.Succs = {2};
-  emitOp(Setup, 0x1080, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(160, 4)});
-  emitOp(Setup, 0x1083, NdOp::INT_ADD, NdVar::tmp(0, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-24), 4)});
-  emitOp(Setup, 0x1083, NdOp::STORE, {},
-         {NdVar::tmp(0, 4), NdVar::reg(x86reg::RSP, 4)});
-  emitOp(Setup, 0x1086, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
-  Setup.InstructionBoundaries = {
-      {0x1080, 3, 0, 1}, {0x1083, 3, 1, 2}, {0x1086, 2, 3, 1}};
-  auto &Capture = F.Blocks[2];
-  Capture.StartAddr = 0x1100;
-  Capture.EndAddr = 0x1105;
-  Capture.Succs = {3};
-  emitOp(Capture, 0x1100, NdOp::CALL, NdVar::reg(x86reg::RAX, 4),
-         {NdVar::cst(0x3000, 4)});
-  Capture.InstructionBoundaries = {{0x1100, 5, 0, 1}};
-  Capture.InstructionBoundaries[0].Control = LowInstructionControl::Call;
-  Capture.InstructionBoundaries[0].ControlFlags =
-      LowInstructionControlFlag::Call;
-  Capture.InstructionBoundaries[0].Immediate = 0x3000;
-  auto &Resume = F.Blocks[3];
-  Resume.StartAddr = 0x1105;
-  Resume.EndAddr = 0x110f;
-  Resume.Succs = {4, 5};
-  emitOp(Resume, 0x1105, NdOp::INT_ADD, NdVar::tmp(0, 4),
-         {NdVar::reg(x86reg::RBP, 4),
-          NdVar::cst(uint32_t(Mutation == 2 ? -104 : -143), 4)});
-  if (Mutation == 1 || Mutation == 2)
-    emitOp(Resume, 0x1105, NdOp::STORE, {},
-           {NdVar::tmp(0, 4), NdVar::cst(0, 1)});
-  if (Mutation == 3)
-    emitOp(Resume, 0x1105, NdOp::CALL, {}, {NdVar::cst(0x3200, 4)});
-  if (Mutation == 6)
-    emitOp(Resume, 0x1105, NdOp::STORE, {},
-           {NdVar::cst(0x4101, 4), NdVar::cst(0, 1)});
-  emitOp(Resume, 0x1108, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
-  emitOp(Resume, 0x110b, NdOp::COND_BR, {},
-         {NdVar::cst(0x1120, 8), NdVar::reg(x86reg::RAX, 4)});
-  Resume.InstructionBoundaries = {
-      {0x1105, 3, 0, uint32_t(Resume.Ops.size() - 2)},
-      {0x1108, 3, uint32_t(Resume.Ops.size() - 2), 1},
-      {0x110b, 4, uint32_t(Resume.Ops.size() - 1), 1}};
-  Resume.InstructionBoundaries.back().Control = LowInstructionControl::Branch;
-  Resume.InstructionBoundaries.back().ControlFlags =
-      LowInstructionControlFlag::Branch |
-      LowInstructionControlFlag::Conditional;
-  auto &Jump = F.Blocks[4];
-  Jump.StartAddr = 0x110f;
-  Jump.EndAddr = 0x111f;
-  emitOp(Jump, 0x110f, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(8, 4)});
-  emitOp(Jump, 0x1112, NdOp::INT_ADD, NdVar::tmp(0, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-144), 4)});
-  emitOp(Jump, 0x1112, NdOp::STORE, {},
-         {NdVar::reg(x86reg::RSP, 4), NdVar::tmp(0, 4)});
-  emitOp(Jump, 0x1115, NdOp::INT_ADD, NdVar::tmp(0, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
-  emitOp(Jump, 0x1115, NdOp::STORE, {}, {NdVar::tmp(0, 4), NdVar::cst(0, 4)});
-  emitOp(Jump, 0x111a, NdOp::CALL, {}, {NdVar::cst(0x3100, 4)});
-  Jump.InstructionBoundaries = {{0x110f, 3, 0, 1},
-                                {0x1112, 3, 1, 2},
-                                {0x1115, 5, 3, 2},
-                                {0x111a, 5, 5, 1}};
-  Jump.InstructionBoundaries.back().Control = LowInstructionControl::Call;
-  Jump.InstructionBoundaries.back().ControlFlags =
-      LowInstructionControlFlag::Call | LowInstructionControlFlag::NoReturn;
-  Jump.InstructionBoundaries.back().Immediate = 0x3100;
-  auto &Retire = F.Blocks[5];
-  Retire.StartAddr = 0x1120;
-  Retire.EndAddr = 0x1127;
-  Retire.Succs = {6};
-  addSlotStore(Retire, -1);
-  Retire.InstructionBoundaries = {{0x1120, 7, 0, 2}};
-  F.ExceptionMetadata->Registration->TryLevelStores = {{0x1120, 0x1127, -1}};
-  auto &Return = F.Blocks[6];
-  Return.StartAddr = 0x1130;
-  Return.EndAddr = 0x1134;
-  emitOp(Return, 0x1130, NdOp::INT_ADD, NdVar::tmp(0, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
-  emitOp(Return, 0x1130, NdOp::LOAD, NdVar::tmp(1, 4), {NdVar::tmp(0, 4)});
-  emitOp(Return, 0x1130, NdOp::STORE, {}, {NdVar::cst(0, 4), NdVar::tmp(1, 4)},
-         NdMemoryAddressSpace::X86FS);
-  Return.InstructionBoundaries = {{0x1130, 4, 0, 3}};
-  return F;
-}
-} // namespace
-
 TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
   for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
     SCOPED_TRACE(Mutation);
-    const auto F = jumpFrame(Mutation);
+    const auto F = makeJumpFrame(Mutation);
     EH3JumpRuntime Runtime;
     Runtime.ImportSlots.insert(0x4100);
     Runtime.Capture = [&](const LowOp &Op, const FrameState &Frame,
@@ -216,7 +114,7 @@ TEST(RegistrationJumpState, RuntimeCallbacksResumeOnlyFromPrivateArguments) {
     SCOPED_TRACE(Filter);
     for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
       SCOPED_TRACE(Mutation);
-      auto F = jumpFrame(0);
+      auto F = makeJumpFrame(0);
       F.Blocks.resize(8);
       auto &Chain = *F.ExceptionMetadata->Registration;
       Chain.Scopes =
@@ -335,7 +233,7 @@ TEST(RegistrationJumpState, ExactFlagsSurviveOnlyTheirReachingDefinition) {
 TEST(RegistrationJumpState, AsyncFilterWritesRevokeAParentResumption) {
   for (bool Overlap : {false, true}) {
     SCOPED_TRACE(Overlap);
-    auto F = jumpFrame(0);
+    auto F = makeJumpFrame(0);
     F.Blocks.resize(9);
     auto &Chain = *F.ExceptionMetadata->Registration;
     Chain.TryLevelStores = {{0x110f, 0x1116, 0}, {0x1120, 0x1127, -1}};
@@ -405,9 +303,9 @@ TEST(RegistrationJumpState, AsyncFilterWritesRevokeAParentResumption) {
 }
 
 TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
-  for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
     SCOPED_TRACE(Mutation);
-    auto F = jumpFrame(0);
+    auto F = makeJumpFrame(0);
     F.Blocks.resize(10);
     auto &Chain = *F.ExceptionMetadata->Registration;
     Chain.Scopes = {{-1, 0x1800, 0x1120, false}, {0, 0, 0x1840, true}};
@@ -440,7 +338,8 @@ TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
     emitOp(Filter, 0x1800, NdOp::INT_ADD, NdVar::tmp(0, 4),
            {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Offset), 4)});
     emitOp(Filter, 0x1800, NdOp::STORE, {},
-           {Mutation >= 10 ? NdVar::cst(0x4400, 4) : NdVar::tmp(0, 4),
+           {(Mutation >= 10 && Mutation <= 12) ? NdVar::cst(0x4400, 4)
+                                               : NdVar::tmp(0, 4),
             Mutation == 12 ? NdVar::reg(x86reg::RBP, 4) : NdVar::cst(2, 4)});
     emitOp(Filter, 0x1805, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
            {Mutation == 7 ? NdVar::reg(x86reg::RCX, 4)
@@ -488,6 +387,48 @@ TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
     Finally.InstructionBoundaries.back().ControlFlags =
         LowInstructionControlFlag::Call;
     Return(Finally, 0x1856);
+    if (Mutation >= 13) {
+      // A continuing filter can change the frame state. Search still follows
+      // its captured scope cursor, whereas the suspended unwind reloads the
+      // changed frame state after the finally returns.
+      F.Blocks.resize(12);
+      auto &StateStore = F.Blocks[7];
+      StateStore.Ops[0].Inputs[1] = NdVar::cst(uint32_t(-4), 4);
+      StateStore.Ops[1].Inputs[1] = NdVar::cst(UINT32_MAX, 4);
+      auto &Disposition = F.Blocks[10];
+      Disposition.Id = 10;
+      Disposition.StartAddr = 0x1805;
+      Disposition.EndAddr = 0x180b;
+      Disposition.Ops.assign(StateStore.Ops.begin() + 2, StateStore.Ops.end());
+      Disposition.InstructionBoundaries.assign(
+          StateStore.InstructionBoundaries.begin() + 1,
+          StateStore.InstructionBoundaries.end());
+      for (unsigned I = 0; I != Disposition.Ops.size(); ++I)
+        Disposition.Ops[I].Seq = I;
+      for (auto &Boundary : Disposition.InstructionBoundaries)
+        Boundary.FirstOp -= 2;
+      StateStore.Ops.resize(2);
+      StateStore.InstructionBoundaries.resize(1);
+      StateStore.EndAddr = 0x1805;
+      StateStore.Succs = {10};
+      Chain.TryLevelStores.push_back({0x1800, 0x1805, -1});
+      auto &Continue = F.Blocks[11];
+      Continue.Id = 11;
+      Continue.StartAddr = 0x1880;
+      Continue.EndAddr = 0x1886;
+      emitOp(Continue, 0x1880, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+             {NdVar::cst(UINT32_MAX, 4)});
+      Continue.InstructionBoundaries = {{0x1880, 5, 0, 1}};
+      Return(Continue, 0x1885);
+      if (Mutation == 14) {
+        Chain.Scopes = {{-1, 0x1880, 0x1120, false},
+                        {0, 0x1800, 0x1120, false},
+                        {1, 0, 0x1840, true}};
+        Chain.TryLevelStores.front().Level = 2;
+        F.Blocks[8].Ops.back().Inputs[1] = NdVar::cst(2, 4);
+        Disposition.Ops.front().Inputs[0] = NdVar::cst(0, 4);
+      }
+    }
     EH3JumpRuntime Runtime;
     Runtime.ImportSlots.insert(0x4100);
     Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
@@ -520,7 +461,7 @@ TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
     RegistrationStateSolver Solver(F, 0, 0, nullptr, nullptr, nullptr, nullptr,
                                    nullptr, nullptr, nullptr, &Runtime);
     const auto Result = Solver.run();
-    const bool Accepted = Mutation == 0 || Mutation == 10;
+    const bool Accepted = Mutation == 0 || Mutation == 10 || Mutation >= 13;
     if (Accepted && !Result.Complete)
       for (const auto &Diagnostic : Result.Diagnostics)
         ADD_FAILURE() << Diagnostic;
@@ -533,7 +474,7 @@ TEST(RegistrationJumpState, FinallyRaiseUsesContinuingFilterFrameEffects) {
 TEST(RegistrationJumpState, UnwindFinallyKeepsNestedPrivateStacksAndEffects) {
   for (unsigned Mutation = 0; Mutation != 21; ++Mutation) {
     SCOPED_TRACE(Mutation);
-    auto F = jumpFrame(0);
+    auto F = makeJumpFrame(0);
     F.Blocks.resize(13);
     auto &Chain = *F.ExceptionMetadata->Registration;
     Chain.Scopes = {{-1, 0x1800, 0x1120, false},
@@ -721,7 +662,7 @@ TEST(RegistrationJumpState, UnwindFinallyKeepsNestedPrivateStacksAndEffects) {
 TEST(RegistrationCRTCall, ControlFPWritesOnlyADisjointScalarWord) {
   for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
     SCOPED_TRACE(Mutation);
-    auto F = jumpFrame(0);
+    auto F = makeJumpFrame(0);
     auto &Setup = F.Blocks[1];
     emitOp(
         Setup, 0x1086, NdOp::INT_ADD, NdVar::tmp(0, 4),
@@ -765,5 +706,132 @@ TEST(RegistrationCRTCall, ControlFPWritesOnlyADisjointScalarWord) {
     EXPECT_EQ(Result.HasBoundSEHCallees, Mutation == 0);
     if (!Mutation)
       EXPECT_TRUE(Result.Complete);
+  }
+}
+
+TEST(RegistrationJumpState, CallbackStateReloadControlsDirectResumption) {
+  for (int32_t Written : {0, -1, 2}) {
+    SCOPED_TRACE(Written);
+    auto F = makeJumpFrame(0);
+    F.Blocks.resize(14);
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    Chain.Scopes = {
+        {-1, 0, 0x1940, true}, {0, 0, 0x1900, true}, {1, 0, 0x1800, true}};
+    auto StateBlock = [&](unsigned Id, va_t Address, int32_t Level, int Next) {
+      auto &Block = F.Blocks[Id];
+      Block.Id = Id;
+      Block.StartAddr = Address;
+      Block.EndAddr = Address + 7;
+      Block.Succs = {Next};
+      addSlotStore(Block, Level);
+      Block.Ops[0].Seq = 0;
+      Block.Ops[1].Seq = 1;
+      Block.InstructionBoundaries = {{Address, 7, 0, 2}};
+      Chain.TryLevelStores.push_back({Address, Address + 7, Level});
+    };
+    StateBlock(7, 0x10a0, 0, 2);
+    StateBlock(8, 0x1140, 2, 4);
+    F.Blocks[1].Succs = {7};
+    F.Blocks[3].Succs = {8, 5};
+    auto &Setup = F.Blocks[1];
+    emitOp(Setup, 0x1086, NdOp::INT_ADD, NdVar::tmp(0, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-28), 4)});
+    emitOp(Setup, 0x1086, NdOp::INT_ADD, NdVar::tmp(1, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-40), 4)});
+    emitOp(Setup, 0x1086, NdOp::STORE, {},
+           {NdVar::tmp(0, 4), NdVar::tmp(1, 4)});
+    Setup.InstructionBoundaries.back().OpCount += 3;
+    auto &Resume = F.Blocks[3];
+    Resume.Ops.front().Inputs[1] = NdVar::cst(uint32_t(-28), 4);
+    LowOp Read;
+    Read.Opcode = NdOp::LOAD;
+    Read.Addr = 0x1105;
+    Read.Output = NdVar::reg(x86reg::RDI, 4);
+    Read.addInput(NdVar::tmp(0, 4));
+    Resume.Ops.insert(Resume.Ops.begin() + 1, Read);
+    ++Resume.InstructionBoundaries.front().OpCount;
+    for (unsigned I = 1; I != Resume.InstructionBoundaries.size(); ++I)
+      ++Resume.InstructionBoundaries[I].FirstOp;
+    for (unsigned I = 0; I != Resume.Ops.size(); ++I)
+      Resume.Ops[I].Seq = I;
+    auto &Jump = F.Blocks[4];
+    Jump.StartAddr += 0x38;
+    Jump.EndAddr += 0x38;
+    for (auto &Op : Jump.Ops)
+      Op.Addr += 0x38;
+    for (auto &Boundary : Jump.InstructionBoundaries)
+      Boundary.Address += 0x38;
+    StateBlock(9, 0x1800, Written, 10);
+    auto Return = [&](unsigned Id, va_t Address) {
+      auto &Block = F.Blocks[Id];
+      Block.Id = Id;
+      Block.StartAddr = Address;
+      Block.EndAddr = Address + 1;
+      emitOp(Block, Address, NdOp::RETURN, {}, {});
+      Block.InstructionBoundaries = {{Address, 1, 0, 1}};
+      Block.InstructionBoundaries.front().Control =
+          LowInstructionControl::Return;
+      Block.InstructionBoundaries.front().ControlFlags =
+          LowInstructionControlFlag::Return;
+    };
+    Return(10, 0x1807);
+    auto &Middle = F.Blocks[11];
+    Middle.Id = 11;
+    Middle.StartAddr = 0x1900;
+    Middle.EndAddr = 0x1906;
+    Middle.Succs = {12};
+    emitOp(Middle, 0x1900, NdOp::INT_ADD, NdVar::tmp(0, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-28), 4)});
+    emitOp(Middle, 0x1900, NdOp::STORE, {},
+           {NdVar::tmp(0, 4), NdVar::reg(x86reg::RBP, 4)});
+    Middle.InstructionBoundaries = {{0x1900, 6, 0, 2}};
+    Return(12, 0x1906);
+    Return(13, 0x1940);
+    EH3JumpRuntime Runtime;
+    Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
+                         size_t &) -> std::optional<EH3JumpCapture> {
+      if (Op.Addr != 0x1100)
+        return std::nullopt;
+      EH3JumpCapture Capture;
+      Capture.Call = Op.Addr;
+      Capture.ReturnPC = 0x1105;
+      Capture.BufferOffset = -144;
+      Capture.StackOffset = -192;
+      Capture.Level = 0;
+      Capture.UnwindTarget = 0x3300;
+      constexpr uint64_t Registers[] = {x86reg::RBP, x86reg::RBX, x86reg::RDI,
+                                        x86reg::RSI};
+      for (unsigned I = 0; I != 4; ++I)
+        Capture.Nonvolatile[I] =
+            Frame.Registers[Registers[I] / x86reg::GeneralRegStride];
+      return Capture;
+    };
+    Runtime.Resume = [](const LowOp &Op, size_t &) {
+      return Op.Addr == 0x1152;
+    };
+    RegistrationStateSolver Solver(F, 0, 0, nullptr, nullptr, nullptr, nullptr,
+                                   nullptr, nullptr, nullptr, &Runtime);
+    const auto A = Solver.run();
+    const bool Valid = Written != 2;
+    if (Valid && !A.Complete)
+      for (const auto &Diagnostic : A.Diagnostics)
+        ADD_FAILURE() << Diagnostic;
+    EXPECT_EQ(A.Complete, Valid);
+    EXPECT_EQ(A.SEHStateStoresComplete, Valid);
+    EXPECT_EQ(A.SEHJumpResumptionsComplete, Valid);
+    if (!Valid) {
+      EXPECT_TRUE(A.SEHStateStores.empty());
+      EXPECT_TRUE(A.SEHJumpResumptions.empty());
+      continue;
+    }
+    ASSERT_EQ(A.SEHJumpResumptions.size(), 1u);
+    EXPECT_EQ(A.SEHJumpResumptions.front().ResumedLevels,
+              (std::vector<int32_t>{Written}));
+    const auto Marker = std::find_if(
+        A.FrameValues.begin(), A.FrameValues.end(), [](const auto &Value) {
+          return Value.Address == 0x1105 && Value.OpSeq == 1;
+        });
+    ASSERT_NE(Marker, A.FrameValues.end());
+    EXPECT_EQ(Marker->EstablishedFrameOffset, -40);
   }
 }

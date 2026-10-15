@@ -397,15 +397,15 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         rule="private-path",
         commits=frozenset({
             "2a5d6f60dc231c1e2c90516e762a1a407ae78ce9",
+            "f5c1f1c145767f8da374c3a0449076ea00200cea",
             "3274140f8d21928e1c7c930203472762c5cab9ce",
         }),
         line="",
         reason=(
-            "Reviewed replacement of a developer artifact directory with a "
-            "local-recovery placeholder. The directory basename, qualification "
-            "claims, links and hashes remain unchanged. Only the exact original "
-            "and deletion commits and line digest are covered; current and "
-            "future private paths remain findings."
+            "Reviewed removal of a local evidence directory from the issue "
+            "closure notes. The exact line digest and introduction/removal "
+            "commits record the cleanup without republishing the path. "
+            "Current files and future occurrences remain forbidden."
         ),
         line_sha256=frozenset({
             "90101851e50b6c41cdb14014f7669182fa5deef52e4d6214bba21b6be517581e",

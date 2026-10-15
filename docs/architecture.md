@@ -172,7 +172,11 @@ addresses only from authoritative identities: NeverD's mirrors by their
 `__nd_data_`/`__nd_codeptr_` spelling plus constant offsets, functions by their
 source identity. Data is named as the listing names it (user names, import
 slots with the suffix `DataNames.def` shares with the listing, debug and image
-symbols, strings). Pages publish where the prelude ends and the epilogue
+symbols, strings). Each mirror's declaration goes under a comment that says
+which image bytes it stands for and which addresses the body reaches through
+it, from a walk of the body before printing; the annotation writer offers no
+hook before a global, so these comments go in after printing and every later
+offset moves by their length. Pages publish where the prelude ends and the epilogue
 begins, and, line by line, the image address each spelled global stands for.
 A mirror an instruction reaches at several offsets maps its spellings in
 printing order only when the counts agree, otherwise to its first byte. The
@@ -334,6 +338,11 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+`RegistrationStateTryLevel` binds each SEH store to its decoded extent,
+operation identity, width, literal and reaching-state transitions. Finally
+execution partitions frame outcomes by the resulting try level; local unwind
+reloads that level before selecting another cleanup. Joining frames first or
+recomputing narrow-write semantics downstream would lose that correlation.
 The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private
@@ -343,10 +352,43 @@ checked near returns and continuations. Call-ABI recovery and LLVM callback
 lowering consume this one binding, so callback-private pushes cannot become
 cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
+`X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
+MedIR callback stores. Native writes require a checked byte, word or full-word
+constant store with a proved finite set of complete resulting states. Narrow
+writes preserve the untouched high bytes; physical state tokens name complete
+results. The binder orders these results and assigns consecutive write identities
+across source occurrences. The same helper computes
+retained scopes from all parent reaching levels and callback write results,
+including their enclosing scopes; an unexplained scope refuses emission.
+LLVM retains callback-only rows through an indexed entry chain of
+`llvm.donothing` invokes without activating those scopes. The original logical
+store remains available to independent source replay. Multiple results use one
+volatile full-word reload followed by a closed switch, one physical update per
+case, and a common continuation. `MedLLVMRegistrationSEHStateDispatch` emits
+this selection; `COFFRegistrationSEHStateDispatch` independently checks its
+complete domain, exact frame read, update identities and predecessor closure.
+Source-segment validation follows only these authenticated edges when a callback
+block is split, preserving source event order independently of physical block
+layout. Case and continuation addresses cannot escape.
+`X86/RegistrationSEHRuntimeReturn.cpp` proves when a callback's scalar return
+has no observer: the whole body is exclusively a runtime finally, with checked
+physical near returns and no ordinary callers or other entry kinds. The MedIR
+call-result binder uses that proof only for incidental `RaiseException` results;
+all other source observations retain the strict SSA-use checks. LLVM emission
+and independent COFF source replay consume the same decision.
 MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF
 source replay consume those same bindings.
+With `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, LLVM maps each callback
+write's source semantic token to its physical parent registration and generated
+state. MC receipts bind parent/callback ownership, frame layout, write identity,
+instruction span and actual x86 address register. Codegen preserves these
+identities and source order across layout passes; final COFF validation checks
+unique code storage and the exact MOV32 displacement, immediate and base
+register. Rebased addresses and temporary symbols are not source identities.
+The pinned r5 compiler provides this capability; older r4 compilers refuse
+native callback state writes.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
 `MedLLVMRegistrationIncoming` owns the transactional caller-frame projection
@@ -505,7 +547,8 @@ state solver binds its actual registration pointer and target level at the
 source call. CFG construction splits the ordinary continuation at this state
 transition. Each traversed finally gets a bounded callback-stack analysis with
 the parent's established EBP, and every returning path must preserve the
-runtime fields and invocation stack before its frame effects can be joined.
+registration fields other than checked TryLevel writes, and restore its
+invocation stack before its frame effects can be joined.
 SEH filter and finally entries share the private invocation-stack coordinate
 used by C++ catches. A finally may save registers and allocate locals below
 its runtime return PC; loads require initialized bytes in the current
@@ -519,6 +562,26 @@ reaching levels only after those independent transfers. An ordinary parent
 entry into callback code still requires a separate invocation-exit contract;
 moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
+The suspended-finally interpreter partitions filter returns by disposition and
+written TryLevel, including joins at a shared return block. Search keeps the
+cursor captured before each filter call. Continued exceptions resume every
+resulting frame at the next instruction; instruction-local temporaries cannot
+cross an internal split. Ordinary callback propagation uses these same checked
+filter effects after a returning `RaiseException`, including changed parent
+cells. Each returned state supplies its own exceptional roots before the
+frames join, so a filter can establish the proof for a scope absent from
+ordinary parent flow. A failed search cannot publish a complete root proof.
+Handler-selected paths contribute no ordinary returning frame. Ordinary
+propagation can retain a conditional return from an external search, while
+nonlocal unwind still requires every path to resume inside its proved search.
+Unwind records the logical state left at entry or by
+the last completed callback together with the final runtime state. Remaining
+filter-only unwind steps may make those values differ. MedIR binds a variable
+resumption only when these pairs give a complete, unambiguous projection for
+every contributing path. LLVM reads the logical cell once after a returning
+capture and maps that original value to the final state. The independent COFF
+consumer checks the exact volatile read, projection keys/results, zero-return
+selector and contiguous restoration.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
@@ -532,9 +595,9 @@ the invocation's restored ESP and parent EBP. A conditional, malformed or
 unbalanced return cannot establish callback completeness or a continuation.
 The runtime advances the try level before invoking each finally, as described
 by [Wine's independent CRT implementation](https://github.com/wine-mirror/wine/blob/master/dlls/msvcrt/except_i386.c).
-Unknown callback calls, runtime-field writes and nonlocal callback exits still
-refuse this returning-path proof. These state facts grant no native call-frame
-or installation permission.
+Unknown callback calls, runtime-field writes without checked TryLevel receipts,
+and nonlocal callback exits still refuse this returning-path proof. These state
+facts grant no native call-frame or installation permission.
 MedIR distinguishes established parent EBP, private callback
 ESP and a continuation's checked saved ESP. Its shared root-shape and
 entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
@@ -4293,8 +4356,9 @@ primary replacement and secondary append preserve IRP association. Terminal
 completion preflights dependencies before automatic unlock/free. Partial MDLs
 retain independent descriptor, root-lock and borrowed-alias ownership.
 
-`KernelRegistry` owns the explicitly configured session tree, per-handle access
-rights and lifetime, key/value serialization, and mutations. Its explicit
+`KernelRegistry` owns the explicitly configured session tree, key/body
+associations, key/value serialization, and mutations. `KernelModelObjects.cpp`
+owns handle rights and lifetime. Its explicit
 registry epoch is combined with the shared scheduler's elapsed time; it owns
 per-key timestamp validity and cached maximum lengths. Missing time never
 falls back to host time. Scenario preflight and
@@ -6253,7 +6317,7 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
-`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per existing context node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization and does not cache its result.
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization and does not cache its result.
 
 ELF object parsing, native relocation writers and loader provenance share one field-width table. AArch64 `PREL64` consumes eight bytes and preserves signed `S + A - P`, including full-width implicit REL addends. Bounds, overlapping writers and signed overflow fail before publication.
 
@@ -6400,7 +6464,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
 
-`KernelModelObjects.cpp` owns process/thread pointer references, handle metadata and retirement. Scheduling owns execution holds and exit; waits retain their existing domain holds. Referenced borrowed threads survive callback/stack retirement. Reused stacks get new identities and priorities, while retained old objects preserve their exit priority. Process identities remain session-owned; registry handles still route to the registry owner pending integration.
+Scheduling and waits retain their own execution holds. Referenced exited threads preserve identity and exit priority, reused stacks get new identities, and processes remain session-owned. `KernelRegistry` owns live key data and per-open body associations; shared data storage does not introduce a second pointer/handle counter. `KernelModelObjects.cpp` alone owns caller references, handle access, process scope and retirement. Deleted data outlives its live path only through retained bodies. Reset requires all key bodies to retire, and opaque body storage rejects guest access.
 
 `KernelDataExports.def` owns the kernel data inventory and layout outside the PE forwarder span. `KernelExportRegistry` separates data addresses from function gates without consuming thunk slots. `KernelModelDataExports.cpp` initializes identities through the object owner and protects data pages before entry. `KernelModelMemory` observes successful model reads; CPU read hooks cover guest instructions. Preflight and diagnostic snapshots remain pure. Declared debugger facts and consumed data retain recovery dependencies; retained data pointers remain borrowed state.
 
@@ -6414,5 +6478,14 @@ fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
 AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
 labels on unmap. JSON supplies explicit identity/provider declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
+
+`AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI
+function tables. Object identity, references, frames and pending exceptions
+remain in that owner; string/array helpers implement value and copy-back
+semantics. Guest storage uses the existing allocator and address-space authority.
+`LinuxBinder` owns LP64 control/looper state within each device open description,
+shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
+alternate semantics or service responses. JNI object limits and Binder stream
+admission fail explicitly rather than borrowing a host VM or driver.
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.

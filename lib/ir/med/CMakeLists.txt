@@ -10,8 +10,10 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationCall.cpp
   X86/RegistrationCallResult.cpp
   X86/RegistrationSEHCall.cpp
+  X86/RegistrationSEHRuntimeReturn.cpp
   X86/RegistrationSEHJump.cpp
   X86/RegistrationSEHBoundCall.cpp
+  X86/RegistrationSEHStateStore.cpp
   X86/RegistrationEntry.cpp
   X86/RegistrationRoots.cpp
   X86/RegistrationReachability.cpp

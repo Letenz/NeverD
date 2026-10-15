@@ -67,6 +67,12 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
                 llvm::AllocaInst &Frame, uint64_t EntrySP,
                 const std::map<const llvm::CallInst *, va_t> &Calls);
 
+/// Restore the capture state on initial return, or project the last logical
+/// callback state through the source's proved remaining unwind steps.
+llvm::Value *emitSEHJumpState(const X86RegistrationSEHJumpCall &Source,
+                              llvm::CallInst &Call, llvm::Value &State,
+                              llvm::IRBuilder<> &Builder);
+
 /// Commit a preflighted buffer projection. The returned map replaces the old
 /// source calls before protected invokes are constructed.
 std::map<llvm::CallInst *, llvm::CallInst *>

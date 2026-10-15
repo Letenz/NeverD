@@ -330,7 +330,7 @@ llvm::Expected<uint64_t> KernelModel::call(
 #undef NEVERD_KERNEL_REGISTRY_API
     if (Kind == KernelAPIKind::ZwClose)
       return closeHandle(A[0]);
-    return Registry.call(*this, Name, A);
+    return Registry.call(Name, A);
   case KernelAPIKind::MmGetSystemRoutineAddress:
     return resolveRoutine(A[0]);
   case KernelAPIKind::MmGetPhysicalMemoryRanges:
