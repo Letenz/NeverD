@@ -1,8 +1,14 @@
-//===- MobileDalvikDex.cpp - Bounded standard DEX reader
-//-------------------===//
-#include "MobileDalvik.h"
-#include "MobileDalvikAccess.h"
-#include "MobileDalvikIdentity.h"
+//===- Dex.cpp - Shared Dalvik dex implementation ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared Dalvik dex implementation.
+//===----------------------------------------------------------------------===//
+#include "neverd/dalvik/Model.h"
+#include "neverd/dalvik/Access.h"
+#include "neverd/dalvik/Identity.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"

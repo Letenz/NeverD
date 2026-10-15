@@ -6536,8 +6536,9 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
-`AndroidJNIMethods` owns the finite intrinsic method catalogue, descriptor binding
-and execution; all JNI call forms reuse it and Bionic's GP argument reader.
+`AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
+all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
+The finite intrinsic catalogue remains in that owner.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
@@ -6548,3 +6549,28 @@ adapters declare these contracts and never infer methods, services or commands.
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
 
 KernelModel keeps scenario identifiers separate from address-keyed file bodies. KernelModelObjects owns caller pointer counts; KernelModelFileObjects owns deferred CLOSE dispatch and waits. KernelModelIO retires bodies only after packet completion and dispatch/continuation return. Device and PnP holds inspect bodies, including bodies with no scenario identifier. DriverSession inherits the actual parent context for synchronous nested callbacks; independent scheduled callbacks keep their own context.
+
+
+## Shared Dalvik decode and bounded execution
+
+`NeverDDalvik` owns the decoded declarations, DEX reader, signatures and input
+budget formerly confined to the mobile CLI. Mobile source recovery includes
+compatibility headers and consumes that same core; it owns Smali parsing and
+Java source emission. The shared module depends on LLVM Support and zlib, not
+CLI/session state or CPU transports. The existing pinned zlib fallback has one
+CMake owner. This does not add a second instruction decoder.
+
+`dalvik::Program` owns immutable explicit class declarations and integral static
+method execution over decoded instructions. Frames own typed 32-bit register
+words and overlapping-wide invalidation; arithmetic has one unsigned-bit
+implementation of Java integer semantics. Calls share one owner-provided
+instruction/deadline callback and bounded frame storage. Missing semantics
+produce a typed stop, with method identity and code-unit PC.
+
+`AndroidDex` admits API-28 DEX bytes before native execution and binds Program's
+budget and exceptions to the existing Bionic workload VM. `AndroidJNIMethods`
+keeps opaque method IDs, call-form/type checks and argument transport; it never
+interprets instructions or stores caller-provided successful results. JSON only
+accepts strict explicit hex images. There is no host JVM, implicit classpath,
+network or phone dependency. The initial supported class contract excludes
+stateful initialization, fields, hierarchy dispatch, objects and handlers.

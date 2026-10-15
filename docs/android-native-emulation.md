@@ -742,8 +742,8 @@ primitive and Object/String array classes. Unknown classes stop rather than
 inventing an application class or assuming ClassNotFoundException. `ThrowNew`
 admits only a null message for these intrinsic throwable classes.
 
-Java execution is limited to the intrinsic methods below. There is no field
-execution, DEX/class loader, native-method registration, monitor, weak-reference,
+Java execution includes the intrinsic methods and explicit integral DEX bodies
+below. There is no field execution, general class loader, native-method registration, monitor, weak-reference,
 critical/direct-buffer, GC or JIT model.
 Attachment names/groups and VM destruction also remain unsupported. The model
 retains at most 4096 objects and 4096 live references/borrows, with object storage
@@ -800,8 +800,8 @@ Boolean and minimum-integer literal identities, and Android's cached int strings
 for -99 through 99, are retained separately from newly allocated value strings.
 getChars validates its destination before writing and preserves it on exception.
 Allocation shares the JNI object budget. String search also has a finite work
-budget. Float/double methods, application methods and arbitrary class
-initializers remain unsupported. This is not a DEX interpreter.
+budget. This intrinsic catalogue does not infer application methods or arbitrary
+class initializers. Explicit supplied DEX bodies use the separate executor below.
 
 Semantic references are the pinned Android 9
 [String](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/String.java),
@@ -809,3 +809,49 @@ Semantic references are the pinned Android 9
 [Integer](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Integer.java),
 [Long](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Long.java)
 and JNI invocation contracts linked above. No host Java runtime is invoked.
+
+
+## Explicit integral DEX methods
+
+With JNI enabled, `android.dex_images` accepts an array of complete hex-encoded
+DEX images. This is an explicit classpath for this workload; the model never
+searches the host, phone, APK store or network. The Android API 28 profile admits
+versions 035, 037, 038 and 039, at most 16 images and 1 MiB of input, further
+limited by the process memory allowance. The shared DEX reader checks container
+checksums, metadata, instruction boundaries and code flow before native guest
+constructors run. Duplicate definitions and platform class replacements fail.
+The reader's existing annotation and format restrictions also apply.
+
+`FindClass` and `GetStaticMethodID` bind the supplied class and exact descriptor.
+Ordinary, V and A calls share the same JNI descriptor/argument owner as the
+intrinsics. Method identities belong to this VM and survive local frame or
+thread teardown. The initial execution contract supports integral static
+methods on direct Object subclasses without fields, interfaces or class
+initializers. Supported bodies include integer/wide constants and moves,
+32/64-bit arithmetic and shifts, narrowing/sign extension, signed comparisons,
+branches, packed/sparse switches, loops, recursion and static calls to supplied
+methods. Integral arguments/results include boolean, byte, char, short, int and
+long. All arithmetic uses Java wrapping and masked shift distances; minimum
+integer divided by -1 wraps, and division by zero raises a pending
+ArithmeticException for JNI to observe and clear.
+
+Every DEX instruction consumes the existing native workload instruction budget
+and deadline. Calls do not reset either budget. Recursion is bounded to 64
+frames and a conservative frame-storage share of the stack/memory allowance;
+resource exhaustion stops explicitly. Uninitialized registers, torn wide
+values and incompatible results fail. Wide moves read both halves before an
+overlapping write. Diagnostics name the method and DEX code-unit address.
+
+This is a bounded interpreter, not complete ART. Object/array instructions,
+float/double bodies, exception handlers, synchronization, field/class
+initialization, inherited dispatch and external/native Java calls remain
+unsupported. An unsupported operation never supplies a guessed Java result.
+Binder system-service implementations and GPU shaders are independent inputs
+and are not supplied by admitting DEX.
+
+The instruction contract follows the Android
+[Dalvik bytecode specification](https://source.android.com/docs/core/runtime/dalvik-bytecode)
+and [DEX format](https://source.android.com/docs/core/runtime/dex-format).
+`test_android_dex_runtime.py` compiles original Java fixtures with javac and D8,
+then compares the JVM's class-file results with JNI calls into those DEX bodies.
+The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.

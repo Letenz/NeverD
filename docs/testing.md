@@ -6930,3 +6930,32 @@ then the four owning labels. Process-public C API/CLI and Python integration
 exercise the same paths; transport unavailability is a skip, never evidence of
 execution. These authored workloads do not establish arbitrary application,
 Android service or shader coverage.
+
+
+## Supplied DEX method execution
+
+`NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
+overlapping wide moves, division exceptions/overflow, budget/stack stops,
+result-use rules and refusal of class initialization/handlers/unknown opcodes.
+`NeverDMobileTests` must also run when changing the shared DEX reader or models;
+mobile recovery and JNI execution share those owners.
+
+For an independent Java compiler/runtime oracle, prepare the JNI fixtures and
+`neverd-process-probe`, then run:
+
+```sh
+python3 scripts/test_android_dex_runtime.py --build build-release \
+  --jdk /path/to/jdk --d8 /path/to/build-tools/lib/d8.jar \
+  --backend unicorn --output /path/to/new-dex-run
+```
+
+Repeat with `--backend hvf` on supported macOS hosts. The original Java is
+compiled to class files for the JVM oracle and to DEX for NeverD. Cases cover
+overflow, negative/oversized shifts, signed division/remainder, narrow returns,
+wide arguments, branches, packed/sparse switches, loops, recursion and
+cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
+division exceptions, loops exhausting the shared native budget, recursion,
+objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+request/report files stay in the explicit output directory. Missing JDK/D8 or
+CPU transports are unavailable evidence, not a passing substitute. The runtime
+itself does not launch these preparation tools or use a device.

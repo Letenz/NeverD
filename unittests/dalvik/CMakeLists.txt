@@ -1,0 +1,1 @@
+add_neverd_unittest(NeverDDalvikTests RuntimeTests.cpp LINK_COMPONENTS Dalvik)

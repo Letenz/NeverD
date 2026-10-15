@@ -548,3 +548,58 @@ int jni_method_unreadable_arguments(void) {
   Ref s = C(e, Ref, 167, "abc");
   return C(e, U16, 45, s, method(e, cls, "charAt", "(I)C"), (void *)1);
 }
+
+/* Generic supplied-method caller: no Java result or method body lives here. */
+static U64 dex_v(Handle e, Ref cl, Ref method, unsigned kind, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, kind);
+  U64 result = 0;
+  switch (kind) {
+  case 0: result = (unsigned)C(e, int, 130, cl, method, ap); break;
+  case 1: result = C(e, U64, 133, cl, method, ap); break;
+  case 2: result = C(e, U8, 118, cl, method, ap); break;
+  case 3: result = (unsigned)(int)C(e, signed char, 121, cl, method, ap); break;
+  case 4: result = C(e, U16, 124, cl, method, ap); break;
+  case 5: result = (unsigned)(int)C(e, short, 127, cl, method, ap); break;
+  }
+  __builtin_va_end(ap);
+  return result;
+}
+U64 jni_dex_call(const char *class_name, const char *name, const char *signature,
+                 const U64 *args, U64 kind, U64 form) {
+  Handle e = attach();
+  Ref cl = C(e, Ref, 6, class_name);
+  Ref method = C(e, Ref, 113, cl, name, signature);
+  U64 result = 0;
+#define DEX_ARGS args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]
+  if (form == 1) result = dex_v(e, cl, method, kind, DEX_ARGS);
+  else if (form == 2) {
+    switch (kind) {
+    case 0: result = (unsigned)C(e, int, 131, cl, method, args); break;
+    case 1: result = C(e, U64, 134, cl, method, args); break;
+    case 2: result = C(e, U8, 119, cl, method, args); break;
+    case 3: result = (unsigned)(int)C(e, signed char, 122, cl, method, args); break;
+    case 4: result = C(e, U16, 125, cl, method, args); break;
+    case 5: result = (unsigned)(int)C(e, short, 128, cl, method, args); break;
+    }
+  } else {
+    switch (kind) {
+    case 0: result = (unsigned)C(e, int, 129, cl, method, DEX_ARGS); break;
+    case 1: result = C(e, U64, 132, cl, method, DEX_ARGS); break;
+    case 2: result = C(e, U8, 117, cl, method, DEX_ARGS); break;
+    case 3: result = (unsigned)(int)C(e, signed char, 120, cl, method, DEX_ARGS); break;
+    case 4: result = C(e, U16, 123, cl, method, DEX_ARGS); break;
+    case 5: result = (unsigned)(int)C(e, short, 126, cl, method, DEX_ARGS); break;
+    }
+  }
+#undef DEX_ARGS
+  if (C(e, U8, 228)) {
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref type = C(e, Ref, 6, "java/lang/ArithmeticException");
+    if (!C(e, U8, 32, exception, type)) return 0xeeee;
+    C(e, void, 23, exception);
+    return 0xdec0de;
+  }
+  return result;
+}

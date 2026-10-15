@@ -1,6 +1,12 @@
-//===- MobileDalvikSignature.cpp - Bounded generic grammar and scope checks
-// -===//
-#include "MobileDalvikSignature.h"
+//===- Signature.cpp - Shared Dalvik signature implementation ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared Dalvik signature implementation.
+//===----------------------------------------------------------------------===//
+#include "neverd/dalvik/Signature.h"
 
 #include <algorithm>
 #include <functional>

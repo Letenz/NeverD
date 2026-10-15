@@ -1,164 +1,17 @@
-//===- MobileDalvik.h - Typed native Dalvik recovery model
-//-----------------===//
+//===- MobileDalvik.h - Mobile source recovery declarations ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Mobile source recovery declarations.
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "MobileCommon.h"
-
-#include <compare>
-#include <map>
-#include <set>
-#include <variant>
+#include "neverd/dalvik/Model.h"
 
 namespace neverd::mobile::dalvik {
-using Access = std::set<std::string>;
-bool has(const Access &access, std::string_view flag);
-std::string descriptor(std::string_view value, bool allow_void = false);
-std::pair<std::vector<std::string>, std::string>
-prototype(std::string_view value);
-unsigned width(std::string_view type);
-Access accessFlags(uint32_t value);
-
-struct MethodRef {
-  std::string owner;
-  std::string name;
-  std::vector<std::string> parameters;
-  std::string returns;
-  std::string signature() const;
-  std::string identity() const;
-  auto operator<=>(const MethodRef &) const = default;
-};
-struct FieldRef {
-  std::string owner;
-  std::string name;
-  std::string type;
-  auto operator<=>(const FieldRef &) const = default;
-};
-MethodRef methodRef(std::string_view value);
-FieldRef fieldRef(std::string_view value);
-
-// String literals contain UTF-8, with isolated UTF-16 surrogates represented
-// in WTF-8 until the Java string emitter escapes their exact code units.
-using Literal = std::variant<std::monostate, int64_t, std::string>;
-using Reference =
-    std::variant<std::monostate, MethodRef, FieldRef, std::string>;
-struct FloatBits {
-  uint64_t bits = 0;
-  bool wide = false;
-};
-using FieldValue =
-    std::variant<std::monostate, int64_t, std::string, bool, FloatBits>;
-
-struct Instruction {
-  uint32_t pc = 0;
-  std::string opcode;
-  std::vector<unsigned> registers;
-  Literal literal;
-  std::optional<uint32_t> target;
-  Reference reference;
-  std::vector<int32_t> keys;
-  std::vector<uint32_t> targets;
-  std::vector<uint64_t> data;
-  unsigned element_width = 0;
-};
-struct Handler {
-  std::optional<std::string> type;
-  uint32_t target = 0;
-};
-struct TryRegion {
-  uint32_t start = 0;
-  uint32_t end = 0;
-  std::vector<Handler> handlers;
-};
-struct Method {
-  MethodRef reference;
-  Access access;
-  unsigned registers = 0;
-  std::vector<Instruction> instructions;
-  std::vector<TryRegion> tries;
-  uint32_t code_end = 0;
-  unsigned incomingWords() const;
-  std::optional<std::string> generic_signature;
-  std::optional<std::vector<std::string>> declared_throws;
-  bool deprecated = false;
-  std::optional<std::vector<std::string>> suppress_lint;
-};
-struct Field {
-  FieldRef reference;
-  Access access;
-  FieldValue value;
-  std::optional<std::string> generic_signature;
-  bool deprecated = false;
-  std::optional<std::vector<std::string>> suppress_lint;
-};
-struct AnnotationMetadata {
-  std::optional<std::string> retention;
-  std::optional<std::vector<std::string>> targets;
-  bool documented = false;
-  bool inherited = false;
-  bool empty() const {
-    return !retention && !targets && !documented && !inherited;
-  }
-};
-struct MarkerAnnotation {
-  std::string type;
-  unsigned visibility = 1;
-};
-struct Class {
-  std::string name;
-  std::optional<std::string> superclass;
-  Access access;
-  std::string source_id;
-  std::vector<std::string> interfaces;
-  std::vector<Field> fields;
-  std::vector<Method> methods;
-  std::optional<std::string> enclosing;
-  std::optional<std::string> inner_name;
-  Access inner_access;
-  bool inner_class_present = false;
-  std::optional<MethodRef> enclosing_method;
-  std::optional<std::string> generic_signature;
-  bool deprecated = false;
-  AnnotationMetadata annotation_metadata;
-  std::vector<MarkerAnnotation> marker_annotations;
-  std::optional<std::vector<std::string>> suppress_lint;
-};
-using ClassMap = std::map<std::string, Class>;
-void validateSourceScopes(const ClassMap &classes, Budget &budget);
-ClassMap linkClasses(std::vector<Class> classes, Budget &budget);
-std::vector<Class> parseDex(std::string_view bytes, std::string_view input_id,
-                            Budget &budget);
-// Class descriptors in class_def order. Checks container integrity and the
-// referenced class metadata, without verifying method bodies or annotations.
-std::vector<std::string> listDexClasses(std::string_view bytes, Budget &budget);
-enum class DexReferenceKind { String, Type, Method, Field };
-struct DexReferenceQuery {
-  DexReferenceKind kind = DexReferenceKind::String;
-  std::string text;
-  bool exact = false;
-  std::optional<std::string> owner;
-};
-struct DexReferenceSite {
-  MethodRef method;
-  uint32_t pc_code_units = 0;
-  std::string opcode;
-  uint32_t target_index = 0;
-  std::string target;
-  std::optional<std::u16string> target_utf16;
-};
-struct DexReferenceResult {
-  std::vector<std::string> class_descriptors;
-  std::vector<DexReferenceSite> references;
-  uint64_t defined_method_count = 0;
-  uint64_t scanned_method_count = 0;
-  uint64_t scanned_code_item_count = 0;
-  uint64_t matching_pool_entries = 0;
-  bool code_scan_complete = false;
-};
-// Direct instruction operands only. Every defined code body is checked before
-// returning; annotations and declaration-only references are not result sites.
-DexReferenceResult findDexReferences(std::string_view bytes,
-                                     const DexReferenceQuery &query,
-                                     Budget &budget);
 Class parseSmali(std::string_view text, std::string_view input_id,
                  Budget &budget);
 llvm::json::Object recoverJava(const ClassMap &classes, Budget &budget);

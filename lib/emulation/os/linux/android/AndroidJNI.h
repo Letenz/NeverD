@@ -18,6 +18,11 @@
 #include <string>
 #include <vector>
 
+namespace neverd::mobile::dalvik {
+class Program;
+struct Method;
+} // namespace neverd::mobile::dalvik
+
 namespace neverd::emulation::android_model {
 namespace jni_abi {
 // Model placement, not an ART object layout. Reference handles are opaque.
@@ -60,6 +65,8 @@ struct JNIState {
   std::map<std::string, std::shared_ptr<JNIObject>> Classes;
   // IDs are separate from references and survive local-frame/thread teardown.
   std::set<unsigned> ResolvedMethods;
+  std::shared_ptr<const mobile::dalvik::Program> Dex;
+  std::map<uint64_t, const mobile::dalvik::Method *> DexMethods;
   std::map<std::string, std::shared_ptr<JNIObject>> MethodConstants;
   // Retain bounded objects until workload teardown. Weak element edges avoid
   // host ownership cycles; this profile deliberately makes no GC claim.

@@ -1,5 +1,6 @@
 add_subdirectory(ir)
 add_subdirectory(evm)
+add_subdirectory(dalvik)
 add_subdirectory(loader)
 add_subdirectory(sbf)
 add_subdirectory(decode)
