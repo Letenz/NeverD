@@ -1663,6 +1663,14 @@ Directory ownership preserves unrelated stat bytes, cursors, flags, enumeration 
 
 The strict shared timed-object parser admits created_directory_objects for exactly Mode, Ownership and Timestamp, with a single type decision. Required objects, exact Boolean, time validation and common budgets remain authoritative. The existing FileModeCreatedDirectoryObjects identifier and wire string remain compatible. No syscall, C function, constructor, dependency or scheduling policy changed.
 
+## Explicit ordinary symbolic ownership
+
+DarwinFiles retains one ordinary admission boundary; only ownership extends it to complete independently granted symbolic vnodes. LinkNode owns its separate OwnershipTime pointer. Initial exact Objects membership attaches it; only successful complete symlink construction with OwnershipMutations.CreatedSymbolicLinkObjects=true attaches CreationPolicy.Mutation.Time. MutableSymbolicLinks, parent/target ownership, filesystem snapshots and regular/directory creation flags supply no such grant. Initial nlink1/no-alias admission does not prevent later explicit runtime symbolic hardlinks from sharing the actual object and its grant.
+
+DarwinOwnership.cpp remains the sole ownership execution and commit owner. It selects actual File, Directory or Link provider/current metadata after existing lookup, complete-stat and shared effective authorization. O_SYMLINK/NOFOLLOW select the link, while followed paths select the target. Active IDs and supplied ctime commit atomically; both inactive IDs still require execution authority and preserve the whole record. Link GID updates never change DirectoryIdentity or target state. Provider pointers follow existing namespace/descriptor lifetime through moves, exchange, runtime links and held deletion; reused names bind new objects. Ownership cannot reverse namespace/xattr metadata invalidation.
+
+The strict generic JSON provider header accepts created_symbolic_link_objects only for FileSystem and Ownership, with separate wire identifiers and authority. Other purposes still reject the key, including false. Complete Namespace creation prerequisites and shared budgets remain authoritative. No service, constructor, C ABI, dependency or scheduling boundary changes. The compact original native/model/C/CLI/Python workloads distinguish complete link and target records, high carriers, lifetime, fresh state and early/late missing grants under original limits.
+
 ## Filesystem snapshots for created directories
 
 新增独立创建开关，可将新目录绑定到实际父目录已声明的文件系统快照。移动和删除后，已打开描述符仍保留原绑定。完整 Apple 运行时、框架和物理 iOS 验证仍未完成。
@@ -1694,11 +1702,3 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 `RegistrationMemberCalleeABI` 负责普通成员调用的标量栈参数，不改变 CRT 析构回调的零弹栈策略。`RegistrationStateCallArguments` 统一检查父栈帧或当前 catch 私有栈中完整初始化、无指针来源的参数字，并在被调用者弹栈后撤销存储权限。初始化函数复用这一参数检查，正常返回后的必写集合仍由独立规则管理。LLVM 发射和 COFF 安装分别重新解码当前成员 ABI，并检查实际标量参数及接收者。
 
 `WindowsRegistrationStackCopies` 独立检查 PHI 合流中的发射器私有 ESP 副本。所有定义必须保留同一已推导位移；每次读取必须在所有前驱上已有定义，或由已检查的回调入口定义覆盖。缺失路径、未知值、不同位移和未证明的恢复入口均被拒绝。
-
-## Explicit ordinary symbolic ownership
-
-DarwinFiles retains one ordinary admission boundary; only ownership extends it to complete independently granted symbolic vnodes. LinkNode owns its separate OwnershipTime pointer. Initial exact Objects membership attaches it; only successful complete symlink construction with OwnershipMutations.CreatedSymbolicLinkObjects=true attaches CreationPolicy.Mutation.Time. MutableSymbolicLinks, parent/target ownership, filesystem snapshots and regular/directory creation flags supply no such grant. Initial nlink1/no-alias admission does not prevent later explicit runtime symbolic hardlinks from sharing the actual object and its grant.
-
-DarwinOwnership.cpp remains the sole ownership execution and commit owner. It selects actual File, Directory or Link provider/current metadata after existing lookup, complete-stat and shared effective authorization. O_SYMLINK/NOFOLLOW select the link, while followed paths select the target. Active IDs and supplied ctime commit atomically; both inactive IDs still require execution authority and preserve the whole record. Link GID updates never change DirectoryIdentity or target state. Provider pointers follow existing namespace/descriptor lifetime through moves, exchange, runtime links and held deletion; reused names bind new objects. Ownership cannot reverse namespace/xattr metadata invalidation.
-
-The strict generic JSON provider header accepts created_symbolic_link_objects only for FileSystem and Ownership, with separate wire identifiers and authority. Other purposes still reject the key, including false. Complete Namespace creation prerequisites and shared budgets remain authoritative. No service, constructor, C ABI, dependency or scheduling boundary changes. The compact original native/model/C/CLI/Python workloads distinguish complete link and target records, high carriers, lifetime, fresh state and early/late missing grants under original limits.
