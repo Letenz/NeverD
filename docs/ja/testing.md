@@ -1972,3 +1972,5 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 `KernelNamespaceTests.cpp` は型、相対名、大文字小文字、サイズ/コピー順序、末尾バイト、権限、プロセス範囲、IRQL、出力失敗、保持中の削除を検証します。`DriverNamespaceTests.cpp` は独自 `driver_namespace.c` を利用可能な Unicorn/KVM/WHP/HVF、両契約、両ロード位置、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` はネイティブ結果を要求します。利用不可バックエンドと未対応情報/セキュリティクラスは未検証範囲です。
 
 `KernelRegistryTests.cpp` は独立オープン、型付き参照、複製ハンドル、プロセス範囲、汎用権限、削除済み識別子、短い/奇数長バッファ、出力エイリアス、失敗・容量境界を検証します。`DriverRegistryObjectTests.cpp` は独自の `fixtures/driver_registry_objects.c` を利用可能なバックエンド、両契約、両基底で、協調実行および17命令スケジューリングで実行します。意図的な参照リークでアンロード拒否を検証し、ネイティブ受入れには4組合せすべてが必要です。
+
+`KernelDeviceStackTests.cpp` は現在の隣接関係、借用と保持、入力または隣接デバイスの削除、最後の参照の解放、不正・破損入力、参照追加前の IRQL 拒否を検証します。独自の `fixtures/driver_device_queries.c` を `DriverDeviceQueryTests.cpp` で実行し、利用可能なバックエンド、両契約、両ロードアドレス、協調および 17 命令のプリエンプティブ実行を網羅します。detach/delete 後の領域保持と意図的な参照リークによるアンロード拒否を確認し、ネイティブ受け入れには 4 種の契約/アドレス結果が必要です。

@@ -109,6 +109,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 WDM 裝置堆疊可以包含同一客體驅動程式擁有的多個裝置物件。`IoAttachDeviceToDeviceStack` 將獨立來源裝置附加到目標的目前堆疊頂端，傳回原頂端，並設定 `StackSize` 和 `AlignmentRequirement`；它不修改驅動程式的 `NextDevice` 串列，也不複製緩衝旗標。`IoDetachDevice` 接收儲存的下層裝置，要求 `PASSIVE_LEVEL`；附加允許 IRQL 不高於 `DISPATCH_LEVEL`。開啟具名下層裝置時，請求派送至目前頂端，而 `FILE_OBJECT.DeviceObject` 和報告保留具名裝置身分。READ/WRITE 使用所選頂端的緩衝旗標。儲存的請求路徑在解除附加、刪除後仍保留各層裝置，直到派送傳回；內部參考不增加表示開啟控制代碼數的 `ReferenceCount`。
 
+對於已建模的裝置堆疊，`IoGetAttachedDevice` 借用目前頂層裝置，不增加參考；`IoGetAttachedDeviceReference` 和 `IoGetDeviceAttachmentBaseRef` 分別傳回帶指標參考的頂層和基底裝置。`IoGetLowerDeviceObject` 參考下一層裝置；沒有下層裝置或輸入裝置等待刪除時傳回空值，僅下層裝置等待刪除不會阻止傳回。每個帶參考的結果都須透過 `ObDereferenceObject` 釋放。參考在 detach/delete 後保留儲存空間，不改變 `DEVICE_OBJECT.ReferenceCount`。四個查詢都會驗證所屬拓撲，並要求 IRQL 不高於 `DISPATCH_LEVEL`。
+
 `IofCallDriver` 和 `IoCallDriver` 輔助入口呼叫保留路徑中的確切目標。真正的內嵌 `IoCopyCurrentIrpStackLocationToNext`、`IoSkipCurrentIrpStackLocation` 和 `IoSetCompletionRoutine` 操作原始客體 IRP；模型驗證游標、數量及控制旗標。下層派送傳回實際狀態，與 `IoStatus` 和完成回呼傳回值分離。完成展開先推進游標，再依成功／錯誤／取消旗標選擇回呼並向上傳遞 pending；執行完成回呼時，回呼負責傳播 pending，包括派送已傳回 `STATUS_PENDING` 後的傳播。`STATUS_MORE_PROCESSING_REQUIRED` 暫停展開並保留 IRP、MDL 和緩衝區，後續完成呼叫可繼續。巢狀完成要求外層傳回停止結果，最終展開只釋放一次儲存空間。標示所屬子系統的續接保留巢狀 WDM／WDF 呼叫框架及繼承的 IRQL。 呼叫上層完成回呼之前，已消耗的下層堆疊位置會清零。
 
 `IoAllocateIrp` 與 `IoFreeIrp` 支援呼叫端擁有的 IRP，允許至 `DISPATCH_LEVEL`，要求 `ChargeQuota=FALSE`。首次 `IoCallDriver` 驗證封包並保存精確的下層裝置路徑。本範圍支援核心 `IRP_MJ_INTERNAL_DEVICE_CONTROL` 與驅動程式擁有的 `METHOD_NEITHER` 緩衝區，不建立使用者檔案或複製使用者緩衝區。客體執行真正的完成及取消回呼。在完成回呼內釋放封包必須傳回 `STATUS_MORE_PROCESSING_REQUIRED`；封包存取立即失效，派送與回呼中繼資料保留至呼叫框架傳回。未傳送封包可直接釋放；洩漏、重複釋放、外來或仍被持有的封包明確失敗。任意重用、其他呼叫端請求格式、`IoBuildDeviceIoControlRequest` 仍不支援。
@@ -366,6 +368,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | 對集區類型 `0`、`1`、`512` 提供資料配置；大小／標籤必須為正，帶標籤釋放必須相符，位址不重複使用 |
 | `IoCreateDevice`、`IoDeleteDevice` | 裝置類型為 `0x22`，characteristics 為 `0` 或 `0x100`，擴充區大小有界，名稱為 ASCII `\Device\Name` |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | 同驅動程式附加；傳回原頂端，解除附加接收儲存的下層裝置；遵守上述拓撲與生命週期限制 |
+| `IoGetAttachedDevice`, `IoGetAttachedDeviceReference`, `IoGetLowerDeviceObject`, `IoGetDeviceAttachmentBaseRef` | 目前已建模的頂層、下層和基底裝置；借用與共用指標參考、刪除狀態；IRQL <= DISPATCH_LEVEL |
 | `IofCallDriver`, `IoCallDriver` | 在保留路徑中向確切目標派送；驗證客體堆疊游標，保留下層 NTSTATUS |
 | `IoInitializeRemoveLockEx`, `IoAcquireRemoveLockEx` | 延伸區內確切擁有者及不透明32／120位元組；NULL／重複 Tag |
 | `IoReleaseRemoveLockEx`, `IoReleaseRemoveLockAndWaitEx` | 符合 Tag 釋放及提供者接收後可恢復的 REMOVE 等待 |

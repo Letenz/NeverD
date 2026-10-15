@@ -1918,3 +1918,5 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 `KernelNamespaceTests.cpp` 驗證型別、相對路徑、大小寫、緩衝區大小與複製順序、尾部位元組、權限、行程範圍、IRQL、失敗輸出及延遲刪除。`DriverNamespaceTests.cpp` 於可用 Unicorn/KVM/WHP/HVF、兩種契約、兩種位址及協作/17 指令排程執行原創 `driver_namespace.c`。`NativeDriverTests.def` 要求原生結果；不可用後端及未支援資訊/安全類別仍為缺口。
 
 `KernelRegistryTests.cpp` 涵蓋獨立開啟、型別參照、複製控制代碼、行程範圍、通用權限、刪除身分、短/奇數位元組名稱緩衝區、輸出別名順序及失敗/容量邊界。`DriverRegistryObjectTests.cpp` 在可用後端、兩種執行契約及兩個載入位址下，以協作排程及17條指令排程執行原創 `fixtures/driver_registry_objects.c`；刻意洩漏指標驗證解除載入拒絕。原生驗收要求全部四種契約/位址組合。
+
+`KernelDeviceStackTests.cpp` 檢查目前鄰居、借用與持有結果、輸入或鄰居的刪除狀態、最後參考退役、無效或損壞輸入，以及在增加參考前拒絕過高 IRQL。原創 `fixtures/driver_device_queries.c` 透過 `DriverDeviceQueryTests.cpp` 在可用後端、兩種契約及兩個載入位址上執行，涵蓋協作排程和 17 條指令搶占排程。測試驗證 detach/delete 後的儲存保留，並以刻意洩漏的參考驗證卸載拒絕；原生驗收要求四種契約/位址組合。

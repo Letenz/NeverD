@@ -435,6 +435,14 @@ llvm::Expected<uint64_t> KernelModel::call(
     return unmapMDL(A);
   case KernelAPIKind::IoAttachDeviceToDeviceStack:
     return attachDevice(A[0], A[1]);
+  case KernelAPIKind::IoGetAttachedDevice:
+    return queryDeviceStack(A[0], DeviceStackQuery::Top);
+  case KernelAPIKind::IoGetAttachedDeviceReference:
+    return queryDeviceStack(A[0], DeviceStackQuery::TopReference);
+  case KernelAPIKind::IoGetLowerDeviceObject:
+    return queryDeviceStack(A[0], DeviceStackQuery::LowerReference);
+  case KernelAPIKind::IoGetDeviceAttachmentBaseRef:
+    return queryDeviceStack(A[0], DeviceStackQuery::BaseReference);
   case KernelAPIKind::IoDetachDevice: {
     if (auto E = detachDevice(A[0]))
       return E;
