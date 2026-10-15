@@ -10,6 +10,26 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelContextCapture.ExactRecordScratchAndFlagsPreserveEveryOtherByte")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelContextCapture.HighStackAndCrossPageRecordUseActualReturnWord")

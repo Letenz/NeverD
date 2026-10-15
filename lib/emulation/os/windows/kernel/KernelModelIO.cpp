@@ -65,6 +65,7 @@ llvm::Expected<uint64_t> KernelModel::processObject(uint32_t ProcessID) {
     return Object.takeError();
   ProcessObjects.emplace(ProcessID, *Object);
   ProcessObjectIDs.emplace(*Object, ProcessID);
+  ReferencedObjects.emplace(*Object, ObjectReferences{ObjectKind::Process});
   return *Object;
 }
 
@@ -1205,10 +1206,12 @@ llvm::Error KernelModel::finishUnload() {
     return ioError("unload returned with live executive resources");
   if (!FastMutexHolds.empty())
     return ioError("unload returned with held fast mutexes");
-  for (const auto &[Object, Thread] : SystemThreads)
-    if (!Thread.Exited || Thread.HandleOpen || Thread.PointerReferences ||
-        WaitReferences.contains(Object))
+  for (const auto &[Object, Thread] : ThreadObjects)
+    if (Thread.System && (!Thread.Exited || WaitReferences.contains(Object)))
       return ioError("unload returned with a live system thread object");
+  for (const auto &[Object, References] : ReferencedObjects)
+    if (References.Pointers || References.Handles)
+      return ioError("unload returned with live object references or handles");
   if (Framework && Framework->hasLiveBinding())
     return ioError("unload returned with a live framework binding");
   if (!Devices.empty() || !SymbolicLinks.empty() || !Allocations.empty() ||
