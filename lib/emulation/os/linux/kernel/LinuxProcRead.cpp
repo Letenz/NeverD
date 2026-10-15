@@ -9,6 +9,7 @@
 #include "LinuxFiles.h"
 #include "LinuxMemory.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -257,8 +258,17 @@ LinuxFiles::seekProc(OpenProcFile &File, uint64_t Offset, uint32_t Whence,
     return Reply(uint64_t(0) - InvalidArgument);
   if (Position == File.Offset)
     return Reply(Position);
-  File.Offset = File.Index = File.From = 0;
+  // Traversal observes the old public f_pos. This matters when an fdinfo
+  // description is duplicated over the descriptor it describes.
+  File.Index = File.From = 0;
   File.Buffer.clear();
+  bool Committed = false;
+  auto ResetOnError = llvm::make_scope_exit([&] {
+    if (!Committed) {
+      File.Offset = File.Index = File.From = 0;
+      File.Buffer.clear();
+    }
+  });
   if (Position) {
     uint64_t Error = 0;
     auto Rows = procRecords(File, Result, Error);
@@ -287,6 +297,7 @@ LinuxFiles::seekProc(OpenProcFile &File, uint64_t Offset, uint32_t Whence,
     }
   }
   File.Offset = Position;
+  Committed = true;
   return Reply(Position);
 }
 } // namespace neverd::emulation::linux_model

@@ -269,6 +269,19 @@ TEST_P(LinuxProc, MapsFollowProtectionUnmapAndRetireBackingIdentity) {
   EXPECT_EQ(Reused.find("00005000 08:01 91"), std::string::npos);
 }
 
+TEST_P(LinuxProc, FDInfoTraversalObservesTheOldPublicPositionUntilCommit) {
+  ASSERT_EQ(open("/data/value"), 3u);
+  ASSERT_EQ(open("/proc/self/fdinfo/3"), 4u);
+  ASSERT_EQ(open("/proc/self/fdinfo/4"), 5u);
+  ASSERT_EQ(call(ServiceKind::Dup2, 5, 4), 4u);
+  // Both aliases now describe their own shared open description.
+  EXPECT_EQ(read(4, 5), "pos:\t");
+  ASSERT_EQ(call(ServiceKind::Lseek, 5, 1), 1u);
+  EXPECT_EQ(read(4, 6), "os:\t5\n");
+  ASSERT_EQ(call(ServiceKind::Lseek, 4, 0), 0u);
+  EXPECT_EQ(read(5, 7), "pos:\t0\n");
+}
+
 TEST_P(LinuxProc, InaccessibleGuardMappingsRemainVisibleAndCountTowardsSize) {
   llvm::cantFail(cpu().addressSpace()->protect(Base + 4096, 4096, 0));
   auto FD = open("/proc/self/maps");
