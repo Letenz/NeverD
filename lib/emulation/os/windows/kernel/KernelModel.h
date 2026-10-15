@@ -671,6 +671,15 @@ private:
   llvm::Expected<uint64_t> interlockedPopEntryList(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> interlockedAdd(llvm::ArrayRef<uint64_t> A,
                                           unsigned Size);
+  llvm::Error validateSListStorage(uint64_t Address, uint32_t Size,
+                                   bool IsWrite) const;
+  llvm::Expected<std::pair<uint64_t, uint64_t>>
+  readSListHeader(uint64_t Header, bool IsWrite) const;
+  llvm::Expected<uint64_t> initializeSList(uint64_t Header);
+  llvm::Expected<uint64_t> pushEntrySList(uint64_t Header, uint64_t Entry);
+  llvm::Expected<uint64_t> popEntrySList(uint64_t Header);
+  llvm::Expected<uint64_t> flushSList(uint64_t Header);
+  llvm::Expected<uint64_t> querySList(uint64_t Header, bool FirstEntry);
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
