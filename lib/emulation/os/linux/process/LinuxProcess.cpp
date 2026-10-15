@@ -110,6 +110,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   ProcessResult Result{ProcessProfile::LinuxELF64, Layout->Architecture,
                        Backend->Kind, Backend->Reason};
   LinuxServices Kernel(CPU, Layout->Memory, InitialBreak, Options, Result);
+  if (auto E = Kernel.initializeProc())
+    return std::move(E);
   Result.Entry = Result.PC = Plan->Entry;
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;

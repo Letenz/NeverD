@@ -2302,6 +2302,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>تعبير أو أمر (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>نسخ(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>تحديد الكل(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>مسح(&amp;L)</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>الأوامر:</translation>
     </message>

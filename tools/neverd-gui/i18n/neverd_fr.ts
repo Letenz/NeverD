@@ -2278,6 +2278,18 @@ Utiliser cette PDB pour l’analyse ? Ses symboles, types, signatures de fonctio
         <translation>Expression ou commande (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Copier</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>&amp;Tout sélectionner</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>&amp;Effacer</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>Commandes :</translation>
     </message>

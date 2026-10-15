@@ -791,6 +791,11 @@ std::string driverResultJSON(const DriverResult &Result) {
     (*Root[field::Configuration].getAsObject())[field::KernelVaShadowQuery] =
         driver_va_shadow_query::toJSON(
             *Result.Configuration.KernelVaShadowQuery);
+  if (Result.Configuration.DebuggerState)
+    (*Root[field::Configuration].getAsObject())[field::DebuggerState] =
+        llvm::json::Object{
+            {"enabled", Result.Configuration.DebuggerState->Enabled},
+            {"not_present", Result.Configuration.DebuggerState->NotPresent}};
   if (Result.Configuration.VersionQuery)
     (*Root[field::Configuration].getAsObject())[field::VersionQuery] =
         driver_version_query::toJSON(*Result.Configuration.VersionQuery);

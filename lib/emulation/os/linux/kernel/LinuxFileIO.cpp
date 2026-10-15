@@ -29,8 +29,11 @@ std::optional<uint64_t> LinuxFiles::duplicate(ServiceKind Kind, uint32_t Old,
         Result, "GPU descriptor replacement cannot retire a busy context");
   // Save before replacement, including Old == New. No observer can see an
   // intermediate close/reallocation or a different open-description identity.
+  if (Old == New)
+    return New;
   auto Description = I->second;
   Descriptors.insert_or_assign(New, std::move(Description));
+  opened(New, Kind == ServiceKind::Dup3 ? Flags : 0);
   return New;
 }
 
@@ -48,6 +51,7 @@ LinuxFiles::close(uint32_t FD, ProcessResult &Result) {
   if (!canRelease(I->second))
     return unsupported(Result, "GPU last close cannot retire a busy context");
   Descriptors.erase(I);
+  CloseOnExec.erase(FD);
   return std::optional<uint64_t>(0);
 }
 
@@ -63,6 +67,8 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
     return unsupported(Result, DeviceOperation);
   if (std::holds_alternative<OpenDirectory>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - IsDirectory);
+  if (auto *P = std::get_if<OpenProcFile>(I->second.get()))
+    return readProc(*P, Address, Size, Result);
   auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
     if (std::get<Stream>(*I->second) == Stream::Input)
@@ -95,13 +101,19 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     const uint64_t Position = (Whence == SeekCurrent ? D->Offset : 0) + Offset;
     if (Position > MaxSignedIOSize)
       return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
-    if (Options->DynamicProcFDs && D->Path == "/proc/self/fd" &&
+    if (liveProcFDs() && llvm::StringRef(D->Path).starts_with("/proc/") &&
+        (llvm::StringRef(D->Path).ends_with("/fd") ||
+         llvm::StringRef(D->Path).ends_with("/fdinfo")) &&
         Position > UINT32_MAX)
       return unsupported(Result,
                          "proc FD cookie exceeds the supported index extent");
+    if (D->Offset != Position)
+      D->NextTask.clear();
     D->Offset = Position;
     return std::optional<uint64_t>(Position);
   }
+  if (auto *P = std::get_if<OpenProcFile>(I->second.get()))
+    return seekProc(*P, Offset, Whence, Result);
   auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
     if (std::get<Stream>(*I->second) == Stream::Input)

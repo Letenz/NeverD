@@ -21,7 +21,8 @@ struct KernelLoadedModule {
 struct KernelModuleImage {
   KernelLoadedModule Identity;
   /// Raw offsets equal RVAs; code starts after the read-only header page and
-  /// ends before export metadata. Every function address comes from Registry.
+  /// ends before read-only data and export metadata. All module symbol
+  /// addresses come from Registry; KernelModel initializes data before entry.
   std::vector<uint8_t> Bytes;
 };
 llvm::Expected<std::vector<KernelModuleImage>>

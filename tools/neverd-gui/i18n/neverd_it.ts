@@ -2278,6 +2278,18 @@ Usare questo PDB per l’analisi? Simboli, tipi, firme delle funzioni e interval
         <translation>Espressione o comando (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Copia</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>Seleziona &amp;tutto</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>&amp;Svuota</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>Comandi:</translation>
     </message>

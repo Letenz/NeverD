@@ -2272,6 +2272,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>表达式或命令 (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>复制(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>全选(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>清除(&amp;L)</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>命令：</translation>
     </message>

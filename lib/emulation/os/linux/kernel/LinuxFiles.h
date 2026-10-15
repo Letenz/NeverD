@@ -9,12 +9,14 @@
 #include "LinuxDeviceState.h"
 #include "LinuxKernel.h"
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <variant>
 
 namespace neverd::emulation::linux_model {
 class LinuxMemory;
+class LinuxClock;
 bool isCanonicalFilePath(llvm::StringRef Path);
 llvm::Error validateFileOptions(const LinuxFileOptions &Options);
 llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
@@ -24,9 +26,14 @@ class LinuxFiles {
 public:
   LinuxFiles(ExecutionBackend &CPU, const MemoryLayout &Layout,
              const std::optional<LinuxFileOptions> &Options,
-             LinuxMemory *Memory = nullptr)
-      : CPU(CPU), Layout(Layout), Options(Options), Memory(Memory) {}
+             LinuxMemory *Memory = nullptr, LinuxClock *Clock = nullptr)
+      : CPU(CPU), Layout(Layout), Options(Options), Memory(Memory),
+        Clock(Clock) {}
 
+  void setTaskProvider(std::function<std::vector<ProcTask>()> Provider) {
+    TaskProvider = std::move(Provider);
+  }
+  void setCurrentTask(uint32_t ID) { CurrentTask = ID; }
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
@@ -64,6 +71,8 @@ private:
   enum class Stream { Input, Output, Error };
   enum class PathKind {
     File,
+    ProcFile,
+    UnmodeledProc,
     Device,
     Directory,
     Missing,
@@ -87,22 +96,35 @@ private:
   struct MutableFile {
     std::vector<uint8_t> Bytes;
     bool Changed = false;
+    std::optional<LinuxFileMetadata> Metadata;
+    std::set<uint64_t> AllocatedPages;
+  };
+  struct OpenProcFile {
+    std::string Path;
+    uint64_t Offset = 0, Index = 0;
+    uint32_t Flags = 0;
+    std::string Buffer;
+    size_t From = 0;
+    uint64_t Capacity = 0;
   };
   struct OpenDirectory {
     std::string Path;
     uint64_t Offset = 0;
+    uint32_t Flags = 0;
+    std::string NextTask;
   };
   struct ProcessDescriptor {
     uint32_t PID, Flags;
   };
   using OpenDevice = std::shared_ptr<LinuxDeviceState>;
   using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor,
-                                  OpenDevice, OpenDirectory>;
+                                  OpenDevice, OpenDirectory, OpenProcFile>;
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;
   const std::optional<LinuxFileOptions> &Options;
   LinuxMemory *Memory;
+  LinuxClock *Clock;
   // Descriptor numbers refer to shared open descriptions. dup preserves the
   // cursor, device transaction position and context ownership; another open
   // creates a distinct description. VMAs also retain a device's lifetime.
@@ -110,15 +132,50 @@ private:
       {0, std::make_shared<Descriptor>(Stream::Input)},
       {1, std::make_shared<Descriptor>(Stream::Output)},
       {2, std::make_shared<Descriptor>(Stream::Error)}};
+  std::set<uint32_t> CloseOnExec;
+  std::function<std::vector<ProcTask>()> TaskProvider;
+  uint32_t CurrentTask = ThreadID;
   std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
   std::map<std::string, MutableFile> MutableFiles;
   std::map<std::string, uint64_t> Inodes;
   std::set<uint64_t> UsedInodes;
   uint64_t NextInode = 1;
 
+  bool liveProcFDs() const {
+    return Options->DynamicProcFDs || Options->DynamicProc;
+  }
+  std::vector<ProcTask> procTasks() const;
+  std::string procPath(llvm::StringRef Path) const;
+  std::optional<PathKind> procKind(const std::string &Path,
+                                   bool Directory) const;
+  std::optional<std::string> procLink(const std::string &Path) const;
+  struct ProcEntry {
+    std::string Name;
+    uint64_t Cookie;
+    uint8_t Type;
+  };
+  std::optional<std::vector<ProcEntry>>
+  procEntries(const std::string &Path) const;
+  llvm::Expected<std::optional<uint64_t>> readProc(OpenProcFile &File,
+                                                   uint64_t Address,
+                                                   uint64_t Size,
+                                                   ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>> seekProc(OpenProcFile &File,
+                                                   uint64_t Offset,
+                                                   uint32_t Whence,
+                                                   ProcessResult &Result);
+  using ProcRecords = std::vector<std::pair<uint64_t, std::string>>;
+  bool growProcBuffer(OpenProcFile &File, uint64_t Size, ProcessResult &Result);
+  llvm::Expected<std::optional<ProcRecords>>
+  procRecords(const OpenProcFile &File, ProcessResult &Result, uint64_t &Error);
+  void opened(uint32_t FD, uint32_t Flags);
+  MutableFile &mutableFile(const std::string &Path);
+  const LinuxFileMetadata *fileMetadata(const std::string &Path) const;
+  bool touchWrite(MutableFile &File, ProcessResult &Result);
+  void allocateWrittenPages(MutableFile &File, uint64_t Begin, uint64_t Size);
   llvm::ArrayRef<uint8_t> fileBytes(const OpenFile &File) const;
   std::optional<std::string> descriptorPath(uint32_t FD) const;
-  static std::optional<uint32_t> procDescriptor(llvm::StringRef Path);
+  std::optional<uint32_t> procDescriptor(llvm::StringRef Path) const;
   llvm::Expected<uint64_t> inode(const std::string &Path);
   llvm::Expected<std::optional<uint64_t>>
   directoryEntries(uint32_t FD, uint64_t Address, uint32_t Size,

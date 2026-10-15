@@ -2272,6 +2272,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>식 또는 명령 (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>복사(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>모두 선택(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>지우기(&amp;L)</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>명령:</translation>
     </message>

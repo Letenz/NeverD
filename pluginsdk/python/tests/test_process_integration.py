@@ -18,6 +18,44 @@ import unittest
 
 
 class ProcessIntegrationTests(unittest.TestCase):
+    def test_android_live_proc_and_maintained_stat(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        metadata = {"device": 0, "inode": 42, "mode": 0o100644,
+                    "link_count": 1, "uid": 0, "gid": 0, "size": 3,
+                    "block_size": 4096, "blocks": 8}
+        metadata.update({key: {"seconds": 0, "nanoseconds": 0}
+                         for key in ("access_time", "modification_time", "change_time")})
+        options = {"backend": "unicorn", "android": {
+            "initialize": False, "thread_limit": 2},
+            "linux_time": {"clocks": [{"id": 0, "seconds": 100, "nanoseconds": 7}]},
+            "linux_files": {"dynamic_proc": {"name": "fixture", "parent_pid": 1},
+                "files": [{"path": "/fixture/value", "bytes_hex": "616263",
+                           "write_limit": 16384, "track_write_metadata": True,
+                           "metadata": metadata}]}}
+        for entry in ("proc_write_stat", "proc_live_maps", "proc_thread_lifecycle"):
+            with self.subTest(entry=entry):
+                options["android"]["entry_symbol"] = entry
+                result = session.emulate_process(str(Path(fixtures) / "proc-O2-relr.so"),
+                                                 "android-aarch64-api28-v1", json.dumps(options))
+                self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                self.assertEqual(result["return_value"], "0")
+
     def test_android_stdio_uses_guest_files_and_provider_lifetime(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

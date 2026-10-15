@@ -25,7 +25,7 @@ llvm::Expected<uint64_t> Bionic::allocate(uint64_t Size) {
       {0, Mapped, linux_model::ProtRead | linux_model::ProtWrite,
        linux_model::MapPrivate | linux_model::MapAnonymous, UINT64_MAX, 0},
       std::nullopt};
-  auto Address = Kernel.handle(linux_model::ServiceKind::Mmap, Event);
+  auto Address = kernelService(linux_model::ServiceKind::Mmap, Event);
   if (!Address)
     return Address.takeError();
   if (!*Address)
@@ -46,7 +46,7 @@ llvm::Error Bionic::release(uint64_t Address) {
     return failure(diagnostic::AllocationOwnership);
   ProcessServiceEvent Event{
       0, 0, {Address, I->second.MappedSize, 0, 0, 0, 0}, std::nullopt};
-  auto Returned = Kernel.handle(linux_model::ServiceKind::Munmap, Event);
+  auto Returned = kernelService(linux_model::ServiceKind::Munmap, Event);
   if (!Returned)
     return Returned.takeError();
   if (!*Returned || **Returned)

@@ -756,6 +756,33 @@ private slots:
     }
   }
 
+  void outputLogClearsFromItsMenu() {
+    Workbench bench;
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output);
+    auto *log = output->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QCOMPARE(log->contextMenuPolicy(), Qt::CustomContextMenu);
+    output->append(QStringLiteral("first line"));
+    const auto action = [](const std::unique_ptr<QMenu> &menu,
+                           const char *name) {
+      return menu->findChild<QAction *>(QLatin1String(name));
+    };
+    std::unique_ptr<QMenu> menu(output->createLogMenu());
+    QVERIFY(action(menu, "outputCopy") && action(menu, "outputSelectAll"));
+    QVERIFY(!action(menu, "outputCopy")->isEnabled());
+    QVERIFY(action(menu, "outputClear")->isEnabled());
+    action(menu, "outputSelectAll")->trigger();
+    QVERIFY(log->textCursor().hasSelection());
+    menu.reset(output->createLogMenu());
+    QVERIFY(action(menu, "outputCopy")->isEnabled());
+    action(menu, "outputClear")->trigger();
+    QVERIFY(log->document()->isEmpty());
+    // An empty log has nothing to clear.
+    menu.reset(output->createLogMenu());
+    QVERIFY(!action(menu, "outputClear")->isEnabled());
+  }
+
   void copyingCharacterSelections() {
     QFETCH(QString, view);
     QFETCH(bool, reverse);
