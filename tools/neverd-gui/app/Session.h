@@ -39,6 +39,9 @@ struct LoadOptions {
   /// A manually selected PDB, with its import mode and file stamp, or
   /// {"mode":"none"} for a PE the user opened without the PDB it names.
   QJsonObject pdb;
+  /// {"mode":"none"} when the user declined the DWARF of an ELF or Mach-O
+  /// image; empty reads it.
+  QJsonObject dwarf;
 };
 
 /// The project's writable worker and a bounded read-only analysis pool.
@@ -118,6 +121,11 @@ public:
   /// (pdb_reference), and opens a PE without it.
   bool findsPdbFiles() const {
     return capabilities_.contains(QStringLiteral("pdb_reference"));
+  }
+  /// Whether the worker finds the DWARF of an ELF or Mach-O image before
+  /// opening it (dwarf_reference), and opens the image without it.
+  bool findsDwarf() const {
+    return capabilities_.contains(QStringLiteral("dwarf_reference"));
   }
   void loadPdb(const QJsonObject &selection);
   void closeFile();

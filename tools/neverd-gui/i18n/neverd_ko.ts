@@ -2228,6 +2228,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell which PDB %1 names: %2</source>
         <translation>%1이(가) 지정한 PDB를 확인할 수 없습니다: %2</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>%1에 DWARF가 있는지 확인할 수 없습니다: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2516,6 +2520,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Edited the function at %1</source>
         <translation>%1의 함수를 편집했습니다</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>선택한 대로 DWARF 디버그 정보 없이 열었습니다</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>DWARF를 불러왔습니다: %1</translation>
     </message>
 </context>
 <context>
@@ -3048,6 +3060,21 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cancel</source>
         <translation>취소</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>DWARF 정보를 찾았습니다</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>DWARF 디버그 정보를 불러오시겠습니까?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

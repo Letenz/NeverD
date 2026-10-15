@@ -2232,6 +2232,10 @@ Utiliser cette PDB pour l’analyse ? Ses symboles, types, signatures de fonctio
         <source>Could not tell which PDB %1 names: %2</source>
         <translation>Impossible de déterminer le PDB indiqué par %1 : %2</translation>
     </message>
+    <message>
+        <source>Could not tell whether %1 has DWARF: %2</source>
+        <translation>Impossible de déterminer si %1 contient du DWARF : %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2520,6 +2524,14 @@ Utiliser cette PDB pour l’analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>Edited the function at %1</source>
         <translation>Fonction modifiée à %1</translation>
+    </message>
+    <message>
+        <source>Opened without its DWARF debug information, as chosen</source>
+        <translation>Ouvert sans ses informations de débogage DWARF, comme choisi</translation>
+    </message>
+    <message>
+        <source>DWARF loaded: %1</source>
+        <translation>DWARF chargé : %1</translation>
     </message>
 </context>
 <context>
@@ -3052,6 +3064,21 @@ Utiliser cette PDB pour l’analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>Cancel</source>
         <translation>Annuler</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DwarfPromptDialog</name>
+    <message>
+        <source>DWARF info found</source>
+        <translation>Informations DWARF trouvées</translation>
+    </message>
+    <message>
+        <source>Load DWARF debug information?</source>
+        <translation>Charger les informations de débogage DWARF ?</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>(%1)</translation>
     </message>
 </context>
 </TS>

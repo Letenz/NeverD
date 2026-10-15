@@ -54,6 +54,9 @@ public:
   /// Whether the engine finds the PDB a PE names before opening it, and
   /// opens a PE without it.
   static bool findsPdbFiles();
+  /// Whether the engine finds the DWARF of an ELF or Mach-O image before
+  /// opening it, and opens the image without it.
+  static bool findsDwarf();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -76,6 +79,8 @@ private:
   std::string projectId_;
   Json openOptions_, signatureInputs_ = Json::array();
   Json pdbInput_ = nullptr, pdbDisplayNames_ = Json::array();
+  /// {"mode":"none"} when the user declined the image's DWARF, else null.
+  Json dwarfInput_ = nullptr;
   /// A read-only replica is checked against the owner's loaded input and
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();
