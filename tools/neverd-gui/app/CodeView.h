@@ -105,6 +105,10 @@ public:
   /// stands for there, as the engine resolved it: a function's entry, or the
   /// byte a constant offset from an image mirror reaches.
   std::optional<Address> globalReferenceAt(int line, int column) const;
+  /// What hovering that global shows: the comments over its declaration,
+  /// which say what it is, the declaration, and where a double-click goes.
+  /// Empty where no global stands for an image address.
+  QString globalHoverText(int line, int column) const;
   /// Show the declaration of the global last activated as \p name, which the
   /// binary does not name; false when this code declares none.
   bool showUnresolvedDeclaration(const QString &name);
