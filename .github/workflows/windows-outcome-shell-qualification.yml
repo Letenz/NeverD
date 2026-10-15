@@ -1,11 +1,6 @@
 name: Temporary Windows outcome shell qualification
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - scripts/tests/test_audit_ci_test_results.py
-      - .github/workflows/windows-outcome-shell-qualification.yml
   workflow_dispatch:
 
 permissions:
