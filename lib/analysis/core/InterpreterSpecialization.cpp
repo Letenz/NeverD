@@ -2339,6 +2339,12 @@ bool Specializer::evaluate(int Id) {
                       UsesReservedTemporary))
         return fail(SpecializationStatus::InvalidInput,
                     "native temporary overlaps the reserved dispatch range");
+    const NdVar TimestampSample = NdVar::tmp(FrameValueTemp, 8);
+    const auto Timestamp =
+        Options.ExplicitMachineState && Options.NormalNonfaultingExecution &&
+                Options.ByteOrder == llvm::endianness::little
+            ? x64::lowerRuntimeTimestampRead(Instruction, TimestampSample)
+            : std::nullopt;
     std::vector<LowOp> Operations = Instruction.Ops;
     std::optional<SpecializationExternalExit> ExternalExit;
     if (Instruction.TerminalImport) {
@@ -2465,7 +2471,8 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::BudgetExceeded,
                     "specialization symbolic-node budget exhausted");
       LowOp Original = Operations[I];
-      if (!supported(Original, Options))
+      const bool TimestampOperation = Timestamp && I == 0;
+      if (!TimestampOperation && !supported(Original, Options))
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
                         ndOpName(Original.Opcode));
@@ -2950,7 +2957,29 @@ bool Specializer::evaluate(int Id) {
       // Do not seed certified reads by pretending a guest STORE happened:
       // that would clobber retained frame facts under the correct alias rules.
       StepResult Flow = StepResult::Continue;
-      if (PriorityOperation) {
+      if (TimestampOperation) {
+        State.write(SymSpace::Temporary, TimestampSample.Offset,
+                    State.freshInput("x64_rdtsc", 64));
+        for (const auto &Scalar : Timestamp->Ops) {
+          if (++Result.EvaluatedOperations > Options.MaxOperations)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "timestamp transition operation budget exhausted");
+          if (Exec.step(Scalar) != StepResult::Continue)
+            return fail(SpecializationStatus::Unsupported,
+                        "symbolic timestamp transition was not exact");
+          if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "timestamp transition symbolic-node budget exhausted");
+        }
+        // Only these two outputs are defined by this native occurrence. Their
+        // clock-derived bits grant no external-pointer or frame-alias fact.
+        for (const NdVar &Output : Timestamp->PlaceholderOutputs) {
+          setUnsafeOrigin(Output, true, Origins);
+          for (uint16_t B = 0; B < Output.Size; ++B)
+            DefinedTemporaries.insert(Output.Offset + B);
+        }
+        OutputUnsafe = true;
+      } else if (PriorityOperation) {
         // Scratch is live only for this transition. Keeping the resulting
         // SymRef locally avoids collision with later string/frame scratch.
         const auto PrioritySlot = NdVar::tmp(FrameValueTemp, 8);
