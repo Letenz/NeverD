@@ -18,7 +18,7 @@ macOS 11 以降とハードウェア仮想化が必要です。他の依存関�
 
 フレームワークのリンクと hypervisor 署名は macOS ビルドターゲット（`CMAKE_SYSTEM_NAME=Darwin`）に限定します。iOS などの Apple モバイルターゲットには、このフレームワーク依存関係や権限を追加しません。NeverD 自体を ISA が一致する Mac で実行する場合、iOS ゲストプロファイルも HVF を利用できます。
 
-**プロセスの実行ファイル**に [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) が必要です。`libneverd.dylib` だけの署名では足りません。CMake は `resources/macos/neverd-hypervisor.entitlements` で CLI、worker、プロセスプローブ、テストを署名します。`NEVERD_HVF_SIGN_IDENTITY` の既定値はアドホック署名の `-` で、既存の署名 ID も指定できます。パッケージ処理は Mach-O 依存関係の修復後に権限を再適用し、検証します。
+**プロセスの実行ファイル**に [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor) が必要です。`libneverd.dylib` だけの署名では足りません。CMake はリンク後に `resources/macos/neverd-hypervisor.entitlements` で CLI、worker、プロセスプローブ、エミュレーションテストを署名します。`NEVERD_HVF_SIGN_IDENTITY` の既定値はアドホック署名の `-` で、既存の署名 ID も指定できます。パッケージ処理は Mach-O 依存関係の修復後に権限を再適用し、検証します。
 
 組み込みアプリケーションは自分の実行ファイルを署名します。NeverD はインストール済み Python を再署名しません。`cpu-capabilities --configuration=JSON --probe-host` で実際のプロセスを確認できます。独立した worker も既定で署名します。`NEVERD_WORKER_SIGN_HVF=OFF` は HVF が不要な場合のみ使用します。
 

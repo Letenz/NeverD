@@ -69,8 +69,8 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
         &RegistrationMemoryIR,
     const std::map<const llvm::CallInst *, va_t> &CallSiteAddrs);
 
-bool collectDeadFinallyResult(llvm::CallInst &Call,
-                              std::vector<llvm::Instruction *> &Dead);
+bool collectDiscardedRegistrationResult(llvm::CallInst &Call,
+                                        std::vector<llvm::Instruction *> &Dead);
 
 } // namespace neverd::x86_registration
 

@@ -18,7 +18,7 @@ Active `NEVERD_ENABLE_CPU_EMULATION=ON` o la emulación de controladores. `NEVER
 
 El enlace del framework y la firma hypervisor se limitan al destino de compilación macOS (`CMAKE_SYSTEM_NAME=Darwin`). Los destinos móviles de Apple, incluido iOS, no reciben esta dependencia ni este permiso. Un perfil invitado iOS puede seguir usando HVF cuando NeverD se ejecuta en un Mac con la ISA correspondiente.
 
-El **ejecutable del proceso** necesita [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor); firmar solo `libneverd.dylib` no basta. CMake firma CLI, worker, sonda de proceso y pruebas con `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` usa `-` como firma ad hoc por defecto o una identidad existente. El empaquetado reaplica y comprueba el permiso después de reparar las dependencias Mach-O.
+El **ejecutable del proceso** necesita [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor); firmar solo `libneverd.dylib` no basta. CMake firma CLI, worker, la sonda de procesos y las pruebas de emulación después del enlace con `resources/macos/neverd-hypervisor.entitlements`. `NEVERD_HVF_SIGN_IDENTITY` usa `-` como firma ad hoc por defecto o una identidad existente. El empaquetado reaplica y comprueba el permiso después de reparar las dependencias Mach-O.
 
 La aplicación que integra la biblioteca firma su propio ejecutable. NeverD no vuelve a firmar Python instalado. `cpu-capabilities --configuration=JSON --probe-host` comprueba el proceso real. El worker independiente se firma por defecto; use `NEVERD_WORKER_SIGN_HVF=OFF` solo si no necesita HVF.
 

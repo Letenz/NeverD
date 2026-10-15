@@ -18,7 +18,7 @@
 
 يقتصر ربط إطار العمل وتوقيع hypervisor على هدف بناء macOS (`CMAKE_SYSTEM_NAME=Darwin`). لا تُضاف هذه التبعية أو الصلاحية إلى أهداف Apple المحمولة، ومنها iOS. يظل بإمكان ملف ضيف iOS استخدام HVF عندما يعمل NeverD نفسه على Mac ذي ISA مطابقة.
 
-يجب أن يحمل **الملف التنفيذي للعملية** الاستحقاق [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). توقيع `libneverd.dylib` وحده غير كافٍ. يوقّع CMake واجهة CLI وworker ومسبار العملية والاختبارات باستخدام `resources/macos/neverd-hypervisor.entitlements`. القيمة الافتراضية لـ `NEVERD_HVF_SIGN_IDENTITY` هي `-` للتوقيع المخصص، ويمكن اختيار هوية توقيع موجودة. يعيد التغليف تطبيق الاستحقاق والتحقق منه بعد إصلاح تبعيات Mach-O.
+يجب أن يحمل **الملف التنفيذي للعملية** الاستحقاق [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor). توقيع `libneverd.dylib` وحده غير كافٍ. يوقّع CMake واجهة CLI وworker ومسبار العملية واختبارات المحاكاة بعد الربط باستخدام `resources/macos/neverd-hypervisor.entitlements`. القيمة الافتراضية لـ `NEVERD_HVF_SIGN_IDENTITY` هي `-` للتوقيع المخصص، ويمكن اختيار هوية توقيع موجودة. يعيد التغليف تطبيق الاستحقاق والتحقق منه بعد إصلاح تبعيات Mach-O.
 
 التطبيق الذي يدمج المكتبة مسؤول عن توقيع ملفه التنفيذي؛ لا يعيد NeverD توقيع Python المثبّت. يفحص `cpu-capabilities --configuration=JSON --probe-host` العملية الفعلية. يُوقّع worker المستقل افتراضياً؛ استخدم `NEVERD_WORKER_SIGN_HVF=OFF` فقط عندما لا يحتاج إلى HVF.
 

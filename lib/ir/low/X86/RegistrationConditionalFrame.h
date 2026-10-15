@@ -13,6 +13,7 @@
 #include "RegistrationJumpCapture.h"
 
 #include "neverd/ir/RegistrationCall.h"
+#include "neverd/ir/RegistrationState.h"
 
 #include <functional>
 #include <map>
@@ -44,6 +45,8 @@ struct ConditionalFrame {
   std::map<std::pair<va_t, int>, BorrowedJumpResume> JumpResumes;
   std::set<std::pair<int32_t, int32_t>> Reads;
   std::set<std::pair<int32_t, int32_t>> Writes;
+  std::set<int32_t> UsedArguments;
+  bool NativeFramePrivate = true;
   bool Complete = true;
   size_t Work = 0;
 };
@@ -54,7 +57,13 @@ struct BoundCalleeEffect {
   std::vector<RegistrationObjectExtent> Writes;
   bool HasOrdinaryReturn = true;
   std::vector<BorrowedJumpResume> JumpResumes;
+  std::optional<RegistrationSEHBoundCall> NativeCall;
 };
+
+/// Record native frame observations without weakening the source state proof.
+void checkConditionalNativeFrame(const FrameState &State, const LowOp &Op,
+                                 const FrameTransfer &Transfer,
+                                 ConditionalFrame &Inputs);
 
 /// Prove one exact original helper using its current caller cells. The caller
 /// separately binds this target to its authenticated physical CALL occurrence.

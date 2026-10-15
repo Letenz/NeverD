@@ -34,7 +34,7 @@ FrameState::sehExceptionLoad(const SEHExceptionAddress &Address,
     // No concrete exception origin or RaiseException argument has been bound.
     // The DWORD is unknown and may carry pointer bits. A later memory sink
     // needs its own address proof; field width alone cannot exclude an alias.
-    return FrameValue{{}, {}, false, true};
+    return FrameValue::taint(true, true);
   return std::nullopt;
 }
 

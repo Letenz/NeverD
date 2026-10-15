@@ -377,7 +377,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     if (AllCallbackBlocks.count(Instruction->getParent()))
       return false;
   std::vector<CallPlan> Calls;
-  std::vector<llvm::Instruction *> DeadFinallyResults;
+  std::vector<llvm::Instruction *> DeadCallResults = JumpPlan->DiscardedResults;
   for (const auto &[Call, Address] : CallSiteAddrs) {
     if (CookieCheckCalls.count(const_cast<llvm::CallInst *>(Call)))
       continue;
@@ -399,8 +399,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
               return llvm::isa<llvm::ReturnInst>(Block->getTerminator());
             });
     if (Finally && !NoReturn &&
-        !x86_registration::collectDeadFinallyResult(
-            *const_cast<llvm::CallInst *>(Call), DeadFinallyResults))
+        !x86_registration::collectDiscardedRegistrationResult(
+            *const_cast<llvm::CallInst *>(Call), DeadCallResults))
       return false;
     if ((State->second >= 0 && mayUnwind(*Call)) || Finally)
       Calls.push_back({const_cast<llvm::CallInst *>(Call), Address,
@@ -627,11 +627,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     Call->eraseFromParent();
   }
 
-  std::set<llvm::Instruction *> DeadFinally(DeadFinallyResults.begin(),
-                                            DeadFinallyResults.end());
-  for (auto *Instruction : DeadFinally)
+  std::set<llvm::Instruction *> DeadResults(DeadCallResults.begin(),
+                                            DeadCallResults.end());
+  for (auto *Instruction : DeadResults)
     Instruction->dropAllReferences();
-  for (auto *Instruction : DeadFinally)
+  for (auto *Instruction : DeadResults)
     Instruction->eraseFromParent();
 
   std::map<va_t, llvm::Function *> JumpCallbacks;

@@ -233,6 +233,30 @@ struct RegistrationSEHJumpResume {
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 
+/// One physical stack argument of an invocation-specialized SEH helper.
+/// Scalar slots and borrowed objects use the caller's established EBP;
+/// opaque buffers name a capture whose native allocation replaces the source.
+struct RegistrationSEHBoundArgument {
+  enum class Kind : uint8_t { Unused, Scalar, Object, JumpBuffer };
+  Kind ArgumentKind = Kind::Unused;
+  int32_t Offset = 0;
+  va_t Capture = 0;
+  bool operator==(const RegistrationSEHBoundArgument &) const = default;
+};
+
+/// A preserved helper may use only these arguments and its private frame.
+/// Source state propagation alone does not establish this native ABI: the
+/// conditional proof also rejects observations of regenerated frame addresses.
+struct RegistrationSEHBoundCall {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  int32_t StackOffset = 0;
+  bool HasOrdinaryReturn = true;
+  std::vector<RegistrationSEHBoundArgument> Arguments;
+  bool operator==(const RegistrationSEHBoundCall &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -247,6 +271,8 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
   /// Invocation-specialized original helpers require a separate native plan.
   bool HasBoundSEHCallees = false;
+  bool SEHBoundCallsComplete = true;
+  std::vector<RegistrationSEHBoundCall> SEHBoundCalls;
   /// Original EH3 captures retain their physical buffer and invocation. Native
   /// reconstruction requires a separate replacement-buffer contract.
   bool HasEH3JumpCaptures = false;

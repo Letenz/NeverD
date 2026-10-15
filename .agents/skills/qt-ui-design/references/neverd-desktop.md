@@ -131,9 +131,54 @@ A shared bounding box alone does not guarantee equal visual weight.
 
 Quick Start uses line glyphs drawn on a 24-pixel grid, without individual rounded
 background tiles, beside outlined file icons. Keep them crisp at normal and
-fractional DPI. File labels must fit their outline, including longer labels
-such as MACH, NDDB, and WASM. Follow `IconSet.def` for asset provenance and
-palette conventions; do not copy a third-party icon set merely to imitate an IDE.
+fractional DPI, as the next section describes. File labels must fit their
+outline, including longer labels such as MACH, NDDB, and WASM. Follow
+`IconSet.def` for asset provenance and palette conventions; do not copy a
+third-party icon set merely to imitate an IDE.
+
+## Crisp lines on the pixel grid
+
+The user reads a blurred thin stroke as a color problem. The Quick Start's blue
+line glyphs looked heavy to the user because their 1.4-pixel strokes sat on
+whole-pixel coordinates, so each stroke covered two pixels at about 70%; the
+New glyph averaged `#4673A2` instead of its `#5DA9F6`. Snapping the strokes
+fixed most of it, and a lighter icon blue did the rest. An audit of the whole
+icon set then found the same fault in the file dialogs' icons and places pane,
+the operand-type and function icons, the partly checked box, and the
+navigation band's cursor.
+
+- Draw every straight stroke where it covers whole pixels at the size the
+  shape is drawn. A stroke at least 1 and under 2 pixels wide centers on a
+  pixel center (`x.5`), a 2-pixel stroke centers on a pixel boundary, and the
+  edge of a fill without a stroke lies on a pixel boundary. Curves and
+  diagonals antialias anyway.
+- Snap at the size Qt draws the asset: `IconSet.def` icons at 16 pixels
+  (toolbars, menus, item views, file dialogs), Quick Start glyphs at 24, and
+  style-sheet chrome at its subcontrol size (chevrons at 10, menu checks and
+  check box marks at 14, toolbar grips at 6 by 16). A whole-number multiple
+  keeps a snapped icon crisp, so message box icons, drawn at 32, stay crisp
+  even where a 16-pixel source line is not. A size that is no whole multiple
+  blurs any grid: Qt's file dialog drew its places pane at 24, so
+  `WorkbenchStyle` draws it at 16 like the file list. Sizes that cannot be
+  snapped, such as the 40-pixel drop glyph or a 150% scale, only need to stay
+  no worse.
+- A symmetric shape with a 1-pixel line on its axis cannot be both centered and
+  crisp. Move it half a pixel off center, as `operand_negate` does, or give the
+  axis line 2 pixels. The `signatures` fingerprint keeps its soft center ridge
+  on purpose.
+- In paint code, fill axis-aligned lines as whole-pixel `QRect`s, offset
+  1-pixel pens by 0.5 in a `QRectF`, and round a computed position before
+  drawing a thin line with antialiasing on, as the navigation band rounds its
+  cursor. `GraphView` turns antialiasing off from 100% zoom up so node borders
+  and edges stay sharp.
+- In the dark theme, thin glyphs take a lighter tone than text of the same hue,
+  as Visual Studio Code paints colored icons `#75BEFF` and links `#4DAAFC`.
+  Judge a thin stroke's color in a capture at 100%, not by its hex value.
+- To audit, render each SVG with `QSvgRenderer` at its drawn size and look for
+  straight runs where two neighboring pixels both have partial coverage with
+  empty pixels outside them. For a filled icon, check the coordinates of its
+  inner lines against the rules above. For one glyph, compare the share of its
+  drawn pixels at full coverage before and after a change.
 
 ## Resizing is part of the design
 
@@ -161,8 +206,10 @@ Use the real Qt implementation, fonts, and theme. A browser mockup or source
 diff does not establish the appearance of a Qt widget.
 
 1. Build the affected GUI targets and inspect real captures in both themes at
-   100% and a fractional scale such as 150%. Check long names, empty content,
-   disabled actions, selection, hover, and keyboard focus as relevant.
+   100% and a fractional scale such as 150%. At 100%, thin lines and icon
+   strokes must cover whole pixels (see "Crisp lines on the pixel grid").
+   Check long names, empty content, disabled actions, selection, hover, and
+   keyboard focus as relevant.
 2. For resizing changes, exercise a mouse gesture, content expansion, minimum
    size, and reopening. Use isolated settings so previews and tests do not
    replace the user's preferences or recent-file history.
