@@ -27,7 +27,11 @@ _registration_jump_callee:
   pop ebp
   ret
 #else
+#if REGISTRATION_CASE == 22
+  push dword ptr [ebp+16]
+#else
   push 42
+#endif
   push dword ptr [ebp+8]
   call __longjmpex
   ud2

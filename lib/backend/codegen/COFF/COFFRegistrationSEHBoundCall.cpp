@@ -73,6 +73,8 @@ bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
         if (!Attr.isEnumAttribute() ||
             Attr.getKindAsEnum() != llvm::Attribute::NoReturn)
           return rejectIR("preserved SEH helper gained unproved effects");
+      std::set<const llvm::Instruction *> Arguments;
+      const llvm::LoadInst *FirstScalar = nullptr;
       for (size_t Index = 0; Index != Receipt.Arguments.size(); ++Index) {
         if (++Work > limits::kMaxRegistrationEHStateWork)
           return rejectIR("preserved SEH arguments exceed the work budget");
@@ -102,6 +104,9 @@ bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
               Load->getParent() != Call->getParent() ||
               !Load->comesBefore(Call))
             return rejectIR("preserved SEH helper lost its scalar argument");
+          Arguments.insert(Load);
+          if (!FirstScalar || Load->comesBefore(FirstScalar))
+            FirstScalar = Load;
           Value = Load->getPointerOperand();
         }
         const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(Value);
@@ -113,6 +118,26 @@ bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
             uint64_t(ExpectedOffset) + 4 > Bytes->getFixedValue() ||
             Offset.getZExtValue() != uint64_t(ExpectedOffset))
           return rejectIR("preserved SEH helper changed its parent argument");
+        Arguments.insert(GEP);
+      }
+      // Scalar slots must be sampled at the original invocation, after all
+      // source stores. Only the checked argument projection and an invoke's
+      // independently authenticated provenance anchor may follow those reads.
+      for (const llvm::Instruction *I = FirstScalar; I && I != Call;
+           I = next(*I)) {
+        if (++Work > limits::kMaxRegistrationEHStateWork)
+          return rejectIR(
+              "preserved SEH argument reads exceed the work budget");
+        if (Arguments.count(I))
+          continue;
+        const auto *Anchor = llvm::dyn_cast<llvm::IntrinsicInst>(I);
+        if (!llvm::isa<llvm::InvokeInst>(Call) || !Anchor ||
+            Anchor->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
+            Anchor->arg_size() || Anchor->getNumOperandBundles() != 1 ||
+            Anchor->countOperandBundlesOfType(
+                windows_eh_md::ProvenanceBundle) != 1 ||
+            next(*Anchor) != Call)
+          return rejectIR("preserved SEH scalar moved across source execution");
       }
       Result.insert(Call);
     }

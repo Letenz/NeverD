@@ -3782,11 +3782,12 @@ The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
 `longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
 `longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
 `longjmp-search-filter-zero`, `longjmp-retired-scope` and
-`longjmp-retired-inner-scope`, `longjmp-callee` and
-`longjmp-returning-callee`. The helper fixtures execute cross-frame resumption
-and ordinary returning object borrows; independent mutations reject frame
-observers, changed buffers/objects, ABI attributes and observed incidental
-results. Shared frame tests retain exception-scalar alias taint across partial
+`longjmp-retired-inner-scope`, `longjmp-callee`,
+`longjmp-returning-callee` and `longjmp-scalar-callee`. The helper fixtures
+execute cross-frame resumption, ordinary returning object borrows and scalar
+argument projection. Independent mutations reject frame observers, changed
+buffers/objects, ABI attributes, observed incidental results and scalar reads
+moved before source writes. Shared frame tests retain exception-scalar alias taint across partial
 spills and reject mixing it with physical pointer bits. These fixtures check a resumed
 nonvolatile register and try level, the requested jump value (including zero
 becoming one), finally's

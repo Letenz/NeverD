@@ -25,7 +25,7 @@ void checkSEHBoundEdits(const llvm::Function &Parent,
                         const ExceptionFunction &Source,
                         const BinaryImage &Image) {
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
-  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Module = llvm::CloneModule(*Parent.getParent());
     auto *Function = Module->getFunction(Parent.getName());
@@ -40,7 +40,10 @@ void checkSEHBoundEdits(const llvm::Function &Parent,
               Capture = Call;
           }
     ASSERT_TRUE(Helper && Capture);
-    ASSERT_EQ(Helper->arg_size(), 2u);
+    ASSERT_GE(Helper->arg_size(), 2u);
+    const bool HasScalar = Helper->arg_size() == 3;
+    if (Mutation >= 15 && !HasScalar)
+      continue;
     llvm::IRBuilder<> B(Helper);
     auto *Buffer = Capture->getArgOperand(0);
     auto *Object = Helper->getArgOperand(1);
@@ -94,6 +97,23 @@ void checkSEHBoundEdits(const llvm::Function &Parent,
                                   Module->getContext(), B.getInt32Ty()));
     if (Mutation == 14)
       Helper->getCalledFunction()->addParamAttr(1, llvm::Attribute::ReadOnly);
+    if (Mutation >= 15) {
+      auto *Scalar = llvm::dyn_cast<llvm::LoadInst>(Helper->getArgOperand(2));
+      ASSERT_TRUE(Scalar);
+      if (Mutation == 15)
+        Scalar->setVolatile(false);
+      if (Mutation == 16) {
+        B.SetInsertPoint(Scalar);
+        Scalar->setOperand(0, B.CreateInBoundsGEP(B.getInt8Ty(),
+                                                  Scalar->getPointerOperand(),
+                                                  B.getInt32(4)));
+      }
+      if (Mutation == 17) {
+        B.SetInsertPoint(Scalar->getNextNode());
+        B.CreateStore(B.getInt32(0), Scalar->getPointerOperand())
+            ->setVolatile(true);
+      }
+    }
     ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
     auto Error = validateCOFFRegistrationIR(*Function, Source, Image);
     ASSERT_TRUE(bool(Error));
