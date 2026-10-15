@@ -252,7 +252,30 @@ the original failed probe remains evidence. Existing amd64 images were retained
 when Docker rejected assigning their multi-architecture digest to a second
 architecture; the ARM64 compiler uses its verified architecture-specific digest.
 
-The Linux x64 and ARM64 musl variants now have independent runtime downloads
-verified against the pinned official checksums; source export is in progress.
-They have not yet completed reconstruction and runtime acceptance. The overall
+Linux ARM64 musl and x64 musl now complete the same bounded acceptance. Each
+retains 2,345 JavaScript modules and 244 assets, with 226,839 anchored navigation
+records. Three independent builds, including each delivery's clean build,
+produce matching hashes: ARM64 is 132,452,272 bytes with SHA-256
+`9e0116f9da6a1b4c86de75ca08ab37d5d540b866e79db5800e08c8d0244f8565`;
+x64 is 134,195,440 bytes with SHA-256
+`45c3fba365552cd61b2aa2039a0fc59b05f6386d0a2a5a0449a1a3bfc2e13c2e`.
+Both pass direct package smoke execution, all 29 original/rebuilt differential
+cases, complete module readback and both native addon loading/materialization
+checks without device calls.
+
+The minimal Alpine image lacked the C++ runtime. Each architecture now uses a
+pinned image with signed Alpine compiler, C++ runtime and ALSA packages,
+installed offline with maintainer scripts disabled. The private deliveries
+include an environment archive; loading that archive and rebuilding from the
+package succeeds without downloading dependencies. x64 repository transport
+failures were resolved through host HTTPS downloads while preserving TLS and
+package-signature verification. Failed setup and stale platform-pin checks
+remain recorded separately from successful target observations.
+
+Windows x64 and ARM64 projects and navigators are exported, each with 2,343
+JavaScript modules, 243 assets and 226,461 anchored evidence records. Official
+independent runtimes are checksum-pinned, and self-authored PE cross-builds
+complete. Full reconstruction is in progress; the available Wine environment
+has not yet passed authored startup qualification. No captured Windows client
+has executed, and Windows runtime equivalence remains unverified. The overall
 goal remains open.
