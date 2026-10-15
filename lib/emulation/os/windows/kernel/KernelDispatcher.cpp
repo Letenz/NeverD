@@ -300,12 +300,14 @@ bool KernelDispatcher::waitLockOwnedByThread(uint64_t Thread) const {
   });
 }
 
-bool KernelDispatcher::ownsMutex(uint64_t ThreadKey) const {
+bool KernelDispatcher::ownsMutex(uint64_t ThreadKey,
+                                 uint64_t ReleasingAddress) const {
   if (!ThreadKey)
     return false;
   for (const auto &[Address, State] : Objects)
     if (State.Type == Kind::Mutex && State.MutexDepth &&
-        State.MutexOwner == ThreadKey)
+        State.MutexOwner == ThreadKey &&
+        (Address != ReleasingAddress || State.MutexDepth > 1))
       return true;
   return false;
 }

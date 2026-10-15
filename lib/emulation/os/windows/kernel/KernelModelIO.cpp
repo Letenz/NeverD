@@ -1201,6 +1201,8 @@ llvm::Error KernelModel::finishUnload() {
     return ioError("unload returned with live registry handles");
   if (!Lookasides.empty())
     return ioError("unload returned with live lookaside lists");
+  if (!ExecutiveResources.empty())
+    return ioError("unload returned with live executive resources");
   if (!FastMutexHolds.empty())
     return ioError("unload returned with held fast mutexes");
   for (const auto &[Object, Thread] : SystemThreads)

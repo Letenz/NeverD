@@ -71,6 +71,10 @@ llvm::Expected<uint64_t> KernelModel::leaveApcRegion(ApcRegionKind Kind) {
           CurrentIRQL, (*State)->CriticalDepth - (Critical ? 1 : 0),
           (*State)->GuardedDepth - (Critical ? 0 : 1)))
     return E;
+  if (auto E = validateExecutiveResourceContext(
+          CurrentIRQL, (*State)->CriticalDepth - (Critical ? 1 : 0),
+          (*State)->GuardedDepth - (Critical ? 0 : 1)))
+    return E;
   --Depth;
   return 0;
 }

@@ -62,6 +62,8 @@ llvm::Expected<uint64_t> KernelModel::lowerIRQL(uint8_t RequestedIRQL) {
           State == ApcStates.end() ? 0 : State->second.CriticalDepth,
           State == ApcStates.end() ? 0 : State->second.GuardedDepth))
     return E;
+  if (auto E = validateExecutiveResourceRestoreIRQL(RequestedIRQL))
+    return E;
   RaisedIRQLs.erase(std::next(Raise).base());
   CurrentIRQL = RequestedIRQL;
   return 0;

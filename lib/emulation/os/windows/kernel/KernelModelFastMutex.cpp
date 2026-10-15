@@ -211,6 +211,8 @@ llvm::Expected<uint64_t> KernelModel::releaseFastMutex(uint64_t Address,
   const uint8_t Restored = Unsafe ? CurrentIRQL : Hold.OldIRQL;
   if (auto E = validateFastMutexContext(Restored, Critical, Guarded, Address))
     return E;
+  if (auto E = validateExecutiveResourceRestoreIRQL(Restored))
+    return E;
   // ExReleaseFastMutex and KeReleaseGuardedMutex share RVA 0x2c9310.
   // Unsafe releases use 0x206930, directly or through its guarded wrapper.
   if (auto E = Memory.writeInteger(Address + FastMutexOwnerOffset, 0, 8))

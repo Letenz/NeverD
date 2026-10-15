@@ -66,6 +66,8 @@ llvm::Error KernelModel::validateKernelObjectBorrow(uint64_t Address,
     Address = pageBase(Address);
     Size = Last - Address + profile::PageSize;
   }
+  if (auto E = validateExecutiveResourceAccess(Address, Size))
+    return E;
   for (uint64_t Head : LookasideHeads)
     if (Head && overlaps(Address, Size, Head, ListEntrySize))
       return mdlError("MDL borrow intersects a private lookaside registry");
