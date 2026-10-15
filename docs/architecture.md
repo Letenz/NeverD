@@ -327,14 +327,22 @@ cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
 MedIR callback stores. Native writes require a checked byte, word or full-word
-constant store whose transitions agree on one complete resulting state. Narrow
-writes preserve the untouched high bytes; the physical state token names that
-complete result, not the literal. The same helper computes
+constant store with a proved finite set of complete resulting states. Narrow
+writes preserve the untouched high bytes; physical state tokens name complete
+results. The binder orders these results and assigns consecutive write identities
+across source occurrences. The same helper computes
 retained scopes from all parent reaching levels and callback write results,
 including their enclosing scopes; an unexplained scope refuses emission.
 LLVM retains callback-only rows through an indexed entry chain of
 `llvm.donothing` invokes without activating those scopes. The original logical
-store remains available to independent source replay.
+store remains available to independent source replay. Multiple results use one
+volatile full-word reload followed by a closed switch, one physical update per
+case, and a common continuation. `MedLLVMRegistrationSEHStateDispatch` emits
+this selection; `COFFRegistrationSEHStateDispatch` independently checks its
+complete domain, exact frame read, update identities and predecessor closure.
+Source-segment validation follows only these authenticated edges when a callback
+block is split, preserving source event order independently of physical block
+layout. Case and continuation addresses cannot escape.
 MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF

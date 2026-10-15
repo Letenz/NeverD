@@ -8,6 +8,8 @@
 
 #include "COFFRegistrationSEHState.h"
 
+#include "COFFRegistrationSEHStateDispatch.h"
+
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
@@ -18,14 +20,14 @@
 
 namespace neverd::coff_registration {
 
-llvm::Expected<std::set<const llvm::CallBase *>>
+llvm::Expected<SEHCallbackStateWrites>
 bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
                            const std::map<int, SourceSegment> &Segments,
                            llvm::ArrayRef<const llvm::Function *> Functions) {
   const auto Expected = getX86RegistrationSEHStateStores(Source);
   if (!Expected)
     return rejectIR("callback state writes have incomplete source receipts");
-  std::set<const llvm::CallBase *> Result;
+  SEHCallbackStateWrites Result;
   std::map<std::pair<va_t, int>, size_t> Occurrences;
   for (size_t I = 0; I != Expected->size(); ++I)
     if (!Occurrences
@@ -35,17 +37,17 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
              .second)
       return rejectIR("callback state-write source identity is ambiguous");
   size_t Work = 0;
+  std::set<size_t> Seen;
+  std::set<const llvm::CallBase *> Physical;
   for (const auto *Function : Functions)
     for (const auto &Block : *Function)
       for (const auto &I : Block) {
         if (++Work > limits::kMaxRegistrationEHStateWork)
           return rejectIR("callback state writes exceed their work budget");
         const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-        const bool StateWrite =
-            Call && Call->getCalledFunction() &&
-            Call->getCalledFunction()->getName() == "llvm.x86.seh.setstate";
-        if (StateWrite && !Result.count(Call))
-          return rejectIR("physical state write has no adjacent source store");
+        if (Call && Call->getCalledFunction() &&
+            Call->getCalledFunction()->getName() == "llvm.x86.seh.setstate")
+          Physical.insert(Call);
         const auto *MD =
             I.getMetadata(windows_eh_md::RegistrationOperationAttachment);
         if (!MD)
@@ -57,16 +59,10 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
         const auto Found = Occurrences.find({*Address, int(*Seq)});
         if (Found == Occurrences.end())
           continue;
-#ifndef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
-        return rejectIR("LLVM lacks physical callback state-write receipts");
-#else
         const auto &Bound = (*Expected)[Found->second];
         const auto &Receipt = *Bound.Source;
         const auto Owner = Segments.find(Receipt.BlockId);
         const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-        const auto *Write = llvm::dyn_cast_or_null<llvm::CallInst>(next(I));
-        const auto *Frame =
-            getX86RegistrationSEHJumpParentFrame(*Function, Parent);
         if (!Store || Function == &Parent || Owner == Segments.end() ||
             !Owner->second.Enter ||
             Owner->second.Enter->getFunction() != Function ||
@@ -77,37 +73,21 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
             !Store->isVolatile() || Store->getAlign() != llvm::Align(1) ||
             integer(Store->getValueOperand(), 8 * Receipt.Width) !=
                 Receipt.Value ||
-            !Write ||
-            Write->getIntrinsicID() != llvm::Intrinsic::x86_seh_setstate ||
-            Write->arg_size() != 8 || Write->getNumOperandBundles() ||
-            Write->getCallingConv() != llvm::CallingConv::C ||
-            Write->isTailCall() || !Write->use_empty() ||
-            !Write->getAttributes().isEmpty() ||
-            Write->getArgOperand(0) != &Parent || !Frame ||
-            Write->getArgOperand(1) != Frame ||
-            integer(Write->getArgOperand(2), 32) !=
-                uint32_t(Bound.TargetLevel) ||
-            integer(Write->getArgOperand(7), 64) != Found->second + 1 ||
-            !Result.insert(Write).second)
+            !Seen.insert(Found->second).second)
           return rejectIR(
               "callback state write changed its source or frame ABI");
-        std::array<uint64_t, 4> Digest{};
-        if (Bound.TargetLevel >= 0) {
-          const auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
-              *Source.ExceptionMetadata, Arch::X86, Bound.TargetLevel);
-          if (!Token)
-            return rejectIR("callback state write has no source scope token");
-          Digest = Token->Digest;
-        } else if (Bound.TargetLevel !=
-                   *Source.ExceptionMetadata->Registration->SeededTryLevel)
-          return rejectIR("callback state write changed its inactive sentinel");
-        for (unsigned J = 0; J != Digest.size(); ++J)
-          if (integer(Write->getArgOperand(3 + J), 64) != Digest[J])
-            return rejectIR("callback state write changed its scope digest");
-#endif
+        auto Sequence =
+            bindSEHCallbackStateSequence(*Store, Bound, Source, Parent);
+        if (!Sequence)
+          return Sequence.takeError();
+        for (const auto *Write : Sequence->Writes)
+          if (!Result.Writes.insert(Write).second)
+            return rejectIR(
+                "callback state write belongs to two source stores");
+        Result.Stores.insert(Store);
       }
-  if (Result.size() != Expected->size())
-    return rejectIR("callback source state write has no physical update");
+  if (Seen.size() != Expected->size() || Physical != Result.Writes)
+    return rejectIR("callback source and physical state writes disagree");
   return Result;
 }
 

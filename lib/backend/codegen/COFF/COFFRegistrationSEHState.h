@@ -13,8 +13,13 @@
 
 namespace neverd::coff_registration {
 
+struct SEHCallbackStateWrites {
+  std::set<const llvm::CallBase *> Writes;
+  std::set<const llvm::StoreInst *> Stores;
+};
+
 /// Source segments must already bind each store's owner and occurrence order.
-llvm::Expected<std::set<const llvm::CallBase *>>
+llvm::Expected<SEHCallbackStateWrites>
 bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
                            const std::map<int, SourceSegment> &Segments,
                            llvm::ArrayRef<const llvm::Function *> Functions);

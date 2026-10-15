@@ -12,6 +12,7 @@
 #include "RegistrationSEHFinallyIRMutations.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
 #include "RegistrationSEHNullAccessTestUtils.h"
+#include "RegistrationSEHStateDispatchTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -1846,6 +1847,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (Error)
     Module->print(llvm::errs(), nullptr);
   ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  registration_test::checkSEHStateDispatchEdits(*Parent, Med, EH, Image);
   if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
     registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
                                               *Low.RegistrationStates);

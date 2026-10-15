@@ -502,13 +502,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       ReplayMed, Function, *SourceSegments, NativeFunctions);
   if (!PhysicalWrites)
     return PhysicalWrites.takeError();
-  ScopeState->PhysicalWrites = *PhysicalWrites;
-  for (const auto *Write : *PhysicalWrites) {
-    const auto *Previous = Write->getPrevNode();
-    while (Previous && Previous->isDebugOrPseudoInst())
-      Previous = Previous->getPrevNode();
-    ScopeState->CallbackWrites.insert(llvm::cast<llvm::StoreInst>(Previous));
-  }
+  ScopeState->PhysicalWrites = PhysicalWrites->Writes;
+  ScopeState->CallbackWrites = PhysicalWrites->Stores;
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,

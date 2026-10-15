@@ -1500,6 +1500,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationSEHDynamicScopeTests.cpp
   eh/RegistrationSEHFinallyResultTests.cpp
   eh/RegistrationSEHStateNativeTests.cpp
+  eh/RegistrationSEHStateDispatchTests.cpp
   eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp

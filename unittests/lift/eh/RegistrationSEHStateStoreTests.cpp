@@ -167,7 +167,7 @@ TEST(RegistrationSEHStateStore, NarrowStoresPreserveTheCompleteSourceLevel) {
     Receipt.Transitions = {{2, 1}};
     auto Bound = getX86RegistrationSEHStateStores(Function);
     ASSERT_TRUE(Bound);
-    EXPECT_EQ(Bound->front().TargetLevel, 1);
+    EXPECT_EQ(Bound->front().TargetLevels, (std::vector<int32_t>{1}));
     // The same low bytes cannot clear the untouched high bytes of -1.
     Receipt.Transitions = {{-1, 1}};
     EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
@@ -177,7 +177,7 @@ TEST(RegistrationSEHStateStore, NarrowStoresPreserveTheCompleteSourceLevel) {
     Receipt.Transitions = {{-1, -1}};
     Bound = getX86RegistrationSEHStateStores(Function);
     ASSERT_TRUE(Bound);
-    EXPECT_EQ(Bound->front().TargetLevel, -1);
+    EXPECT_EQ(Bound->front().TargetLevels, (std::vector<int32_t>{-1}));
     Receipt.Value ^= uint32_t(1) << (Width * 8);
     Native.Level = Receipt.Value;
     EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
@@ -199,12 +199,55 @@ TEST(RegistrationSEHStateStore, ByteLiteralDoesNotNameTheCompleteScope) {
   Receipt.Transitions = {{257, 258}};
   auto Bound = getX86RegistrationSEHStateStores(Function);
   ASSERT_TRUE(Bound);
-  EXPECT_EQ(Bound->front().TargetLevel, 258);
+  EXPECT_EQ(Bound->front().TargetLevels, (std::vector<int32_t>{258}));
   EXPECT_EQ(getX86RegistrationSEHRetainedScopes(Function),
             (std::optional<std::vector<uint32_t>>{{258}}));
   Receipt.Transitions.push_back({1, 2});
-  // Distinct full outputs need a runtime selection plan, not a guessed token.
+  Bound = getX86RegistrationSEHStateStores(Function);
+  ASSERT_TRUE(Bound);
+  EXPECT_EQ(Bound->front().TargetLevels, (std::vector<int32_t>{2, 258}));
+  EXPECT_EQ(Bound->front().FirstWriteID, 1u);
+  std::reverse(Receipt.Transitions.begin(), Receipt.Transitions.end());
+  Bound = getX86RegistrationSEHStateStores(Function);
+  ASSERT_TRUE(Bound);
+  EXPECT_EQ(Bound->front().TargetLevels, (std::vector<int32_t>{2, 258}));
+  EXPECT_EQ(getX86RegistrationSEHRetainedScopes(Function),
+            (std::optional<std::vector<uint32_t>>{{258}}));
+  // Replacing just the low byte cannot clear the other complete result's high
+  // bytes, even when both proposed states name valid scopes.
+  Receipt.Transitions.back().second = 2;
   EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
+}
+
+TEST(RegistrationSEHStateStore,
+     NarrowSentinelAndPositiveOutcomesKeepTheirHighBytes) {
+  for (bool EH4 : {false, true}) {
+    SCOPED_TRACE(EH4);
+    auto Function = sourceStateStore();
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Encoding = EH4 ? ExceptionEncoding::X86ScopeTableEH4
+                      : ExceptionEncoding::X86ScopeTableEH3;
+    auto &Chain = *EH.Registration;
+    const int32_t Sentinel = EH4 ? -2 : -1;
+    Chain.SeededTryLevel = Sentinel;
+    Chain.Scopes.clear();
+    for (int32_t Level = 0; Level != 256; ++Level)
+      Chain.Scopes.push_back({Level ? Level - 1 : Sentinel, 0, 0x2020, true});
+    Function.RegistrationStates->Blocks[0].Levels = {255};
+    auto &Native = Chain.TryLevelStores[0];
+    auto &Receipt = Function.RegistrationStates->SEHStateStores[0];
+    auto &Value = Function.Blocks[1].Ops[0].Inputs[1];
+    Native.Width = Receipt.Width = Value.Size = 1;
+    const int32_t Positive = uint8_t(Sentinel);
+    Native.Level = Receipt.Value = Value.ConstVal = Positive;
+    Receipt.Transitions = {{1, Positive}, {Sentinel, Sentinel}};
+    auto Bound = getX86RegistrationSEHStateStores(Function);
+    ASSERT_TRUE(Bound);
+    EXPECT_EQ(Bound->front().TargetLevels,
+              (std::vector<int32_t>{Sentinel, Positive}));
+    Receipt.Transitions.back().second = Positive;
+    EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
+  }
 }
 
 TEST(RegistrationSEHStateStore,

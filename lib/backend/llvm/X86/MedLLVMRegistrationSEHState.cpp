@@ -108,18 +108,22 @@ std::optional<std::vector<SEHCallbackStateWrite>> prepareSEHCallbackStateWrites(
       }
     if (!Owner)
       return std::nullopt;
-    SEHCallbackStateWrite Write{
-        Store, *Owner, Bound.TargetLevel, {}, Result.size() + 1};
-    if (Write.Level >= 0) {
-      const auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
-          *Source.ExceptionMetadata, Arch::X86, Write.Level);
-      if (!Token)
+    SEHCallbackStateWrite Write{Store, *Owner, {}};
+    for (int32_t Level : Bound.TargetLevels) {
+      SEHCallbackStateTarget Target{
+          Level, {}, Bound.FirstWriteID + Write.Targets.size()};
+      if (Level >= 0) {
+        const auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
+            *Source.ExceptionMetadata, Arch::X86, Level);
+        if (!Token)
+          return std::nullopt;
+        Target.Digest = Token->Digest;
+      } else if (Level !=
+                 *Source.ExceptionMetadata->Registration->SeededTryLevel)
         return std::nullopt;
-      Write.Digest = Token->Digest;
-    } else if (Write.Level !=
-               *Source.ExceptionMetadata->Registration->SeededTryLevel)
-      return std::nullopt;
-    Result.push_back(Write);
+      Write.Targets.push_back(Target);
+    }
+    Result.push_back(std::move(Write));
   }
 #endif
   return Result;
@@ -138,13 +142,8 @@ void emitSEHCallbackStateWrites(
         InstructionMaps[Write.Callback].at(Write.Original));
     assert(Frame && Store->getFunction() == Callback &&
            "preflighted state store must retain its exact callback and frame");
-    llvm::IRBuilder<> B(Store->getNextNode());
-    B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
-                     Parent.getParent(), llvm::Intrinsic::x86_seh_setstate),
-                 {&Parent, const_cast<llvm::Value *>(Frame),
-                  B.getInt32(Write.Level), B.getInt64(Write.Digest[0]),
-                  B.getInt64(Write.Digest[1]), B.getInt64(Write.Digest[2]),
-                  B.getInt64(Write.Digest[3]), B.getInt64(Write.ID)});
+    emitSEHCallbackStateDispatch(*Store, Write.Targets, Parent,
+                                 *const_cast<llvm::Value *>(Frame));
   }
 #else
   assert(Writes.empty() && "state stores require the LLVM write protocol");

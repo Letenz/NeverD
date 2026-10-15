@@ -4062,7 +4062,22 @@ The native receipt tests require
 packages. Older r4 builds retain analysis and refusal coverage but cannot run
 these compiler-protocol tests. The focused Wine job and native Windows source
 replay use the complete `all` profile with the published compiler; an LLVM
-workflow artifact override is no longer needed for these 61 source scenarios.
+workflow artifact override is no longer needed for these 62 source scenarios.
+
+`registration_state_dispatch.s` adds `longjmp-state-byte-high-bits`: the same
+filter byte store produces complete states 0 and 256. Four alternating invocations
+require one or two cleanup visits, respectively, and check the restored EAX/EBX,
+final state and registration chain. Intermediate sibling rows have ordinary
+activation stores to isolate the result domain from deep nesting and unrelated
+reachability limits. Two separate nonlocal call sites keep each parent call's
+active level unambiguous. The 20 runtime images cover source and generated PE,
+both CLI modes, IR/EXE input, optimization on/off and rebasing.
+`RegistrationSEHStateDispatchTests` replays 20 verifier-clean edits to the actual
+reconstructed IR: changed read address/width/ordering, missing or extra uses,
+changed domains, swapped or bypassed cases, altered or duplicated updates,
+hoisted reads and escaped case/continuation addresses all refuse installation.
+Reordering the physical case blocks remains accepted. MedIR tests separately
+cover EH3/EH4 sentinel and positive outcomes of the same byte store.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation

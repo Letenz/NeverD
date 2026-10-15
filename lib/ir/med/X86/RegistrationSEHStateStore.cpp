@@ -128,20 +128,22 @@ getX86RegistrationSEHStateStores(const MedFunc &Function) {
         Store.Width == 4 ? UINT32_MAX : (uint32_t(1) << (8 * Store.Width)) - 1;
     if (Store.Value > Mask || (Op.Inputs[1].ConstVal & Mask) != Store.Value)
       return std::nullopt;
-    const int32_t TargetLevel = Store.Transitions.front().second;
+    std::set<int32_t> TargetLevels;
     std::set<std::pair<int32_t, int32_t>> Transitions;
-    for (const auto &Transition : Store.Transitions)
+    for (const auto &Transition : Store.Transitions) {
       if (++Work > limits::kMaxRegistrationEHStateWork ||
           !ValidLevel(Transition.first) || !ValidLevel(Transition.second) ||
-          Transition.second != TargetLevel ||
           uint32_t(Transition.second) !=
               ((uint32_t(Transition.first) & ~Mask) | Store.Value) ||
           !Transitions.insert(Transition).second)
         return std::nullopt;
+      TargetLevels.insert(Transition.second);
+    }
     if (!Bound
              .emplace(
                  Store.Address,
-                 X86RegistrationSEHStateStoreBinding{&Op, &Store, TargetLevel})
+                 X86RegistrationSEHStateStoreBinding{
+                     &Op, &Store, {TargetLevels.begin(), TargetLevels.end()}})
              .second)
       return std::nullopt;
   }
@@ -161,8 +163,12 @@ getX86RegistrationSEHStateStores(const MedFunc &Function) {
     }
   }
   std::vector<X86RegistrationSEHStateStoreBinding> Result;
-  for (const auto &[Address, Binding] : Bound)
+  uint64_t NextWriteID = 1;
+  for (auto &[Address, Binding] : Bound) {
+    Binding.FirstWriteID = NextWriteID;
+    NextWriteID += Binding.TargetLevels.size();
     Result.push_back(Binding);
+  }
   return Result;
 }
 
@@ -200,8 +206,9 @@ getX86RegistrationSEHRetainedScopes(const MedFunc &Function) {
           return std::nullopt;
   }
   for (const auto &Binding : *Stores)
-    if (!Include(Callback, Binding.TargetLevel))
-      return std::nullopt;
+    for (int32_t Level : Binding.TargetLevels)
+      if (!Include(Callback, Level))
+        return std::nullopt;
   std::vector<uint32_t> Result;
   for (uint32_t I = 0; I != Chain.Scopes.size(); ++I) {
     if (Parent.count(I))

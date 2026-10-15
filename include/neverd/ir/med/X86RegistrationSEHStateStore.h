@@ -21,13 +21,16 @@ struct RegistrationSEHStateStore;
 struct X86RegistrationSEHStateStoreBinding {
   const MedOp *Operation = nullptr;
   const RegistrationSEHStateStore *Source = nullptr;
-  /// The complete source state after every reaching invocation of this store.
-  /// A narrow store's literal is only the overwritten low bytes.
-  int32_t TargetLevel = -1;
+  /// Sorted complete results, including the high bytes retained by a narrow
+  /// store. The source transitions prove that this set covers every invocation.
+  std::vector<int32_t> TargetLevels;
+  /// Consecutive physical-write identities follow source occurrence order,
+  /// then the sorted target levels within each occurrence.
+  uint64_t FirstWriteID = 0;
 };
 
-/// Return callback stores in source occurrence order. Every checked transition
-/// must produce the same complete level, preserving untouched high bytes.
+/// Return callback stores in source occurrence order. Each checked transition
+/// must preserve the untouched high bytes and produce a valid complete level.
 /// The source solver owns address and transition semantics. Native projection
 /// and replay retain their ordinary checks of the current memory operand.
 std::optional<std::vector<X86RegistrationSEHStateStoreBinding>>

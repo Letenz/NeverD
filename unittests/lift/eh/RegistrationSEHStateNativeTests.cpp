@@ -527,7 +527,7 @@ TEST(RegistrationSEHStateNative, NarrowLogicalStoresUseFullPhysicalStates) {
       auto Writes = coff_registration::bindSEHCallbackStateWrites(
           F.Source, *F.Parent, *Segments, Functions);
       ASSERT_TRUE(bool(Writes)) << llvm::toString(Writes.takeError());
-      ASSERT_EQ(Writes->size(), 2u);
+      ASSERT_EQ(Writes->Writes.size(), 2u);
       const auto Compiled = compileStateFixture(F);
       ASSERT_TRUE(Compiled.Success);
       ASSERT_EQ(Compiled.WinX86SEHStateWrites.size(), 2u);
@@ -596,9 +596,9 @@ TEST(RegistrationSEHStateNative,
     auto Original = coff_registration::bindSEHCallbackStateWrites(
         F.Source, *F.Parent, *Segments, Functions);
     ASSERT_TRUE(bool(Original)) << llvm::toString(Original.takeError());
-    ASSERT_EQ(Original->size(), 2u);
+    ASSERT_EQ(Original->Writes.size(), 2u);
     llvm::CallInst *Write = nullptr;
-    for (const auto *Call : *Original)
+    for (const auto *Call : Original->Writes)
       if (llvm::cast<llvm::ConstantInt>(Call->getArgOperand(2))->isZero())
         Write = const_cast<llvm::CallInst *>(llvm::cast<llvm::CallInst>(Call));
     ASSERT_TRUE(Write);
