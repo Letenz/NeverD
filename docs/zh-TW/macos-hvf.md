@@ -1,6 +1,6 @@
 **語言**: [English](../macos-hvf.md) | [简体中文](../zh-CN/macos-hvf.md) | [繁體中文](macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
+<!-- i18n-source: c6842dbcde7494478da5d1a0035e88fb073d2764b43e2a30400a470727685ec4 -->
 
 [← 文件索引](README.md)
 
@@ -18,7 +18,7 @@ NeverD 使用 Apple 的 [Hypervisor.framework](https://developer.apple.com/docum
 
 框架連結及 hypervisor 簽署僅適用於 macOS 建置目標（`CMAKE_SYSTEM_NAME=Darwin`）。iOS 等 Apple 行動平台目標不會附加此框架相依或權限。NeverD 本身在架構相符的 Mac 上執行時，iOS 客體設定仍可使用 HVF。
 
-**行程的執行檔**必須帶有 [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor)。只簽署 `libneverd.dylib` 不足。CMake 使用 `resources/macos/neverd-hypervisor.entitlements` 簽署 CLI、worker 與測試；`NEVERD_HVF_SIGN_IDENTITY` 預設為 ad hoc 的 `-`，也可指定現有簽章身分。封裝會在修復 Mach-O 相依關係後重新套用並驗證權限。
+**行程的執行檔**必須帶有 [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor)。只簽署 `libneverd.dylib` 不足。CMake 使用 `resources/macos/neverd-hypervisor.entitlements` 在連結後簽署 CLI、worker、行程探針與模擬測試；`NEVERD_HVF_SIGN_IDENTITY` 預設為 ad hoc 的 `-`，也可指定現有簽章身分。封裝會在修復 Mach-O 相依關係後重新套用並驗證權限。
 
 嵌入應用程式負責自己的執行檔簽章，NeverD 不會重新簽署已安裝的 Python。`cpu-capabilities --configuration=JSON --probe-host` 檢查實際行程。獨立 worker 預設也會簽署；只有不需要 HVF 時才設定 `NEVERD_WORKER_SIGN_HVF=OFF`。
 
