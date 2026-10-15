@@ -208,6 +208,56 @@ TEST(RegistrationSEHTryLevel, BranchingCallbackKeepsStateAndFrameCorrelated) {
   expectMarker(A, 0);
 }
 
+TEST(RegistrationSEHTryLevel, DeepUnwindKeepsTheDefaultProofBudget) {
+  for (bool ReverseBlocks : {false, true}) {
+    SCOPED_TRACE(ReverseBlocks);
+    auto F = stateUnwindFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    // Search-only rows still advance the local-unwind cursor. The one
+    // traversed finally must retain its write after the whole deep walk.
+    constexpr int32_t Count = 1024;
+    Chain.Scopes.resize(Count);
+    for (int32_t I = 2; I != Count; ++I)
+      Chain.Scopes[I] = {I - 1, 0x1b00, 0x1c00, false};
+    Chain.TryLevelStores.front().Level = Count - 1;
+    F.Blocks[2].Ops.back().Inputs[1] = NdVar::cst(Count - 1, 4);
+    if (ReverseBlocks)
+      std::reverse(F.Blocks.begin(), F.Blocks.end());
+    const auto A = analyze(F);
+    for (const auto &Diagnostic : A.Diagnostics)
+      ADD_FAILURE() << Diagnostic;
+    ASSERT_TRUE(A.Complete);
+    EXPECT_TRUE(A.RegistrationLifetimeComplete);
+    const auto Resume =
+        std::find_if(A.Blocks.begin(), A.Blocks.end(),
+                     [](const auto &B) { return B.BlockId == 4; });
+    ASSERT_NE(Resume, A.Blocks.end());
+    EXPECT_EQ(Resume->Levels, (std::vector<int32_t>{-1}));
+    expectMarker(A, -44);
+  }
+}
+
+TEST(RegistrationSEHTryLevel, ConvergingUnwindBranchesHaveSeparateAncestors) {
+  const auto A = analyze(stateUnwindFrame(0, 4, UINT32_MAX, true));
+  for (const auto &Diagnostic : A.Diagnostics)
+    ADD_FAILURE() << Diagnostic;
+  ASSERT_TRUE(A.Complete);
+  EXPECT_EQ(A.Blocks[4].Levels, (std::vector<int32_t>{-1}));
+  // Both arms reach the same outer frame. A completed sibling traversal is
+  // not a recurrent configuration on the current path.
+  expectMarker(A, -44);
+}
+
+TEST(RegistrationSEHTryLevel,
+     RecurrentUnwindFrameCannotBorrowATerminalSibling) {
+  for (bool Branch : {false, true}) {
+    SCOPED_TRACE(Branch);
+    const auto A = analyze(stateUnwindFrame(2, 4, 0, Branch));
+    EXPECT_FALSE(A.Complete);
+    EXPECT_FALSE(A.RegistrationLifetimeComplete);
+  }
+}
+
 TEST(RegistrationSEHTryLevel, NarrowWritesPreserveTheReachingHighBytes) {
   for (uint16_t Width : {1, 2}) {
     SCOPED_TRACE(Width);

@@ -91,6 +91,7 @@ struct Domain {
     bool OtherCallback = false;
     std::optional<int32_t> OrdinaryCallStack;
     std::optional<ParentStackRestore> StackRestore;
+    bool operator==(const SEHCaller &) const = default;
   };
   std::vector<SEHCaller> SEHCallers;
   size_t sehCallerCellCount() const {
@@ -107,6 +108,14 @@ struct Domain {
         Count += Context.cellCount();
     return Count;
   }
+  size_t snapshotWork() const {
+    return Levels.size() + Frame.cellCount() + Frame.OtherRegisterBytes.size() +
+           RuntimeObject.cellCount() + RuntimeObject.OtherRegisterBytes.size() +
+           InitializedFrameBytes.size() + JumpCaptures.size() * 14 +
+           Activation.JumpCaptureCalls.size() + Activation.Callers.size() +
+           sehCallerCellCount() + catchCellCount() + 10;
+  }
+  bool operator==(const Domain &) const = default;
 };
 
 /// Frames with different native TryLevels must not lose their correlation.
@@ -290,6 +299,10 @@ private:
   bool conditionalReturn(const Domain &State, const LowOp &Op);
   bool conditionalCall(const FrameState &State, const LowOp &Op);
   void dispatchBlock(size_t I, const Domain &Before, const BlockFacts &Facts);
+  void queueSEHScopes(const Domain &Before, bool Invalid);
+  void flushSEHScopes();
+  void dispatchSEHScopes(const Domain &Before, bool Invalid,
+                         const std::set<int32_t> &Levels);
   std::vector<RegistrationCxxSearch> cxxSearches(const Domain &State,
                                                  bool Invalid);
   bool enterCxxCatch(Domain &Root, const Domain &Source, uint32_t TryIndex,
@@ -315,8 +328,8 @@ private:
                          RegistrationChainAccess::Kind Kind);
   void merge(size_t Target, const Domain &Source);
   void dispatch(
-      va_t Address, int32_t Level, const Domain &Source, bool Unknown = false,
-      bool Callback = false, bool SearchFilter = false,
+      va_t Address, std::set<int32_t> Levels, const Domain &Source,
+      bool Unknown = false, bool Callback = false, bool SearchFilter = false,
       std::optional<std::pair<uint32_t, uint32_t>> CxxCatch = std::nullopt);
 
   const LowFunc &Function;
@@ -348,6 +361,14 @@ private:
   std::set<va_t> FinallyTargets;
   std::set<va_t> SEHParentEntries;
   std::vector<std::map<SEHActivation, ActivationState>> States;
+  struct SEHDispatchMemo {
+    Domain Source;
+    bool Invalid;
+    std::set<int32_t> Levels;
+    std::set<int32_t> Pending;
+  };
+  std::vector<SEHDispatchMemo> DispatchedSEHFrames;
+  std::set<size_t> PendingSEHFrames;
   std::vector<size_t> Order;
   std::set<std::tuple<size_t, size_t, SEHActivation>> Work;
   size_t WorkUsed = 0;

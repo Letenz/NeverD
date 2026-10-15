@@ -19,7 +19,7 @@ class RegistrationSourceReplayTests(unittest.TestCase):
             "longjmp-filter-skipped-scope",
             "longjmp-filter-two-resume-mappings",
             "longjmp-filter-callback-activation", "longjmp-state-byte-high-bits",
-            "longjmp-finally-incidental-result"})
+            "longjmp-finally-incidental-result", "longjmp-deep-scope-chain"})
         self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
         with self.assertRaises(ValueError):
             source_cases("unknown")

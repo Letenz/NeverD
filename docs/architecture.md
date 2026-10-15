@@ -338,6 +338,17 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+SEH dispatch joins use an explicit pending queue. After ordinary propagation
+quiesces, equal source snapshots contribute their complete level domains to
+runtime roots together. Only the level set and the exact cell overwritten by
+root construction are excluded from snapshot identity; other frame values,
+captures, invocation identities and invalid-state evidence remain distinct.
+Completed contributions are remembered only within the current solver run.
+`RegistrationStateSEHDispatch` collects scope ancestry with finite bit sets;
+`RegistrationStateSEHDispatchWork` owns scheduling and duplicate suppression.
+Local unwind uses an iterative depth-first path with ancestors indexed by
+their proved level. A sibling's completed path cannot prove or reject a cycle
+on another path. These changes retain the existing cumulative work limit.
 `RegistrationStateTryLevel` binds each SEH store to its decoded extent,
 operation identity, width, literal and reaching-state transitions. Finally
 execution partitions frame outcomes by the resulting try level; local unwind

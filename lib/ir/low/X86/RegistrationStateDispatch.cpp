@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <utility>
 
 namespace neverd::registration_state {
@@ -126,7 +127,7 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
 }
 
 void RegistrationStateSolver::dispatch(
-    va_t Address, int32_t Level, const Domain &Source, bool Unknown,
+    va_t Address, std::set<int32_t> Levels, const Domain &Source, bool Unknown,
     bool Callback, bool SearchFilter,
     std::optional<std::pair<uint32_t, uint32_t>> CxxCatch) {
   auto It = Entries.find(Address);
@@ -136,6 +137,10 @@ void RegistrationStateSolver::dispatch(
     return;
   }
   Domain Root;
+  assert(!Levels.empty());
+  if (!charge(Levels.size() + 1))
+    return;
+  Root.Levels = std::move(Levels);
   if (!KnownCxx && Callback)
     Root.Activation = {Address, SearchFilter};
   if (!KnownCxx && Callback) {
@@ -144,7 +149,6 @@ void RegistrationStateSolver::dispatch(
     for (const auto &[Offset, Capture] : Source.JumpCaptures)
       Root.Activation.JumpCaptureCalls.emplace_back(Offset, Capture.Call);
   }
-  Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
@@ -155,8 +159,14 @@ void RegistrationStateSolver::dispatch(
   Root.InitializedFrameBytes = Source.InitializedFrameBytes;
   Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
   Root.RuntimeObject.forgetCellValues();
-  Root.Frame.Cells[*Chain.TryLevelOffset] =
-      FrameValue::constant(uint32_t(Level));
+  // This is the join of roots from one source snapshot, differing only in
+  // their logical level. Distinct constants have no exact cell value; the
+  // complete finite domain remains in Levels for subsequent state transfers.
+  if (Root.Levels.size() == 1)
+    Root.Frame.Cells[*Chain.TryLevelOffset] =
+        FrameValue::constant(uint32_t(*Root.Levels.begin()));
+  else
+    Root.Frame.Cells.erase(*Chain.TryLevelOffset);
   Root.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
       FrameValue::frame(KnownCxx ? *Chain.cxxRuntimeFrameOffset() : 0);
   Root.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].MayBeFrame =
