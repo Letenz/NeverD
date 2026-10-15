@@ -1,4 +1,4 @@
-//===- KernelInterlockedAPIs.def - Spin-lock interlocked routines --------===//
+//===- KernelInterlockedAPIs.def - Interlocked list routines -------------===//
 //
 // NeverD Decompiler
 //
@@ -6,9 +6,9 @@
 ///
 /// \file
 /// Argument counts, caller-IRQL ceilings and typed operations for the
-/// executive routines that update caller storage under a caller spin lock.
-/// They mask interrupts instead of raising IRQL and free the lock before they
-/// return, following the Windows 10.0.19041.6456 kernel exports.
+/// executive routines that update caller lists and counters atomically, either
+/// under a caller spin lock with interrupts masked or lock-free on an x64
+/// SLIST_HEADER, following the Windows 10.0.19041.6456 kernel exports.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -33,3 +33,22 @@ NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedAddUlong, 3, Any,
                               interlockedAdd(A, 4))
 NEVERD_KERNEL_INTERLOCKED_API(ExInterlockedAddLargeInteger, 3, Any,
                               interlockedAdd(A, 8))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-initializeslisthead
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpushentryslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedpopentryslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinterlockedflushslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exquerydepthslist
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-firstentryslist
+// x64 wdm.h maps InterlockedPushEntrySList, InterlockedPopEntrySList,
+// InterlockedFlushSList and their ExInterlocked forms to the Exp exports.
+NEVERD_KERNEL_INTERLOCKED_API(InitializeSListHead, 1, Any,
+                              initializeSList(A[0]))
+NEVERD_KERNEL_INTERLOCKED_API(ExpInterlockedPushEntrySList, 2, Any,
+                              pushEntrySList(A[0], A[1]))
+NEVERD_KERNEL_INTERLOCKED_API(ExpInterlockedPopEntrySList, 1, Any,
+                              popEntrySList(A[0]))
+NEVERD_KERNEL_INTERLOCKED_API(ExpInterlockedFlushSList, 1, Any,
+                              flushSList(A[0]))
+NEVERD_KERNEL_INTERLOCKED_API(ExQueryDepthSList, 1, Dispatch,
+                              querySList(A[0], false))
+NEVERD_KERNEL_INTERLOCKED_API(FirstEntrySList, 1, Any, querySList(A[0], true))

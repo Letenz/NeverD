@@ -1475,6 +1475,28 @@ TEST(KernelRuntimeExecution, CompiledDriverSharesQueuesUnderOneSpinLock) {
   EXPECT_EQ(Calls["ExInterlockedAddLargeInteger"], 3u);
 }
 
+TEST(KernelRuntimeExecution, CompiledDriverCachesEntriesOnASequencedList) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_slist.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // LIFO order; the flushed chain keeps its links.
+  EXPECT_EQ(Result->Messages[0],
+            "slist depth 4 top 4 popped 4 chain 321 count 3 empty 1");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["InitializeSListHead"], 1u);
+  EXPECT_EQ(Calls["ExpInterlockedPushEntrySList"], 4u);
+  EXPECT_EQ(Calls["ExpInterlockedPopEntrySList"], 2u);
+  EXPECT_EQ(Calls["ExpInterlockedFlushSList"], 1u);
+  EXPECT_EQ(Calls["ExQueryDepthSList"], 2u);
+  EXPECT_EQ(Calls["FirstEntrySList"], 1u);
+}
+
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
                               "driver_identity.sys");

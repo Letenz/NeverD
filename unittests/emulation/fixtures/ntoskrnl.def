@@ -119,3 +119,9 @@ EXPORTS
   ExInterlockedAddUlong
   ExInterlockedAddLargeInteger
   KeInitializeSpinLock
+  InitializeSListHead
+  ExpInterlockedPushEntrySList
+  ExpInterlockedPopEntrySList
+  ExpInterlockedFlushSList
+  ExQueryDepthSList
+  FirstEntrySList

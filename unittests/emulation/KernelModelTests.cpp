@@ -712,6 +712,86 @@ TEST_F(DriverKernelModel, InterlockedRoutinesRefuseWhatTheKernelCannotRun) {
             "executive spin lock must be initialized and free");
 }
 
+TEST_F(DriverKernelModel, SequencedListsEncodeDepthAndSequenceLikeTheKernel) {
+  // A push adds 0x10001 to the first quadword, a pop decrements only the
+  // 16-bit Depth and a flush clears it; the entry word's low four bits are
+  // reserved and masked on every read.
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x534c5354});
+  ASSERT_NE(Block, 0u);
+  const uint64_t Header = Block, E1 = Block + 0x10, E2 = Block + 0x20;
+  auto Word = [&](uint64_t Address) {
+    auto Value = Memory->readInteger(Address, 8);
+    return Value ? *Value : ~uint64_t(0);
+  };
+  success(Memory->writeInteger(Header, ~uint64_t(0), 8));
+  invoke("InitializeSListHead", {Header});
+  EXPECT_EQ(Word(Header), 0u);
+  EXPECT_EQ(Word(Header + 8), 0u);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, E1}), 0u);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, E2}), E1);
+  EXPECT_EQ(Word(Header), 0x20002u);
+  EXPECT_EQ(Word(E2), E1);
+  EXPECT_EQ(invoke("ExQueryDepthSList", {Header}), 2u);
+  EXPECT_EQ(invoke("FirstEntrySList", {Header}), E2);
+  EXPECT_EQ(invoke("ExpInterlockedPopEntrySList", {Header}), E2);
+  EXPECT_EQ(Word(Header), 0x20001u);
+  EXPECT_EQ(Word(E2), E1);
+  EXPECT_EQ(invoke("ExpInterlockedFlushSList", {Header}), E1);
+  EXPECT_EQ(Word(Header), 0x20000u);
+  EXPECT_EQ(Word(Header + 8), 0u);
+  EXPECT_EQ(invoke("ExpInterlockedPopEntrySList", {Header}), 0u);
+  EXPECT_EQ(Word(Header), 0x20000u);
+
+  // Depth wraps alone on a pop, which stores the popped link unchanged, but a
+  // push carries it into Sequence.
+  success(Memory->writeInteger(Header, 0x30000, 8));
+  success(Memory->writeInteger(Header + 8, E1 | 5, 8));
+  success(Memory->writeInteger(E1, E2 | 3, 8));
+  EXPECT_EQ(invoke("ExpInterlockedPopEntrySList", {Header}), E1);
+  EXPECT_EQ(Word(Header), 0x3ffffu);
+  EXPECT_EQ(Word(Header + 8), E2 | 3);
+  EXPECT_EQ(invoke("FirstEntrySList", {Header}), E2);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, E1}), E2);
+  EXPECT_EQ(Word(Header), 0x50000u);
+  EXPECT_EQ(Word(E1), E2);
+}
+
+TEST_F(DriverKernelModel, SequencedListsRaiseAndRefuseLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Block =
+      invoke("ExAllocatePoolWithTag", {0, 0x100, 0x534c5354});
+  const uint64_t Paged = invoke("ExAllocatePoolWithTag", {1, 0x20, 0x534c5354});
+  ASSERT_NE(Block, 0u);
+  ASSERT_NE(Paged, 0u);
+  const uint64_t Header = Block, Entry = Block + 0x10;
+  invoke("InitializeSListHead", {Header});
+  // InitializeSListHead raises like the kernel; cmpxchg16b would fault, and
+  // a misaligned entry would lose its reserved low bits.
+  EXPECT_EQ(failure("InitializeSListHead", {Header + 8}),
+            "raised guest exception 0x80000002");
+  EXPECT_EQ(failure("ExpInterlockedPushEntrySList", {Header + 8, Entry}),
+            "sequenced list header requires 16-byte alignment");
+  EXPECT_EQ(failure("ExpInterlockedPushEntrySList", {Header, Entry + 8}),
+            "sequenced list entries require 16-byte alignment");
+  EXPECT_EQ(failure("ExpInterlockedPushEntrySList", {Header, Header}),
+            "sequenced list entry overlaps its header");
+  auto Untouched = Memory->readInteger(Header, 8);
+  ASSERT_TRUE(static_cast<bool>(Untouched));
+  EXPECT_EQ(*Untouched, 0u);
+
+  // Paged lookaside entries make paged lists valid below DISPATCH_LEVEL.
+  invoke("InitializeSListHead", {Paged});
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Paged, Paged + 0x10}), 0u);
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("ExpInterlockedPopEntrySList", {Paged}).find("paged pool"),
+            std::string::npos);
+  EXPECT_EQ(invoke("ExpInterlockedPushEntrySList", {Header, Entry}), 0u);
+  EXPECT_EQ(invoke("ExQueryDepthSList", {Header}), 1u);
+  invoke("KeLowerIrql", {Previous});
+}
+
 TEST_F(DriverKernelModel, MDLMappingIgnoresUnspecifiedNarrowArgumentHighBits) {
   using namespace windows;
   invoke("IoCreateDevice",
