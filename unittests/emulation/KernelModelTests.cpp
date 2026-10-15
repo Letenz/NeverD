@@ -1032,5 +1032,86 @@ TEST_F(DriverKernelModel,
   EXPECT_EQ(Result.MajorFunctions[1], 0u); // No guest registration observed.
 }
 
+TEST_F(DriverKernelModel, CRuntimeStringsReadLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t A = Scratch + 0x100, B = Scratch + 0x140, C = Scratch + 0x180,
+                 D = Scratch + 0x1c0, E = Scratch + 0x200, F = Scratch + 0x240,
+                 G = Scratch + 0x280;
+  const uint64_t WA = Scratch + 0x300, WB = Scratch + 0x340,
+                 WC = Scratch + 0x380, WH = Scratch + 0x3c0,
+                 WL = Scratch + 0x400;
+  ascii(A, "hello world");
+  ascii(B, "world");
+  ascii(C, "abc");
+  ascii(D, "abd");
+  ascii(E, "ABC");
+  ascii(F, "");
+  ascii(G, "hel ");
+  utf16(WA, u"hello");
+  utf16(WB, u"HELLO");
+  utf16(WC, u"ll");
+  utf16(WH, u"hel");
+  utf16(WL, u"l");
+
+  // Lengths, bounded and unbounded; a satisfied count never reads further.
+  EXPECT_EQ(invoke("strlen", {A}), 11u);
+  EXPECT_EQ(invoke("wcslen", {WA}), 5u);
+  EXPECT_EQ(invoke("strnlen", {A, 3}), 3u);
+  EXPECT_EQ(invoke("strnlen", {A, 50}), 11u);
+  EXPECT_EQ(invoke("wcsnlen", {WA, 10}), 5u);
+
+  // Ordered compares normalize to -1/0/1; wcsncmp reports the raw difference.
+  EXPECT_EQ(invoke("strcmp", {C, D}), uint64_t(uint32_t(-1)));
+  EXPECT_EQ(invoke("strcmp", {D, C}), 1u);
+  EXPECT_EQ(invoke("strcmp", {C, C}), 0u);
+  EXPECT_EQ(invoke("strncmp", {C, D, 2}), 0u);
+  EXPECT_EQ(invoke("strncmp", {C, D, 3}), uint64_t(uint32_t(-1)));
+  EXPECT_EQ(invoke("wcscmp", {WA, WA}), 0u);
+  EXPECT_EQ(invoke("wcsncmp", {WA, WB, 5}), 32u); // 'h' - 'H'
+
+  // Case-insensitive compares fold ASCII A-Z before differencing.
+  EXPECT_EQ(invoke("_stricmp", {C, E}), 0u);
+  EXPECT_EQ(invoke("_wcsicmp", {WA, WB}), 0u);
+  EXPECT_EQ(invoke("_strnicmp", {C, E, 2}), 0u);
+  EXPECT_EQ(invoke("_wcsnicmp", {WA, WB, 5}), 0u);
+
+  // Character search truncates the target and includes the terminator.
+  EXPECT_EQ(invoke("strchr", {A, 'o'}), A + 4);
+  EXPECT_EQ(invoke("strrchr", {A, 'o'}), A + 7);
+  EXPECT_EQ(invoke("strchr", {A, 'z'}), 0u);
+  EXPECT_EQ(invoke("strchr", {A, 0}), A + 11);
+  EXPECT_EQ(invoke("strchr", {A, 0x100 | 'o'}), A + 4); // high bits ignored
+  EXPECT_EQ(invoke("wcschr", {WA, 'l'}), WA + 4);
+  EXPECT_EQ(invoke("wcsrchr", {WA, 'l'}), WA + 6);
+
+  // Substring search; an empty needle returns the haystack.
+  EXPECT_EQ(invoke("strstr", {A, B}), A + 6);
+  EXPECT_EQ(invoke("strstr", {A, C}), 0u);
+  EXPECT_EQ(invoke("strstr", {A, F}), A);
+  EXPECT_EQ(invoke("wcsstr", {WA, WC}), WA + 4);
+
+  // Spans of the initial run in and out of the control set.
+  EXPECT_EQ(invoke("strspn", {A, G}), 4u);
+  EXPECT_EQ(invoke("wcsspn", {WA, WH}), 4u);
+  EXPECT_EQ(invoke("wcscspn", {WA, WL}), 2u);
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringsFoldOnlyAsciiAndRefuseBadBuffers) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t P = Scratch + 0x100, Q = Scratch + 0x140;
+  // Latin-1 letters that differ by 0x20 are not ASCII A-Z, so they never fold.
+  success(Memory->write(P, std::vector<uint8_t>{0xc1, 0x00}));
+  success(Memory->write(Q, std::vector<uint8_t>{0xe1, 0x00}));
+  EXPECT_EQ(invoke("_stricmp", {P, Q}), uint64_t(uint32_t(-0x20)));
+
+  // A null record is a clear refusal, not a synthesized fault.
+  EXPECT_EQ(failure("strlen", {0}), "invalid or overflowing guest buffer");
+  EXPECT_EQ(failure("wcscmp", {0, Q}), "invalid or overflowing guest buffer");
+  // A zero count returns zero without dereferencing either pointer.
+  EXPECT_EQ(invoke("strnlen", {0, 0}), 0u);
+  EXPECT_EQ(invoke("strncmp", {0, 0, 0}), 0u);
+  EXPECT_EQ(invoke("_wcsnicmp", {0, 0, 0}), 0u);
+}
+
 } // namespace
 } // namespace neverd::emulation
