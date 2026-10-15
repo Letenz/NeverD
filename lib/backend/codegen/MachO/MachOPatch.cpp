@@ -536,7 +536,14 @@ resolveMachORewriteTarget(llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
     return llvm::createStringError(
         llvm::errc::not_supported,
         "ARMv7k rewrite currently requires positive Thumb function evidence");
-  if (RequestedMode != InstructionMode::Default && RequestedMode != *Mode)
+  // An iOS executable can contain ARM import stubs alongside Thumb source
+  // functions. Replacement IR owns only the authenticated mapped functions;
+  // the image-wide mixed mode must not override their exact nlist evidence.
+  const bool MixedReplacement =
+      RequestedMode == InstructionMode::MixedARMThumb &&
+      InputKind == RewriteInputKind::ReplacementIR;
+  if (RequestedMode != InstructionMode::Default && RequestedMode != *Mode &&
+      !MixedReplacement)
     return llvm::createStringError(
         llvm::errc::invalid_argument,
         "cached ARM code mode disagrees with authenticated nlist metadata");
@@ -805,42 +812,12 @@ bool isAuthenticatedSourceFunctionEntry(const BinaryImage &Image,
   return Image.hasAuthenticatedFunctionEntryAt(Address);
 }
 
-llvm::Error validateSourceFunctionIdentities(const CompiledImage &Compiled,
-                                             const llvm::Module &Module,
-                                             const BinaryImage *Image) {
-  if (!Image)
-    return sourceIdentityError(
-        "an exact loader-authenticated image context is required");
+llvm::Error
+validateSourceFunctionExceptionIdentities(const CompiledImage &Compiled,
+                                          const llvm::Module &Module) {
   if (Compiled.SourceFunctionOriginalVAs.empty())
     return sourceIdentityError(
         "the compiled image has no exact original function entries");
-  if (!llvm::mc_rewrite::validateRewriteSourceFunctionOwners(
-          Compiled.SourceFunctionOwners))
-    return sourceIdentityError("compiler source-owner provenance is invalid");
-
-  const uint64_t TrampolineSize =
-      getTargetCodegenInfo(Image->Arch, Image->Mode).trampolineSize();
-  if (TrampolineSize == 0)
-    return sourceIdentityError("the target has no supported entry trampoline");
-
-  std::set<uint64_t> SeenOriginalEntries;
-  for (const auto &[SourceFunction, OriginalVA] :
-       Compiled.SourceFunctionOriginalVAs) {
-    const size_t OwnerCount = std::count_if(
-        Compiled.SourceFunctionOwners.begin(),
-        Compiled.SourceFunctionOwners.end(), [&](const auto &Owner) {
-          return Owner.SourceFunction == SourceFunction;
-        });
-    if (OwnerCount != 1)
-      return sourceIdentityError(
-          "an original entry does not have exactly one compiler owner");
-    if (!SeenOriginalEntries.insert(OriginalVA).second)
-      return sourceIdentityError(
-          "two source functions share an original entry");
-    if (!isAuthenticatedSourceFunctionEntry(*Image, OriginalVA))
-      return sourceIdentityError(
-          "an original entry is not a loader-authenticated function start");
-  }
 
   auto Requirements =
       exception_rewrite::validateExceptionRewriteContracts(Module);
@@ -1528,7 +1505,10 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
                                 const std::filesystem::path &OutputPath,
                                 llvm::Module &Mod, Arch TargetArch,
                                 const MachOPatchOptions &Opts) {
-  if (!isSingleInstructionMode(CachedMode)) {
+  const bool MixedReplacement = TargetArch == Arch::ARM &&
+                                CachedMode == InstructionMode::MixedARMThumb &&
+                                InputKind == RewriteInputKind::ReplacementIR;
+  if (!isSingleInstructionMode(CachedMode) && !MixedReplacement) {
     llvm::WithColor::error()
         << "macho_patch: rewriting requires a single instruction mode (got "
         << getInstructionModeName(CachedMode) << ")\n";
@@ -1585,7 +1565,9 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
           }
           if (TargetArch == Arch::ARM &&
               CachedImage->Mode != InstructionMode::Default &&
-              CachedImage->Mode != AuthenticatedImage.Mode) {
+              CachedImage->Mode != AuthenticatedImage.Mode &&
+              !(InputKind == RewriteInputKind::ReplacementIR &&
+                CachedImage->Mode == InstructionMode::MixedARMThumb)) {
             llvm::WithColor::error()
                 << "macho_patch: cached ARM code mode disagrees with "
                    "authenticated nlist metadata\n";
@@ -1834,8 +1816,14 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
                  "authenticated input ABI\n";
           return false;
         }
-        if (llvm::Error Error = validateSourceFunctionIdentities(
-                Img, *CompileMod, &AuthenticatedImage)) {
+        if (!validateSourceFunctionPatchPlan(Img, &AuthenticatedImage,
+                                             AuthenticatedDetail)) {
+          llvm::WithColor::error()
+              << "macho patch source identity: " << AuthenticatedDetail << "\n";
+          return false;
+        }
+        if (llvm::Error Error =
+                validateSourceFunctionExceptionIdentities(Img, *CompileMod)) {
           llvm::WithColor::error() << llvm::toString(std::move(Error)) << "\n";
           return false;
         }

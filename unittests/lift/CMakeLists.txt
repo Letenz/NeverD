@@ -1739,6 +1739,7 @@ add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/ELFSectionPatchTests.cpp
   eh/ELFSourceRelocationsTests.cpp
   eh/ELFSourceSymbolsTests.cpp
+  eh/MachOARM32TransactionTests.cpp
   eh/MachOCompactUnwindPatchTests.cpp
   eh/MachOExceptionPatchTests.cpp
   eh/NativeExceptionRewriteContractTests.cpp

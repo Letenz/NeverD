@@ -106,6 +106,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 WDM 스택에는 같은 게스트 드라이버가 소유한 여러 장치를 둘 수 있습니다. `IoAttachDeviceToDeviceStack`은 독립 소스 장치를 대상의 현재 최상단에 연결하고 이전 최상단을 반환합니다. `StackSize`와 `AlignmentRequirement`를 설정하지만 `NextDevice` 목록이나 버퍼 플래그는 변경하지 않습니다. `IoDetachDevice`는 저장한 하위 장치를 받으며 `PASSIVE_LEVEL`이 필요합니다. 연결은 `DISPATCH_LEVEL` 이하에서 가능합니다. 이름 있는 하위 장치를 열면 현재 최상단으로 디스패치하지만 `FILE_OBJECT.DeviceObject`와 보고서는 이름 있는 장치 신원을 유지합니다. READ/WRITE 버퍼링은 선택한 최상단의 플래그를 사용합니다. 요청이 보존한 경로는 분리·삭제 후에도 디스패치 반환까지 각 장치를 유지하며, 내부 참조는 열린 핸들 수인 `ReferenceCount`에 더해지지 않습니다.
 
+모델링된 장치 스택에서 `IoGetAttachedDevice`는 참조를 추가하지 않고 현재 최상위 장치를 빌립니다. `IoGetAttachedDeviceReference`와 `IoGetDeviceAttachmentBaseRef`는 각각 최상위 및 기반 장치를 포인터 참조와 함께 반환합니다. `IoGetLowerDeviceObject`는 바로 아래 장치를 참조하며, 아래 장치가 없거나 입력 장치가 삭제 대기 중이면 null을 반환합니다. 아래 장치만 삭제 대기 중인 경우에는 결과를 억제하지 않습니다. 참조된 각 결과는 `ObDereferenceObject`로 해제해야 합니다. 참조는 detach/delete 후에도 저장 공간을 유지하며 `DEVICE_OBJECT.ReferenceCount`를 변경하지 않습니다. 네 쿼리는 소유된 토폴로지를 검증하며 IRQL은 `DISPATCH_LEVEL` 이하여야 합니다.
+
 `IofCallDriver`와 `IoCallDriver` 도우미는 보존 경로에서 지정된 정확한 대상을 호출합니다. 실제 인라인 `IoCopyCurrentIrpStackLocationToNext`, `IoSkipCurrentIrpStackLocation`, `IoSetCompletionRoutine`은 원래 게스트 IRP를 조작하며 커서, 개수, 제어 플래그를 검증합니다. 하위 디스패치의 실제 반환 상태는 `IoStatus` 및 완료 루틴 반환값과 분리됩니다. 완료 처리는 커서를 전진시키고 성공/오류/취소 조건에 따라 콜백을 호출하며 pending을 위로 전달합니다. 완료 루틴이 실행되면 해당 루틴이 전달을 책임지며, 디스패치가 이미 `STATUS_PENDING`을 반환한 뒤에도 전달할 수 있습니다. `STATUS_MORE_PROCESSING_REQUIRED`는 IRP, MDL, 버퍼를 유지한 채 완료 해제를 멈추고 이후 완료 호출로 재개합니다. 중첩 완료에는 외부 루틴의 중단 결과가 필요하며 최종 해제 시 저장소를 한 번만 폐기합니다. 소유 하위 시스템이 표시된 continuation은 WDM/WDF 호출 프레임과 상속 IRQL을 보존합니다. 상위 완료 콜백 전에 소비된 하위 스택 위치를 0으로 지웁니다.
 
 `IoAllocateIrp`와 `IoFreeIrp`는 `DISPATCH_LEVEL` 이하에서 호출자 소유 IRP를 지원하며 `ChargeQuota=FALSE`가 필요합니다. 첫 `IoCallDriver`는 패킷을 검증하고 정확한 하위 장치 경로를 보존합니다. 이 범위는 커널 `IRP_MJ_INTERNAL_DEVICE_CONTROL`과 드라이버 소유 `METHOD_NEITHER` 버퍼를 처리하며 사용자 파일이나 사용자 버퍼 복사를 만들지 않습니다. 실제 게스트 완료 및 취소 루틴을 실행합니다. 완료 콜백 안에서 해제하면 `STATUS_MORE_PROCESSING_REQUIRED`를 반환해야 합니다. 패킷 접근은 즉시 끝나고 호출 메타데이터는 프레임 반환까지 유지됩니다. 보내지 않은 패킷은 바로 해제할 수 있으며 누수, 이중 해제, 다른 소유자 또는 아직 사용 중인 패킷 해제는 명시적으로 실패합니다. 임의 재사용, 다른 요청 형식, `IoBuildDeviceIoControlRequest`는 지원하지 않습니다.
@@ -363,6 +365,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | 풀 유형 `0`, `1`, `512`의 데이터 할당. 크기/태그는 양수이며, 태그가 있는 해제는 일치해야 하고 주소를 재사용하지 않음 |
 | `IoCreateDevice`, `IoDeleteDevice` | 장치 유형 `0x22`, 특성 `0` 또는 `0x100`, 제한된 확장, ASCII `\Device\Name` 이름 |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | 동일 드라이버 연결. 이전 최상단을 반환하며 분리는 저장한 하위 장치를 받음. 위 토폴로지/수명 제한 적용 |
+| `IoGetAttachedDevice`, `IoGetAttachedDeviceReference`, `IoGetLowerDeviceObject`, `IoGetDeviceAttachmentBaseRef` | 현재 모델링된 최상위/하위/기반 장치, 빌림과 공유 포인터 참조, 삭제 상태; IRQL <= DISPATCH_LEVEL |
 | `IofCallDriver`, `IoCallDriver` | 보존 경로의 정확한 대상으로 디스패치. 게스트 커서 검증 및 하위 NTSTATUS 보존 |
 | `IoInitializeRemoveLockEx`, `IoAcquireRemoveLockEx` | 확장부의 정확한 소유자와 불투명32/120바이트, NULL/중복 Tag |
 | `IoReleaseRemoveLockEx`, `IoReleaseRemoveLockAndWaitEx` | 일치하는 Tag 해제와 제공자 수신 후 재개 가능한 REMOVE 대기 |

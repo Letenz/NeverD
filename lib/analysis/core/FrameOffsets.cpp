@@ -11,6 +11,7 @@
 #include "neverd/symbolic/SymMBA.h"
 
 #include <algorithm>
+#include <cassert>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -148,7 +149,13 @@ static FrameOffset proveFrameOffsetImpl(
     SymContext &Ctx, SymRef Predicate, SymRef Value, SymRef Root,
     solver::SolverOptions Settings, uint64_t MaxQueries,
     uint64_t MaxSymbolicNodes, uint64_t &Queries, FiniteQueryCache *Cache,
-    FiniteDomainEncoding *Encoding, FrameOffsetNormalization *Normalization) {
+    FiniteDomainEncoding *Encoding, FrameOffsetNormalization *Normalization,
+    FiniteValues *CompletedDomain = nullptr) {
+  // Only the uncached normalization retry requests this evidence. Algebraic
+  // offsets carry no feasible-domain witness and leave it unknown.
+  assert(!CompletedDomain || !Cache);
+  if (CompletedDomain)
+    *CompletedDomain = {};
   if (Normalization)
     Normalization->WorkUsed = 0;
   const auto Valid = [&](SymRef R, unsigned Width) {
@@ -204,26 +211,38 @@ static FrameOffset proveFrameOffsetImpl(
                                   MaxQueries, MaxSymbolicNodes, Queries);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
-  if (Cache && !Cached) {
-    if (CacheBias && Domain.Status == FiniteValueStatus::Complete) {
-      auto Unbiased = Domain;
+  const auto RememberDomain = [&](const FiniteValues &Proved) {
+    if (!Cache || Cached ||
+        (Proved.Status != FiniteValueStatus::Complete &&
+         Proved.Status != FiniteValueStatus::TooManyValues))
+      return;
+    if (CacheBias && Proved.Status == FiniteValueStatus::Complete) {
+      auto Unbiased = Proved;
       for (auto &Tuple : Unbiased.Tuples)
         if (Tuple.size() == 1)
           Tuple.front() -= CacheBias;
       Cache->store(std::move(Prepared), Unbiased);
     } else {
-      Cache->store(std::move(Prepared), Domain);
+      Cache->store(std::move(Prepared), Proved);
     }
-  }
+  };
+  RememberDomain(Domain);
   switch (Domain.Status) {
   case FiniteValueStatus::Complete:
-    if (Domain.Tuples.empty())
+    if (Domain.Tuples.empty()) {
+      if (CompletedDomain)
+        *CompletedDomain = Domain;
       return {FrameOffsetStatus::Infeasible};
+    }
     if (Domain.Tuples.size() != 1 || Domain.Tuples.front().size() != 1)
       return {FrameOffsetStatus::Invalid};
+    if (CompletedDomain)
+      *CompletedDomain = Domain;
     return {FrameOffsetStatus::Exact,
             Domain.Tuples.front().front() + (Cached ? CacheBias : 0)};
   case FiniteValueStatus::TooManyValues:
+    if (CompletedDomain)
+      *CompletedDomain = Domain;
     return {FrameOffsetStatus::NonUnique};
   case FiniteValueStatus::Invalid:
     return {FrameOffsetStatus::Invalid};
@@ -239,10 +258,19 @@ static FrameOffset proveFrameOffsetImpl(
         // An exact derivation may still need the ordinary predicate-dependent
         // proof. Retry once with a fresh encoding and the original limits and
         // cumulative query count. Do not normalize again or reset WorkUsed.
-        // Neither outcome of this fallback enters the finite-domain cache.
-        if (*Normalized != Value)
-          return proveFrameOffset(Ctx, Predicate, *Normalized, Root, Settings,
-                                  MaxQueries, MaxSymbolicNodes, Queries);
+        // Exact normalization preserves every projected value under the same
+        // predicate. A completed retry can therefore populate the original
+        // query's cache, with its original constant bias. A structural offset
+        // or incomplete retry supplies no finite-domain evidence to store.
+        if (*Normalized != Value) {
+          FiniteValues RetriedDomain;
+          const auto Retried =
+              proveFrameOffsetImpl(Ctx, Predicate, *Normalized, Root, Settings,
+                                   MaxQueries, MaxSymbolicNodes, Queries,
+                                   nullptr, nullptr, nullptr, &RetriedDomain);
+          RememberDomain(RetriedDomain);
+          return Retried;
+        }
       }
     return {FrameOffsetStatus::BudgetExceeded};
   }

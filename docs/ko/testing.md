@@ -1784,6 +1784,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*`은 정확한 항등식, 추가 입력, 루트 식별, 증인을 캐시하지 않는 도달 불가능 조건, 기본 동작, 구조 및 측정 비용, 호출 후 노드 한도 거부를 검사합니다. `FrameNormalizationPreservesStoresAndNativeReturns`와 `RawCodeFrameNormalization*`은 독립 바이트 판정기로 원래 메모리 효과와 실제 반환 주소, 해당되는 양쪽 바이트 순서, 정확하거나 부족한 연산 예산 및 영수증 변조를 확인합니다. `FrameNormalizationStrategyBindsIndependentProof`는 두 바이너리 증명 식별을 검사합니다.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 는 캐시된 이력을 다시 청구하지 않고, 추가된 넓은 상수는 계속 청구하며, 작업 및 노드 예산 부족은 거부하고, 복사된 가독성 캐시가 독립적으로 유지되는지 확인합니다.
 
 ## 네이티브 Lift 검증
@@ -1962,3 +1964,5 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 `KernelNamespaceTests.cpp`는 형식, 상대 이름, 대소문자, 크기/복사 순서, 꼬리 바이트, 권한, 프로세스 범위, IRQL, 실패 출력 및 보유 중 삭제를 검증합니다. `DriverNamespaceTests.cpp`는 독립 `driver_namespace.c`를 가용 Unicorn/KVM/WHP/HVF, 두 계약과 로드 주소, 협력/17 명령 스케줄링으로 실행합니다. `NativeDriverTests.def`는 네이티브 결과를 요구합니다. 미가용 백엔드와 미지원 정보/보안 클래스는 여전히 검증 공백입니다.
 
 `KernelRegistryTests.cpp`는 독립 열기, 형식 참조, 복제 핸들, 프로세스 범위, 일반 권한, 삭제 ID, 짧거나 홀수인 버퍼, 출력 별칭과 실패/용량 경계를 검사합니다. `DriverRegistryObjectTests.cpp`는 독자 작성한 `fixtures/driver_registry_objects.c`를 사용 가능한 백엔드, 두 계약과 두 베이스에서 협력형 및 17명령 스케줄링으로 실행합니다. 의도적인 포인터 누수로 언로드 거부를 확인하며 네이티브 수용에는 네 조합 모두가 필요합니다.
+
+`KernelDeviceStackTests.cpp`는 현재 이웃, 빌린 결과와 보유한 결과, 입력 또는 이웃 장치의 삭제, 마지막 참조 해제, 잘못되거나 손상된 입력, 참조 추가 전 IRQL 거부를 검사합니다. 자체 `fixtures/driver_device_queries.c`는 `DriverDeviceQueryTests.cpp`를 통해 사용 가능한 백엔드, 두 계약과 로드 주소, 협력 및 17명령 선점 스케줄링에서 실행됩니다. detach/delete 후 저장 공간 유지와 의도적 참조 누수 시 언로드 거부를 검증하며 네 가지 네이티브 계약/주소 결과가 필수입니다.

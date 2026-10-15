@@ -1862,6 +1862,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` проверяет точные тождества, дополнительные входы, идентичность корня, невыполнимые предикаты без кешированных свидетелей, поведение по умолчанию, структурные и измерительные расходы и отказ при превышении числа узлов. `FrameNormalizationPreservesStoresAndNativeReturns` и `RawCodeFrameNormalization*` проверяют исходные эффекты памяти и физические адреса возврата независимыми побайтовыми оракулами, оба применимых порядка байтов, точные и недостаточные бюджеты операций и изменённые квитанции. `FrameNormalizationStrategyBindsIndependentProof` проверяет обе идентичности двоичных доказательств.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` проверяет отсутствие повторного учёта кешированной истории, учёт добавленных широких констант, отказ при недостаточных бюджетах работы и узлов и независимость копий кеша читаемости.
 
 ## Нативная проверка Lift
@@ -2040,3 +2042,5 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 `KernelNamespaceTests.cpp` проверяет типы, относительные имена/регистр, размеры/порядок копирования, хвостовые байты, права, область процесса, IRQL, ошибочные выходы и отложенное удаление. `DriverNamespaceTests.cpp` исполняет оригинальный `driver_namespace.c` на доступных Unicorn/KVM/WHP/HVF с двумя контрактами, адресами и кооперативным/17-инструкционным планированием. `NativeDriverTests.def` требует нативные результаты; недоступные backend и классы информации/безопасности остаются пробелами.
 
 `KernelRegistryTests.cpp` проверяет независимые открытия, типизированные ссылки, копии дескрипторов, область процесса, общие права, удалённые идентичности, короткие/нечётные буферы, наложение выходов и границы ошибок/ёмкости. `DriverRegistryObjectTests.cpp` запускает оригинальный `fixtures/driver_registry_objects.c` на доступных движках, обоих контрактах и базах с кооперативным планированием и квантом 17 инструкций. Намеренная утечка проверяет отказ выгрузки; нативная приёмка требует все четыре сочетания.
+
+`KernelDeviceStackTests.cpp` проверяет текущих соседей, заимствованные и удерживаемые результаты, удаление входа или соседа, освобождение последней ссылки, неверные или повреждённые входы и отказ по IRQL до получения ссылки. Оригинальный `fixtures/driver_device_queries.c` выполняется через `DriverDeviceQueryTests.cpp` на доступных бэкендах с обоими контрактами и адресами загрузки, с кооперативным и вытесняющим планированием по 17 инструкций. Проверяются сохранение памяти после detach/delete и отказ выгрузки при намеренной утечке ссылки; обязательны все четыре нативных сочетания контракта и адреса.
