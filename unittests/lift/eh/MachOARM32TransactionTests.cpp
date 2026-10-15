@@ -822,6 +822,152 @@ TEST(MachOARM32Transaction, UnflaggedTextSymbolIsNotARMModeEvidence) {
   llvm::consumeError(Mode.takeError());
 }
 
+void addARM32TrieExport(ARM32TransactionFixture &Fixture, uint32_t Offset) {
+  // Root with a single `_export` edge and a regular, image-relative terminal.
+  std::vector<uint8_t> Trie = {0, 1, '_', 'e', 'x', 'p', 'o', 'r', 't', 0, 11};
+  std::vector<uint8_t> Terminal = {0};
+  do {
+    uint8_t Byte = Offset & 0x7f;
+    Offset >>= 7;
+    Terminal.push_back(Byte | (Offset ? 0x80 : 0));
+  } while (Offset);
+  Trie.push_back(static_cast<uint8_t>(Terminal.size()));
+  Trie.insert(Trie.end(), Terminal.begin(), Terminal.end());
+  Trie.push_back(0);
+  constexpr uint32_t TrieOffset = kARM32LinkeditOff + 0xd0;
+  ASSERT_LE(TrieOffset + Trie.size(), Fixture.Binary.size());
+  std::copy(Trie.begin(), Trie.end(), Fixture.Binary.begin() + TrieOffset);
+  auto *Header = reinterpret_cast<mach_header *>(Fixture.Binary.data());
+  auto *Command = reinterpret_cast<linkedit_data_command *>(
+      Fixture.Binary.data() + sizeof(mach_header) + Header->sizeofcmds);
+  Command->cmd = LC_DYLD_EXPORTS_TRIE;
+  Command->cmdsize = sizeof(*Command);
+  Command->dataoff = TrieOffset;
+  Command->datasize = static_cast<uint32_t>(Trie.size());
+  ++Header->ncmds;
+  Header->sizeofcmds += sizeof(*Command);
+}
+
+void checkARM32TrieAddress(uint32_t Offset, bool ThumbEvidence,
+                           uint32_t Expected) {
+  auto Fixture = makeARM32TransactionFixture(
+      macho_unwind::kARMModeFrame | macho_unwind::kARMFrameFirstPushR4, 0x2000);
+  ASSERT_FALSE(Fixture.Binary.empty());
+  if (!ThumbEvidence) {
+    auto *Symbols =
+        reinterpret_cast<nlist *>(Fixture.Binary.data() + kARM32SymtabOff);
+    Symbols[1].n_desc = 0;
+  }
+  addARM32TrieExport(Fixture, Offset);
+  llvm::SmallString<128> Path;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-arm32-export", "macho", Path));
+  llvm::FileRemover Remove(Path);
+  ASSERT_TRUE(writeFile(Path, Fixture.Binary));
+  MachOLoader Loader;
+  auto Image = Loader.load(Path.str().str());
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  EXPECT_TRUE(std::any_of(
+      Image->Exports.begin(), Image->Exports.end(),
+      [&](const Export &E) { return E.Addr == kARM32ImageBase + Expected; }));
+  if (Expected != Offset)
+    EXPECT_FALSE(std::any_of(
+        Image->Exports.begin(), Image->Exports.end(),
+        [&](const Export &E) { return E.Addr == kARM32ImageBase + Offset; }));
+}
+
+TEST(MachOARM32Transaction, ThumbExportUsesCanonicalCodeAddress) {
+  checkARM32TrieAddress(kARM32TextOff + 1, true, kARM32TextOff);
+}
+
+TEST(MachOARM32Transaction, OddDataExportKeepsByteAddress) {
+  checkARM32TrieAddress(kARM32GOTOff + 1, true, kARM32GOTOff + 1);
+}
+
+TEST(MachOARM32Transaction, UnprovenOddCodeExportIsNotNormalized) {
+  checkARM32TrieAddress(kARM32TextOff + 1, false, kARM32TextOff + 1);
+}
+
+void checkMixedSourceMode(bool Replacement, bool ThumbEvidence) {
+  ARM32TransactionFixture Fixture = makeARM32TransactionFixture(
+      macho_unwind::kARMModeFrame | macho_unwind::kARMFrameFirstPushR4,
+      /*CompactCapacity=*/0x2000);
+  ASSERT_FALSE(Fixture.Binary.empty());
+  auto *Symbols =
+      reinterpret_cast<nlist *>(Fixture.Binary.data() + kARM32SymtabOff);
+  addARM32TrieExport(Fixture, kARM32TextOff + 1);
+  // An unrelated ARM leaf models the import thunks in a linked iOS image.
+  Symbols[2].n_desc = 0;
+  writeU32(Fixture.Binary, kARM32TextOff + 0x20, 0xe3a0002f); // mov r0, #47
+  writeU32(Fixture.Binary, kARM32TextOff + 0x24, 0xe12fff1e); // bx lr
+  // A Thumb call supplies structural interworking evidence for that ARM leaf.
+  writeU16(Fixture.Binary, kARM32TextOff + 0x10, 0xf000); // blx +0xc
+  writeU16(Fixture.Binary, kARM32TextOff + 0x12, 0xe806);
+  writeU16(Fixture.Binary, kARM32TextOff + 0x14, 0x4770); // bx lr
+  if (!ThumbEvidence)
+    Symbols[1].n_desc = 0;
+
+  llvm::SmallString<128> InputPath, OutputPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-mixed-source-input",
+                                                  "macho", InputPath));
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-mixed-source-output",
+                                                  "macho", OutputPath));
+  llvm::FileRemover RemoveInput(InputPath), RemoveOutput(OutputPath);
+  const std::vector<uint8_t> Sentinel = {0x4d, 0x49, 0x58};
+  ASSERT_TRUE(writeFile(InputPath, Fixture.Binary));
+  ASSERT_TRUE(writeFile(OutputPath, Sentinel));
+  MachOLoader Loader;
+  auto Image = Loader.load(InputPath.str().str());
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  ASSERT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+  EXPECT_EQ(Image->instructionModeAt(kARM32MayThrowVA), InstructionMode::ARM);
+
+  llvm::LLVMContext Context;
+  llvm::Module Module("mixed-source", Context);
+  Module.setTargetTriple(llvm::Triple("thumbv7k-apple-watchos"));
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "replacement", Module);
+  rewrite_source::setOriginalVA(*Function, kARM32FunctionVA);
+  Function->setUWTableKind(llvm::UWTableKind::Default);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRet(Builder.getInt32(93));
+  MachOPatcher Patcher;
+  Patcher.setImageContext(&*Image);
+  if (Replacement)
+    Patcher.setInputKind(RewriteInputKind::ReplacementIR);
+  const auto Result = Patcher.patch(InputPath.str().str(),
+                                    OutputPath.str().str(), Module, Arch::ARM);
+  EXPECT_EQ(readFile(InputPath), Fixture.Binary);
+  if (!Replacement || !ThumbEvidence) {
+    EXPECT_FALSE(Result.Success);
+    EXPECT_EQ(readFile(OutputPath), Sentinel);
+    return;
+  }
+  ASSERT_TRUE(Result.Success);
+  const auto Output = readFile(OutputPath);
+  ASSERT_GT(Result.CodeSize, 0u);
+  ASSERT_LE(kARM32LinkeditOff + Result.CodeSize, Output.size());
+  EXPECT_EQ(emulateThumbI32Return(llvm::ArrayRef<uint8_t>(Output).slice(
+                                      kARM32LinkeditOff, Result.CodeSize),
+                                  kARM32ImageBase + kARM32LinkeditOff),
+            std::optional<uint32_t>(93));
+}
+
+TEST(MachOARM32Transaction, SourcePatchUsesSelectedThumbModeInMixedImage) {
+  checkMixedSourceMode(true, true);
+}
+
+TEST(MachOARM32Transaction,
+     MixedSourcePatchStillRequiresPositiveThumbEvidence) {
+  checkMixedSourceMode(true, false);
+}
+
+TEST(MachOARM32Transaction, MixedLiftedRewriteStillRefuses) {
+  checkMixedSourceMode(false, true);
+}
+
 TEST(MachOARM32Transaction, DoesNotTreatTextSegmentDataAsModeEvidence) {
   ARM32TransactionFixture Fixture = makeARM32TransactionFixture(
       macho_unwind::kARMModeFrame | macho_unwind::kARMFrameFirstPushR4,
