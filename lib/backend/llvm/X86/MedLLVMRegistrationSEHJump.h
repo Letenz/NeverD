@@ -10,6 +10,8 @@
 #include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 
+#include "llvm/IR/IRBuilder.h"
+
 #include <vector>
 
 namespace llvm {
@@ -31,6 +33,13 @@ struct SEHJumpPlan {
 bool prepareSEHBoundCall(const llvm::CallInst &Call,
                          const RegistrationSEHBoundCall &Source,
                          const llvm::AllocaInst &Frame, uint64_t EntrySP);
+bool hasSEHBoundFrameArguments(const RegistrationSEHBoundCall &Source,
+                               const llvm::AllocaInst &Frame, uint64_t EntrySP);
+llvm::SmallVector<llvm::Value *, 8>
+projectSEHBoundArguments(const RegistrationSEHBoundCall &Source,
+                         llvm::IRBuilder<> &Builder, llvm::AllocaInst &Frame,
+                         uint64_t EntrySP,
+                         const std::map<va_t, llvm::AllocaInst *> &Buffers);
 
 std::map<llvm::CallInst *, llvm::CallInst *>
 emitSEHBoundCalls(const SEHJumpPlan &Plan, llvm::AllocaInst &Frame,

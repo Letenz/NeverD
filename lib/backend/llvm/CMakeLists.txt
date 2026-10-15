@@ -18,6 +18,7 @@ add_neverd_component_library(NeverDWindowsRegistrationFrame
   X86/RegistrationSEHException.cpp
   X86/RegistrationSEHJump.cpp
   X86/RegistrationSEHBoundCall.cpp
+  X86/RegistrationSEHBoundABI.cpp
   X86/RegistrationSEHJumpCallbackFrame.cpp
   X86/RegistrationSEHJumpStack.cpp
   X86/WindowsRegistrationABI.cpp
@@ -63,6 +64,7 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMRegistrationSEHDynamicScope.cpp
   X86/MedLLVMRegistrationSEHJump.cpp
   X86/MedLLVMRegistrationSEHBoundCall.cpp
+  X86/MedLLVMRegistrationSEHRuntime.cpp
   X86/MedLLVMRegistrationSEHJumpCallback.cpp
   X86/MedLLVMRegistrationCxxContinuation.cpp
   X86/MedLLVMRegistrationCxxStack.cpp

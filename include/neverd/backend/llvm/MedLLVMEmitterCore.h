@@ -189,6 +189,11 @@ private:
       const std::map<llvm::BasicBlock *, std::pair<int, int>> &PHICopyEdges);
   llvm::Function *resolveX86RegistrationHandlerReference(va_t Address);
   void declareX86RegistrationJumpRuntimes(const MedFunc &Func);
+  llvm::Function *getX86RegistrationSEHRuntimeTarget(const MedOp &Op);
+  llvm::Function *
+  prepareX86RegistrationSEHRuntimeCall(const MedOp &Op,
+                                       llvm::IRBuilder<> &Builder,
+                                       std::vector<llvm::Value *> &Arguments);
   bool
   emitNativeCxxEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                   const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);

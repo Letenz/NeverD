@@ -60,6 +60,13 @@ std::optional<va_t> checkedCallbackRangeEnd(const BinaryImage &Img, va_t Entry,
                                             va_t Boundary, va_t Limit,
                                             size_t &Work);
 
+/// Bound a registration body by all ordinary and table-owned entries. An
+/// unresolved or escaping edge leaves its existing conservative range intact.
+std::optional<va_t>
+checkedRegistrationRangeEnd(const BinaryImage &Img,
+                            const ExceptionAddressRange &Range,
+                            const std::vector<va_t> &Roots, size_t &Work);
+
 template <typename T>
 std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
   const uint8_t *P = Img.readVA(Address, sizeof(T));

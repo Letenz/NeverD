@@ -12,6 +12,8 @@
 
 #include "neverd/ir/RegistrationState.h"
 
+#include "llvm/IR/CallingConv.h"
+
 #include <map>
 #include <optional>
 
@@ -37,6 +39,13 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function);
 llvm::FunctionType *
 getX86RegistrationSEHBoundType(const RegistrationSEHBoundCall &Call,
                                llvm::LLVMContext &Context);
+
+llvm::CallingConv::ID
+getX86RegistrationSEHBoundConvention(const RegistrationSEHBoundCall &Call);
+
+/// Empty for a preserved source helper; otherwise the authenticated import.
+llvm::StringRef
+getX86RegistrationSEHBoundImport(const RegistrationSEHBoundCall &Call);
 
 } // namespace neverd
 

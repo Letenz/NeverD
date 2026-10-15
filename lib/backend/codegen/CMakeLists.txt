@@ -5,6 +5,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFFH4Encoding.cpp
   COFF/COFFInplace.cpp
   COFF/COFFPatch.cpp
+  COFF/COFFSourceCallSymbols.cpp
   COFF/COFFTrampolineRegions.cpp
   COFF/PESignaturePolicy.cpp
   COFF/COFFReloc.cpp

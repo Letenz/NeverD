@@ -31,6 +31,29 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
     return std::nullopt;
   size_t Work = 0;
   for (const auto &Call : States.SEHBoundCalls) {
+    using CalleeKind = RegistrationSEHBoundCall::Kind;
+    using ArgumentKind = RegistrationSEHBoundArgument::Kind;
+    switch (Call.CalleeKind) {
+    case CalleeKind::PreservedHelper:
+      break;
+    case CalleeKind::RaiseException:
+      if (!Call.HasOrdinaryReturn || Call.Arguments.size() != 4 ||
+          Call.Arguments[0].ArgumentKind != ArgumentKind::Scalar ||
+          Call.Arguments[1].ArgumentKind != ArgumentKind::Scalar ||
+          Call.Arguments[2].ArgumentKind != ArgumentKind::Scalar ||
+          Call.Arguments[3].ArgumentKind != ArgumentKind::NullPointer)
+        return std::nullopt;
+      break;
+    case CalleeKind::ControlFP:
+      if (!Call.HasOrdinaryReturn || Call.Arguments.size() != 3 ||
+          Call.Arguments[0].ArgumentKind != ArgumentKind::Object ||
+          Call.Arguments[1].ArgumentKind != ArgumentKind::Scalar ||
+          Call.Arguments[2].ArgumentKind != ArgumentKind::Scalar)
+        return std::nullopt;
+      break;
+    default:
+      return std::nullopt;
+    }
     if (++Work > limits::kMaxRegistrationEHStateWork || Call.OpSeq < 0 ||
         Call.Address > UINT32_MAX - 5 || Call.TargetVA > UINT32_MAX ||
         Call.Arguments.size() > 31 ||
@@ -53,8 +76,17 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
           return std::nullopt;
         break;
       case Kind::Object:
-        if (Arg.Capture || Arg.Offset > -28 ||
-            Arg.Offset < int64_t(Call.StackOffset) + 128)
+        if (Arg.Capture ||
+            (Call.CalleeKind == CalleeKind::ControlFP
+                 ? Arg.Offset > -4 ||
+                       Arg.Offset < int64_t(Call.StackOffset) + 12
+                 : Arg.Offset > -28 ||
+                       Arg.Offset < int64_t(Call.StackOffset) + 128))
+          return std::nullopt;
+        break;
+      case Kind::NullPointer:
+        if (Call.CalleeKind != CalleeKind::RaiseException || I != 3 ||
+            Arg.Capture || Arg.Offset)
           return std::nullopt;
         break;
       case Kind::JumpBuffer:
@@ -76,10 +108,14 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
         return std::nullopt;
       const auto Found = Result.find(Op.Addr);
-      if (Found == Result.end() || Op.Opcode != NdOp::CALL)
+      if (Found == Result.end() ||
+          (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL))
         continue;
       auto &Call = Found->second;
+      const bool Imported = Call.Source->CalleeKind !=
+                            RegistrationSEHBoundCall::Kind::PreservedHelper;
       if (Call.Operation || Op.OriginSeq != Call.Source->OpSeq ||
+          Op.Opcode != (Imported ? NdOp::INDIR_CALL : NdOp::CALL) ||
           Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
           Op.Inputs[0].Size != 4 ||
           Op.Inputs[0].ConstVal != Call.Source->TargetVA ||
@@ -93,30 +129,22 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
                    [](const auto &Item) { return !Item.second.Operation; }))
     return std::nullopt;
   for (const auto &[Address, Call] : Result) {
+    if (Call.Source->CalleeKind == RegistrationSEHBoundCall::Kind::ControlFP) {
+      if (Call.Operation->Output.Size != 4)
+        return std::nullopt;
+      continue;
+    }
     RegistrationCallFrameEffect Effect;
     Effect.Address = Address;
     Effect.OpSeq = Call.Source->OpSeq;
     Effect.Target = Call.Source->TargetVA;
-    if (!hasUnusedX86RegistrationCallResult(Function, Effect, Work))
+    if (!hasUnusedX86RegistrationCallResult(
+            Function, Effect, Work,
+            Call.Source->CalleeKind !=
+                RegistrationSEHBoundCall::Kind::PreservedHelper))
       return std::nullopt;
   }
   return Result;
-}
-
-llvm::FunctionType *
-getX86RegistrationSEHBoundType(const RegistrationSEHBoundCall &Call,
-                               llvm::LLVMContext &Context) {
-  auto *I32 = llvm::Type::getInt32Ty(Context);
-  auto *Ptr = llvm::PointerType::getUnqual(Context);
-  llvm::SmallVector<llvm::Type *, 8> Arguments;
-  for (const auto &Arg : Call.Arguments) {
-    using Kind = RegistrationSEHBoundArgument::Kind;
-    Arguments.push_back(Arg.ArgumentKind == Kind::Object ||
-                                Arg.ArgumentKind == Kind::JumpBuffer
-                            ? static_cast<llvm::Type *>(Ptr)
-                            : I32);
-  }
-  return llvm::FunctionType::get(I32, Arguments, false);
 }
 
 } // namespace neverd

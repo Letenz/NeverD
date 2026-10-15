@@ -883,18 +883,18 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       }
       MB.Ops.push_back(MOp);
 
-      // i386 callee-cleanup: a direct CALL to a callee that pops bytes on
+      // i386 callee-cleanup: a checked runtime import or direct callee pops on
       // return (x86 `ret imm`, the SysV hidden struct-return (sret) pointer
       // pop) leaves the caller's stack pointer that many bytes higher than a
       // balanced call. The lifter modeled the CALL as SP-neutral, so add the
       // pop here -- before SSA, so the chain is well-formed -- and later stack
       // accesses (the cdecl `add esp, k` cleanup, the result-buffer reload) use
       // the corrected SP.
-      if (MOp.Opcode == NdOp::CALL && MOp.NumInputs >= 1 &&
-          MOp.Inputs[0].isConst()) {
+      if ((MOp.Opcode == NdOp::CALL || MOp.Opcode == NdOp::INDIR_CALL) &&
+          MOp.NumInputs >= 1 && MOp.Inputs[0].isConst()) {
         auto Pop = TheArch == Arch::X86 ? registrationCallStackPop(Low, LB, LOp)
                                         : std::nullopt;
-        if (!Pop && CalleePopMap) {
+        if (!Pop && CalleePopMap && MOp.Opcode == NdOp::CALL) {
           const auto It = CalleePopMap->find(MOp.Inputs[0].ConstVal);
           if (It != CalleePopMap->end())
             Pop = It->second;

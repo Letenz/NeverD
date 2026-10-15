@@ -1871,6 +1871,14 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 `check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
 `longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+`longjmp-runtime-raise` 与 `longjmp-runtime-continue` 在非局部恢复后调用原
+`RaiseException` 导入，分别验证 handler 进入和 filter 允许继续执行。
+`longjmp-control-fp` 在捕获前观察 `_controlfp_s` 的返回值和私有输出对象。
+每个场景执行 16 项契约破坏检查，覆盖运行时 ABI、provider/IAT 身份、实际参数、
+import 存储、调用属性和读取顺序。继续执行场景还验证没有填充的相邻 helper 不会
+继承父函数 EH 范围；`RegistrationInstructionRange.*` 覆盖全部运行时入口、未解析或
+逃逸的边、重叠指令及工作预算耗尽。
+
 `longjmp-callee` 与 `longjmp-returning-callee` 分别执行跨注册帧恢复和普通返回的
 父栈对象借用；`longjmp-scalar-callee` 检查标量参数投影，并拒绝将参数读取提前到
 源写入之前的 IR 变异。独立反例拒绝物理帧观察、错误缓冲区或对象、调用属性变化及被观察的附带
