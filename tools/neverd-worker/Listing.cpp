@@ -4008,6 +4008,10 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   d.build();
   if (auto it = d.listingNames.find(name); it != d.listingNames.end())
     return it->second;
+  // listingNames keeps only the names the listing gives functions; the others
+  // show their engine's, a symbol's or the user's name.
+  if (const auto *function = d.functionNamed(name))
+    return function->entry;
   if (auto it = d.importTargets.find(name); it != d.importTargets.end())
     return it->second;
   if (auto it = d.exportAliases.find(name); it != d.exportAliases.end())

@@ -854,7 +854,7 @@ void Session::editFunction(Address entry, const QJsonObject &attributes,
 }
 
 void Session::rename(Address function, const QString &name,
-                     std::optional<quint64> epoch) {
+                     std::optional<quint64> epoch, std::function<void()> then) {
   if (name.trimmed().isEmpty() || !acceptsEdit(epoch))
     return;
   // A rename commits at once, and the worker refuses it over staged comments;
@@ -863,12 +863,14 @@ void Session::rename(Address function, const QString &name,
     save();
   command(QStringLiteral("rename"),
           {{"address", hexAddress(function)}, {"name", name.trimmed()}},
-          [this, function, name](const QJsonObject &) {
+          [this, function, name, then = std::move(then)](const QJsonObject &) {
             refreshHistory();
             emit renamed(function, name.trimmed());
             emit message(tr("Renamed %1 to %2")
                              .arg(displayAddress(function), name.trimmed()),
                          0);
+            if (then)
+              then();
           });
 }
 

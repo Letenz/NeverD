@@ -2,6 +2,7 @@
 #include "ActionRegistry.h"
 #include "Address.h"
 #include "AddressSpace.h"
+#include "DialogReturnKey.h"
 #include "Docking.h"
 #include "Expression.h"
 #include "Icons.h"
@@ -1326,6 +1327,50 @@ private slots:
     QCOMPARE(opened, QStringList{QStringLiteral("second")});
     QTest::keyClick(&list, Qt::Key_Enter, Qt::KeypadModifier);
     QCOMPARE(opened.size(), 2);
+  }
+
+  void returnInADialogPressesItsDefaultButton() {
+    // Qt's GNOME platform theme makes Return press the focused check box,
+    // as this one does: after Alt+O checked "Does not return", Return
+    // cleared it and the dialog stayed open.
+    class ReturnPressedCheckBox final : public QCheckBox {
+    public:
+      using QCheckBox::QCheckBox;
+
+    protected:
+      void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+          toggle();
+        else
+          QCheckBox::keyPressEvent(event);
+      }
+    };
+    const std::unique_ptr<QObject> filter(acceptDialogsOnReturn(*qApp));
+    QDialog dialog;
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *box =
+        new ReturnPressedCheckBox(QStringLiteral("D&oes not return"), &dialog);
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(box);
+    layout->addWidget(buttons);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    box->setFocus();
+    QTest::keyClick(box, Qt::Key_Space);
+    QVERIFY(box->isChecked());
+    QTest::keyClick(box, Qt::Key_Return);
+    QVERIFY(box->isChecked());
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(!dialog.isVisible());
+    // Outside a dialog the button keeps the key.
+    ReturnPressedCheckBox alone(QStringLiteral("Alone"));
+    alone.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&alone));
+    QTest::keyClick(&alone, Qt::Key_Return);
+    QVERIFY(alone.isChecked());
   }
 
   void themeDrawsFlatControls() {

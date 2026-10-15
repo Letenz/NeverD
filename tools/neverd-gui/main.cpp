@@ -1,3 +1,4 @@
+#include "app/DialogReturnKey.h"
 #include "app/DisassemblyView.h"
 #include "app/Docking.h"
 #include "app/GnomeModalDialogs.h"
@@ -69,6 +70,7 @@ int main(int argc, char **argv) {
   const auto applicationCreatedMs = startupClock.nsecsElapsed() / 1.0e6;
   gnome::detachModalDialogs(app);
   WindowFrame::frameDialogs(app);
+  acceptDialogsOnReturn(app);
   configureDocking();
   const auto dockingFrontendMs = startupClock.nsecsElapsed() / 1.0e6;
 
