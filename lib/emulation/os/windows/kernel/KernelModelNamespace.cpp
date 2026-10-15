@@ -99,7 +99,7 @@ KernelModel::findObjectHandle(uint64_t Handle) const {
 std::optional<uint32_t> KernelModel::objectAccessMask(ObjectKind Kind) {
   switch (Kind) {
   case ObjectKind::File:
-    return 0x1f01ff;
+    return FileAllAccess;
   case ObjectKind::Key:
     return KeyAllAccess;
   case ObjectKind::Thread:

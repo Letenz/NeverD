@@ -1939,3 +1939,5 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 
 
 `DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 選用欄位 `filesystem` 在 DriverEntry 前宣告工作階段內的磁碟區。省略表示可用性未知；`[]` 表示沒有檔案系統提供者。空磁碟區必須明確包含根目錄。宣告不讀取主機檔案，也不使檔案 I/O 自動成功。裝置查找、指標參考及來賓篩選器附加共用裝置身分；建立／開啟、中繼資料查詢、讀寫、目錄列舉及控制操作仍未實作。包含宣告磁碟區的路徑會在建立檔案物件或提交 IRP 前拒絕。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` 保存輸入；頂層 `filesystem` 來自獨立狀態擁有者，增加 `device_object` 與節點 `end_of_file`，執行或投影驗證停止後仍保留。通用 `devices` 僅包含來賓裝置。工作階段磁碟區可在卸載後保留，但來賓物件、參考、控制代碼、附加與 IRP 必須釋放。任何宣告，包括 `[]`，均保留未重建相依性並阻止可執行 UNPACK 復原。舊版 Unicorn 可能在停止前提交遭拒寫入；診斷仍保留投影錯誤。
+
+私有 provider 開啟測試涵蓋全部 4096 組讀取、寫入、刪除權限與共享組合、執行和附加權限分類、僅中繼資料存取、磁碟區內零檔案 ID、重複 CLEANUP、最終 CLOSE、過期或重複綁定，以及已清理物件仍佔用的容量。同一共享組合也單獨透過原始公開核心輔助函式執行驗證。這些檢查驗證共享狀態所有權；檔案系統 CREATE/OPEN 分派與實際 WDK 呼叫端整合仍待完成。

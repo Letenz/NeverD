@@ -6679,3 +6679,5 @@ stateful initialization, fields, hierarchy dispatch, objects and handlers.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
+
+KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. This preparatory owner does not enable CREATE/OPEN exports or relax route rejection.

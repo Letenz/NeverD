@@ -1737,3 +1737,5 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: يحفظ `configuration.filesystem` الإدخال؛ وينشر `filesystem` الحالة المستقلة مع `device_object` و`end_of_file` حتى بعد التوقف أو فشل التحقق. يحتوي `devices` أجهزة الضيف فقط. قد تبقى وحدات الجلسة بعد التفريغ لكن يجب تحرير مراجع الضيف ومقابضه وروابطه وIRP. كل إعلان، حتى `[]`، يمنع استعادة UNPACK التنفيذية. قد ينفذ Unicorn القديم كتابة مرفوضة قبل التوقف؛ ويبقى فشل التحقق في التشخيص.
+
+يحتفظ KernelFileSystem بقيمة provider token واحدة لكل FILE_OBJECT. تستقبل عملية المشاركة الداخلية عقدة مقبولة وصلاحيات محولة مسبقاً، وتفحص التعارض في الاتجاهين، وتستثني الوصول إلى البيانات الوصفية فقط. يحرر CLEANUP قيود المشاركة مع إبقاء token، ويحذف CLOSE قيمة token التي اكتمل تنظيفها. تدخل الكائنات المنظفة التي ما زالت لها مراجع ضمن حد 1024 عملية فتح. تقارن مطابقة الربط الدقيقة tokens بمالك كائنات الملفات. لا تفعّل هذه المرحلة صادرات CREATE/OPEN ولا تخفف رفض المسارات.

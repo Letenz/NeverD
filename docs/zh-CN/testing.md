@@ -1954,3 +1954,5 @@ KernelFileObjectTests 与 KernelObjectTests 覆盖带类型的指针打开、类
 
 
 `DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 可选字段 `filesystem` 在 DriverEntry 前声明会话内的卷。省略表示可用性未知；`[]` 表示没有文件系统提供方。空卷必须显式包含根目录。声明不读取宿主文件，也不使文件 I/O 自动成功。设备查找、指针引用和来宾筛选器挂接共用设备身份；创建／打开、元数据查询、读写、目录枚举及控制操作仍未实现。包含声明卷的路径会在创建文件对象或提交 IRP 前拒绝。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` 保存输入；顶层 `filesystem` 来自独立状态所有者，增加 `device_object` 和节点 `end_of_file`，执行或投影校验停止后仍保留。通用 `devices` 只包含来宾设备。会话卷可在卸载后保留，但来宾对象、引用、句柄、挂接和 IRP 必须释放。任何声明，包括 `[]`，都保留未重建依赖并阻止可执行 UNPACK 恢复。旧 Unicorn 模式可能在停止前提交已拒绝的设备写入；诊断保留投影失败，文件状态仍可观察。
+
+私有 provider 打开测试覆盖全部 4096 组读、写、删除权限与共享组合、执行和追加权限分类、仅元数据访问、卷内零文件 ID、重复 CLEANUP、最终 CLOSE、过期或重复绑定，以及已清理对象仍占用的容量。同一共享组合还单独通过原始公开内核辅助函数执行验证。这些检查验证共享状态所有权；文件系统 CREATE/OPEN 分派及真实 WDK 调用方集成仍待完成。
