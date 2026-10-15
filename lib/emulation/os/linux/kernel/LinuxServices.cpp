@@ -131,7 +131,9 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::GetEGID:
     return std::optional<uint64_t>(GroupID);
   case ServiceKind::Mmap:
-    if (Event.Arguments[3] == MapShared) {
+    if (Event.Arguments[3] == MapShared ||
+        (!(Event.Arguments[3] & MapAnonymous) &&
+         Files.isDevice(uint32_t(Event.Arguments[4])))) {
       auto Device = Files.mappingDevice(uint32_t(Event.Arguments[4]));
       if (const auto *Error = std::get_if<uint64_t>(&Device))
         return std::optional<uint64_t>(*Error);

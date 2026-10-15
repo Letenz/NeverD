@@ -523,7 +523,7 @@ U64 devices_gpu_commands(U64 Route) {
   CHECK(*(volatile U32 *)(store + context[1] * 40 + 8), 1);
   /* GPU pins cannot follow a recycled CPU virtual address. */
   CHECK(raw(Unmap, code, 4096, 0), 0);
-  CHECK(raw6(Map, code, 4096, 3, 0x32, (U64)-1, 0), code);
+  CHECK(raw6(Map, code, 4096, 3, 0x22, (U64)-1, 0), code);
   p[0] = 0xffffffff;
   d[1] = 0;
   CHECK(invoke(Route, 3, 0xc0200910, (U64)&submit), 0);

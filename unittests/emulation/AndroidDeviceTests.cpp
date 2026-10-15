@@ -52,8 +52,18 @@ protected:
   ProcessResult run(const char *Entry, std::vector<uint64_t> Arguments = {}) {
     Options.Android->EntrySymbol = Entry;
     Options.Android->Arguments = std::move(Arguments);
-    return llvm::cantFail(
-        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options));
+    auto Result =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    if (Result)
+      return std::move(*Result);
+    ProcessResult Failure{ProcessProfile::AndroidNativeAArch64,
+                          GuestArchitecture::AArch64,
+                          Options.Backend,
+                          {}};
+    Failure.Stop = ProcessStopReason::RuntimeFailure;
+    Failure.Diagnostic = llvm::toString(Result.takeError());
+    ADD_FAILURE() << Failure.Diagnostic;
+    return Failure;
   }
 };
 
@@ -142,12 +152,10 @@ TEST_P(AndroidDevices, RejectedGPUProgramsCannotPublishEarlierWrites) {
         {Buffer, 8192, std::vector<uint8_t>(8192, 0xa5), false}};
     Options.Android->ReadMemory = {{Buffer, 4096},
                                    {Buffer + 4096 + 20, 4},
-                                   {0x22000000 + 40, 4},
-                                   {0x22000000 + 48, 4}};
+                                   {0x22000000 + 40, 4, false},
+                                   {0x22000000 + 48, 4, false}};
     auto R = run("devices_gpu_rejected", {Mode, Buffer});
-    EXPECT_EQ(R.Stop, Mode == 1 ? ProcessStopReason::RuntimeFailure
-                                : ProcessStopReason::UnsupportedService)
-        << R.Diagnostic;
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
     ASSERT_EQ(R.MemorySnapshots.size(), 4u);
     EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(4096, 0xa5));
     EXPECT_EQ(R.MemorySnapshots[1].Bytes,

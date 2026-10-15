@@ -104,24 +104,29 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
   if (Words > 4096)
     return unsupported(Result, "GPU command word budget exhausted");
   auto Resolve = [&](uint64_t Address, uint64_t Length,
-                     bool Write) -> llvm::Expected<MemoryView> {
+                     bool Write) -> llvm::Expected<std::optional<MemoryView>> {
     auto I = GPU.Allocations.upper_bound(Address);
     if (I == GPU.Allocations.begin())
-      return failure("GPU address does not identify a registered allocation");
+      return std::optional<MemoryView>();
     --I;
     if (Address - I->first > I->second.Bytes.size() ||
         Length > I->second.Bytes.size() - (Address - I->first) ||
         (Write && I->second.ReadOnly))
-      return failure("GPU memory range or write permission is invalid");
-    return I->second.Bytes.subview(Address - I->first, Length);
+      return std::optional<MemoryView>();
+    auto View = I->second.Bytes.subview(Address - I->first, Length);
+    if (!View)
+      return View.takeError();
+    return std::optional<MemoryView>(std::move(*View));
   };
   if (Get64(8) % 4)
     return unsupported(Result, "GPU command buffer is not dword aligned");
   auto Program = Resolve(Get64(8), uint64_t(Words) * 4, false);
   if (!Program)
     return Program.takeError();
+  if (!*Program)
+    return unsupported(Result, "GPU command range is not registered RAM");
   std::vector<uint8_t> Code(Words * 4);
-  if (auto E = Program->read(0, Code))
+  if (auto E = (*Program)->read(0, Code))
     return std::move(E);
   struct Store {
     MemoryView Target;
@@ -150,11 +155,14 @@ LinuxFiles::gpuIoctl(LinuxDeviceState &Device, uint32_t Request,
     auto Target = Resolve(Address, 4, true);
     if (!Target)
       return Target.takeError();
-    if (Target->overlaps(*Program))
+    if (!*Target)
+      return unsupported(Result,
+                         "GPU write range is not registered writable RAM");
+    if ((*Target)->overlaps(**Program))
       return unsupported(Result,
                          "GPU self-modifying command fetch is unmodeled");
-    Stores.push_back({std::move(*Target), llvm::support::endian::read32le(
-                                              Code.data() + (At + 2) * 4)});
+    Stores.push_back({std::move(**Target), llvm::support::endian::read32le(
+                                               Code.data() + (At + 2) * 4)});
     At += 3;
   }
   // Admission precedes all effects. Unknown packets cannot become successful

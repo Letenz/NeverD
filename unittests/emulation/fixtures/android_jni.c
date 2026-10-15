@@ -447,7 +447,7 @@ int jni_method_values(void) {
   CHECK(!C(e, U8, 24, pair, constructed));
   Ref copy = method(e, cls, "getChars", "(II[CI)V");
   C(e, void, 61, suffix, copy, 0, 1, array, 0);
-  C(e, void, 202, array, 0, 5, units + 1);
+  C(e, void, 201, array, 0, 5, units + 1);
   CHECK(units[1] == 90 && units[2] == 0 && units[3] == 0xd83d &&
         units[4] == 0xde00 && units[5] == 90 && units[6] == 0x7e7e);
   C(e, void, 220, s, 0, 1, units);
@@ -515,12 +515,12 @@ int jni_method_exceptions(void) {
   CHECK(C(e, U8, 32, ex, exception_class));
   Ref a = C(e, Ref, 177, 2);
   U16 input[] = {11, 22};
-  C(e, void, 210, a, 0, 2, input);
+  C(e, void, 209, a, 0, 2, input);
   C(e, void, 61, s, copy, 0, 3, a, 0);
   CHECK(C(e, U8, 228));
   C(e, void, 17);
   U16 out[] = {0, 0};
-  C(e, void, 202, a, 0, 2, out);
+  C(e, void, 201, a, 0, 2, out);
   CHECK(out[0] == 11 && out[1] == 22);
   CHECK(!C(vm, int, 5));
   return 0;
