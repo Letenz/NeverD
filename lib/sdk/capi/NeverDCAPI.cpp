@@ -39,7 +39,9 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/ELF/SBFELFLoader.h"
 #include "neverd/loader/MachO/MachOLoader.h"
+#include "neverd/loader/ObjectFileUtils.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
 #include "neverd/sdk/NeverDPlugin.h"
@@ -434,6 +436,43 @@ const char *neverd_pdb_reference_json(const char *Path,
   return Answer();
 }
 
+const char *neverd_dwarf_reference_json(const char *Path) {
+  llvm::json::Object Root;
+  const auto Answer = [&] {
+    return dupStr(jsonToString(llvm::json::Value(std::move(Root))));
+  };
+  Root["dwarf"] = nullptr;
+  const auto Input = std::filesystem::u8path(Path ? Path : "");
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Input), /*IsText=*/false,
+                                            /*RequiresNullTerminator=*/false);
+  if (!Buffer) {
+    Root["error"] = jsonSafeText("cannot read " + pathToUTF8(Input) + ": " +
+                                 Buffer.getError().message());
+    return Answer();
+  }
+  // The magic says the format; an SBF program is ELF, but discovery reads no
+  // debug information for it.
+  const BinaryFormat Format =
+      magicToFormat(llvm::identify_magic((*Buffer)->getBuffer()));
+  const llvm::ArrayRef<uint8_t> Bytes(
+      reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart()),
+      (*Buffer)->getBufferSize());
+  bool SupportedSBF = false;
+  if (Format == BinaryFormat::ELF && isSBFELF(Bytes, SupportedSBF) &&
+      !searchesDebugInfo(Arch::SBF))
+    return Answer();
+  const auto Source = findDWARF(Input, Format);
+  if (!Source)
+    return Answer();
+  // A frontend keeps the path it shows, so it must not depend on the working
+  // directory the input was named against.
+  std::error_code EC;
+  Root["dwarf"] = llvm::json::Object{
+      {"path", pathToUTF8(std::filesystem::absolute(Source->Path, EC))},
+      {"location", dwarfLocationName(Source->Location)}};
+  return Answer();
+}
+
 int neverd::sdk::loadNativeSnapshotSession(neverd_session_t Sess,
                                            BinaryImage Image,
                                            uint64_t InputBytes,
@@ -721,6 +760,11 @@ void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
 void neverd_session_set_pdb_search(neverd_session_t Sess, int Enabled) {
   if (auto *S = toSession(Sess))
     S->DbgRequest.SearchPDB = Enabled != 0;
+}
+
+void neverd_session_set_dwarf_search(neverd_session_t Sess, int Enabled) {
+  if (auto *S = toSession(Sess))
+    S->DbgRequest.SearchDWARF = Enabled != 0;
 }
 
 void neverd_session_set_symbol_path(neverd_session_t Sess,

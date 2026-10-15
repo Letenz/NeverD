@@ -123,6 +123,21 @@ without the PDB it names and is saved with the project like a selection. With a
 one that loads. `pdb_reference` is listed in `capabilities` when the engine has
 it.
 
+`dwarf_reference {path}` needs no open binary either: it returns the SDK's
+`neverd_dwarf_reference_json`, `{dwarf:null}` or `{dwarf:{path,location}}` --
+the file that holds an ELF or Mach-O image's DWARF, with location `input` (the
+image's own sections), `dsym` (a .dSYM bundle beside a Mach-O image) or
+`beside` (a split .debug file beside the image, matched by name alone), the
+first in the order the open reads them. A PE, an image without DWARF and an
+SBF program answer null. The GUI asks before an `open`, as IDA asks "Load DWARF
+debug information?", and passes a declined answer as `dwarf:{mode:"none"}`,
+the only `dwarf` value there is: the open reads no DWARF, though other debug
+information still loads, and the answer is saved with the project and kept by
+read-only replicas. `open` and `metadata` return it as `dwarf`, null when the
+DWARF was read, and what the load read as `debug_info:{enabled,kind,path}`,
+kind `dwarf`, `pdb`, `map` or `none`. `dwarf_reference` is listed in `capabilities` when the engine
+has `neverd_dwarf_reference_json` and `neverd_session_set_dwarf_search`.
+
 `open` and `metadata` also return `pdb_download`: either null or `{file,key}`
 derived by the SDK from a unique valid PE CodeView record. A candidate is offered
 only with debug loading enabled, no loaded, selected or declined PDB and

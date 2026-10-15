@@ -92,11 +92,11 @@ Analysis uses the shared C++ backend and never launches the input. See the
 
 A start without a file shows the quick start alone, as IDA does: the workbench
 appears once you choose how to start, and closing the quick start quits. The
-questions asked before a file loads, **Load a new file** and **Load PDB file**,
-greet alone too while the workbench has not shown yet, after the quick start or
+questions asked before a file loads, **Load a new file**, **Load PDB file** and
+**DWARF info found**, greet alone too while the workbench has not shown yet, after the quick start or
 for a file named on the command line; the workbench appears as the file starts
 to load, or when you cancel the load. A run that captures or measures asks
-nothing and loads the PDB that discovery finds. Drag
+nothing and loads the debug information that discovery finds. Drag
 its window edges or lower-right grip to resize it; the next opening remembers
 that size. The action pane stays the same width while the recent files use the
 available space. Its side pane holds the ways to start: **New** (N) asks for a
@@ -659,6 +659,22 @@ way before it loads the file, through the system's libcurl or WinHTTP.
 A project whose PDB no longer loads, and a file opened before anyone was asked,
 offer the same dialog once the file is open; a copy that has reached a store
 since then loads without asking.
+
+Opening an ELF or Mach-O image with DWARF asks **DWARF info found** — *Load
+DWARF debug information?* — as IDA does, before the file loads. When the DWARF
+is not in the input itself, the dialog names the file that holds it: the
+`.dSYM` bundle beside a Mach-O image, or a split `.debug` file beside the
+image, which is found by its name alone (`<image>.debug`, `<stem>.debug` or
+`.debug/<image>`) and not by its build ID or debug link. **Yes** loads it, and
+the Output window names what loaded; for a `.dSYM` bundle it names the image
+the bundle belongs to. **No**, Escape or closing the dialog opens the file
+without its DWARF, which the project keeps, so reopening it does not load the
+DWARF either; a linker map beside the input still loads. IDA's import options
+(global names, types, calling conventions, line numbers) are not offered,
+because the engine reads DWARF whole or not at all. Projects, files opened with
+**Load debug information** cleared, and SBF programs, whose debug information
+is never read, are not asked. The command line reads the image without its
+DWARF with `--no-dwarf`.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and
