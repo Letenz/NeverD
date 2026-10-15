@@ -1859,6 +1859,15 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 `check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
 `longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+`longjmp-nested-finally-call` 从普通 finally 调用中执行可返回的内层 finally，随后恢复父函数；
+`longjmp-nested-finally-unwind` 通过 CRT unwind 进入外层 finally。两者区分内外层写入，
+并在恢复后再次抛出异常。每个普通 finally 调用接受 16 类安装器变异，检查源归属、目标、
+父帧、abnormal 标志、ABI 及属性。clone 回归覆盖两次调用共享未观察的返回值槽，以及
+volatile 读取造成的原子拒绝。
+普通入口与运行时展开的源测试共同覆盖直接调用、折叠尾跳转及 CALL 后隐藏副作用。
+`RegistrationSEHJumpABI` 验证无关寄存器值、额外私有栈数据和冲突的推断原型不会改变
+准确栈参数顺序与数量；缺失参数及被修改的源证明仍被拒绝。
+
 `longjmp-runtime-raise` 与 `longjmp-runtime-continue` 在非局部恢复后调用原
 `RaiseException` 导入，分别验证 handler 进入和 filter 允许继续执行。
 `longjmp-control-fp` 在捕获前观察 `_controlfp_s` 的返回值和私有输出对象。

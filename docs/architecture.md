@@ -289,6 +289,15 @@ The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private
 state solver owns the shared lattice and cumulative work budget across them.
+MedIR's `X86/RegistrationSEHCall.cpp` binds ordinary finally invocations to
+checked near returns and continuations. Call-ABI recovery and LLVM callback
+lowering consume this one binding, so callback-private pushes cannot become
+cdecl arguments. Outlining exposes exact instruction clone identities for
+removing preflighted unused return transports without reopening the proof.
+MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
+recovery uses their exact stack-only capture/resume contracts; an incidental
+register value cannot shift the jump-buffer argument. LLVM emission and COFF
+source replay consume those same bindings.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
 `MedLLVMRegistrationIncoming` owns the transactional caller-frame projection

@@ -26,13 +26,15 @@ bool RegistrationStateSolver::runLocalFinally(
 bool RegistrationStateSolver::runSEHCallbackFrame(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
     std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
-    const FrameValue *JumpValue, FrameValue *FilterResult) {
+    const FrameValue *JumpValue, FrameValue *FilterResult, unsigned Depth,
+    std::optional<int32_t> ParentStackOffset) {
   const auto Entry = Entries.find(Target);
   // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
   // belongs to a separate runtime restoration protocol; finally-only helpers
   // need not initialize that slot.
   const auto ParentSP =
-      OrdinaryInvocation
+      ParentStackOffset ? ParentStackOffset
+      : OrdinaryInvocation
           ? Parent.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset
           : Parent.load(*Chain.RegistrationOffset - 8, 4).Offset;
   if (Entry == Entries.end() || !ParentSP ||
@@ -107,6 +109,14 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         continue;
       }
       if (Op.Opcode == NdOp::CALL) {
+        if (Op.NumInputs == 1 && Op.Inputs[0].isConst() &&
+            Op.Inputs[0].Size == 4 &&
+            FinallyTargets.count(Op.Inputs[0].Offset)) {
+          if (FilterResult ||
+              !runSEHNestedFinallyFrame(I, Op, State, *ParentSP, Writes, Depth))
+            return false;
+          continue;
+        }
         const auto SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride]
                             .CallbackAddress;
         if (!Jump || !JumpValue || !JumpRuntime || !JumpRuntime->Resume ||

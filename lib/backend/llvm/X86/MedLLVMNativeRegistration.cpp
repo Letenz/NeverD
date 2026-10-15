@@ -7,6 +7,7 @@
 #include "../eh/MedLLVMEHHelpers.h"
 #include "MedLLVMRegistrationIncoming.h"
 #include "MedLLVMRegistrationSEHDynamicScope.h"
+#include "MedLLVMRegistrationSEHFinally.h"
 #include "MedLLVMRegistrationSEHJump.h"
 #include "MedLLVMRegistrationSEHProof.h"
 
@@ -385,21 +386,45 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     if (AllCallbackBlocks.count(Instruction->getParent()))
       return false;
   std::vector<CallPlan> Calls;
+  std::vector<x86_registration::SEHNestedFinallyCall> NestedFinallyCalls;
   std::vector<llvm::Instruction *> DeadCallResults = JumpPlan->DiscardedResults;
   for (const auto &[Call, Address] : CallSiteAddrs) {
     if (CookieCheckCalls.count(const_cast<llvm::CallInst *>(Call)))
       continue;
     auto *CallBlock = const_cast<llvm::BasicBlock *>(Call->getParent());
-    if (AllCallbackBlocks.count(CallBlock))
-      continue;
-    auto State = Active.find(CallBlock);
-    if (State == Active.end() || !Call->getNextNode() || Call->isMustTailCall())
-      return false;
     std::optional<size_t> Finally;
     if (auto Direct = DirectCalls.find(Address); Direct != DirectCalls.end())
       if (auto Callback = CallbackIndices.find({Direct->second, true});
           Callback != CallbackIndices.end())
         Finally = Callback->second;
+    if (AllCallbackBlocks.count(CallBlock)) {
+      if (Finally) {
+        std::vector<llvm::Instruction *> DiscardedResults;
+        if (!x86_registration::collectDiscardedRegistrationResult(
+                *const_cast<llvm::CallInst *>(Call), DiscardedResults))
+          return false;
+        DeadCallResults.insert(DeadCallResults.end(), DiscardedResults.begin(),
+                               DiscardedResults.end());
+        for (size_t Index = 0; Index != Requests.size(); ++Index)
+          if (llvm::is_contained(Requests[Index].Blocks, CallBlock)) {
+            if (Requests[Index].Kind != X86RegistrationCallbackKind::Finally ||
+                llvm::none_of(States.SEHInvocationExits, [&](const auto &Exit) {
+                  return Exit.Exit ==
+                             RegistrationSEHInvocationExit::Kind::NearReturn &&
+                         Exit.CallVA == Address &&
+                         Exit.EntryVA == DirectCalls.at(Address);
+                }))
+              return false;
+            NestedFinallyCalls.push_back(
+                {Call, Address, DirectCalls.at(Address), Index, *Finally,
+                 std::move(DiscardedResults)});
+          }
+      }
+      continue;
+    }
+    auto State = Active.find(CallBlock);
+    if (State == Active.end() || !Call->getNextNode() || Call->isMustTailCall())
+      return false;
     const bool NoReturn =
         Finally &&
         llvm::none_of(
@@ -479,7 +504,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   }
   x86_registration::IncomingFrameProjection IncomingProjection(
       Parent, EH.CodeRange.Begin, *Incoming);
-  auto Outlined = outlineX86RegistrationCallbacks(Parent, Requests);
+  std::vector<X86RegistrationCallbackInstructionMap> CallbackInstructions;
+  auto Outlined =
+      outlineX86RegistrationCallbacks(Parent, Requests, &CallbackInstructions);
   if (!Outlined) {
     const std::string Detail = llvm::toString(Outlined.takeError());
     LLVM_DEBUG(llvm::dbgs() << Detail << '\n');
@@ -634,6 +661,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     CallSiteAddrs.erase(Call);
     Call->eraseFromParent();
   }
+
+  x86_registration::emitSEHNestedFinallyCalls(NestedFinallyCalls, *Outlined,
+                                              CallbackInstructions, Parent,
+                                              EH.CodeRange.Begin);
 
   std::set<llvm::Instruction *> DeadResults(DeadCallResults.begin(),
                                             DeadCallResults.end());

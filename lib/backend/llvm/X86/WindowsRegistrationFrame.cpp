@@ -30,7 +30,8 @@ using x86_registration::reject;
 llvm::Function *
 commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
                llvm::ArrayRef<llvm::AllocaInst *> Escaped,
-               const std::map<llvm::Argument *, uint32_t> &ArgumentIndices) {
+               const std::map<llvm::Argument *, uint32_t> &ArgumentIndices,
+               X86RegistrationCallbackInstructionMap *InstructionMap) {
   llvm::Module *Module = Parent.getParent();
   const auto &Request = *Plan.Request;
   llvm::BasicBlock &Entry = *Request.Entry;
@@ -185,14 +186,21 @@ commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
       if (Kind == X86RegistrationCallbackKind::Finally ||
           !Return->getReturnValue()->getType()->isIntegerTy(32)) {
         llvm::IRBuilder<> B(Return);
+        llvm::ReturnInst *Replacement;
         if (Kind == X86RegistrationCallbackKind::Finally)
-          B.CreateRetVoid();
+          Replacement = B.CreateRetVoid();
         else
-          B.CreateRet(filterResult(*Return));
+          Replacement = B.CreateRet(filterResult(*Return));
+        Values[Block->getTerminator()] = Replacement;
         Return->eraseFromParent();
       }
     }
   }
+  if (InstructionMap)
+    for (const auto *Block : Blocks)
+      for (const auto &Instruction : *Block)
+        InstructionMap->emplace(
+            &Instruction, llvm::cast<llvm::Instruction>(Values[&Instruction]));
   Builder.CreateBr(llvm::cast<llvm::BasicBlock>(Values[&Entry]));
   return Callback;
 }
@@ -201,7 +209,8 @@ commitCallback(llvm::Function &Parent, const CallbackPlan &Plan,
 
 llvm::Expected<std::vector<llvm::Function *>> outlineX86RegistrationCallbacks(
     llvm::Function &Parent,
-    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests) {
+    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests,
+    std::vector<X86RegistrationCallbackInstructionMap> *InstructionMaps) {
   if (Requests.empty() || Requests.size() > limits::kMaxRegistrationEHRecords)
     return reject("callback batch is empty or exceeds the work budget");
   size_t WorkUsed = 0;
@@ -276,8 +285,15 @@ llvm::Expected<std::vector<llvm::Function *>> outlineX86RegistrationCallbacks(
       ExistingEscape->eraseFromParent();
   }
   std::vector<llvm::Function *> Callbacks;
+  std::vector<X86RegistrationCallbackInstructionMap> Clones;
+  if (InstructionMaps)
+    Clones.resize(Plans.size());
   for (const CallbackPlan &Plan : Plans)
-    Callbacks.push_back(commitCallback(Parent, Plan, Escaped, ArgumentIndices));
+    Callbacks.push_back(
+        commitCallback(Parent, Plan, Escaped, ArgumentIndices,
+                       InstructionMaps ? &Clones[Callbacks.size()] : nullptr));
+  if (InstructionMaps)
+    *InstructionMaps = std::move(Clones);
   return Callbacks;
 }
 
