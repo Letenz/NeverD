@@ -6555,6 +6555,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `FrameOffsets.*Normalization*` covers exact identities, extra inputs, root identity, infeasible predicates without cached witnesses, default behavior, prefix/measurement charges and post-call node refusal. `FrameNormalizationPreservesStoresAndNativeReturns` and `RawCodeFrameNormalization*` exercise original memory effects and physical return words with independent byte oracles, both byte orders where applicable, exact/short operation budgets and receipt mutation. `FrameNormalizationStrategyBindsIndependentProof` checks both binary proof identities.
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
+
 ## Native Lift qualification
 
 The `Lift native qualification` workflow owns the 108 previously unqualified cases (62 failures and 46 skips). It installs Clang 23 or newer, GNU GCC and the i386 development libraries on a native Linux x86-64 runner, and initializes the pinned binary corpus. `unittests/Inputs/lift-qualification.json` retains every original test identity. `scripts/run_lift_qualification.py` rejects missing, duplicate, disabled, skipped or failed cases and a nonzero process exit; `qualification.json` records individual passes, source/corpus revisions, compiler versions and binary hashes.

@@ -797,6 +797,28 @@ TEST(SymExpr, CollectVarsReportsEveryReachableVariableOnce) {
   EXPECT_EQ(Ctx.varInfo(Vars[1]).Name, "y");
 }
 
+TEST(SymExpr, ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 64);
+  const auto Sum = Ctx.mkAdd(X, Ctx.mkConst(64, 7));
+  const auto Before = Ctx.numNodes();
+  EXPECT_EQ(Ctx.numCachedReadabilityNodes(), 0u);
+  EXPECT_EQ(Ctx.numNodes(), Before);
+  EXPECT_EQ(Ctx.readabilityCost(Sum), 3u);
+  EXPECT_EQ(Ctx.numCachedReadabilityNodes(), Before);
+
+  Ctx.mkConst(llvm::APInt(256, 19));
+  EXPECT_EQ(Ctx.numCachedReadabilityNodes(), Before);
+  auto Copy = Ctx;
+  EXPECT_EQ(Copy.numCachedReadabilityNodes(), Before);
+  EXPECT_EQ(Copy.readabilityCost(Sum), 3u);
+  EXPECT_EQ(Copy.numCachedReadabilityNodes(), Copy.numNodes());
+  EXPECT_EQ(Ctx.numCachedReadabilityNodes(), Before);
+  EXPECT_EQ(Ctx.readabilityCost(Sum), 3u);
+  EXPECT_EQ(Ctx.numCachedReadabilityNodes(), Ctx.numNodes());
+  EXPECT_EQ(Ctx.numNodes(), Before + 1);
+}
+
 TEST(SymExpr, FindVarSeesDeclarationsAndNothingElse) {
   SymContext Ctx;
   SymRef X32 = Ctx.mkVar("x", W32);

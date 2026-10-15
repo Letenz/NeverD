@@ -1718,6 +1718,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` 覆盖精确恒等式、额外输入、根身份、无缓存见证的不可达谓词、默认行为、结构准入与测量计费，以及调用后的节点超限拒绝。`FrameNormalizationPreservesStoresAndNativeReturns` 和 `RawCodeFrameNormalization*` 使用独立字节检查器验证原始内存效果与实际返回地址，并覆盖适用的两种字节序、精确及不足的操作预算和回执篡改。`FrameNormalizationStrategyBindsIndependentProof` 检查两种二进制证明身份。
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 检查缓存历史不再重复计费、新增宽常量仍需计费、工作或节点额度不足仍拒绝，以及可读性缓存副本保持独立。
+
 ## 原生 Lift 验收
 
 `Lift native qualification` 工作流负责此前未完成验证的 108 项（62 项失败和 46 项跳过）。它在原生 Linux x86-64 执行器上安装 Clang 23 或更新版本、GNU GCC 和 i386 开发库，并初始化固定版本的二进制语料。`unittests/Inputs/lift-qualification.json` 保留所有原始测试标识。`scripts/run_lift_qualification.py` 拒绝遗漏、重复、禁用、跳过、失败和非零进程退出；`qualification.json` 记录逐项通过结果、源码与语料版本、编译器版本和二进制哈希。

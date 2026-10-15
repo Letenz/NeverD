@@ -1024,4 +1024,63 @@ TEST(FrameOffsets, AdmittedNormalizationMeasurementCanStillExhaust) {
   EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {Difference}, 1));
 }
 
+TEST(FrameOffsets, NormalizationChargesOnlyTheUncachedReadabilityPrefix) {
+  SymContext Original;
+  // History unrelated to the demanded address must still cost admission when
+  // cold, but a previous readability query has already paid for its cache.
+  for (unsigned I = 1; I <= 4096; ++I)
+    Original.mkConst(llvm::APInt(256, I).shl(128));
+  const auto Root = Original.mkVar("frame", 64);
+  const auto Input = Original.mkVar("data", 64);
+  const auto Value = mbaFrameAddress(Original, Root, Input, uint64_t{0} - 24);
+  const auto Admission = Original.mkVar("admission", 8);
+  const auto Predicate = Original.mkEq(Original.mkMul(Admission, Admission),
+                                       Original.mkConst(8, 9));
+  Original.mkSub(Value, Root);
+  ASSERT_EQ(Original.numCachedReadabilityNodes(), 0u);
+  uint64_t Prefix = 0;
+  for (uint32_t I = 0; I != Original.numNodes(); ++I) {
+    const SymRef R(I);
+    Prefix += 1 + Original.numOperands(R);
+    if (Original.op(R) == SymOp::Const)
+      Prefix += (uint64_t{Original.width(R)} + 63) / 64;
+  }
+  const auto Run = [&](bool Warm, uint64_t MaxWork, bool ShortNodes = false) {
+    auto Ctx = Original;
+    if (Warm)
+      Ctx.readability(Value);
+    // Appended nodes still need admission even after a fully warm prefix.
+    Ctx.mkConst(llvm::APInt(256, 0xabcdef));
+    SpecializationOptions O;
+    O.MaxSolverGates =
+        1; // Refuse the predicate before allocating query values.
+    if (ShortNodes)
+      O.MaxSymbolicNodes = Ctx.numNodes() - 1;
+    FrameOffsetNormalization Work{MaxWork};
+    uint64_t Queries = 0;
+    const auto R = proveFrameOffset(Ctx, Predicate, Value, Root, O, Queries,
+                                    nullptr, &Work);
+    EXPECT_EQ(Queries, 0u);
+    EXPECT_LE(Work.WorkUsed, MaxWork);
+    return std::pair{R, Work.WorkUsed};
+  };
+  const auto [Cold, ColdWork] = Run(false, 65536);
+  const auto [Warm, WarmWork] = Run(true, 65536);
+  ASSERT_EQ(Cold.Status, FrameOffsetStatus::Exact);
+  ASSERT_EQ(Warm.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Cold.Offset, uint64_t{0} - 24);
+  EXPECT_EQ(Warm.Offset, Cold.Offset);
+  EXPECT_EQ(ColdWork - WarmWork, Prefix);
+  EXPECT_GT(WarmWork, 5u); // The new four-limb literal plus MBA work.
+  EXPECT_EQ(Run(true, WarmWork).first.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Run(false, WarmWork).first.Status,
+            FrameOffsetStatus::BudgetExceeded);
+  const auto [Short, Charged] = Run(true, 4);
+  EXPECT_EQ(Short.Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Charged, 4u);
+  const auto [NodeLimit, NodeWork] = Run(true, 65536, true);
+  EXPECT_EQ(NodeLimit.Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(NodeWork, 0u);
+}
+
 } // namespace
