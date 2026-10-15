@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 09eca35d8bd805528aff87341978b9aad368d02830f1ed3e8fb870f2e362b442 -->
+<!-- i18n-source: 15ab0786b9291fd6d8202718cc28811e93d8cac7e18b806c7a1aef443603b8de -->
 
 [← 文档索引](README.md)
 
@@ -1887,3 +1887,16 @@ Original owned nonroot ARM64 macOS O0/O1/O2 probes retain318 observations, inclu
 C, CLI and Python routes use all five image profiles without loading an analysis session, compare exact output and services, and reject malformed Booleans. Three matching ARM64 HVF identities execute under required-native policy. Current inventory requires94 methods per matching platform,282 on ARM64; the common native catalogue contains81 cases. Intel hardware, physical iOS, special-security/nonowner native effects, full dyld, Mach IPC and Apple frameworks remain unqualified or unfinished.
 
 The implementation uses the existing shared ownership authorizer and [pinned XNU ownership and link ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), plus [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No kernel implementation was copied.
+
+## 通过 lchown 修改路径末端对象的所有权
+
+`lchown`（BSD 364）修改路径末端对象，不跟随末端符号链接，悬空链接和循环链接也适用。中间链接仍正常解析，实际祖先目录仍需 SEARCH 权限。普通文件、目录和符号链接使用已有的独立 `ownership_mutations` 授权。有效的低 32 位 ID 提交请求的 ID 和固定 ctime；两个 ID 都为无效值 `UINT32_MAX` 时仍需提供者，并保持整个 stat 记录不变。创建标志、对象生命周期和元数据永久失效规则与既有所有权操作一致。
+
+共用工作负载核对完整的带哨兵记录、原始 BSD 返回、别名、移动、持有后删除和名称复用。虚拟变体输出独立编写的字节，并保持目标对象的授权独立。Intel 原生执行、实体 iOS 和完整 Apple 运行时及框架仍未验证或未完成。
+
+```text
+lchown364 / final symbolic vnode / existing ownership_mutations grants
+lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
+native preparation489 observations including258 lchown / ARM64 O0 O1 O2
+common native82 / mandatory95 per matching platform / ARM64 required285
+```

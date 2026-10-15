@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 09eca35d8bd805528aff87341978b9aad368d02830f1ed3e8fb870f2e362b442 -->
+<!-- i18n-source: 15ab0786b9291fd6d8202718cc28811e93d8cac7e18b806c7a1aef443603b8de -->
 
 [← Índice de documentación](README.md)
 
@@ -1781,3 +1781,16 @@ Original owned nonroot ARM64 macOS O0/O1/O2 probes retain318 observations, inclu
 C, CLI and Python routes use all five image profiles without loading an analysis session, compare exact output and services, and reject malformed Booleans. Three matching ARM64 HVF identities execute under required-native policy. Current inventory requires94 methods per matching platform,282 on ARM64; the common native catalogue contains81 cases. Intel hardware, physical iOS, special-security/nonowner native effects, full dyld, Mach IPC and Apple frameworks remain unqualified or unfinished.
 
 The implementation uses the existing shared ownership authorizer and [pinned XNU ownership and link ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), plus [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No kernel implementation was copied.
+
+## Propiedad del objeto final con lchown
+
+`lchown` (BSD 364) modifica el objeto final sin seguir su enlace simbólico, incluidos enlaces colgantes y cíclicos. Los enlaces intermedios se resuelven y los ancestros reales requieren SEARCH. Archivos ordinarios, directorios y enlaces simbólicos usan sus permisos independientes `ownership_mutations`. Los ID activos de 32 bits aplican los ID solicitados y el ctime fijo; dos ID inactivos `UINT32_MAX` todavía requieren un proveedor y conservan todo stat. Las banderas de creación, la vida del objeto y la invalidación permanente de metadatos siguen las mismas reglas de propiedad.
+
+La carga común comprueba registros completos protegidos, resultados BSD crudos, alias, movimientos, objetos retenidos tras borrarlos y nombres reutilizados. La variante virtual emite bytes escritos independientemente y mantiene separada la autoridad del destino. Intel nativo, iOS físico y los entornos Apple completos siguen sin verificar o incompletos.
+
+```text
+lchown364 / final symbolic vnode / existing ownership_mutations grants
+lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
+native preparation489 observations including258 lchown / ARM64 O0 O1 O2
+common native82 / mandatory95 per matching platform / ARM64 required285
+```

@@ -176,6 +176,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Access:
   case ServiceKind::FaccessAt:
   case ServiceKind::Chown:
+  case ServiceKind::Lchown:
   case ServiceKind::Fchown:
   case ServiceKind::FchownAt:
   case ServiceKind::Chmod:

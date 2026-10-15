@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 09eca35d8bd805528aff87341978b9aad368d02830f1ed3e8fb870f2e362b442 -->
+<!-- i18n-source: 15ab0786b9291fd6d8202718cc28811e93d8cac7e18b806c7a1aef443603b8de -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1781,3 +1781,16 @@ Original owned nonroot ARM64 macOS O0/O1/O2 probes retain318 observations, inclu
 C, CLI and Python routes use all five image profiles without loading an analysis session, compare exact output and services, and reject malformed Booleans. Three matching ARM64 HVF identities execute under required-native policy. Current inventory requires94 methods per matching platform,282 on ARM64; the common native catalogue contains81 cases. Intel hardware, physical iOS, special-security/nonowner native effects, full dyld, Mach IPC and Apple frameworks remain unqualified or unfinished.
 
 The implementation uses the existing shared ownership authorizer and [pinned XNU ownership and link ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), plus [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No kernel implementation was copied.
+
+## ملكية الكائن الأخير في المسار عبر lchown
+
+يعدّل `lchown` ‏(BSD 364) الكائن الأخير في المسار دون تتبع رابطه الرمزي، بما في ذلك الروابط المعلقة والدائرية. تبقى الروابط الوسطية قابلة للحل ويحتاج الأسلاف الفعليون إلى SEARCH. تستخدم الملفات العادية والأدلة والروابط الرمزية منح `ownership_mutations` المستقلة الموجودة. تثبّت المعرّفات الفعالة ذات 32 بت المعرّفات المطلوبة وctime الثابت؛ وحتى عند كون المعرّفين غير فعالين بقيمة `UINT32_MAX` يلزم المزوّد مع حفظ سجل stat كاملاً. تتبع أعلام الإنشاء وعمر الكائن والإبطال الدائم للبيانات الوصفية قواعد الملكية نفسها.
+
+يتحقق عبء العمل المشترك من السجلات الكاملة المحمية ونتائج BSD الخام والأسماء البديلة والنقل وحفظ الكائن بعد الحذف وإعادة استخدام الاسم. يخرج المتغير الافتراضي بايتات مؤلفة باستقلال ويبقي سلطة الهدف منفصلة. يظل Intel الأصلي وiOS الفعلي وبيئات Apple الكاملة غير متحقق منها أو غير مكتملة.
+
+```text
+lchown364 / final symbolic vnode / existing ownership_mutations grants
+lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
+native preparation489 observations including258 lchown / ARM64 O0 O1 O2
+common native82 / mandatory95 per matching platform / ARM64 required285
+```

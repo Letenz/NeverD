@@ -2676,3 +2676,16 @@ Original owned nonroot ARM64 macOS O0/O1/O2 probes retain318 observations, inclu
 C, CLI and Python routes use all five image profiles without loading an analysis session, compare exact output and services, and reject malformed Booleans. Three matching ARM64 HVF identities execute under required-native policy. Current inventory requires94 methods per matching platform,282 on ARM64; the common native catalogue contains81 cases. Intel hardware, physical iOS, special-security/nonowner native effects, full dyld, Mach IPC and Apple frameworks remain unqualified or unfinished.
 
 The implementation uses the existing shared ownership authorizer and [pinned XNU ownership and link ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), plus [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No kernel implementation was copied.
+
+## Final-object ownership through lchown
+
+`lchown` (BSD 364) changes the final pathname object without following its symbolic link, including dangling and cyclic links. Intermediate links still resolve, and actual ancestors require SEARCH. Ordinary regular files, directories and symbolic links use their existing independent `ownership_mutations` grants. Active low32 IDs commit the requested IDs and fixed ctime; two inactive `UINT32_MAX` IDs still require a provider and preserve the whole stat record. Creation flags, object lifetime and permanent metadata invalidation follow the same ownership rules.
+
+The shared workload checks complete guarded records, raw BSD results, aliases, moves, held unlink and name reuse. The virtual variant emits independently authored bytes and keeps target authority separate. Native Intel, physical iOS and full Apple runtimes/frameworks remain unverified or incomplete.
+
+```text
+lchown364 / final symbolic vnode / existing ownership_mutations grants
+lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
+native preparation489 observations including258 lchown / ARM64 O0 O1 O2
+common native82 / mandatory95 per matching platform / ARM64 required285
+```

@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 09eca35d8bd805528aff87341978b9aad368d02830f1ed3e8fb870f2e362b442 -->
+<!-- i18n-source: 15ab0786b9291fd6d8202718cc28811e93d8cac7e18b806c7a1aef443603b8de -->
 
 [← Index de la documentation](README.md)
 
@@ -1781,3 +1781,16 @@ Original owned nonroot ARM64 macOS O0/O1/O2 probes retain318 observations, inclu
 C, CLI and Python routes use all five image profiles without loading an analysis session, compare exact output and services, and reject malformed Booleans. Three matching ARM64 HVF identities execute under required-native policy. Current inventory requires94 methods per matching platform,282 on ARM64; the common native catalogue contains81 cases. Intel hardware, physical iOS, special-security/nonowner native effects, full dyld, Mach IPC and Apple frameworks remain unqualified or unfinished.
 
 The implementation uses the existing shared ownership authorizer and [pinned XNU ownership and link ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), plus [ordinary setattr authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). No kernel implementation was copied.
+
+## Propriété de l’objet final avec lchown
+
+`lchown` (BSD 364) modifie l’objet final du chemin sans suivre son lien symbolique, même pendant ou cyclique. Les liens intermédiaires sont résolus et les ancêtres réels exigent SEARCH. Fichiers ordinaires, répertoires et liens symboliques utilisent leurs autorisations indépendantes `ownership_mutations`. Les ID actifs sur 32 bits appliquent les ID demandés et le ctime fixe ; deux ID inactifs `UINT32_MAX` exigent encore un fournisseur et préservent le stat entier. Les indicateurs de création, la durée de vie des objets et l’invalidation définitive des métadonnées suivent les règles existantes.
+
+La charge commune vérifie les enregistrements complets protégés, les résultats BSD bruts, les alias, déplacements, suppressions avec objet conservé et noms réutilisés. La variante virtuelle produit des octets rédigés indépendamment et sépare l’autorité de la cible. Intel natif, iOS physique et les environnements Apple complets restent non vérifiés ou incomplets.
+
+```text
+lchown364 / final symbolic vnode / existing ownership_mutations grants
+lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
+native preparation489 observations including258 lchown / ARM64 O0 O1 O2
+common native82 / mandatory95 per matching platform / ARM64 required285
+```

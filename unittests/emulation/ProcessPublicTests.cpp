@@ -4446,6 +4446,123 @@ TEST_P(DarwinSymbolicOwnershipPublic, PreserveVnodeOwnershipAcrossCAndCLI) {
   }
 #endif
 }
+TEST_P(DarwinSymbolicOwnershipPublic,
+       LchownPreservesVnodeOwnershipAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto OutputFilePath = (Root / OutputFile).string();
+  const auto &[File, Profile] = GetParam();
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+  const uint64_t Class =
+      llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+  constexpr const char *Modes[] = {"lchown-ownership-mutations",
+                                   "virtual-lchown-ownership"};
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    SCOPED_TRACE(Variant);
+    const unsigned Kind = Variant < 2 ? Variant : 1;
+    const bool Missing = Variant >= 2, Late = Variant == 3;
+    auto Files = emulation::darwin_test::symbolicOwnershipFilesJSON(true);
+    auto &M = *Files.getAsObject()->getObject("ownership_mutations");
+    if (Variant == 2)
+      M["objects"] = llvm::json::Array{llvm::json::Object{
+          {"path", "/data"},
+          {"time", llvm::json::Object{{"seconds", 81}, {"nanoseconds", 82}}}}};
+    else if (Missing)
+      M["created_symbolic_link_objects"] = false;
+    llvm::json::Value Request(llvm::json::Object{
+        {"backend", "unicorn"},
+        {"instruction_quantum", 1024},
+        {"timeout_microseconds", 5000000},
+        {"arguments", llvm::json::Array{"guest", Modes[Kind],
+                                        Kind >= 2 ? "/dir/new" : "/dir/link"}},
+        {"darwin_files", std::move(Files)},
+        {"darwin_system",
+         llvm::cantFail(llvm::json::parse(
+             emulation::darwin_test::SymbolicOwnershipCredentialsJSON))}});
+    const auto Options = llvm::formatv("{0}", Request).str();
+    const auto BaseWanted =
+        emulation::darwin_test::symbolicOwnershipServices(Kind);
+    const auto Wanted =
+        emulation::darwin_test::symbolicOwnershipServices(Kind, true);
+    auto ExpectedOutput = emulation::darwin_test::symbolicOwnershipOutput(Kind);
+    unsigned Last = Wanted.size();
+    if (Missing) {
+      Last = 0;
+      while (Last != Wanted.size() &&
+             !(BaseWanted[Last].Number == 123 &&
+               BaseWanted[Last].Arguments[0] == (Late ? 8 : 3)))
+        ++Last;
+      ASSERT_NE(Last, Wanted.size());
+      ExpectedOutput = Late ? ExpectedOutput.substr(0, 6 * 160) : "";
+    }
+    for (unsigned Repeat = 0; Repeat != (Missing ? 1u : 2u); ++Repeat) {
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report));
+      const auto *O = Report->getAsObject();
+      ASSERT_NE(O, nullptr);
+      EXPECT_EQ(O->getString(field::Stop),
+                Missing ? "unsupported_service" : "exited");
+      EXPECT_EQ(O->getString(field::Stdout), llvm::toHex(ExpectedOutput, true));
+      EXPECT_EQ(O->getString(field::Stderr), "");
+      EXPECT_EQ(O->getString(field::Backend), "unicorn");
+      if (!Missing)
+        EXPECT_EQ(O->getInteger(field::ExitStatus), 58);
+      else
+        EXPECT_EQ(O->getString(field::Diagnostic),
+                  "Darwin object ownership provider is not configured");
+      const auto *Calls = O->getArray(field::Services);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(), Missing ? Last + 1 : Wanted.size());
+      for (unsigned I = 0; I != Calls->size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto *E = (*Calls)[I].getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | Wanted[I].Number, true));
+        const auto *Args = E->getArray(field::Arguments);
+        ASSERT_NE(Args, nullptr);
+        ASSERT_EQ(Args->size(), 6u);
+        for (unsigned J = 0; J != 6; ++J)
+          if (Wanted[I].Arguments[J])
+            EXPECT_EQ((*Args)[J].getAsString(),
+                      llvm::utohexstr(*Wanted[I].Arguments[J], true));
+        if (Missing && I == Last) {
+          EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
+          EXPECT_EQ(E->get(field::Error), nullptr);
+        } else {
+          EXPECT_EQ(E->getString(field::Result),
+                    llvm::utohexstr(Wanted[I].Value, true));
+          EXPECT_EQ(E->getBoolean(field::Error), Wanted[I].Error);
+        }
+      }
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      if (!Repeat) {
+        EXPECT_EQ(runCLIRequest(Path, Profile, Options, OutputFilePath),
+                  Missing ? process_cli::Incomplete
+                          : process_cli::GuestFailure);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(OutputFilePath, *Report));
+      }
+    }
+    (*Request.getAsObject()
+          ->getObject("darwin_files")
+          ->getObject("ownership_mutations"))["created_symbolic_link_objects"] =
+        1;
+    const auto Malformed = llvm::formatv("{0}", Request).str();
+    EXPECT_EQ(neverd_emulate_process_json(Session, Path.c_str(), Profile,
+                                          Malformed.c_str()),
+              nullptr);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+#endif
+}
 INSTANTIATE_TEST_SUITE_P(
     Platforms, DarwinSymbolicOwnershipPublic,
     testing::Values(std::pair{"macos-arm64", MacOSMachO64},

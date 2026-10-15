@@ -1131,8 +1131,11 @@ TEST(DarwinNative, SymbolicOwnershipWorkloadsMatchOwnedNativeLifetime) {
   const std::string Bytes("ab\0\xff"
                           "ef",
                           6);
-  for (bool Created : {false, true}) {
-    const auto Parent = Root / (Created ? "created" : "initial");
+  for (const char *Mode :
+       {"symbolic-ownership-mutations", "created-symbolic-ownership",
+        "lchown-ownership-mutations"}) {
+    const bool Created = llvm::StringRef(Mode) == "created-symbolic-ownership";
+    const auto Parent = Root / Mode;
     ASSERT_TRUE(std::filesystem::create_directories(Parent / "dir"));
     std::filesystem::permissions(Parent / "dir",
                                  std::filesystem::perms::owner_all);
@@ -1152,12 +1155,8 @@ TEST(DarwinNative, SymbolicOwnershipWorkloadsMatchOwnedNativeLifetime) {
     std::string LaunchError;
     bool ExecutionFailed = false;
     const auto Status = llvm::sys::ExecuteAndWait(
-        Program,
-        {Program,
-         Created ? "created-symbolic-ownership"
-                 : "symbolic-ownership-mutations",
-         Input},
-        std::nullopt, Redirects, 5, 0, &LaunchError, &ExecutionFailed);
+        Program, {Program, Mode, Input}, std::nullopt, Redirects, 5, 0,
+        &LaunchError, &ExecutionFailed);
     ASSERT_FALSE(ExecutionFailed) << LaunchError;
     auto Out = llvm::MemoryBuffer::getFile(Output),
          Err = llvm::MemoryBuffer::getFile(Error),
@@ -1523,7 +1522,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       if (llvm::StringRef(Test.Mode) == "symbolic-filesystem-observations")
         std::filesystem::create_symlink("data", CaseInput);
     } else if (llvm::StringRef(Test.Mode) == "symbolic-ownership-mutations" ||
-               llvm::StringRef(Test.Mode) == "created-symbolic-ownership") {
+               llvm::StringRef(Test.Mode) == "created-symbolic-ownership" ||
+               llvm::StringRef(Test.Mode) == "lchown-ownership-mutations") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "dir"));
       std::filesystem::permissions(Catalogue / "dir",
@@ -1536,7 +1536,7 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         ASSERT_TRUE(Data.good());
       }
       CaseInput = (Catalogue / "dir" / "link").string();
-      if (llvm::StringRef(Test.Mode) == "symbolic-ownership-mutations")
+      if (llvm::StringRef(Test.Mode) != "created-symbolic-ownership")
         std::filesystem::create_symlink("../data", CaseInput);
     } else if (llvm::StringRef(Test.Mode) == "created-directory-filesystem") {
       const auto Catalogue = Root / Test.Mode;

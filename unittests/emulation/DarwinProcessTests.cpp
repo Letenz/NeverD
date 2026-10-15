@@ -2891,6 +2891,80 @@ TEST_P(DarwinProcess, SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate) {
   }
 }
 
+TEST_P(DarwinProcess, LchownKeepsVnodeOwnershipAcrossNamespaceChanges) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials =
+      darwin_test::symbolicOwnershipCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr const char *Modes[] = {"lchown-ownership-mutations",
+                                   "virtual-lchown-ownership"};
+  for (unsigned Kind = 0; Kind != 2; ++Kind) {
+    SCOPED_TRACE(Modes[Kind]);
+    Options.Arguments[2] = Kind >= 2 ? "/dir/new" : "/dir/link";
+    Options.DarwinFiles = darwin_test::symbolicOwnershipOptions(true);
+    const auto BaseWanted = darwin_test::symbolicOwnershipServices(Kind);
+    const auto Wanted = darwin_test::symbolicOwnershipServices(Kind, true);
+    const auto Output = darwin_test::symbolicOwnershipOutput(Kind);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Repeat);
+      auto R = run(Modes[Kind]);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 58);
+      EXPECT_EQ(R->ReturnValue, 58u);
+      EXPECT_EQ(R->StandardOutput, Output);
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+        for (unsigned J = 0; J != 6; ++J)
+          if (Wanted[I].Arguments[J])
+            EXPECT_EQ(R->Services[I].Arguments[J], *Wanted[I].Arguments[J]);
+      }
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").GID, 31u);
+      EXPECT_EQ(Options.DarwinFiles->SymbolicLinks.at("/dir/link"),
+                (std::vector<uint8_t>{'.', '.', '/', 'd', 'a', 't', 'a'}));
+    }
+    for (bool Late : {false, true}) {
+      Options.DarwinFiles = darwin_test::symbolicOwnershipOptions(true);
+      if (Kind >= 2 || Late)
+        Options.DarwinFiles->OwnershipMutations->CreatedSymbolicLinkObjects =
+            false;
+      else
+        Options.DarwinFiles->OwnershipMutations->Objects.erase("/dir/link");
+      const uint64_t FD = Late ? 8 : 3;
+      unsigned Last = 0;
+      while (Last != Wanted.size() && !(BaseWanted[Last].Number == 123 &&
+                                        BaseWanted[Last].Arguments[0] == FD))
+        ++Last;
+      ASSERT_NE(Last, Wanted.size());
+      auto R = run(Modes[Kind]);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(R->Diagnostic,
+                "Darwin object ownership provider is not configured");
+      EXPECT_EQ(R->StandardOutput,
+                Late && (Kind & 1) ? Output.substr(0, 6 * 160) : "");
+      EXPECT_TRUE(R->StandardError.empty());
+      ASSERT_EQ(R->Services.size(), Last + 1);
+      EXPECT_EQ(R->Services.back().Number, Class | 364);
+      EXPECT_EQ(R->Services.back().Arguments[1], Late ? 501u : UINT32_MAX);
+      EXPECT_EQ(R->Services.back().Arguments[2],
+                Late ? (Kind & 1 ? 20u : 31u) : UINT32_MAX);
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_FALSE(R->Services.back().Error);
+    }
+  }
+}
+
 TEST_P(DarwinProcess,
        DirectoryOwnershipMutationsPreserveIndependentObjectAndNamespaceState) {
   Options.InstructionQuantum = 1024;
