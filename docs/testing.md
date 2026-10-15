@@ -3008,6 +3008,10 @@ writes, retained maxima and live subkey indices. Original
 enumeration and deletion through Unicorn/KVM/WHP/HVF with legacy/checked-x64
 contracts at preferred/rebased addresses; unavailable host backends skip
 explicitly.
+`driver_cstring_writes.c` uses the same backend/contract/base matrix for eight
+C string writers. Model tests cover copy padding versus append termination,
+zero-count narrow/wide differences, exact source boundaries, full-width counts,
+overlap, write preflight, paged IRQL restrictions and expired pool storage.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 

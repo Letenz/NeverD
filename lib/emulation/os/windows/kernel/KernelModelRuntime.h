@@ -85,6 +85,13 @@ llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
                                        GuestMemory &Memory,
                                        llvm::ArrayRef<uint64_t> A,
                                        unsigned UnitWidth);
+/// strcpy/wcscpy, or strcat/wcscat when Append is true. A third argument
+/// selects the counted form. Copy pads to the count; append always terminates.
+/// Overlap and invalid storage are rejected before publishing any output.
+llvm::Expected<uint64_t> cStringWrite(const KernelModel &Model,
+                                      GuestMemory &Memory,
+                                      llvm::ArrayRef<uint64_t> A,
+                                      unsigned UnitWidth, bool Append);
 /// How a comparison reports a mismatch: Normalized is strcmp/strncmp/wcscmp
 /// (-1, 0 or 1); Raw is wcsncmp (the raw unit difference); FoldedRaw is the
 /// case-insensitive family (ASCII A-Z folded to lowercase, then raw).
