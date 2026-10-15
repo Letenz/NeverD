@@ -254,6 +254,9 @@ Json hello() {
     for (const char *operation :
          {"local_types", "local_type", "local_types_source"})
       result["capabilities"].push_back(operation);
+  if (Engine::declaresLocalTypes())
+    for (const char *operation : {"local_types_declare", "local_types_forget"})
+      result["capabilities"].push_back(operation);
   if (Engine::findsDwarf())
     result["capabilities"].push_back("dwarf_reference");
   if (Engine::findsSymbolTables())

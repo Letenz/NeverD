@@ -16,6 +16,8 @@
 
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -239,6 +241,61 @@ int render(neverd_session_t Sess, raw_ostream &Out) {
   return 0;
 }
 
+/// The language a file's extension says its declarations are in.
+std::optional<StringRef> languageOfFile(StringRef Path) {
+  const StringRef Extension = sys::path::extension(Path);
+  if (Extension == ".h" || Extension == ".c")
+    return StringRef("c");
+  if (Extension == ".hpp" || Extension == ".hh" || Extension == ".hxx" ||
+      Extension == ".cpp" || Extension == ".cc" || Extension == ".cxx")
+    return StringRef("cpp");
+  if (Extension == ".rs")
+    return StringRef("rust");
+  if (Extension == ".go")
+    return StringRef("go");
+  return std::nullopt;
+}
+
+/// Adds the types of each --declare file; false with each problem printed
+/// as file:line:column.
+bool declare(neverd_session_t Sess) {
+  for (const std::string &Path : TypesDeclare) {
+    const std::optional<StringRef> Language = languageOfFile(Path);
+    if (!Language) {
+      WithColor::error() << Path
+                         << ": name C (.h), C++ (.hpp), Rust (.rs) or Go "
+                            "(.go) declarations\n";
+      return false;
+    }
+    auto Buffer = MemoryBuffer::getFile(Path);
+    if (!Buffer) {
+      WithColor::error() << "cannot read " << Path << ": "
+                         << Buffer.getError().message() << "\n";
+      return false;
+    }
+    const std::string Options =
+        text(json::Object{{"language", Language->str()}});
+    std::optional<json::Value> Reply =
+        reply(Sess,
+              neverd_local_types_declare(
+                  Sess, (*Buffer)->getBuffer().str().c_str(), Options.c_str()),
+              "types");
+    if (!Reply)
+      return false;
+    const json::Array *Problems = Reply->getAsObject()->getArray("problems");
+    if (Problems && !Problems->empty()) {
+      for (const json::Value &Value : *Problems)
+        if (const json::Object *Problem = Value.getAsObject())
+          WithColor::error()
+              << Path << ":" << Problem->getInteger("line").value_or(0) << ":"
+              << Problem->getInteger("column").value_or(0) << ": "
+              << Problem->getString("message").value_or("") << "\n";
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 int runTypes(neverd_session_t Sess) {
@@ -270,6 +327,8 @@ int runTypes(neverd_session_t Sess) {
     }
   }
   raw_ostream &Out = File ? *File : outs();
+  if (!declare(Sess))
+    return 1;
   if (TypeNames.empty() && !TypesAll)
     return list(Sess, Out);
   if (TypesLayout)

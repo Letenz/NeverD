@@ -3930,6 +3930,109 @@ private slots:
     types->setPage(0);
   }
 
+  void localTypesAreDeclaredEditedAndDeletedByIdasKeys() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.session.declaresLocalTypes());
+    bench.action(ActionId::ViewLocalTypes)->trigger();
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(types);
+    auto *list =
+        types->findChild<QTreeView *>(QStringLiteral("localTypesList"));
+    QVERIFY(list);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    types->showType(QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+
+    // Ins opens the editor over the list, the main window's keys notwith-
+    // standing; a problem stays in it at its place, and a declaration that
+    // reads adds its type and shows it.
+    QStringList titles;
+    bool problemShown = false, problemAtItsPlace = false;
+    int answers = 0;
+    QTimer editor;
+    connect(&editor, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *text = dialog ? dialog->findChild<QPlainTextEdit *>(
+                                QStringLiteral("declareEditor"))
+                          : nullptr;
+      auto *declare =
+          dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
+                 : nullptr;
+      auto *problems = dialog ? dialog->findChild<QListWidget *>(
+                                    QStringLiteral("declareProblems"))
+                              : nullptr;
+      if (!text || !declare || !problems || !declare->isEnabled())
+        return;
+      if (titles.size() == answers)
+        titles.append(dialog->windowTitle());
+      if (answers == 0 && !problems->isVisible()) {
+        text->setPlainText(QStringLiteral("struct BAD {\n  NOPE x;\n};"));
+        QTest::mouseClick(declare, Qt::LeftButton);
+        return;
+      }
+      if (answers == 0) {
+        problemShown = problems->count() == 1;
+        problemAtItsPlace = text->textCursor().blockNumber() == 1 &&
+                            text->textCursor().positionInBlock() == 2;
+        text->setPlainText(QStringLiteral("struct OWNER { void *Next; };"));
+        // Ctrl+Return declares from the editor.
+        ++answers;
+        QTest::keyClick(text, Qt::Key_Return, Qt::ControlModifier);
+        return;
+      }
+      if (answers == 1 &&
+          text->toPlainText().contains(QStringLiteral("struct OWNER"))) {
+        // Edit: the type shown, declared in the language shown.
+        ++answers;
+        QTest::mouseClick(declare, Qt::LeftButton);
+      }
+    });
+    editor.start(10);
+    QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        dialog->reject();
+    });
+    list->setFocus();
+    QTest::keyClick(list, Qt::Key_Insert);
+    QVERIFY(problemShown);
+    QVERIFY(problemAtItsPlace);
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
+
+    // Ctrl+E edits it, though the main window jumps to an entry point by
+    // the same key.
+    list->setFocus();
+    QTest::keyClick(list, Qt::Key_E, Qt::ControlModifier);
+    QTRY_COMPARE(answers, 2);
+    editor.stop();
+    QCOMPARE(titles.value(0), QStringLiteral("Add types"));
+    QCOMPARE(titles.value(1), QStringLiteral("Edit OWNER"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
+
+    // Del deletes the selected type once asked.
+    QTimer confirm;
+    connect(&confirm, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        confirm.stop();
+        QTest::mouseClick(box->button(QMessageBox::Yes), Qt::LeftButton);
+      }
+    });
+    confirm.start(10);
+    list->setFocus();
+    QTest::keyClick(list, Qt::Key_Delete);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    auto *summary =
+        types->findChild<QLabel *>(QStringLiteral("localTypesSummary"));
+    QVERIFY(summary);
+    QTRY_VERIFY(summary->text().contains(QStringLiteral("Deleted OWNER")));
+  }
+
   void viewsNarrowPastTheirRows() {
     // A status line or a row of buttons is cut at its view's edge.  Kept
     // whole, the disassembly's status line held its dock over 500 pixels

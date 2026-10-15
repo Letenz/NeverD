@@ -3610,5 +3610,131 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
         <source>Cannot export the types: %1</source>
         <translation>Impossible d'exporter les types : %1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>Ajouter des types depuis une déclaration</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>Modifier la déclaration du type</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>Supprimer les types sélectionnés</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Ajouter des types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Modifier le type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Supprimer des types…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>Une de vos déclarations ne se lit plus : %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>%n de vos déclarations ne se lit plus : %1</numerusform>
+            <numerusform>%n de vos déclarations ne se lisent plus : %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>Ajouter des types</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>Impossible de lire le type : %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>Modifier %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>%1 déclaré</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>%n type déclaré</numerusform>
+            <numerusform>%n types déclarés</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>Supprimer le type %1 ?</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>Supprimer %n type ?</numerusform>
+            <numerusform>Supprimer %n types ?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>Supprimer des types</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>%1 supprimé</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>%n type supprimé</numerusform>
+            <numerusform>%n types supprimés</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(%1 y fait encore référence)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(%n type y fait encore référence)</numerusform>
+            <numerusform>(%n types y font encore référence)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>Impossible de supprimer les types : %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>La fenêtre a été fermée</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>Déclarer des types</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>Déclarez des structures, unions, énumérations et typedefs. Un type portant le nom d'un type du programme le remplace.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>Déclarer</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>Lire les déclarations (Ctrl+Entrée)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>Ligne %1, colonne %2 : %3</translation>
+    </message>
 </context>
 </TS>

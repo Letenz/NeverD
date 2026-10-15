@@ -39,6 +39,8 @@
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
 #include "neverd/types/PDBTypeImport.h"
+#include "neverd/types/TypeParse.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -109,10 +111,26 @@ struct Session {
   types::PDBTypeImportStats LocalTypeStats;
   /// Where they came from: "pdb", or "none" for an image without types.
   std::string LocalTypesSource;
+  /// The declarations the user added, in order, read again over the
+  /// program's types whenever those are read anew.
+  /// A declaration adds the types its source declares; one with Forget
+  /// removes the types it names instead.
+  struct TypeDeclaration {
+    types::Language Lang = types::Language::C;
+    std::string Source;
+    std::vector<std::string> Forget;
+  };
+  std::vector<TypeDeclaration> TypeDeclarations;
+  /// What the declarations replayed over the program's types last met:
+  /// {declaration index, problem}.
+  std::vector<std::pair<size_t, types::SourceProblem>> DeclarationProblems;
+  /// Drops the program's types, read anew when next asked for; the user's
+  /// declarations stay, to be read again over them.
   void dropLocalTypes() {
     LocalTypes.reset();
     LocalTypeStats = {};
     LocalTypesSource.clear();
+    DeclarationProblems.clear();
   }
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
@@ -937,6 +955,12 @@ struct PipelineRunner {
   bool load(const char *InputPath, std::string &Err, const Session *Policy);
   bool run(PipelineOptions Opts, std::string &Err);
 };
+
+/// Writes \p Values to the sidecar \p Path through a temporary file, so a
+/// reader sees the old file or the new one; false with the session's error
+/// naming \p Kind.
+bool saveSidecar(Session *S, const std::filesystem::path &Path,
+                 llvm::json::Value Values, llvm::StringRef Kind);
 
 } // namespace sdk
 } // namespace neverd

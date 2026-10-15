@@ -3634,5 +3634,151 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Cannot export the types: %1</source>
         <translation>تعذّر تصدير الأنواع: %1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>إضافة أنواع من تصريح</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>تحرير تصريح النوع</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>حذف الأنواع المحددة</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>إضافة أنواع…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>تحرير النوع…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>حذف الأنواع…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>لم يعد أحد تصريحاتك قابلاً للقراءة: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>لم يعد %n تصريح من تصريحاتك قابلاً للقراءة: %1</numerusform>
+            <numerusform>لم يعد %n تصريح من تصريحاتك قابلاً للقراءة: %1</numerusform>
+            <numerusform>لم يعد %n تصريحان من تصريحاتك قابلين للقراءة: %1</numerusform>
+            <numerusform>لم تعد %n تصريحات من تصريحاتك قابلة للقراءة: %1</numerusform>
+            <numerusform>لم يعد %n تصريحًا من تصريحاتك قابلاً للقراءة: %1</numerusform>
+            <numerusform>لم يعد %n تصريح من تصريحاتك قابلاً للقراءة: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>إضافة أنواع</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>تعذّرت قراءة النوع: %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>تحرير %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>تم تصريح %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>تم تصريح %n نوع</numerusform>
+            <numerusform>تم تصريح %n نوع</numerusform>
+            <numerusform>تم تصريح %n نوعين</numerusform>
+            <numerusform>تم تصريح %n أنواع</numerusform>
+            <numerusform>تم تصريح %n نوعًا</numerusform>
+            <numerusform>تم تصريح %n نوع</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>هل تريد حذف النوع %1؟</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>هل تريد حذف %n نوع؟</numerusform>
+            <numerusform>هل تريد حذف %n نوع؟</numerusform>
+            <numerusform>هل تريد حذف %n نوعين؟</numerusform>
+            <numerusform>هل تريد حذف %n أنواع؟</numerusform>
+            <numerusform>هل تريد حذف %n نوعًا؟</numerusform>
+            <numerusform>هل تريد حذف %n نوع؟</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>حذف الأنواع</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>تم حذف %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>تم حذف %n نوع</numerusform>
+            <numerusform>تم حذف %n نوع</numerusform>
+            <numerusform>تم حذف %n نوعين</numerusform>
+            <numerusform>تم حذف %n أنواع</numerusform>
+            <numerusform>تم حذف %n نوعًا</numerusform>
+            <numerusform>تم حذف %n نوع</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(لا يزال %1 يشير إليه)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(لا يزال %n نوع يشير إليه)</numerusform>
+            <numerusform>(لا يزال %n نوع يشير إليه)</numerusform>
+            <numerusform>(لا يزال %n نوعان يشيران إليه)</numerusform>
+            <numerusform>(لا تزال %n أنواع تشير إليه)</numerusform>
+            <numerusform>(لا يزال %n نوعًا يشير إليه)</numerusform>
+            <numerusform>(لا يزال %n نوع يشير إليه)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>تعذّر حذف الأنواع: %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>أُغلقت النافذة</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>تصريح الأنواع</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>صرّح ببنى واتحادات وتعدادات وأسماء typedef. النوع الذي يحمل اسم أحد أنواع البرنامج يحل محله.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>تصريح</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>قراءة التصريحات ‎(Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>السطر %1، العمود %2: %3</translation>
+    </message>
 </context>
 </TS>

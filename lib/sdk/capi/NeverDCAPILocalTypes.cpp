@@ -16,10 +16,15 @@
 #include "SessionImpl.h"
 
 #include "neverd/debug/PDBLoader.h"
+#include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectWriteLock.h"
 #include "neverd/types/TypeJSON.h"
+#include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -34,14 +39,114 @@ types::DataModel dataModelOf(const BinaryImage &Img) {
                                           : types::DataModel::LP64;
 }
 
+/// Applies \p Declaration to \p Library: the types its source declares, or
+/// the removal of those it names.
+types::ParseResult apply(const Session::TypeDeclaration &Declaration,
+                         types::TypeLibrary &Library) {
+  types::ParseResult Result;
+  if (!Declaration.Forget.empty()) {
+    for (const std::string &Name : Declaration.Forget)
+      if (!Library.remove(Name))
+        Result.Problems.push_back({0, 0, "no type is named " + Name});
+    return Result;
+  }
+  types::ParseOptions Options;
+  Options.Lang = Declaration.Lang;
+  Options.Rules = types::defaultRules(Library.dataModel());
+  Options.Origin = types::TypeOrigin::User;
+  return types::parseTypes(Declaration.Source, Library, Options);
+}
+
+/// The user's declarations, read again over freshly read types.  One the
+/// program's types no longer admit, as those of another PDB may not, is
+/// left out, and what it met is kept to report.
+void redeclare(Session &S) {
+  S.DeclarationProblems.clear();
+  for (size_t I = 0; I < S.TypeDeclarations.size(); ++I)
+    for (types::SourceProblem &Problem :
+         apply(S.TypeDeclarations[I], *S.LocalTypes).Problems)
+      S.DeclarationProblems.emplace_back(I, std::move(Problem));
+}
+
+std::filesystem::path declarationsPath(const Session &S) {
+  auto Path = S.FilePath;
+  Path += ".neverd-types.json";
+  return Path;
+}
+
+llvm::json::Array declarationRows(const Session &S) {
+  llvm::json::Array Rows;
+  for (const Session::TypeDeclaration &Declaration : S.TypeDeclarations) {
+    if (!Declaration.Forget.empty()) {
+      llvm::json::Array Names;
+      for (const std::string &Name : Declaration.Forget)
+        Names.push_back(jsonSafeText(Name));
+      Rows.push_back(llvm::json::Object{{"forget", std::move(Names)}});
+      continue;
+    }
+    Rows.push_back(
+        llvm::json::Object{{"language", types::languageId(Declaration.Lang)},
+                           {"source", jsonSafeText(Declaration.Source)}});
+  }
+  return Rows;
+}
+
+/// The declarations \p Rows holds, or none with \p Error.
+std::optional<std::vector<Session::TypeDeclaration>>
+parseDeclarations(const llvm::json::Value &Rows, std::string &Error) {
+  const llvm::json::Array *List = Rows.getAsArray();
+  if (!List) {
+    Error = "the type declarations are no list";
+    return std::nullopt;
+  }
+  std::vector<Session::TypeDeclaration> Declarations;
+  for (const llvm::json::Value &Row : *List) {
+    const llvm::json::Object *Object = Row.getAsObject();
+    Session::TypeDeclaration Declaration;
+    if (Object && Object->get("forget")) {
+      const llvm::json::Array *Names = Object->getArray("forget");
+      if (!Names || Names->empty()) {
+        Error = "a removal names no types";
+        return std::nullopt;
+      }
+      for (const llvm::json::Value &Name : *Names) {
+        std::optional<llvm::StringRef> Text = Name.getAsString();
+        if (!Text || Text->empty()) {
+          Error = "a removal names a type by no text";
+          return std::nullopt;
+        }
+        Declaration.Forget.push_back(Text->str());
+      }
+      Declarations.push_back(std::move(Declaration));
+      continue;
+    }
+    std::optional<llvm::StringRef> Language =
+        Object ? Object->getString("language") : std::nullopt;
+    std::optional<types::Language> Lang =
+        Language ? types::languageNamed(*Language) : std::nullopt;
+    std::optional<llvm::StringRef> Source =
+        Object ? Object->getString("source") : std::nullopt;
+    if (!Lang || !Source) {
+      Error = "a type declaration needs a language (c, cpp, rust or go) and "
+              "its source";
+      return std::nullopt;
+    }
+    Declaration.Lang = *Lang;
+    Declaration.Source = Source->str();
+    Declarations.push_back(std::move(Declaration));
+  }
+  return Declarations;
+}
+
 /// The session's local types, read from its PDB the first time; null with
 /// the session's error when they cannot be read.
-const types::TypeLibrary *localTypes(Session &S) {
+types::TypeLibrary *localTypes(Session &S) {
   if (S.LocalTypes)
     return S.LocalTypes.get();
   if (S.DbgKind != DebugInfoKind::PDB || !S.Dbg) {
     S.LocalTypes = std::make_unique<types::TypeLibrary>(dataModelOf(S.Img));
     S.LocalTypesSource = "none";
+    redeclare(S);
     return S.LocalTypes.get();
   }
   types::PDBTypeImportStats Stats;
@@ -73,6 +178,7 @@ const types::TypeLibrary *localTypes(Session &S) {
   S.LocalTypes = std::move(Library);
   S.LocalTypeStats = std::move(Stats);
   S.LocalTypesSource = "pdb";
+  redeclare(S);
   return S.LocalTypes.get();
 }
 
@@ -197,6 +303,16 @@ const char *neverd_local_types_json(neverd_session_t Sess,
                           {"declaredOnly", S->LocalTypeStats.DeclaredOnly},
                           {"nestingMismatches", std::move(Mismatches)}}},
       {"types", std::move(Types)}};
+  if (!S->DeclarationProblems.empty()) {
+    llvm::json::Array Problems;
+    for (const auto &[Index, Problem] : S->DeclarationProblems)
+      Problems.push_back(
+          llvm::json::Object{{"declaration", static_cast<int64_t>(Index)},
+                             {"line", Problem.Line},
+                             {"column", Problem.Column},
+                             {"message", jsonSafeText(Problem.Message)}});
+    Result["declarationProblems"] = std::move(Problems);
+  }
   if (Lang) {
     llvm::json::Array Renamed;
     for (const auto &[Name, Spelled] : types::renamedNames(*Library, *Lang))
@@ -301,6 +417,179 @@ const char *neverd_local_types_source(neverd_session_t Sess,
     return dupStr(Text);
   }
   return dupStr(types::renderTypes(*Library, Roots, Render));
+}
+
+const char *neverd_local_types_declare(neverd_session_t Sess,
+                                       const char *Source,
+                                       const char *OptionsJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  std::optional<llvm::json::Object> Options = options(*S, OptionsJson);
+  if (!Options)
+    return nullptr;
+  Session::TypeDeclaration Declaration;
+  if (const llvm::json::Value *Value = Options->get("language")) {
+    std::optional<llvm::StringRef> Id = Value->getAsString();
+    std::optional<types::Language> Lang =
+        Id ? types::languageNamed(*Id) : std::nullopt;
+    if (!Lang) {
+      S->setError("\"language\" must be c, cpp, rust or go");
+      return nullptr;
+    }
+    Declaration.Lang = *Lang;
+  }
+  types::TypeLibrary *Library = localTypes(*S);
+  if (!Library)
+    return nullptr;
+  Declaration.Source = Source ? Source : "";
+  const types::ParseResult Result = apply(Declaration, *Library);
+  if (Result.ok())
+    S->TypeDeclarations.push_back(std::move(Declaration));
+  llvm::json::Array Types, Prototypes, Problems;
+  for (const std::string &Name : Result.Types)
+    Types.push_back(jsonSafeText(Name));
+  for (const std::string &Name : Result.Prototypes)
+    Prototypes.push_back(jsonSafeText(Name));
+  for (const types::SourceProblem &Problem : Result.Problems)
+    Problems.push_back(
+        llvm::json::Object{{"line", Problem.Line},
+                           {"column", Problem.Column},
+                           {"message", jsonSafeText(Problem.Message)}});
+  return dupStr(jsonToString(llvm::json::Value(
+      llvm::json::Object{{"types", std::move(Types)},
+                         {"prototypes", std::move(Prototypes)},
+                         {"problems", std::move(Problems)}})));
+}
+
+const char *neverd_local_types_forget(neverd_session_t Sess,
+                                      const char *NamesJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  llvm::Expected<llvm::json::Value> Parsed =
+      llvm::json::parse(NamesJson ? NamesJson : "");
+  if (!Parsed) {
+    S->setError("the names are no JSON: " + llvm::toString(Parsed.takeError()));
+    return nullptr;
+  }
+  std::string Error;
+  std::optional<std::vector<Session::TypeDeclaration>> Removal =
+      parseDeclarations(
+          llvm::json::Array{llvm::json::Object{{"forget", std::move(*Parsed)}}},
+          Error);
+  if (!Removal) {
+    S->setError(Error == "a removal names no types"
+                    ? "name the types to remove in a list"
+                    : Error);
+    return nullptr;
+  }
+  types::TypeLibrary *Library = localTypes(*S);
+  if (!Library)
+    return nullptr;
+  Session::TypeDeclaration &Declaration = Removal->front();
+  for (const std::string &Name : Declaration.Forget)
+    if (!Library->find(Name)) {
+      S->setError("no type is named " + Name);
+      return nullptr;
+    }
+  llvm::StringSet<> Removed;
+  for (const std::string &Name : Declaration.Forget)
+    Removed.insert(Name);
+  apply(Declaration, *Library);
+  // The types that still name one removed.
+  llvm::json::Array UsedBy;
+  for (const types::LocalType *Type : Library->types())
+    for (const std::string &Named : types::mentionedTypeNames(*Type))
+      if (Removed.contains(Named)) {
+        UsedBy.push_back(jsonSafeText(Type->Name));
+        break;
+      }
+  llvm::json::Array Names;
+  for (const std::string &Name : Declaration.Forget)
+    Names.push_back(jsonSafeText(Name));
+  S->TypeDeclarations.push_back(std::move(Declaration));
+  return dupStr(jsonToString(llvm::json::Value(llvm::json::Object{
+      {"removed", std::move(Names)}, {"usedBy", std::move(UsedBy)}})));
+}
+
+const char *neverd_type_declarations_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  return dupStr(jsonToString(llvm::json::Value(declarationRows(*S))));
+}
+
+int neverd_type_declarations_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->requireFileBacked() || !S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, declarationsPath(*S), declarationRows(*S),
+                     "type declarations")
+             ? 0
+             : -1;
+}
+
+int neverd_type_declarations_load(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->requireFileBacked() || !S->Loaded)
+    return -1;
+  const std::filesystem::path Path = declarationsPath(*S);
+  std::error_code EC;
+  const bool Exists = std::filesystem::exists(Path, EC);
+  if (EC) {
+    S->setError("cannot inspect type declarations: " + EC.message());
+    return -1;
+  }
+  std::vector<Session::TypeDeclaration> Declarations;
+  if (Exists) {
+    auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
+    if (!Buffer) {
+      S->setError("cannot read type declarations: " +
+                  Buffer.getError().message());
+      return -1;
+    }
+    llvm::Expected<llvm::json::Value> Parsed =
+        llvm::json::parse((*Buffer)->getBuffer());
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      S->setError("type declarations sidecar is not valid JSON");
+      return -1;
+    }
+    std::string Error;
+    std::optional<std::vector<Session::TypeDeclaration>> Read =
+        parseDeclarations(*Parsed, Error);
+    if (!Read) {
+      S->setError("type declarations sidecar: " + Error);
+      return -1;
+    }
+    Declarations = std::move(*Read);
+  }
+  S->TypeDeclarations = std::move(Declarations);
+  S->dropLocalTypes();
+  return 0;
 }
 
 } // extern "C"

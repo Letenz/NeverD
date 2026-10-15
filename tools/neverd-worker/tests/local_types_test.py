@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The program's local types: a list, one type laid out, and source."""
 from contextlib import ExitStack
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -43,6 +44,34 @@ def run(executable):
         rust = ok(owner, "local_types_source", {"language": "rust", "types": ["_PACKED"],
                                                 "dependencies": False})
         assert rust["language"] == "rust" and "#[repr(C, packed(1))]" in rust["source"]
+
+        # Declared types join the program's, and the project keeps them.
+        assert "local_types_declare" in owner.hello["capabilities"]
+        declared = ok(owner, "local_types_declare", {
+            "language": "rust",
+            "source": "#[repr(C)] pub struct OWNER { pub Device: *mut _DEVICE, pub Count: u32 }"})
+        assert declared["types"] == ["OWNER"] and declared["problems"] == [], declared
+        assert ok(owner, "local_type", {"name": "OWNER"})["size"] == 16
+        problem = ok(owner, "local_types_declare", {"language": "c", "source": "struct B {\n  NOPE x;\n};"})
+        assert problem["problems"][0]["line"] == 2 and problem["problems"][0]["column"] == 3, problem
+        forgot = ok(owner, "local_types_forget", {"names": ["_PACKED"]})
+        assert forgot["removed"] == ["_PACKED"], forgot
+        sidecar = binary.with_name(binary.name + ".neverd-types.json")
+        assert sidecar.exists()
+        rows = json.loads(sidecar.read_text())
+        assert [row.get("language") for row in rows] == ["rust", None], rows
+        assert rows[1] == {"forget": ["_PACKED"]}
+        bad = owner.call("local_types_forget", {"names": "_PACKED"})
+        assert bad["status"] == "error" and bad["error"]["code"] == "invalid_request", bad
+
+        # The analysis replica reads the project's types as they were left,
+        # and declares none.
+        replica = clients.enter_context(Client(executable))
+        ok(replica, "analysis_restore", ok(owner, "analysis_snapshot"))
+        assert ok(replica, "local_type", {"name": "OWNER"})["size"] == 16
+        assert ok(replica, "local_types", {"filter": "packed"})["types"] == []
+        refused = replica.call("local_types_declare", {"source": "struct C { int c; };"})
+        assert refused["error"]["code"] == "read_only", refused
 
         missing = owner.call("local_type", {"name": "_NO_SUCH_TYPE"})
         assert missing["status"] == "error" and missing["error"]["code"] == "local_types_failed", missing

@@ -76,7 +76,9 @@ bool command(const QString &operation) {
                                         "history_reset",
                                         "string_options",
                                         "contribution_register",
-                                        "contribution_unregister"};
+                                        "contribution_unregister",
+                                        "local_types_declare",
+                                        "local_types_forget"};
   return operations.contains(operation);
 }
 
