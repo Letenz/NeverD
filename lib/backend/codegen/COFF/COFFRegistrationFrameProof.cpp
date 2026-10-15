@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/RegistrationFrameAddress.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/X86RegistrationLayout.h"
+#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 #include "neverd/ir/RegistrationCall.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionCommon.h"
@@ -801,12 +802,30 @@ llvm::Error validateFramePrivacy(
                                       ? llvm::dyn_cast<llvm::IntrinsicInst>(
                                             Call->getArgOperand(1))
                                       : nullptr;
-              if (Function != &Parent || !Abnormal ||
-                  Abnormal->getBitWidth() != 8 ||
-                  Abnormal->getZExtValue() > 1 || !Frame ||
-                  Frame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
+              if (!Abnormal || Abnormal->getBitWidth() != 8 ||
+                  Abnormal->getZExtValue() > 1 ||
                   Call->getCallingConv() != Callee->getCallingConv())
                 return Reject();
+              if (Function == &Parent) {
+                if (!Frame ||
+                    Frame->getIntrinsicID() != llvm::Intrinsic::localaddress)
+                  return Reject("ordinary finally call changed its normal "
+                                "parent-frame ABI");
+              } else {
+                // An outlined finally forwards only its physical parent
+                // frame. Source occurrence, near return and callee ownership
+                // are authenticated separately by bindSEHFinallyCalls.
+                const auto *ParentFrame =
+                    getX86RegistrationSEHJumpParentFrame(*Function, Parent);
+                if (Cxx || !SEH || !Abnormal->isZero() ||
+                    !Function->getReturnType()->isVoidTy() ||
+                    Function->arg_size() != 2 || !ParentFrame ||
+                    Call->getArgOperand(1) != ParentFrame ||
+                    !llvm::isa<llvm::CallInst>(Call) ||
+                    !Call->getMetadata(
+                        windows_eh_md::RegistrationFinallyCallAttachment))
+                  return Reject();
+              }
               continue;
             }
             if (llvm::any_of(Call->operands(), [&](const auto &Use) {

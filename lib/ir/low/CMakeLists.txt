@@ -35,6 +35,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateCookies.cpp
   X86/RegistrationStateDispatch.cpp
   X86/RegistrationStateFinallyCall.cpp
+  X86/RegistrationStateSEHCall.cpp
   X86/RegistrationStateSEHExit.cpp
   X86/RegistrationStateSEHException.cpp
   X86/RegistrationStateLocalUnwind.cpp
@@ -53,6 +54,8 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateTransfer.cpp
   X86/RegistrationStateUnwind.cpp
   X86/RegistrationFinallyFrame.cpp
+  X86/RegistrationNestedFinallyFrame.cpp
+  X86/RegistrationFilterFrame.cpp
   X86/RegistrationFrame.cpp
   X86/RegistrationFrameMemory.cpp
   X86/RegistrationFrameCallback.cpp
@@ -80,6 +83,7 @@ add_neverd_component_library(NeverDIRLow
   GuardedZeroSelect.cpp
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
+  X86/RegistrationCallbackImage.cpp
   X86/RegistrationCFG.cpp
   X86/RegistrationCleanupABI.cpp
   X86/RegistrationCleanupFrame.cpp

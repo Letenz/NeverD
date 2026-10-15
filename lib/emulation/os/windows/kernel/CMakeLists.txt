@@ -65,6 +65,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelMemoryCalls.cpp
   KernelModelBugCheck.cpp
   KernelModelIO.cpp
+  KernelModelObjects.cpp
   KernelModelUserMemory.cpp
   KernelModelPhysicalMemory.cpp
   KernelModelMDL.cpp
@@ -95,6 +96,10 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelRemoveLocks.cpp
   KernelRemoveLocks.cpp
   KernelModelRuntime.cpp
+  KernelModelRundown.cpp
+  KernelModelLookaside.cpp
+  KernelModelFastMutex.cpp
+  KernelModelExecutiveResources.cpp
   KernelModelScheduling.cpp
   KernelModelSLists.cpp
   KernelModelWaits.cpp

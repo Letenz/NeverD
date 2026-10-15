@@ -207,7 +207,8 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
                               Options.Scheduling.has_value());
   ConfiguredPnpDevices = Options.PnpDevices;
-  if (auto E = Registry.initialize(Options.Registry))
+  if (auto E = Registry.initialize(Options.Registry,
+                                   Options.RegistrySystemTime100ns))
     return E;
   if (Exports) {
     auto Modules = makeKernelModuleImages(*Exports);
@@ -689,6 +690,12 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return modelError("overflowing guest access in Windows model");
   if (auto E = validateBugCheckAccess(Address, Size, IsWrite))
     return E;
+  if (auto E = validateLookasideAccess(Address, Size, IsWrite))
+    return E;
+  if (auto E = validateFastMutexAccess(Address, Size, IsWrite))
+    return E;
+  if (auto E = validateExecutiveResourceAccess(Address, Size))
+    return E;
   const uint64_t End = Address + Size;
   if (Address < profile::ProcessorEnvironmentBase + profile::PageSize &&
       profile::ProcessorEnvironmentBase < End)
@@ -764,12 +771,12 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   for (const auto &[ProcessID, Object] : ProcessObjects)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque process object");
-  for (const auto &[Object, Thread] : SystemThreads)
+  for (const auto &[Object, Thread] : ThreadObjects)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque thread object");
-  for (const auto &[Thread, Object] : CurrentThreadObjects)
+  for (const auto &[Kind, Object] : ObjectTypes)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
-      return modelError("guest access to an opaque thread object");
+      return modelError("guest access to an opaque object type");
   for (const auto &[Handle, Owner] : PoFxDeviceObjects)
     if (Address < Handle + profile::PointerSize && Handle < End)
       return modelError("guest access to an opaque PoFx handle");

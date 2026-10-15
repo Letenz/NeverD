@@ -1238,3 +1238,50 @@ TEST_F(PEFixedImageTest, RawCodeFrameNormalizationCannotDropBusinessInput) {
     EXPECT_FALSE(R.RawEnvironment);
   }
 }
+
+TEST_F(PEFixedImageTest, RawCodeCmpxchgReceiptBindsOrdering) {
+  constexpr va_t Address = 0x400000;
+  auto O = rawOptions(Address);
+  // LOCK CMPXCHG qword ptr [rsp-8],rdx; RET. Use the existing complete fixed
+  // image plus an owned supplemental code declaration, not a forged receipt.
+  O.X64CodeRegions[0].Bytes = {0xf0, 0x48, 0x0f, 0xb1, 0x54, 0x24, 0xf8, 0xc3};
+  ASSERT_FALSE(O.ExternalStoresPreserveEntryReturnSlot);
+  const auto Good = specializeBinaryInterpreter(Image, Address, O);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  ASSERT_TRUE(Good.RawEnvironment);
+  ASSERT_TRUE(Good.RawEnvironment->Domain);
+  EXPECT_FALSE(Good.RawEnvironment->Domain->Declaration
+                   .ExternalStoresPreserveEntryReturnSlot);
+  auto Valid = validateSpecializationRawEnvironment(Good, O);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Good;
+    unsigned Atomics = 0;
+    for (auto &B : Changed.Residual.Blocks)
+      for (auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+          ++Atomics;
+          ASSERT_EQ(Op.NumInputs, 3u);
+          ASSERT_EQ(Op.Inputs[2].Size, 8u);
+          ASSERT_EQ(Op.MemoryOrdering,
+                    NdMemoryOrdering::SequentiallyConsistent);
+          ASSERT_EQ(Op.MemoryAddressSpace, NdMemoryAddressSpace::Default);
+          if (Mutation == 0)
+            Op.MemoryOrdering = NdMemoryOrdering::Relaxed;
+          else if (Mutation == 1)
+            Op.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+          else
+            Op.Inputs[2] = NdVar::scalar(0x12345678, 8);
+        }
+    ASSERT_EQ(Atomics, 1u);
+    auto Error = validateSpecializationRawEnvironment(Changed, O);
+    ASSERT_TRUE(bool(Error));
+    EXPECT_NE(
+        llvm::toString(std::move(Error)).find("graph differs from its receipt"),
+        std::string::npos);
+  }
+  auto Copy = Good;
+  auto ValidCopy = validateSpecializationRawEnvironment(Copy, O);
+  EXPECT_FALSE(bool(ValidCopy)) << llvm::toString(std::move(ValidCopy));
+}

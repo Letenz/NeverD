@@ -239,6 +239,22 @@ reads. It rejects altered imports, values, attributes and reordered reads.
 Closed ordinary and callback instruction graphs exclude trailing helper code
 from inferred registration ranges, even without alignment padding.
 
+EH3 finally callbacks also retain checked `RaiseException` invocations and
+read their arguments from their own outlined stack. A nonlocal unwind may
+continue through such a raise when the active filter search proves a
+continue-execution disposition. The same frame interpreter propagates filter
+writes back to the suspended finally, preserves its private stack, and rejects
+changes to registration administration or a live jump buffer. Mapped PE data,
+including zero-fill storage, retains its runtime values and access permissions;
+overlapping mappings, import writes and escaping frame pointers refuse.
+
+Ordinary calls from one finally callback to another retain the same physical
+parent frame and give each invocation its own private stack. The source near
+return proves the exact continuation and suspended caller stack; native calls
+pass a zero abnormal flag. Installation replays each source call's callback
+owner, target, frame and calling convention. Unobserved scalar return chains
+are removed by exact clone identity; an observable result refuses atomically.
+
 Call-free parent blocks reached at several proved scope levels select their
 asynchronous SEH interval from the protected logical state slot. The body runs
 once; entry and exit use the same captured selector. Installation independently

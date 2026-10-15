@@ -9,6 +9,8 @@
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/lift/X86Regs.h"
 
+#include <array>
+
 namespace neverd::analysis::x64 {
 
 inline constexpr uint64_t StackPointer = x86reg::RSP;
@@ -27,6 +29,20 @@ llvm::Expected<RawEnvironmentPreparation>
 validateRawEnvironmentDeclarations(const SpecializationOptions &Options);
 
 bool runtimeFlagsIntrinsic(const LowOp &Op);
+
+struct RuntimeTimestampRead {
+  std::array<LowOp, 3> Ops;
+  std::array<NdVar, 2> PlaceholderOutputs;
+};
+
+/// Match the complete canonical x64 RDTSC bundle and bind one caller-supplied
+/// sample to its primary result and two instruction-local output placeholders.
+/// The original operation remains a runtime read. This scalar transition gives
+/// no timestamp, privilege, nonfaulting, source or native-proof certificate.
+std::optional<RuntimeTimestampRead>
+lowerRuntimeTimestampRead(const SpecializationInstruction &Instruction,
+                          NdVar Sample);
+
 bool isRetainedNativeTrap(const SpecializationInstruction &Insn);
 bool isCetDisabledProjection(const SpecializationInstruction &Insn);
 

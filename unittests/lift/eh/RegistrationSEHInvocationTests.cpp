@@ -217,7 +217,7 @@ TEST(RegistrationState, FinallyInvocationsResumeOnlyTheirCheckedParent) {
 }
 
 TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
-  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 17; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = invocationFrame(0, true);
     auto &Outer = F.Blocks[6];
@@ -258,27 +258,83 @@ TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
       Inner.InstructionBoundaries.back().ControlFlags =
           LowInstructionControlFlag::Return;
     }
+    const bool PrivateStacks = Mutation >= 6;
+    if (PrivateStacks) {
+      Outer.Ops.clear();
+      emitOp(Outer, 0x1800, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Outer, 0x1800, NdOp::STORE, {},
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(7, 4)});
+      emitOp(Outer, 0x1802, NdOp::CALL, {}, {NdVar::cst(0x1850, 4)});
+      Outer.EndAddr = 0x1807;
+      Outer.InstructionBoundaries = {{0x1800, 2, 0, 2}, {0x1802, 5, 2, 1}};
+      Outer.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+      Outer.InstructionBoundaries.back().ControlFlags =
+          LowInstructionControlFlag::Call;
+      Outer.InstructionBoundaries.back().Immediate = 0x1850;
+      Return.StartAddr = 0x1807;
+      Return.EndAddr = 0x1809;
+      Return.Ops.clear();
+      emitOp(Return, 0x1807, NdOp::LOAD, NdVar::reg(x86reg::RDX, 4),
+             {NdVar::reg(x86reg::RSP, 4)});
+      emitOp(Return, 0x1807, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Return, 0x1808, NdOp::RETURN, {}, {});
+      Return.InstructionBoundaries = {{0x1807, 1, 0, 2}, {0x1808, 1, 2, 1}};
+      Return.InstructionBoundaries.back().Control =
+          LowInstructionControl::Return;
+      Return.InstructionBoundaries.back().ControlFlags =
+          LowInstructionControlFlag::Return;
+      Inner.Ops.clear();
+      emitOp(Inner, 0x1850, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Inner, 0x1850, NdOp::STORE, {},
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(9, 4)});
+      emitOp(Inner, 0x1852, NdOp::LOAD, NdVar::reg(x86reg::RDX, 4),
+             {NdVar::reg(x86reg::RSP, 4)});
+      emitOp(Inner, 0x1852, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Inner, 0x1853, NdOp::RETURN, {}, {});
+      Inner.EndAddr = 0x1854;
+      Inner.InstructionBoundaries = {
+          {0x1850, 2, 0, 2}, {0x1852, 1, 2, 2}, {0x1853, 1, 4, 1}};
+      Inner.InstructionBoundaries.back().Control =
+          LowInstructionControl::Return;
+      Inner.InstructionBoundaries.back().ControlFlags =
+          LowInstructionControlFlag::Return;
+    }
+    const va_t NestedCall = PrivateStacks ? 0x1802 : 0x1800;
     std::vector<RegistrationSEHControlContract> Controls{
         {RegistrationSEHControlContract::Kind::NearCall, 0x1100, 0x1105,
          0x1800},
-        {RegistrationSEHControlContract::Kind::NearCall, 0x1800, 0x1805,
-         0x1850},
-        {RegistrationSEHControlContract::Kind::NearReturn, 0x1805, 0x1806,
-         InvalidVA},
-        {RegistrationSEHControlContract::Kind::NearReturn,
-         Mutation == 2 || Mutation == 4 ? 0x1851u : 0x1850u, Inner.EndAddr,
-         InvalidVA}};
+        {RegistrationSEHControlContract::Kind::NearCall, NestedCall,
+         Outer.EndAddr, 0x1850},
+        {RegistrationSEHControlContract::Kind::NearReturn, Return.EndAddr - 1,
+         Return.EndAddr, InvalidVA},
+        {RegistrationSEHControlContract::Kind::NearReturn, Inner.EndAddr - 1,
+         Inner.EndAddr, InvalidVA}};
     if (Mutation == 3)
       Controls.erase(Controls.begin() + 1);
+    if (Mutation >= 7 && Mutation < 16)
+      addFinallyTailJump(Outer, Return, Controls, Mutation - 7);
+    if (Mutation == 16)
+      addFinallyCallTrailingEffect(Outer);
     const auto A = analyzeRegistrationStates(F, 0, 0, nullptr, nullptr, nullptr,
                                              nullptr, &Controls);
-    EXPECT_EQ(A.Complete, Mutation == 0);
-    if (!Mutation) {
-      EXPECT_TRUE(A.HasBoundSEHCallees);
-      ASSERT_EQ(A.SEHInvocationExits.size(), 1u);
-      EXPECT_EQ(A.SEHInvocationExits.front().Address, 0x1805u);
+    const bool Valid = Mutation == 0 || Mutation == 6 || Mutation == 7;
+    EXPECT_EQ(A.Complete, Valid);
+    if (Valid) {
+      EXPECT_FALSE(A.HasBoundSEHCallees);
+      ASSERT_EQ(A.SEHInvocationExits.size(), 2u);
+      EXPECT_EQ(A.SEHInvocationExits.front().Address, Return.EndAddr - 1);
       EXPECT_EQ(A.SEHInvocationExits.front().CallVA, 0x1100u);
       EXPECT_EQ(A.SEHInvocationExits.front().StackOffset, -56);
+      EXPECT_EQ(A.SEHInvocationExits.back().Address, Inner.EndAddr - 1);
+      EXPECT_EQ(A.SEHInvocationExits.back().CallVA, NestedCall);
+      EXPECT_EQ(A.SEHInvocationExits.back().EntryVA, 0x1850u);
+      EXPECT_EQ(A.SEHInvocationExits.back().TargetVA, Return.StartAddr);
+      EXPECT_EQ(A.SEHInvocationExits.back().StackOffset,
+                PrivateStacks ? -4 : 0);
     } else
       EXPECT_FALSE(A.SEHInvocationExitsComplete);
   }

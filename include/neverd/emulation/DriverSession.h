@@ -186,6 +186,9 @@ struct DriverOptions {
   /// An explicitly populated registry namespace. Omission leaves registry
   /// availability unspecified; an empty inventory models an empty namespace.
   std::optional<std::vector<DriverRegistryKey>> Registry;
+  /// Registry system time at virtual time zero, in Windows 100 ns units.
+  /// Mutations use this epoch plus the shared scheduler's elapsed time.
+  std::optional<uint64_t> RegistrySystemTime100ns;
   std::vector<DriverPnpDevice> PnpDevices;
   /// Omission retains cooperative scheduling and idle-only clock advancement.
   /// An explicit policy permits instruction-boundary thread preemption below

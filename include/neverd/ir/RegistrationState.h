@@ -254,6 +254,8 @@ struct RegistrationSEHBoundCall {
   int OpSeq = -1;
   va_t TargetVA = InvalidVA;
   int32_t StackOffset = 0;
+  /// Zero for the parent frame; otherwise the private callback stack owner.
+  va_t EntryVA = 0;
   bool HasOrdinaryReturn = true;
   std::vector<RegistrationSEHBoundArgument> Arguments;
   bool operator==(const RegistrationSEHBoundCall &) const = default;

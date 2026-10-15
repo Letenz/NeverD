@@ -86,5 +86,10 @@ NEVERD_DRIVER_PROFILE(ThunkTrapByte, 0xcc)
 NEVERD_DRIVER_PROFILE(MajorFunctionCount, 28)
 NEVERD_DRIVER_PROFILE(MaxImports, 4096)
 NEVERD_DRIVER_PROFILE(MaxNestedIRQLRaises, 64)
+// Fixed lookaside tuning in this bounded profile; no background depth tuning.
+NEVERD_DRIVER_PROFILE(LookasideInitialDepth, 4)
+NEVERD_DRIVER_PROFILE(LookasideMaximumDepth, 256)
+// A deterministic invalid link after removal, not a host MmBadPointer value.
+NEVERD_DRIVER_PROFILE(LookasideRetiredLink, 0xffffffffffffffff)
 NEVERD_DRIVER_PROFILE(MaxAPCRegionNesting, 64)
 NEVERD_DRIVER_PROFILE(SecurityCookie, 0x00004e5644434f4fULL)

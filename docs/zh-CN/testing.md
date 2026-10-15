@@ -1871,6 +1871,15 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 `check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
 `longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+`longjmp-nested-finally-call` 从普通 finally 调用中执行可返回的内层 finally，随后恢复父函数；
+`longjmp-nested-finally-unwind` 通过 CRT unwind 进入外层 finally。两者区分内外层写入，
+并在恢复后再次抛出异常。每个普通 finally 调用接受 16 类安装器变异，检查源归属、目标、
+父帧、abnormal 标志、ABI 及属性。clone 回归覆盖两次调用共享未观察的返回值槽，以及
+volatile 读取造成的原子拒绝。
+普通入口与运行时展开的源测试共同覆盖直接调用、折叠尾跳转及 CALL 后隐藏副作用。
+`RegistrationSEHJumpABI` 验证无关寄存器值、额外私有栈数据和冲突的推断原型不会改变
+准确栈参数顺序与数量；缺失参数及被修改的源证明仍被拒绝。
+
 `longjmp-runtime-raise` 与 `longjmp-runtime-continue` 在非局部恢复后调用原
 `RaiseException` 导入，分别验证 handler 进入和 filter 允许继续执行。
 `longjmp-control-fp` 在捕获前观察 `_controlfp_s` 的返回值和私有输出对象。
@@ -1906,3 +1915,13 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 ### 跨过零点的符号区域坐标
 
 `SymRegionWrap.*` 检查两种字节序、跨相对零点的完整和局部访问、不回绕的输入来源、复制后的未知状态纪元、精确和不足的保存预算，以及绝对／标量范围溢出的拒绝。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` 断言符号地址仍为 `base - 1`，并用独立字节校验器检查完整 STORE 副作用、原生返回地址字和恢复后的栈状态。缺少分离证明或入口对齐时仍须拒绝。
+
+### 顺序执行域内的原始比较交换
+
+`SymAtomicCmpxchg.*` 与 `InterpreterSpecialization.AtomicCmpxchg*` 覆盖完整字节效果、两种字节序、旧值来源、输入输出别名、原生返回单元、跨汇合点的仿射溢出存储失效、有序操作发生次数的保留、严格准入及精确／不足预算。独立字节校验器仅模拟顺序值语义。源码包装对照采用初始化完整、结构有效的图，要求在有序内存边界拒绝。独立 LowIR 对照还绑定完整 sidecar，并要求不产生证书。原生二进制证明可能更早拒绝，因为 LOCK CMPXCHG 尚缺完整的架构未定义输出审计。原始收据检查绑定内存序、地址空间和目标操作数。声明支持前应运行所属测试集；测试定义本身不是执行证据。
+
+`InterpreterSpecialization.WideIntegerConcat*` 覆盖两种字节序、高低字、常量输入、重叠输出、高字控制、非法形状、精确／不足预算及未知内存来源保留。严格解码的 `PSHUFD` 以独立双字索引验证全部 256 种选择值及相同／不同目标寄存器。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` 保留原生证明和两种源码布局的拒绝。
+
+`InterpreterSpecialization.Timestamp*` 用独立值和状态参考实现检查完整读数、寄存器高半部清零、独立及重复读取、寄存器／标志／内存／段基址保持、精确和不足预算、非法序列与未知地址来源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 检查原始恢复完成，同时保留原生证明和源码布局拒绝。现有 `X86_64_Intrinsics` 时间戳用例检查源码生成和一次读取的完整位结果；`DriverTimestamp` 单独检查 Unicorn/KVM/WHP 共享时钟策略、状态保持、预算及溢出。平台跳过不代表该后端已执行。
+
+`KernelObjectTests.cpp` 验证已知 ID 查找、类型/权限/模式失败、可选句柄信息、输出失败不泄漏引用、卸载以及栈复用后的旧身份。`DriverObjectTests.cpp` 在可用 Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、首选/重定位地址和协作/17 指令调度下执行原创 `driver_objects.c`。`NativeDriverTests.def` 强制要求 KVM/WHP 结果；缺失或跳过仍是覆盖缺口。这些夹具不证明 ACL、通用进程退出或尚未实现的对象类别。

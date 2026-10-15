@@ -4,10 +4,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+/// \file
+/// Bind checked nonlocal jump lifetimes to their surviving MedIR calls.
+
 #include "neverd/Limits.h"
-#include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
-#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
+#include "neverd/ir/med/X86RegistrationSEHJump.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -17,7 +20,7 @@ namespace neverd {
 
 std::optional<std::map<va_t, X86RegistrationSEHJumpCall>>
 getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
-  if (!Function.RegistrationStates)
+  if (!Function.RegistrationStates || Function.SkippedSSA)
     return std::nullopt;
   const auto &States = *Function.RegistrationStates;
   const auto Bound = getX86RegistrationSEHBoundCalls(Function);
@@ -65,7 +68,8 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     if (It == Result.end())
       return nullptr;
     const auto &Op = *It->second.Operation;
-    if (Op.OriginSeq != Seq || Seq < 0 || Op.NumInputs != 1 ||
+    if (Op.Dead || Op.ExactArguments || Op.SourceCallHint ||
+        Op.OriginSeq != Seq || Seq < 0 || Op.NumInputs != 1 ||
         !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
         Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)

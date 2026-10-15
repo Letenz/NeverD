@@ -1640,3 +1640,13 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 有界 libSystem 匯入
 
 `MachOProgramLinking` 擁有嚴格原始 classic/generic64 事實、完整未定義符號閉合與準備預算。Darwin 進程管理庫/符號准入、指標發布、fixup 後唯讀、libSystem 入口與 errno。`DarwinLibSystemCalls.def` 將精確名稱和參數數量繫結到 `DarwinServices` 核心效果，不捏造原始 trap。`DarwinMemory` 管理保留頁與原始最大權限；`ExecutionBudget` 共用期限，`ProcessReport` 輸出可選 `darwin.native_calls`，不載入宿主庫。
+
+### 循序執行範圍內的原始比較交換
+
+`SymExec` 負責獲准的原始 `ATOMIC_CMPXCHG` 的值語義：發佈輸出前擷取位址、預期值、目標值及舊值，再一次提交 `ite(Old == Expected, Desired, Old)`。`SymState` 負責該次寫入的位元組效果、別名失效及保存預算。`InterpreterSpecialization` 負責接納與來源：Old 使用寫入前的記憶體來源；條件寫入保守合併 Old、預期值與目標值的來源，並撤銷可能重疊的仿射溢出儲存事實。即使比較失敗，也須證明完整寫入範圍與受保護返回單元分離。殘餘程式保留原子操作、記憶體順序及發生次數；拒絕時不發佈部分殘餘 CFG。
+
+原始特化亦接受嚴格的 8+8 位元組 `CONCAT`，輸出為可寫的 16 位元組純量。第一個輸入提供高 64 位元，第二個提供低 64 位元，與儲存位元組序無關。輸入須為完整純量位置或常數。仍要求顯式、無故障機器狀態、預設位址空間及無記憶體序操作；`SymExec` 負責值語義，重疊輸出會先讀取兩個原始輸入再寫入。此能力不擴充原始碼配置或原生證明契約。
+
+在顯式、無故障、小端的原始還原中，x64 層識別完整標準 `RDTSC` 指令及其五操作多輸出序列。每次出現使用一個新的 64 位元符號讀數，由 `SymExec` 執行三個計入預算的純量操作，綁定完整主結果及兩個指令內暫存佔位值。殘留程式碼保留原始讀取、複製與零擴充。時鐘值與讀數關係不受約束，時間戳衍生位址仍屬未知來源，原生與原始碼證明契約不變。
+
+`KernelModelObjects.cpp` 統一管理行程/執行緒指標參照、控制代碼中繼資料及回收。排程層管理執行保留與退出；等待層維持其內部參照。已參照的借用執行緒在回呼/堆疊結束後繼續存活。重用堆疊採新身分及優先權，舊物件保留退出優先權。行程身分仍屬工作階段；登錄控制代碼暫由原管理方負責。

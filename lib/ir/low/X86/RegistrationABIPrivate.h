@@ -80,6 +80,8 @@ bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
                              size_t &Work);
 bool hasClosedRegistrationRaise(const BinaryImage &Image, const LowOp &Op,
                                 const registration_state::FrameState &State);
+bool hasSEHCallbackImageMemory(const BinaryImage &Image, va_t Address,
+                               uint16_t Width, bool Write, size_t &Work);
 
 struct InitializerFrame {
   uint32_t StackPopBytes = 0;

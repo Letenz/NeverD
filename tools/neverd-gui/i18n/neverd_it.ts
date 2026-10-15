@@ -1512,8 +1512,8 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation>Trasforma la funzione corrente</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>Semplifica simbolicamente questa funzione</translation>
+        <source>Symbolic simplification</source>
+        <translation>Semplificazione simbolica</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

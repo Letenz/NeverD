@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: ea95e492ed89405a4adc058cbf8d89873c3c2df48b902d55a21a390158b23f6e -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR は Windows ARM64 C++ FH3 も受け付け、xdata、親フレー�
 
 | コンパイラ | 成果物 | OS 上で検証した実行プロファイル |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++、Mach-O x64/ARM64 C/C++、PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | ネイティブオブジェクト | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | ネイティブオブジェクト | 互換性のある Itanium ランタイムを使う ELF x64/ARM64 C/C++; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++、Mach-O x64/ARM64 C/C++、PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | ネイティブオブジェクト | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | ネイティブオブジェクト | 互換性のある Itanium ランタイムを使う ELF x64/ARM64 C/C++; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 通常モード | LLVM IR | ELF x64 C、Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 通常モード | ネイティブオブジェクト | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / ネイティブオブジェクト | ELF / PE / Mach-O x64/ARM64: 純粋な C ソース |
@@ -194,3 +194,7 @@ Windows x64 と ARM64 でも、それぞれ 36 回の Clang C++ FH3 観測を実
 Mach-O の書き込み可能ポインタは実行時に初期化します。静的なアドレス初期化は未対応のロード時再配置登録を必要とするため、明示的な拒否テストで検証します。ELF のサイズゼロ COMDAT 関数は、署名が実行可能セクションの先頭にある唯一の関数で、CFI がセクション全体と厳密に一致する場合のみ受け入れます。内部オフセット、共有、末尾パディング、グループなし、CFI 欠落は拒否します。
 
 ELF ARM と Thumb は別プロファイルです。ソース生成器へ `-marm` または `-mthumb` を明示し、ネイティブ関数のバインドは元の命令状態ビットを保持します。32 ビット ELF は実際の動的再配置を持つ PIE を使用します。ARM32 QEMU では glibc の明示的な `--loader` と sysroot を記録します。QEMU の AUXV 計算は、移動したプログラムヘッダーを Linux カーネルと同じ方法では扱わないためです。この経路は QEMU 上の glibc ロードと実行の検証であり、ARM32 実機やネイティブカーネルローダーの証明ではありません。
+
+これらのパッチ適用済み ELF イメージでは、Linux x86 と ARM32 の `qemu-user` 経路はいずれも、対象アーキテクチャに対応する sysroot 内の glibc `--loader` を明示的に指定する必要があります。Linux x86 の `compatibility` 経路は Linux x64 ホストカーネルの 32 ビット互換機能を使用し、QEMU 実行とは別に記録されます。これはネイティブの 32 ビット x86 ホスト上での実行を証明するものではありません。
+
+[`fcee81c9a5e2f20a71090ade23ae833175f64c59` のプロセス検証](https://github.com/NeverSight/NeverD/actions/runs/38694434082)では、対応するネイティブホストで 576 回、x86 互換モードで 78 回、QEMU ユーザーモードの ARM／Thumb で 96 回、計 750 回の観測すべてが成功しました。独立した成果物監査で全 126 イメージのハッシュ、実行環境、シナリオ一覧を照合しました。[Windows 再ビルド検証](https://github.com/NeverSight/NeverD/actions/runs/38694628242)は重点チェック 194 件と Windows／Linux のプロセス観測 474 回に成功しました。[Linux 再ビルド検証](https://github.com/NeverSight/NeverD/actions/runs/38694638358)は、元の失敗 62 件とスキップ 46 件をすべて含む 444 件に、失敗・スキップなしで成功しました。上記のハードウェアとローダーの検証範囲は変わりません。NeverC は純粋な C 専用のままで、リポジトリは変更していません。

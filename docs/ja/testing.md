@@ -1954,3 +1954,13 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 ### ゼロをまたぐシンボリック領域座標
 
 `SymRegionWrap.*` は両エンディアン、相対座標のゼロをまたぐ完全／部分アクセス、折り返さない入力の由来、コピーした未知状態の世代、ちょうど足りる／不足する保存予算、および絶対／スカラ範囲オーバーフローの拒否を検証します。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` はシンボリックアドレスが `base - 1` の形を保つことを確認し、独立したバイト単位の参照実行で STORE 全体の効果、ネイティブの戻りアドレス語、復元後のスタック状態を検証します。分離証明または入口アラインメントがなければ引き続き拒否が必要です。
+
+### 逐次 raw 実行での比較交換
+
+`SymAtomicCmpxchg.*` と `InterpreterSpecialization.AtomicCmpxchg*` は、全バイトの効果、両エンディアン、旧値の由来、入出力エイリアス、ネイティブ戻りセル、合流をまたぐアフィンスピルの無効化、有序操作の発生保持、厳密な受け入れ、十分な予算と不足予算を対象とします。独立したバイト参照器が扱うのは逐次的な値の意味論だけです。ソースラップの対照には初期化済みで構造が正しいグラフを使い、有序メモリの境界での拒否を要求します。独立 LowIR の対照には完全な sidecar も結び付け、証明書がないことを要求します。ネイティブバイナリの証明は、LOCK CMPXCHG のアーキテクチャ未定義出力監査が不完全なため、より早く拒否される場合があります。raw レシートの検査は順序、アドレス空間、更新オペランドを結び付けます。対応を主張する前に所有テスト群を実行してください。テスト定義だけでは実行の証拠になりません。
+
+`InterpreterSpecialization.WideIntegerConcat*` は両バイト順、上下位ワード、定数入力、重複出力、上位ワードによる分岐、不正形状、正確／不足予算、未知メモリ由来の保持を検査します。厳密に復号した `PSHUFD` は全256選択値と同一／別宛先を独立したダブルワード索引で照合します。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` はネイティブ証明と両ソース配置の拒否を維持します。
+
+`InterpreterSpecialization.Timestamp*` は独立した値・状態オラクルで全ビット、上位半分のクリア、独立／反復読み取り、レジスタ・フラグ・メモリ・セグメント基底の保持、正確／不足予算、不正な操作列、未知アドレス由来を検査します。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` は raw 完了とネイティブ証明／ソース配置の拒否を確認します。既存の `X86_64_Intrinsics` 時計ケースはソース出力と 1 回の読み取りによる全ビット結果を検査し、`DriverTimestamp` は Unicorn/KVM/WHP 共通の時計方針、状態保持、予算、オーバーフローを別途検査します。プラットフォームによるスキップはバックエンド実行の証拠ではありません。
+
+`KernelObjectTests.cpp` は既知 ID、型/権限/モード失敗、ハンドル情報、出力失敗時の参照漏れ防止、アンロード、スタック再利用を検証します。`DriverObjectTests.cpp` は独自の `driver_objects.c` を利用可能な Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、標準/再配置アドレス、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` は KVM/WHP 結果を必須とし、欠落やスキップは未検証です。ACL、一般的なプロセス終了、未実装の型の証明にはなりません。
