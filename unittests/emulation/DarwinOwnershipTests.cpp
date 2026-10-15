@@ -1427,6 +1427,18 @@ TEST_P(DarwinOwnershipTest,
   }
 }
 
+DarwinFileOptions staticSymbolicOwnershipOptions() {
+  auto O = darwin_test::symbolicOwnershipOptions();
+  O.MutableDirectories.clear();
+  O.DirectoryMutationPolicies.clear();
+  O.MovableDirectories.clear();
+  O.SwapRenameDirectories.clear();
+  O.MutableSymbolicLinks.clear();
+  O.SymbolicLinkMutationPolicies.clear();
+  O.CreationPolicy.reset();
+  return O;
+}
+
 TEST_P(DarwinOwnershipTest, LchownKeepsTheFinalLinkSeparateFromItsTarget) {
   Options = darwin_test::symbolicOwnershipOptions();
   Credentials = darwin_test::symbolicOwnershipCredentials();
@@ -1477,7 +1489,7 @@ TEST_P(DarwinOwnershipTest, LchownSharesRegularAndDirectoryOwnershipProviders) {
 }
 
 TEST_P(DarwinOwnershipTest, LchownFollowsPrefixesAndChecksSearchBeforeMissing) {
-  Options = darwin_test::symbolicOwnershipOptions();
+  Options = staticSymbolicOwnershipOptions();
   Credentials = darwin_test::symbolicOwnershipCredentials();
   Options->SymbolicLinks["/via"] = {'d', 'i', 'r'};
   Options->Directories.insert("/locked");
@@ -1499,7 +1511,7 @@ TEST_P(DarwinOwnershipTest, LchownFollowsPrefixesAndChecksSearchBeforeMissing) {
 
 TEST_P(DarwinOwnershipTest, LchownNeedsItsOwnCompleteMetadataAndGrant) {
   for (unsigned State = 0; State != 4; ++State) {
-    Options = darwin_test::symbolicOwnershipOptions();
+    Options = staticSymbolicOwnershipOptions();
     Credentials = darwin_test::symbolicOwnershipCredentials();
     Options->OwnershipMutations->Objects.erase("/dir/link");
     if (State & 1)
@@ -1577,7 +1589,7 @@ TEST_P(DarwinOwnershipTest, LchownCannotRestoreInvalidatedMetadata) {
                {path("/dir/link"), path("/dir/moved", Base + 128)}),
             0u);
   refused(ServiceKind::Lchown, {path("/dir/moved"), UINT32_MAX, UINT32_MAX},
-          diagnostic::FileMetadata);
+          diagnostic::SymbolicLinkMutatedMetadata);
   EXPECT_EQ(status(Target), Before);
 }
 
