@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "AndroidInternal.h"
 
+#include "neverd/dalvik/Runtime.h"
+
 namespace neverd::emulation::android_model {
 namespace {
 llvm::StringRef parent(llvm::StringRef Name) {
@@ -22,7 +24,7 @@ llvm::StringRef parent(llvm::StringRef Name) {
   if (Name == "java/lang/ArrayIndexOutOfBoundsException" ||
       Name == "java/lang/StringIndexOutOfBoundsException")
     return "java/lang/IndexOutOfBoundsException";
-  if (Name.ends_with("Exception"))
+  if (Name.starts_with("java/lang/") && Name.ends_with("Exception"))
     return "java/lang/RuntimeException";
   return "java/lang/Object";
 }
@@ -58,12 +60,13 @@ llvm::Expected<std::shared_ptr<JNIObject>>
 Bionic::jniClass(llvm::StringRef Name) {
   if (auto I = JNI.Classes.find(Name.str()); I != JNI.Classes.end())
     return I->second;
-  // Only intrinsic storage/exception classes are known. Absence of an arbitrary
-  // application class is not evidence that FindClass should throw.
+  // Intrinsic and explicitly supplied classes are known. Absence of an
+  // arbitrary application class is not evidence that FindClass should throw.
   bool Known = Name == "java/lang/Object" || Name == "java/lang/Class" ||
                Name == "java/lang/String" || Name == "java/lang/Throwable" ||
                Name == "java/lang/Exception" || Name == "java/lang/Error" ||
                Name == "java/lang/RuntimeException" ||
+               Name == "java/lang/ArithmeticException" ||
                Name == "java/lang/NullPointerException" ||
                Name == "java/lang/IllegalArgumentException" ||
                Name == "java/lang/IndexOutOfBoundsException" ||
@@ -75,6 +78,11 @@ Bionic::jniClass(llvm::StringRef Name) {
                Name == "[Ljava/lang/Object;" || Name == "[Ljava/lang/String;" ||
                (Name.size() == 2 && Name[0] == '[' &&
                 llvm::StringRef("ZBCSIJFD").contains(Name[1]));
+  if (JNI.Dex && JNI.Dex->containsClass("L" + Name.str() + ";")) {
+    if (auto Reason = JNI.Dex->unsupportedClass("L" + Name.str() + ";"))
+      return failure(*Reason);
+    Known = true;
+  }
   if (!Known)
     return failure("JNI class resolution requires an unmodeled class: " + Name);
   auto Object = jniNewObject(JNIObject::Class, Name, 0);

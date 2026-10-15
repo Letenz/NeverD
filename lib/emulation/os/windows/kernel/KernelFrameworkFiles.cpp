@@ -421,7 +421,7 @@ KernelFramework::routeFileRequest(uint64_t Device, uint64_t IRP,
       View.Major == RequestMajorCleanup ? Config.Cleanup : Config.Close;
   if (Callback)
     Steps.push_back({StepKind::Callback, *File, Callback, 0, 0,
-                     Config.SynchronizationObject});
+                     Config.SynchronizationObject, View.CallbackProcessID});
   if (Forward) {
     Steps.push_back({StepKind::ForwardFileIRP, IRP, 0, *File});
   } else {

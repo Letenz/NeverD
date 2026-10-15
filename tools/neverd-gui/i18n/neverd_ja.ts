@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>現在の関数の名前と属性を変更します</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>ローカル型(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>プログラムの型をレイアウトとソースとともに表示</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2260,6 +2268,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>%1 にシンボルテーブルがあるかどうか判別できませんでした：%2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>ローカル型</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3360,6 +3372,237 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>未保存のアナリストの主張を破棄して続行しますか？</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>C ヘッダー (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>C++ ヘッダー (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Windows の名前（ULONG）</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>IDA の名前（unsigned int）</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>C のキーワード（unsigned long）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>正確な幅（uint32_t）</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>名前で型を絞り込み</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>サイズ</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>前に表示した型に戻る（Esc）</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>レイアウト</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>レイアウトまたはソースをコピー</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>型をソースとしてエクスポート</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>この型をエクスポート…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>選択した型をエクスポート…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>すべての型をエクスポート…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>C と C++ での組み込み型の名前</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>16 進オフセット</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>依存する型を含める</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>この型が必要とするすべての型も宣言し、ソースがコンパイルできるようにする</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>レイアウト検査</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>各型の後に、コンパイラーが検証するサイズとオフセットのチェックを付ける</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>オフセット</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>この解析エンジンにはローカル型がありません。</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>プログラムの型を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>型を読み込めません：%1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>この PDB には型が定義されていません。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>ローカル型はありません：このプログラムには型を含む PDB がありません。</translation>
+    </message>
+    <message>
+        <source>Types: %1 · PDB · %2</source>
+        <translation>型：%1 · PDB · %2</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>PDB の一覧どおりに配置できない型：%1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>型を配置できません：%1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// 型のソースを生成できません：%1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>構造体</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>共用体</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>列挙型</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>型の別名</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>関数型</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>%1（%2）バイト</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>%1 にアライン</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>%1 にパック</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>宣言のみ</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>列挙子</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>値</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>（パディング）</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>ダブルクリックで %1 を開く</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>ローカル型のエクスポート</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1 に書き込めません</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>%1 にエクスポートしました</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>型をエクスポートできません：%1</translation>
     </message>
 </context>
 </TS>

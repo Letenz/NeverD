@@ -21,6 +21,7 @@
 #include "JumpTableResolverDetail.h"
 #include "ResolverDefinitionCache.h"
 #include "ResolverLaneView.h"
+#include "ResolverPendingWalks.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -2515,6 +2516,28 @@ static bool provesExactUnsignedModuloRecipe(
     }
   }
   return Width == 32 && matchesObservedHighHalf();
+}
+
+enum class ResolverPredicateMode : uint8_t { Equality, Unsigned, Joined };
+
+// The source of truth for the predicate forms used by edge refinement. Local
+// shape inspection may avoid reconstructing operands only when this policy
+// cannot use their producer, and its exact, unguarded shape is known.
+static bool resolverPredicateCanFilter(NdOp Opcode,
+                                       ResolverPredicateMode Mode) {
+  switch (Opcode) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+    return true;
+  case NdOp::INT_LESS:
+  case NdOp::INT_LESSEQUAL:
+    return Mode != ResolverPredicateMode::Equality;
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+    return Mode == ResolverPredicateMode::Joined;
+  default:
+    return false;
+  }
 }
 
 enum class ResolverResultKind : uint8_t { Invalid, Cycle, Value };
@@ -5356,88 +5379,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   constexpr size_t ValueKeyWork = 6;
   using MemoryKey = std::tuple<int, int, uint64_t, int64_t, uint16_t, bool>;
 
-  // A concrete merge can still be provisional: {2} + Cycle is {2} only while
-  // the skipped ancestor is active. Once that ancestor finishes, another query
-  // must reconstruct the merge to include definitions found later in the loop.
-  // Record skipped activations for Value and Cycle results alike, including
-  // dependencies inherited through completed memo hits.
-  //
-  // One conservative interval avoids allocating a dependency set per state.
-  // Walks unwind in stack order, so the deepest activation's identity certifies
-  // every shallower activation in the interval. A reused depth has a new
-  // identity. Over-approximating the interval can only cause an earlier retry.
-  // Value and memory walks share this owner because they recurse into each
-  // other.
-  struct ResolverPendingRange {
-    uint64_t LastIdentity = 0;
-    uint32_t First = 0;
-    uint32_t Last = 0;
-    bool empty() const { return LastIdentity == 0; }
-  };
-  struct ResolverWalkFrame {
-    uint64_t Identity;
-    ResolverPendingRange Pending;
-  };
-  struct ResolverWalks {
-    std::vector<ResolverWalkFrame> Frames;
-    uint64_t NextIdentity = 0;
-    bool live(const ResolverPendingRange &R) const {
-      return R.empty() || (R.Last < Frames.size() &&
-                           Frames[R.Last].Identity == R.LastIdentity);
-    }
-    void observe(const ResolverPendingRange &R) {
-      if (R.empty() || Frames.empty())
-        return;
-      assert(live(R));
-      auto &P = Frames.back().Pending;
-      if (P.empty()) {
-        P = R;
-        return;
-      }
-      P.First = std::min(P.First, R.First);
-      if (P.Last < R.Last) {
-        P.Last = R.Last;
-        P.LastIdentity = R.LastIdentity;
-      }
-    }
-    struct Scope {
-      ResolverWalks &Owner;
-      ResolverPendingRange Self;
-      bool Finished = false;
-      explicit Scope(ResolverWalks &Owner) : Owner(Owner) {
-        assert(Owner.Frames.size() < std::numeric_limits<uint32_t>::max());
-        const uint32_t Depth = Owner.Frames.size();
-        Self = {++Owner.NextIdentity, Depth, Depth};
-        Owner.Frames.push_back({Self.LastIdentity, {}});
-      }
-      Scope(const Scope &) = delete;
-      Scope &operator=(const Scope &) = delete;
-      ~Scope() {
-        if (!Finished) {
-          assert(Owner.Frames.size() == Self.Last + 1);
-          Owner.Frames.pop_back();
-        }
-      }
-      ResolverPendingRange finish() {
-        assert(Owner.Frames.size() == Self.Last + 1);
-        auto P = Owner.Frames.back().Pending;
-        Owner.Frames.pop_back();
-        Finished = true;
-        // The completed state closes its own transparent backedges. Retain
-        // dependencies on enclosing walks; their missing arms are still live.
-        if (!P.empty() && P.Last == Self.Last) {
-          if (P.First == Self.Last)
-            P = {};
-          else {
-            --P.Last;
-            P.LastIdentity = Owner.Frames[P.Last].Identity;
-          }
-        }
-        Owner.observe(P);
-        return P;
-      }
-    };
-  } Walks;
+  using ResolverWalks = detail::ResolverPendingWalks;
+  using ResolverPendingRange = ResolverWalks::Pending;
+  ResolverWalks Walks;
 
   // A disengaged memo value is the single prepaid Active state.  Reusing the
   // same map node for the completed result avoids allocating an Active-set node
@@ -5472,7 +5416,15 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   std::optional<bool> MemoOccurrenceRootMode;
   std::optional<bool> MemoPrivateFrameCallMode;
   std::optional<bool> MemoScalarConstantFoldMode;
-  std::optional<unsigned> MemoEdgeConstraintMode;
+  std::optional<ResolverPredicateMode> MemoEdgeConstraintMode;
+  auto predicateMode = [](const JumpTableValueQuery *Query) {
+    if (Query &&
+        Query->Relation == JumpTableValueRelation::JoinedUnsignedFeasibleSet)
+      return ResolverPredicateMode::Joined;
+    if (Query && Query->Relation == JumpTableValueRelation::UnsignedFeasibleSet)
+      return ResolverPredicateMode::Unsigned;
+    return ResolverPredicateMode::Equality;
+  };
 
   auto constantValue = [&](const NdVar &V) -> ResolverResult {
     if (!V.isConst() || V.Size == 0)
@@ -5562,6 +5514,51 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     return true;
   };
 
+  // Inspect only an exact, unguarded local producer and transparent boolean
+  // transports. An unsupported shape cannot constrain this query, regardless
+  // of the values of its operands. Unknown producers keep the complete walk.
+  auto predicateCannotFilter = [&](int Block, int Before, NdVar V) {
+    const auto Mode = predicateMode(ActiveValueQuery);
+    const auto &B = Graph.Blocks[Block];
+    while (V.Size == 1) {
+      if (V.isConst())
+        return true;
+      if (!V.isReg() && !V.isTemp())
+        return false;
+      const auto Position = Graph.Definitions.previous(
+          Block, B.Ops, Before, V, viewOf(V), TRI, LaneViews, consumeEvidence);
+      if (!Position || *Position < 0)
+        return false;
+      const LowOp &Def = B.Ops[*Position];
+      if (Def.Output.Space != V.Space || Def.Output.Offset != V.Offset ||
+          Def.Output.Size != V.Size)
+        return false;
+      const auto Guarded = instructionIsGuarded(Def.Addr);
+      if (!Guarded || *Guarded)
+        return false;
+      switch (Def.Opcode) {
+      case NdOp::BOOL_AND:
+      case NdOp::BOOL_OR:
+      case NdOp::BOOL_XOR:
+      case NdOp::INT_SLESS:
+      case NdOp::INT_SLESSEQUAL:
+      case NdOp::INT_LESS:
+      case NdOp::INT_LESSEQUAL:
+        return !resolverPredicateCanFilter(Def.Opcode, Mode);
+      case NdOp::COPY:
+      case NdOp::BOOL_NOT:
+        if (Def.NumInputs != 1 || Def.Inputs[0].Size != 1)
+          return false;
+        V = Def.Inputs[0];
+        Before = *Position;
+        break;
+      default:
+        return false;
+      }
+    }
+    return false;
+  };
+
   // Exact equality and unsigned-order predicates filter the lane they compare.
   // Keep that relation on CFG edges and SELECT arms: a loop's checked index
   // must not regain out-of-range values through its predecessor merge.
@@ -5575,10 +5572,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       constrainPredicate;
   constrainPredicate = [&](ResolverResult Value, ResolverResult Condition,
                            bool Taken, unsigned Depth) -> ResolverResult {
-    const bool JoinedGuard =
-        ActiveValueQuery &&
-        ActiveValueQuery->Relation ==
-            JumpTableValueRelation::JoinedUnsignedFeasibleSet;
+    const auto Mode = predicateMode(ActiveValueQuery);
+    const bool JoinedGuard = Mode == ResolverPredicateMode::Joined;
     if (Depth > MaxResolverDepth || (JoinedGuard && !consumeEvidence())) {
       QueryResolverAnalysisIncomplete = true;
       QueryResolverDepthExceeded |= Depth > MaxResolverDepth;
@@ -5626,17 +5621,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     }
     if (!Predicate || Predicate->K != ResolverValueExpr::Kind::Transform ||
         !Predicate->HasOpcode ||
-        (Predicate->Opcode != NdOp::INT_EQUAL &&
-         Predicate->Opcode != NdOp::INT_NOTEQUAL &&
-         Predicate->Opcode != NdOp::INT_LESS &&
-         Predicate->Opcode != NdOp::INT_LESSEQUAL) ||
+        !resolverPredicateCanFilter(Predicate->Opcode, Mode) ||
         Predicate->Inputs.size() != 2)
-      return Value;
-    if ((Predicate->Opcode == NdOp::INT_LESS ||
-         Predicate->Opcode == NdOp::INT_LESSEQUAL) &&
-        !JoinedGuard &&
-        (!ActiveValueQuery || ActiveValueQuery->Relation !=
-                                  JumpTableValueRelation::UnsignedFeasibleSet))
       return Value;
     const ResolverValue &Left = Predicate->Inputs[0];
     const ResolverValue &Right = Predicate->Inputs[1];
@@ -7757,10 +7743,13 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                   Graph.PointToOp.find({Branch.Addr, Branch.Seq});
               if (Point != Graph.PointToOp.end() &&
                   Point->second.first == Pred) {
-                ResolverResult Condition = resolvePredicate(
-                    Pred, Point->second.second, Branch.Inputs[1], Depth + 1);
-                IncomingValue = constrainOnCondition(
-                    std::move(IncomingValue), std::move(Condition), IsTaken);
+                if (!predicateCannotFilter(Pred, Point->second.second,
+                                           Branch.Inputs[1])) {
+                  ResolverResult Condition = resolvePredicate(
+                      Pred, Point->second.second, Branch.Inputs[1], Depth + 1);
+                  IncomingValue = constrainOnCondition(
+                      std::move(IncomingValue), std::move(Condition), IsTaken);
+                }
               }
             }
           }
@@ -8925,7 +8914,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     const bool FiniteSet =
         JoinedFiniteSet ||
         Query.Relation == JumpTableValueRelation::UnsignedFeasibleSet;
-    const unsigned EdgeConstraintMode = JoinedFiniteSet ? 2 : FiniteSet ? 1 : 0;
+    const auto EdgeConstraintMode = predicateMode(&Query);
     if (MemoEdgeConstraintMode &&
         *MemoEdgeConstraintMode != EdgeConstraintMode) {
       ValueMemo.clear();

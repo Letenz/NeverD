@@ -1,5 +1,6 @@
 add_subdirectory(ir)
 add_subdirectory(evm)
+add_subdirectory(dalvik)
 add_subdirectory(loader)
 add_subdirectory(sbf)
 add_subdirectory(decode)
@@ -12,6 +13,7 @@ add_subdirectory(backend)
 add_subdirectory(pipeline)
 add_subdirectory(pass)
 add_subdirectory(debug)
+add_subdirectory(types)
 add_subdirectory(libc)
 
 # Target register metadata delegates architecture-specific names to the

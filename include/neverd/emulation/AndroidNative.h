@@ -67,9 +67,12 @@ struct AndroidNativeOptions {
   /// ThreadLimit > 1; never replenishes execution limits.
   bool DrainThreads = false;
   /// Opt into a bounded JNI 1.6 native-interface model. Threads initially
-  /// remain detached. This supplies neither Java bytecode execution nor
-  /// application classes, methods or framework services.
+  /// remain detached. Intrinsic classes and explicitly supplied DEX bodies
+  /// share this workload VM; framework services are not inferred.
   bool JNI = false;
+  /// Complete explicit DEX 035/037/038/039 images (Android API 28). No host
+  /// classpath is consulted. Requires JNI; bounded integral static bodies only.
+  std::vector<std::vector<uint8_t>> DexImages;
   /// Exact library names and available function names for the local dlfcn
   /// model. No host files are loaded. Calling an unmodeled function still
   /// stops.

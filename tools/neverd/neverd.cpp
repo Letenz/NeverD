@@ -365,6 +365,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runEntryPoints(Sess);
   if (SwitchesCmd)
     return runSwitches(Sess);
+  if (TypesCmd)
+    return runTypes(Sess);
   if (StringsCmd)
     return runStrings(Sess);
   if (FuncsCmd)

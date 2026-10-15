@@ -684,4 +684,16 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 上共用导入和动态调用实现，要求 IRQL <= DISPATCH_LEVEL。目标为 16 字节对齐、完整可读写的 1232 字节内核记录；仅写 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，其余字节（包括 x87 数据、指针和 MXCSR mask）保持不变。ContextFlags 为 `0x10000f`，调用者 RSP=入口 RSP+8，RIP 取实际返回槽；入口 RSP-8 写入 8 字节标志暂存值，RAX 返回零扩展 EFLAGS，算术标志按 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 逻辑 SS 选择子，不代表宿主或原始后端选择子。完整记录、返回槽和暂存槽必须通过普通内核 RAM、有效对象、权限和唯一物理映射检查；记录不得与返回/暂存范围重叠，入口 RSP 模 16 必须为 8。采集或准入失败不改变 CPU/RAM，legacy 明确拒绝。这是有界模型，不代表所有 Windows 实现；即使捕获字节被覆盖，仍保留未重建环境依赖，不授予 UNPACK 还原或符号前提。
 
-文件对象按地址保持唯一身份，并使用共享的指针引用管理，包括 CREATE 期间取得的引用。旧对象仍被保留时，可以复用场景文件编号。CLEANUP 关闭场景句柄；CLOSE 释放剩余的场景保留。若驱动仍持有指针，CLOSE 结果的 IRP 为零且未完成，直到最后一次释放在 PASSIVE_LEVEL 派送实际回调。挂起的 CLOSE 会暂停释放它的线程。CREATE 失败时，带引用的对象保留存储但清除设备关联，不发送 CLOSE。每个关联的文件对象在最终销毁前保留设备，并计入 DEVICE_OBJECT.ReferenceCount。嵌套回调继承调用方的线程、进程和 PreviousMode。文件句柄创建及复制、文件系统名称查询和声明式文件系统提供方仍未实现。
+文件对象按地址保持唯一身份，由场景句柄、附加句柄和调用方指针共同引用。ObOpenObjectByPointer 支持已创建的 FILE_OBJECT、内核访问和可选 OBJ_KERNEL_HANDLE，并把通用文件权限映射为具体权限。关闭某进程的最后一个句柄时，若其他进程仍有句柄，则发送 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL；关闭全局最后一个句柄才发送 CLEANUP。延迟的场景 CLEANUP 保留声明的下层响应。即使场景编号已复用，CLOSE 仍等待最后一个句柄、指针和正在执行的关闭续调。内核句柄属于系统进程：CLEANUP 临时使用该有效进程，但保留调用线程、创建进程及 PreviousMode；CLOSE 恢复实际释放方的进程。挂起回调暂停释放方。CREATE 失败只保留带引用的存储并清除设备关联。每个关联对象只计入一次 DEVICE_OBJECT.ReferenceCount。WDM 与 KMDF 共用这些生命周期；普通 KMDF 设备以 STATUS_INVALID_DEVICE_REQUEST 完成 LOCK_CONTROL。关闭回调内重新打开、存在未完成文件 I/O 时关闭、KMDF 筛选驱动的 LOCK_CONTROL 转发、文件系统名称查询和声明式文件系统提供方仍未支持。
+
+## 文件信息查询 IRP
+
+`IoQueryFileInformation` 向现有已建模 WDM 文件的设备栈发送真实的 `IRP_MJ_QUERY_INFORMATION`，信息由来宾驱动提供，不虚构文件系统元数据。调用方须具有已知进程和线程，处于 PASSIVE_LEVEL，并启用中断及特殊内核 APC。同一文件的重叠 I/O、已挂载 VPB、文件扩展路由、框架拥有的被查询文件，以及异步查询最后引用所需的延迟删除均明确不支持。`IoGetRelatedDeviceObject` 在 IRQL <= DISPATCH_LEVEL 返回已验证的未挂载设备栈顶层。
+
+查询在完成期间借用调用方缓冲区。非挂起调用返回分发状态，挂起调用返回完成状态；立即以错误状态完成时不发布私有 IOSB，返回长度为零。工作线程完成的通知在原调用方恢复时交付。同步查询保持文件存活至最终 CLOSE 结束，之后只写入四字节 ReturnedLength，保留相邻字节并支持与输出缓冲区别名重叠。报告使用 kind `query_information`、origin `IoQueryFileInformation` 和 `file_information_class`；场景输入不能伪造这种请求。类 75 转为类 71 并设置栈标志 1；其他类编号传给来宾驱动，不宣称提供方已实现各类元数据。
+
+同步查询在最终 CLOSE 结束前保持临界区域，随后恢复调用方原有的 APC 状态。待交付通知在符合条件的内核 API 返回边界及所属线程恢复来宾指令前可见，包括退出守护区域和恢复 IRQL。报告字节在原进程中采集，完成查询的工作线程不会读取其用户缓冲区。分配失败会重置同步文件事件，但不修改 ReturnedLength。
+
+## 处理器身份与 DPC 级别提升
+
+单处理器配置在所有已建模 IRQL 上实现 `KeGetCurrentProcessorNumberEx`，返回处理器索引零，并可选地精确写入四字节：组零、处理器零、保留字节零。输出检查保留相邻内存并拒绝非法存储。`KeRaiseIrqlToDpcLevel` 接受 IRQL 0、1、2，返回原级别，并与 `KfRaiseIrql`、`KeLowerIrql` 共用执行上下文的嵌套栈。导入和动态查找共用这些契约。真实 x64 WDK 内联封装调用 `KfRaiseIrql(2)`；独立导出入口也可通过动态查找调用。

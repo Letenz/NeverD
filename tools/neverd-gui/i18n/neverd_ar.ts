@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>تغيير اسم الدالة الحالية وخصائصها</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>الأنواع المحلية(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>عرض أنواع البرنامج مع تخطيطها ومصدرها</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2290,6 +2298,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>تعذّر تحديد ما إذا كان %1 يحتوي على جدول رموز: %2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>الأنواع المحلية</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3390,6 +3402,237 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>هل تريد تجاهل إقرارات المحلل غير المحفوظة والمتابعة؟</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>ترويسة C ‎(*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>ترويسة C++ ‎(*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust ‎(*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go ‎(*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>أسماء Windows ‎(ULONG)</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>أسماء IDA ‎(unsigned int)</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>كلمات C المحجوزة ‎(unsigned long)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>عروض دقيقة ‎(uint32_t)</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>تصفية الأنواع بالاسم</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>الاسم</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>الصنف</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>الحجم</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>الأعضاء</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>العودة إلى النوع المعروض سابقًا ‎(Esc)</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>التخطيط</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>نسخ التخطيط أو المصدر</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>تصدير الأنواع كمصدر</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>تصدير هذا النوع…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>تصدير الأنواع المحددة…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>تصدير كل الأنواع…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>كيف تسمّي C وC++ الأنواع المضمّنة</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>إزاحات ست عشرية</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>مع التبعيات</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>التصريح أيضًا بكل نوع يحتاجه هذا النوع ليُترجَم المصدر</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>فحوص التخطيط</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>إلحاق كل نوع بفحوص لحجمه وإزاحاته يتحقق منها المترجم</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>العضو</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>الإزاحة</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>البايتات</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>النوع</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>لا يوفّر هذا المحرك أنواعًا محلية.</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>جارٍ قراءة أنواع البرنامج…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>تعذّرت قراءة الأنواع: %1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>لا يعرّف ملف PDB أي أنواع.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>لا توجد أنواع محلية: لا يملك هذا البرنامج ملف PDB فيه أنواع.</translation>
+    </message>
+    <message>
+        <source>Types: %1 · PDB · %2</source>
+        <translation>الأنواع: %1 · PDB · %2</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>أنواع لا يطابق تخطيطها ما يسرده PDB: %1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>تعذّر تخطيط النوع: %1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// تعذّر توليد مصدر النوع: %1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>بنية</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>اتحاد</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>تعداد</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>اسم بديل لنوع</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>نوع دالة</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>البايتات: %1 ‎(%2)</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>المحاذاة: %1</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>الحزم: %1</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>مُصرَّح به فقط</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>المعدِّد</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>القيمة</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>(حشو)</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>انقر نقرًا مزدوجًا لفتح %1</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>تصدير الأنواع المحلية</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>تعذّرت الكتابة إلى %1</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>تم التصدير إلى %1</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>تعذّر تصدير الأنواع: %1</translation>
     </message>
 </context>
 </TS>

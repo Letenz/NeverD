@@ -1,9 +1,15 @@
-//===- MobileDalvikModel.cpp - Shared Dalvik declaration validation
-//--------===//
-#include "MobileDalvik.h"
-#include "MobileDalvikAccess.h"
-#include "MobileDalvikIdentity.h"
-#include "MobileDalvikSignature.h"
+//===- Model.cpp - Shared Dalvik model implementation ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared Dalvik model implementation.
+//===----------------------------------------------------------------------===//
+#include "neverd/dalvik/Model.h"
+#include "neverd/dalvik/Access.h"
+#include "neverd/dalvik/Identity.h"
+#include "neverd/dalvik/Signature.h"
 
 #include <algorithm>
 #include <array>

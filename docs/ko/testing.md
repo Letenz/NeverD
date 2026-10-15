@@ -1786,6 +1786,10 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 는 캐시된 이력을 다시 청구하지 않고, 추가된 넓은 상수는 계속 청구하며, 작업 및 노드 예산 부족은 거부하고, 복사된 가독성 캐시가 독립적으로 유지되는지 확인합니다.
@@ -1969,4 +1973,8 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 
 `KernelDeviceStackTests.cpp`는 현재 이웃, 빌린 결과와 보유한 결과, 입력 또는 이웃 장치의 삭제, 마지막 참조 해제, 잘못되거나 손상된 입력, 참조 추가 전 IRQL 거부를 검사합니다. 자체 `fixtures/driver_device_queries.c`는 `DriverDeviceQueryTests.cpp`를 통해 사용 가능한 백엔드, 두 계약과 로드 주소, 협력 및 17명령 선점 스케줄링에서 실행됩니다. detach/delete 후 저장 공간 유지와 의도적 참조 누수 시 언로드 거부를 검증하며 네 가지 네이티브 계약/주소 결과가 필수입니다.
 
-KernelFileObjectTests는 CREATE 중 참조, 유형 불일치, 번호 재사용, 대기 CLOSE, 삭제, 생성 실패 및 높은 IRQL에서 마지막 해제 거부를 확인합니다. 독자적인 driver_file_objects.c와 DriverFileObjectTests는 사용 가능한 백엔드, 두 계약과 기준 주소, 협력 실행과 17명령 스케줄링으로 동기 및 대기 종료, 생성 실패와 의도적 누수를 검사합니다. 중첩 종료는 실제 스레드, 프로세스 및 PreviousMode를 확인합니다. 네 가지 계약 및 주소 조합이 네이티브 필수 검증이며 핸들과 파일 시스템은 별도 검증이 필요합니다.
+KernelFileObjectTests와 KernelObjectTests는 형식 검사, 형식 불일치 시 출력 초기화, 일반 권한, 프로세스별·전체 핸들 수, 콜백 재열기 거부, 잘못된 경로 재시도, 요청자 종료, 반복 정리 및 대기 CLOSE를 확인합니다. KernelPnpRequestTests는 지연 CLEANUP의 하위 응답을, KernelFrameworkFileTests는 콜백 프로세스와 LOCK_CONTROL을 확인합니다. driver_file_objects.c의 포인터 수명 검증도 유지됩니다. 독자적인 driver_file_handles.c는 협력 실행과 17명령 스케줄링에서 동기·대기 CLEANUP과 CLOSE, 시스템 작업자 해제, 번호 재사용과 누수를 검증합니다. 실제 WDK driver_kmdf_file_handles.c는 시스템 정리, 호출자 문맥 복원 및 정리 콜백이 없는 경로를 검사합니다. NEVERD_KMDF_FILE_HANDLES_FIXTURE와 선택적 NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE를 설정합니다. DriverFileObjectTests는 가능한 백엔드, 두 계약과 주소를 사용하며 없는 WDK 산출물이나 백엔드는 명시적으로 건너뜁니다. 파일 시스템은 별도 검증이 필요합니다. 시나리오에서 시작한 KMDF CLEANUP/CLOSE는 호출 프로세스, 스레드와 PreviousMode를 유지합니다. F 모드는 다른 파일의 CLEANUP에서 보유 핸들을 닫고 반환 후 컨텍스트 복원을 확인합니다.
+
+`KernelFileQueryTests.cpp`는 패킷 필드, 빌린 메모리, 즉시/보류 상태 게시, 잘못된 출력, 작업자 알림, 파일 유지와 최종 CLOSE를 확인합니다. `DriverFileObjectTests.cpp`는 독자적인 `driver_file_queries.c`를 계약, 백엔드, 로드 기준 주소, 협력/명령 시계 스케줄링별로 실행합니다. 선택 항목 `NEVERD_WDM_FILE_QUERIES_FIXTURE`와 `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE`는 실제 WDK 헤더/가져오기 라이브러리와 활성 CFG 이미지를 추가합니다. 없는 백엔드나 외부 픽스처는 명시적으로 건너뜁니다. 파일 시스템 제공자나 일반 APC 전달의 구현을 입증하지 않습니다.
+
+프로세서 회귀는 출력 경계, NULL, 중첩 복원, 잘못된 IRQL 및 가져오기 식별을 확인합니다. 독자적인 `driver_processors.c`는 백엔드, 계약, 기준 주소, 스케줄링별로 진입점, 작업자, DPC를 실행합니다. 선택 항목 `NEVERD_WDM_PROCESSORS_FIXTURE`와 `NEVERD_WDM_PROCESSORS_CFG_FIXTURE`는 실제 WDK 일반/CFG 이미지의 인라인 호출과 동적 내보내기를 검증하며, 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.

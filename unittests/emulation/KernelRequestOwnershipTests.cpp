@@ -1065,6 +1065,9 @@ TEST_F(KernelRequestOwnership,
             Input.RequestorProcessID);
   EXPECT_EQ(call("PsGetCurrentProcessId", {}), 4u);
   success(Model->validateGuestAccess(UserInput, 1, false));
+  EXPECT_EQ(call("KeGetCurrentProcessorNumberEx", {0}), 0u);
+  EXPECT_EQ(call("KeGetCurrentProcessorNumberEx", {Scratch + 0x280}), 0u);
+  EXPECT_EQ(bytes(Scratch + 0x280, 4), (std::vector<uint8_t>(4, 0)));
   EXPECT_EQ(bytes(UserInput, 1), (std::vector<uint8_t>{0x11}));
   auto CanReadOther = Memory->canAccess(OtherInput, 1, Read);
   ASSERT_TRUE(bool(CanReadOther));

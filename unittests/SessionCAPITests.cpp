@@ -3500,6 +3500,65 @@ TEST_F(SessionCAPITest, NamedPDBWithoutPEIdentityLoadsOnlyByChoice) {
   EXPECT_EQ(neverd_session_load(Session, Stripped.c_str()), 0);
 }
 
+TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "local_types.exe", std::ios::binary);
+  const std::string Exe =
+      write("local_types.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  const std::string PDB = (Fixtures / "local_types.pdb").string();
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+
+  // Without its PDB the program has no local types.
+  neverd_session_set_pdb_search(Session, 0);
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1);
+  llvm::json::Object None = parse(neverd_local_types_json(Session, nullptr));
+  EXPECT_EQ(None.getString("source"), "none");
+  EXPECT_EQ(None.getArray("types")->size(), 0u);
+
+  neverd_session_set_pdb_path(Session, PDB.c_str());
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  llvm::json::Object List =
+      parse(neverd_local_types_json(Session, R"({"filter":"THREAD"})"));
+  EXPECT_EQ(List.getString("source"), "pdb");
+  EXPECT_EQ(List.getString("dataModel"), "LLP64");
+  ASSERT_EQ(List.getArray("types")->size(), 1u);
+  EXPECT_EQ((*List.getArray("types"))[0].getAsObject()->getString("name"),
+            "_THREAD_LIKE");
+  EXPECT_EQ(List.getObject("stats")->getArray("nestingMismatches")->size(), 0u);
+
+  llvm::json::Object Thread =
+      parse(neverd_local_type_json(Session, "_THREAD_LIKE", nullptr));
+  EXPECT_EQ(Thread.getInteger("size"), 24);
+  EXPECT_EQ(Thread.getArray("members")->size(), 5u);
+
+  const std::string Header = takeString(neverd_local_types_source(
+      Session, R"({"types":["_DEVICE"],"asserts":true})"));
+  EXPECT_NE(Header.find("struct _LIST_ENTRY\n{"), std::string::npos);
+  EXPECT_NE(Header.find("struct _DEVICE\n{"), std::string::npos);
+  EXPECT_NE(Header.find("_Static_assert(sizeof(struct _DEVICE) == 0x58"),
+            std::string::npos);
+  const std::string Rust = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"rust","types":["_PACKED"],"dependencies":false})"));
+  EXPECT_NE(Rust.find("#[repr(C, packed(1))]"), std::string::npos);
+
+  EXPECT_EQ(neverd_local_type_json(Session, "_NO_SUCH_TYPE", nullptr), nullptr);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("_NO_SUCH_TYPE"),
+            std::string::npos);
+  EXPECT_EQ(neverd_local_types_source(Session, R"({"language":"pascal"})"),
+            nullptr);
+  EXPECT_EQ(neverd_local_types_json(Session, "[1]"), nullptr);
+}
+
 TEST_F(SessionCAPITest, PDBReferenceNamesTheCopyALoadFinds) {
   const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
                         "safety" / "fixtures" / "binaries";
@@ -4525,7 +4584,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
     ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
     const auto Entry = seedAnalysisCacheSymbols(Session);
     auto &State = *neverd::sdk::toSession(Session);
-    State.selectFunction(Entry);
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
     const auto Source = takeString(neverd_decompile(Session, Entry));
     const auto LLVM = takeString(neverd_decompile_llvm(Session, Entry));
@@ -4535,7 +4594,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
     ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
     for (const char *View : {"llvm", "llvmc"}) {
       SCOPED_TRACE(View);
-      State.selectFunction(Entry);
+      neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
       ASSERT_EQ(neverd_prepare_function_view(Session, Entry, View), 1);
       ASSERT_TRUE(State.PipeResult.HighIRDeferred);
       ASSERT_TRUE(State.PipeResult.HighFuncs.empty());
@@ -4785,7 +4844,7 @@ TEST_F(SessionCAPITest, SourceOptionsKeepOrdinaryAndEnhancedPagesIndependent) {
   auto &State = *neverd::sdk::toSession(Session);
   State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry, 11));
   State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry + 16, 6));
-  State.resetFunctionsFromImage();
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
   const auto Ordinary = takeString(neverd_decompile(Session, Entry));
   ASSERT_FALSE(Ordinary.empty()) << takeString(neverd_last_error(Session));
   const auto Low = takeString(neverd_ir_low(Session, Entry));
@@ -4854,7 +4913,7 @@ TEST_F(SessionCAPITest, SourceOptionsDoNotDependOnLLVMViewOrder) {
   std::string Original, Enhanced, Med;
   for (bool LLVMFirst : {false, true}) {
     SCOPED_TRACE(LLVMFirst);
-    State.clearPipeline();
+    neverd::sdk::SessionTestAccess::clearPipeline(State);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
     const auto Before = takeString(neverd_ir_med(Session, Entry));
     if (LLVMFirst) {
@@ -4970,7 +5029,7 @@ TEST_F(SessionCAPITest,
   std::string Inspection, Source;
   for (bool SourceFirst : {false, true}) {
     SCOPED_TRACE(SourceFirst);
-    State.clearPipeline();
+    neverd::sdk::SessionTestAccess::clearPipeline(State);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
     if (SourceFirst)
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), Source);

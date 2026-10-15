@@ -258,6 +258,37 @@ with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
 separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
+## Local types
+
+`NeverDTypesTests` covers the local type library: builtin sizes per data
+model, how anonymous unions and structures are rebuilt from MSVC's flat member
+lists (each nesting must flatten back exactly), the PDB import against
+`unittests/types/fixtures/local_types.pdb`, layout JSON, and the C, C++, Rust
+and Go renderers. The fixture's source says how to rebuild the
+`local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
+`NeverDSessionCAPITests` reads the same fixture through the C API.
+
+To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
+`ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
+and every nesting must hold.
+
+Rendered source must also compile with each record's size and offsets checked.
+`scripts/check_type_renders.py` runs `neverd types --all --asserts` and
+compiles the result:
+- C and C++ in all four builtin spellings with clang for the MSVC target, and
+  the portable spelling for the GNU target too;
+- Rust with rustc (64-bit layouts only);
+- Go with `go vet` for Windows.
+
+A missing toolchain is reported and skipped. Without `--binary` it checks the
+fixture:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
+```
+
 ## Scalar x86 floating-point state
 
 `NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
@@ -1742,6 +1773,16 @@ private-frame variants cover x86, x64, ARM and AArch64 across ELF, COFF and
 Mach-O. Reachable values cannot disappear from feasible masks or certify a false
 upper bound; real arithmetic updates cannot become transparent backedges. Warm
 and cold queries must agree at evidence-budget and resolver-depth boundaries.
+`ResolverPendingWalks.*` compares recursive dependency lifetimes against an
+independent set-of-activation-IDs model, including sparse ancestors, completed
+memo hits, reused depths and the fixed bitset's word and capacity boundaries.
+Unrelated returns must preserve an exact snapshot; retiring any actual
+dependency must invalidate it, including beyond the exact tracking capacity.
+`ResolverPredicateDemand.*` places a deep operand behind conditions that the
+current query cannot use. The independent constant candidate must still be
+proved across four architectures and exact COPY/NOT transports. Needed
+conditions, guarded/partial definitions and cross-block producers retain their
+depth refusals; policy switches and evidence budgets agree cold and warm.
 `ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
 budget boundary, including completion flags and masks. It covers owned temporary
 overrides, equal-sized edge changes, roots, different builders, nested leases,
@@ -6747,6 +6788,10 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
@@ -6947,7 +6992,7 @@ native transports remain skips, not execution evidence.
 
 `KernelDeviceStackTests.cpp` checks current neighbors, borrowed versus retained results, deletion of either query input or neighbor, last-reference retirement, invalid/corrupted inputs and IRQL rejection before retention. Original `fixtures/driver_device_queries.c` runs through `DriverDeviceQueryTests.cpp` on available backends, both contracts and image bases, with cooperative and 17-instruction scheduling. It verifies held storage after detach/delete and rejects unload with a deliberately leaked reference; all four native contract/base outcomes are required.
 
-KernelFileObjectTests checks references during CREATE, type mismatch, reused identifiers, pending CLOSE, deletion, failed CREATE and rejection of elevated final release. Original driver_file_objects.c and DriverFileObjectTests execute synchronous/pending close, failed creation and deliberate leaks on available backends, both contracts and bases, with cooperative and 17-instruction scheduling. The nested close checks the actual thread, process and PreviousMode. Native acceptance requires all four contract/base outcomes. File handles and filesystem operations need separate coverage.
+KernelFileObjectTests and KernelObjectTests cover typed pointer opens, output clearing on type mismatch, generic access, process/global handle counts, callback reopening rejection, failed-route retry, requestor exit, repeated cleanup and pending final close. KernelPnpRequestTests preserves a delayed CLEANUP provider response; KernelFrameworkFileTests checks callback process ownership and LOCK_CONTROL admission. Original driver_file_objects.c keeps its pointer-lifetime coverage. Original driver_file_handles.c checks synchronous/pending CLEANUP and CLOSE, system-worker release, identifier reuse and deliberate leaks with cooperative and 17-instruction scheduling. Genuine WDK driver_kmdf_file_handles.c checks system-process cleanup, restored caller close and callback-free cleanup; configure NEVERD_KMDF_FILE_HANDLES_FIXTURE and optional NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE. DriverFileObjectTests runs available backends, both contracts and bases. Missing WDK artifacts or backends skip visibly. Filesystem operations require separate coverage. Scenario-originated KMDF CLEANUP/CLOSE retain the calling process, thread and PreviousMode; the F fixture mode closes a retained handle from another file’s CLEANUP and checks restoration afterward.
 
 ### Android method, transaction and command execution
 
@@ -6963,3 +7008,35 @@ then the four owning labels. Process-public C API/CLI and Python integration
 exercise the same paths; transport unavailability is a skip, never evidence of
 execution. These authored workloads do not establish arbitrary application,
 Android service or shader coverage.
+
+`KernelFileQueryTests.cpp` checks query packet fields, borrowed memory, immediate versus pending status publication, invalid outputs, worker notification, retained files and final CLOSE. `DriverFileObjectTests.cpp` executes the original `driver_file_queries.c` across contracts, backends, load bases and cooperative/instruction-clock scheduling. Optional `NEVERD_WDM_FILE_QUERIES_FIXTURE` and `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` add genuine WDK headers/import libraries and active CFG. Missing backends or external fixtures remain explicit skips; these tests do not implement a filesystem provider or general APC delivery.
+
+## Supplied DEX method execution
+
+`NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
+overlapping wide moves, division exceptions/overflow, budget/stack stops,
+result-use rules and refusal of class initialization/handlers/unknown opcodes.
+`NeverDMobileTests` must also run when changing the shared DEX reader or models;
+mobile recovery and JNI execution share those owners.
+
+For an independent Java compiler/runtime oracle, prepare the JNI fixtures and
+`neverd-process-probe`, then run:
+
+```sh
+python3 scripts/test_android_dex_runtime.py --build build-release \
+  --jdk /path/to/jdk --d8 /path/to/build-tools/lib/d8.jar \
+  --backend unicorn --output /path/to/new-dex-run
+```
+
+Repeat with `--backend hvf` on supported macOS hosts. The original Java is
+compiled to class files for the JVM oracle and to DEX for NeverD. Cases cover
+overflow, negative/oversized shifts, signed division/remainder, narrow returns,
+wide arguments, branches, packed/sparse switches, loops, recursion and
+cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
+division exceptions, loops exhausting the shared native budget, recursion,
+objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+request/report files stay in the explicit output directory. Missing JDK/D8 or
+CPU transports are unavailable evidence, not a passing substitute. The runtime
+itself does not launch these preparation tools or use a device.
+
+Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.

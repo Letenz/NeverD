@@ -11,6 +11,7 @@
 #include "HexView.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
+#include "LocalTypesView.h"
 #include "MainWindow.h"
 #include "OutputWindow.h"
 #include "PdbPromptDialog.h"
@@ -66,6 +67,7 @@
 #include <QToolButton>
 #include <QTranslator>
 #include <QTreeView>
+#include <QTreeWidget>
 #include <QUrl>
 #include <cmath>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
@@ -3870,6 +3872,64 @@ private slots:
     QVERIFY2(input.width() >= 420, qPrintable(QString::number(input.width())));
   }
 
+  void localTypesLayOutAndRenderTheProgramsTypes() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.action(ActionId::ViewLocalTypes)->trigger();
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(types);
+    auto *list =
+        types->findChild<QTreeView *>(QStringLiteral("localTypesList"));
+    auto *layout =
+        types->findChild<QTreeWidget *>(QStringLiteral("localTypesLayout"));
+    auto *source =
+        types->findChild<QPlainTextEdit *>(QStringLiteral("localTypesSource"));
+    auto *filter =
+        types->findChild<QLineEdit *>(QStringLiteral("localTypesFilter"));
+    QVERIFY(list && layout && source && filter);
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    // The filter has the focus, as IDA's quick filter does.
+    QTRY_VERIFY(filter->hasFocus());
+
+    // A record shows its members, the padding between and the union it
+    // holds, the union's bitfield at its bit.
+    types->showType(QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+    QTRY_COMPARE(layout->topLevelItemCount(), 4);
+    QCOMPARE(layout->topLevelItem(0)->text(0), QStringLiteral("Type"));
+    QCOMPARE(layout->topLevelItem(1)->text(0), QStringLiteral("(padding)"));
+    QCOMPARE(layout->topLevelItem(1)->text(2), QStringLiteral("0x6"));
+    QCOMPARE(layout->topLevelItem(3)->text(0), QStringLiteral("union"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(1),
+             QStringLiteral("0x18.0"));
+    QCOMPARE(layout->topLevelItem(3)->child(1)->text(2), QStringLiteral(":1"));
+
+    // A member's type opens on a double click; Back returns.
+    auto *links = layout->topLevelItem(2);
+    QCOMPARE(links->text(0), QStringLiteral("Links"));
+    emit layout->itemDoubleClicked(links, 0);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_LIST_ENTRY"));
+    QTest::keyClick(layout, Qt::Key_Escape);
+    QTRY_COMPARE(types->currentType(), QStringLiteral("_DEVICE"));
+
+    // The source in the language of its tab, with the options asked.
+    types->setPage(3);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language rust spelling windows")));
+    types->setPage(1);
+    QTRY_VERIFY(source->toPlainText().startsWith(
+        QStringLiteral("// language c spelling windows")));
+    QVERIFY(source->toPlainText().contains(QStringLiteral("struct _DEVICE")));
+
+    // The filter keeps the types whose name holds its text.
+    filter->setText(QStringLiteral("list"));
+    QTRY_COMPARE(list->model()->rowCount(), 1);
+    types->setPage(0);
+  }
+
   void viewsNarrowPastTheirRows() {
     // A status line or a row of buttons is cut at its view's edge.  Kept
     // whole, the disassembly's status line held its dock over 500 pixels
@@ -3884,15 +3944,17 @@ private slots:
                  std::optional<Address>(Base + 0x140));
     bench.action(ActionId::ViewPseudocode)->trigger();
     bench.action(ActionId::ViewExtensions)->trigger();
+    bench.action(ActionId::ViewLocalTypes)->trigger();
     auto *code = bench.codeView(QStringLiteral("source"));
     auto *extensions = bench.window->findChild<ExtensionsView *>();
-    QVERIFY(code && extensions && bench.functions());
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(code && extensions && types && bench.functions());
     // Every button shows, as the fold button does for library code.
     for (auto *button : code->findChildren<QToolButton *>())
       button->show();
     const QString wide(400, QLatin1Char('x'));
     const QList<QWidget *> views{bench.window->disassembly(), code,
-                                 bench.functions(), extensions};
+                                 bench.functions(), extensions, types};
     for (auto *view : views) {
       for (auto *label : view->findChildren<QLabel *>())
         label->setText(wide);

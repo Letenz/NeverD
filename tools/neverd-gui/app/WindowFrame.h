@@ -23,6 +23,14 @@ namespace neverd::gui {
 /// frame elsewhere and when the setting ui/nativeTitleBar is on.
 class WindowFrame final : public QObject {
 public:
+  /// Before the application object exists: a window that takes its native
+  /// window early, as a dialog polished before it first shows does in
+  /// attach(), keeps it to itself.  Qt otherwise gives every other child of
+  /// its parent a native window too, and GNOME's Wayland composites the
+  /// workbench's title bar, toolbars, docks and status bar as subsurfaces
+  /// that stop updating once the dialog closes.
+  static void prepareNativeWindows();
+
   /// Whether top-level windows draw their own frame.
   static bool enabled();
 

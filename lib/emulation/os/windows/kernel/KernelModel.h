@@ -111,6 +111,10 @@ public:
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
            nullptr,
        const KernelContextCapture *Context = nullptr);
+  /// Deliver completed query notifications at an eligible caller boundary.
+  /// File retirement and API results remain owned by the query continuation.
+  llvm::Error
+  deliverFileQueryCompletions(const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -209,7 +213,9 @@ public:
       FrameworkWaitLock,
       FrameworkCallback,
       FrameworkCallbackLock,
-      FileClose
+      FileClose,
+      FileHandleClose,
+      FileInformationQuery
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -226,6 +232,10 @@ public:
   };
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
+  llvm::Expected<std::optional<uint64_t>> resumeFileHandleClose(uint64_t ID);
+  std::optional<uint64_t> takeFileQueryContinuation();
+  llvm::Expected<std::optional<uint64_t>>
+  resumeFileInformationQuery(uint64_t ID);
   std::optional<uint64_t> nextEventTime() const;
   bool hasQueuedDPC() const { return Scheduler.hasQueuedDPC(); }
   bool hasQueuedPriorityCallback() const {
@@ -268,7 +278,10 @@ public:
   }
   /// A synchronous nested callback retains its parent's process and memory
   /// authority while keeping its own execution and resource ownership.
-  llvm::Error inheritExecutionContext(uint64_t Child, uint64_t Parent);
+  llvm::Error
+  inheritExecutionContext(uint64_t Child, uint64_t Parent,
+                          std::optional<uint32_t> ProcessID = std::nullopt);
+  llvm::Error activateInheritedProcess();
   llvm::Error setUserRequestContext(
       bool Active,
       uint32_t ProcessID = DriverRequest::DefaultRequestorProcessID);
@@ -296,6 +309,10 @@ public:
                                   bool IsWrite) const;
 
 private:
+  llvm::Expected<uint64_t> dispatchKernelCall(
+      const std::string &Name, llvm::ArrayRef<uint64_t> Arguments,
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+      const KernelContextCapture *Context);
   static std::optional<unsigned> halArgumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t> callHAL(llvm::StringRef Name,
                                    llvm::ArrayRef<uint64_t> Arguments);
@@ -601,7 +618,9 @@ private:
   struct ExecutionProcessContext {
     uint32_t ProcessID, CreatingProcessID;
     uint8_t PreviousMode;
-    bool Attached;
+    /// Public KeStackAttachProcess currently admits only a bounded operation
+    /// set. Internal object-manager callbacks have their own continuation.
+    bool RestrictedAttachment;
   };
   std::optional<ExecutionProcessContext> executionProcessContext() const;
   struct InheritedExecutionContext {
@@ -925,6 +944,7 @@ private:
     uint32_t GrantedAccess;
     uint32_t Attributes;
     uint32_t ProcessID;
+    bool ScenarioOwned = false;
   };
   // External references have one owner. Execution and registered waits keep
   // their domain-owned holds until completion; they are not caller references.
@@ -1009,6 +1029,7 @@ private:
   llvm::Expected<uint64_t> setThreadPriority(uint64_t Object, int32_t Priority);
   // Canonical logical-thread ownership survives parked and nested executions.
   std::set<uint64_t> SystemAffinityThreads;
+  llvm::Expected<uint64_t> currentProcessorNumber(uint64_t Output);
   llvm::Expected<uint64_t> setSystemAffinity(uint64_t Mask);
   llvm::Expected<uint64_t> revertSystemAffinity();
   std::map<uint64_t, size_t> RemoveLockWaitReferences;
@@ -1212,6 +1233,13 @@ private:
     uint64_t PnpDevice = 0;
     bool Asynchronous = false;
     FileState State = FileState::Opening;
+    uint64_t ScenarioHandle = 0;
+    uint32_t ScenarioID = 0;
+    bool ScenarioCleanupRequested = false;
+    uint32_t HandleCloseHolds = 0;
+    uint32_t InternalIOHolds = 0;
+    bool QueryEventInitialized = false;
+    std::optional<DeferredFileClose> DeferredCleanup;
     std::optional<DeferredFileClose> DeferredClose;
   };
   // Scenario identifiers name an open instance, not its object-manager body.
@@ -1222,12 +1250,55 @@ private:
                                               std::optional<size_t> SourceIndex,
                                               size_t Index,
                                               uint64_t RetainedFile = 0);
-  llvm::Error retireFileIfUnreferenced(uint64_t Object);
+  llvm::Error retireFileIfUnreferenced(
+      uint64_t Object, std::optional<uint32_t> CallerProcess = std::nullopt);
   llvm::Error tryFinalizeFileClose(uint64_t IRP);
   llvm::Error waitForFileClose(uint64_t IRP);
   llvm::Expected<std::optional<uint64_t>>
   finishFileCloseDispatch(uint64_t Token, uint64_t ResultValue);
   std::set<uint64_t> InternalFileCloses;
+  struct FileHandleClose {
+    uint64_t File = 0;
+    uint64_t IRP = 0;
+    uint32_t CallerProcess = 0;
+  };
+  std::map<uint64_t, FileHandleClose> FileHandleCloses;
+  uint64_t NextFileHandleClose = 1;
+  llvm::Error validateFileHandleClose(uint64_t File, bool Scenario) const;
+  llvm::Expected<std::optional<DriverRequestKind>>
+  planFileHandleClose(uint64_t Handle) const;
+  void releaseFileHandle(uint64_t Handle);
+  llvm::Expected<Invocation> beginFileHandleRequest(uint64_t File,
+                                                    DriverRequestKind Kind,
+                                                    uint32_t ProcessID);
+  llvm::Error closeFileHandle(uint64_t Handle);
+  llvm::Error dispatchFileHandleClose(uint64_t ID, const Invocation &Call,
+                                      uint32_t ProcessID);
+  llvm::Error waitForFileHandleClose(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileHandleDispatch(uint64_t Token, uint64_t ReturnValue);
+  struct FileInformationQuery {
+    uint64_t File = 0, IRP = 0, ReturnedLength = 0, Storage = 0;
+    uint64_t CallerExecution = 0, CallerThread = 0;
+    uint32_t CallerProcess = 0;
+    uint32_t Status = 0, Information = 0;
+    bool Released = false;
+    bool CompletionPublished = false;
+    bool CriticalRegion = false;
+  };
+  std::map<uint64_t, FileInformationQuery> FileInformationQueries;
+  uint64_t NextFileInformationQuery = 1;
+  std::optional<uint64_t> PendingFileQueryContinuation;
+  llvm::Expected<uint64_t> relatedFileDevice(uint64_t File) const;
+  llvm::Expected<uint64_t>
+  queryFileInformation(llvm::ArrayRef<uint64_t> A,
+                       const KernelContextCapture *Context);
+  llvm::Error validateFileQueryInterrupts(const KernelContextCapture *Context);
+  llvm::Error publishFileQueryCompletion(uint64_t IRP);
+  llvm::Expected<bool> fileInformationQueryReady(uint64_t ID) const;
+  llvm::Error waitForFileInformationQuery(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileInformationDispatch(uint64_t Token, uint64_t ReturnValue);
   bool Unloading = false;
   bool Unloaded = false;
   struct RequestedPower {
@@ -1312,6 +1383,9 @@ private:
     std::vector<std::optional<bool>> UnwoundPending;
     bool Forwarded = false;
     uint64_t SystemBuffer = 0;
+    /// Internal query producers borrow caller storage through completion.
+    bool BorrowedSystemBuffer = false;
+    uint64_t FileQueryOperation = 0;
     uint64_t UserBuffer = 0;
     uint64_t UserInput = 0;
     std::vector<UserRegion> UserRegions;
@@ -1332,6 +1406,9 @@ private:
     bool AsynchronousFile = false;
     uint32_t ProcessID = 0;
     uint32_t InputSize = 0;
+    /// Effective process of an object-manager file lifecycle callback. The
+    /// invoking thread's creating process and PreviousMode stay unchanged.
+    std::optional<uint32_t> CallbackProcessID;
     uint32_t TransferSize = 0;
     uint64_t ByteOffset = 0;
     bool Direct = false;
@@ -1354,7 +1431,9 @@ private:
     PowerDispatch,
     PowerCompletion,
     Cancel,
-    FileClose
+    FileClose,
+    FileHandleClose,
+    FileInformationQuery
   };
   struct IRPCall {
     IRPCallKind Kind;
@@ -1364,6 +1443,8 @@ private:
     uint64_t ReturnValue = 0;
     std::optional<uint64_t> ProviderReceiptIRP;
     std::optional<uint32_t> FrameworkDispatchStatus;
+    uint64_t FileHandleOperation = 0;
+    uint64_t FileQueryOperation = 0;
   };
   struct ProviderReceipt {
     uint64_t Device = 0;
@@ -1587,8 +1668,8 @@ private:
   llvm::Error completeRequest(uint64_t IRP, uint8_t PriorityBoost);
   llvm::Error validateRequestCompletion(uint64_t IRP, uint32_t Status,
                                         uint64_t Information) const;
-  llvm::Error validateIOAccess(uint64_t Address, uint32_t Size,
-                               bool IsWrite) const;
+  llvm::Error validateIOAccess(uint64_t Address, uint32_t Size, bool IsWrite,
+                               bool DispatcherStorage = false) const;
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
   llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,

@@ -14,6 +14,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidJNIStrings.cpp
   AndroidJNIArrays.cpp
   AndroidJNIMethods.cpp
+  AndroidDex.cpp
   AndroidSignals.cpp
   AndroidStdio.cpp
   AndroidStdioRead.cpp
@@ -31,7 +32,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMemory.cpp
   AndroidFinalizers.cpp
   AndroidNative.cpp
-  LINK_COMPONENTS Loader EmulationRuntime EmulationImage EmulationABI EmulationLinuxKernel
+  LINK_COMPONENTS Dalvik Loader EmulationRuntime EmulationImage EmulationABI EmulationLinuxKernel
   LLVM_COMPONENTS Support)
 if(WIN32)
   target_compile_definitions(NeverDEmulationAndroid PRIVATE NOMINMAX)

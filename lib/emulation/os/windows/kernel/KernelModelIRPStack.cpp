@@ -602,6 +602,10 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     return stackError("unknown or inactive guest continuation");
   if (Call->second.Kind == IRPCallKind::FileClose)
     return finishFileCloseDispatch(Token, ResultValue);
+  if (Call->second.Kind == IRPCallKind::FileHandleClose)
+    return finishFileHandleDispatch(Token, ResultValue);
+  if (Call->second.Kind == IRPCallKind::FileInformationQuery)
+    return finishFileInformationDispatch(Token, ResultValue);
   if (Call->second.Kind == IRPCallKind::PowerCompletion)
     return finishPowerCompletion(Token);
   if (Call->second.Kind == IRPCallKind::Cancel) {

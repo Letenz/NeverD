@@ -63,6 +63,7 @@ NEVERD_WDK_ARGUMENTS("link", "/machine:x64", "/subsystem:native", "/driver",
 NEVERD_WDK_ARGUMENTS("cfg_compile", "-Xclang", "-cfguard")
 NEVERD_WDK_ARGUMENTS("cfg_link", "/guard:cf")
 NEVERD_WDK_ARGUMENTS("async_compile", "-fasync-exceptions")
+NEVERD_WDK_ARGUMENTS("public_api_compile", "-DNEVERD_WDK_FIXTURE")
 // Force the real CMPXCHG16B intrinsic instead of an external libatomic call.
 NEVERD_WDK_ARGUMENTS("wide_atomic_compile", "-mcx16")
 NEVERD_WDK_ARGUMENTS("seh_compile", "-fasync-exceptions",
@@ -75,8 +76,14 @@ NEVERD_WDK_ARGUMENTS("seh_link", "/debug:dwarf")
 // sources.
 NEVERD_WDK_FIXTURE("KMDF", "driver_kmdf_lifecycle.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("KMDF_CONTROL", "driver_kmdf_control.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_FILE_HANDLES", "driver_kmdf_file_handles.c", "KMDF",
+                   "0", "")
 NEVERD_WDK_FIXTURE("KMDF_PNP", "driver_kmdf_pnp.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("WDM_DMA", "driver_wdm_dma.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_FILE_QUERIES", "driver_file_queries.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_PROCESSORS", "driver_processors.c", "WDM", "0",
+                   "public_api")
 NEVERD_WDK_FIXTURE("WDM_DMA_CHANNEL", "driver_wdm_dma_channel.c", "WDM", "0",
                    "")
 NEVERD_WDK_FIXTURE("WDM_INTERRUPT", "driver_wdm_interrupts.c", "WDM", "0", "")

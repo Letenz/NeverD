@@ -840,7 +840,7 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     for (const auto &[Lock, State] : QueuedSpinLocks)
       if (Address < Lock + 8 && Lock < End)
         return modelError("guest write to a held executive spin lock");
-  if (auto E = validateIOAccess(Address, Size, IsWrite))
+  if (auto E = validateIOAccess(Address, Size, IsWrite, !IncludeDispatcher))
     return E;
   if (auto E = validateMDLAccess(Address, Size, IsWrite))
     return E;
@@ -934,7 +934,7 @@ KernelModel::executionProcessContext() const {
     auto Context = It->second.Process;
     if (Context && Attached) {
       Context->ProcessID = CurrentUserProcessID;
-      Context->Attached = true;
+      Context->RestrictedAttachment = true;
     }
     return Context;
   }
@@ -959,19 +959,39 @@ KernelModel::executionProcessContext() const {
   return std::nullopt;
 }
 
-llvm::Error KernelModel::inheritExecutionContext(uint64_t Child,
-                                                 uint64_t Parent) {
+llvm::Error
+KernelModel::inheritExecutionContext(uint64_t Child, uint64_t Parent,
+                                     std::optional<uint32_t> ProcessID) {
   if (!Child || Child == Parent || Parent != CurrentExecution ||
       ExecutionThreadKeys.contains(Child) ||
       InheritedExecutionContexts.contains(Child))
     return modelError("nested context inheritance requires a fresh "
                       "child of the active execution");
+  auto Context = executionProcessContext();
+  if (ProcessID && (!Context || !*ProcessID))
+    return modelError("internal process attachment requires a known caller");
+  const bool Switch = ProcessID && *ProcessID != Context->ProcessID;
+  if (Switch) {
+    Context->ProcessID = *ProcessID;
+  }
   InheritedExecutionContexts.emplace(
-      Child,
-      InheritedExecutionContext{CurrentThreadKey, CurrentUserProcessID,
-                                canCatchUserAccess(profile::UserArenaBase, 1),
-                                executionProcessContext()});
+      Child, InheritedExecutionContext{
+                 CurrentThreadKey, Switch ? *ProcessID : CurrentUserProcessID,
+                 Switch ? *ProcessID != SystemProcessID
+                        : canCatchUserAccess(profile::UserArenaBase, 1),
+                 Context});
   return llvm::Error::success();
+}
+
+llvm::Error KernelModel::activateInheritedProcess() {
+  const auto Inherited = InheritedExecutionContexts.find(CurrentExecution);
+  if (Inherited == InheritedExecutionContexts.end() ||
+      Inherited->second.ThreadKey != CurrentThreadKey ||
+      !Inherited->second.Process || hasProcessAttachment(CurrentExecution))
+    return llvm::Error::success();
+  const auto &Context = Inherited->second;
+  return setUserRequestContext(Context.Process->ProcessID != SystemProcessID,
+                               Context.Process->ProcessID);
 }
 
 bool KernelModel::canCatchUserAccess(uint64_t Address, uint64_t Size) const {

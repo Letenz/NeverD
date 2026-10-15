@@ -1060,6 +1060,8 @@ std::string driverResultJSON(const DriverResult &Result) {
       Item[field::RequestorProcessID] = Request.RequestorProcessID;
     if (Request.ResponseIndex)
       Item[field::ResponseIndex] = *Request.ResponseIndex;
+    if (Request.FileInformationClass)
+      Item[field::FileInformationClass] = *Request.FileInformationClass;
     if (Request.Kind == DriverRequestKind::Pnp ||
         Request.Kind == DriverRequestKind::Power ||
         Request.Origin == DriverRequestOrigin::DriverAllocatedIRP ||
