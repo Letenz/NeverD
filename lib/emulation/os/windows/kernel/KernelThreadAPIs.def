@@ -14,6 +14,9 @@ NEVERD_KERNEL_THREAD_API(KeSetPriorityThread, 2, Passive,
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesetsystemaffinitythread
 NEVERD_KERNEL_THREAD_API(KeQueryActiveProcessors, 0, Any,
                          uint64_t(profile::ActiveProcessorMask))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-kegetcurrentprocessornumberex
+NEVERD_KERNEL_THREAD_API(KeGetCurrentProcessorNumberEx, 1, Any,
+                         currentProcessorNumber(A[0]))
 NEVERD_KERNEL_THREAD_API(KeSetSystemAffinityThread, 1, Dispatch,
                          setSystemAffinity(A[0]))
 NEVERD_KERNEL_THREAD_API(KeRevertToUserAffinityThread, 0, Dispatch,

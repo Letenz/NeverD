@@ -7000,3 +7000,5 @@ objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
 request/report files stay in the explicit output directory. Missing JDK/D8 or
 CPU transports are unavailable evidence, not a passing substitute. The runtime
 itself does not launch these preparation tools or use a device.
+
+Processor regressions cover output boundaries, NULL, nested restores, invalid IRQL and import identity. Original `driver_processors.c` exercises entry, worker and DPC contexts across backends, contracts, bases and scheduling. Optional `NEVERD_WDM_PROCESSORS_FIXTURE` and `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` verify genuine WDK inline calls and dynamic exports with normal/active CFG images; missing transports remain explicit skips.

@@ -201,6 +201,70 @@ TEST_F(KernelRuntime, ActiveProcessorMaskMatchesTheSingleProcessorSchedule) {
   EXPECT_FALSE(failure("KeQueryActiveProcessors", {0}).empty());
 }
 
+TEST_F(KernelRuntime, ProcessorNumberWritesFourBytesAtEverySupportedIRQL) {
+  Model->enterExecution(0x100);
+  for (uint8_t IRQL : {0, 1, 2, 15}) {
+    const auto Previous = invoke("KfRaiseIrql", {IRQL});
+    for (uint64_t Offset : {0u, 1u, 4u}) {
+      check(Memory->writeInteger(Scratch, UINT64_MAX, 8));
+      check(Memory->writeInteger(Scratch + 8, UINT64_MAX, 8));
+      EXPECT_EQ(invoke("KeGetCurrentProcessorNumberEx", {Scratch + Offset}),
+                0u);
+      for (unsigned I = 0; I < 16; ++I)
+        EXPECT_EQ(integer(Scratch + I, 1),
+                  I >= Offset && I < Offset + 4 ? 0u : 0xffu);
+    }
+    EXPECT_EQ(invoke("KeGetCurrentProcessorNumberEx", {0}), 0u);
+    EXPECT_EQ(invoke("KeGetCurrentIrql", {}), IRQL);
+    invoke("KeLowerIrql", {Previous});
+  }
+  EXPECT_FALSE(failure("KeGetCurrentProcessorNumberEx", {}).empty());
+}
+
+TEST_F(KernelRuntime, ProcessorNumberRejectsInvalidOutputBeforeAnyWrite) {
+  check(Memory->writeInteger(Scratch + 0xfffc, 0xaabbccdd, 4));
+  EXPECT_FALSE(
+      failure("KeGetCurrentProcessorNumberEx", {Scratch + 0xfffe}).empty());
+  EXPECT_EQ(integer(Scratch + 0xfffc, 4), 0xaabbccddu);
+  check(Memory->protect(Scratch, 0x1000, Read));
+  EXPECT_FALSE(failure("KeGetCurrentProcessorNumberEx", {Scratch}).empty());
+  EXPECT_FALSE(
+      failure("KeGetCurrentProcessorNumberEx", {UINT64_MAX - 1}).empty());
+  EXPECT_FALSE(failure("KeGetCurrentProcessorNumberEx", {Model->driverObject()})
+                   .empty());
+  const auto Pool = invoke("ExAllocatePoolWithTag", {0, 16, Tag});
+  invoke("ExFreePoolWithTag", {Pool, Tag});
+  EXPECT_NE(failure("KeGetCurrentProcessorNumberEx", {Pool}).find("freed"),
+            std::string::npos);
+}
+
+TEST_F(KernelRuntime, DpcLevelRaiseUsesTheSharedExecutionRestoreStack) {
+  EXPECT_NE(failure("KeRaiseIrqlToDpcLevel", {}).find("execution"),
+            std::string::npos);
+  Model->enterExecution(0x100);
+  for (uint8_t Starting : {0, 1, 2}) {
+    const auto Original = invoke("KfRaiseIrql", {Starting});
+    EXPECT_EQ(invoke("KeRaiseIrqlToDpcLevel", {}), Starting);
+    EXPECT_EQ(invoke("KeGetCurrentIrql", {}), 2u);
+    EXPECT_EQ(invoke("KeRaiseIrqlToDpcLevel", {}), 2u);
+    invoke("KeLowerIrql", {2});
+    invoke("KeLowerIrql", {Starting});
+    invoke("KeLowerIrql", {Original});
+    EXPECT_EQ(invoke("KeGetCurrentIrql", {}), 0u);
+  }
+  const auto Previous = invoke("KfRaiseIrql", {3});
+  EXPECT_FALSE(failure("KeRaiseIrqlToDpcLevel", {}).empty());
+  EXPECT_EQ(invoke("KeGetCurrentIrql", {}), 3u);
+  invoke("KeLowerIrql", {Previous});
+  EXPECT_FALSE(failure("KeRaiseIrqlToDpcLevel", {2}).empty());
+  invoke("KeRaiseIrqlToDpcLevel", {});
+  Model->enterExecution(0x200);
+  EXPECT_FALSE(failure("KeLowerIrql", {0}).empty());
+  Model->enterExecution(0x100);
+  invoke("KeLowerIrql", {0});
+  check(Model->validateExecutionReturn(0x100, 0));
+}
+
 TEST_F(KernelRuntime, SystemAffinityFollowsLogicalThreadsAndNestedCalls) {
   EXPECT_NE(failure("KeSetSystemAffinityThread", {1}).find("thread"),
             std::string::npos);
