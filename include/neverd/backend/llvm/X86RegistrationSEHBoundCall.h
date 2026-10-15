@@ -30,6 +30,7 @@ struct X86RegistrationSEHBoundCall {
   const RegistrationSEHBoundCall *Source = nullptr;
   const MedOp *Operation = nullptr;
   int Block = -1;
+  const MedOp *StackRoot = nullptr;
 };
 
 /// Bind invocation-specific argument recipes to their exact source operations.

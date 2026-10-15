@@ -203,6 +203,14 @@ private:
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
                        const EH3JumpCapture *Jump = nullptr,
                        const FrameValue *JumpValue = nullptr);
+  bool runSEHCallbackFrame(va_t Target, FrameState &Parent,
+                           bool OrdinaryInvocation,
+                           std::vector<RegistrationObjectExtent> *Writes,
+                           const EH3JumpCapture *Jump,
+                           const FrameValue *JumpValue,
+                           FrameValue *FilterResult);
+  bool runSEHContinueFilters(FrameState &Parent,
+                             std::vector<RegistrationObjectExtent> *Writes);
   void
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
                     const FrameTransfer &Transfer, const BlockFacts &Facts,

@@ -31,15 +31,16 @@ void checkSEHRuntimeEdits(const llvm::Function &Parent,
     auto Module = llvm::CloneModule(*Parent.getParent());
     auto *Function = Module->getFunction(Parent.getName());
     llvm::CallBase *Runtime = nullptr;
-    for (auto &Block : *Function)
-      for (auto &I : Block)
-        if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
-          if (const auto *Callee = Call->getCalledFunction();
-              Callee && (Callee->getName() == "RaiseException" ||
-                         Callee->getName() == "_controlfp_s")) {
-            ASSERT_FALSE(Runtime);
-            Runtime = Call;
-          }
+    for (auto &Owner : *Module)
+      for (auto &Block : Owner)
+        for (auto &I : Block)
+          if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+            if (const auto *Callee = Call->getCalledFunction();
+                Callee && (Callee->getName() == "RaiseException" ||
+                           Callee->getName() == "_controlfp_s")) {
+              ASSERT_FALSE(Runtime);
+              Runtime = Call;
+            }
     ASSERT_TRUE(Runtime);
     auto *Callee = Runtime->getCalledFunction();
     const bool ControlFP = Callee->getName() == "_controlfp_s";

@@ -19,6 +19,14 @@ bool RegistrationStateSolver::runLocalFinally(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
     std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
     const FrameValue *JumpValue) {
+  return runSEHCallbackFrame(Target, Parent, OrdinaryInvocation, Writes, Jump,
+                             JumpValue, nullptr);
+}
+
+bool RegistrationStateSolver::runSEHCallbackFrame(
+    va_t Target, FrameState &Parent, bool OrdinaryInvocation,
+    std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
+    const FrameValue *JumpValue, FrameValue *FilterResult) {
   const auto Entry = Entries.find(Target);
   // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
   // belongs to a separate runtime restoration protocol; finally-only helpers
@@ -42,7 +50,10 @@ bool RegistrationStateSolver::runLocalFinally(
     Initial.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
         FrameValue::frame(0);
   }
-  Initial.enterCallback(Target);
+  if (FilterResult)
+    Initial.enterSEHFilter(Target, *Chain.RegistrationOffset - 4);
+  else
+    Initial.enterCallback(Target);
   std::map<size_t, FrameState> Incoming{{Entry->second, Initial}};
   std::deque<size_t> Pending{Entry->second};
   std::set<size_t> Queued{Entry->second};
@@ -60,7 +71,6 @@ bool RegistrationStateSolver::runLocalFinally(
     bool HasResume = false;
     for (const auto &Op : Block.Ops) {
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
-          Op.Opcode == NdOp::INDIR_CALL ||
           (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
           Op.Opcode == NdOp::INDIR_BR ||
           Op.MemoryOrdering != NdMemoryOrdering::None)
@@ -77,6 +87,25 @@ bool RegistrationStateSolver::runLocalFinally(
               Block.Ops.size() - Source->second.second.FirstOp)
         return false;
       Transfer.beginInstruction(Op.Addr);
+      if (Op.Opcode == NdOp::INDIR_CALL) {
+        const auto SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+                            .CallbackAddress;
+        if (FilterResult || !JumpRuntime || !JumpRuntime->Raise || !SP ||
+            SP->Entry != Target ||
+            !State.callbackMemoryIsPrivate(*SP, 16, true) ||
+            !JumpRuntime->Raise(Op, State, WorkUsed) ||
+            State.loadCallback(SP->Offset + 4, 4).Constant != 0 ||
+            !runSEHContinueFilters(State, Writes))
+          return false;
+        // Continue execution restores this suspended invocation, including
+        // its nonvolatile registers and private stack. Search-filter writes
+        // to the parent remain visible after the stdcall consumes its args.
+        Transfer.write(Op, Transfer.evaluate(Op, true));
+        State.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
+            FrameValue::callbackFrame(Target, SP->Offset + 16);
+        State.trimCallbackCells();
+        continue;
+      }
       if (Op.Opcode == NdOp::CALL) {
         const auto SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride]
                             .CallbackAddress;
@@ -141,6 +170,28 @@ bool RegistrationStateSolver::runLocalFinally(
             State.storeCallback(Address.CallbackAddress->Offset,
                                 Memory.AccessSize,
                                 Transfer.read(*Memory.StoredValue));
+        } else if (Address.SEHException) {
+          if (Op.Opcode != NdOp::LOAD ||
+              !State.sehExceptionLoad(*Address.SEHException, Memory.AccessSize))
+            return false;
+        } else if (Address.Constant && !Address.MayBeFrame) {
+          const bool Write = Op.Opcode == NdOp::STORE;
+          const uint64_t End = uint64_t(*Address.Constant) + Memory.AccessSize;
+          const uint64_t TableEnd =
+              Chain.ScopeTableVA + (EH4 ? 16 : 0) + Chain.Scopes.size() * 12;
+          if (!JumpRuntime || !JumpRuntime->ImageMemory ||
+              !JumpRuntime->ImageMemory(*Address.Constant, Memory.AccessSize,
+                                        Write, WorkUsed) ||
+              (Write &&
+               (*Address.Constant < TableEnd && Chain.ScopeTableVA < End)) ||
+              (Write && Transfer.read(*Memory.StoredValue).MayBeFrame))
+            return false;
+          if (!Write) {
+            // Mutable image contents may contain pointer bits. Storage
+            // ownership never turns those bits into an exact frame value.
+            Transfer.write(Op, FrameValue::taint(true));
+            continue;
+          }
         } else if (!Address.Offset || *Address.Offset < *ParentSP ||
                    int64_t(*Address.Offset) + Memory.AccessSize > 0) {
           return false;
@@ -193,6 +244,11 @@ bool RegistrationStateSolver::runLocalFinally(
   }
   if (!Returned)
     return false;
+  if (FilterResult) {
+    *FilterResult = Returned->Registers[x86reg::RAX / x86reg::GeneralRegStride];
+    // Runtime exception pointers expire with this search invocation.
+    Returned->leaveCallback();
+  }
   Parent.Cells = std::move(Returned->Cells);
   if (OrdinaryInvocation) {
     // A source finally is not an ABI-preserving ordinary function. Retain
