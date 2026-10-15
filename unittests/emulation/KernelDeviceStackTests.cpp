@@ -412,5 +412,115 @@ TEST_F(KernelDeviceStack,
   call("IoDetachDevice", {Lower});
   EXPECT_EQ(get(Lower + DeviceAttachedOffset), 0u);
 }
+
+TEST_F(KernelDeviceStack, QueriesUseCurrentEdgesAndOneSharedPointerReference) {
+  const auto Lower = device();
+  const auto Middle = device();
+  const auto Upper = device();
+  call("IoAttachDeviceToDeviceStack", {Middle, Lower});
+  call("IoAttachDeviceToDeviceStack", {Upper, Lower});
+  for (uint64_t Input : {Lower, Middle, Upper}) {
+    EXPECT_EQ(call("IoGetAttachedDevice", {Input}), Upper);
+    rejectedCall("ObfDereferenceObject", {Upper}, "referenced object");
+    EXPECT_EQ(call("IoGetAttachedDeviceReference", {Input}), Upper);
+    call("ObfDereferenceObject", {Upper});
+    rejectedCall("ObfDereferenceObject", {Upper}, "referenced object");
+    EXPECT_EQ(call("IoGetDeviceAttachmentBaseRef", {Input}), Lower);
+    call("ObfDereferenceObject", {Lower});
+    rejectedCall("ObfDereferenceObject", {Lower}, "referenced object");
+    EXPECT_EQ(get(Input + DeviceReferenceCount, 4), 0u);
+  }
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Upper}), Middle);
+  call("ObfDereferenceObject", {Middle});
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Middle}), Lower);
+  call("ObfDereferenceObject", {Lower});
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Lower}), 0u);
+  rejectedCall("ObfDereferenceObject", {Lower}, "referenced object");
+  call("IoDetachDevice", {Middle});
+  EXPECT_EQ(call("IoGetAttachedDevice", {Lower}), Middle);
+  EXPECT_EQ(call("IoGetAttachedDevice", {Upper}), Upper);
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Upper}), 0u);
+  EXPECT_EQ(call("IoGetDeviceAttachmentBaseRef", {Upper}), Upper);
+  call("ObfDereferenceObject", {Upper});
+}
+
+TEST_F(KernelDeviceStack, QueriesRetainDeletedObjectsAndCheckTheInputState) {
+  const auto Lower = device();
+  const auto Upper = device();
+  call("IoAttachDeviceToDeviceStack", {Upper, Lower});
+  EXPECT_EQ(call("IoGetAttachedDeviceReference", {Lower}), Upper);
+  EXPECT_EQ(call("IoGetDeviceAttachmentBaseRef", {Upper}), Lower);
+  call("IoDeleteDevice", {Lower});
+  // Deleting the lower neighbor does not mark the upper input for deletion.
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Upper}), Lower);
+  call("ObfDereferenceObject", {Lower});
+  call("IoDeleteDevice", {Upper});
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Upper}), 0u);
+  EXPECT_EQ(call("IoGetAttachedDevice", {Lower}), Upper);
+  EXPECT_EQ(call("IoGetAttachedDeviceReference", {Lower}), Upper);
+  call("ObfDereferenceObject", {Upper});
+  EXPECT_EQ(call("IoGetDeviceAttachmentBaseRef", {Upper}), Lower);
+  call("ObfDereferenceObject", {Lower});
+  call("IoDetachDevice", {Lower});
+  success(Model->snapshot());
+  EXPECT_TRUE(Result.Devices.empty());
+  success(Model->validateGuestAccess(Lower, 2, false));
+  success(Model->validateGuestAccess(Upper, 2, false));
+  EXPECT_EQ(call("IoGetAttachedDevice", {Lower}), Lower);
+  EXPECT_EQ(call("IoGetDeviceAttachmentBaseRef", {Upper}), Upper);
+  call("ObfDereferenceObject", {Upper});
+  call("ObfDereferenceObject", {Lower});
+  reject(Model->validateGuestAccess(Lower, 2, false), "freed");
+  success(Model->validateGuestAccess(Upper, 2, false));
+  call("ObfDereferenceObject", {Upper});
+  reject(Model->validateGuestAccess(Upper, 2, false), "freed");
+  for (const auto *Name :
+       {"IoGetAttachedDevice", "IoGetAttachedDeviceReference",
+        "IoGetDeviceAttachmentBaseRef", "IoGetLowerDeviceObject"})
+    rejectedCall(Name, {Upper}, "unknown device");
+}
+
+TEST_F(KernelDeviceStack, RejectedQueriesDoNotAcquireReferences) {
+  const auto Lower = device();
+  const auto Upper = device();
+  call("IoAttachDeviceToDeviceStack", {Upper, Lower});
+  for (const auto *Name :
+       {"IoGetAttachedDevice", "IoGetAttachedDeviceReference",
+        "IoGetDeviceAttachmentBaseRef", "IoGetLowerDeviceObject"}) {
+    rejectedCall(Name, {0}, "device");
+    rejectedCall(Name, {Scratch}, "device");
+    rejectedCall(Name, {Model->driverObject()}, "device");
+    put(Lower + DeviceAttachedOffset, 0);
+    rejectedCall(Name, {Upper}, "corrupted");
+    put(Lower + DeviceAttachedOffset, Upper);
+    rejectedCall("ObfDereferenceObject", {Upper}, "referenced object");
+    rejectedCall("ObfDereferenceObject", {Lower}, "referenced object");
+  }
+}
+
+TEST_F(KernelDeviceStack, QueriesAllowDispatchIRQLAndRejectHigherBeforeRetain) {
+  Model->enterExecution(profile::StackBase);
+  const auto Lower = device();
+  const auto Upper = device();
+  call("IoAttachDeviceToDeviceStack", {Upper, Lower});
+  const auto Previous = call("KfRaiseIrql", {2});
+  EXPECT_EQ(call("IoGetAttachedDevice", {Lower}), Upper);
+  EXPECT_EQ(call("IoGetAttachedDeviceReference", {Lower}), Upper);
+  call("ObfDereferenceObject", {Upper});
+  EXPECT_EQ(call("IoGetDeviceAttachmentBaseRef", {Upper}), Lower);
+  call("ObfDereferenceObject", {Lower});
+  EXPECT_EQ(call("IoGetLowerDeviceObject", {Upper}), Lower);
+  call("ObfDereferenceObject", {Lower});
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  const auto Dispatch = call("KfRaiseIrql", {3});
+  for (const auto *Name :
+       {"IoGetAttachedDevice", "IoGetAttachedDeviceReference",
+        "IoGetDeviceAttachmentBaseRef", "IoGetLowerDeviceObject"})
+    rejectedCall(Name, {Upper}, "IRQL");
+  call("KeLowerIrql", {Dispatch});
+  call("KeLowerIrql", {Previous});
+  rejectedCall("ObfDereferenceObject", {Upper}, "referenced object");
+  rejectedCall("ObfDereferenceObject", {Lower}, "referenced object");
+}
 } // namespace
 } // namespace neverd::emulation
