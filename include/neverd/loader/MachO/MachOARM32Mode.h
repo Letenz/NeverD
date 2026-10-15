@@ -36,10 +36,12 @@ struct ModeInfo {
 };
 
 /// Parse the exact CPU subtype and every Thumb-defined executable nlist symbol
-/// when a symbol table is present.
+/// when a symbol table is present.  Without \p ReadsStrippedSymbols, the
+/// symbols strip removes give no evidence, as in a stripped image.
 /// Capability bits, malformed command tables, conflicting definitions, and
 /// non-ARM/64-bit inputs are rejected.
-llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary);
+llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary,
+                                       bool ReadsStrippedSymbols = true);
 
 /// Require every requested entry to have an exact nlist mode and require all
 /// requested entries to use one code-generation mode.  The current registry

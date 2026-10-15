@@ -1070,6 +1070,156 @@ llvm::Expected<uint64_t> unicodeStringToInteger(const KernelModel &Model,
   return Store(Value, StatusSuccess);
 }
 
+namespace {
+// Read one 1- or 2-byte unit at \p Base + \p Index units, validating the exact
+// unit and refusing a terminator-less run once the offset passes 1 MiB.
+llvm::Expected<uint64_t> readScanUnit(const KernelModel &Model,
+                                      GuestMemory &Memory, uint64_t Base,
+                                      uint64_t Index, unsigned UnitWidth) {
+  if (auto E = checkBufferRange(Base, (Index + 1) * UnitWidth))
+    return E;
+  return readInteger(Model, Memory, Base + Index * UnitWidth, UnitWidth);
+}
+
+// The kernel folds only ASCII A-Z to lowercase for case-insensitive compares.
+uint64_t foldAsciiUpper(uint64_t Unit) {
+  return static_cast<uint32_t>(Unit - 'A') < 26u ? Unit + 32 : Unit;
+}
+} // namespace
+
+llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
+                                       GuestMemory &Memory,
+                                       llvm::ArrayRef<uint64_t> A,
+                                       unsigned UnitWidth) {
+  const bool Bounded = A.size() > 1;
+  for (uint64_t Length = 0; !Bounded || Length < A[1]; ++Length) {
+    auto Unit = readScanUnit(Model, Memory, A[0], Length, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    if (!*Unit)
+      return Length;
+  }
+  // A satisfied count stops without reading the terminator.
+  return A[1];
+}
+
+llvm::Expected<uint64_t> cStringCompare(const KernelModel &Model,
+                                        GuestMemory &Memory,
+                                        llvm::ArrayRef<uint64_t> A,
+                                        unsigned UnitWidth,
+                                        CStringCompare Kind) {
+  const bool Counted = A.size() > 2;
+  const bool Fold = Kind == CStringCompare::FoldedRaw;
+  for (uint64_t Index = 0; !Counted || Index < A[2]; ++Index) {
+    auto Left = readScanUnit(Model, Memory, A[0], Index, UnitWidth);
+    if (!Left)
+      return Left.takeError();
+    auto Right = readScanUnit(Model, Memory, A[1], Index, UnitWidth);
+    if (!Right)
+      return Right.takeError();
+    uint64_t Lv = Fold ? foldAsciiUpper(*Left) : *Left;
+    uint64_t Rv = Fold ? foldAsciiUpper(*Right) : *Right;
+    if (Lv != Rv) {
+      if (Kind == CStringCompare::Normalized)
+        return Lv < Rv ? uint64_t(uint32_t(-1)) : uint64_t(1);
+      return uint64_t(static_cast<uint32_t>(static_cast<int64_t>(Lv) -
+                                            static_cast<int64_t>(Rv)));
+    }
+    if (!Lv)
+      return 0;
+  }
+  return 0;
+}
+
+llvm::Expected<uint64_t> cStringFindChar(const KernelModel &Model,
+                                         GuestMemory &Memory,
+                                         llvm::ArrayRef<uint64_t> A,
+                                         unsigned UnitWidth, bool Reverse) {
+  const uint64_t Target = A[1] & (UnitWidth == 1 ? 0xffu : 0xffffu);
+  uint64_t Match = 0;
+  for (uint64_t Index = 0;; ++Index) {
+    auto Unit = readScanUnit(Model, Memory, A[0], Index, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    if (*Unit == Target) {
+      const uint64_t Here = A[0] + Index * UnitWidth;
+      if (!Reverse)
+        return Here;
+      Match = Here;
+    }
+    if (!*Unit)
+      return Reverse ? Match : 0;
+  }
+}
+
+llvm::Expected<uint64_t> cStringFind(const KernelModel &Model,
+                                     GuestMemory &Memory,
+                                     llvm::ArrayRef<uint64_t> A,
+                                     unsigned UnitWidth) {
+  const auto scanLength = [&](uint64_t Base) -> llvm::Expected<uint64_t> {
+    for (uint64_t Length = 0;; ++Length) {
+      auto Unit = readScanUnit(Model, Memory, Base, Length, UnitWidth);
+      if (!Unit)
+        return Unit.takeError();
+      if (!*Unit)
+        return Length;
+    }
+  };
+  auto NeedleLen = scanLength(A[1]);
+  if (!NeedleLen)
+    return NeedleLen.takeError();
+  // An empty needle returns the haystack before the haystack is examined.
+  if (!*NeedleLen)
+    return A[0];
+  auto HayLen = scanLength(A[0]);
+  if (!HayLen)
+    return HayLen.takeError();
+  if (*HayLen < *NeedleLen)
+    return 0;
+  auto Needle = readBytes(Model, Memory, A[1], *NeedleLen * UnitWidth);
+  if (!Needle)
+    return Needle.takeError();
+  auto Hay = readBytes(Model, Memory, A[0], *HayLen * UnitWidth);
+  if (!Hay)
+    return Hay.takeError();
+  for (uint64_t Start = 0; Start + *NeedleLen <= *HayLen; ++Start)
+    if (std::equal(Needle->begin(), Needle->end(),
+                   Hay->begin() + Start * UnitWidth))
+      return A[0] + Start * UnitWidth;
+  return 0;
+}
+
+llvm::Expected<uint64_t> cStringSpan(const KernelModel &Model,
+                                     GuestMemory &Memory,
+                                     llvm::ArrayRef<uint64_t> A,
+                                     unsigned UnitWidth, bool Complement) {
+  uint64_t ControlLength = 0;
+  for (;; ++ControlLength) {
+    auto Unit = readScanUnit(Model, Memory, A[1], ControlLength, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    if (!*Unit)
+      break;
+  }
+  auto Control = readBytes(Model, Memory, A[1], ControlLength * UnitWidth);
+  if (!Control)
+    return Control.takeError();
+  std::vector<uint64_t> Set;
+  Set.reserve(ControlLength);
+  for (uint64_t I = 0; I < ControlLength; ++I)
+    Set.push_back(UnitWidth == 1 ? (*Control)[I] : codeUnit(*Control, I * 2));
+  const auto inSet = [&](uint64_t Unit) {
+    return std::find(Set.begin(), Set.end(), Unit) != Set.end();
+  };
+  for (uint64_t Index = 0;; ++Index) {
+    auto Unit = readScanUnit(Model, Memory, A[0], Index, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    if (!*Unit || (Complement ? inSet(*Unit) : !inSet(*Unit)))
+      return Index;
+  }
+}
+
 llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                GuestMemory &Memory,
                                                uint64_t Format,

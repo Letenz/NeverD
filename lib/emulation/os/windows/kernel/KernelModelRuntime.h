@@ -74,6 +74,47 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
 llvm::Expected<uint64_t> unicodeStringToInteger(const KernelModel &Model,
                                                 GuestMemory &Memory,
                                                 llvm::ArrayRef<uint64_t> A);
+
+/// C runtime string helpers. \p UnitWidth is 1 for the narrow routines and 2
+/// for the wide ones. Each reads caller memory one unit at a time; a run with
+/// no terminator stops at the 1 MiB model limit.
+///
+/// strlen and wcslen; strnlen and wcsnlen when \p A carries a count. Returns
+/// the unit count (size_t).
+llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
+                                       GuestMemory &Memory,
+                                       llvm::ArrayRef<uint64_t> A,
+                                       unsigned UnitWidth);
+/// How a comparison reports a mismatch: Normalized is strcmp/strncmp/wcscmp
+/// (-1, 0 or 1); Raw is wcsncmp (the raw unit difference); FoldedRaw is the
+/// case-insensitive family (ASCII A-Z folded to lowercase, then raw).
+enum class CStringCompare { Normalized, Raw, FoldedRaw };
+/// strcmp/wcscmp/_stricmp/_wcsicmp; the counted forms when \p A carries a
+/// count. Returns an int zero-extended to 32 bits.
+llvm::Expected<uint64_t> cStringCompare(const KernelModel &Model,
+                                        GuestMemory &Memory,
+                                        llvm::ArrayRef<uint64_t> A,
+                                        unsigned UnitWidth,
+                                        CStringCompare Kind);
+/// strchr/wcschr when \p Reverse is false, strrchr/wcsrchr otherwise. The
+/// target is truncated to the unit width; the terminator is searched too.
+/// Returns the matching guest address or NULL.
+llvm::Expected<uint64_t> cStringFindChar(const KernelModel &Model,
+                                         GuestMemory &Memory,
+                                         llvm::ArrayRef<uint64_t> A,
+                                         unsigned UnitWidth, bool Reverse);
+/// strstr and wcsstr. An empty needle returns the haystack. Returns the first
+/// match's guest address or NULL.
+llvm::Expected<uint64_t> cStringFind(const KernelModel &Model,
+                                     GuestMemory &Memory,
+                                     llvm::ArrayRef<uint64_t> A,
+                                     unsigned UnitWidth);
+/// strspn/wcsspn when \p Complement is false, wcscspn otherwise. Returns the
+/// length (size_t) of the initial run.
+llvm::Expected<uint64_t> cStringSpan(const KernelModel &Model,
+                                     GuestMemory &Memory,
+                                     llvm::ArrayRef<uint64_t> A,
+                                     unsigned UnitWidth, bool Complement);
 llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                GuestMemory &Memory,
                                                uint64_t Format,

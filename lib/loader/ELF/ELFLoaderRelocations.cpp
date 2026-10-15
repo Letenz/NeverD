@@ -112,6 +112,11 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       continue;
 
     const Elf_Shdr *SymSH = getShdr<ELFT>(Sections, SH.sh_link);
+    // strip also removes the relocations --emit-relocs keeps in a linked
+    // image, which name .symtab's symbols.
+    if (SymSH && SymSH->sh_type == SHT_SYMTAB && !IsRelocatable &&
+        !Img.ReadsStaticSymbols)
+      continue;
     llvm::StringRef StrTab;
     if (SymSH) {
       auto TabOr = ELF.getStringTableForSymtab(*SymSH, Sections);

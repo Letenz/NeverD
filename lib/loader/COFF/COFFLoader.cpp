@@ -103,6 +103,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   BinaryImage Img;
   initializeImage(Buffer, Img, BinaryFormat::COFF,
                   /*CopyRaw=*/RestrictFunctionEntries.empty());
+  Img.ReadsStaticSymbols = ReadsStaticSymbols;
 
   auto ObjOrErr = coff_loader::COFFObjectView::create(Buffer);
   if (!ObjOrErr)
@@ -1002,7 +1003,9 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // Named definitions own their entries before unwind discovery supplies
   // ranges. Otherwise .pdata creates an anonymous duplicate for every typed
   // symbol at the same address.
-  coff_loader::parseSymbolTable(Obj, Img, ImageBase, SectionVAs);
+  // Declined, a linked image's COFF symbol table reads as stripped.
+  if (Img.IsRelocatable || Img.ReadsStaticSymbols)
+    coff_loader::parseSymbolTable(Obj, Img, ImageBase, SectionVAs);
 
   // --- Exceptions (.pdata) ---
   coff_loader::parseExceptions(Obj, Img, ImageBase);

@@ -138,6 +138,23 @@ DWARF was read, and what the load read as `debug_info:{enabled,kind,path}`,
 kind `dwarf`, `pdb`, `map` or `none`. `dwarf_reference` is listed in `capabilities` when the engine
 has `neverd_dwarf_reference_json` and `neverd_session_set_dwarf_search`.
 
+`symbol_table_reference {path}` needs no open binary either: it returns the
+SDK's `neverd_symbol_table_reference_json`, `{symbols:null}` or
+`{symbols:{table,count,names}}` -- the image's static symbol table, which
+strip removes: `.symtab` for ELF and SBF, `COFF symbol table` for a PE, and
+`LC_SYMTAB` for the symbols a Mach-O image does not export, with the defined
+names a load reads from it and its first function names, at most eight,
+global ones first. An image without one, an object file and a format without
+one answer null. Anyone can write names into the table, so the GUI asks
+before an `open`, ahead of the PDB and DWARF questions, and passes a declined
+answer as `symbols:{mode:"none"}`, the only `symbols` value there is: the
+open reads the image as if stripped, keeping the symbols dynamic linking
+needs, and the answer is saved with the project and kept by read-only
+replicas. `open` and `metadata` return it as `symbols`, null when the table
+was read. `symbol_table_reference` is listed in `capabilities` when the
+engine has `neverd_symbol_table_reference_json` and
+`neverd_session_set_symbol_table`.
+
 `open` and `metadata` also return `pdb_download`: either null or `{file,key}`
 derived by the SDK from a unique valid PE CodeView record. A candidate is offered
 only with debug loading enabled, no loaded, selected or declined PDB and

@@ -58,6 +58,9 @@ public:
   /// Whether the engine finds the DWARF of an ELF or Mach-O image before
   /// opening it, and opens the image without it.
   static bool findsDwarf();
+  /// Whether the engine finds an image's static symbol table before opening
+  /// it, and opens the image as if stripped.
+  static bool findsSymbolTables();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -82,6 +85,9 @@ private:
   Json pdbInput_ = nullptr, pdbDisplayNames_ = Json::array();
   /// {"mode":"none"} when the user declined the image's DWARF, else null.
   Json dwarfInput_ = nullptr;
+  /// {"mode":"none"} when the user declined the image's static symbol
+  /// table, else null.
+  Json symbolsInput_ = nullptr;
   /// A read-only replica is checked against the owner's loaded input and
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();

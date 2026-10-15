@@ -1,0 +1,28 @@
+//===- StaticSymbolTables.def - The tables strip removes --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The static symbol table of each format that has one, as the C API names
+/// it: the table a load reads unless the caller declines it
+/// (BinaryImage::ReadsStaticSymbols), and that strip removes.  Define the
+/// macro before including this file.
+///
+///   NEVERD_STATIC_SYMBOL_TABLE(Format, Spelling)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_STATIC_SYMBOL_TABLE
+#define NEVERD_STATIC_SYMBOL_TABLE(Format, Spelling)
+#endif
+
+// An ELF image's SHT_SYMTAB section, also an SBF program's.
+NEVERD_STATIC_SYMBOL_TABLE(ELF, ".symtab")
+// The table a PE's file header locates with PointerToSymbolTable.
+NEVERD_STATIC_SYMBOL_TABLE(COFF, "COFF symbol table")
+// The local and private external entries of a Mach-O image's LC_SYMTAB.
+NEVERD_STATIC_SYMBOL_TABLE(MachO, "LC_SYMTAB")
+
+#undef NEVERD_STATIC_SYMBOL_TABLE

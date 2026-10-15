@@ -74,6 +74,20 @@ void normalizeBinaryMetadata(BinaryImage &Img) {
   }
 }
 
+namespace {
+/// An object file's relocations name its symbols, so it has no reading
+/// without its symbol table; a linked image does.
+Error checkStaticSymbolChoice(const BinaryImage &Img,
+                              const BinaryLoadOptions &Opts) {
+  if (Opts.ReadStaticSymbols || !Img.IsRelocatable)
+    return Error::success();
+  return make_error<StringError>(
+      "an object file cannot be read without its symbol table, which its "
+      "relocations name",
+      inconvertibleErrorCode());
+}
+} // namespace
+
 Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
                                  const BinaryLoadOptions &Opts) {
   std::unique_ptr<Loader> TheLoader;
@@ -98,9 +112,12 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
     TheLoader->restrictFunctions(Opts.OnlyFunctionEntries);
   if (!Opts.ARMFunctionModes.empty())
     TheLoader->setARMFunctionModes(Opts.ARMFunctionModes);
+  TheLoader->setReadsStaticSymbols(Opts.ReadStaticSymbols);
   auto ImgOrErr = TheLoader->load(Path);
   if (!ImgOrErr)
     return ImgOrErr.takeError();
+  if (Error E = checkStaticSymbolChoice(*ImgOrErr, Opts))
+    return std::move(E);
   normalizeBinaryMetadata(*ImgOrErr);
   ImgOrErr->numberSharedFunctionNames();
   return std::move(*ImgOrErr);
@@ -123,9 +140,12 @@ Expected<BinaryImage> loadBinaryBuffer(llvm::MemoryBufferRef Buffer,
                                    inconvertibleErrorCode());
   TheLoader->restrictFunctions(Opts.OnlyFunctionEntries);
   TheLoader->setARMFunctionModes(Opts.ARMFunctionModes);
+  TheLoader->setReadsStaticSymbols(Opts.ReadStaticSymbols);
   auto Image = TheLoader->loadBuffer(Buffer);
   if (!Image)
     return Image.takeError();
+  if (Error E = checkStaticSymbolChoice(*Image, Opts))
+    return std::move(E);
   normalizeBinaryMetadata(*Image);
   Image->numberSharedFunctionNames();
   return std::move(*Image);
