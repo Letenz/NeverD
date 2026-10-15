@@ -2252,6 +2252,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Expresión o comando (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Copiar</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>Seleccionar &amp;todo</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>&amp;Borrar</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>Comandos:</translation>
     </message>

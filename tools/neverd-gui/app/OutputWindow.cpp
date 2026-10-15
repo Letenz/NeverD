@@ -1,5 +1,6 @@
 #include "OutputWindow.h"
 
+#include "Icons.h"
 #include "Resolve.h"
 #include "Session.h"
 #include "Theme.h"
@@ -7,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QScrollBar>
 #include <QSettings>
@@ -14,6 +16,7 @@
 #include <QTextCursor>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <memory>
 
 namespace neverd::gui {
 namespace {
@@ -49,6 +52,11 @@ OutputWindow::OutputWindow(Session &session, QWidget *parent)
   log_->setMaximumBlockCount(MaximumLogLines);
   log_->setLineWrapMode(QPlainTextEdit::NoWrap);
   log_->setFrameShape(QFrame::NoFrame);
+  log_->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(log_, &QWidget::customContextMenuRequested, this, [this](QPoint at) {
+    const std::unique_ptr<QMenu> menu(createLogMenu());
+    menu->exec(log_->viewport()->mapToGlobal(at));
+  });
   layout->addWidget(log_, 1);
   auto *row = new QHBoxLayout;
   row->setContentsMargins(0, 0, 0, 0);
@@ -84,6 +92,28 @@ OutputWindow::OutputWindow(Session &session, QWidget *parent)
     append(QStringLiteral("> ") + line, 0);
     execute(line);
   });
+}
+
+QMenu *OutputWindow::createLogMenu() {
+  auto *menu = new QMenu(this);
+  QAction *copy = menu->addAction(icon(QStringLiteral("copy")), tr("&Copy"));
+  copy->setObjectName(QStringLiteral("outputCopy"));
+  copy->setShortcut(QKeySequence::Copy);
+  copy->setEnabled(log_->textCursor().hasSelection());
+  connect(copy, &QAction::triggered, log_, &QPlainTextEdit::copy);
+  QAction *all =
+      menu->addAction(icon(QStringLiteral("select_all")), tr("Select &all"));
+  all->setObjectName(QStringLiteral("outputSelectAll"));
+  all->setShortcut(QKeySequence::SelectAll);
+  connect(all, &QAction::triggered, log_, &QPlainTextEdit::selectAll);
+  menu->addSeparator();
+  // The same as the command line's clear.
+  QAction *clear =
+      menu->addAction(icon(QStringLiteral("output_clear")), tr("C&lear"));
+  clear->setObjectName(QStringLiteral("outputClear"));
+  clear->setEnabled(!log_->document()->isEmpty());
+  connect(clear, &QAction::triggered, log_, &QPlainTextEdit::clear);
+  return menu;
 }
 
 void OutputWindow::append(const QString &text, int level) {
