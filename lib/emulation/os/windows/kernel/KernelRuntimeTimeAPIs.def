@@ -1,0 +1,22 @@
+//===- KernelRuntimeTimeAPIs.def - Calendar time runtime contracts -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, caller-IRQL ceilings and typed operations for the calendar
+/// conversions drivers use to format and build system times. They only touch
+/// caller-provided guest memory and follow the Windows 10.0.19041.6456 kernel
+/// exports without recorded leap seconds.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtltimetotimefields
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtltimefieldstotime
+// The image's ExLeapSecondData is unset, so both use the plain Gregorian
+// helpers at RVA 0x30d368 and 0x30d154.
+NEVERD_KERNEL_RUNTIME_TIME_API(RtlTimeToTimeFields, 2, Any,
+                               runtime::timeToTimeFields(*this, Memory, A))
+NEVERD_KERNEL_RUNTIME_TIME_API(RtlTimeFieldsToTime, 2, Any,
+                               runtime::timeFieldsToTime(*this, Memory, A))

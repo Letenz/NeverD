@@ -48,6 +48,12 @@ llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
 llvm::Expected<uint64_t> copyAnsiString(const KernelModel &Model,
                                         GuestMemory &Memory,
                                         llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
+                                          GuestMemory &Memory,
+                                          llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> timeFieldsToTime(const KernelModel &Model,
+                                          GuestMemory &Memory,
+                                          llvm::ArrayRef<uint64_t> A);
 /// RtlEqualString when \p EqualityOnly is true, otherwise RtlCompareString.
 llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
                                             GuestMemory &Memory,
