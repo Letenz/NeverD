@@ -3,10 +3,13 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "core/RAMInitializationWatch.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/ExecutionSession.h"
+
+#include <array>
 
 namespace neverd::emulation {
 namespace {
@@ -603,6 +606,452 @@ TEST_P(DirectX64, DeadlinePublishesCommittedRegistersAtAnInstructionBoundary) {
   EXPECT_TRUE(PC == Code || PC == Code + 3);
   EXPECT_FALSE(llvm::cantFail(History.intact()));
   EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+class DirectDriverX64 : public testing::Test {
+protected:
+  std::unique_ptr<ExecutionBackend> CPU;
+  std::shared_ptr<ExecutionBudget> Budget;
+  void SetUp() override {
+    auto Backend = createExecutionBackend(ExecutionBackendKind::KVM,
+                                          ExecutionContract::DirectDriverX64,
+                                          0x100000, GuestArchitecture::X64);
+    if (!Backend) {
+      auto E = Backend.takeError();
+      const bool Unavailable = E.isA<BackendUnavailableError>();
+      auto Reason = llvm::toString(std::move(E));
+      if (Unavailable)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+    CPU = std::move(Backend->CPU);
+    llvm::cantFail(CPU->map(Code, PageSize * 2, Read | Write | Execute));
+    llvm::cantFail(CPU->map(Data, PageSize, Read | Write));
+    llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {Data, 0}));
+  }
+  std::unique_ptr<ExecutionSession> start(uint64_t Timeout = 1000000) {
+    Budget = llvm::cantFail(ExecutionBudget::create({1000000, 1000, Timeout}));
+    return llvm::cantFail(ExecutionSession::create(std::move(CPU), Budget));
+  }
+  uint64_t reg(ExecutionSession &S, CPURegister R) {
+    return llvm::cantFail(S.cpu().readRegister(R))[0];
+  }
+  void rejected(ExecutionSession &S, const SessionExit &Exit, uint64_t PC) {
+    ASSERT_TRUE(Exit.CPU);
+    EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::BackendFailure)
+        << Exit.CPU->Diagnostic;
+    EXPECT_EQ(reg(S, CPURegister::X64PC), PC);
+    EXPECT_NE(Exit.CPU->Diagnostic.find("direct supervisor execution"),
+              std::string::npos);
+    auto Resume = S.cpu().runUntilExit(PC, 100000);
+    ASSERT_FALSE(bool(Resume));
+    llvm::consumeError(Resume.takeError());
+  }
+};
+
+TEST_F(DirectDriverX64, SupervisorCodeRunsWithoutCheckedInstructionAdmission) {
+  // BSWAP16 runs on the processor. Overwrite its undefined result before
+  // checking CPL; this test intentionally asserts no BSWAP16 value.
+  constexpr uint8_t Bytes[] = {0x66, 0x0f, 0xc8, 0x31, 0xc0,
+                               0x8c, 0xc8, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 6u);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 7);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX) & 3, 0u);
+  EXPECT_NE(reg(*S, CPURegister::X64AX), 0u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_F(DirectDriverX64, CanonicalSupervisorWatchPreservesCommittedRAM) {
+  constexpr uint64_t HighCode = 0xffff800000100000;
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x90};
+  llvm::cantFail(CPU->map(HighCode, PageSize, Read | Write | Execute));
+  llvm::cantFail(CPU->write(HighCode, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{HighCode + 3, 1}}));
+  const auto Exit = llvm::cantFail(S->run(HighCode, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch)
+      << (Exit.CPU ? Exit.CPU->Diagnostic : "no CPU exit");
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), HighCode + 3);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), Value);
+}
+
+TEST_F(DirectDriverX64, PageFaultPreservesTheCommittedStringPrefix) {
+  constexpr uint8_t Bytes[] = {0xf3, 0xaa, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {0x7f, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {2, 0}));
+  llvm::cantFail(
+      CPU->writeRegister(CPURegister::X64DI, {Data + PageSize - 1, 0}));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 14u);
+  EXPECT_EQ(Exit.CPU->Fault->Address, Data + PageSize);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code);
+  EXPECT_EQ(reg(*S, CPURegister::X64CX), 1u);
+  // Normal CPU accesses remain forbidden after a terminal fault. Inspect
+  // committed RAM through the diagnostic snapshot API without clearing it.
+  auto Read = S->cpu().readInteger(Data + PageSize - 1, 1);
+  ASSERT_FALSE(bool(Read));
+  llvm::consumeError(Read.takeError());
+  uint8_t Committed = 0;
+  ASSERT_EQ(llvm::toString(
+                S->cpu().snapshotBacking(Data + PageSize - 1, {&Committed, 1})),
+            "");
+  EXPECT_EQ(Committed, 0x7fu);
+  EXPECT_TRUE(S->cpu().fault());
+}
+
+TEST_F(DirectDriverX64, FSBaseWriteSurvivesAWatchAndResume) {
+  // WRMSR FS_BASE; mov rax, fs:[0]; ud2.
+  constexpr uint8_t Bytes[] = {0xb9, 0x00, 0x01, 0x00, 0xc0, 0xb8, 0x00,
+                               0x00, 0x02, 0x00, 0x31, 0xd2, 0x0f, 0x30,
+                               0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00,
+                               0x00, 0x00, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeInteger(Data, Value, 8));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 14, 1}}));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch)
+      << (Exit.CPU ? Exit.CPU->Diagnostic : "no CPU exit");
+  EXPECT_EQ(reg(*S, CPURegister::X64FSBase), Data);
+  llvm::cantFail(S->watchExecution({}));
+  Exit = llvm::cantFail(S->run(Code + 14, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), Value);
+  EXPECT_EQ(reg(*S, CPURegister::X64FSBase), Data);
+}
+
+TEST_F(DirectDriverX64, UnretainedMSRStopsBeforeAccessWithCommittedContext) {
+  // Commit a register and a RAM store before the forbidden KERNEL_GS_BASE
+  // write.
+  constexpr uint8_t Bytes[] = {0x41, 0xff, 0xc0, 0x48, 0x89, 0x01,
+                               0xb9, 0x02, 0x01, 0x00, 0xc0, 0x31,
+                               0xc0, 0x31, 0xd2, 0x0f, 0x30};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto S = start();
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  rejected(*S, Exit, Code + 15);
+  EXPECT_EQ(reg(*S, CPURegister::X64R8), 1u);
+  EXPECT_EQ(reg(*S, CPURegister::X64CX), 0xc0000102u);
+  auto Read = S->cpu().readInteger(Data, 8);
+  ASSERT_FALSE(bool(Read));
+  llvm::consumeError(Read.takeError());
+  std::array<uint8_t, 8> Committed{};
+  ASSERT_EQ(llvm::toString(S->cpu().snapshotBacking(Data, Committed)), "");
+  EXPECT_EQ(Committed, (std::array<uint8_t, 8>{0xf0, 0xde, 0xbc, 0x9a, 0x78,
+                                               0x56, 0x34, 0x12}));
+  EXPECT_TRUE(S->cpu().fault());
+}
+
+TEST_F(DirectDriverX64, ChangedCR0IsRejectedAtTheOriginalExceptionBoundary) {
+  // Toggle CR0.WP; ud2. A later entry must never silently reinstall CR0.
+  constexpr uint8_t Bytes[] = {0x0f, 0x20, 0xc0, 0x48, 0x35, 0x00, 0x00,
+                               0x01, 0x00, 0x0f, 0x22, 0xc0, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  rejected(*S, Exit, Code + 12);
+}
+
+TEST_F(DirectDriverX64,
+       ChangedCR0IsRejectedWhenTheDeadlineInterruptsExecution) {
+  constexpr uint8_t Bytes[] = {0x0f, 0x20, 0xc0, 0x48, 0x35, 0x00, 0x00,
+                               0x01, 0x00, 0x0f, 0x22, 0xc0, 0xeb, 0xfe};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start(50000);
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  rejected(*S, Exit, Code + 12);
+  EXPECT_TRUE(Exit.CPU->DeadlineReached);
+}
+
+TEST_F(DirectDriverX64, ChangedDebugRegisterIsRejected) {
+  // mov dr0, rax; ud2.
+  constexpr uint8_t Bytes[] = {0x0f, 0x23, 0xc0, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Data, 0}));
+  auto S = start();
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  rejected(*S, Exit, Code + 3);
+}
+
+TEST_F(DirectDriverX64, ChangedDescriptorTableIsRejected) {
+  // sgdt [rcx]; inc word [rcx]; lgdt [rcx]; ud2. Existing selectors remain
+  // valid.
+  constexpr uint8_t Bytes[] = {0x0f, 0x01, 0x01, 0x66, 0xff, 0x01,
+                               0x0f, 0x01, 0x11, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  rejected(*S, Exit, Code + 9);
+}
+
+TEST_F(DirectDriverX64, DeadlineCapturesStableSupervisorContext) {
+  constexpr uint8_t Bytes[] = {0x48, 0xff, 0xc0, 0xeb, 0xfb};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start(50000);
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.Kind, SessionExitKind::Timeout);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::Deadline)
+      << Exit.CPU->Diagnostic;
+  EXPECT_GT(reg(*S, CPURegister::X64AX), 0u);
+  const auto PC = reg(*S, CPURegister::X64PC);
+  EXPECT_TRUE(PC == Code || PC == Code + 3);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_F(DirectDriverX64, InitializationTracksSameValuePartialAndAliasedStores) {
+  constexpr uint64_t Alias = 0x40000;
+  // Both stores write zeros into already zero RAM through another VA.
+  constexpr uint8_t Bytes[] = {0x88, 0x41, 0x01, 0x66, 0x89,
+                               0x41, 0x03, 0x0f, 0x0b};
+  llvm::cantFail(CPU->mapAlias(Alias, Data, PageSize, Read | Write));
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {Alias, 0}));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 8))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 7);
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_EQ(Mark->initialized(I), I == 1 || I == 3 || I == 4) << I;
+  std::array<uint8_t, 8> After{};
+  ASSERT_EQ(llvm::toString(S->cpu().snapshotBacking(Data, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 8>{}));
+}
+
+TEST_F(DirectDriverX64,
+       TemporaryWriteProtectionChangesCannotBypassInitialization) {
+  // Save CR0, clear WP, store, restore CR0, then fault. Checking only the
+  // final CR0 would miss the write; second-level protection must stop it.
+  constexpr uint8_t Bytes[] = {0x0f, 0x20, 0xc0, 0x48, 0x89, 0xc2, 0x48,
+                               0x0f, 0xba, 0xf0, 0x10, 0x0f, 0x22, 0xc0,
+                               0x48, 0xc7, 0x01, 0x01, 0x00, 0x00, 0x00,
+                               0x0f, 0x22, 0xc2, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 8))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::BackendFailure);
+  EXPECT_NE(Exit.CPU->Diagnostic.find("protected physical write"),
+            std::string::npos)
+      << Exit.CPU->Diagnostic;
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_FALSE(Mark->initialized(I));
+  std::array<uint8_t, 8> After{};
+  ASSERT_EQ(llvm::toString(S->cpu().snapshotBacking(Data, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 8>{}));
+  auto Resume = S->cpu().runUntilExit(Code, 100000);
+  ASSERT_FALSE(bool(Resume));
+  llvm::consumeError(Resume.takeError());
+}
+
+TEST_F(DirectDriverX64,
+       TemporaryWriteProtectionChangesCannotBypassWriteWatches) {
+  constexpr uint8_t Bytes[] = {0x0f, 0x20, 0xc0, 0x48, 0x89, 0xc2, 0x48,
+                               0x0f, 0xba, 0xf0, 0x10, 0x0f, 0x22, 0xc0,
+                               0x48, 0xc7, 0x01, 0x01, 0x00, 0x00, 0x00,
+                               0x0f, 0x22, 0xc2, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, 8}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::BackendFailure);
+  EXPECT_NE(Exit.CPU->Diagnostic.find("protected physical write"),
+            std::string::npos)
+      << Exit.CPU->Diagnostic;
+  std::array<uint8_t, 8> After{};
+  ASSERT_EQ(llvm::toString(S->cpu().snapshotBacking(Data, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 8>{}));
+}
+
+TEST_F(DirectDriverX64, InitializationTracksScalarXorWritesAndNativeFlags) {
+  // Same-value byte XOR, then word/dword/qword XOR through each scalar width.
+  // The last XOR is locked so the original processor also owns atomicity.
+  constexpr uint8_t Bytes[] = {
+      0x80, 0x31, 0x00,                   // xor byte [rcx], 0
+      0x66, 0x81, 0x71, 0x02, 0x5a, 0x00, // xor word [rcx+2], 0x5a
+      0x31, 0x41, 0x04,                   // xor dword [rcx+4], eax
+      0xf0, 0x48, 0x31, 0x41, 0x08,       // lock xor qword [rcx+8], rax
+      0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 17))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + sizeof(Bytes) - 2);
+  for (unsigned I = 0; I < 17; ++I)
+    EXPECT_EQ(Mark->initialized(I), I != 1 && I != 16) << I;
+  std::array<uint8_t, 17> After{};
+  ASSERT_EQ(llvm::toString(S->cpu().snapshotBacking(Data, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 17>{0, 0, 0x5a, 0, 0xf0, 0xde, 0xbc,
+                                            0x9a, 0xf0, 0xde, 0xbc, 0x9a, 0x78,
+                                            0x56, 0x34, 0x12, 0}));
+  // Value is positive and nonzero, with even parity in its low byte.
+  EXPECT_EQ(reg(*S, CPURegister::X64FLAGS) & 0x8c5u, 0x4u);
+}
+
+TEST_F(DirectDriverX64,
+       InitializationMarksOneStoreAcrossDifferentPhysicalPages) {
+  // Allocate a separate page between the two virtual neighbors.
+  llvm::cantFail(CPU->map(0x40000, PageSize, Read | Write));
+  llvm::cantFail(CPU->map(Data + PageSize, PageSize, Read | Write));
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(
+      CPU->writeRegister(CPURegister::X64CX, {Data + PageSize - 4, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data + PageSize - 4, 8))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 3);
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_TRUE(Mark->initialized(I)) << I;
+  std::array<uint8_t, 8> After{};
+  ASSERT_EQ(
+      llvm::toString(S->cpu().snapshotBacking(Data + PageSize - 4, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 8>{0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56,
+                                           0x34, 0x12}));
+}
+
+TEST_F(DirectDriverX64, InitializationDoesNotMarkAFaultingCrossPageStore) {
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(
+      CPU->writeRegister(CPURegister::X64CX, {Data + PageSize - 4, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data + PageSize - 4, 4))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 14u);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code);
+  for (unsigned I = 0; I < 4; ++I)
+    EXPECT_FALSE(Mark->initialized(I)) << I;
+  std::array<uint8_t, 4> After{};
+  ASSERT_EQ(
+      llvm::toString(S->cpu().snapshotBacking(Data + PageSize - 4, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 4>{}));
+}
+
+TEST_F(DirectDriverX64, InitializationRejectsAnUnknownStoreBeforeItsEffects) {
+  constexpr uint8_t Bytes[] = {0x48, 0xff, 0x01, 0x0f, 0x0b}; // inc [rcx]
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 8))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::BackendFailure);
+  EXPECT_NE(Exit.CPU->Diagnostic.find("initialization store"),
+            std::string::npos);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code);
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_FALSE(Mark->initialized(I)) << I;
+  std::array<uint8_t, 8> After{};
+  ASSERT_EQ(llvm::toString(S->cpu().snapshotBacking(Data, After)), "");
+  EXPECT_EQ(After, (std::array<uint8_t, 8>{}));
+}
+
+TEST_F(DirectDriverX64,
+       InitializationWatchCreationAndRemovalInvalidateProjection) {
+  constexpr uint8_t Move[] = {0x48, 0x89, 0x01, 0x90};
+  llvm::cantFail(CPU->write(Code, Move));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code + 3, 1}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(S->cpu().addressSpace()->pinBacking(Data, 8))));
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_FALSE(Mark->initialized(I));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch)
+      << (Exit.CPU ? Exit.CPU->Diagnostic : "no CPU exit");
+  for (unsigned I = 0; I < 8; ++I)
+    EXPECT_TRUE(Mark->initialized(I));
+  Mark.reset();
+  constexpr uint8_t Increment[] = {0x48, 0xff, 0x01, 0x90};
+  llvm::cantFail(S->cpu().write(Code, Increment));
+  Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::ExecutionWatch)
+      << (Exit.CPU ? Exit.CPU->Diagnostic : "no CPU exit");
+  auto Read = S->cpu().readInteger(Data, 8);
+  ASSERT_TRUE(bool(Read)) << llvm::toString(Read.takeError());
+  EXPECT_EQ(*Read, 1u);
+}
+
+TEST_F(DirectDriverX64, InitializationTracksTheCompleteUnalignedVectorStore) {
+  constexpr uint8_t Bytes[] = {0xf3, 0x0f, 0x7f, 0x01, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {Data + 1, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64V0, {Value, Value}));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data, 18))));
+  auto S = start();
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap)
+      << Exit.CPU->Diagnostic;
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 4);
+  for (unsigned I = 0; I < 18; ++I)
+    EXPECT_EQ(Mark->initialized(I), I > 0 && I < 17) << I;
+}
+
+TEST_F(DirectDriverX64, PublicWriteStepKeepsOtherInitializationPagesProtected) {
+  llvm::cantFail(CPU->map(Data + PageSize, PageSize, Read | Write));
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x0f, 0x0b};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(
+      CPU->writeRegister(CPURegister::X64CX, {Data + PageSize - 4, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(
+      llvm::cantFail(CPU->addressSpace()->pinBacking(Data + PageSize, 4))));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data + PageSize - 4, 4}}));
+  const auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch)
+      << (Exit.CPU ? Exit.CPU->Diagnostic : "no CPU exit");
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 3);
+  for (unsigned I = 0; I < 4; ++I)
+    EXPECT_TRUE(Mark->initialized(I)) << I;
+  auto Read = S->cpu().readInteger(Data + PageSize - 4, 8);
+  ASSERT_TRUE(bool(Read)) << llvm::toString(Read.takeError());
+  EXPECT_EQ(*Read, Value);
 }
 
 INSTANTIATE_TEST_SUITE_P(Transports, DirectX64,

@@ -51,6 +51,22 @@ NEVERD_EXECUTION_DIAGNOSTIC(KvmCreate, "cannot create KVM VM or vCPU")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmMap,
                             "cannot register KVM backing or map vCPU state")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmState, "KVM CPU state transfer failed")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    DirectDriverBackend, "direct driver execution currently requires x64 KVM")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    KvmDirectState,
+    "direct supervisor execution changed unretained machine state")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    KvmDirectMSR, "direct supervisor execution does not retain this MSR access")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    KvmDirectMemory,
+    "direct supervisor execution attempted a protected physical write")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    KvmDirectSlots,
+    "direct supervisor physical write guards exceed KVM memory slots")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    DirectInitializationStore,
+    "direct execution cannot track this initialization store precisely")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmRun, "KVM single-step execution failed")
 NEVERD_EXECUTION_DIAGNOSTIC(KvmRunControl,
                             "KVM cancellation worker initialization failed")
@@ -162,7 +178,7 @@ NEVERD_EXECUTION_DIAGNOSTIC(
     "CPU does not implement stopped instruction inspection")
 NEVERD_EXECUTION_DIAGNOSTIC(
     DirectExecutionUnsupported,
-    "CPU transport does not implement direct user execution")
+    "CPU transport does not implement this direct execution operation")
 NEVERD_EXECUTION_DIAGNOSTIC(
     MissingExecutionStart,
     "CPU returned without starting execution or reporting a setup failure")

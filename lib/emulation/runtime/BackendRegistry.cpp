@@ -155,7 +155,9 @@ createCheckedBackend(ExecutionBackendKind Kind,
       return E;
   if (Architecture == GuestArchitecture::X64) {
     auto Machine =
-        Kind == ExecutionBackendKind::KVM   ? createKvmMachine(**Memory)
+        Kind == ExecutionBackendKind::KVM
+            ? createKvmMachine(**Memory, Capabilities.Contract ==
+                                             ExecutionContract::DirectDriverX64)
         : Kind == ExecutionBackendKind::WHP ? createWhpMachine(**Memory)
         : Kind == ExecutionBackendKind::HVF
             ? createHvfX64Machine(**Memory)

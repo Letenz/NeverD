@@ -16,7 +16,7 @@ class X64Machine;
 class AArch64Machine;
 
 llvm::Expected<std::unique_ptr<X64Machine>>
-createKvmMachine(MemoryProjection &Memory);
+createKvmMachine(MemoryProjection &Memory, bool DirectSupervisor = false);
 llvm::Expected<std::unique_ptr<X64Machine>>
 createWhpMachine(MemoryProjection &Memory);
 llvm::Expected<std::unique_ptr<X64Machine>>

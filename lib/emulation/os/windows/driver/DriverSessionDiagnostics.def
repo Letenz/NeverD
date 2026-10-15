@@ -11,6 +11,21 @@ NEVERD_DRIVER_SESSION_DIAGNOSTIC(Limits,
                                  "driver limits must be positive (memory <= "
                                  "{0} bytes, events <= {1}, timeout <= {2} ms)")
 NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DirectScheduling,
+    "direct driver execution does not support instruction-driven scheduling")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DirectWriteTrace,
+    "direct driver execution requires trace_memory_writes=false")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(DirectCPUID,
+                                 "direct driver execution uses transport CPUID "
+                                 "and cannot apply scenario cpuid")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DirectGate, "direct driver entered an unnamed or interior service gate")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DirectIRQL, "direct driver CR8 disagrees with the modeled IRQL")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
+    DirectGS, "direct driver GS base disagrees with the modeled GS base")
+NEVERD_DRIVER_SESSION_DIAGNOSTIC(
     ImportLimit, "too many driver imports for the bounded x64 profile")
 NEVERD_DRIVER_SESSION_DIAGNOSTIC(MissingSecurityCookie,
                                  "x64 SEH: image has no security cookie")
