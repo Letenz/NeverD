@@ -216,6 +216,7 @@ private:
     const DarwinFileMetadata *Metadata = nullptr;
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileTime *OwnershipTime = nullptr;
     const DarwinFileTime *MutationTime = nullptr;
     bool Created = false;
     bool MetadataInvalidated = false;

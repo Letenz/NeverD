@@ -168,3 +168,4 @@ NEVERD_NATIVE_DARWIN_CASE(
     CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime)
 NEVERD_NATIVE_DARWIN_CASE(
     SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate)
+NEVERD_NATIVE_DARWIN_CASE(SymbolicOwnershipKeepsVnodeAndTargetGrantsSeparate)

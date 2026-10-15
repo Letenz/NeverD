@@ -189,6 +189,8 @@ NEVERD_PROCESS_REPORT_FIELD(FileSystemMountedFrom, "mounted_from")
 NEVERD_PROCESS_REPORT_FIELD(FileSystemExtendedFlags, "extended_flags")
 NEVERD_PROCESS_REPORT_FIELD(FileOwnershipMutations, "ownership_mutations")
 NEVERD_PROCESS_REPORT_FIELD(FileOwnershipObjects, "objects")
+NEVERD_PROCESS_REPORT_FIELD(FileOwnershipCreatedSymbolicLinkObjects,
+                            "created_symbolic_link_objects")
 NEVERD_PROCESS_REPORT_FIELD(FileOwnershipTime, "time")
 NEVERD_PROCESS_REPORT_FIELD(FileModeMutations, "mode_mutations")
 NEVERD_PROCESS_REPORT_FIELD(FileModeObjects, "objects")

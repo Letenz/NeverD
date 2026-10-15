@@ -605,15 +605,15 @@ TEST_P(DarwinCreatedAttributeTest,
             FD == D ? diagnostic::FileModeProvider
                     : diagnostic::FileModeTarget);
     refused(ServiceKind::Fchown, {FD, UINT32_MAX, UINT32_MAX},
-            FD == D ? diagnostic::FileOwnershipProvider
-                    : diagnostic::FileOwnershipTarget);
+            FD == D || FD == L ? diagnostic::FileOwnershipProvider
+                               : diagnostic::FileOwnershipTarget);
   }
   EXPECT_EQ(status(D), DirectoryBefore);
   refused(ServiceKind::FchmodAt, {UINT64_MAX, path("/link"), 0600, 0x20},
           diagnostic::FileModeTarget);
   refused(ServiceKind::FchownAt,
           {UINT64_MAX, path("/link"), UINT32_MAX, UINT32_MAX, 0x20},
-          diagnostic::FileOwnershipTarget);
+          diagnostic::FileOwnershipProvider);
   const auto A = create();
   EXPECT_EQ(ok(ServiceKind::Fchmod, {A, 0640}), 0u);
   EXPECT_EQ(ok(ServiceKind::Fchown, {A, 501, 31}), 0u);
