@@ -51,6 +51,19 @@ struct SpecializationTerminalImport {
   bool operator==(const SpecializationTerminalImport &) const = default;
 };
 
+enum class SpecializationX64MachineExitKind : uint8_t { Call, Jump, Return };
+
+/// An explicit end of a machine region, after this exact native transfer.
+/// The residual retains its real target and physical stack effects. No callee,
+/// continuation, ordinary return ABI or whole-function coverage is implied.
+struct SpecializationX64MachineExit {
+  uint32_t Version = 1;
+  va_t Address = 0;
+  SpecializationX64MachineExitKind Kind =
+      SpecializationX64MachineExitKind::Return;
+  bool operator==(const SpecializationX64MachineExit &) const = default;
+};
+
 /// Caller-owned original x64 code at a runtime address. The complete range is
 /// executable, readable, nonfaulting and immutable across every possible writer
 /// for the whole supported execution. This is an explicit environment domain,
@@ -198,8 +211,13 @@ struct SpecializationOptions {
   /// residual; native proof and source interfaces reject even unused
   /// declarations.
   std::vector<SpecializationTerminalImport> X64TerminalImports;
+  /// Explicit raw-region boundaries. Requires the raw environment receipt and
+  /// excludes RequireRestoredFrameAtReturn and X64TerminalImports. All other
+  /// transfers retain their ordinary exhaustive-analysis obligations.
+  std::vector<SpecializationX64MachineExit> X64MachineExits;
   /// Raw-only supplemental code domain. Requires explicit nonfaulting,
-  /// CET-disabled x64 state and a restored eight-byte entry RSP root. The
+  /// CET-disabled x64 state and an eight-byte entry RSP root. Ordinary domains
+  /// require restored returns; X64MachineExits declares machine regions. The
   /// binary adapter requires a complete fixed primary PE and disjoint ranges,
   /// including its unmapped holes. It uses exactly the supplied preconditions,
   /// without inserting the ordinary adapter's implicit external-store domain.
@@ -348,7 +366,8 @@ struct SpecializationOptions {
   uint64_t MaxFrameOffsetNormalizationWorkPerProof = 0;
 
   bool hasRawEnvironment() const {
-    return !X64CodeRegions.empty() || !X64ImportBindings.empty();
+    return !X64CodeRegions.empty() || !X64ImportBindings.empty() ||
+           !X64MachineExits.empty();
   }
 
   uint32_t chainedVisitLimit() const {
@@ -399,10 +418,11 @@ struct SpecializationReadWitness {
   std::string Evidence;
 };
 
-/// A physical CALL expanded to target evaluation, capture, stack decrement,
-/// original return-address STORE, and an opaque external INDIR_BR. No ordinary
-/// successor or callee state summary is implied. Original is retained because
-/// synthetic residual labels cannot supply the physical return address.
+/// An exact native transfer ending the declared analysis region. A terminal
+/// import retains its physical CALL; MachineExit additionally admits declared
+/// CALL/JMP/RET boundaries. The actual next PC and physical stack effects stay
+/// in the final INDIR_BR span. No ordinary successor or callee state summary is
+/// implied. Synthetic residual labels never supply native return addresses.
 struct SpecializationExternalExit {
   uint32_t Version = 1;
   va_t ResidualAddress = 0;
@@ -414,11 +434,17 @@ struct SpecializationExternalExit {
   /// Integrity binding for identity, domain, original evidence and occurrence.
   /// This does not authenticate a changed image or the live loader binding.
   std::string IdentityDigest;
+  /// Present only for an explicitly declared raw machine-region boundary.
+  /// The original need not be an import or a CALL. This is a machine transfer,
+  /// never a callee-effect summary or an implicit ordinary function return.
+  std::optional<SpecializationX64MachineExit> MachineExit;
 };
 
 struct SpecializationResult {
   SpecializationStatus Status = SpecializationStatus::InvalidInput;
-  /// Populated only on Complete. Incomplete exploration is never a replacement.
+  /// Populated only on Complete, within the declared domain and boundaries.
+  /// Explicit machine regions do not imply whole-function reconstruction.
+  /// Incomplete exploration is never a replacement.
   LowFunc Residual;
   std::vector<SpecializationOrigin> Origins;
   std::vector<SpecializationReadWitness> Reads;
@@ -444,8 +470,11 @@ struct SpecializationResult {
 /// Validate every remaining indirect transfer against its complete exit
 /// receipt and the explicit domain. Stripping or altering a receipt invalidates
 /// this interface; the LowFunc alone is not an ordinary call-free function.
-/// As with the provider itself, the fixed-image evidence is trusted input here;
-/// this does not reopen the image or authenticate its current runtime binding.
+/// Raw machine regions additionally require
+/// validateSpecializationRawEnvironment; this exit-only check does not
+/// authenticate their full graph or entry marker. As with the provider itself,
+/// the fixed-image evidence is trusted input here; this does not reopen the
+/// image or authenticate its current runtime binding.
 llvm::Error
 validateSpecializationExternalExits(const SpecializationResult &Result,
                                     const SpecializationOptions &Options);

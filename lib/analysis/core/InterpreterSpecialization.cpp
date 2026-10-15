@@ -138,7 +138,7 @@ struct NativeSlice {
 
 std::string externalExitDigest(const SpecializationExternalExit &Exit) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-specialization-external-exit-v1");
+  Hash.update("neverd-specialization-external-exit-v2");
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
     llvm::support::endian::write64le(Bytes, Value);
@@ -161,6 +161,12 @@ std::string externalExitDigest(const SpecializationExternalExit &Exit) {
   Text(Exit.OriginalOperationDigest);
   Text(Exit.ExpandedOperationDigest);
   Text(Exit.ResidualOperationDigest);
+  Number(Exit.MachineExit.has_value());
+  if (Exit.MachineExit) {
+    Number(Exit.MachineExit->Version);
+    Number(Exit.MachineExit->Address);
+    Number(static_cast<unsigned>(Exit.MachineExit->Kind));
+  }
   const auto &I = Exit.Original;
   const auto &B = I.Origin;
   Number(B.Address);
@@ -1996,6 +2002,9 @@ bool Specializer::emitTargets(Node &Draft,
     return true;
   }
   if (Flow == StepResult::Return) {
+    if (!Options.X64MachineExits.empty())
+      return fail(SpecializationStatus::UnresolvedControl,
+                  "machine region has no implicit ordinary RETURN boundary");
     if (Options.RequireRestoredFrameAtReturn) {
       const auto &Base = *Options.FrameBaseRegister;
       const auto Displacement =
@@ -2374,6 +2383,17 @@ bool Specializer::evaluate(int Id) {
             : std::nullopt;
     std::vector<LowOp> Operations = Instruction.Ops;
     std::optional<SpecializationExternalExit> ExternalExit;
+    for (const auto &Declaration : Options.X64MachineExits) {
+      if (++Result.EvaluatedOperations > Options.MaxOperations)
+        return fail(SpecializationStatus::BudgetExceeded,
+                    "machine-exit lookup budget exhausted");
+      if (Declaration.Address == Cursor.Address) {
+        ExternalExit.emplace();
+        ExternalExit->Original = Instruction;
+        ExternalExit->MachineExit = Declaration;
+        break;
+      }
+    }
     if (Instruction.TerminalImport) {
       if (std::find(Options.X64TerminalImports.begin(),
                     Options.X64TerminalImports.end(),
@@ -2390,9 +2410,34 @@ bool Specializer::evaluate(int Id) {
     bool ExpandedReturn = false;
     bool ExpandedIndirectCall = false;
     size_t NativeCallPrefixSize = 0;
-    if (Instruction.NativeStackControl !=
-        SpecializationNativeStackControl::None) {
-      if (!FrameRoot || !Options.RequireRestoredFrameAtReturn ||
+    if (ExternalExit && ExternalExit->MachineExit) {
+      const bool IsReturn = ExternalExit->MachineExit->Kind ==
+                            SpecializationX64MachineExitKind::Return;
+      const NdVar Scratch =
+          NdVar::tmp(IsReturn ? NativeReturnTemp : NativeCallTargetTemp, 8);
+      const NdVar Reserved[] = {
+          NdVar::tmp(DispatchTemp, 8), NdVar::tmp(ReadAddressTemp, 8),
+          NdVar::tmp(ReadConditionTemp, 8),
+          NdVar::tmp(IsReturn ? NativeCallTargetTemp : NativeReturnTemp, 8)};
+      auto Expanded = expandX64MachineExit(
+          Instruction, *ExternalExit->MachineExit, Scratch, Reserved);
+      if (!Expanded)
+        return fail(SpecializationStatus::InvalidInput,
+                    llvm::toString(Expanded.takeError()));
+      ExternalExit->ExpansionScratch = Scratch;
+      ExternalExit->OriginalOperationDigest =
+          Expanded->Receipt.OriginalOperationDigest;
+      ExternalExit->ExpandedOperationDigest =
+          Expanded->Receipt.ExpandedOperationDigest;
+      Operations = std::move(Expanded->Ops);
+      ExpandedReturn = Expanded->ExpandedReturn;
+      ExpandedIndirectCall = Expanded->ExpandedIndirectCall;
+      NativeCallPrefixSize = Expanded->OriginalPrefixSize;
+    } else if (Instruction.NativeStackControl !=
+               SpecializationNativeStackControl::None) {
+      if (!FrameRoot ||
+          (!Options.RequireRestoredFrameAtReturn &&
+           Options.X64MachineExits.empty()) ||
           Instruction.Fallthrough.Address != InputBlock.EndAddr ||
           Instruction.Fallthrough.Mode != Cursor.Mode ||
           Instruction.Ops.empty())
@@ -2421,7 +2466,7 @@ bool Specializer::evaluate(int Id) {
           NdVar::tmp(IsReturn ? NativeCallTargetTemp : NativeReturnTemp, 8)};
       auto Expanded = expandNativeStackControl(
           Instruction, Stack, Scratch,
-          IsReturn && *Displacement == 0
+          IsReturn && *Displacement == 0 && Options.X64MachineExits.empty()
               ? NativeReturnExpansion::OuterFunctionBoundary
               : NativeReturnExpansion::InternalTransfer,
           Reserved);
@@ -2678,7 +2723,8 @@ bool Specializer::evaluate(int Id) {
           }
           if (!Displacement && !StorePreservation &&
               Options.ProveStoreReturnSlotSeparation &&
-              Options.RequireRestoredFrameAtReturn &&
+              (Options.RequireRestoredFrameAtReturn ||
+               !Options.X64MachineExits.empty()) &&
               Options.FrameBaseRegister->Offset == x64::StackPointer &&
               !Frame.NativeReturnSlots.empty()) {
             const auto Address = Exec.memoryAddressValue(Original);
@@ -2692,7 +2738,10 @@ bool Specializer::evaluate(int Id) {
                               "native return-cell traversal budget exhausted");
                 ++Result.EvaluatedOperations;
                 const int64_t Begin = static_cast<int64_t>(Slot);
-                if (!Slot || Begin > std::numeric_limits<int64_t>::max() - 8)
+                // A region has no implicit outer return word. A physical
+                // internal CALL may therefore legitimately occupy offset zero.
+                if ((!Slot && Options.X64MachineExits.empty()) ||
+                    Begin > std::numeric_limits<int64_t>::max() - 8)
                   continue;
                 const auto Cell = Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, Slot));
                 const auto Overlap = memoryExtentsOverlap(
@@ -3154,9 +3203,10 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::Unsupported,
                     "control transfer before the end of a lifted instruction");
       if (ExternalExit) {
-        if (!ExpandedIndirectCall || Original.Opcode != NdOp::INDIR_BR)
+        if ((!ExpandedIndirectCall && !ExternalExit->MachineExit) ||
+            Original.Opcode != NdOp::INDIR_BR)
           return fail(SpecializationStatus::InvalidInput,
-                      "terminal import lacks its physical external transfer");
+                      "external exit lacks its exact physical transfer");
         Draft.Block.Ops.push_back(Original);
         Finished = true;
         continue;
@@ -4052,6 +4102,8 @@ validateSpecializationExternalExits(const SpecializationResult &Result,
     return Error;
   if (auto Error = validateX64TerminalImportDomain(Options))
     return Error;
+  if (auto Cost = x64::validateRawEnvironmentDeclarations(Options); !Cost)
+    return Cost.takeError();
   std::map<va_t, const LowInstructionBoundary *> Origins;
   for (const auto &Origin : Result.Origins)
     if (!Origins.emplace(Origin.ResidualAddress, &Origin.NativeInstruction)
@@ -4088,8 +4140,9 @@ validateSpecializationExternalExits(const SpecializationResult &Result,
           Boundary.Immediate ||
           lowUndefinedOperationDigest(Span) != Exit.ResidualOperationDigest)
         return Invalid("external exit differs from its terminal residual span");
-      if (auto Error = validateX64TerminalImportCall(Exit.Original))
-        return Error;
+      if (!Exit.MachineExit)
+        if (auto Error = validateX64TerminalImportCall(Exit.Original))
+          return Error;
       const auto Origin = Origins.find(Exit.ResidualAddress);
       const auto BoundaryKey = [](const LowInstructionBoundary &B) {
         return std::tie(B.Address, B.Size, B.FirstOp, B.OpCount, B.Mode,
@@ -4098,13 +4151,25 @@ validateSpecializationExternalExits(const SpecializationResult &Result,
       if (Origin == Origins.end() ||
           BoundaryKey(*Origin->second) != BoundaryKey(Exit.Original.Origin))
         return Invalid("external exit differs from its native origin");
-      const auto &Binding = Exit.Original.TerminalImport->Binding;
-      if (std::count(Options.X64TerminalImports.begin(),
-                     Options.X64TerminalImports.end(), Binding) != 1)
-        return Invalid("external exit has no unique declared terminal domain");
-      auto Expanded = expandNativeStackControl(
-          Exit.Original, NdVar::reg(x64::StackPointer, 8),
-          Exit.ExpansionScratch, NativeReturnExpansion::InternalTransfer);
+      if (Exit.MachineExit) {
+        if (std::count(Options.X64MachineExits.begin(),
+                       Options.X64MachineExits.end(), *Exit.MachineExit) != 1)
+          return Invalid("machine exit has no unique declared boundary");
+      } else {
+        const auto &Binding = Exit.Original.TerminalImport->Binding;
+        if (std::count(Options.X64TerminalImports.begin(),
+                       Options.X64TerminalImports.end(), Binding) != 1)
+          return Invalid(
+              "external exit has no unique declared terminal domain");
+      }
+      auto Expanded =
+          Exit.MachineExit
+              ? expandX64MachineExit(Exit.Original, *Exit.MachineExit,
+                                     Exit.ExpansionScratch)
+              : expandNativeStackControl(
+                    Exit.Original, NdVar::reg(x64::StackPointer, 8),
+                    Exit.ExpansionScratch,
+                    NativeReturnExpansion::InternalTransfer);
       if (!Expanded)
         return Expanded.takeError();
       if (Expanded->Receipt.OriginalOperationDigest !=
@@ -4119,7 +4184,8 @@ validateSpecializationExternalExits(const SpecializationResult &Result,
       }
       if (lowUndefinedOperationDigest(NativeSpan) !=
           Exit.ExpandedOperationDigest)
-        return Invalid("external exit does not retain its exact physical call");
+        return Invalid(
+            "external exit does not retain its exact physical transfer");
       Exits.erase(Found);
     }
   }
