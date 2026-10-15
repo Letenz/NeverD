@@ -4,5 +4,6 @@ add_neverd_component_library(NeverDTypes
   LocalTypes.cpp
   PDBTypeImport.cpp
   RustTypeRender.cpp
+  TypeJSON.cpp
   TypeRender.cpp
 )

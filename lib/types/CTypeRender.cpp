@@ -627,6 +627,23 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
 
 } // namespace
 
+struct CSpeller::Impl {
+  Impl(const TypeLibrary &Library, const RenderOptions &Options)
+      : Options(Options), Writer(Library, this->Options) {}
+  RenderOptions Options;
+  CWriter Writer;
+};
+
+CSpeller::CSpeller(const TypeLibrary &Library, const RenderOptions &Options)
+    : P(std::make_unique<Impl>(Library, Options)) {}
+
+CSpeller::~CSpeller() = default;
+
+std::string CSpeller::declare(const TypeExpr &Type,
+                              const std::string &Declarator) const {
+  return P->Writer.declare(Type, Declarator);
+}
+
 std::string renderC(const TypeLibrary &Library, const LocalType &Type,
                     const RenderOptions &Options) {
   CWriter Writer(Library, Options);

@@ -658,23 +658,36 @@ PDBTypeImportStats Importer::run() {
   PDBTypeImportStats Stats;
   const uint32_t First = Tpi.TypeIndexBegin();
   const uint32_t Count = Tpi.getNumTypeRecords();
-  // Where each union, structure and enumeration is defined.
+  // Where each union, structure and enumeration is defined.  A name the
+  // stream defines more than once, as the kernel defines the architectural
+  // part of _KPRCB apart from the whole, takes its largest definition.
+  llvm::DenseMap<uint32_t, uint64_t> DefinedSizes;
+  const auto choose = [&](llvm::StringMap<cv::TypeIndex> &Map,
+                          llvm::StringRef Key, cv::TypeIndex Index,
+                          uint64_t Size) {
+    auto [It, Inserted] = Map.try_emplace(Key, Index);
+    if (!Inserted && Size > DefinedSizes.lookup(It->second.getIndex()))
+      It->second = Index;
+  };
   for (uint32_t I = 0; I < Count; ++I) {
     const cv::TypeIndex Index(First + I);
     const cv::CVType Type = Types.getType(Index);
     llvm::StringRef Name, Unique;
     bool Forward = true;
+    uint64_t Size = 0;
     if (isClassKind(Type.kind())) {
       if (auto Record = deserialize<cv::ClassRecord>(Type)) {
         Forward = Record->isForwardRef();
         Name = Record->getName();
         Unique = Record->hasUniqueName() ? Record->getUniqueName() : "";
+        Size = Record->getSize();
       }
     } else if (Type.kind() == cv::LF_UNION) {
       if (auto Record = deserialize<cv::UnionRecord>(Type)) {
         Forward = Record->isForwardRef();
         Name = Record->getName();
         Unique = Record->hasUniqueName() ? Record->getUniqueName() : "";
+        Size = Record->getSize();
       }
     } else if (Type.kind() == cv::LF_ENUM) {
       if (auto Record = deserialize<cv::EnumRecord>(Type)) {
@@ -685,9 +698,10 @@ PDBTypeImportStats Importer::run() {
     }
     if (Forward)
       continue;
+    DefinedSizes[Index.getIndex()] = Size;
     if (!Unique.empty())
-      ByUniqueName.try_emplace(Unique, Index);
-    ByName.try_emplace(Name, Index);
+      choose(ByUniqueName, Unique, Index, Size);
+    choose(ByName, Name, Index, Size);
   }
 
   // Every named type, in the order of its first record, defined once.
@@ -712,7 +726,10 @@ PDBTypeImportStats Importer::run() {
     LocalType Local;
     Local.Name = Name.str();
     Local.Origin = TypeOrigin::PDB;
-    const std::optional<cv::TypeIndex> Definition = definition(Index);
+    // The definition the name takes, wherever its first record is.
+    std::optional<cv::TypeIndex> Definition = definition(Index);
+    if (auto Chosen = ByName.find(Name); Chosen != ByName.end())
+      Definition = Chosen->second;
     if (Type.kind() == cv::LF_ENUM) {
       Local.Kind = TypeKind::Enum;
       if (!Definition) {
@@ -764,12 +781,7 @@ llvm::Expected<PDBTypeImportStats> importPDBTypes(llvm::pdb::PDBFile &File,
 }
 
 llvm::Expected<std::unique_ptr<TypeLibrary>>
-importPDBTypes(llvm::StringRef Path, PDBTypeImportStats *Stats) {
-  std::unique_ptr<llvm::pdb::IPDBSession> Session;
-  if (auto Err = llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
-                                           Path, Session))
-    return std::move(Err);
-  auto &File = static_cast<llvm::pdb::NativeSession &>(*Session).getPDBFile();
+importPDBTypes(llvm::pdb::PDBFile &File, PDBTypeImportStats *Stats) {
   DataModel Model = DataModel::LLP64;
   if (File.hasPDBDbiStream()) {
     auto Dbi = File.getPDBDbiStream();
@@ -784,6 +796,16 @@ importPDBTypes(llvm::StringRef Path, PDBTypeImportStats *Stats) {
   if (Stats)
     *Stats = *Read;
   return std::move(Library);
+}
+
+llvm::Expected<std::unique_ptr<TypeLibrary>>
+importPDBTypes(llvm::StringRef Path, PDBTypeImportStats *Stats) {
+  std::unique_ptr<llvm::pdb::IPDBSession> Session;
+  if (auto Err = llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
+                                           Path, Session))
+    return std::move(Err);
+  return importPDBTypes(
+      static_cast<llvm::pdb::NativeSession &>(*Session).getPDBFile(), Stats);
 }
 
 } // namespace neverd::types

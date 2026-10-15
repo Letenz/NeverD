@@ -56,6 +56,7 @@ add_neverd_tool(neverd
   NeverDTranslateOutput.cpp
   cmd/NeverDCmdInfo.cpp
   cmd/NeverDCmdTables.cpp
+  cmd/NeverDCmdTypes.cpp
   cmd/NeverDCmdStrings.cpp
   cmd/NeverDCmdXrefs.cpp
   cmd/NeverDCmdDisasm.cpp

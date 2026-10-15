@@ -52,6 +52,11 @@ struct PDBTypeImportStats {
 llvm::Expected<PDBTypeImportStats> importPDBTypes(llvm::pdb::PDBFile &File,
                                                   TypeLibrary &Into);
 
+/// The types \p File defines, in a library of the data model its machine
+/// uses.
+llvm::Expected<std::unique_ptr<TypeLibrary>>
+importPDBTypes(llvm::pdb::PDBFile &File, PDBTypeImportStats *Stats);
+
 /// The types of the PDB at \p Path, in a library of the data model its
 /// machine uses.
 llvm::Expected<std::unique_ptr<TypeLibrary>>

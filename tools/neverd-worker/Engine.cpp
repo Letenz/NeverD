@@ -175,6 +175,10 @@ const LoadOptionsFunctions &loadOptions() {
 constexpr std::string_view LoadOptionsSuffix = ".neverd-load.json";
 /// The PDB a PE names and where it is, before or after the PE is open.
 using PdbReferenceFunction = const char *(*)(const char *, const char *);
+// Additive C ABI capability: the program's local types.
+using LocalTypesFunction = const char *(*)(neverd_session_t, const char *);
+using LocalTypeFunction = const char *(*)(neverd_session_t, const char *,
+                                          const char *);
 /// Whether the next load searches for the PDB a PE names.
 using PdbSearchFunction = void (*)(neverd_session_t, int);
 /// The DWARF of an ELF or Mach-O image and where it is, before or after the
@@ -553,6 +557,11 @@ bool Engine::loadsPdbFiles() {
   using Load = int (*)(neverd_session_t, const char *);
   return engineSymbol<Inspect>("neverd_session_inspect_pdb_json") &&
          engineSymbol<Load>("neverd_session_load_pdb");
+}
+bool Engine::listsLocalTypes() {
+  return engineSymbol<LocalTypesFunction>("neverd_local_types_json") &&
+         engineSymbol<LocalTypeFunction>("neverd_local_type_json") &&
+         engineSymbol<LocalTypesFunction>("neverd_local_types_source");
 }
 bool Engine::findsPdbFiles() {
   return engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json") &&
@@ -2043,6 +2052,61 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
     result["import"] = listing().isImport(address);
     return result;
+  }
+  if (operation == "local_types" || operation == "local_type" ||
+      operation == "local_types_source") {
+    if (!listsLocalTypes())
+      throw Error("unsupported", "This engine has no local types");
+    // Type names and sizes are no addresses: the reply stays as it is.
+    const auto localTypesJson = [this](const std::string &reply) {
+      if (reply.empty())
+        throw Error("local_types_failed", error());
+      try {
+        return Json::parse(reply);
+      } catch (const Json::exception &) {
+        throw Error("engine_error", "Engine returned malformed JSON");
+      }
+    };
+    // The options the C API reads, as the request states them.
+    Json options = Json::object();
+    for (const char *key : {"filter", "language", "spelling"})
+      if (p.contains(key))
+        options[key] = stringField(p, key, {}, 4096);
+    for (const char *key : {"offsets", "hexOffsets", "asserts", "dependencies"})
+      if (p.contains(key)) {
+        if (!p.at(key).is_boolean())
+          throw Error("invalid_request",
+                      std::string(key) + " must be true or false");
+        options[key] = p.at(key);
+      }
+    if (p.contains("types")) {
+      if (!p.at("types").is_array())
+        throw Error("invalid_request", "types must be an array of names");
+      for (const auto &name : p.at("types"))
+        if (!name.is_string())
+          throw Error("invalid_request", "types must be an array of names");
+      options["types"] = p.at("types");
+    }
+    const std::string text = options.dump();
+    if (operation == "local_types") {
+      const auto list =
+          engineSymbol<LocalTypesFunction>("neverd_local_types_json");
+      return localTypesJson(ownedString(list(session_, text.c_str())));
+    }
+    if (operation == "local_type") {
+      const auto one =
+          engineSymbol<LocalTypeFunction>("neverd_local_type_json");
+      const auto name = stringField(p, "name", {}, 4096);
+      return localTypesJson(
+          ownedString(one(session_, name.c_str(), text.c_str())));
+    }
+    const auto source =
+        engineSymbol<LocalTypesFunction>("neverd_local_types_source");
+    const auto reply = ownedString(source(session_, text.c_str()));
+    if (reply.empty())
+      throw Error("local_types_failed", error());
+    return Json{{"language", options.value("language", "c")},
+                {"source", reply}};
   }
   if (operation == "strings")
     return listing().strings(p);

@@ -49,6 +49,9 @@ bool readable(const QString &operation) {
                                         "dwarf_reference",
                                         "symbol_table_reference",
                                         "function_attributes",
+                                        "local_types",
+                                        "local_type",
+                                        "local_types_source",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }

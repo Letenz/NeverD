@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -197,6 +198,21 @@ void valueDependencies(const LocalType &Type, std::vector<std::string> &Names);
 /// Every named type \p Type mentions, through pointers too.
 void mentionedTypes(const TypeExpr &Type, std::vector<std::string> &Names);
 void mentionedTypes(const LocalType &Type, std::vector<std::string> &Names);
+
+/// Spells types as C or C++ declares them, with one name table for every
+/// type it spells.
+class CSpeller {
+public:
+  CSpeller(const TypeLibrary &Library, const RenderOptions &Options);
+  ~CSpeller();
+  /// \p Type declaring \p Declarator, or alone when that is empty.
+  std::string declare(const TypeExpr &Type,
+                      const std::string &Declarator = std::string()) const;
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> P;
+};
 
 /// The renderers of each language.
 std::string renderC(const TypeLibrary &Library, const LocalType &Type,

@@ -52,6 +52,9 @@ public:
   /// Whether the engine lists the ways it can load a file (identify).
   static bool identifiesFiles();
   static bool loadsPdbFiles();
+  /// Whether the engine lists the program's local types (local_types,
+  /// local_type, local_types_source).
+  static bool listsLocalTypes();
   /// Whether the engine finds the PDB a PE names before opening it, and
   /// opens a PE without it.
   static bool findsPdbFiles();

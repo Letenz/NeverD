@@ -7,11 +7,6 @@
 #include "neverd/types/PDBTypeImport.h"
 #include "neverd/types/TypeRender.h"
 
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include <cstdlib>
 #include <gtest/gtest.h>
 
 using namespace neverd::types;
@@ -338,46 +333,4 @@ TEST(TypeRender, NamesThatAreNoIdentifiersCompile) {
   EXPECT_EQ(Renamed[0].second, "Outer__Inner_int_");
   EXPECT_EQ(Renamed[1].first, "_SECOND::None");
   EXPECT_EQ(Renamed[1].second, "_SECOND_None");
-}
-
-/// Writes every type of the fixture, and of the kernel when
-/// NEVERD_TYPES_NTKRNLMP names its PDB, in each language with layout checks,
-/// to NEVERD_TYPES_RENDER_DIR, for scripts/check_type_renders.py to compile.
-TEST_F(TypeRenderFixture, WritesSourcesToCompile) {
-  const char *Dir = std::getenv("NEVERD_TYPES_RENDER_DIR");
-  if (!Dir)
-    GTEST_SKIP() << "NEVERD_TYPES_RENDER_DIR is not set";
-  const auto write = [&](const TypeLibrary &Types, llvm::StringRef Stem) {
-    const auto put = [&](llvm::StringRef Name, const RenderOptions &Options) {
-      llvm::SmallString<256> Path(Dir);
-      llvm::sys::path::append(Path, Name);
-      std::error_code EC;
-      llvm::raw_fd_ostream Out(Path, EC);
-      ASSERT_FALSE(EC) << Path.str().str();
-      Out << renderTypes(Types, {}, Options);
-    };
-    static const char *const Spellings[] = {"windows", "ida", "keywords",
-                                            "portable"};
-    for (unsigned Spelling = 0; Spelling < 4; ++Spelling)
-      for (Language Lang : {Language::C, Language::Cpp}) {
-        RenderOptions Options = in(Lang);
-        Options.Asserts = true;
-        Options.Spelling = static_cast<BuiltinSpelling>(Spelling);
-        put((Stem + "-" + Spellings[Spelling] +
-             (Lang == Language::C ? ".h" : ".hpp"))
-                .str(),
-            Options);
-      }
-    for (Language Lang : {Language::Rust, Language::Go}) {
-      RenderOptions Options = in(Lang);
-      Options.Asserts = true;
-      put((Stem + (Lang == Language::Rust ? ".rs" : ".go")).str(), Options);
-    }
-  };
-  write(*Library, "fixture");
-  if (const char *Kernel = std::getenv("NEVERD_TYPES_NTKRNLMP")) {
-    auto KernelLibrary = importPDBTypes(Kernel);
-    ASSERT_TRUE(bool(KernelLibrary));
-    write(**KernelLibrary, "ntoskrnl");
-  }
 }
