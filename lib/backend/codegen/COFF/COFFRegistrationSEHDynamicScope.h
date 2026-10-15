@@ -1,0 +1,38 @@
+//===- COFFRegistrationSEHDynamicScope.h - Scope replay --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_COFFREGISTRATIONSEHDYNAMICSCOPE_H
+#define NEVERD_COFFREGISTRATIONSEHDYNAMICSCOPE_H
+
+#include "COFFRegistrationIRProof.h"
+
+namespace neverd::coff_registration {
+struct RegistrationSEHScopeState {
+  bool Enabled = false;
+  int64_t Offset = 0;
+  std::set<const llvm::StoreInst *> Writes;
+};
+
+llvm::Expected<RegistrationSEHScopeState>
+bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
+                    llvm::ArrayRef<const llvm::Function *> Functions,
+                    const std::set<const llvm::StoreInst *> &RuntimeWrites);
+
+struct DynamicSEHScopeCase {
+  const llvm::InvokeInst *Enter;
+  const llvm::InvokeInst *Exit;
+  const llvm::BasicBlock *Unwind;
+};
+
+llvm::Error
+validateDynamicSEHScope(const RegistrationBlockState &Source,
+                        const RegistrationFrame &Frame,
+                        const SourceSegment &Segment,
+                        const llvm::CallInst &Enter, const llvm::CallInst &Exit,
+                        const std::map<int32_t, DynamicSEHScopeCase> &Cases);
+} // namespace neverd::coff_registration
+
+#endif // NEVERD_COFFREGISTRATIONSEHDYNAMICSCOPE_H

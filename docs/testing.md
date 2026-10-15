@@ -3781,7 +3781,8 @@ done
 The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
 `longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
 `longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
-and `longjmp-search-filter-zero`. These fixtures check a resumed
+`longjmp-search-filter-zero`, `longjmp-retired-scope` and
+`longjmp-retired-inner-scope`. These fixtures check a resumed
 nonvolatile register and try level, the requested jump value (including zero
 becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
@@ -3796,6 +3797,17 @@ frame, escape index, unused recovery, escaped buffer and redirected value load.
 CLI coverage includes both patch modes from emitted IR and directly from the
 original EXE, with default optimization and `--no-opt`. Both pipeline paths
 must preserve `optnone` runtime callback roots and register snapshots.
+Use `--runtime-root` with the captured `runtime-libs` directory to bind SEH and
+jump imports to the authenticated Microsoft x86 CRT. This is required under
+Wine for the retired-inner-scope case: Wine 9's builtin CRT unwinds below the
+saved scope differently. The JSON report retains the provider manifest and
+the output directory contains the exact DLL. Focused CI captures this runtime
+from MSVC, runs all source cases in Wine, then replays the same 20 images per
+case on Windows with `replay_windows_registration.py --source-only`. Replay
+verifies every image hash, runtime DLL hash, code owner and relocation base.
+Dynamic-scope mutations alter selectors, state cases, restore values, source
+stores and overlapping aliases; each must fail installation. Dead-finally-result
+tests reject observable, aliased, volatile and atomic spill chains.
 The source-input unit rejects edits to capture/resume identities, the private
 buffer, register snapshots, restored state and argument slot. Its unwind-adapter
 controls change the copy extent, physical registration field, virtual EBP,
@@ -4794,7 +4806,7 @@ The required execution policy follows existing CI ownership:
   `NeverDSourceAnchorTests`. Missing compilers, missing generated corpus inputs,
   skipped checks, or omitted suites fail the audit. The CTest evidence artifact
   includes the compiler versions, native ELF inputs, emitted C and CLI logs.
-- The only platform exceptions within these required suites are
+- Platform exceptions within these required suites include
   `ObjCEHCorpus.HonorsHostMachORewriteContractForEveryVariant` and
   `CxxItaniumEHCorpus.HonorsHostMachORewriteContractForEveryProbeVariant` on
   non-macOS hosts. Both execute native Mach-O probes; their exact identities
@@ -6091,9 +6103,9 @@ The verifier's evidence regressions run with
 atomic publication, original data bindings, native state and C++ exceptions.
 Its object cases use cross Clang plus LLD for malformed-input, relocation and
 byte-preservation checks even on a non-Linux host. Native ELF runtime cases run
-on Linux x64; Mach-O runtime cases run on Darwin ARM64. Set `NEVERD_TEST_NEVERC`
+on Linux x64/ARM64; Mach-O runtime cases run on Darwin ARM64/x64. Set `NEVERD_TEST_NEVERC`
 to an optional NeverC executable to include its compiler cases. GCC C++ runtime
-cases additionally require a matching Linux x64 `g++`.
+cases additionally require a matching Linux x64/ARM64 `g++`.
 Configure `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` with a compatible Clang
 path; the verified source profile uses Clang 22.1.6. This setting is separate
 from the compiler that builds NeverD and from other suites' fixture compilers.
@@ -6148,15 +6160,15 @@ Driver write-watch controls independently encode changed-value and repeated same
 
 Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
 
-The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C++ IR, C++ objects, C++ hosted DynCode, noninline helpers/recursion and unsupported C++ rejection. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` runs actual lifetimes and a throwing callback through two hosted frames. The Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
+The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C IR, C objects, C hosted DynCode, noninline helpers/recursion and C++ rejection. `SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler` also verifies rejection without an installed NeverC. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` executes C results and a throwing callback through two hosted C frames. The separate Clang Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
 
-Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.
+Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C IR/object/hosted results and a throwing callback through two hosted C frames. `check_source_patch_elf_runtime.py` requires 120 native Linux observations per architecture for C IR/objects/hosted, hosted propagation and nine Clang C++ exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real C producer outputs; they do not claim a NeverC executable ran on the CI host. The Linux inventory includes nine exception scenarios for each of Clang IR, Clang native objects and GCC native objects on x64 and ARM64. NeverC remains C-only.
 
-Native qualification [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) passed all 204 process observations: 36 each on Windows x64/ARM64 and 66 each on Linux x64/ARM64. The public source API produced C++ IR, ordinary objects and C++ hosted DynCode, plus a throwing callback through two NeverC frames. Replay verified the current engine source/submodule digest, original and final bytes, publication receipts and actual native host. macOS ARM64 and Rosetta x64 passed the same three C++ routes and two-frame propagation locally. Native Clang FH3 qualification [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) separately passed nine exception scenarios plus controls, 36 observations each on Windows x64/ARM64.
+The earlier 204-observation translation-profile receipt is historical. Current fixtures require C-only NeverC producers; Clang C++ FH3, native-host identity and emulated CPU profiles retain separate evidence. `HighSwiftEmitter` executes register and memory scalar conversions at both optimization levels, observing result bits and MXCSR. The mobile C parser accepts only the backend's exact pragma-only rounding prefix and continues to reject conditional declarations and mutated directives.
 
 `InterpreterSpecialization.HighAddress*` and `BinaryLowIRRefinement.HighAddress*` cover upper-half entries and transfers, overlapping native extents, original CALL return bytes, stack restoration, data equal to label values, malformed or missing code, and exact/short budgets. The independent byte oracle and a changed-return-word negative control distinguish runtime values from CFG labels.
 
@@ -6183,6 +6195,10 @@ python3 scripts/run_lift_qualification.py \
 ```
 
 The native profile also requires the LLVM-C wide-integer constant/store checks and native i386 synthesized-table execution. Swift signal observers use independent raw storage, with positive controls and separate negative controls for premature state and result writes at both optimization levels. Observing an active Swift `inout` variable from the signal handler would instead trigger an exclusivity failure and invalidate the exception observation.
+
+The native Linux x64 job also requires three C++ exception replacement checks: Clang IR, Clang native objects and GCC native objects. Their XML and process exit are audited separately, and any failure or skip fails qualification; NeverC is not used for these C++ inputs.
+
+The native qualification job builds the pinned LLVM fork from source, including the scoped x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -6249,9 +6265,9 @@ DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB 
 
 ## Swift scalar instruction completion
 
-Recovered x86_64 Swift supports scalar register ADD/SUB/MUL/DIV and Float32, signed32 and signed64 register conversions to Double, preserving numerical bits and complete input/output MXCSR. Other conversions, memory, packed arithmetic, SQRT/MIN/MAX, FMA, rounding and approximate operations remain unsupported. These repairs address observed Swift stack and mixed-function recovery failures; the full macOS/iOS runtime and framework environment remains incomplete.
+Recovered x86_64 Swift supports scalar ADD/SUB/MUL/DIV in register and memory forms, signed 32/64-bit conversion to Float32/Float64, and Float32/Float64 conversion in both directions, including VEX forms. Numerical bits and complete incoming/outgoing MXCSR remain paired. Packed arithmetic, SQRT/MIN/MAX, FMA, rounding and approximate operations remain unsupported; the full macOS/iOS framework environment remains incomplete.
 
-HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers, GenericScalarCompletionRejectsOtherShapesAndControls, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper and ScalarDoubleConversionsRejectOtherEffectsAndLayouts check shared contracts, helper identities and explicit unsupported/malformed refusal. GenericScalarCompletionCompilesAndExecutesCompleteState, MixedScalarCompletionDeduplicatesHelpersAndExecutesState, ScalarDoubleConversionSourceExecutesCompleteState and MixedScalarDoubleConversionsDeduplicateAndExecuteState compile and execute literal numerical/MXCSR cases at Onone/O, comparing emitted Swift with independently authored original SSE arithmetic and CVTSI2SD32/CVTSI2SD64/CVTSS2SD observers. Coverage includes signed boundaries,2^53+1 precision, all rounding modes, sticky flags, DAZ/FTZ, subnormals, signed zeros, infinities and quiet/signaling NaN payloads. Compiler/native bounds remain120/5 seconds. Separate legacy/generic divide-by-zero and conversion precision/invalid trap tests require native Intel macOS and untouched numerical/state sentinels. They skip explicitly on ARM64 because Rosetta forces exception masks; translated masked execution never qualifies Intel unmasked traps.
+Mixed legacy/generic and legacy/VEX cases check one helper per numerical/state contract. Independent original SSE observers and literal results compare generated Swift at Onone/O for rounding, sticky flags, DAZ/FTZ, subnormals, signed zeros and NaNs. Register/memory controls also cover all scalar conversion directions. Unmasked arithmetic and conversion traps require native Linux x64 or Intel macOS and unchanged result/state sentinels; ARM64 hosts explicitly skip those trap checks because Rosetta masks exceptions.
 
 ## Explicit ordinary directory modes
 
@@ -6299,3 +6315,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ### Declared kernel VA shadow query
 
 `KernelVaShadowQueryTests` checks independent flags, exact/short/cross-page outputs, ULONG truncation, both destinations, overlap, permissions, aliases, objects, context, IRQL and retained dependencies. `DriverVaShadowQueryTests` checks strict transport and imported/dynamic queries through rebased Unicorn/KVM/WHP lifecycles. Unused declarations still refuse UNPACK recovery. All 19 identities per native backend are mandatory; unavailable execution remains an explicit skip. Existing version-query cases cover the shared buffer admission.
+
+## Source patch qualification after integration
+
+The native Linux qualification also runs the complete `HighSwiftEmitter` owner, including register and memory conversions, legacy/VEX helper sharing, original SSE comparisons and unmasked traps. Use the corrected LLVM source build: r4 can misencode i386 PIC GOT anchors; publication now rejects an invalid anchor displacement. Ten Linux/ELF-specific `SessionCAPITest` cases retain explicit platform skips on macOS and Windows. The audit matches their exact names, owner labels and original reasons, continues to require native Linux execution, and never counts these skips as passes. The host-compiled no-return fixture accounts for Mach-O symbol spelling and the recovered native argument width.

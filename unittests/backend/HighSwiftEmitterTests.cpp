@@ -233,6 +233,7 @@ TEST(HighSwiftEmitter, GenericScalarCompletionRejectsOtherShapesAndControls) {
       Call->Operands = {
           HighExpr::makeConst(0x1000, 8), HighExpr::makeConst(16, 1),
           HighExpr::makeConst(0x3f800000, 4), HighExpr::makeConst(0x1f80, 4)};
+      Call->Operands.front()->Type = NdType::makeInt(2);
       break;
     case 6:
       Call->Operands[0]->Type = NdType::makeInt(2);
@@ -301,9 +302,10 @@ TEST(HighSwiftEmitter, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper) {
                     Arithmetic.Body.begin() + 2);
       const auto E = HighSwiftEmitter().emit(F, S);
       ASSERT_TRUE(E.Recovered) << E.Reason;
-      const std::string Name = (Control & 1) ? "signed" : "float";
       const std::string Definition =
-          "static func " + Name + ((Control & 2) ? "64" : "32") + "ToDouble(";
+          "static func " + x86FPScalarConvertMnemonic(Control & ~8u) +
+          "_source" + std::to_string(x86FPScalarConvertSourceBytes(Control) * 8) +
+          "(";
       const auto First = E.MemberSource.find(Definition);
       ASSERT_NE(First, std::string::npos);
       EXPECT_EQ(E.MemberSource.find(Definition, First + 1), std::string::npos);
@@ -325,8 +327,8 @@ TEST(HighSwiftEmitter, ScalarDoubleConversionsRejectOtherEffectsAndLayouts) {
     case 0:
     case 1:
     case 2:
-      // These other scalar conversions are valid contracts but have no Swift
-      // lowering in this change. They are not malformed arithmetic substitutes.
+      // These scalar calls are valid in isolation, but their 64-bit result
+      // cannot initialize the surrounding 96-bit Double/state container.
       Call->Operands[1] = HighExpr::makeConst(Mutation + 1, 1);
       Call->Operands[0]->Type = NdType::makeInt(Mutation ? 8 : 4, false);
       Call->Type = NdType::makeInt(8, false);
@@ -338,6 +340,7 @@ TEST(HighSwiftEmitter, ScalarDoubleConversionsRejectOtherEffectsAndLayouts) {
       Call->Operands[0] = HighExpr::makeConst(0x1000, 8);
       ASSERT_TRUE(x86FPStateShapeIsValid(
           Call->IntrinsicId, x86FPStateHighShape(*Call, Arch::Unknown)));
+      Call->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
       break;
     case 4:
       Call->Operands[1] = HighExpr::makeConst(4 | 16, 1);
@@ -381,6 +384,56 @@ TEST(HighSwiftEmitter, ScalarDoubleConversionsRejectOtherEffectsAndLayouts) {
   }
 }
 
+namespace {
+std::pair<HighFunc, SwiftSourceSignature> fpConversionFunction(unsigned Control,
+                                                               bool Memory) {
+  const auto SourceBytes = x86FPScalarConvertSourceBytes(Control);
+  const auto Bytes = x86FPScalarConvertDestinationBytes(Control);
+  auto [F, S] = fpStateFunction(Intrinsic::X86FPAddState, Bytes);
+  S.Name = "convert_" + x86FPScalarConvertMnemonic(Control) + "_source" +
+           std::to_string(SourceBytes * 8) + (Memory ? "_memory" : "");
+  auto P = [&](unsigned Index) {
+    auto E = param(Index);
+    E->Type = F.Params[Index].Type;
+    return E;
+  };
+  auto Input = P(0);
+  if (!Memory) {
+    Input =
+        HighExpr::makeBinop(NdOp::SUBBYTES, Input, HighExpr::makeConst(0, 4));
+    Input->Type = NdType::makeInt(SourceBytes, false);
+  }
+  F.Body[0].Val =
+      fpStateCall(Memory ? Intrinsic::X86FPScalarConvertMemoryState
+                         : Intrinsic::X86FPScalarConvertState,
+                  Bytes + 4, {Input, HighExpr::makeConst(Control, 1), P(2)});
+  return {F, S};
+}
+
+std::pair<HighFunc, SwiftSourceSignature>
+fpArithmeticFunction(Intrinsic Id, unsigned Bytes, bool Memory) {
+  auto [F, S] = fpStateFunction(Id, Bytes);
+  S.Name = "generic_" + std::string(x86ScalarFPStateMnemonic(Id)) +
+           std::to_string(Bytes * 8) + (Memory ? "_memory" : "");
+  auto &Call = F.Body[0].Val;
+  const unsigned Control =
+      unsigned(x86ScalarFPStateKind(Id)) | 16 | (Bytes == 8 ? 8 : 0);
+  const auto Operands = Call->Operands;
+  if (Memory) {
+    auto Address = param(0);
+    Address->Type = F.Params[0].Type;
+    Call->Operands = {Address, HighExpr::makeConst(Control, 1), Operands[1],
+                      Operands[2]};
+  } else {
+    Call->Operands = {HighExpr::makeConst(Control, 1), Operands[0], Operands[1],
+                      Operands[2]};
+  }
+  Call->IntrinsicId =
+      Memory ? Intrinsic::X86FPArithMemoryState : Intrinsic::X86FPArithState;
+  return {F, S};
+}
+} // namespace
+
 TEST(HighSwiftEmitter, ScalarSSEKeepsNumericalAndCompleteMXCSRResults) {
   for (unsigned Bytes : {4u, 8u})
     for (auto Id : {Intrinsic::X86FPAddState, Intrinsic::X86FPSubState,
@@ -414,6 +467,91 @@ TEST(HighSwiftEmitter, MXCSRReadIsAValueAndCommitIsAStatement) {
   F.Body[0].RetVal = fpStateCall(Intrinsic::X86WriteMXCSR, 0,
                                  {HighExpr::makeConst(0x1f80, 4)});
   EXPECT_FALSE(HighSwiftEmitter().emit(F, signature()).Recovered);
+}
+
+TEST(HighSwiftEmitter, ScalarConversionsRejectUnprovedControlAndMemory) {
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    auto [F, S] = fpConversionFunction(7, Mutation == 6);
+    auto &Call = F.Body[0].Val;
+    switch (Mutation) {
+    case 0:
+      Call->Operands[1] = param(1);
+      break;
+    case 1:
+      Call->Operands[1]->ConstVal = 16;
+      break;
+    case 2:
+      Call->Operands[1]->Type = NdType::makeInt(2);
+      break;
+    case 3:
+      Call->Operands[2]->Type = NdType::makeInt(8);
+      break;
+    case 4:
+      Call->Operands[0]->Type = NdType::makeInt(4);
+      break;
+    case 5:
+      Call->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 6:
+      Call->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    }
+    const auto E = HighSwiftEmitter().emit(F, S);
+    EXPECT_FALSE(E.Recovered) << Mutation;
+    EXPECT_TRUE(E.Source.empty()) << Mutation;
+    EXPECT_NE(E.Reason.find("floating-point state shape"), std::string::npos)
+        << Mutation << ": " << E.Reason;
+  }
+}
+
+TEST(HighSwiftEmitter, ScalarConversionsDeduplicateLegacyAndVexHelpers) {
+  for (unsigned Control : {1u, 2u, 3u, 4u, 5u, 7u})
+    for (bool Memory : {false, true}) {
+      auto [F, S] = fpConversionFunction(Control, Memory);
+      auto [Earlier, Other] = fpConversionFunction(Control | 8u, Memory);
+      Earlier.Body.front().Dst->Var.Id = 986;
+      F.Body.front().Val->Operands.back() = Earlier.Body[2].StoreVal;
+      F.Body.insert(F.Body.begin(), Earlier.Body.begin(),
+                    Earlier.Body.begin() + 2);
+      const auto E = HighSwiftEmitter().emit(F, S);
+      ASSERT_TRUE(E.Recovered) << E.Reason;
+      const auto Definition =
+          "static func " + x86FPScalarConvertMnemonic(Control) + "_source" +
+          std::to_string(x86FPScalarConvertSourceBytes(Control) * 8) +
+          (Memory ? "_memory(" : "(");
+      const auto First = E.MemberSource.find(Definition);
+      ASSERT_NE(First, std::string::npos);
+      EXPECT_EQ(E.MemberSource.find(Definition, First + 1), std::string::npos);
+    }
+}
+
+TEST(HighSwiftEmitter, GenericArithmeticRejectsPackedAndUnimplementedKinds) {
+  for (bool Memory : {false, true})
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto [F, S] = fpArithmeticFunction(Intrinsic::X86FPAddState, 8, Memory);
+      auto &Call = F.Body[0].Val;
+      auto &Control = Call->Operands[Memory ? 1 : 0];
+      switch (Mutation) {
+      case 0:
+        Control->ConstVal &= ~16;
+        break;
+      case 1:
+        Control->ConstVal |= unsigned(X86FPArithKind::Minimum);
+        break;
+      case 2:
+        Control = param(1);
+        break;
+      case 3:
+        Call->Operands.back()->Type = NdType::makeInt(8);
+        break;
+      case 4:
+        Call->MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+        break;
+      }
+      const auto E = HighSwiftEmitter().emit(F, S);
+      EXPECT_FALSE(E.Recovered) << Memory << ": " << Mutation;
+      EXPECT_TRUE(E.Source.empty());
+    }
 }
 
 TEST(HighSwiftEmitter, RoundStateRequiresAnExplicitSwiftImplementation) {
@@ -613,6 +751,325 @@ TEST(HighSwiftEmitter, CompilerPreamblesUseEveryMembersStorageNamespace) {
     EXPECT_NE(B.ModulePreamble.find("nd_x86_ldmxcsr_1"), std::string::npos);
   }
 }
+
+namespace {
+void executeAllGeneratedSSESource(bool TrapsOnly) {
+#if !defined(__APPLE__) && !(defined(__linux__) && defined(__x86_64__))
+  GTEST_SKIP()
+      << "This execution control requires macOS or native Linux x86-64 Swift";
+#else
+#if !defined(__x86_64__)
+  if (TrapsOnly)
+    GTEST_SKIP() << "Unmasked SSE traps require native x86_64 execution; "
+                    "Rosetta forces exception masks even for raw SSE";
+#endif
+  auto Compiler = llvm::sys::findProgramByName("swiftc");
+  if (!Compiler)
+    GTEST_SKIP() << "Swift source execution requires a local swiftc toolchain";
+  std::string Body;
+  std::set<std::string> Preambles;
+  for (unsigned Bytes : {4u, 8u})
+    for (auto Id : {Intrinsic::X86FPAddState, Intrinsic::X86FPSubState,
+                    Intrinsic::X86FPMulState, Intrinsic::X86FPDivState}) {
+      auto [F, S] = fpStateFunction(Id, Bytes);
+      const auto E = HighSwiftEmitter().emit(F, S);
+      ASSERT_TRUE(E.Recovered) << E.Reason;
+      Preambles.insert(E.ModulePreamble);
+      Body += E.MemberSource;
+    }
+  for (unsigned Control : {1u, 3u, 5u, 7u, 2u, 4u, 9u, 11u, 13u, 15u, 10u, 12u})
+    for (bool Memory : {false, true}) {
+      auto [F, S] = fpConversionFunction(Control, Memory);
+      const auto E = HighSwiftEmitter().emit(F, S);
+      ASSERT_TRUE(E.Recovered) << S.Name << ": " << E.Reason;
+      Preambles.insert(E.ModulePreamble);
+      Body += E.MemberSource;
+    }
+  for (unsigned Bytes : {4u, 8u})
+    for (auto Id : {Intrinsic::X86FPAddState, Intrinsic::X86FPSubState,
+                    Intrinsic::X86FPMulState, Intrinsic::X86FPDivState})
+      for (bool Memory : {false, true}) {
+        auto [F, S] = fpArithmeticFunction(Id, Bytes, Memory);
+        const auto E = HighSwiftEmitter().emit(F, S);
+        ASSERT_TRUE(E.Recovered) << S.Name << ": " << E.Reason;
+        Preambles.insert(E.ModulePreamble);
+        Body += E.MemberSource;
+      }
+  auto F = function();
+  auto S = signature();
+  S.Name = "currentMXCSR";
+  S.Parameters.clear();
+  S.Labels.clear();
+  S.ReturnType = {SwiftSourceType::Kind::Integer, "UInt64", 64, false, nullptr};
+  F.Params.clear();
+  F.ReturnType = NdType::makeInt(8, false);
+  F.Body[0].RetVal = fpStateCall(Intrinsic::X86ReadMXCSR, 4, {});
+  const auto Read = HighSwiftEmitter().emit(F, S);
+  ASSERT_TRUE(Read.Recovered) << Read.Reason;
+  Preambles.insert(Read.ModulePreamble);
+  Body += Read.MemberSource;
+  ASSERT_EQ(Preambles.size(), 1U);
+  std::string Source = *Preambles.begin() + Body + R"swift(
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("SSE execution controls require POSIX signals")
+#endif
+func nativeMarker(_ text: Swift.StaticString) {
+    _ = write(2, text.utf8Start, text.utf8CodeUnitCount)
+}
+nativeMarker("native-start\n")
+// Signal observers must not reenter a Swift inout access during the operation.
+let trappedState = Swift.UnsafeMutablePointer<Swift.UInt32>.allocate(capacity: 1)
+let trappedResult = Swift.UnsafeMutablePointer<Swift.UInt64>.allocate(capacity: 1)
+trappedState.initialize(to: 0x76543210)
+trappedResult.initialize(to: 0x0123456789abcdef)
+defer {
+    trappedState.deinitialize(count: 1)
+    trappedState.deallocate()
+    trappedResult.deinitialize(count: 1)
+    trappedResult.deallocate()
+}
+if Swift.CommandLine.arguments.count == 2 {
+    let mode = Swift.CommandLine.arguments[1]
+    signal(SIGFPE) { _ in
+        _exit(trappedState.pointee == 0x76543210 &&
+                     trappedResult.pointee == 0x0123456789abcdef ? 0 : 43)
+    }
+    if mode == "observe" {
+        _ = raise(SIGFPE)
+    } else if mode == "stateWritten" {
+        trappedState.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "resultWritten" {
+        trappedResult.pointee = 0
+        _ = raise(SIGFPE)
+    } else if mode == "trap32" {
+        trappedResult.pointee = sse_div32(0x3f800000,0,0x1d80,trappedState)
+    } else if mode == "trap64" {
+        trappedResult.pointee = sse_div64(0x3ff0000000000000,0,0x1d80,trappedState)
+    } else if mode == "conversionTrap" {
+        trappedResult.pointee = convert_cvtsi2ss_source32(16777217,0,0xf80,trappedState)
+    } else if mode == "conversionInvalidTrap" {
+        trappedResult.pointee = convert_cvtss2sd_source32(0x7f812345,0,0x1f00,trappedState)
+    } else if mode == "genericTrap" {
+        trappedResult.pointee = generic_div64(0x3ff0000000000000,0,0x1d80,trappedState)
+    } else {
+        _exit(44)
+    }
+    _exit(42)
+}
+func check(_ fn: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
+                  Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
+           _ a: Swift.UInt64, _ b: Swift.UInt64, _ incoming: Swift.UInt32,
+           _ expected: Swift.UInt64, _ expectedState: Swift.UInt32) {
+    nativeMarker("check-start\n")
+    var state: Swift.UInt32 = 0
+    let result = fn(a,b,incoming,&state)
+    Swift.precondition(result == expected)
+    Swift.precondition(state == expectedState)
+    Swift.precondition(currentMXCSR() == Swift.UInt64(expectedState))
+    nativeMarker("check-end\n")
+}
+for rounding in 0..<4 {
+    let incoming = Swift.UInt32(0x1f80 | (rounding << 13))
+    check(sse_add32,0x3f800000,0x33800000,incoming,
+          rounding == 2 ? 0x3f800001 : 0x3f800000,incoming | 0x20)
+    check(sse_add64,0x3ff0000000000000,0x3ca0000000000000,incoming,
+          rounding == 2 ? 0x3ff0000000000001 : 0x3ff0000000000000,incoming | 0x20)
+    check(sse_add32,0,0x80000000,incoming,rounding == 1 ? 0x80000000 : 0,incoming)
+    check(sse_add64,0,0x8000000000000000,incoming,
+          rounding == 1 ? 0x8000000000000000 : 0,incoming)
+}
+check(sse_sub32,0x3f800000,0x3f000000,0x1fa1,0x3f000000,0x1fa1)
+check(sse_sub64,0x3ff0000000000000,0x3fe0000000000000,0x1fa1,0x3fe0000000000000,0x1fa1)
+check(sse_div32,0x3f800000,0,0x1f80,0x7f800000,0x1f84)
+check(sse_div64,0x3ff0000000000000,0,0x1f80,0x7ff0000000000000,0x1f84)
+check(sse_mul32,0x7f7fffff,0x7f7fffff,0x1f80,0x7f800000,0x1fa8)
+check(sse_mul64,0x7fefffffffffffff,0x7fefffffffffffff,0x1f80,0x7ff0000000000000,0x1fa8)
+check(sse_mul32,0x00800000,0x3f000000,0x1f80,0x00400000,0x1f80)
+check(sse_mul32,0x00800000,0x3f000000,0x9f80,0,0x9fb0)
+check(sse_mul64,0x0010000000000000,0x3fe0000000000000,0x1f80,0x0008000000000000,0x1f80)
+check(sse_mul64,0x0010000000000000,0x3fe0000000000000,0x9f80,0,0x9fb0)
+check(sse_add32,1,0x3f800000,0x1fc0,0x3f800000,0x1fc0)
+check(sse_add64,1,0x3ff0000000000000,0x1fc0,0x3ff0000000000000,0x1fc0)
+check(sse_add32,0x7f812345,0x3f800000,0x1f80,0x7fc12345,0x1f81)
+check(sse_add64,0x7ff0000000012345,0x3ff0000000000000,0x1f80,0x7ff8000000012345,0x1f81)
+check(sse_add32,0x7fc12345,0xffc54321,0x1f80,0x7fc12345,0x1f80)
+check(sse_mul64,0x7ff8000000012345,0xfff8000000054321,0x1f80,0x7ff8000000012345,0x1f80)
+nativeMarker("native-end\n")
+)swift";
+  Source += R"swift(
+func checkConversion(
+    _ register: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
+                 Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
+    _ memory: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
+               Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
+    _ bits: Swift.UInt64, _ incoming: Swift.UInt32,
+    _ expected: Swift.UInt64, _ outgoing: Swift.UInt32) {
+    check(register,bits,0,incoming,expected,outgoing)
+    var source = bits
+    withUnsafePointer(to: &source) { pointer in
+        check(memory,Swift.UInt64(Swift.UInt(bitPattern: pointer)),0,
+              incoming,expected,outgoing)
+    }
+}
+for rounding in 0..<4 {
+    let incoming = Swift.UInt32(0x1f80 | (rounding << 13))
+)swift";
+  for (unsigned Control :
+       {1u, 3u, 5u, 7u, 2u, 4u, 9u, 11u, 13u, 15u, 10u, 12u}) {
+    const auto Name = fpConversionFunction(Control, false).second.Name;
+    const auto Prefix = "    checkConversion(" + Name + "," + Name + "_memory,";
+    if (x86FPScalarConvertIsInteger(Control)) {
+      if (x86FPScalarConvertDestinationBytes(Control) == 4) {
+        Source += Prefix + "16777217,incoming,rounding == 2 ? 0x4b800001 : "
+                           "0x4b800000,incoming | 0x20)\n";
+        Source += Prefix + "0xfffffffffeffffff,incoming,rounding == 1 ? "
+                           "0xcb800001 : 0xcb800000,incoming | 0x20)\n";
+      } else if (x86FPScalarConvertSourceBytes(Control) == 8) {
+        Source += Prefix + "9007199254740993,incoming,rounding == 2 ? "
+                           "0x4340000000000001 : 0x4340000000000000,"
+                           "incoming | 0x20)\n";
+      } else {
+        Source += Prefix + "2147483647,incoming,0x41dfffffffc00000,incoming)\n";
+      }
+    } else if (x86FPScalarConvertDestinationBytes(Control) == 4) {
+      Source += Prefix + "0x3ff0000010000000,incoming,rounding == 2 ? "
+                         "0x3f800001 : 0x3f800000,incoming | 0x20)\n";
+    } else {
+      Source += Prefix + "0x3f800001,incoming,0x3ff0000020000000,incoming)\n";
+    }
+  }
+  Source += "}\n";
+  Source += R"swift(
+func checkArithmetic(
+    _ register: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
+                 Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
+    _ memory: (Swift.UInt64, Swift.UInt64, Swift.UInt32,
+               Swift.UnsafeMutablePointer<Swift.UInt32>) -> Swift.UInt64,
+    _ a: Swift.UInt64, _ b: Swift.UInt64, _ incoming: Swift.UInt32,
+    _ expected: Swift.UInt64, _ outgoing: Swift.UInt32) {
+    check(register,a,b,incoming,expected,outgoing)
+    var source = b
+    withUnsafePointer(to: &source) { pointer in
+        check(memory,Swift.UInt64(Swift.UInt(bitPattern: pointer)),a,
+              incoming,expected,outgoing)
+    }
+}
+for rounding in 0..<4 {
+    let incoming = Swift.UInt32(0x1f80 | (rounding << 13))
+    checkArithmetic(generic_add32,generic_add32_memory,0x3f800000,0x33800000,
+                    incoming,rounding == 2 ? 0x3f800001 : 0x3f800000,incoming | 0x20)
+    checkArithmetic(generic_add64,generic_add64_memory,0x3ff0000000000000,
+                    0x3ca0000000000000,incoming,rounding == 2 ?
+                    0x3ff0000000000001 : 0x3ff0000000000000,incoming | 0x20)
+}
+checkArithmetic(generic_sub32,generic_sub32_memory,0x3f800000,0x3f000000,
+                0x1fa1,0x3f000000,0x1fa1)
+checkArithmetic(generic_sub64,generic_sub64_memory,0x3ff0000000000000,
+                0x3fe0000000000000,0x1fa1,0x3fe0000000000000,0x1fa1)
+checkArithmetic(generic_mul32,generic_mul32_memory,0x00800000,0x3f000000,
+                0x9f80,0,0x9fb0)
+checkArithmetic(generic_mul64,generic_mul64_memory,0x0010000000000000,
+                0x3fe0000000000000,0x9f80,0,0x9fb0)
+checkArithmetic(generic_div32,generic_div32_memory,0x3f800000,0,
+                0x1f80,0x7f800000,0x1f84)
+checkArithmetic(generic_div64,generic_div64_memory,0x3ff0000000000000,0,
+                0x1f80,0x7ff0000000000000,0x1f84)
+)swift";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-swift-sse-state",
+                                                    Directory));
+  struct Cleanup {
+    std::string Path;
+    ~Cleanup() {
+      if (::testing::Test::HasFailure() ||
+          std::getenv("NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS")) {
+        llvm::errs() << "Retained Swift SSE execution artifacts: " << Path
+                     << "\n";
+        return;
+      }
+      (void)llvm::sys::fs::remove_directories(Path);
+    }
+  } Cleanup{Directory.str().str()};
+  const std::string Path = Directory.str().str() + "/main.swift";
+  const char *ConfiguredCache = std::getenv("NEVERD_SWIFT_MODULE_CACHE");
+  const std::string Cache = ConfiguredCache
+                                ? ConfiguredCache
+                                : Directory.str().str() + "/module-cache";
+  {
+    std::ofstream Output(Path);
+    ASSERT_TRUE(Output);
+    Output << Source;
+  }
+  for (llvm::StringRef Optimization : {"-Onone", "-O"}) {
+    const std::string Executable =
+        Directory.str().str() + "/verify" + Optimization.str();
+    const std::string CompilerLog = Executable + ".log";
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, CompilerLog};
+    std::string Error;
+    llvm::SmallVector<llvm::StringRef, 12> CompilerArguments{*Compiler};
+#if defined(__APPLE__)
+    CompilerArguments.append({"-target", "x86_64-apple-macosx13.0"});
+#endif
+    CompilerArguments.append(
+        {Optimization, "-module-cache-path", Cache, Path, "-o", Executable});
+    const int Status = llvm::sys::ExecuteAndWait(
+        *Compiler, CompilerArguments, std::nullopt, Redirects, 120, 0, &Error);
+    std::ifstream Log(CompilerLog);
+    const std::string Diagnostics((std::istreambuf_iterator<char>(Log)),
+                                  std::istreambuf_iterator<char>());
+    ASSERT_EQ(Status, 0) << Error << "\n" << Diagnostics << "\n" << Source;
+    auto Run = [&](llvm::StringRef Mode, int ExpectedStatus = 0) {
+      const std::string Prefix = Executable + "-" + Mode.str();
+      const std::string StandardOutput = Prefix + ".stdout";
+      const std::string StandardError = Prefix + ".stderr";
+      const std::optional<llvm::StringRef> NativeRedirects[] = {
+          std::nullopt, StandardOutput, StandardError};
+      llvm::SmallVector<llvm::StringRef, 2> Arguments{Executable};
+      if (!Mode.empty())
+        Arguments.push_back(Mode);
+      Error.clear();
+      const auto Began = std::chrono::steady_clock::now();
+      const int NativeStatus = llvm::sys::ExecuteAndWait(
+          Executable, Arguments, std::nullopt, NativeRedirects, 5, 0, &Error);
+      const auto Milliseconds =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - Began)
+              .count();
+      std::ifstream NativeLog(StandardError);
+      const std::string NativeDiagnostics(
+          (std::istreambuf_iterator<char>(NativeLog)),
+          std::istreambuf_iterator<char>());
+      EXPECT_EQ(NativeStatus, ExpectedStatus)
+          << Optimization.str() << " " << Mode.str() << ": " << Error << "\n"
+          << "Native execution elapsed " << Milliseconds << " ms\n"
+          << NativeDiagnostics;
+      if (std::getenv("NEVERD_KEEP_SWIFT_EXECUTION_ARTIFACTS"))
+        llvm::errs() << "Swift SSE native execution: " << Optimization << " "
+                     << Mode << " status=" << NativeStatus
+                     << " elapsed_ms=" << Milliseconds << "\n";
+    };
+    // Prove the signal observer accepts untouched storage and rejects either
+    // premature write independently, before testing the hardware exception.
+    Run("observe");
+    Run("stateWritten", 43);
+    Run("resultWritten", 43);
+    if (!TrapsOnly) {
+      Run({});
+      continue;
+    }
+    for (llvm::StringRef Mode : {"trap32", "trap64", "conversionTrap",
+                                 "conversionInvalidTrap", "genericTrap"})
+      Run(Mode);
+  }
+#endif
+}
+} // namespace
 
 namespace {
 void executeGeneratedSSESource(bool TrapsOnly, bool Generic = false,
@@ -1050,10 +1507,12 @@ uint64_t original_float32ToDouble(uint64_t a, uint64_t unused,
 
 TEST(HighSwiftEmitter, GeneratedSSESourceExecutesExactResultAndStateControls) {
   executeGeneratedSSESource(false);
+  executeAllGeneratedSSESource(false);
 }
 
 TEST(HighSwiftEmitter, GeneratedSSESourceTrapsBeforeNumericalAndStateStores) {
   executeGeneratedSSESource(true);
+  executeAllGeneratedSSESource(true);
 }
 
 TEST(HighSwiftEmitter,

@@ -9,6 +9,7 @@
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHJump.h"
 
@@ -19,6 +20,7 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+#include "neverd/backend/llvm/X86RegistrationSEHScope.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -305,6 +307,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   std::map<uint32_t, BlockTarget> BlockEntries, BlockExits;
   std::set<const llvm::InvokeInst *> Invokes;
   std::set<const llvm::CallBase *> ScopeBoundaries;
+  auto ScopeWrites = Jumps->StateRestores;
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
   std::map<va_t, uint32_t> Protected;
   std::set<std::pair<va_t, int>> Chain;
@@ -474,6 +477,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
           Sync->getAlign() != llvm::Align(1))
         return rejectIR(
             "handler dispatch lost its source try-level synchronization");
+      ScopeWrites.insert(Sync);
       Dispatch D;
       const auto *Callback =
           CallbackMap->at({Scope.IsFinally ? Scope.HandlerVA : Scope.FilterVA,
@@ -537,11 +541,15 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     ImmutableImageRanges.push_back(
         {States.SecurityCookieVA, States.SecurityCookieVA + 4});
   }
+  auto ScopeState = coff_registration::bindDynamicSEHState(
+      ReplayMed, *Frame, NativeFunctions, ScopeWrites);
+  if (!ScopeState)
+    return ScopeState.takeError();
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
           States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-          &*ExceptionFields, &*Jumps))
+          &*ExceptionFields, &*Jumps, &*ScopeState))
     return Error;
   auto SourceSegments = validateSourceSegments(Function, ReplayMed,
                                                *CallbackMap, NativeFunctions);
@@ -557,14 +565,52 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
     if (Actual != Outer || (!Scopes[I].IsFinally && !HandlerTargets.count(I)))
       return rejectIR("scope enclosing state or handler target changed");
   }
-  size_t ActiveRanges = 0;
+  size_t ActiveRanges = 0, ActiveBlocks = 0;
   std::map<int, const llvm::BasicBlock *> SourceEntries, SourceExits;
   std::map<va_t, uint32_t> ExpectedProtected;
   for (const auto &State : States.Blocks) {
     if (State.CallbackOnly)
       continue;
-    if (State.Unknown || State.Levels.size() > 1)
-      return rejectIR("source scope is not uniquely determined at a CFG block");
+    if (State.Unknown)
+      return rejectIR("source scope is not determined at a CFG block");
+    if (State.Levels.size() > 1) {
+      const auto Begin = BlockEntries.find(State.BlockId);
+      const auto End = BlockExits.find(State.BlockId);
+      if (Begin == BlockEntries.end() || End == BlockExits.end() ||
+          Begin->second.Identity.SourceVA != State.Range.Begin ||
+          Begin->second.Identity.AuxVA != State.Range.End ||
+          End->second.Identity.SourceVA != State.Range.End ||
+          End->second.Identity.AuxVA != State.Range.Begin ||
+          Begin->second.Identity.Flags !=
+              uint32_t(x86_registration::DynamicScopeLevel) ||
+          End->second.Identity.Flags !=
+              uint32_t(x86_registration::DynamicScopeLevel))
+        return rejectIR("dynamic source block lost its exact state identity");
+      std::map<int32_t, coff_registration::DynamicSEHScopeCase> Cases;
+      for (int32_t Level : State.Levels) {
+        if (Level < 0) {
+          if (Level != *Source.Registration->SeededTryLevel)
+            return rejectIR("dynamic source scope has an unknown sentinel");
+          continue;
+        }
+        const RangeKey Key{uint32_t(Level), uint32_t(State.BlockId)};
+        if (!Dispatches.count(Level) || !Enters.count(Key) ||
+            !Exits.count(Key) || Enters.at(Key).first != State.Range.Begin ||
+            Exits.at(Key).first != State.Range.End)
+          return rejectIR("dynamic source scope has an incomplete interval");
+        Cases.emplace(Level, coff_registration::DynamicSEHScopeCase{
+                                 Enters.at(Key).second, Exits.at(Key).second,
+                                 Dispatches.at(Level).Unwind});
+      }
+      if (auto Error = coff_registration::validateDynamicSEHScope(
+              State, *Frame, SourceSegments->at(State.BlockId),
+              *Begin->second.Anchor, *End->second.Anchor, Cases))
+        return Error;
+      ActiveRanges += Cases.size();
+      SourceEntries.emplace(State.BlockId, Begin->second.Anchor->getParent());
+      SourceExits.emplace(State.BlockId, End->second.Anchor->getParent());
+      continue;
+    }
     const int32_t Level = State.Levels.empty()
                               ? *Source.Registration->SeededTryLevel
                               : State.Levels.front();
@@ -596,6 +642,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       continue;
     }
     ++ActiveRanges;
+    ++ActiveBlocks;
     const uint32_t Region = Level;
     const RangeKey Key{Region, uint32_t(State.BlockId)};
     if (!Enters.count(Key) || !Exits.count(Key) ||
@@ -658,7 +705,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   if (ActiveRanges != Enters.size() || ActiveRanges != Exits.size() ||
       SourceEntries.size() != SourceExits.size() ||
       SourceExits.size() != BlockExits.size() ||
-      SourceEntries.size() - ActiveRanges != BlockEntries.size() ||
+      SourceEntries.size() - ActiveBlocks != BlockEntries.size() ||
       ExpectedProtected != Protected)
     return rejectIR("native scope ranges or protected call set is incomplete");
   for (size_t I = 0; I < Scopes.size(); ++I) {
@@ -815,7 +862,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
             IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
             States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-            &*ExceptionFields, &*Jumps))
+            &*ExceptionFields, &*Jumps, &*ScopeState))
       return Error;
   return llvm::Error::success();
 #endif

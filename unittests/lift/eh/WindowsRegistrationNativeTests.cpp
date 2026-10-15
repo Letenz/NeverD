@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
 #include "RegistrationSEHNullAccessTestUtils.h"
@@ -1881,6 +1882,10 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (!Low.RegistrationStates->SEHJumpCaptures.empty())
     registration_test::checkSEHJumpEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
+  if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
+        return !B.CallbackOnly && B.Levels.size() > 1;
+      }))
+    registration_test::checkDynamicSEHScopeEdits(*Parent, EH, Image);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
                             llvm::StringRef Diagnostic) {
     SCOPED_TRACE(Label.str());
@@ -2445,33 +2450,34 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         Redirect ? "unused storage" : "dominate");
-  RejectMutation(
-      "logical exception cell read before runtime bridge",
-      [](llvm::Function &F) {
-        for (auto &Helper : *F.getParent())
-          for (auto &Block : Helper)
-            for (auto &I : Block) {
-              auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-              auto *Load =
-                  Store
-                      ? llvm::dyn_cast<llvm::LoadInst>(Store->getValueOperand())
-                      : nullptr;
-              auto *Cell = Load ? llvm::dyn_cast<llvm::GetElementPtrInst>(
-                                      Load->getPointerOperand())
-                                : nullptr;
-              auto *Runtime = Cell ? llvm::dyn_cast<llvm::IntrinsicInst>(
-                                         Cell->getPointerOperand())
+  if (llvm::any_of(EH.Registration->Scopes,
+                   [](const auto &Scope) { return !Scope.IsFinally; }))
+    RejectMutation(
+        "logical exception cell read before runtime bridge",
+        [](llvm::Function &F) {
+          for (auto &Helper : *F.getParent())
+            for (auto &Block : Helper)
+              for (auto &I : Block) {
+                auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+                auto *Load = Store ? llvm::dyn_cast<llvm::LoadInst>(
+                                         Store->getValueOperand())
                                    : nullptr;
-              if (!Runtime ||
-                  Runtime->getIntrinsicID() != llvm::Intrinsic::frameaddress)
-                continue;
-              llvm::IRBuilder<> B(Store);
-              B.CreateLoad(B.getPtrTy(), Store->getPointerOperand());
-              return true;
-            }
-        return false;
-      },
-      "unproved LLVM escape or access");
+                auto *Cell = Load ? llvm::dyn_cast<llvm::GetElementPtrInst>(
+                                        Load->getPointerOperand())
+                                  : nullptr;
+                auto *Runtime = Cell ? llvm::dyn_cast<llvm::IntrinsicInst>(
+                                           Cell->getPointerOperand())
+                                     : nullptr;
+                if (!Runtime ||
+                    Runtime->getIntrinsicID() != llvm::Intrinsic::frameaddress)
+                  continue;
+                llvm::IRBuilder<> B(Store);
+                B.CreateLoad(B.getPtrTy(), Store->getPointerOperand());
+                return true;
+              }
+          return false;
+        },
+        "unproved LLVM escape or access");
   RejectMutation(
       "callback spill overwritten on a self-loop backedge",
       [](llvm::Function &F) {
@@ -2488,7 +2494,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         if (!LogicalFrame || !Escape)
           return false;
         for (auto &Helper : *F.getParent()) {
-          if (&Helper == &F || Helper.isDeclaration() || Helper.arg_size())
+          if (&Helper == &F || Helper.isDeclaration())
             continue;
           llvm::IntrinsicInst *Recover = nullptr;
           for (auto &I : Helper.getEntryBlock())
@@ -2642,28 +2648,30 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         return false;
       },
       "try-level synchronization");
-  RejectMutation(
-      "wrong exception pointer cell",
-      [](llvm::Function &F) {
-        for (auto &Helper : *F.getParent())
-          for (auto &B : Helper)
-            for (auto &I : B) {
-              auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&I);
-              auto *Frame = GEP ? llvm::dyn_cast<llvm::IntrinsicInst>(
-                                      GEP->getPointerOperand())
-                                : nullptr;
-              if (Frame &&
-                  Frame->getIntrinsicID() == llvm::Intrinsic::frameaddress &&
-                  GEP->getNumIndices() == 1) {
-                GEP->setOperand(
-                    1, llvm::ConstantInt::get(
-                           llvm::Type::getInt32Ty(F.getContext()), -16));
-                return true;
+  if (llvm::any_of(EH.Registration->Scopes,
+                   [](const auto &Scope) { return !Scope.IsFinally; }))
+    RejectMutation(
+        "wrong exception pointer cell",
+        [](llvm::Function &F) {
+          for (auto &Helper : *F.getParent())
+            for (auto &B : Helper)
+              for (auto &I : B) {
+                auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&I);
+                auto *Frame = GEP ? llvm::dyn_cast<llvm::IntrinsicInst>(
+                                        GEP->getPointerOperand())
+                                  : nullptr;
+                if (Frame &&
+                    Frame->getIntrinsicID() == llvm::Intrinsic::frameaddress &&
+                    GEP->getNumIndices() == 1) {
+                  GEP->setOperand(
+                      1, llvm::ConstantInt::get(
+                             llvm::Type::getInt32Ty(F.getContext()), -16));
+                  return true;
+                }
               }
-            }
-        return false;
-      },
-      "exception pointers");
+          return false;
+        },
+        "exception pointers");
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
   llvm::InitializeAllTargetMCs();

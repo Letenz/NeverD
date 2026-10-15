@@ -1798,15 +1798,15 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 تقارن المصفوفة أيضًا إيصالات `target` للكائنات الأصلية المترجمة والمقدمة بقائمة ABI مستقلة. بعد اختبار المدخلات غير السليمة، يجب تثبيت الكائن غير المعدّل وتنفيذه بوصفه حالة ضابطة صالحة.
 
-يضيف `NeverCProfiles/*` ثلاثين اختبارًا لستة ملفات x64/ARM64: C++ IR والكائنات وhosted DynCode والدوال غير المضمنة والتكرار ورفض C++ غير المدعوم. يرفض `NeverDSourcePatchDynCodeTests` البصمات والمداخل والأهداف والحالة والتحقق المزيف. يتحقق `SourcePatchException.NeverC*` من عمليات حقيقية واستثناء يمر بإطارين. يتطلب فاحص Windows تسعة سيناريوهات معدلة وضوابط أصلية وثلاث محاولات وتطابق الجهاز والالتزام والبصمات ومضيف x64/ARM64 أصلي.
+تتحقق مصفوفة `NeverCProfiles/*` الاختيارية من 30 حالة عبر ستة ملفات x64/ARM64: وسيط C وكائناته وhosted DynCode ودواله المساعدة غير المضمنة والاستدعاء الذاتي ورفض C++. يثبت `SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler` الرفض قبل التشغيل حتى دون تثبيت NeverC. ينفذ `SourcePatchException.NeverC*` نتائج C واستثناء يمر عبر إطارَي hosted C؛ وتختبر استثناءات Clang C++ منفصلة. تتحقق تحويلات Swift القياسية في السجلات والذاكرة من بتات النتائج وMXCSR عند مستويَي التحسين. يقبل محلل الهاتف فقط بادئة pragma الدقيقة للتقريب من خلفية C، ويواصل رفض التعريفات الشرطية والتوجيهات المعدلة.
 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
 
-يثبت التحقق الأصلي مراجعة NeverC على `182fd2c5dc` ويستخدم برامج أصلية مترجمة بصورة مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 ملاحظة Windows أصلية لكل معمارية لأعمار كائنات C++ عبر IR والكائنات وhosted، واستثناء يعبر إطارين hosted. ويتطلب `check_source_patch_elf_runtime.py` عدد 66 ملاحظة Linux أصلية لكل معمارية لـ C++ عبر IR والكائنات وhosted وانتقال استثناءات hosted وتسعة سيناريوهات Clang. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية. تثبت هذه الفحوص مخرجات مترجم حقيقية ولا تدعي تشغيل برنامج NeverC التنفيذي على مضيف CI.
+يثبت التحقق الأصلي إصدار NeverC عند `182fd2c5dc` مع برامج أصلية مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 مشاهدة لكل معمارية Windows لوسيط C وكائناته وhosted ومرور الاستثناء عبر إطارَي C. ويتطلب `check_source_patch_elf_runtime.py` عدد 120 مشاهدة لكل معمارية Linux لـC والمرور hosted وتسعة سيناريوهات لاستثناءات Clang C++. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية؛ ولا يعني ذلك تشغيل مترجم NeverC نفسه على مضيف CI. ينفذ Linux x64 وARM64 السيناريوهات التسعة لكل من وسيط Clang وكائنات Clang الأصلية وكائنات GCC الأصلية. ويبقى NeverC مخصصا لـC فقط.
 
-نجح التحقق الأصلي [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) في الملاحظات الـ204 كلها: 36 لكل معمارية Windows x64/ARM64 و66 لكل معمارية Linux x64/ARM64. أنتجت واجهة المصدر العامة C++ IR وكائنات عادية وC++ hosted DynCode، واستثناء يعبر إطارين NeverC. يتحقق الإعادة من بصمات المصدر والوحدات الفرعية الحالية والبايتات الأصلية والنهائية والإيصالات والمضيف الأصلي الفعلي. نجحت أيضًا مسارات C++ الثلاثة والانتقال المحلي على macOS ARM64 وRosetta x64. ونجح Clang FH3 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) بصورة منفصلة في تسعة سيناريوهات وضوابطها، بمجموع 36 ملاحظة لكل معمارية Windows x64/ARM64.
+تعد المشاهدات الـ204 لملف الترجمة السابق سجلا تاريخيا ولا تثبت عقد C الخالصة الحالي. تستخدم مسارات NeverC الثلاثة الحالية لغة C، وتختبر Clang C++ FH3 منفصلة. تستخدم macOS x64 بيئة Rosetta 2. لا تحل نتائج CPU في Unicorn/QEMU محل التحقق الأصلي من النظام وفك المكدس.
 
 تغطي `InterpreterSpecialization.HighAddress*` و`BinaryLowIRRefinement.HighAddress*` العناوين العليا والنطاقات المتداخلة وبايتات رجوع CALL واستعادة المكدس والبيانات المساوية للتسميات والشيفرة غير الصالحة أو المفقودة والميزانيات الدقيقة والناقصة. يميز منفّذ بايتات مستقل واختبار سلبي يغيّر عنوان الرجوع بين قيم التنفيذ والتسميات.
 
@@ -1835,6 +1835,10 @@ python3 scripts/run_lift_qualification.py \
 يتطلب الإعداد الأصلي أيضًا فحوص ثوابت الأعداد الصحيحة الواسعة وعمليات تخزينها في LLVM-C، والتنفيذ الأصلي للجداول المركبة على i386. تستخدم مراقبات إشارات Swift ذاكرة خام مستقلة، مع ضوابط إيجابية وضوابط سلبية منفصلة للكتابة المبكرة للحالة والنتيجة عند مستويي التحسين. قراءة متغير Swift `inout` أثناء الوصول النشط إليه من معالج الإشارة ستؤدي إلى خطأ في حصرية الوصول وتبطل مراقبة الاستثناء.
 
 يشغل `NeverDFPParameterMaskTests` مجموعة ABI المشتركة و`FPParameterMask.*`، ويحافظ على البايتات الحية والكتابات السابقة والتعريفات الغامضة والإرجاعات غير المقنعة، ويستبعد فقط البايتات الممسوحة أو المستبدلة بالكامل. يشمل نقل D0 وسجلات D16-D31 المؤقتة وفرعي إرجاع FP. يشغل `NeverDARM32ObjectImmediateTests` خمسة اختبارات تفاضلية ARM32 C منفصلة؛ وتستخدم Windows EH CI مترجم Clang 18 وأشكال NEON zip/mask المختلفة عن Clang 23. تحتفظ استدعاءات CALL المباشرة وغير المباشرة، قبل استعادة معاملات ABI، بسجلات FP المعدة صراحةً.
+
+تتطلب مهمة Linux x64 الأصلية أيضا ثلاثة اختبارات لاستبدال C++ مع الاستثناءات: وسيط Clang وكائنات Clang الأصلية وكائنات GCC الأصلية. يدقق XML وحالة خروج العملية كل على حدة، وأي فشل أو تخط يفشل التحقق. لا تستخدم هذه المدخلات C++ مترجم NeverC.
+
+تبني مهمة التحقق الأصلي مراجعة LLVM المثبتة من المصدر، بما في ذلك تصحيح نطاق محددات x64 PLT/AArch64. لا تكفي الحزمة المبنية مسبقًا r4 وحدها للتحقق من مسار استثناءات Clang IR.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -1901,9 +1905,9 @@ DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB 
 
 ## Swift scalar instruction completion
 
-يدعم Swift المستعاد لمعمارية x86_64 عمليات ADD/SUB/MUL/DIV القياسية في السجلات وتحويل سجلات Float32 وsigned32 وsigned64 إلى Double، مع حفظ البتات العددية وكامل MXCSR الوارد والصادر. تظل التحويلات الأخرى وصيغ الذاكرة والحساب المعبأ وSQRT/MIN/MAX وFMA والتقريب والعمليات التقريبية غير مدعومة. تعالج هذه الإصلاحات إخفاقات استعادة معاملات المكدس والدوال المختلطة في Swift؛ وتبقى بيئة تشغيل macOS/iOS وأطرها الكاملة غير مكتملة.
+يدعم Swift المستعاد لـx86_64 عمليات ADD/SUB/MUL/DIV القياسية على السجلات والذاكرة، وتحويل الأعداد الصحيحة الموقعة 32/64 بت إلى Float32/Float64 والتحويل بين Float32 وFloat64 في الاتجاهين، بما في ذلك VEX. تبقى البتات العددية مقترنة بكامل MXCSR الداخل والخارج. ترفض العمليات المجمعة وSQRT/MIN/MAX وFMA والتقريب والتدوير المستقل؛ ولا تزال بيئة أطر macOS/iOS الكاملة غير مكتملة.
 
-HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers, GenericScalarCompletionRejectsOtherShapesAndControls, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper and ScalarDoubleConversionsRejectOtherEffectsAndLayouts check shared contracts, helper identities and explicit unsupported/malformed refusal. GenericScalarCompletionCompilesAndExecutesCompleteState, MixedScalarCompletionDeduplicatesHelpersAndExecutesState, ScalarDoubleConversionSourceExecutesCompleteState and MixedScalarDoubleConversionsDeduplicateAndExecuteState compile and execute literal numerical/MXCSR cases at Onone/O, comparing emitted Swift with independently authored original SSE arithmetic and CVTSI2SD32/CVTSI2SD64/CVTSS2SD observers. Coverage includes signed boundaries,2^53+1 precision, all rounding modes, sticky flags, DAZ/FTZ, subnormals, signed zeros, infinities and quiet/signaling NaN payloads. Compiler/native bounds remain120/5 seconds. Separate legacy/generic divide-by-zero and conversion precision/invalid trap tests require native Intel macOS and untouched numerical/state sentinels. They skip explicitly on ARM64 because Rosetta forces exception masks; translated masked execution never qualifies Intel unmasked traps.
+تتحقق الصيغ المختلطة القديمة والعامة والقديمة وVEX من وجود مساعد واحد لكل عقد عددي وحالة. تقارن مراقبات SSE أصلية مستقلة وقيم حرفية بين Onone وO للتدوير والأعلام الثابتة وDAZ/FTZ والأعداد دون الطبيعية والأصفار الموقعة وNaN وجميع التحويلات القياسية. تتطلب المصائد غير المقنعة Linux x64 أصليا أو macOS على Intel مع بقاء قيم حراسة النتيجة والحالة دون تغيير؛ وتتخطاها ARM64 صراحة لأن Rosetta تقنع الاستثناءات.
 
 ## Explicit ordinary directory modes
 
@@ -1955,3 +1959,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ### استعلام صريح عن حالة kernel VA shadow
 
 يفحص `KernelVaShadowQueryTests` أعلاماً مستقلة وأطوالاً وحدود صفحات واقتطاع ULONG والمخرجين والتداخل والأذونات والأسماء البديلة والكائنات والسياق وIRQL والاعتمادات. يفحص `DriverVaShadowQueryTests` النقل الصارم ودورات Unicorn/KVM/WHP المعاد تموضعها مع استدعاءات مستوردة وديناميكية. تظل التصريحات غير المستخدمة ترفض استعادة UNPACK. الاختبارات الـ19 لكل backend أصلي إلزامية؛ التنفيذ غير المتاح يسجل كتخط صريح. تغطي اختبارات الإصدار أيضاً فحص المخزن المشترك.
+
+## تأهيل ترقيعات المصدر بعد الدمج
+
+يشغّل التأهيل الأصلي على Linux المجموعة الكاملة `HighSwiftEmitter`، بما فيها تحويلات السجلات والذاكرة، ومشاركة مساعدات legacy/VEX، والمقارنة مع SSE الأصلي، والاستثناءات غير المقنّعة. استخدم بناء LLVM المصحح من المصدر: قد يشفّر r4 مرتكزات GOT في i386 PIC بصورة خاطئة؛ يُرفض النشر الآن عند وجود إزاحة غير صالحة. تحتفظ عشر حالات `SessionCAPITest` الخاصة بـ Linux/ELF بتجاوزات منصة صريحة على macOS وWindows. يتحقق التدقيق من الأسماء وتسميات المالك والأسباب الأصلية بدقة، ويُلزم تنفيذها على Linux، ولا يحسب التجاوزات نجاحات. يراعي اختبار عدم العودة أسماء رموز Mach-O وعرض وسيطة المعالج المستعاد.

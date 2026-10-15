@@ -14,7 +14,7 @@
 
 `sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다.
 
-`SourcePatchCompiler`는 NeverC `cpp-core-v2`와 C23 생성을 조합하며 `validateDynCodePatchImage`는 감사를 실제 객체/페이로드 해시, 코드, 진입점에 연결합니다. 형식 설치기는 실제 언와인드 기록을 등록합니다. ARM64 FH3는 로더 xdata 범위와 MC funclet/FuncInfo 소유권을 사용합니다. DWARF가 없는 Mach-O는 모든 함수의 native compact 기록이 필요합니다.
+`SourcePatchCompiler`는 실행 전에 NeverC를 C로 제한하고 C++ 컴파일은 Clang 또는 일치하는 ELF GCC 드라이버가 맡습니다. `validateDynCodePatchImage`는 hosted C 감사를 실제 객체, 페이로드 해시, 정확한 코드 및 진입점 배치에 연결합니다. 형식별 설치기는 실제 언와인드 레코드를 등록합니다. ARM64 Clang FH3는 로더의 xdata 범위와 MC의 funclet/FuncInfo 그룹을 사용하며 Mach-O의 완전한 네이티브 compact 레코드도 유지합니다.
 
 `CompiledImage`는 AArch64 ELF 콜론 지정자를 한 곳에서 정규화해 실시간 해결과 저장한 fixup에 공통으로 사용합니다. ELF 해결기와 로더 재배치 발행은 정확한 ABS/GOT 식별을 공유하며 TLS와 알 수 없는 형식은 계속 거부합니다. COFF 네이티브 함수 범위는 디코딩된 런타임 기록을 사용할 수 있지만 hosted 코드는 완전한 컴파일러 언와인드 범위가 필요합니다.
 
@@ -1551,6 +1551,8 @@ LLVM 방출기는 현재의 불변 MedFunc 안에서 완료된 기본 예산 스
 
 `MedCallingConvFP`가 부동소수점/벡터 입력의 바이트 요구를 공통으로 관리합니다. AND/OR 상수 마스크는 유일하고 유한한 SSA 상수 증명으로 완전히 지우거나 대체한 바이트만 제외하며, 첫 쓰기 버전이 0인 결합 마스크도 포함합니다. 누락·모호함·로드·호출에서 유래한 마스크는 입력을 유지합니다. FP 반환 레지스터의 중간 쓰기는 값 전달이며 반환 읽기는 현재 CFG에서 각 RETURN에 도달하는 정의로 판정합니다. 알 수 없는 경로는 보수적으로 요구를 유지합니다. 명시적 ABI 피연산자 복구 전에는 FP 반환 레지스터의 전달 값도 CALL의 가능한 읽기입니다. 자기 하위 바이트로 확장되는 벡터 레지스터(`vzeroupper`)는 자신의 입력 바이트만 제자리에 유지하며, 다른 레지스터에서 옮겨 온 바이트는 다른 쓰기와 마찬가지로 반환에 도달합니다. ARM32는 전체 D0-D31을 인자용 D0-D7과 별도로 기술합니다.
 
+ELF 객체 파싱, 네이티브 재배치와 로더 출처 검증은 같은 필드 너비 표를 사용합니다. AArch64 `PREL64`는 8바이트이며 전체 REL 암시적 가산수를 포함한 부호 있는 `S + A - P`를 보존합니다. 범위 초과, 쓰기 중첩, 부호 있는 오버플로는 게시 전에 거부합니다.
+
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 
 DarwinFiles extends its sole authorizer with typed OwnershipSearch and OwnershipChange and an explicit UID/GID request. DarwinOwnership.cpp owns chown16/fchown123/fchownat468 import and the atomic active UID/GID/ctime commit; DarwinServices only forwards. The shared path walker and statusMetadata owner supply actual current records. Target membership and change-derived TAKE_OWNERSHIP/WRITE_SECURITY decisions stay in the sole authorizer. Contents retains a separate initial ownership provider/time grant; both inactive IDs still require it and preserve every field. Mode/data/namespace/xattr/storage/VM grants remain independent, creation/name reuse never inherits authority and invalidated records remain unknown. Strict JSON uses the existing vocabulary/admission/time owners. Static query closures deny all57 other file routes before preflight. This ordinary environment excludes ACL/MAC/listeners/bypass/revocation/native leases and unmodeled setattr lifecycle; it does not establish general DAC or a complete macOS/iOS environment.
@@ -1610,9 +1612,9 @@ DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fs
 
 ## Swift scalar instruction completion
 
-복원된 x86_64 Swift는 스칼라 레지스터 ADD/SUB/MUL/DIV와 Float32, signed32, signed64 레지스터에서 Double로의 변환을 지원하며 수치 비트와 전체 입력 및 출력 MXCSR을 보존합니다. 다른 변환, 메모리, 패킹 연산, SQRT/MIN/MAX, FMA, 반올림 및 근사 연산은 지원하지 않습니다. 확인된 Swift 스택 인수와 혼합 함수 복원 실패를 수정하지만 전체 macOS/iOS 런타임과 프레임워크 환경은 아직 미완성입니다.
+복원된 x86_64 Swift는 레지스터 및 메모리 스칼라 ADD/SUB/MUL/DIV, 부호 있는 32/64비트 정수의 Float32/Float64 변환, Float32/Float64 양방향 변환과 VEX 형식을 지원합니다. 결과 비트와 전체 입력/출력 MXCSR를 함께 보존합니다. 패킹 연산, SQRT/MIN/MAX, FMA, 반올림 전용 연산과 근사 연산은 거부하며 완전한 macOS/iOS 프레임워크 환경은 아직 미완성입니다.
 
-The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits register X86FPArithState with scalar control16|optional8|kind for 4/8-byte Add/Subtract/Multiply/Divide, normalizing its intrinsic/width helper key and dropping only Control at operand0. X86FPScalarConvertState admits only controls4/5/7 and VEX variants12/13/15 for Float32/signed32/signed64 to Double. Its conversion-specific full-layout key removes only VEX bit8, keeps all three source kinds distinct, and drops only the literal Control at operand1. Source and State retain their order. Legacy/VEX and legacy/generic occurrences share one helper per numerical/state contract. Signed32 truncates and reinterprets its raw bits; signed64 reinterprets its full source, and Float32 preserves its low32 bit pattern. Target guards, file-level module_preamble, optimization-disabled numerical work and complete96-bit result/MXCSR packing remain required. The lifter still owns vector upper lanes. No ARM64 MXCSR substitution or memory/packed lowering is inferred.
+공유 X86FPState 형상 검증기가 기준입니다. 기존/일반 산술은 명령어/너비 헬퍼를 공유합니다. 변환 키는 소스 종류, 소스/대상 너비와 레지스터/메모리를 구분하고 VEX 상위 레인 비트만 제거합니다. 상위 레인은 리프터가 담당합니다. 소스/상태 순서, 최적화를 끈 수치 계산과 전체 64/96비트 결과/MXCSR를 유지하며 ARM64 MXCSR 대체를 추론하지 않습니다.
 
 ## Explicit ordinary directory modes
 
