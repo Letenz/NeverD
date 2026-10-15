@@ -1855,6 +1855,13 @@ sources, repeated long blocks, final recording and cross-function exhaustion.
 Every exhaustion must protect the nonempty request set. Existing cross-target
 jump-table and returned-code tests exercise the shared collector's semantics.
 
+`ModuleIntrinsicEffects` validates scalar value-only shapes across x87, BMI2,
+ARM and AArch64. `ModuleJumpTableBudget` also checks a pure instruction after a
+real call with clobbered input lanes, unused address inputs, later result/input
+escapes, explicit temporary address operands of memory intrinsics and malformed
+contracts. These tests retain real loader-backed relocation occurrences and
+must protect table slots whenever an observable use remains.
+
 `ModuleAdjacentTable.*` uses real ELF32/ELF64 adjacent absolute tables in both
 function orders. It checks final x87 returns, independent roots, an unsplit
 interior branch that bypasses the mask, physical fallthrough gaps, cloned TOP
