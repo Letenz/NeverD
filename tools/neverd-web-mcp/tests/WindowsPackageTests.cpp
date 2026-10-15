@@ -93,6 +93,7 @@ struct Fixture {
 class Process {
   Handle In, Out, Child, Log;
   std::string Pending;
+  bool WorkerHello = false;
 
 public:
   Process(const fs::path &Binary, std::wstring Options,
@@ -217,9 +218,19 @@ public:
         more();
       auto V = Json::parse(Pending.substr(4, N));
       Pending.erase(0, N + 4);
+      check(V.value("protocol_major", 0) == 1,
+            "Installed worker protocol mismatch");
+      if (V.value("type", "") == "hello") {
+        check(!WorkerHello && Sequence == 1 &&
+                  V.value("protocol_minor", 0) == 1,
+              "Installed worker handshake mismatch");
+        WorkerHello = true;
+        continue;
+      }
       if (V.value("type", "") == "heartbeat")
         continue;
-      check(V.value("request_id", "") == ID && V.at("status") == "ok",
+      check(WorkerHello && V.value("type", "") == "response" &&
+                V.value("request_id", "") == ID && V.at("status") == "ok",
             "Installed worker failed");
       return V.at("payload");
     }
@@ -364,7 +375,7 @@ int wmain(int Count, wchar_t **Args) {
     check(Json::parse(CLI.finish()).value("status", "") == "ok",
           "Installed CLI failed");
     Process Worker(Bin / L"neverd-worker.exe", L"", F.Root / L"worker.log");
-    check(Worker.worker("web_capabilities", Json::object(), 1)
+    check(Worker.worker("web_capabilities", {{"schema_version", 1}}, 1)
                   .at("input_reader") == Caps.at("input_reader"),
           "Worker capability mismatch");
     P = Worker.worker("web_import_preview",
