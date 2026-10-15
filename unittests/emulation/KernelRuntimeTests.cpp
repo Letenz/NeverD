@@ -1452,6 +1452,51 @@ TEST(KernelRuntimeExecution, CompiledDriverRoundTripsCalendarTimes) {
   EXPECT_EQ(Calls["RtlTimeToTimeFields"], 1u);
 }
 
+TEST(KernelRuntimeExecution, CompiledDriverSharesQueuesUnderOneSpinLock) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_interlocked.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // FIFO drain after one head insertion, LIFO reuse from the free list.
+  EXPECT_EQ(Result->Messages[0],
+            "queue 1 1 1 order 30 10 20 free 20 10 30 pending 0 bytes 60");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["ExInterlockedInsertTailList"], 2u);
+  EXPECT_EQ(Calls["ExInterlockedInsertHeadList"], 1u);
+  EXPECT_EQ(Calls["ExInterlockedRemoveHeadList"], 4u);
+  EXPECT_EQ(Calls["ExInterlockedPushEntryList"], 3u);
+  EXPECT_EQ(Calls["ExInterlockedPopEntryList"], 4u);
+  EXPECT_EQ(Calls["ExInterlockedAddUlong"], 6u);
+  EXPECT_EQ(Calls["ExInterlockedAddLargeInteger"], 3u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverCachesEntriesOnASequencedList) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_slist.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // LIFO order; the flushed chain keeps its links.
+  EXPECT_EQ(Result->Messages[0],
+            "slist depth 4 top 4 popped 4 chain 321 count 3 empty 1");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["InitializeSListHead"], 1u);
+  EXPECT_EQ(Calls["ExpInterlockedPushEntrySList"], 4u);
+  EXPECT_EQ(Calls["ExpInterlockedPopEntrySList"], 2u);
+  EXPECT_EQ(Calls["ExpInterlockedFlushSList"], 1u);
+  EXPECT_EQ(Calls["ExQueryDepthSList"], 2u);
+  EXPECT_EQ(Calls["FirstEntrySList"], 1u);
+}
+
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
                               "driver_identity.sys");
