@@ -154,6 +154,13 @@ their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
 Cancelling view reads must preserve a queued project snapshot needed by a
 retained external analysis request.
+`NeverDWorkerAllocator` checks the embedded Linux allocator across the worker's
+C++ runtime, the shared SDK and libc, including reallocation, over-aligned
+objects and cross-thread release. Configure `NEVERD_WORKER_MIMALLOC=OFF` for
+the platform allocator; ASan/TSan/MSan configurations require that setting so
+their allocation interceptors remain authoritative. Real worker and workbench
+integration checks run with the actual linked worker, without `LD_PRELOAD`.
+
 `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
@@ -1860,6 +1867,14 @@ ELF, COFF and Mach-O. Its ELF source
 roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
 selection oracle. Small joined domains reuse the finite-coordinate proof;
 unchecked paths and sparse or incomplete domains cannot grant a dense table.
+
+`GuardExpression.*` independently enumerates every byte offset and boundary
+for signed/unsigned comparisons in both operand orders and affine directions.
+Wide nested affine expressions and Boolean combinations retain wrap, sign and
+hole boundaries; periodic masks, shifts and width changes require full replay.
+The native guard suites above still cover CFG/lane identity, sparse tables,
+all-domain proof rejection and exhausted evidence. Replay partitions retain the
+original whole-window evidence charge and the final solver proof.
 
 `ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` verifies
 missing ADD/SELECT inputs, input-array overflow, zero widths and a memory-space
