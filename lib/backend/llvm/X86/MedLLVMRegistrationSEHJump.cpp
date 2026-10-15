@@ -88,10 +88,18 @@ void MedLLVMEmitter::declareX86RegistrationJumpRuntimes(const MedFunc &Func) {
     FuncNames[Address] = Name.str();
     return Runtime;
   };
-  for (const auto &[Address, Call] : *Bound)
-    Declare(Call.Source->TargetVA,
-            "__nd_seh_bound_" + llvm::utohexstr(Call.Source->TargetVA),
-            getX86RegistrationSEHBoundType(*Call.Source, *Ctx));
+  for (const auto &[Address, Call] : *Bound) {
+    const auto Import = getX86RegistrationSEHBoundImport(*Call.Source);
+    auto *Callee =
+        Declare(Call.Source->TargetVA,
+                Import.empty()
+                    ? "__nd_seh_bound_" + llvm::utohexstr(Call.Source->TargetVA)
+                    : Import.str(),
+                getX86RegistrationSEHBoundType(*Call.Source, *Ctx),
+                getX86RegistrationSEHBoundConvention(*Call.Source));
+    if (Callee && !Import.empty())
+      Callee->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+  }
   for (const auto &[Address, Call] : *Calls) {
     if (Call.Resume)
       Declare(Call.Operation->Inputs[0].ConstVal, "_longjmpex",
@@ -122,8 +130,10 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
   for (const auto &[Call, Address] : Calls) {
     if (const auto Found = Bound->find(Address); Found != Bound->end()) {
       if (!prepareSEHBoundCall(*Call, *Found->second.Source, Frame, EntrySP) ||
-          !collectDiscardedRegistrationResult(
-              *const_cast<llvm::CallInst *>(Call), Result.DiscardedResults))
+          (Found->second.Source->CalleeKind !=
+               RegistrationSEHBoundCall::Kind::ControlFP &&
+           !collectDiscardedRegistrationResult(
+               *const_cast<llvm::CallInst *>(Call), Result.DiscardedResults)))
         return std::nullopt;
       Result.BoundCalls.emplace(const_cast<llvm::CallInst *>(Call),
                                 Found->second);

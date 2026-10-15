@@ -116,6 +116,43 @@ TEST(RegistrationInstructionRange,
   }
 }
 
+TEST(RegistrationInstructionRange, BodyExtentIncludesEveryRuntimeEntry) {
+  // A direct helper follows the parent's return with no padding or symbol.
+  // The disconnected callback is also an owner, but the called helper is not.
+  auto Image =
+      codeImage({0xe8, 1, 0, 0, 0, 0xc3, 0x90, 0xc3, 0x90, 0xc3, 0x90, 0xc3});
+  const ExceptionAddressRange Range{Image.Entry, Image.Entry + 12};
+  size_t Work = 0;
+  EXPECT_EQ(checkedRegistrationRangeEnd(Image, Range, {Image.Entry}, Work),
+            Image.Entry + 6);
+  Work = 0;
+  EXPECT_EQ(checkedRegistrationRangeEnd(Image, Range,
+                                        {Image.Entry, Image.Entry + 8}, Work),
+            Image.Entry + 10);
+  const size_t RequiredWork = Work;
+  Work = limits::kMaxRegistrationEHStateWork - RequiredWork + 1;
+  EXPECT_FALSE(checkedRegistrationRangeEnd(
+      Image, Range, {Image.Entry, Image.Entry + 8}, Work));
+
+  struct Case {
+    std::vector<uint8_t> Bytes;
+    std::vector<va_t> Roots;
+  };
+  for (const auto &C : {
+           Case{{0xff, 0xe0, 0xc3}, {0x1000}}, // Unresolved jump.
+           Case{{0xeb, 0x20, 0xc3}, {0x1000}}, // Escaping branch.
+           Case{{0x90, 0x90}, {0x1000}},       // Unclosed fallthrough.
+           Case{{0xe8, 0, 0, 0, 0, 0xc3}, {0x1000, 0x1001}},
+           Case{{0xc3}, {0x1001}}, // Root outside the range.
+           Case{{0xcb}, {0x1000}}, // Far return.
+       }) {
+    auto Bad = codeImage(C.Bytes);
+    Work = 0;
+    EXPECT_FALSE(checkedRegistrationRangeEnd(
+        Bad, {Bad.Entry, Bad.Entry + C.Bytes.size()}, C.Roots, Work));
+  }
+}
+
 TEST(RegistrationInstructionRange, ClosedCallbackOwnsItsLocalBranchTargets) {
   for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
     SCOPED_TRACE(Mutation);

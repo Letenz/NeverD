@@ -3975,6 +3975,15 @@ frame, escape index, unused recovery, escaped buffer and redirected value load.
 CLI coverage includes both patch modes from emitted IR and directly from the
 original EXE, with default optimization and `--no-opt`. Both pipeline paths
 must preserve `optnone` runtime callback roots and register snapshots.
+`longjmp-runtime-raise` and `longjmp-runtime-continue` call the original
+`RaiseException` import after resumption and exercise handler entry and filter
+continuation. `longjmp-control-fp` observes both `_controlfp_s`'s scalar result
+and private output before capture. Sixteen mutations per fixture check the
+runtime ABI, provider/IAT identity, exact argument values, import storage,
+attributes and argument-read ordering. The continuation fixture also checks
+that a helper immediately following a closed registration body does not
+inherit its EH ownership. `RegistrationInstructionRange.*` covers all runtime
+roots, unresolved/escaping edges, overlapping instructions and budget refusal.
 Use `--runtime-root` with the captured `runtime-libs` directory to bind SEH and
 jump imports to the authenticated Microsoft x86 CRT. This is required under
 Wine for the retired-inner-scope case: Wine 9's builtin CRT unwinds below the
@@ -6623,3 +6632,7 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Bounded kernel caller-context capture
 
 `KernelContextCaptureTests` covers all record/guard bytes, stack scratch, flags, aliases, overlaps, objects, permissions, IRQL and injected collector/setter failures. `DriverContextCaptureTests` checks live GPR/FPCW/MXCSR/XMM values and imported/dynamic calls through rebased entry/request/unload lifecycles, including rejected outputs and retained dependencies. Its bytewise twelve-record oracle has an explicit 400000-instruction test budget. The fixture uses the checked initial FPCW; separate collector cases vary it. All 17 identities per native backend are mandatory; unavailable WHP execution remains an explicit Linux skip. Existing x64/ARM64 user context tests protect unchanged behavior.
+
+### Symbolic region coordinates across zero
+
+`SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.

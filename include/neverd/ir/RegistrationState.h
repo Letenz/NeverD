@@ -237,17 +237,19 @@ struct RegistrationSEHJumpResume {
 /// Scalar slots and borrowed objects use the caller's established EBP;
 /// opaque buffers name a capture whose native allocation replaces the source.
 struct RegistrationSEHBoundArgument {
-  enum class Kind : uint8_t { Unused, Scalar, Object, JumpBuffer };
+  enum class Kind : uint8_t { Unused, Scalar, Object, JumpBuffer, NullPointer };
   Kind ArgumentKind = Kind::Unused;
   int32_t Offset = 0;
   va_t Capture = 0;
   bool operator==(const RegistrationSEHBoundArgument &) const = default;
 };
 
-/// A preserved helper may use only these arguments and its private frame.
-/// Source state propagation alone does not establish this native ABI: the
-/// conditional proof also rejects observations of regenerated frame addresses.
+/// Invocation-bound native arguments. Preserved helpers require a conditional
+/// frame-observation proof; imported runtimes require an authenticated import
+/// and a complete invocation-specific memory and callback contract.
 struct RegistrationSEHBoundCall {
+  enum class Kind : uint8_t { PreservedHelper, RaiseException, ControlFP };
+  Kind CalleeKind = Kind::PreservedHelper;
   va_t Address = InvalidVA;
   int OpSeq = -1;
   va_t TargetVA = InvalidVA;

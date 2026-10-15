@@ -19,9 +19,11 @@ struct RegistrationCallFrameEffect;
 /// including a call's implicit arguments, observes the result. Duplicate or
 /// missing definitions, ambiguous occurrences and exhausted budgets reject.
 /// This proves absence of a source observation, never a language return type.
+/// Indirect selects an exact constant IAT-call occurrence; its runtime identity
+/// and argument ABI still require the caller's separate source proof.
 bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
                                         const RegistrationCallFrameEffect &Call,
-                                        size_t &Work);
+                                        size_t &Work, bool Indirect = false);
 } // namespace neverd
 
 #endif

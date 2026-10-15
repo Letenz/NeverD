@@ -1940,3 +1940,7 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 ### 제한된 커널 호출자 문맥 캡처
 
 `KernelContextCaptureTests`는 전체 바이트, 가드, 스택, 플래그, 별칭, 겹침, 객체, 권한, IRQL과 주입 실패를 검사합니다. `DriverContextCaptureTests`는 실시간 GPR/FPCW/MXCSR/XMM, 재배치 진입/요청/해제, 가져오기/동적 호출과 의존성을 검사합니다. 12개 레코드 바이트 비교에는 명시적 400000 명령 테스트 예산을 쓰며 초기 FPCW 외에 독립 collector가 값을 바꿉니다. 각 네이티브 backend의 17개가 필수이고 Linux의 WHP 불가 상태는 명시적으로 건너뜁니다. 기존 x64/ARM64 사용자 테스트도 유지합니다.
+
+### 0을 가로지르는 기호 영역 좌표
+
+`SymRegionWrap.*`는 두 바이트 순서, 상대 좌표 0을 가로지르는 전체 및 부분 접근, 순환하지 않는 입력 출처, 복사된 미지 상태 세대, 정확하거나 부족한 보존 예산, 절대／스칼라 범위 오버플로 거부를 검사합니다. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero`는 기호 주소가 `base - 1` 형태를 유지하는지 확인하고, 독립적인 바이트 참조 실행으로 전체 STORE 효과, 네이티브 반환 주소 워드, 복원된 스택 상태를 검사합니다. 분리 증명이나 진입 정렬이 없으면 계속 거부해야 합니다.

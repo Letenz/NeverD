@@ -72,7 +72,9 @@ slice lifetime after input deletion, shared-descriptor cleanup and write failure
 in a C++ child with a lowered file-size limit. SDK/CLI cases admit an original
 above the old 64-MiB ceiling, then verify smaller parser budgets still refuse it.
 Current POSIX directory traversal retains descriptor-relative no-follow opens.
-Windows input remains unavailable until a handle-based implementation passes tests.
+Windows input was unavailable at this foundation milestone. The later
+[Windows host qualification](#native-windows-host-and-extracted-product-qualification-2026-10-15)
+records the implemented handle-based reader and its native test evidence.
 
 Ordinary inventory returns hashes, sizes, parent identities and fixed kinds;
 target-derived names and contents are omitted. That is the current
@@ -4039,8 +4041,8 @@ in place. A changed directory revision and replacement still refuse. Native
 manifest publication uses retained directory handles and does not replace an
 existing target; rewrite rollback preserves foreign files.
 
-The [complete native/archive run](https://github.com/NeverSight/NeverD/actions/runs/38675592150)
-at `d7af8fd059fdee3c9fcaf05713d6f9f2061a459b` passes **110 native cases,
+The [complete native/archive run](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
+at `5e126750ae7513591b6d79056c02358fe55da0f1` passes **110 native cases,
 two adapter checks and six installed checks**, with zero failures or skips.
 The selection includes sixteen Windows ownership cases and eight independent
 native handoff cases. The 65 MiB + 1 byte original import retains separate
@@ -4057,7 +4059,9 @@ and runs before the full engine build. Native source/toolchain/dependency
 pins, every required test and every archive member are bound by the receipt.
 The formal release gate also requires all eleven producer and fifteen CEF
 resource cases at the same source commit; it reaudits and publishes the
-qualified ZIP without rebuilding or overwriting an existing Release.
+qualified ZIP without rebuilding or overwriting an existing Release. This same
+run passes all eleven producer and fifteen CEF/resource cases on macOS arm64,
+with zero failures or skips.
 
 The local owning rebuild at `b2523a9f0` passes 807 of 852 Web cases with 45
 explicit optional/omission skips and no failures. After the subsequent native

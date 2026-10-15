@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/codegen/COFF/COFFSourceCallSymbols.h"
 #include "RegistrationCxxContinuationTestUtils.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
@@ -1882,11 +1883,19 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
     registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
                                               *Low.RegistrationStates);
-  if (!Low.RegistrationStates->SEHBoundCalls.empty()) {
+  if (llvm::any_of(Low.RegistrationStates->SEHBoundCalls, [](const auto &Call) {
+        return Call.CalleeKind ==
+               RegistrationSEHBoundCall::Kind::PreservedHelper;
+      })) {
     registration_test::checkSEHBoundEdits(*Parent, EH, Image);
     registration_test::checkSEHBoundSourceEdits(*Parent, EH, Image);
   } else if (!Low.RegistrationStates->SEHJumpCaptures.empty())
     registration_test::checkSEHJumpEdits(*Parent, EH, Image);
+  if (llvm::any_of(Low.RegistrationStates->SEHBoundCalls, [](const auto &Call) {
+        return Call.CalleeKind !=
+               RegistrationSEHBoundCall::Kind::PreservedHelper;
+      }))
+    registration_test::checkSEHRuntimeEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
         return !B.CallbackOnly && B.Levels.size() > 1;
@@ -2227,7 +2236,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           for (auto &I : Block)
             if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
               if (auto *Callee = Call->getCalledFunction();
-                  Callee && Callee->isDeclaration() && !Callee->isIntrinsic()) {
+                  Callee && Callee->isDeclaration() && !Callee->isIntrinsic() &&
+                  !Callee->hasDLLImportStorageClass()) {
                 Callee->setCallingConv(llvm::CallingConv::X86_StdCall);
                 return true;
               }
@@ -2690,6 +2700,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   COFFPatcher Patcher;
   const uint64_t CodeVA = Patcher.plannedExecSegmentVA(Binary, Arch::X86);
   ASSERT_NE(CodeVA, 0u);
+  auto SourceCalls = getCOFFSourceCallSymbols(*Module, Image);
+  ASSERT_TRUE(bool(SourceCalls)) << llvm::toString(SourceCalls.takeError());
   auto Resolve = [&](llvm::StringRef Symbol,
                      uint32_t) -> std::optional<uint64_t> {
     if (auto Cookie = findCOFFRegistrationRuntimeVA(Image, Symbol))
@@ -2698,19 +2710,12 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
       return *Address;
     if (auto Address = parseNdCodePtrSymbol(Symbol))
       return *Address;
-    for (const auto &Function : *Module) {
-      llvm::SmallString<64> ObjectName;
-      llvm::Mangler Mangler;
-      Mangler.getNameWithPrefix(ObjectName, &Function, false);
-      if (ObjectName != Symbol)
-        continue;
-      auto Address = rewrite_source::getOriginalVA(Function);
-      if (!Address) {
-        llvm::consumeError(Address.takeError());
-        return std::nullopt;
-      }
-      return *Address;
-    }
+    if (const auto Import = SourceCalls->Imports.find(Symbol.str());
+        Import != SourceCalls->Imports.end())
+      return Import->second;
+    if (const auto Code = SourceCalls->Code.find(Symbol.str());
+        Code != SourceCalls->Code.end())
+      return Code->second;
     return std::nullopt;
   };
   auto Compiled = compileImageForPatch(*Module, Arch::X86, BinaryFormat::COFF,
@@ -2945,13 +2950,16 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           continue;
         auto Address = rewrite_source::getOriginalVA(*Callee);
         ASSERT_TRUE(bool(Address)) << llvm::toString(Address.takeError());
-        if (*Address && !OriginalCallee) {
+        if (*Address && Image.isCodeAddress(**Address) && !OriginalCallee) {
           OriginalCallee = Callee;
         }
       }
     ASSERT_TRUE(OriginalCallee);
-    ASSERT_EQ(CollisionModule->getFunction("RaiseException"), nullptr);
-    OriginalCallee->setName("RaiseException");
+    const auto CollisionName = CollisionModule->getFunction("RaiseException")
+                                   ? "ExitProcess"
+                                   : "RaiseException";
+    ASSERT_EQ(CollisionModule->getFunction(CollisionName), nullptr);
+    OriginalCallee->setName(CollisionName);
     const auto CollisionPath =
         std::filesystem::path(Path).parent_path() / "collision-patched.exe";
     const auto CollisionResult =

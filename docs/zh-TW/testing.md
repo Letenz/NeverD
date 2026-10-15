@@ -1896,3 +1896,7 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 ### 有界核心呼叫者內容擷取
 
 `KernelContextCaptureTests` 驗證完整記錄、保護位元組、堆疊、旗標、別名、重疊、物件、權限、IRQL 和注入失敗。`DriverContextCaptureTests` 驗證即時 GPR/FPCW/MXCSR/XMM、重新定位生命週期、匯入/動態呼叫與相依性。12 筆逐位元組比較使用明確的 400000 指令測試預算；夾具使用 checked 初始 FPCW，獨立 collector 改變該值。每個原生後端 17 項皆必跑，Linux 的 WHP 不可用時明確略過；既有 x64/ARM64 使用者測試保護原行為。
+
+### 跨越零點的符號區域座標
+
+`SymRegionWrap.*` 檢查兩種位元組順序、跨相對零點的完整與局部存取、不回繞的輸入來源、複製後的未知狀態紀元、精確與不足的保存預算，以及絕對／純量範圍溢位的拒絕。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` 斷言符號位址仍為 `base - 1`，並以獨立位元組校驗器檢查完整 STORE 副作用、原生返回位址字與還原後的堆疊狀態。缺少分離證明或入口對齊時仍須拒絕。

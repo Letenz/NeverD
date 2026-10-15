@@ -2046,3 +2046,7 @@ La verifica nativa Linux esegue anche l’intera suite `HighSwiftEmitter`: conve
 ### Acquisizione limitata del contesto chiamante kernel
 
 `KernelContextCaptureTests` copre byte completi, guardie, stack, flag, alias, sovrapposizioni, oggetti, permessi, IRQL ed errori iniettati. `DriverContextCaptureTests` verifica GPR/FPCW/MXCSR/XMM vivi, cicli rilocati ingresso/richiesta/unload e dipendenze. Le dodici verifiche byte per byte hanno budget esplicito di 400000 istruzioni; casi collector separati variano FPCW. Le 17 identità per backend nativo sono obbligatorie; WHP indisponibile su Linux è saltato esplicitamente. I test utente x64/ARM64 proteggono il comportamento precedente.
+
+### Coordinate di regione simbolica attraverso lo zero
+
+`SymRegionWrap.*` verifica entrambi gli ordini dei byte, accessi completi e parziali attraverso lo zero relativo, origini di input senza riavvolgimento, epoche sconosciute copiate, budget di conservazione esatti e insufficienti e il rifiuto degli overflow assoluti/scalari. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` richiede la forma simbolica dell’indirizzo `base - 1` e verifica gli effetti completi dello STORE, le parole degli indirizzi di ritorno nativi e lo stato ripristinato dello stack con un oracolo di byte indipendente. L’assenza della prova di separazione o dell’allineamento di ingresso deve continuare a causare un rifiuto.

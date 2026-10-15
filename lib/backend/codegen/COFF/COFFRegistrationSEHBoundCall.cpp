@@ -41,13 +41,17 @@ bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
       const auto &Bound = Expected->at(*Address);
       const auto &Receipt = *Bound.Source;
       const auto *Callee = Call->getCalledFunction();
+      const auto Convention = getX86RegistrationSEHBoundConvention(Receipt);
+      const auto Import = getX86RegistrationSEHBoundImport(Receipt);
       if (!matchesSourceOperation(I, Source.Entry, *Address, 2) ||
           metadataInteger(*Marker, 2, 32) != uint32_t(Receipt.OpSeq) ||
           metadataInteger(*Marker, 3, 32) != uint32_t(Bound.Block) ||
           !Seen.insert(*Address).second || !Callee ||
           !Callee->isDeclaration() || !Callee->hasExternalLinkage() ||
-          Callee->getCallingConv() != llvm::CallingConv::C ||
-          Call->getCallingConv() != llvm::CallingConv::C ||
+          Callee->getCallingConv() != Convention ||
+          Call->getCallingConv() != Convention ||
+          Callee->hasDLLImportStorageClass() != !Import.empty() ||
+          (!Import.empty() && Callee->getName() != Import) ||
           Callee->getFunctionType() !=
               getX86RegistrationSEHBoundType(Receipt, Parent.getContext()) ||
           Call->arg_size() != Receipt.Arguments.size() ||
@@ -57,7 +61,8 @@ bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
           Call->hasFnAttr(llvm::Attribute::NoCallback) ||
           Call->hasFnAttr(llvm::Attribute::WillReturn) ||
           Call->hasFnAttr(llvm::Attribute::ReturnsTwice) ||
-          !Call->use_empty() ||
+          (!Call->use_empty() &&
+           Receipt.CalleeKind != RegistrationSEHBoundCall::Kind::ControlFP) ||
           Call->doesNotReturn() == Receipt.HasOrdinaryReturn)
         return rejectIR("preserved SEH helper changed its invocation ABI");
       auto Identity = rewrite_source::getOriginalVA(*Callee);
@@ -84,6 +89,11 @@ bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
             Callee->getAttributes().getParamAttrs(Index).hasAttributes())
           return rejectIR("preserved SEH helper changed its parameter ABI");
         using Kind = RegistrationSEHBoundArgument::Kind;
+        if (Arg.ArgumentKind == Kind::NullPointer) {
+          if (!llvm::isa<llvm::ConstantPointerNull>(Value))
+            return rejectIR("closed SEH runtime gained an argument array");
+          continue;
+        }
         if (Arg.ArgumentKind == Kind::Unused) {
           if (integer(Value, 32) != 0)
             return rejectIR("unused SEH helper argument gained a value");

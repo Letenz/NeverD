@@ -235,6 +235,9 @@ private:
   transferControlFP(const Domain &Before, Domain &After, const LowOp &Op,
                     const BlockFacts &Facts,
                     std::optional<Domain> &CallException);
+  void recordSEHRuntimeCall(const Domain &State, const LowOp &Op,
+                            RegistrationSEHBoundCall::Kind Kind,
+                            std::optional<int32_t> Output = std::nullopt);
   bool resumeJumpCapture(Domain &After, BlockFacts &Facts, const LowOp &Op,
                          const EH3JumpCapture &Saved, const FrameValue &Value,
                          va_t CalleeVA = 0, va_t ResumeVA = 0);

@@ -23,6 +23,9 @@ void checkSEHBoundEdits(const llvm::Function &Parent,
 void checkSEHBoundSourceEdits(const llvm::Function &Parent,
                               const ExceptionFunction &Source,
                               const BinaryImage &Image);
+void checkSEHRuntimeEdits(const llvm::Function &Parent,
+                          const ExceptionFunction &Source,
+                          const BinaryImage &Image);
 } // namespace registration_test
 } // namespace neverd
 

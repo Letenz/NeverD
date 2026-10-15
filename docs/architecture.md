@@ -6312,3 +6312,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Bounded kernel caller-context capture
 
 `WindowsX64Context.def` owns the common x64 layout/field table. `WindowsX64Context.cpp` shares integer collection and logical selectors while user full-FP and kernel limited-FP publication remain separate. `DriverContextCapture.cpp` borrows the current CPU through synchronous, non-reentrant callbacks. `KernelModelContextCapture.cpp` owns buffer admission, real return-word reading and effects. All admission precedes the atomic FLAGS setter; prevalidated ordinary RAM is then written on the stopped CPU. This is not rollback for arbitrary write failures or concurrent mapping changes. All three transports use this owner.
+
+### Symbolic region coordinates across zero
+
+`SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
