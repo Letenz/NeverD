@@ -2252,6 +2252,18 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <translation>Ausdruck oder Befehl (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Kopieren</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>&amp;Alles auswählen</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>&amp;Leeren</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>Befehle:</translation>
     </message>

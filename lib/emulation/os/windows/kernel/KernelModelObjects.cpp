@@ -37,13 +37,16 @@ llvm::Expected<uint64_t> KernelModel::objectType(uint64_t Object) {
   const auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end())
     return objectError("object type requires a known object");
-  if (const auto Type = ObjectTypes.find(Found->second.Kind);
-      Type != ObjectTypes.end())
+  return objectType(Found->second.Kind);
+}
+
+llvm::Expected<uint64_t> KernelModel::objectType(ObjectKind Kind) {
+  if (const auto Type = ObjectTypes.find(Kind); Type != ObjectTypes.end())
     return Type->second;
   auto Type = allocate(profile::ProcessTokenSize);
   if (!Type)
     return Type.takeError();
-  ObjectTypes.emplace(Found->second.Kind, *Type);
+  ObjectTypes.emplace(Kind, *Type);
   return *Type;
 }
 
@@ -79,8 +82,7 @@ KernelModel::referenceObjectByPointer(llvm::ArrayRef<uint64_t> A) {
 llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
   auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end() || !Found->second.Pointers)
-    return objectError("ObfDereferenceObject requires a referenced thread or "
-                       "process object");
+    return objectError("ObfDereferenceObject requires a referenced object");
   --Found->second.Pointers;
   retireObjectIfUnreferenced(Object);
   return uint64_t(0);
@@ -109,6 +111,9 @@ KernelModel::referenceObjectByHandle(llvm::ArrayRef<uint64_t> A) {
     return windows::StatusInvalidHandle;
   if (!matchesObjectType(Found->second.Kind, A[2]))
     return windows::StatusObjectTypeMismatch;
+  if (Found->second.Kind != ObjectKind::Thread &&
+      Found->second.Kind != ObjectKind::Process)
+    return objectError("object handles require a process or thread object");
   const uint32_t ValidAccess = Found->second.Kind == ObjectKind::Thread
                                    ? windows::ThreadAllAccess
                                    : windows::ProcessAllAccess;
@@ -150,6 +155,9 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
   if ((!A[4] && Mode == windows::UserMode) ||
       !matchesObjectType(Object->second.Kind, A[4]))
     return windows::StatusObjectTypeMismatch;
+  if (Object->second.Kind != ObjectKind::Thread &&
+      Object->second.Kind != ObjectKind::Process)
+    return objectError("object handles require a process or thread object");
   // ACLs, access-state records and inheritance need a declared security
   // environment. Refuse those requests without granting invented authority.
   if (Mode != windows::KernelMode || A[2] ||
@@ -269,9 +277,9 @@ void KernelModel::retireObjectIfUnreferenced(uint64_t Object) {
   if (References == ReferencedObjects.end() || References->second.Pointers ||
       References->second.Handles || WaitReferences.contains(Object))
     return;
-  // Process identities are currently retained by the declared request/session
-  // environment. Dropping a caller reference must not revoke that environment.
-  if (References->second.Kind == ObjectKind::Process)
+  // Process and driver identities are retained by the session environment.
+  // Only thread objects currently have a modeled retirement transition.
+  if (References->second.Kind != ObjectKind::Thread)
     return;
   const auto Thread = ThreadObjects.find(Object);
   if (Thread == ThreadObjects.end() || !Thread->second.Exited)

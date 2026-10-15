@@ -471,8 +471,12 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       Stop(DriverStopReason::UnsupportedAPI, session_diagnostic::ImportRead);
       return;
     }
-    if (auto E = Kernel.validateGuestAccess(Address, Size, false))
+    if (auto E = Kernel.validateGuestAccess(Address, Size, false)) {
       Stop(DriverStopReason::ModelError, llvm::toString(std::move(E)));
+      return;
+    }
+    if (KernelExportRegistry::overlapsData(Address, Size))
+      Kernel.recordUnpackEnvironmentRead();
   };
   Hooks.MemoryWritten = [&]() {
     // Publish the committed store before admitting the next instruction.
