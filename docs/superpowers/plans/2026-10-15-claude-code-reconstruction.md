@@ -274,8 +274,30 @@ remain recorded separately from successful target observations.
 
 Windows x64 and ARM64 projects and navigators are exported, each with 2,343
 JavaScript modules, 243 assets and 226,461 anchored evidence records. Official
-independent runtimes are checksum-pinned, and self-authored PE cross-builds
-complete. Full reconstruction is in progress; the available Wine environment
-has not yet passed authored startup qualification. No captured Windows client
-has executed, and Windows runtime equivalence remains unverified. The overall
-goal remains open.
+independent runtimes are checksum-pinned. Three local cross-builds and two
+native Windows builds produce identical outputs on each architecture: x64 is
+145,140,736 bytes, SHA-256
+`da3d6780681d86726737d3c4449fbbd20c1daa9a3d4a155fc7ff037626dbe204`;
+ARM64 is 131,968,512 bytes, SHA-256
+`e4d072017574a731a31e59cb639903060ef6fe6532155cc2c3bfe2046ad50cfa`.
+All 2,586 reconstructed module rows match independent NeverD readback.
+
+The user authorized native x64/ARM64 GitHub Actions environments in their
+personal `gmh5225/test_mac_intel` repository. Both now pass four startup/CLI
+cases and seven configuration differential cases against their own originals,
+plus retained audio addon loading, cached identity, export reflection and exact
+materialization checks. No retained device exports are invoked. Each process
+uses a fresh, capability-free AppContainer and a bounded Job Object. Authored
+positive and negative controls establish writable task state, denied host
+canary reads and binary-directory writes, network denial and descendant
+collection before any captured input executes.
+
+Two fixture assumptions were corrected from measured controls: Windows Bun's
+unmodified compiler also reports `import.meta.main=false`, and Windows redirects
+AppContainer TEMP beneath the supplied disposable HOME. Neither observation is
+silently normalized away. The standalone CI extractor was compared with every
+NeverD module row before use. Original executables are fetched from a published,
+hash-pinned package inside the runner; source and executables are not uploaded
+as workflow artifacts. The remaining 22 offline behavior cases are in progress.
+Wine startup failures remain recorded; native results do not depend on Wine.
+The overall goal remains open.
