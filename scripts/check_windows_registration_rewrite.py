@@ -103,6 +103,8 @@ CASES.update({prefix + name: (number, 23)
               for number, name in ((20, "longjmp-eh4-callee"),
                                    (21, "longjmp-eh4-returning-callee"),
                                    (22, "longjmp-eh4-scalar-callee"))})
+CASES.update({name + "-mixed-gs": value for name, value in tuple(CASES.items())
+              if "-eh4-" in name})
 
 
 
@@ -259,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
     gs = args.case.startswith("eh4-gs-")
+    helper_gs = gs != args.case.endswith("-mixed-gs")
     jump = "longjmp-" in args.case
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
@@ -324,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
                              "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
+                             f"-DREGISTRATION_HELPER_GS={int(helper_gs)}",
                              *([f"-DREGISTRATION_MULTISTATE_EH4={int(eh4)}"] if case == 52 else []),
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),

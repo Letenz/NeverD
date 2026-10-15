@@ -17,7 +17,7 @@ _registration_jump_callee:
   xor dword ptr [ebp-8],eax
   xor eax,ebp
   mov [ebp-28],eax
-#if REGISTRATION_EXPECT_GS
+#if REGISTRATION_HELPER_GS
   mov [ebp-32],eax
 #endif
   lea eax,[ebp-16]
@@ -29,7 +29,7 @@ _registration_jump_callee:
   mov dword ptr [ecx],2
   mov dword ptr [ebp-4],-2
 #if REGISTRATION_CASE == 21
-#if REGISTRATION_EXPECT_GS
+#if REGISTRATION_HELPER_GS
   mov ecx,[ebp-32]
   xor ecx,ebp
   call "@__security_check_cookie@4"
@@ -54,7 +54,7 @@ _registration_jump_callee:
   ret
 .Lhandler:
   mov eax,95
-#if REGISTRATION_EXPECT_GS
+#if REGISTRATION_HELPER_GS
   mov ecx,[ebp-32]
   xor ecx,ebp
   call "@__security_check_cookie@4"
@@ -68,7 +68,7 @@ _registration_jump_callee:
 .section .rdata,"dr"
 .p2align 2
 .Lscope_table:
-#if REGISTRATION_EXPECT_GS
+#if REGISTRATION_HELPER_GS
   .long -32,0,-28,0
 #else
   .long -2,0,-28,0

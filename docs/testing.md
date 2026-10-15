@@ -4218,7 +4218,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats twenty capture/resumption scenarios with and without
+The EH4 jump matrix repeats twenty-three capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes, private leaf/graph calls with a live buffer, and
 registered EH3/EH4 helpers borrowing the parent buffer and a scalar object.
@@ -4242,7 +4242,7 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 109 scenarios; older compiler profiles keep their original membership.
+contains 115 scenarios; older compiler profiles keep their original membership.
 
 The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
 `longjmp-scalar-callee` variants retain the source helper's registration while
@@ -4255,6 +4255,8 @@ cookie addresses before lowering the preserved call.
 
 The corresponding `longjmp-eh4-callee`, `longjmp-eh4-returning-callee` and
 `longjmp-eh4-scalar-callee` variants use a separately registered EH4 helper.
+Their `-mixed-gs` variants invert only the helper's GS configuration, covering
+all four caller/helper cookie combinations without sharing their local proofs.
 `RegistrationSEHBoundCookieTests` mutates its actual cookie load width, global
 address, access direction, frame XOR, encoded scope pointer, and full/partial
 cookie stores. It also changes the live GS check parameter and requires source
