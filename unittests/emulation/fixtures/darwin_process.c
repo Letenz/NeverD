@@ -9706,6 +9706,190 @@ static __attribute__((noinline)) int mount_enumeration(int virtual_mode) {
   return 0;
 }
 
+/* Original compact link-vnode ownership workload; native and virtual records
+ * share byte/identity checks, while virtual ctime is explicitly supplied. */
+static int symbolic_owner_capture(u64 fd, union mode_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  return mode_result(339, fd, (u64)(out->bytes + 8), 0, 0, 0) ||
+         out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+         out->words[19] != 0xa5a5a5a5a5a5a5a5UL;
+}
+static int symbolic_owner_same(const union mode_stat_guard *a,
+                               const union mode_stat_guard *b) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a->words[i] != b->words[i])
+      return 1;
+  return 0;
+}
+static int symbolic_owner_stable(const union mode_stat_guard *before,
+                                 const union mode_stat_guard *after,
+                                 unsigned uid, unsigned gid, unsigned links,
+                                 unsigned literal, u64 sec, u64 nano) {
+  if (little_integer(after->bytes + 24, 4) != uid ||
+      little_integer(after->bytes + 28, 4) != gid ||
+      little_integer(after->bytes + 14, 2) != links ||
+      (before->words[1] & 0xffffffffffffUL) !=
+          (after->words[1] & 0xffffffffffffUL))
+    return 1;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (i != 1 && i != 3 && i != 9 && i != 10 &&
+        before->words[i] != after->words[i])
+      return 1;
+  return literal && (after->words[9] != sec || after->words[10] != nano);
+}
+static int symbolic_owner_emit(const union mode_stat_guard *out,
+                               unsigned kind) {
+  if (!(kind & 1))
+    return 0;
+  unsigned error;
+  return call(4, 1, (u64)out->bytes, 160, 0, 0, 0, &error) != 160 || error ||
+         secondary;
+}
+static __attribute__((noinline)) int symbolic_ownership(const char *path,
+                                                        unsigned kind) {
+  char moved[1024], alias[1024];
+  unsigned n = 0, error;
+  while (path[n] && n < 1017) {
+    moved[n] = alias[n] = path[n];
+    ++n;
+  }
+  if (path[n])
+    return 400;
+  const char ms[] = ".moved", as[] = ".alias";
+  for (unsigned i = 0; i != sizeof(ms); ++i)
+    moved[n + i] = ms[i];
+  for (unsigned i = 0; i != sizeof(as); ++i)
+    alias[n + i] = as[i];
+  if (kind >= 2 && mode_result(57, (u64) "../data", (u64)path, 0, 0, 0))
+    return 401;
+  const u64 link = call(5, (u64)path, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 402;
+  const u64 dup = call(41, link, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 402;
+  const u64 independent = call(5, (u64)path, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 402;
+  const u64 target = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 402;
+  union mode_stat_guard initial, data, current, other;
+  if (symbolic_owner_capture(link, &initial) ||
+      symbolic_owner_capture(target, &data) ||
+      (little_integer(initial.bytes + 12, 2) & 0170000) != 0120000 ||
+      (little_integer(data.bytes + 12, 2) & 0170000) != 0100000 ||
+      initial.words[2] == data.words[2])
+    return 403;
+  const unsigned uid = little_integer(initial.bytes + 24, 4),
+                 gid = (kind & 1) ? 20 : little_integer(initial.bytes + 28, 4);
+  const unsigned literal = kind & 1;
+  const u64 own_sec = kind >= 2 ? 101 : 181, own_nano = kind >= 2 ? 102 : 182;
+  if (directory_ownership_result(123, link, 0xffffffffUL, 0xffffffffUL, 0, 0,
+                                 0) ||
+      symbolic_owner_capture(link, &current) ||
+      symbolic_owner_same(&initial, &current))
+    return 404;
+  if (directory_ownership_result(123, dup, uid, gid, 0, 0, 0) ||
+      symbolic_owner_capture(independent, &current) ||
+      symbolic_owner_stable(&initial, &current, uid, gid, 1, literal, own_sec,
+                            own_nano) ||
+      symbolic_owner_capture(target, &other) ||
+      symbolic_owner_same(&data, &other) ||
+      symbolic_owner_emit(&current, kind) || symbolic_owner_emit(&other, kind))
+    return 405;
+  const u64 high = 0x13579bdf00000000UL;
+  if (directory_ownership_result(high | 468, high | 0xfffffffeUL, (u64)path,
+                                 high | uid, high | gid, high | 0x20, 0) ||
+      symbolic_owner_capture(link, &current) ||
+      symbolic_owner_stable(&initial, &current, uid, gid, 1, literal, own_sec,
+                            own_nano) ||
+      directory_ownership_result(16, (u64)path, 0xffffffffUL, gid, 0, 0, 0) ||
+      symbolic_owner_capture(target, &other) ||
+      symbolic_owner_stable(&data, &other, uid, gid, 1, literal, 81, 82) ||
+      symbolic_owner_emit(&other, kind))
+    return 406;
+  if (mode_result(471, 0xfffffffeUL, (u64)path, 0xfffffffeUL, (u64)alias, 0))
+    return 407;
+  const u64 hard = call(5, (u64)alias, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      directory_ownership_result(high | 123, high | hard, high | uid,
+                                 high | gid, 0, 0, 0) ||
+      symbolic_owner_capture(link, &current) ||
+      symbolic_owner_stable(&initial, &current, uid, gid, 2, literal, own_sec,
+                            own_nano) ||
+      symbolic_owner_emit(&current, kind))
+    return 408;
+  if (mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_ownership_result(468, -1UL, (u64)path, uid, gid, 0x20, 2) ||
+      directory_ownership_result(468, -1UL, (u64)moved, uid, gid, 0x20, 0) ||
+      symbolic_owner_capture(hard, &current) ||
+      symbolic_owner_stable(&initial, &current, uid, gid, 2, literal, own_sec,
+                            own_nano) ||
+      symbolic_owner_emit(&current, kind) ||
+      mode_result(10, (u64)moved, 0, 0, 0, 0) ||
+      mode_result(10, (u64)alias, 0, 0, 0, 0) ||
+      directory_ownership_result(123, link, uid, gid, 0, 0, 0) ||
+      symbolic_owner_capture(dup, &current) ||
+      symbolic_owner_stable(&initial, &current, uid, gid, 0, literal, own_sec,
+                            own_nano) ||
+      symbolic_owner_emit(&current, kind))
+    return 409;
+  if (mode_result(57, (u64) "../data", (u64)path, 0, 0, 0))
+    return 410;
+  const u64 replacement = call(5, (u64)path, 0x200000, 0, 0, 0, 0, &error);
+  union mode_stat_guard fresh;
+  if (error || secondary || symbolic_owner_capture(replacement, &fresh) ||
+      initial.words[2] == fresh.words[2] ||
+      directory_ownership_result(123, replacement, uid, gid, 0, 0, 0) ||
+      symbolic_owner_capture(replacement, &other) ||
+      symbolic_owner_stable(&fresh, &other, uid, gid, 1, literal, 101, 102) ||
+      symbolic_owner_emit(&other, kind) ||
+      directory_ownership_result(123, independent, uid, gid, 0, 0, 0) ||
+      symbolic_owner_capture(replacement, &current) ||
+      symbolic_owner_same(&other, &current) ||
+      symbolic_owner_capture(link, &current) ||
+      symbolic_owner_stable(&initial, &current, uid, gid, 0, literal, own_sec,
+                            own_nano) ||
+      symbolic_owner_emit(&current, kind))
+    return 411;
+  if (mode_result(57, (u64) "missing", (u64)alias, 0, 0, 0))
+    return 412;
+  const u64 dangling = call(5, (u64)alias, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      directory_ownership_result(123, dangling, uid, gid, 0, 0, 0) ||
+      directory_ownership_result(16, (u64)alias, uid, gid, 0, 0, 2) ||
+      directory_ownership_result(468, -1UL, (u64)alias, 0xffffffffUL,
+                                 0xffffffffUL, 0x20, 0) ||
+      mode_result(57, (u64)moved, (u64)moved, 0, 0, 0) ||
+      directory_ownership_result(16, (u64)moved, uid, gid, 0, 0, 62))
+    return 413;
+  const u64 cycle = call(5, (u64)moved, 0x200000, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      directory_ownership_result(123, cycle, 0xffffffffUL, 0xffffffffUL, 0, 0,
+                                 0) ||
+      directory_ownership_result(123, -1UL, uid, gid, 0, 0, 9) ||
+      directory_ownership_result(468, -1UL, 1, uid, gid, 8, 22) ||
+      mode_result(6, link, 0, 0, 0, 0) ||
+      directory_ownership_result(123, link, uid, gid, 0, 0, 9))
+    return 414;
+  const u64 remaining[] = {dup,         independent, target, hard,
+                           replacement, dangling,    cycle};
+  for (unsigned i = 0; i != 7; ++i)
+    if (mode_result(6, remaining[i], 0, 0, 0, 0))
+      return 415;
+  if (mode_result(10, (u64)path, 0, 0, 0, 0) ||
+      mode_result(10, (u64)alias, 0, 0, 0, 0) ||
+      mode_result(10, (u64)moved, 0, 0, 0, 0) ||
+      call(4, 1, (u64) "W", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 416;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -9777,6 +9961,18 @@ int main(int argc, char **argv, char **envp, char **apple) {
                                                                           : 0;
     const int status = argc < 3 ? 382 : symbolic_filesystem(argv[2], kind);
     return status ? status : 57;
+  }
+  if (equal(argv[1], "symbolic-ownership-mutations") ||
+      equal(argv[1], "virtual-symbolic-ownership") ||
+      equal(argv[1], "created-symbolic-ownership") ||
+      equal(argv[1], "virtual-created-symbolic-ownership")) {
+    const unsigned kind = equal(argv[1], "virtual-created-symbolic-ownership")
+                              ? 3
+                          : equal(argv[1], "created-symbolic-ownership") ? 2
+                          : equal(argv[1], "virtual-symbolic-ownership") ? 1
+                                                                         : 0;
+    const int status = argc < 3 ? 400 : symbolic_ownership(argv[2], kind);
+    return status ? status : 58;
   }
   if (equal(argv[1], "filesystem-observations")) {
     const int status = argc < 3 ? 349 : filesystem_observations(argv[2]);

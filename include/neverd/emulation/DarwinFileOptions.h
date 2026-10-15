@@ -220,12 +220,12 @@ struct DarwinModeMutationOptions {
 /// leases, AppleDouble/fallback, FSEvents/notifications/cache or other setattr
 /// lifecycle effects. Data, namespace and VM contracts remain independent.
 struct DarwinOwnershipMutationOptions {
-  /// Initial ordinary regular/directory grants. Active UID/GID requests supply
-  /// fixed resulting ctime, including equal IDs. Both UINT32_MAX IDs declare
-  /// successful provider execution with no effects, including unchanged ctime.
-  /// Empty declares only the environment for initial objects. Shared objects
-  /// retain authority; creation/name reuse do not inherit initial grants or
-  /// restore invalidated metadata.
+  /// Initial ordinary regular/directory/symbolic grants. Active UID/GID
+  /// requests supply fixed resulting ctime, including equal IDs. Both
+  /// UINT32_MAX IDs declare successful provider execution with no effects,
+  /// including unchanged ctime. Empty declares only the environment for initial
+  /// objects. Shared objects retain authority; creation/name reuse do not
+  /// inherit initial grants or restore invalidated metadata.
   std::map<std::string, DarwinFileTime> Objects;
   /// Independent provider for newly admitted ordinary regular objects. True
   /// requires the complete CreationPolicy and uses its fixed Mutation.Time
@@ -237,6 +237,10 @@ struct DarwinOwnershipMutationOptions {
   /// namespace authority is supplied; actual parent GID updates govern
   /// creation.
   bool CreatedDirectoryObjects = false;
+  /// Independent new-symbolic-object grant. True requires complete
+  /// CreationPolicy with Namespace and uses Mutation.Time as fixed ctime.
+  /// Neither the parent nor the followed target supplies ownership authority.
+  bool CreatedSymbolicLinkObjects = false;
 };
 
 /// Explicit ordinary regular/directory-vnode timestamp provider on a writable

@@ -40,6 +40,11 @@ linuxTimeOptionsFromJSON(const llvm::json::Value &Value) {
       if (!Enabled)
         return invalid(Name);
       Out.AdvanceOnIdle = *Enabled;
+    } else if (Name == field::NanosecondsPerInstruction) {
+      auto Rate = process_json::integer<uint64_t>(V);
+      if (!Rate)
+        return invalid(Name);
+      Out.NanosecondsPerInstruction = *Rate;
     } else if (Name == field::Clocks) {
       const auto *Clocks = V.getAsArray();
       if (!Clocks || Clocks->size() > linux_model::TimeClockLimit)

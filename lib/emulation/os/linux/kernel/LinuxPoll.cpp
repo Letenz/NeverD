@@ -19,7 +19,7 @@ std::optional<uint16_t> LinuxFiles::pollReadiness(int32_t FD,
     return PollInvalidDescriptor;
   // Process descriptors are opened only for known live tasks. Their fixed
   // observation has no exit notification or asynchronous lifetime changes.
-  if (std::holds_alternative<ProcessDescriptor>(I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second))
     return 0;
   unsupported(Result, PollDescriptorUnsupported);
   return std::nullopt;

@@ -331,7 +331,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             : nullptr;
     using ProviderType = std::remove_cvref_t<decltype(*Options)>;
     constexpr bool SymbolicLinkProvider =
-        std::is_same_v<ProviderType, DarwinFileSystemOptions>;
+        std::is_same_v<ProviderType, DarwinFileSystemOptions> ||
+        std::is_same_v<ProviderType, DarwinOwnershipMutationOptions>;
     constexpr bool DirectoryProvider =
         std::is_same_v<ProviderType, DarwinModeMutationOptions> ||
         std::is_same_v<ProviderType, DarwinOwnershipMutationOptions> ||
@@ -346,8 +347,10 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     const llvm::json::Value *CreatedSymbolicLinks = nullptr;
     if constexpr (SymbolicLinkProvider) {
       if (Environment)
-        CreatedSymbolicLinks =
-            Environment->get(field::FileSystemCreatedSymbolicLinkObjects);
+        CreatedSymbolicLinks = Environment->get(
+            std::is_same_v<ProviderType, DarwinOwnershipMutationOptions>
+                ? field::FileOwnershipCreatedSymbolicLinkObjects
+                : field::FileSystemCreatedSymbolicLinkObjects);
     }
     if (!Environment ||
         Environment->size() != 1 + unsigned(bool(Created)) +

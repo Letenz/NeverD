@@ -66,17 +66,31 @@ LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
     return PathKind::Directory;
   if (Options->Files.contains(Path))
     return RequiresDirectory ? PathKind::NotDirectory : PathKind::File;
-  // Catalogue prefixes denote directories; a known file used as a path
-  // component is ENOTDIR.
+  if (Options->Devices.contains(Path))
+    return RequiresDirectory ? PathKind::NotDirectory : PathKind::Device;
+  if (Options->SymbolicLinks.contains(Path))
+    return RequiresDirectory ? PathKind::LinkTraversal : PathKind::SymbolicLink;
+  // Catalogue prefixes denote directories; a link component requires an
+  // unmodeled traversal, while a regular file component is ENOTDIR.
   const std::string Prefix = Path + '/';
-  auto Next = Options->Files.lower_bound(Prefix);
-  if (Next != Options->Files.end() &&
-      llvm::StringRef(Next->first).starts_with(Prefix))
+  for (const auto *Catalogue : {&Options->Files, &Options->SymbolicLinks}) {
+    auto Next = Catalogue->lower_bound(Prefix);
+    if (Next != Catalogue->end() &&
+        llvm::StringRef(Next->first).starts_with(Prefix))
+      return PathKind::Directory;
+  }
+  auto Device = Options->Devices.lower_bound(Prefix);
+  if (Device != Options->Devices.end() &&
+      llvm::StringRef(Device->first).starts_with(Prefix))
     return PathKind::Directory;
   for (size_t I = Path.find('/', 1); I != std::string::npos;
-       I = Path.find('/', I + 1))
-    if (Options->Files.contains(Path.substr(0, I)))
+       I = Path.find('/', I + 1)) {
+    const auto Parent = Path.substr(0, I);
+    if (Options->Files.contains(Parent) || Options->Devices.contains(Parent))
       return PathKind::NotDirectory;
+    if (Options->SymbolicLinks.contains(Parent))
+      return PathKind::LinkTraversal;
+  }
   return PathKind::Missing;
 }
 
@@ -95,11 +109,15 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
   if (!Path)
     return unsupported(Result, FilePathForm);
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::Directory:
     if (Mode)
       return unsupported(Result, FileAccessMode);
@@ -125,9 +143,13 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   const size_t Slash = Path.rfind('/');
   const std::string Parent = Slash ? Path.substr(0, Slash) : "/";
   switch (lookupPath(Parent)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::File:
+  case PathKind::Device:
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
@@ -146,7 +168,10 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   const uint32_t LargeFile = ARM64 ? OpenLargeFileARM64 : OpenLargeFileX64;
   const uint32_t Directory = ARM64 ? OpenDirectoryARM64 : OpenDirectoryX64;
   const uint32_t Direct = ARM64 ? OpenDirectARM64 : OpenDirectX64;
-  if (Flags & ~(OpenCloseOnExec | LargeFile | Directory | Direct))
+  const uint32_t AccessMask = Options->Devices.empty() ? 0 : 3;
+  if ((Flags &
+       ~(OpenCloseOnExec | LargeFile | Directory | Direct | AccessMask)) ||
+      (Flags & 3) == 3)
     return unsupported(Result, FileOpenFlags);
   auto Imported = readPath(Address);
   if (!Imported)
@@ -162,12 +187,32 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
   switch (
       lookupPath(Path->Name, Path->RequiresDirectory || (Flags & Directory))) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
     return unsupported(Result, FileDirectory);
+  case PathKind::Device: {
+    if (Flags & Direct)
+      return unsupported(Result, FileDirectIO);
+    const auto &Device = Options->Devices.at(Path->Name);
+    if ((Flags & 3) != Device.AccessMode)
+      return unsupported(Result, DeviceOpenMode);
+    if (Device.OpenErrno)
+      return std::optional<uint64_t>(uint64_t(0) - Device.OpenErrno);
+    std::erase_if(DeviceDescriptions,
+                  [](const auto &D) { return D.expired(); });
+    auto Description =
+        std::make_shared<LinuxDeviceState>(LinuxDeviceState{&Device});
+    DeviceDescriptions.push_back(Description);
+    Descriptors.emplace(FD,
+                        std::make_shared<Descriptor>(std::move(Description)));
+    return std::optional<uint64_t>(FD);
+  }
   case PathKind::File:
     break;
   }
@@ -176,12 +221,14 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   // this catalogue does not infer a backing filesystem's direct-I/O policy.
   if (Flags & Direct)
     return unsupported(Result, FileDirectIO);
+  if (Flags & 3)
+    return unsupported(Result, FileOpenFlags);
   auto File = Options->Files.find(Path->Name);
   auto Metadata = Options->Metadata.find(Path->Name);
-  Descriptors.emplace(FD,
-                      OpenFile{File->second, Metadata == Options->Metadata.end()
-                                                 ? nullptr
-                                                 : &Metadata->second});
+  Descriptors.emplace(FD, std::make_shared<Descriptor>(OpenFile{
+                              File->second, Metadata == Options->Metadata.end()
+                                                ? nullptr
+                                                : &Metadata->second}));
   return std::optional<uint64_t>(FD);
 }
 

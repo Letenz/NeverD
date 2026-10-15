@@ -13,6 +13,9 @@ class Function;
 namespace neverd::llvmc {
 // Operates on the source-only clone, before any emission analyses are built.
 bool factorCommonBranchTests(llvm::Function &Function);
+// Select return-only PHIs on their original incoming edges so error paths can
+// print direct returns. Never duplicates a load, call or cleanup operation.
+bool distributeReturnEdges(llvm::Function &Function);
 } // namespace neverd::llvmc
 
 #endif

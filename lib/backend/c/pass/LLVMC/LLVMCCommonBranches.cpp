@@ -9,11 +9,88 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 
 namespace neverd::llvmc {
+
+bool distributeReturnEdges(llvm::Function &Function) {
+  using namespace llvm;
+  constexpr size_t MaxBlocks = 4096;
+  constexpr size_t MaxEdges = 4096;
+  if (Function.isDeclaration() || Function.size() > MaxBlocks ||
+      Function.hasPersonalityFn() ||
+      Function.getMetadata(windows_eh_md::FunctionAttachment) ||
+      Function.getMetadata(windows_eh_md::NativeAttachment) ||
+      Function.getParent()->getNamedMetadata(windows_eh_md::FunctionTable))
+    return false;
+  SmallVector<BasicBlock *, 8> Returns;
+  for (auto &Block : Function) {
+    if (Block.isEHPad())
+      return false;
+    if (isa<ReturnInst>(Block.getTerminator()))
+      Returns.push_back(&Block);
+  }
+  size_t Work = MaxEdges;
+  bool Changed = false;
+  for (auto *Block : Returns) {
+    auto *Return = cast<ReturnInst>(Block->getTerminator());
+    auto *Value = Return->getReturnValue();
+    auto *Phi = dyn_cast_or_null<PHINode>(Value);
+    if (Phi && Phi->getParent() != Block)
+      Phi = nullptr;
+    if (Block->hasAddressTaken() || pred_empty(Block) ||
+        Block->size() != (Phi ? 2u : 1u) || (Phi && !Phi->hasOneUse()))
+      continue;
+    SmallPtrSet<BasicBlock *, 8> Seen;
+    SmallVector<BasicBlock *, 8> Predecessors;
+    bool Valid = true;
+    for (auto *Pred : predecessors(Block)) {
+      if (!Work) {
+        Valid = false;
+        break;
+      }
+      --Work;
+      if (!isa<UncondBrInst, CondBrInst>(Pred->getTerminator())) {
+        Valid = false;
+        break;
+      }
+      if (Seen.insert(Pred).second)
+        Predecessors.push_back(Pred);
+    }
+    if (!Valid)
+      continue;
+    // The return block has no effects to duplicate. Its selected PHI operand
+    // already dominates the incoming edge, including when it is poison on an
+    // untaken edge. Calls, ordered loads and cleanup work remain in place.
+    for (auto *Pred : Predecessors) {
+      auto *Incoming = Phi ? Phi->getIncomingValueForBlock(Pred) : Value;
+      auto *Branch = Pred->getTerminator();
+      ReturnInst *NewReturn;
+      if (isa<UncondBrInst>(Branch)) {
+        NewReturn = ReturnInst::Create(Function.getContext(), Incoming,
+                                       Branch->getIterator());
+        Branch->eraseFromParent();
+      } else {
+        auto *Edge = BasicBlock::Create(Function.getContext(), "return.edge",
+                                        &Function, Pred->getNextNode());
+        NewReturn = ReturnInst::Create(Function.getContext(), Incoming, Edge);
+        for (unsigned I = 0; I < Branch->getNumSuccessors(); ++I)
+          if (Branch->getSuccessor(I) == Block)
+            Branch->setSuccessor(I, Edge);
+      }
+      NewReturn->copyMetadata(*Return);
+      NewReturn->setDebugLoc(Return->getDebugLoc());
+    }
+    Block->dropAllReferences();
+    Block->eraseFromParent();
+    Changed = true;
+  }
+  return Changed;
+}
 
 bool factorCommonBranchTests(llvm::Function &Function) {
   using namespace llvm;

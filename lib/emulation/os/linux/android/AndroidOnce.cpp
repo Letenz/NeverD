@@ -43,7 +43,7 @@ BionicResult Bionic::once(const NativeCallEvent &Call) {
   if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
   return std::optional<BionicValue>(
-      GuestCallback{A[1], std::nullopt, OnceCallback{A[0]}});
+      GuestCallback{A[1], {}, OnceCallback{A[0]}});
 }
 llvm::Error Bionic::finishOnce(const OnceCallback &Callback) {
   if (auto E = access(Callback.Control, once_abi::ControlBytes, Write))

@@ -313,5 +313,98 @@ TEST_F(LinuxMemory, UnsupportedAdviceCannotInventReturnsOrChangePolicy) {
   }
   EXPECT_EQ(Space->mappingGeneration(), Generation);
 }
+TEST_F(LinuxMemory, DeviceSnapshotsSharePagesAndRetireOnlyTheLastAlias) {
+  LinuxDeviceOptions Device;
+  auto &Input = Device.ReadOnlyMappings.emplace_back();
+  Input.Offset = PageSize;
+  Input.Bytes.resize(3 * PageSize);
+  for (size_t I = 0; I < Input.Bytes.size(); ++I)
+    Input.Bytes[I] = 0x31 + I / PageSize;
+  auto DeviceMap = [&](uint64_t Hint, uint64_t Size, uint64_t Offset) {
+    return llvm::cantFail(Memory->mapDevice(
+        {0, 0, {Hint, Size, 1, 1, 3, Offset}, {}}, &Device, Report));
+  };
+  ASSERT_EQ(DeviceMap(UnitHint, 3 * PageSize - 1, PageSize), UnitHint);
+  const uint64_t Alias = UnitHint + 4 * PageSize;
+  ASSERT_EQ(DeviceMap(Alias, 2 * PageSize, 2 * PageSize), Alias);
+  EXPECT_EQ(Space->mappedBytes(), 5 * PageSize);
+  EXPECT_EQ(RAM->allocatedBytes(), 3 * PageSize);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 0x31u);
+  EXPECT_EQ(*Space->readInteger(Alias, 1), 0x32u);
+  EXPECT_EQ(*Space->readInteger(Alias + 2 * PageSize - 1, 1), 0x33u);
+  EXPECT_FALSE(*Space->canAccess(Alias, 1, Write));
+  // A stopped observer writes backing solely to distinguish real aliasing
+  // from copied bytes. This is not a modeled guest write or device producer.
+  llvm::cantFail(Space->writeBacking(UnitHint + PageSize, {0x78}));
+  EXPECT_EQ(*Space->readInteger(Alias, 1), 0x78u);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint + PageSize, PageSize), 0u);
+  EXPECT_EQ(RAM->allocatedBytes(), 3 * PageSize);
+  ASSERT_EQ(call(ServiceKind::Munmap, Alias, 2 * PageSize), 0u);
+  EXPECT_EQ(RAM->allocatedBytes(), 2 * PageSize);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, 3 * PageSize), 0u);
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+  ASSERT_EQ(DeviceMap(UnitHint, 1, 2 * PageSize), UnitHint);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 0x32u);
+}
+
+TEST_F(LinuxMemory, DeviceProtectionPolicySplitsCoalescedRangesAndRetires) {
+  LinuxDeviceOptions Device;
+  Device.ReadOnlyMappings = {{0, std::vector<uint8_t>(2 * PageSize, 0x42)}};
+  ASSERT_EQ(map(PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, PageSize, 1), 0u);
+  ASSERT_EQ(llvm::cantFail(Memory->mapDevice(
+                {0, 0, {UnitHint + PageSize, 2 * PageSize, 1, 1, 3, 0}, {}},
+                &Device, Report)),
+            UnitHint + PageSize);
+  ASSERT_EQ(llvm::cantFail(Space->mappings()).size(), 1u);
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint, 3 * PageSize, 3),
+            uint64_t(-13));
+  EXPECT_TRUE(*Space->canAccess(UnitHint, 1, Write));
+  EXPECT_FALSE(*Space->canAccess(UnitHint + PageSize, 1, Write));
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint + PageSize, PageSize, 5),
+            uint64_t(-13));
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint + PageSize, 2 * PageSize, 0),
+            0u);
+  EXPECT_FALSE(*Space->canAccess(UnitHint + PageSize, 1, Read));
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint + PageSize, 2 * PageSize, 1),
+            0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint + PageSize, 1), 0x42u);
+  EXPECT_FALSE(call(ServiceKind::Madvise, UnitHint + PageSize, PageSize, 12));
+  EXPECT_FALSE(Memory->isMergeable(UnitHint + PageSize));
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint + PageSize, PageSize), 0u);
+  ASSERT_EQ(map(PageSize, UnitHint + PageSize), UnitHint + PageSize);
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint + PageSize, PageSize, 5), 0u);
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint + 2 * PageSize, PageSize, 3),
+            uint64_t(-13));
+}
+
+TEST_F(LinuxMemory, DeviceMappingRefusalAndBudgetsPublishNoPartialPages) {
+  LinuxDeviceOptions Device;
+  Device.ReadOnlyMappings = {
+      {PageSize, std::vector<uint8_t>(3 * PageSize, 0x51)}};
+  auto DeviceMap = [&](uint64_t Size, uint64_t Offset, uint64_t Prot = 1) {
+    return llvm::cantFail(Memory->mapDevice(
+        {0, 0, {UnitHint, Size, Prot, 1, 3, Offset}, {}}, &Device, Report));
+  };
+  EXPECT_EQ(DeviceMap(0, PageSize), uint64_t(-22));
+  EXPECT_EQ(DeviceMap(1, PageSize + 1), uint64_t(-22));
+  EXPECT_FALSE(DeviceMap(PageSize, 0));
+  EXPECT_FALSE(DeviceMap(2 * PageSize, 3 * PageSize));
+  EXPECT_FALSE(DeviceMap(PageSize, UINT64_MAX - 4095));
+  EXPECT_EQ(DeviceMap(PageSize, PageSize, 3), uint64_t(-13));
+  EXPECT_EQ(DeviceMap(PageSize, PageSize, 5), uint64_t(-13));
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+  EXPECT_EQ(Space->mappedBytes(), 0u);
+  ASSERT_EQ(map(6 * PageSize, UnitHeap), UnitHeap);
+  auto Generation = Space->mappingGeneration();
+  EXPECT_EQ(DeviceMap(3 * PageSize, PageSize), uint64_t(-12));
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+  EXPECT_EQ(RAM->allocatedBytes(), 6 * PageSize);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHeap, 6 * PageSize), 0u);
+  ASSERT_EQ(DeviceMap(3 * PageSize, PageSize, 0), UnitHint);
+  EXPECT_FALSE(*Space->canAccess(UnitHint, 1, Read));
+  EXPECT_EQ(call(ServiceKind::Mprotect, UnitHint, 3 * PageSize, 1), 0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint + 2 * PageSize, 1), 0x51u);
+}
 } // namespace
 } // namespace neverd::emulation

@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_LINUXFILEOPTIONS_H
 #define NEVERD_EMULATION_LINUXFILEOPTIONS_H
 
+#include "neverd/emulation/LinuxDeviceOptions.h"
 #include "neverd/emulation/LinuxTimeOptions.h"
 
 #include <cstdint>
@@ -42,6 +43,13 @@ struct LinuxFileOptions {
   /// Optional status observations keyed by an existing Files path. Absent
   /// metadata is unknown. These observations do not change catalogue access.
   std::map<std::string, LinuxFileMetadata> Metadata;
+  /// Immutable link target bytes, without a trailing NUL, for readlink queries.
+  /// Keys share the Files namespace. Targets are observations, not host paths;
+  /// traversal, link metadata and descriptor-backed links remain unmodeled.
+  std::map<std::string, std::vector<uint8_t>> SymbolicLinks;
+  /// Explicit device sessions in the same closed namespace. These are input
+  /// contracts, not inferred drivers, regular files, or host device handles.
+  std::map<std::string, LinuxDeviceOptions> Devices;
 };
 } // namespace neverd::emulation
 #endif

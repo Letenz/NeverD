@@ -55,11 +55,6 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       return failure(diagnostic::SnapshotLimits);
     ReportSize += Read.Size;
   }
-  for (const auto &[Name, Value] : Native.Properties)
-    if (Name.empty() || Name.find('\0') != std::string::npos ||
-        Value.find('\0') != std::string::npos || Value.size() >= 92 ||
-        Name.size() > Options.MemoryLimit)
-      return failure(diagnostic::Property);
   uint64_t SymbolCount = 0, CatalogBytes = 0;
   if (Native.Libraries.size() > 256)
     return failure(diagnostic::LibraryCount);
@@ -102,6 +97,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto Linked = loadImage(**Space, *Image, Options);
   if (!Linked)
     return Linked.takeError();
+  auto Properties = initializeProperties(**Space, Options, *Resources);
+  if (!Properties)
+    return Properties.takeError();
+  Linked->Properties = std::move(*Properties);
   uint64_t StackBase = linux_model::StackTop - Options.StackSize;
   if (auto E = (*Space)->map(StackBase, Options.StackSize,
                              Read | Write | UserAccessible))
@@ -220,11 +219,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return true;
   };
   auto StartCallback = [&](const GuestCallback &Callback) -> llvm::Error {
-    // The suspended import's live stack remains in place. Both supported
+    // The suspended import's live stack remains in place. All admitted
     // callback signatures fit the ordinary scalar register ABI.
-    if (Callback.Argument)
-      if (auto E = CPU.writeRegister(Calls->info().Arguments[0],
-                                     {*Callback.Argument, 0}))
+    if (Callback.Arguments.size() > Calls->info().Arguments.size())
+      return failure(diagnostic::CallbackArguments);
+    for (size_t I = 0; I < Callback.Arguments.size(); ++I)
+      if (auto E = CPU.writeRegister(Calls->info().Arguments[I],
+                                     {Callback.Arguments[I], 0}))
         return E;
     if (auto E = CPU.writeRegister(Calls->info().Link, {ReturnPC, 0}))
       return E;
@@ -253,6 +254,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       NeedSchedule = false;
       QuantumRemaining = Options.InstructionQuantum;
     }
+    if (auto E = Kernel.synchronizeDevices()) {
+      RuntimeFailure(std::move(E));
+      break;
+    }
     TraceThreadID = Threads.id();
     auto &Callbacks = Threads.callbacks();
     const uint64_t Before = Resources->instructions();
@@ -273,6 +278,11 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     Result.PC = (*PC)[0];
+    if ((Exit->Kind == SessionExitKind::Quantum ||
+         (Exit->Kind == SessionExitKind::CPU && Result.LastCPUExit &&
+          Result.LastCPUExit->Kind == ExecutionExitKind::ServiceRequest)) &&
+        !Kernel.clock().accountInstructions(Resources->instructions(), Result))
+      break;
     if (Exit->Kind == SessionExitKind::Quantum) {
       NeedSchedule = true;
       continue;

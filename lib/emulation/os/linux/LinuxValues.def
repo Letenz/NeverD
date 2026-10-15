@@ -58,12 +58,17 @@ NEVERD_LINUX_VALUE(NoEntry, 2)
 NEVERD_LINUX_VALUE(AlreadyExists, 17)
 NEVERD_LINUX_VALUE(NotDirectory, 20)
 NEVERD_LINUX_VALUE(TooManyFiles, 24)
+NEVERD_LINUX_VALUE(ValueOverflow, 75)
 NEVERD_LINUX_VALUE(IllegalSeek, 29)
 NEVERD_LINUX_VALUE(NameTooLong, 36)
 NEVERD_LINUX_VALUE(RangeError, 34)
 NEVERD_LINUX_VALUE(XAttrNameLimit, 256)
 NEVERD_LINUX_VALUE(FileDescriptorLimit, 4096)
 NEVERD_LINUX_VALUE(FileCountLimit, 256)
+NEVERD_LINUX_VALUE(DeviceIoctlLimit, 1024)
+NEVERD_LINUX_VALUE(DeviceMappingLimit, 16)
+NEVERD_LINUX_VALUE(DeviceMappingPageSize, 4096)
+NEVERD_LINUX_VALUE(DeviceMemoryLimit, 16)
 NEVERD_LINUX_VALUE(FileByteLimit, 16 * 1024 * 1024)
 NEVERD_LINUX_VALUE(FilePathLimit, 4096)
 NEVERD_LINUX_VALUE(FileNameLimit, 255)
@@ -90,6 +95,7 @@ NEVERD_LINUX_VALUE(SeekEnd, 2)
 NEVERD_LINUX_VALUE(SeekHole, 4)
 NEVERD_LINUX_VALUE(MmapBase, 0x100000000ULL)
 NEVERD_LINUX_VALUE(MapPrivate, 0x02)
+NEVERD_LINUX_VALUE(MapShared, 0x01)
 NEVERD_LINUX_VALUE(MapAnonymous, 0x20)
 NEVERD_LINUX_VALUE(ProtRead, 0x01)
 NEVERD_LINUX_VALUE(ProtWrite, 0x02)
@@ -104,9 +110,11 @@ NEVERD_LINUX_VALUE(SignalActionSize, 32)
 NEVERD_LINUX_VALUE(SignalMaskSize, 8)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(Dup2, 33, 2)
 NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
 NEVERD_LINUX_X64_SERVICE(Access, 21, 2)
 NEVERD_LINUX_X64_SERVICE(Mkdir, 83, 2)
+NEVERD_LINUX_X64_SERVICE(Readlink, 89, 3)
 NEVERD_LINUX_X64_SERVICE(ArchPrctl, 158, 2)
 NEVERD_LINUX_X64_SERVICE(Time, 201, 1)
 #endif
@@ -161,8 +169,12 @@ NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
 NEVERD_LINUX_SERVICE(MkdirAt, 258, 34, 3)
+NEVERD_LINUX_SERVICE(ReadlinkAt, 267, 78, 4)
 NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
+NEVERD_LINUX_SERVICE(Ioctl, 16, 29, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
+NEVERD_LINUX_SERVICE(Dup, 32, 23, 1)
+NEVERD_LINUX_SERVICE(Dup3, 292, 24, 3)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
 NEVERD_LINUX_SERVICE(Fstat, 5, 80, 2)
 NEVERD_LINUX_SERVICE(FstatAt, 262, 79, 4)
@@ -241,6 +253,20 @@ NEVERD_LINUX_DIAGNOSTIC(
     FileInputsMissing, "Linux file services require explicit linux_files input")
 NEVERD_LINUX_DIAGNOSTIC(FileOpenFlags,
                         "unsupported Linux memory-file open flags")
+NEVERD_LINUX_DIAGNOSTIC(DeviceOptions,
+                        "invalid linux_files device transaction contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceOperation,
+                        "Linux device operation has no explicit contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceOpenMode,
+                        "Linux device open access mode differs from its contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceIoctlMissing,
+                        "Linux ioctl has no matching next device transaction")
+NEVERD_LINUX_DIAGNOSTIC(DeviceIoctlMemory,
+                        "Linux ioctl memory does not satisfy its explicit contract")
+NEVERD_LINUX_DIAGNOSTIC(DeviceMappingMissing,
+                        "Linux mmap has no matching read-only device pages")
+NEVERD_LINUX_DIAGNOSTIC(DeviceMappingAdvice,
+                        "Linux device mapping advice is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(
     XAttrKernel, "extended attribute queries require explicit released GKI input")
 NEVERD_LINUX_DIAGNOSTIC(
@@ -248,6 +274,14 @@ NEVERD_LINUX_DIAGNOSTIC(
 NEVERD_LINUX_DIAGNOSTIC(FileDirectIO,
                         "direct I/O for this catalogue file is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FilePathForm, "unsupported Linux memory-file path form")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkTarget,
+                        "linux_files symbolic links require nonempty NUL-free targets")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkTraversal,
+                        "Linux symbolic-link traversal or metadata is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkDescriptor,
+                        "Linux descriptor-backed symbolic links are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkPartialOutput,
+                        "partial Linux readlink output fault is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileAccessMode,
                         "Linux memory-file permission checks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileDirectory,

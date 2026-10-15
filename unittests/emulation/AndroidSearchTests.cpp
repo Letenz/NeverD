@@ -211,6 +211,87 @@ TEST_P(AndroidSearch, NamedCallsRetainProviderAndRejectClosedLibrary) {
   }
 }
 
+TEST_P(AndroidSearch, DecimalIntegersPreserveWidthsPrefixesAndErrno) {
+  struct Case {
+    const char *Text;
+    int64_t Expected;
+  };
+  const Case Cases[] = {{"", 0},
+                        {" \t\n\r\v\f-123tail", -123},
+                        {"+007", 7},
+                        {"-0", 0},
+                        {"-+12", 0},
+                        {" +", 0},
+                        {"0x10", 0},
+                        {"012", 12},
+                        {"7.5", 7},
+                        {"\xff"
+                         "123",
+                         0},
+                        {"2147483647", INT32_MAX},
+                        {"-2147483648", INT32_MIN},
+                        {"9223372036854775807", INT64_MAX},
+                        {"-9223372036854775808", INT64_MIN}};
+  for (const auto &C : Cases) {
+    auto &Bytes = Options.Android->Memory[0].Bytes;
+    llvm::StringRef Text(C.Text);
+    Bytes.assign(Text.begin(), Text.end());
+    Bytes.push_back(0);
+    for (uint64_t Mode = 0; Mode != 3; ++Mode) {
+      SCOPED_TRACE(testing::Message() << Mode << ':' << C.Text);
+      if (Mode == 0 && (C.Expected > INT32_MAX || C.Expected < INT32_MIN))
+        continue;
+      auto R = run("decimal_supplied", {Buffer, Mode, Buffer + 64});
+      returned(R, uint64_t(C.Expected));
+      ASSERT_FALSE(R.MemorySnapshots.empty());
+      EXPECT_EQ(llvm::support::endian::read32le(
+                    R.MemorySnapshots[0].Bytes.data() + 64),
+                733u);
+    }
+  }
+  Options.Android->Libraries["libsearch.so"] = {"atoi"};
+  Options.Android->Memory[0].Bytes = {'-', '3', 0};
+  auto R = run("decimal_dynamic", {Buffer, 0});
+  returned(R, uint64_t(-3));
+  EXPECT_EQ(R.NativeCalls.back().Library, "libsearch.so");
+  auto Closed = run("decimal_dynamic", {Buffer, 1});
+  EXPECT_EQ(Closed.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_FALSE(Closed.NativeCalls.back().Result);
+}
+TEST_P(AndroidSearch,
+       DecimalConversionStopsAtTheFirstNondigitAndRejectsOverflow) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  for (uint64_t Mode = 0; Mode != 3; ++Mode) {
+    Bytes.assign(4096, 0xa5);
+    Bytes[4094] = '3';
+    Bytes[4095] = 'x';
+    returned(run("decimal_supplied", {PageEnd - 2, Mode, Buffer}), 3);
+    Bytes[4095] = 0;
+    returned(run("decimal_supplied", {PageEnd - 2, Mode, Buffer}), 3);
+    Bytes[4095] = '4';
+    rejected(run("decimal_supplied", {PageEnd - 2, Mode, Buffer}),
+             Mode == 0   ? "atoi"
+             : Mode == 1 ? "atol"
+                         : "atoll",
+             "invalid guest pointer");
+    for (const char *Text :
+         {Mode == 0 ? "2147483648" : "9223372036854775808",
+          Mode == 0 ? "-2147483649" : "-9223372036854775809"}) {
+      llvm::StringRef Input(Text);
+      Bytes.assign(Input.begin(), Input.end());
+      Bytes.push_back(0);
+      auto R = run("decimal_supplied", {Buffer, Mode, Buffer + 64});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(R.Diagnostic.find("out-of-range decimal"), std::string::npos);
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      ASSERT_FALSE(R.MemorySnapshots.empty());
+      EXPECT_EQ(llvm::support::endian::read32le(
+                    R.MemorySnapshots[0].Bytes.data() + 64),
+                0u);
+    }
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Compiled, AndroidSearch,
     testing::Combine(testing::Values("search-O0-none", "search-O0-android",
