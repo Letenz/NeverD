@@ -116,6 +116,7 @@
           "neverd_pointer_at",
           "neverd_pointer_refs_json",
           "neverd_prepare_function",
+          "neverd_prepare_function_view",
           "neverd_project_name",
           "neverd_proof_status_name",
           "neverd_read_bytes",
