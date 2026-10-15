@@ -25,7 +25,8 @@ struct SourceLimits {
   uint64_t ParserBytes, ParserAllocations, ParserSeconds;
 };
 
-/// Recovery permits readable export only; semantic consumers reject its model.
+/// Recovery permits bounded source export only; semantic consumers reject its
+/// model. Recovery owners do not change semantic-consumer admission.
 SourceLimits sourceLimits(SourceAnalysisMode Mode);
 SourceLimits sourceLimits(const SourceAnalysis &Source);
 uint64_t sourceWorkLimit(const SourceAnalysis &Source, uint64_t Interactive);

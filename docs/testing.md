@@ -791,6 +791,28 @@ The same target compares static scalar, pointer, array and packed-record alignme
 
 ## Offline web analysis
 
+`WebBunProjectSource.*` checks parser-confirmed module literal relocation and
+unchanged syntax, unsupported requests and unresolved runtime paths.
+`WebBunProjectRequire.*` checks exact imported require aliases against the
+shared lexical/module owners, including writes, shadows, optional/spread
+calls, dynamic scope, source changes and private proof construction.
+`WebBunProject.*` checks fixed filenames, preserved source/asset bytes, shared
+text decoding, exclusive output, aggregate record/string budgets and complete
+diagnostic/readable-source accounting. `WebLargeSource` checks that module
+inventory uses the same explicit Large work profile as bindings/navigation;
+Recovery models remain rejected. The optional development target
+`neverd-web-bun-project` exports a reconstruction candidate from one admitted
+Bun executable; it does not build or run it. Build and isolated runtime
+receipts are separate acceptance evidence, never implied by an export passing.
+
+`WebBunSemanticIndex.*` checks private names and source coordinates, shared
+module/feature evidence, rejection of comment/substring false matches, exact
+UTF-16 names, bounded partial refusals and read-back-bound navigation output.
+The optional `neverd-web-bun-semantic-index` development driver takes an admitted
+Bun executable and a new output directory. Its inferred role labels and
+captured-name links do not establish runtime API identity or original project
+structure; no target code is executed.
+
 `WebWindowsHost.*` qualifies native Windows x64 local NTFS capture, junction
 and alternate-stream refusal, replacement, Unicode identity, private unlinked
 spools, concurrent range reads and export/rollback ownership. The required
