@@ -65,8 +65,8 @@ llvm::Error validateTimeOptions(const LinuxTimeOptions &Options) {
     if ((CPU || ID == ClockProcessCPU || ID == ClockThreadCPU) &&
         Value.Seconds < 0)
       return failure(TimeCPUObservation);
-    if (Options.AdvanceOnIdle && !advancingClock(ID) && ID != ClockProcessCPU &&
-        !CPU)
+    if ((Options.AdvanceOnIdle || Options.NanosecondsPerInstruction) &&
+        !advancingClock(ID) && ID != ClockProcessCPU && !CPU)
       return failure(TimeAdvanceClock);
   }
   return llvm::Error::success();
@@ -120,7 +120,8 @@ std::optional<uint64_t> LinuxClock::deadline(const LinuxTimespec &Duration,
 }
 
 bool LinuxClock::advanceTo(uint64_t Deadline, ProcessResult &Result) {
-  assert(advancesOnIdle() && Deadline >= Elapsed && Deadline <= INT64_MAX);
+  assert(Options && (advancesOnIdle() || Options->NanosecondsPerInstruction) &&
+         Deadline >= Elapsed && Deadline <= INT64_MAX);
   for (const auto &[ID, Value] : Options->Clocks) {
     if (advancingClock(ID) && !shifted(Value, Deadline)) {
       unsupported(Result, TimeAdvanceOverflow);
@@ -128,6 +129,23 @@ bool LinuxClock::advanceTo(uint64_t Deadline, ProcessResult &Result) {
     }
   }
   Elapsed = Deadline;
+  return true;
+}
+
+bool LinuxClock::accountInstructions(uint64_t Total, ProcessResult &Result) {
+  if (!Options || !Options->NanosecondsPerInstruction)
+    return true;
+  if (Total < AccountedInstructions ||
+      Total - AccountedInstructions > (uint64_t(INT64_MAX) - Elapsed) /
+                                          Options->NanosecondsPerInstruction) {
+    unsupported(Result, TimeAdvanceOverflow);
+    return false;
+  }
+  if (!advanceTo(Elapsed + (Total - AccountedInstructions) *
+                               Options->NanosecondsPerInstruction,
+                 Result))
+    return false;
+  AccountedInstructions = Total;
   return true;
 }
 } // namespace neverd::emulation::linux_model

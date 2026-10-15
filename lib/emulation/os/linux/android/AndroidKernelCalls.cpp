@@ -30,16 +30,29 @@ BionicResult Bionic::kernelCall(std::optional<linux_model::ServiceKind> Kind,
       Kind ? Kernel.handle(*Kind, Event, Thread) : Kernel.handle(Event, Thread);
   if (!Returned)
     return Returned.takeError();
-  if (!*Returned && Threads && Threads->waitSleep())
+  return kernelResult(*Returned);
+}
+
+BionicResult Bionic::kernelResult(std::optional<uint64_t> Returned) {
+  if (!Returned && Threads && Threads->waitSleep())
     return std::optional<BionicValue>(GuestThreadWait{});
-  if (!*Returned)
+  if (!Returned)
     return std::optional<BionicValue>();
-  if (**Returned >= uint64_t(0) - 4095) {
-    if (auto E = setErrno(uint64_t(0) - **Returned))
+  if (*Returned >= uint64_t(0) - 4095) {
+    if (auto E = setErrno(uint64_t(0) - *Returned))
       return std::move(E);
     return value(UINT64_MAX);
   }
-  return value(**Returned);
+  return value(*Returned);
+}
+
+BionicResult Bionic::usleep(const NativeCallEvent &Call) {
+  // Bionic's useconds_t is unsigned 32-bit, including values >= one second.
+  const uint64_t Nanoseconds = uint64_t(uint32_t(Call.Arguments[0])) * 1000;
+  const LinuxTimespec Duration{int64_t(Nanoseconds / 1000000000),
+                               int64_t(Nanoseconds % 1000000000)};
+  return kernelResult(linux_model::sleepRelative(
+      Duration, Kernel.clock(), Threads ? Threads->kernel() : nullptr, Result));
 }
 
 BionicResult Bionic::syscall(const NativeCallEvent &Call) {

@@ -272,6 +272,92 @@ int main(void) {
 )");
 }
 
+TEST(LLVMCVoidAnalysis, FreezeOfIntegerCallAndLoadKeepsOneReturnedValue) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("freeze-call-join", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *I32 = llvm::Type::getInt32Ty(Context);
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I32, {I64, Pointer, I32}, false),
+      llvm::GlobalValue::ExternalLinkage, "call_or_load", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *Native = llvm::BasicBlock::Create(Context, "native", Function);
+  auto *Memory = llvm::BasicBlock::Create(Context, "memory", Function);
+  auto *Join = llvm::BasicBlock::Create(Context, "join", Function);
+  llvm::IRBuilder<> Builder(Entry);
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Function->getArg(2), Builder.getInt32(0)), Native,
+      Memory);
+  Builder.SetInsertPoint(Native);
+  auto Callee = Module.getOrInsertFunction(
+      "integer_service", llvm::FunctionType::get(I32, {I64}, false));
+  auto *Returned = Builder.CreateCall(Callee, {Function->getArg(0)});
+  Builder.CreateBr(Join);
+  Builder.SetInsertPoint(Memory);
+  auto *Loaded = Builder.CreateLoad(I32, Function->getArg(1));
+  Builder.CreateBr(Join);
+  Builder.SetInsertPoint(Join);
+  auto *Merged = Builder.CreatePHI(I32, 2);
+  Merged->addIncoming(Returned, Native);
+  Merged->addIncoming(Loaded, Memory);
+  auto *Chosen = Builder.CreateFreeze(Merged, "chosen");
+  Builder.CreateStore(Chosen, Function->getArg(1));
+  Builder.CreateRet(Builder.CreateXor(Chosen, Builder.getInt32(0x9713)));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"(
+static unsigned service_calls;
+uint32_t integer_service(uint64_t value) {
+  ++service_calls;return (uint32_t)(value ^ (value >> 37));
+}
+int main(void) {
+  for (unsigned use = 0; use != 2; ++use)
+    for (uint64_t i = 0; i != 512; ++i) {
+      uint64_t input = UINT64_C(0xf72385317ac45281) * (i + 1);
+      uint32_t cell = (uint32_t)i * UINT32_C(0x953170e9);
+      uint32_t expected = use ? (uint32_t)(input ^ (input >> 37)) : cell;
+      service_calls = 0;
+      if (call_or_load(input, &cell, use) != (expected ^ 0x9713) ||
+          cell != expected || service_calls != use) return 1;
+    }
+  return 0;
+}
+)";
+  for (const char *Level : {"-O0", "-O2"})
+    compileAndRun(Source,
+                  {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+}
+
+TEST(LLVMCVoidAnalysis, FreezeOfIntegerCallRejectsUnprovedOperands) {
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("freeze-call-operand", Context);
+    auto *I64 = llvm::Type::getInt64Ty(Context);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(I64, {I64, I64}, false),
+        llvm::GlobalValue::ExternalLinkage, "unproved_call", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    llvm::Value *Operand =
+        Builder.CreateShl(Function->getArg(0), Function->getArg(1));
+    if (Case == 1)
+      Operand = llvm::UndefValue::get(I64);
+    if (Case == 2)
+      Operand = llvm::PoisonValue::get(I64);
+    auto Callee = Module.getOrInsertFunction(
+        "integer_service", llvm::FunctionType::get(I64, {I64}, false));
+    Builder.CreateRet(
+        Builder.CreateFreeze(Builder.CreateCall(Callee, {Operand})));
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+                 std::runtime_error);
+  }
+}
+
 TEST(LLVMCVoidAnalysis,
      FreezeOfDivisionRecurrenceRequiresDefinedDivisionInputs) {
   for (bool FreezeInputs : {false, true}) {

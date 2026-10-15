@@ -47,6 +47,9 @@ struct AndroidNativeOptions {
   std::string EntrySymbol;
   std::optional<uint64_t> EntryAddress;
   std::vector<uint64_t> Arguments;
+  /// Complete immutable property snapshot. Values are at most 91 bytes.
+  /// Find/read/enumeration share stable guest records with generation zero;
+  /// enumeration uses name order, not an inferred device-area traversal order.
   std::map<std::string, std::string> Properties;
   std::vector<NativeMemoryRegion> Memory;
   std::vector<NativeMemoryRead> ReadMemory;

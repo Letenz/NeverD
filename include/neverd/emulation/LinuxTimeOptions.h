@@ -31,6 +31,10 @@ struct LinuxTimeOptions {
   /// sleep deadline only when no guest thread can run. Realtime, monotonic and
   /// boottime observations advance; process CPU observations remain fixed.
   bool AdvanceOnIdle = false;
+  /// Explicit deterministic virtual wall-time rate. Zero preserves a frozen
+  /// clock during CPU execution. Account admitted instructions at stopped
+  /// execution boundaries; this is not measured hardware or process CPU time.
+  uint64_t NanosecondsPerInstruction = 0;
 };
 } // namespace neverd::emulation
 #endif

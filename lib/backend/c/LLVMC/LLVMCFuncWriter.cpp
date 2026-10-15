@@ -514,6 +514,18 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
         Analysis.Inlinable.insert(&Inst);
         continue;
       }
+      // A constant field address rooted directly in an SSA pointer argument
+      // has no observation to capture. Repeating its existing expression does
+      // not repeat a load, move a memory access or assume that the field is
+      // unchanged across calls. Keep dynamic indices and loaded bases under
+      // the ordinary single-use/materialization rules.
+      if (const auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&Inst);
+          GEP && !GEP->getType()->isVectorTy() && GEP->getNumIndices() <= 16 &&
+          GEP->hasAllConstantIndices() &&
+          llvm::isa<llvm::Argument>(GEP->getPointerOperand())) {
+        Analysis.Inlinable.insert(&Inst);
+        continue;
+      }
       // Each use spells a frame byte address from the frame itself, never by
       // this name, so a statement for it would be a dead assignment.
       if (llvm::isa<llvm::BinaryOperator, llvm::GetElementPtrInst,
@@ -2330,6 +2342,9 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UseScalarExpressionTypes = false;
+  RawMemoryUpdates.clear();
+  RawMemoryUpdateInputs.clear();
+  RawMemoryExpressionLoads.clear();
   ScopedScalarNames.clear();
   Dominators.recalculate(Fn);
   NextVar = 0;
@@ -2605,6 +2620,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   collectOmittedInlinedImmediates(Fn);
   collectTypedHomes(Fn);
   markSinglePrintedUseCalls(Fn);
+  planRawMemoryUpdates(Fn);
   scanReferencedBlocks(Fn);
   // The scan predicts references and layout; it has not emitted any region.
   // Re-evaluate ownership during the statement walk, where folded conditions
@@ -8132,6 +8148,24 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
   }
   if (CurTo)
     writePhiCopies(CurFrom, CurTo, Indent);
+  if (EmitGoto && CurTo && CurTo->size() == 1 &&
+      CurTo->getSinglePredecessor() == CurFrom && !CurTo->hasAddressTaken() &&
+      !isReservedEHNormalTarget(CurTo)) {
+    const auto &Function = *CurTo->getParent();
+    if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(CurTo->getTerminator());
+        Return && !Function.hasPersonalityFn() &&
+        !Function.getMetadata(windows_eh_md::FunctionAttachment) &&
+        !Function.getMetadata(windows_eh_md::NativeAttachment) &&
+        !Function.getParent()->getNamedMetadata(windows_eh_md::FunctionTable)) {
+      // This edge owns an effect-free return block. PHI selection happened in
+      // the source clone; print the same return here without a status local or
+      // a jump to a one-instruction label. Cleanup/EH continuations stay whole.
+      writeInstruction(*const_cast<llvm::ReturnInst *>(Return), Indent);
+      InlinedFallthroughBlocks.insert(CurTo);
+      ReferencedBlocks.erase(CurTo);
+      return;
+    }
+  }
   if (const llvm::BasicBlock *Tail = phiFedCallTail(CurTo);
       Tail && !isReservedEHNormalTarget(Tail)) {
     const llvm::CallInst *Call = nullptr;

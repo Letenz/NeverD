@@ -13,6 +13,61 @@
 #include <array>
 
 namespace neverd::emulation::android_model {
+BionicResult Bionic::decimalInteger(const NativeCallEvent &Call) {
+  const bool Narrow = Call.Name == symbol::Atoi;
+  auto Parsed =
+      decimalValue(Narrow, [&](uint64_t I) -> llvm::Expected<uint8_t> {
+        if (Call.Arguments[0] > UINT64_MAX - I)
+          return failure(diagnostic::StringAddressOverflow);
+        return byte(Call.Arguments[0] + I);
+      });
+  if (!Parsed)
+    return Parsed.takeError();
+  return *Parsed ? value(**Parsed) : std::optional<BionicValue>();
+}
+
+llvm::Expected<std::optional<uint64_t>> Bionic::decimalValue(
+    bool Narrow,
+    llvm::function_ref<llvm::Expected<uint8_t>(uint64_t)> ReadByte) {
+  const uint64_t PositiveLimit = Narrow ? INT32_MAX : INT64_MAX;
+  enum class Phase { Space, Sign, Digits };
+  Phase P = Phase::Space;
+  bool Negative = false;
+  uint64_t Number = 0;
+  for (uint64_t I = 0; I < Options.MemoryLimit; ++I) {
+    auto C = ReadByte(I);
+    if (!C)
+      return C.takeError();
+    if (P == Phase::Space) {
+      if (*C == ' ' || (*C >= '\t' && *C <= '\r'))
+        continue;
+      P = Phase::Sign;
+    }
+    if (P == Phase::Sign) {
+      P = Phase::Digits;
+      if (*C == '+' || *C == '-') {
+        Negative = *C == '-';
+        continue;
+      }
+    }
+    if (*C < '0' || *C > '9') {
+      const uint64_t Value = Negative ? uint64_t(0) - Number : Number;
+      return std::optional<uint64_t>(Narrow ? uint32_t(Value) : Value);
+    }
+    const unsigned Digit = *C - '0';
+    const uint64_t Limit = PositiveLimit + uint64_t(Negative);
+    if (Number > (Limit - Digit) / 10) {
+      // Only defined, representable conversions are admitted. Do not choose
+      // libc-specific overflow, narrowing or errno behavior for the caller.
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic = diagnostic::DecimalRange;
+      return std::optional<uint64_t>();
+    }
+    Number = Number * 10 + Digit;
+  }
+  return failure(diagnostic::StringScanLimit);
+}
+
 BionicResult Bionic::findCharacter(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   llvm::StringRef Name(Call.Name);

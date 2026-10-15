@@ -95,6 +95,9 @@ public:
   /// (CSourceMap::Names), as HighC does, from the ordinary render.
   void recordSourceNames(const llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
+  std::string sourceScalarType(llvm::Type *Type, bool Signed) const;
+  std::string sourceFunctionDeclaration(const llvm::Function &Fn,
+                                        llvm::StringRef Declarator) const;
   /// The C name of global \p Name: the module names a global by its symbol
   /// (cNameOfLLVMName), but a declaration of an import by the name its
   /// import entry lists, which is already the C name on some formats.
@@ -130,6 +133,9 @@ public:
   std::string fcmpInlineText(const llvm::FCmpInst &Compare);
   std::string gepExpr(const llvm::GEPOperator &GEP);
   bool writeRawMemoryCopy(llvm::Instruction &Inst, int Indent);
+  void planRawMemoryUpdates(llvm::Function &Fn);
+  bool writeRawMemoryUpdate(const llvm::StoreInst &Store, int Indent);
+  std::string rawMemoryLoadText(const llvm::LoadInst &Load);
   /// A call whose result is printed at exactly one later instruction is
   /// inlined there. Ctor returns, noreturn, and values with two printed
   /// uses stay assigned. A call that mentions a slot is not moved past a
@@ -747,6 +753,12 @@ public:
   /// Fixed expression boundaries, chosen before declarations or assignments
   /// can be omitted and retained by later display-only inlining passes.
   std::set<const llvm::Value *> MaterializedExpressions;
+  /// A captured scalar update can move to its own store only after every
+  /// remaining SSA use and intervening effect has been checked.
+  std::map<const llvm::StoreInst *, const llvm::BinaryOperator *>
+      RawMemoryUpdates;
+  std::set<const llvm::Instruction *> RawMemoryUpdateInputs;
+  std::set<const llvm::LoadInst *> RawMemoryExpressionLoads;
   /// Calls currently being printed as expressions, so a cyclic reprint
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;

@@ -74,6 +74,9 @@ struct CSourceMap {
   const std::vector<sigs::LibraryRecognition> *Recognitions = nullptr;
   const HighSourceMap *HighSources = nullptr;
   const LLVMSourceMap *LLVMSources = nullptr;
+  /// Opt-in exact call-expression anchors for evidence views, including calls
+  /// inlined into a return or argument. Ordinary navigation is unchanged.
+  bool RecordCallExpressions = false;
   std::vector<CSourceRegion> Regions;
   /// Replaced on every emit; published only with byte-identical source text.
   std::vector<CSourceAnchor> Anchors;

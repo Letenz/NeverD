@@ -1908,6 +1908,16 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # Exact cells for residual overlapping byte arrays after ordinary SROA.
+add_neverd_unittest(NeverDStateSourceRecoveryTests
+  pipeline/StateSourceRecoveryTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+target_compile_definitions(NeverDStateSourceRecoveryTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 add_neverd_unittest(NeverDByteCellScalarizationTests
   pipeline/ByteCellScalarizationTests.cpp
   pipeline/ByteCellScalarizationCompileTests.cpp

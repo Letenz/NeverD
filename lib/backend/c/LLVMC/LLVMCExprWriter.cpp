@@ -760,10 +760,6 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     }
     if (CE->getOpcode() == llvm::Instruction::PtrToInt) {
       auto *Src = CE->getOperand(0);
-      if (auto *Fn = llvm::dyn_cast<llvm::Function>(Src)) {
-        return "(" + typeToCLLVM(CE->getType()) + ")(void*)" +
-               functionIdentifier(*Fn);
-      }
       return "(" + typeToCLLVM(CE->getType()) + ")(void*)" + valueStr(Src);
     }
     if (CE->getOpcode() == llvm::Instruction::IntToPtr) {
@@ -801,6 +797,14 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
+    if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV)) {
+      auto Name = functionIdentifier(*Fn);
+      // Headers may overload an imported C symbol. An address expression
+      // needs the same signed signature as its declaration to select it.
+      if (Opts.PreserveLLVMFunctionTypes && Fn->isDeclaration())
+        return "((" + sourceFunctionDeclaration(*Fn, "(*)") + ")" + Name + ")";
+      return Name;
+    }
     const std::string Name = globalNameStr(GV);
     // An LLVM global value is an address in initializers and expressions.
     // Only object declarations and direct loads/stores use the bare C name.
@@ -2647,7 +2651,10 @@ bool LLVMCWriter::isComposedRemValue(const llvm::Value *V) {
 
 std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
                                            bool MarkChain) {
-  if (!Callee)
+  // Exact calls print the captured SSA operand, not a reconstructed vtable
+  // expression. Do not mark its loads or observable stores as consumed by an
+  // expression that this mode will never emit.
+  if (!Callee || Opts.PreserveLLVMFunctionTypes)
     return {};
   std::vector<const llvm::Instruction *> Chain;
   auto Mark = [&](const llvm::Value *V) {
@@ -3548,18 +3555,21 @@ std::string LLVMCWriter::gepExpr(const llvm::GEPOperator &GEP) {
   const std::string Carrier = "uint" + std::to_string(Bits) + "_t";
   std::string Base = valueStr(GEP.getPointerOperand());
   std::string Sum = "(" + Carrier + ")(uintptr_t)(" + Base + ")";
+  const std::string Suffix = Bits == 32 ? "U" : "ULL";
   if (!Offset.isZero())
-    Sum += " + (" + Carrier + ")0x" + llvm::utohexstr(Offset.getZExtValue()) +
-           "ULL";
+    Sum += " + 0x" + llvm::utohexstr(Offset.getZExtValue()) + Suffix;
   for (const auto &[Index, Scale] : Variables) {
     // GEP indices are signed at their original width, then sign extended or
     // truncated to the pointer index width. Unsigned carrier arithmetic keeps
     // address/offset multiplication wrapping without C signed-overflow UB.
     Sum += " + (" + Carrier + ")(" +
-           signedIntegerOperand(Index, valueStr(Index)) + ") * (" + Carrier +
-           ")0x" + llvm::utohexstr(Scale.getZExtValue()) + "ULL";
+           signedIntegerOperand(Index, valueStr(Index)) + ")";
+    if (!Scale.isOne())
+      Sum += " * 0x" + llvm::utohexstr(Scale.getZExtValue()) + Suffix;
   }
-  return "(void*)(uintptr_t)(" + Carrier + ")(" + Sum + ")";
+  // Every term uses the unsigned address carrier. The sum already wraps at
+  // that width; another cast around the complete expression adds no semantics.
+  return "(void*)(uintptr_t)(" + Sum + ")";
 }
 
 std::string LLVMCWriter::aggregateMemberPath(llvm::Type *Ty,
@@ -3585,6 +3595,9 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
 }
 
 std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
+  if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst))
+    if (RawMemoryExpressionLoads.count(Load))
+      return rawMemoryLoadText(*Load);
   if (Inst.getOpcode() == llvm::Instruction::FNeg)
     return "(-" + valueStr(Inst.getOperand(0)) + ")";
   if (const auto *Extract = llvm::dyn_cast<llvm::ExtractElementInst>(&Inst))

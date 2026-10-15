@@ -116,6 +116,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Result.Diagnostic = llvm::toString(std::move(E));
   };
   while (true) {
+    if (auto E = Kernel.synchronizeDevices()) {
+      RuntimeFailure(std::move(E));
+      break;
+    }
     auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
     if (!Exit) {
       RuntimeFailure(Exit.takeError());
@@ -129,6 +133,11 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       RuntimeFailure(PC.takeError());
       break;
     }
+    if ((Exit->Kind == SessionExitKind::Quantum ||
+         (Exit->Kind == SessionExitKind::CPU && Result.LastCPUExit &&
+          Result.LastCPUExit->Kind == ExecutionExitKind::ServiceRequest)) &&
+        !Kernel.clock().accountInstructions(Resources->instructions(), Result))
+      break;
     if (Exit->Kind == SessionExitKind::Quantum)
       continue;
     if (Exit->Kind == SessionExitKind::InstructionLimit) {

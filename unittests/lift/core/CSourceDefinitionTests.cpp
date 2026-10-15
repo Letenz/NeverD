@@ -123,6 +123,21 @@ TEST(CSourceDefinitions, CombinedRecordingRefusesLibraryEvidence) {
   EXPECT_EQ(Map.Definitions, (std::vector<CSourceDefinition>{{0x1000, 17}}));
 }
 
+TEST(CSourceDefinitions, PositionRecordingRefusesCallExpressionCoverage) {
+  auto Call = HighExpr::makeCall("ordinary_service", 0x2000, {});
+  HighSourceMap Sources = {
+      {0x1000, {0x1010, 2}, Call, HighSourceKind::CallExpression, {}}};
+  CSourceMap Map;
+  Map.HighSources = &Sources;
+  Map.Definitions.push_back({0x1000, 17});
+  EXPECT_THROW(
+      CSourceRecorder(Map, "source", CSourceRecorder::Recording::Positions),
+      std::invalid_argument);
+  EXPECT_EQ(Map.Definitions, (std::vector<CSourceDefinition>{{0x1000, 17}}));
+  EXPECT_NO_THROW(CSourceRecorder(
+      Map, "source", CSourceRecorder::Recording::DefinitionsAndInstructions));
+}
+
 TEST(CSourceDefinitions, HighCEmptyLibraryEvidenceAvoidsAnExtraRender) {
   HighFunc Function = returnsConstant("one_render", 0x1000, 7);
   Function.Body[0].Addr = 0x1010;

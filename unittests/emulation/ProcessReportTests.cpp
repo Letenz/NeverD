@@ -19,6 +19,7 @@
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Base64.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
@@ -3235,6 +3236,10 @@ TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
   for (
       const char *Bad :
       {R"({"advance_on_idle":1})",
+       R"({"nanoseconds_per_instruction":true})",
+       R"({"nanoseconds_per_instruction":-1})",
+       R"({"nanoseconds_per_instruction":"18446744073709551616"})",
+       R"({"nanoseconds_per_instruction":1,"clocks":[{"id":3,"seconds":0,"nanoseconds":0}]})",
        R"({"advance_on_idle":"true"})",
        R"({"advance_on_idle":null})",
        R"({"advance_on_idle":true,"clocks":[{"id":3,"seconds":0,"nanoseconds":0}]})",
@@ -3428,6 +3433,445 @@ TEST(ProcessReport, MalformedMemoryFileCataloguesFailBeforeExecution) {
   ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
   EXPECT_TRUE(Empty->LinuxFiles->Files.empty());
   EXPECT_EQ(Empty->LinuxFiles->DescriptorLimit, 256u);
+}
+
+TEST(ProcessReport, LinuxLinkObservationsAreBoundedAndShareTheFileNamespace) {
+  auto Good = processOptionsFromJSON(R"({"linux_files":{"files":[],
+    "symbolic_links":[{"path":"/links/raw","target_hex":"2f78ff79"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->LinuxFiles->SymbolicLinks.at("/links/raw"),
+            (std::vector<uint8_t>{'/', 'x', 0xff, 'y'}));
+  for (
+      const char *Links :
+      {"null", "{}", "[null]", R"([{"path":"/x","target_hex":""}])",
+       R"([{"path":"/x","target_hex":"6100"}])",
+       R"([{"path":"/x","target_hex":"0"}])",
+       R"([{"path":"/x","target_hex":"gg"}])",
+       R"([{"path":"x","target_hex":"61"}])",
+       R"([{"path":"/x/","target_hex":"61"}])",
+       R"([{"path":"/x","target_hex":"61","extra":1}])",
+       R"([{"path":"/x","target_hex":"61"},{"path":"/x","target_hex":"62"}])",
+       R"([{"path":"/x","target_hex":"61"},{"path":"/x/y","target_hex":"62"}])",
+       R"([{"path":"/fixture/data","target_hex":"61"}])",
+       R"([{"path":"/fixture","target_hex":"61"}])",
+       R"([{"path":"/fixture/data/child","target_hex":"61"}])"}) {
+    SCOPED_TRACE(Links);
+    auto R = processOptionsFromJSON(
+        std::string(
+            R"({"linux_files":{"files":[{"path":"/fixture/data","bytes_hex":""}],"symbolic_links":)") +
+        Links + "}}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    auto O = *Good;
+    auto &F = *O.LinuxFiles;
+    if (Mode == 0)
+      F.SymbolicLinks["relative"] = {'x'};
+    if (Mode == 1)
+      F.SymbolicLinks["/bad"] = {0};
+    if (Mode == 2)
+      F.SymbolicLinks["/bad"].resize(16 * 1024 * 1024, 'x');
+    if (Mode == 3)
+      for (unsigned I = 0; I < 256; ++I)
+        F.Files["/file" + std::to_string(I)] = {};
+    if (Mode == 4)
+      F.Files["/links/raw/child"] = {};
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+}
+
+TEST(ProcessReport, LinuxDeviceTransactionsAreExplicitLosslessAndBounded) {
+  const char *Device = R"({"path":"/fixture/control","access_mode":2,
+    "open_errno":0,"ioctls":[{"request":4294967295,"result":-13,
+      "argument":"18446744073709551615","memory":[
+        {"offset":1,"pointer_offset":0,"expected_hex":"00fF",
+         "output_hex":"8001"}]}]})";
+  auto Parse = [](const std::string &D) {
+    return processOptionsFromJSON(
+        std::string(R"({"linux_files":{"files":[],"devices":[)") + D + "]}}");
+  };
+  auto O = Parse(Device);
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  const auto &D = O->LinuxFiles->Devices.at("/fixture/control");
+  EXPECT_EQ(D.AccessMode, 2u);
+  EXPECT_EQ(D.OpenErrno, 0u);
+  ASSERT_EQ(D.Ioctls.size(), 1u);
+  EXPECT_EQ(D.Ioctls[0].Request, UINT32_MAX);
+  EXPECT_EQ(D.Ioctls[0].Result, -13);
+  EXPECT_EQ(D.Ioctls[0].Argument, UINT64_MAX);
+  ASSERT_EQ(D.Ioctls[0].Memory.size(), 1u);
+  EXPECT_EQ(D.Ioctls[0].Memory[0].PointerOffset, 0u);
+  EXPECT_EQ(D.Ioctls[0].Memory[0].Expected, (std::vector<uint8_t>{0, 255}));
+  EXPECT_EQ(D.Ioctls[0].Memory[0].Output, (std::vector<uint8_t>{128, 1}));
+
+  for (unsigned Mode = 0; Mode != 18; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto J = llvm::cantFail(llvm::json::parse(Device));
+    auto &Object = *J.getAsObject();
+    auto &Call = *Object.getArray("ioctls")->front().getAsObject();
+    auto &Memory = *Call.getArray("memory")->front().getAsObject();
+    switch (Mode) {
+    case 0:
+      Object["access_mode"] = 3;
+      break;
+    case 1:
+      Object["open_errno"] = 4096;
+      break;
+    case 2:
+      Object.erase("open_errno");
+      break;
+    case 3:
+      Object["path"] = "relative";
+      break;
+    case 4:
+      Object["extra"] = true;
+      break;
+    case 5:
+      Call["request"] = uint64_t(1) << 32;
+      break;
+    case 6:
+      Call["result"] = -4096;
+      break;
+    case 7:
+      Call["argument"] = -1;
+      break;
+    case 8:
+      Call["memory"] = nullptr;
+      break;
+    case 9:
+      Call["extra"] = 0;
+      break;
+    case 10:
+      Memory["offset"] = "18446744073709551615";
+      break;
+    case 11:
+      Memory["pointer_offset"] = "18446744073709551608";
+      break;
+    case 12:
+      Memory["expected_hex"] = "0";
+      break;
+    case 13:
+      Memory["output_hex"] = "gg";
+      break;
+    case 14:
+      Memory["expected_hex"] = "";
+      Memory["output_hex"] = "";
+      break;
+    case 15:
+      Memory["offset"] = -1;
+      break;
+    case 16:
+      Memory["extra"] = 0;
+      break;
+    case 17:
+      Call["result"] = 1.5;
+      break;
+    }
+    auto R = Parse(llvm::formatv("{0}", J).str());
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto Input = *O;
+    auto &Files = *Input.LinuxFiles;
+    auto &Device = Files.Devices.at("/fixture/control");
+    if (Mode == 0)
+      Files.Files["/fixture/control"] = {};
+    if (Mode == 1)
+      Files.SymbolicLinks["/fixture/control/child"] = {'x'};
+    if (Mode == 2)
+      Files.Devices["/fixture/control/child"] = {};
+    if (Mode == 3)
+      Device.Ioctls.resize(1025);
+    if (Mode == 4)
+      Device.Ioctls[0].Memory.resize(17);
+    if (Mode == 5)
+      Device.Ioctls[0].Memory[0].Output.resize(16 * 1024 * 1024);
+    if (Mode == 6)
+      Device.AccessMode = 3;
+    if (Mode == 7)
+      Device.OpenErrno = 4096;
+    if (Mode == 8)
+      Device.Ioctls[0].Result = -4096;
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, Input);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+  auto Duplicate = Parse(std::string(Device) + ',' + Device);
+  EXPECT_FALSE(bool(Duplicate));
+  llvm::consumeError(Duplicate.takeError());
+}
+
+TEST(ProcessReport, LinuxDeviceMappingBase64PreservesCompleteBinaryPages) {
+  std::vector<uint8_t> Bytes(32768);
+  for (size_t I = 0; I < Bytes.size(); ++I)
+    Bytes[I] = uint8_t(I);
+  const auto Encoded = llvm::encodeBase64(Bytes);
+  auto Parse = [](llvm::json::Object Mapping) {
+    llvm::json::Value V = llvm::json::Object{
+        {"linux_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{}},
+             {"devices", llvm::json::Array{llvm::json::Object{
+                             {"path", "/fixture/pages"},
+                             {"access_mode", 2},
+                             {"open_errno", 0},
+                             {"ioctls", llvm::json::Array{}},
+                             {"read_only_mappings",
+                              llvm::json::Array{std::move(Mapping)}}}}}}}};
+    return processOptionsFromJSON(llvm::formatv("{0}", V).str());
+  };
+  auto Valid =
+      Parse(llvm::json::Object{{"offset", 4096}, {"bytes_base64", Encoded}});
+  ASSERT_TRUE(bool(Valid)) << llvm::toString(Valid.takeError());
+  const auto &Mapping =
+      Valid->LinuxFiles->Devices.at("/fixture/pages").ReadOnlyMappings;
+  ASSERT_EQ(Mapping.size(), 1u);
+  EXPECT_EQ(Mapping[0].Offset, 4096u);
+  EXPECT_EQ(Mapping[0].Bytes, Bytes);
+  for (size_t Size : {4096u, 8192u, 12288u}) {
+    std::vector<uint8_t> Pages(Bytes.begin(), Bytes.begin() + Size);
+    auto R = Parse(llvm::json::Object{
+        {"offset", 0}, {"bytes_base64", llvm::encodeBase64(Pages)}});
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(
+        R->LinuxFiles->Devices.at("/fixture/pages").ReadOnlyMappings[0].Bytes,
+        Pages);
+  }
+  // The same bytes in hex exceed the unchanged transport limit.
+  auto Hex = Parse(
+      llvm::json::Object{{"offset", 4096}, {"bytes_hex", llvm::toHex(Bytes)}});
+  ASSERT_FALSE(bool(Hex));
+  EXPECT_NE(llvm::toString(Hex.takeError()).find("64 KiB"), std::string::npos);
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    llvm::json::Object M{{"offset", 4096}, {"bytes_base64", Encoded}};
+    if (Mode == 0)
+      M["bytes_hex"] = "";
+    if (Mode == 1)
+      M["bytes_base64"] = nullptr;
+    if (Mode == 2)
+      M["bytes_base64"] = Encoded.substr(0, Encoded.size() - 1);
+    if (Mode == 3)
+      M["bytes_base64"] = " " + Encoded.substr(1);
+    if (Mode == 4)
+      M["bytes_base64"] = "-" + Encoded.substr(1);
+    if (Mode == 5)
+      M["bytes_base64"] = Encoded.substr(0, Encoded.size() - 2) + "9=";
+    if (Mode == 6)
+      M["bytes_base64"] = llvm::encodeBase64(std::vector<uint8_t>(4095));
+    if (Mode == 7)
+      M["offset"] = 1;
+    if (Mode == 8)
+      M["bytes_base64"] = "====";
+    auto R = Parse(std::move(M));
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+}
+
+TEST(ProcessReport, LinuxDeviceMappingsRequireCompleteDisjointBoundedPages) {
+  auto Input = [] {
+    return llvm::json::Object{
+        {"path", "/fixture/control"},
+        {"access_mode", 2},
+        {"open_errno", 0},
+        {"ioctls", llvm::json::Array{}},
+        {"read_only_mappings",
+         llvm::json::Array{llvm::json::Object{
+             {"offset", "4096"}, {"bytes_hex", std::string(8192, 'a')}}}}};
+  };
+  auto Parse = [](llvm::json::Object Device) {
+    llvm::json::Value V = llvm::json::Object{
+        {"linux_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{}},
+             {"devices", llvm::json::Array{std::move(Device)}}}}};
+    return processOptionsFromJSON(llvm::formatv("{0}", V).str());
+  };
+  auto Valid = Parse(Input());
+  ASSERT_TRUE(bool(Valid)) << llvm::toString(Valid.takeError());
+  const auto &Mapping =
+      Valid->LinuxFiles->Devices.at("/fixture/control").ReadOnlyMappings;
+  ASSERT_EQ(Mapping.size(), 1u);
+  EXPECT_EQ(Mapping[0].Offset, 4096u);
+  EXPECT_EQ(Mapping[0].Bytes, std::vector<uint8_t>(4096, 0xaa));
+  for (unsigned Mode = 0; Mode != 11; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto D = Input();
+    auto &M = *D.getArray("read_only_mappings")->front().getAsObject();
+    if (Mode == 0)
+      M["offset"] = 1;
+    if (Mode == 1)
+      M["offset"] = "18446744073709547520";
+    if (Mode == 2)
+      M["bytes_hex"] = "";
+    if (Mode == 3)
+      M["bytes_hex"] = "aa";
+    if (Mode == 4)
+      M["bytes_hex"] = std::string(8192, 'g');
+    if (Mode == 5)
+      M["extra"] = true;
+    if (Mode == 6)
+      M.erase("offset");
+    if (Mode == 7)
+      D["read_only_mappings"] = nullptr;
+    if (Mode == 8)
+      D.getArray("read_only_mappings")->push_back(llvm::json::Object(M));
+    if (Mode == 9) {
+      llvm::json::Array TooMany;
+      for (unsigned I = 0; I < 17; ++I)
+        TooMany.push_back(llvm::json::Object(M));
+      D["read_only_mappings"] = std::move(TooMany);
+    }
+    if (Mode == 10)
+      M["offset"] = -4096;
+    auto R = Parse(std::move(D));
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto O = *Valid;
+    auto &M = O.LinuxFiles->Devices.at("/fixture/control").ReadOnlyMappings;
+    if (Mode == 0)
+      M[0].Bytes.resize(4095);
+    if (Mode == 1)
+      M.push_back(M.front());
+    if (Mode == 2)
+      M.resize(17);
+    if (Mode == 3)
+      M[0].Bytes.resize(16 * 1024 * 1024);
+    if (Mode == 4)
+      M[0].Offset = UINT64_MAX - 4095;
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+}
+
+TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
+  auto Input = [] {
+    return llvm::json::Object{
+        {"path", "/fixture/control"},
+        {"access_mode", 2},
+        {"open_errno", 0},
+        {"ioctls", llvm::json::Array{}},
+        {"kgsl_contexts",
+         llvm::json::Object{{"memstore_offset", 4096}, {"context_limit", 3}}},
+        {"read_only_mappings",
+         llvm::json::Array{llvm::json::Object{
+             {"offset", 4096},
+             {"bytes_hex", std::string(8192, 'a')},
+             {"updates", llvm::json::Array{
+                             llvm::json::Object{{"after_nanoseconds", "0"},
+                                                {"offset", 4095},
+                                                {"bytes_hex", "ab"}},
+                             llvm::json::Object{
+                                 {"after_nanoseconds", "18446744073709551615"},
+                                 {"offset", 40},
+                                 {"bytes_hex", "01000000"}}}}}}}};
+  };
+  auto Parse = [](llvm::json::Object D) {
+    llvm::json::Value V = llvm::json::Object{
+        {"linux_files",
+         llvm::json::Object{{"files", llvm::json::Array{}},
+                            {"devices", llvm::json::Array{std::move(D)}}}}};
+    return processOptionsFromJSON(llvm::formatv("{0}", V).str());
+  };
+  auto Good = Parse(Input());
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &D = Good->LinuxFiles->Devices.at("/fixture/control");
+  ASSERT_TRUE(D.KGSL);
+  EXPECT_EQ(D.KGSL->ContextLimit, 3u);
+  ASSERT_EQ(D.ReadOnlyMappings[0].Updates.size(), 2u);
+  EXPECT_EQ(D.ReadOnlyMappings[0].Updates[1].AfterNanoseconds, UINT64_MAX);
+  for (unsigned Mode = 0; Mode != 19; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto D = Input();
+    auto &K = *D.getObject("kgsl_contexts");
+    auto &M = *D.getArray("read_only_mappings")->front().getAsObject();
+    auto &U = *M.getArray("updates")->front().getAsObject();
+    if (Mode == 0)
+      K["context_limit"] = 0;
+    if (Mode == 1)
+      K["context_limit"] = 103; // last slot exceeds the mapping
+    if (Mode == 2)
+      K["context_limit"] = 1025;
+    if (Mode == 3)
+      K["memstore_offset"] = 8192;
+    if (Mode == 4)
+      K["extra"] = true;
+    if (Mode == 5)
+      D["kgsl_contexts"] = nullptr;
+    if (Mode == 6)
+      U["offset"] = 4096;
+    if (Mode == 7)
+      U["bytes_hex"] = "";
+    if (Mode == 8)
+      U["bytes_hex"] = std::string(8194, 'a');
+    if (Mode == 9)
+      U["after_nanoseconds"] = -1;
+    if (Mode == 10)
+      U["after_nanoseconds"] = true;
+    if (Mode == 11)
+      U["extra"] = 0;
+    if (Mode == 12)
+      U.erase("bytes_hex");
+    if (Mode == 13)
+      M["updates"] = nullptr;
+    if (Mode == 14) {
+      U["after_nanoseconds"] = 1;
+      M.getArray("updates")->back().getAsObject()->operator[](
+          "after_nanoseconds") = 0;
+    }
+    if (Mode == 15) {
+      D.getArray("ioctls")->push_back(
+          llvm::json::Object{{"request", "3221752083"},
+                             {"result", 0},
+                             {"memory", llvm::json::Array{}}});
+    }
+    if (Mode == 16)
+      U["offset"] = "18446744073709551615";
+    if (Mode == 17) {
+      llvm::json::Array Updates;
+      for (unsigned I = 0; I != 1025; ++I)
+        Updates.push_back(llvm::json::Object(U));
+      M["updates"] = std::move(Updates);
+    }
+    if (Mode == 18)
+      K["context_limit"] = true;
+    auto R = Parse(std::move(D));
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  // The C++ entry point uses the same validator as JSON.
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto O = *Good;
+    auto &D = O.LinuxFiles->Devices.at("/fixture/control");
+    if (Mode == 0)
+      D.KGSL->ContextLimit = 0;
+    if (Mode == 1)
+      D.ReadOnlyMappings[0].Updates[0].Bytes.clear();
+    if (Mode == 2)
+      D.ReadOnlyMappings[0].Updates[0].Offset = UINT64_MAX;
+    if (Mode == 3)
+      D.ReadOnlyMappings[0].Updates.resize(1025);
+    if (Mode == 4)
+      D.Ioctls.push_back({0xc00c0916, 0, {}, {}});
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
 }
 
 llvm::json::Value fileMetadata() {
