@@ -147,7 +147,7 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
   if (Slot == 19 || Slot == 26) {
     const int32_t Capacity = A[1];
     if (Capacity < 0)
-      return failure("JNI local capacity must be nonnegative");
+      return value(uint32_t(-1));
     if (uint32_t(Capacity) > jni_abi::ReferenceLimit - JNI.References.size() ||
         Thread.Frames.size() == jni_abi::ReferenceLimit)
       return failure("JNI local frame capacity budget exhausted");

@@ -37,7 +37,8 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.addCleanup(host.call, "neverd_session_destroy", handle)
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
         for entry in ("jni_vm_lifecycle", "jni_string_values", "jni_arrays",
-                      "jni_references", "jni_threads", "jni_primitive_bits"):
+                      "jni_references", "jni_threads", "jni_primitive_bits",
+                      "jni_art_string_edges"):
             with self.subTest(entry=entry):
                 options = {"backend": "unicorn", "android": {
                     "entry_symbol": entry, "initialize": False,

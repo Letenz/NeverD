@@ -2733,8 +2733,9 @@ TEST_F(ProcessPublic, AndroidJNIObjectsAndThreadsMatchSDKAndCLI) {
   auto Request = llvm::cantFail(llvm::json::parse(R"({
     "backend":"unicorn", "android":{"entry_symbol":"jni_vm_lifecycle",
     "initialize":false,"thread_limit":2,"jni":true}})"));
-  for (const char *Entry : {"jni_vm_lifecycle", "jni_string_values",
-                            "jni_arrays", "jni_references", "jni_threads"}) {
+  for (const char *Entry :
+       {"jni_vm_lifecycle", "jni_string_values", "jni_arrays", "jni_references",
+        "jni_threads", "jni_art_string_edges"}) {
     (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
     const auto Options = jsonText(*Request.getAsObject());
     const auto Text = takeString(neverd_emulate_process_json(

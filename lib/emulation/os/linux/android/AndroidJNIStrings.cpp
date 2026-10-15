@@ -16,9 +16,12 @@ namespace {
 llvm::Expected<std::vector<uint8_t>> decode(llvm::StringRef Text) {
   std::vector<uint8_t> Out;
   for (size_t I = 0; I < Text.size();) {
-    uint16_t Value = uint8_t(Text[I++]);
+    uint32_t Value = uint8_t(Text[I++]);
     unsigned More = 0;
-    if (Value >= 0xe0 && Value <= 0xef) {
+    if (Value >= 0xf0 && Value <= 0xf4) {
+      Value &= 7;
+      More = 3;
+    } else if (Value >= 0xe0 && Value <= 0xef) {
       Value &= 15;
       More = 2;
     } else if (Value >= 0xc0 && Value <= 0xdf) {
@@ -33,8 +36,16 @@ llvm::Expected<std::vector<uint8_t>> decode(llvm::StringRef Text) {
       Value = (Value << 6) | (uint8_t(Text[I++]) & 63);
     }
     if ((More == 1 && Value < 0x80 && Value != 0) ||
-        (More == 2 && Value < 0x800))
+        (More == 2 && Value < 0x800) ||
+        (More == 3 && (Value < 0x10000 || Value > 0x10ffff)))
       return failure("JNI string has a noncanonical modified UTF-8 sequence");
+    if (More == 3) {
+      const uint32_t Scalar = Value - 0x10000;
+      const uint16_t High = 0xd800 | (Scalar >> 10);
+      Out.push_back(uint8_t(High));
+      Out.push_back(uint8_t(High >> 8));
+      Value = 0xdc00 | (Scalar & 0x3ff);
+    }
     Out.push_back(uint8_t(Value));
     Out.push_back(uint8_t(Value >> 8));
   }
@@ -44,6 +55,22 @@ std::vector<uint8_t> encode(llvm::ArrayRef<uint8_t> UTF16) {
   std::vector<uint8_t> Out;
   for (size_t I = 0; I < UTF16.size(); I += 2) {
     const uint16_t Value = llvm::support::endian::read16le(UTF16.data() + I);
+    // ART's JNI encoding uses four bytes for a complete surrogate pair;
+    // isolated surrogate units still retain their three-byte representation.
+    if (Value >= 0xd800 && Value < 0xdc00 && I + 2 < UTF16.size()) {
+      const uint16_t Next =
+          llvm::support::endian::read16le(UTF16.data() + I + 2);
+      if (Next >= 0xdc00 && Next <= 0xdfff) {
+        const uint32_t Scalar =
+            0x10000 + ((Value - 0xd800) << 10) + (Next - 0xdc00);
+        Out.push_back(0xf0 | (Scalar >> 18));
+        Out.push_back(0x80 | ((Scalar >> 12) & 63));
+        Out.push_back(0x80 | ((Scalar >> 6) & 63));
+        Out.push_back(0x80 | (Scalar & 63));
+        I += 2;
+        continue;
+      }
+    }
     if (Value && Value < 0x80) {
       Out.push_back(Value);
     } else if (Value < 0x800) {
@@ -116,6 +143,8 @@ BionicResult Bionic::jniRelease(unsigned Slot, const NativeCallEvent &Call) {
 
 BionicResult Bionic::jniStrings(unsigned Slot, const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
+  if ((Slot == 167 || Slot == 169) && !A[1])
+    return value(0); // ART nullable input; do not touch isCopy.
   if (Slot == 166 || Slot == 170)
     return jniRelease(Slot, Call);
   if (Slot == 163 || Slot == 167) {

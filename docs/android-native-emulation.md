@@ -760,3 +760,14 @@ and the [invocation interface](https://docs.oracle.com/en/java/javase/17/docs/sp
 These are bounded protocol models implemented independently of ART, not a booted
 Android runtime. See [device contracts](linux-device-contracts.md) for Binder and
 GPU ownership shared with raw Linux syscalls.
+
+ART-specific JNI value boundaries follow the pinned [API 28 JNI owner](https://android.googlesource.com/platform/art/+/refs/tags/android-9.0.0_r1/runtime/jni_internal.cc)
+and [UTF conversion contract](https://android.googlesource.com/platform/art/+/refs/tags/android-9.0.0_r1/libdexfile/dex/utf.cc).
+`NewStringUTF` accepts null and valid four-byte Unicode sequences; a complete
+surrogate pair encodes as four bytes, while an isolated UTF-16 surrogate unit
+encodes as three. `GetStringUTFChars` on null leaves `isCopy` untouched. Malformed
+encodings still fail explicitly. Negative array construction and an incompatible
+object-array initializer are JNI abort boundaries, represented by `runtime_failure`,
+not recoverable Java exceptions. Array-region bounds and `SetObjectArrayElement`
+type mismatches produce pending Java exceptions. Negative local-frame capacity
+returns `JNI_ERR` without pushing a frame. These distinctions are tested separately.

@@ -23,7 +23,7 @@ BionicResult Bionic::jniArrays(unsigned Slot, const NativeCallEvent &Call) {
   if (Slot == 172 || (Slot >= 175 && Slot <= 182)) {
     const int32_t Length = A[1];
     if (Length < 0)
-      return Throw("java/lang/NegativeArraySizeException");
+      return failure("JNI abort: negative array creation length");
     std::string ClassName;
     std::shared_ptr<JNIObject> Initial;
     const unsigned Width =
@@ -45,7 +45,7 @@ BionicResult Bionic::jniArrays(unsigned Slot, const NativeCallEvent &Call) {
           !jniAssignable(Initial->Type == JNIObject::Class ? "java/lang/Class"
                                                            : Initial->ClassName,
                          (*Class)->ClassName))
-        return Throw("java/lang/ArrayStoreException");
+        return failure("JNI abort: incompatible object-array initializer");
       ClassName = "[L" + (*Class)->ClassName + ";";
     } else {
       ClassName = std::string("[") + Kinds[Slot - 175];

@@ -61,6 +61,23 @@ TEST_P(AndroidJNI, ModifiedUTF8UTF16AndRangeException) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, ARTStringEdgesPreserveSupplementaryCharactersAndNulls) {
+  auto R = run("jni_art_string_edges");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, ArrayConstructionAbortsWithoutRecoverableException) {
+  for (const char *Entry : {"jni_negative_array", "jni_negative_object_array",
+                            "jni_bad_array_initializer"}) {
+    auto R = run(Entry);
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure)
+        << Entry << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("JNI abort:"), std::string::npos)
+        << Entry << R.Diagnostic;
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_FALSE(R.NativeCalls.back().Result.has_value());
+  }
+}
 TEST_P(AndroidJNI, ArrayValuesCommitAbortAndBounds) {
   auto R = run("jni_arrays");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;

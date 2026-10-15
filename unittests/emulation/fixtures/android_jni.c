@@ -54,7 +54,7 @@ int jni_string_values(void) {
   const char text[] = "A\300\200\355\240\275\355\270\200";
   Ref s = C(e, Ref, 167, text);
   CHECK(s);
-  CHECK(C(e, int, 164, s) == 4 && C(e, int, 168, s) == 9);
+  CHECK(C(e, int, 164, s) == 4 && C(e, int, 168, s) == 7);
   U8 copy = 0;
   const volatile U16 *p = C(e, const U16 *, 165, s, &copy);
   CHECK(copy == 1 && p[0] == 65 && p[1] == 0 && p[2] == 0xd83d &&
@@ -63,8 +63,9 @@ int jni_string_values(void) {
   CHECK(same && same != s);
   C(e, void, 166, s, p);
   const volatile U8 *q = C(e, const U8 *, 169, same, &copy);
-  for (unsigned i = 0; i < sizeof(text); ++i)
-    CHECK(q[i] == (U8)text[i]);
+  const U8 encoded[] = {65, 0xc0, 0x80, 0xf0, 0x9f, 0x98, 0x80, 0};
+  for (unsigned i = 0; i < sizeof(encoded); ++i)
+    CHECK(q[i] == encoded[i]);
   C(e, void, 170, same, q);
   volatile U8 region[8];
   for (unsigned i = 0; i < 8; ++i)
@@ -103,8 +104,6 @@ int jni_arrays(void) {
   CHECK(output[1] == 9 && output[0] == 0x80);
   C(e, void, 208, b, 3, 2, input);
   CHECK(C(e, U8, 228));
-  C(e, void, 17);
-  CHECK(!C(e, Ref, 176, -1) && C(e, U8, 228));
   C(e, void, 17);
   Ref string = C(e, Ref, 167, "value");
   Ref cls = C(e, Ref, 6, "java/lang/String");
@@ -224,7 +223,7 @@ int jni_unknown_method(void) {
 }
 int jni_invalid_utf8(void) {
   Handle e = attach();
-  return (int)C(e, Ref, 167, "\360\237\230\200");
+  return (int)C(e, Ref, 167, "\360\237\230");
 }
 int jni_double_release(void) {
   Handle e = attach();
@@ -265,8 +264,8 @@ int jni_pending_cleanup(void) {
   U8 *p = C(e, U8 *, 184, array, (void *)0);
   CHECK(p);
   p[0] = 0x8a;
-  Ref failed = C(e, Ref, 176, -1);
-  CHECK(!failed && C(e, U8, 228));
+  C(e, void, 208, array, 1, 1, p);
+  CHECK(C(e, U8, 228));
   CHECK(!C(e, int, 19, 2));
   Ref error = C(e, Ref, 15);
   CHECK(error);
@@ -283,7 +282,8 @@ int jni_pending_cleanup(void) {
 }
 int jni_pending_illegal(void) {
   Handle e = attach();
-  C(e, Ref, 176, -1);
+  Ref array = C(e, Ref, 176, 1);
+  C(e, void, 208, array, 1, 1, (void *)1);
   return C(e, int, 4);
 }
 int jni_table_replaced(void) {
@@ -309,4 +309,50 @@ int jni_named_vm_spoof(void) {
   extern int fake_detach(Handle) __asm__("JavaVM.DetachCurrentThread");
   attach();
   return fake_detach(vm);
+}
+
+int jni_art_string_edges(void) {
+  Handle e = attach();
+  CHECK(e);
+  CHECK(C(e, int, 19, -1) == -1 && C(e, int, 26, -1) == -1);
+  CHECK(!C(e, Ref, 167, (void *)0));
+  Ref empty = C(e, Ref, 163, (void *)0, 0);
+  CHECK(empty && C(e, int, 164, empty) == 0);
+  volatile U8 copy = 0x55;
+  CHECK(!C(e, const char *, 169, (Ref)0, &copy) && copy == 0x55);
+  CHECK(!C(e, const char *, 169, (Ref)0, (void *)1));
+  const char text[] = "\360\220\200\200\364\217\277\277";
+  Ref string = C(e, Ref, 167, text);
+  CHECK(string && C(e, int, 164, string) == 4 && C(e, int, 168, string) == 8);
+  const volatile U16 *units = C(e, const U16 *, 165, string, (void *)0);
+  CHECK(units[0] == 0xd800 && units[1] == 0xdc00 && units[2] == 0xdbff &&
+        units[3] == 0xdfff);
+  C(e, void, 166, string, units);
+  const volatile U8 *encoded = C(e, const U8 *, 169, string, (void *)0);
+  for (unsigned i = 0; i < sizeof(text); ++i)
+    CHECK(encoded[i] == (U8)text[i]);
+  C(e, void, 170, string, encoded);
+  volatile U8 region[8] = {0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
+  C(e, void, 221, string, 1, 2, region);
+  const U8 isolated[] = {0xed, 0xb0, 0x80, 0xed, 0xaf, 0xbf, 0x55, 0x55};
+  for (unsigned i = 0; i < 8; ++i)
+    CHECK(region[i] == isolated[i]);
+  CHECK(!C(e, U8, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_negative_array(void) {
+  Handle e = attach();
+  return (int)C(e, Ref, 176, -1);
+}
+int jni_negative_object_array(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/Object");
+  return (int)C(e, Ref, 172, -1, cls, (Ref)0);
+}
+int jni_bad_array_initializer(void) {
+  Handle e = attach();
+  Ref cls = C(e, Ref, 6, "java/lang/String");
+  Ref array = C(e, Ref, 176, 1);
+  return (int)C(e, Ref, 172, 1, cls, array);
 }
