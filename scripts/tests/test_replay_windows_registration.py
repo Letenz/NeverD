@@ -13,10 +13,11 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(len(r5), 64)
         eh4_jumps = {name for name in current
                      if name.startswith("eh4-") and "longjmp-" in name}
-        self.assertEqual(len(eh4_jumps), 26)
+        self.assertEqual(len(eh4_jumps), 28)
         self.assertEqual(set(current) - set(r5) - eh4_jumps, {
             "longjmp-shared-parent-call", "shared-parent-throwing-call",
-            "longjmp-private-parent-call", "longjmp-private-parent-graph"})
+            "longjmp-private-parent-call", "longjmp-private-parent-graph",
+            "longjmp-multistate-capture"})
         self.assertEqual(set(current) - set(r4) - eh4_jumps, {
             "longjmp-state-activate-call", "longjmp-state-activate-unwind",
             "longjmp-state-retire", "longjmp-state-sentinel",
@@ -29,7 +30,8 @@ class RegistrationSourceReplayTests(unittest.TestCase):
             "longjmp-filter-callback-activation", "longjmp-state-byte-high-bits",
             "longjmp-finally-incidental-result", "longjmp-deep-scope-chain",
             "longjmp-shared-parent-call", "shared-parent-throwing-call",
-            "longjmp-private-parent-call", "longjmp-private-parent-graph"})
+            "longjmp-private-parent-call", "longjmp-private-parent-graph",
+            "longjmp-multistate-capture"})
         self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
         with self.assertRaises(ValueError):
             source_cases("unknown")

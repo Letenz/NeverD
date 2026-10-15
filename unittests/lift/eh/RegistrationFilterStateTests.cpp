@@ -347,10 +347,11 @@ TEST(RegistrationFilterState,
             Level == 0 && V == Variant::SkipFilterBeforeResume       ? 1
             : Level == 0 && V == Variant::SkipTwoFiltersBeforeResume ? 3
                                                                      : Level;
-        Restores.push_back({Frame, Level});
+        Restores.push_back(
+            {Frame, Level, V == Variant::TwoResumeMappings ? 1 : 0});
       }
       if (V == Variant::TwoResumeMappings)
-        Restores = {{2, 1}, {3, 0}};
+        Restores = {{2, 1, 1}, {3, 0, 1}};
       EXPECT_EQ(Resume.StateRestores, Restores);
     }
   }

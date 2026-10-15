@@ -71,6 +71,7 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
 /// callback state through the source's proved remaining unwind steps.
 llvm::Value *emitSEHJumpState(const X86RegistrationSEHJumpCall &Source,
                               llvm::CallInst &Call, llvm::Value &State,
+                              llvm::Value *Captured,
                               llvm::IRBuilder<> &Builder);
 
 /// Commit a preflighted buffer projection. The returned map replaces the old

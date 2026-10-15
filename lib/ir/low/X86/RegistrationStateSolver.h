@@ -60,6 +60,16 @@ struct SEHActivation {
   auto operator<=>(const SEHActivation &) const = default;
 };
 
+/// Keep a live buffer's saved unwind bound correlated with the reaching state.
+/// Other frame facts still join and can invalidate the buffer; this key grants
+/// no initialization or value authority of its own.
+struct SEHFlowKey {
+  SEHActivation Activation;
+  std::vector<int32_t> Levels;
+  std::vector<std::tuple<int32_t, va_t, int32_t>> Captures;
+  auto operator<=>(const SEHFlowKey &) const = default;
+};
+
 struct Domain {
   SEHActivation Activation;
   std::set<int32_t> Levels;
@@ -373,7 +383,7 @@ private:
   std::set<int32_t> AllLevels;
   std::set<va_t> FinallyTargets;
   std::set<va_t> SEHParentEntries;
-  std::vector<std::map<SEHActivation, ActivationState>> States;
+  std::vector<std::map<SEHFlowKey, ActivationState>> States;
   struct SEHDispatchMemo {
     Domain Source;
     bool Invalid;
@@ -384,7 +394,7 @@ private:
   std::map<size_t, std::vector<size_t>> SEHFrameBuckets;
   std::set<size_t> PendingSEHFrames;
   std::vector<size_t> Order;
-  std::set<std::tuple<size_t, size_t, SEHActivation>> Work;
+  std::set<std::tuple<size_t, size_t, SEHFlowKey>> Work;
   size_t WorkUsed = 0;
   bool Exhausted = false;
   bool ProvenInstallation = false;

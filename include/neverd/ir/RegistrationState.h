@@ -204,7 +204,8 @@ struct RegistrationSEHJumpCapture {
   va_t UnwindVA = InvalidVA;
   int32_t BufferOffset = 0;
   int32_t StackOffset = 0;
-  int32_t Level = -1;
+  /// Sorted unique source states independently proved at this occurrence.
+  std::vector<int32_t> Levels{-1};
   Kind Protocol = Kind::EH3;
   /// EH4's third unwind argument names the image's load-config cookie.
   /// It is an address, never the runtime value or an invented replacement.
@@ -217,6 +218,8 @@ struct RegistrationSEHJumpCapture {
 struct RegistrationSEHJumpState {
   int32_t FrameLevel = -1;
   int32_t ResumeLevel = -1;
+  /// The unwind bound saved by this invocation of the source capture.
+  int32_t CaptureLevel = -1;
   auto operator<=>(const RegistrationSEHJumpState &) const = default;
 };
 
@@ -243,8 +246,9 @@ struct RegistrationSEHJumpResume {
   /// Actual source states after local unwind. A capture inside a retired
   /// scope does not reactivate that scope when the continuation resumes.
   std::vector<int32_t> ResumedLevels;
-  /// Sorted unique pairs from every completed unwind path. Native resumption
-  /// requires a single final state for each observable logical frame state.
+  /// Sorted unique observations from every completed unwind path. Native
+  /// resumption requires a single final state for each captured bound and
+  /// observable logical frame state.
   std::vector<RegistrationSEHJumpState> StateRestores;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };

@@ -25,6 +25,7 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
                        const BinaryImage &Image) {
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
   checkSEHJumpStateEdits(Parent, Source, Image);
+  checkSEHJumpCaptureStateEdits(Parent, Source, Image);
   using x86_registration::SEHJumpRole;
   const auto Protocol =
       Source.Personality == ExceptionPersonality::ExceptHandler4

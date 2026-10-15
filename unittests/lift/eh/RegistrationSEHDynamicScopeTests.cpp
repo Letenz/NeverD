@@ -88,7 +88,7 @@ void checkDynamicSEHScopeEdits(const llvm::Function &Parent,
                                const ExceptionFunction &Source,
                                const BinaryImage &Image) {
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Module = llvm::CloneModule(*Parent.getParent());
     auto *Function = Module->getFunction(Parent.getName());
@@ -156,13 +156,31 @@ void checkDynamicSEHScopeEdits(const llvm::Function &Parent,
     case 7:
       SourceWrite->setOperand(0, B.getInt32(42));
       break;
+    case 8: {
+      llvm::IRBuilder<> AtWrite(SourceWrite);
+      SourceWrite->setOperand(
+          1, AtWrite.CreateGEP(B.getInt8Ty(), SourceWrite->getPointerOperand(),
+                               B.getInt32(1)));
+      break;
+    }
+    case 9:
+      SourceWrite->setMetadata(windows_eh_md::RegistrationOperationAttachment,
+                               nullptr);
+      break;
+    case 10:
+      SourceWrite->setAlignment(llvm::Align(4));
+      break;
+    case 11:
+      SourceWrite->clone()->insertBefore(SourceWrite->getIterator());
+      break;
     }
     ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
     auto Error = validateCOFFRegistrationIR(*Function, Source, Image);
     ASSERT_TRUE(bool(Error));
     const auto Message = llvm::toString(std::move(Error));
     EXPECT_TRUE(Message.find("scope") != std::string::npos ||
-                Message.find("source try level") != std::string::npos)
+                Message.find("source try level") != std::string::npos ||
+                Message.find("source execution") != std::string::npos)
         << Message;
   }
 #endif

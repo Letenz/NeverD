@@ -88,7 +88,10 @@ void checkSEHJumpStateEdits(const llvm::Function &Parent,
       Read->setAlignment(llvm::Align(4));
     if (Mutation >= 8) {
       auto *Mapping = Mappings.front();
-      auto *Test = llvm::cast<llvm::ICmpInst>(Mapping->getCondition());
+      auto *Both =
+          llvm::dyn_cast<llvm::BinaryOperator>(Mapping->getCondition());
+      auto *Test = llvm::cast<llvm::ICmpInst>(Both ? Both->getOperand(0)
+                                                   : Mapping->getCondition());
       if (Mutation == 8)
         Test->setOperand(1, B.getInt32(42));
       if (Mutation == 9)
@@ -100,6 +103,11 @@ void checkSEHJumpStateEdits(const llvm::Function &Parent,
       if (Mutation == 12) {
         Mapping->replaceAllUsesWith(Mapping->getFalseValue());
         Mapping->eraseFromParent();
+        if (Both) {
+          auto *Bound = llvm::cast<llvm::ICmpInst>(Both->getOperand(1));
+          Both->eraseFromParent();
+          Bound->eraseFromParent();
+        }
         Test->eraseFromParent();
       }
       if (Mutation == 13)

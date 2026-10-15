@@ -29,9 +29,16 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
   if (Exhausted || !charge(1 + Source.Activation.JumpCaptureCalls.size() +
                            Source.Activation.Callers.size() +
+                           Source.Levels.size() + Source.JumpCaptures.size() +
                            2 * std::bit_width(States[Target].size() + 1)))
     return;
-  auto [It, New] = States[Target].try_emplace(Source.Activation);
+  SEHFlowKey Key{Source.Activation};
+  if (JumpRuntime && !KnownCxx) {
+    Key.Levels.assign(Source.Levels.begin(), Source.Levels.end());
+    for (const auto &[Offset, Capture] : Source.JumpCaptures)
+      Key.Captures.emplace_back(Offset, Capture.Call, Capture.Level);
+  }
+  auto [It, New] = States[Target].try_emplace(Key);
   auto &Node = It->second;
   if (New)
     Node.Facts.Invalid = InvalidBlocks[Target];
@@ -123,7 +130,7 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
   if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))
-    Work.emplace(Order[Target], Target, Source.Activation);
+    Work.emplace(Order[Target], Target, std::move(Key));
 }
 
 Domain dispatchSource(const Domain &Source) {

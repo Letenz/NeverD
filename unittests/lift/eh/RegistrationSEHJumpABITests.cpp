@@ -54,12 +54,14 @@ struct JumpCallFixture {
     EH.Personality = ExceptionPersonality::ExceptHandler3;
     EH.CodeRange = {0x1000, 0x1025};
     EH.Registration.emplace();
+    EH.Registration->SeededTryLevel = -1;
+    EH.Registration->Scopes = {{-1, 0x4000, 0x4100, false}};
     auto &States = Function.RegistrationStates.emplace();
     States.Complete = States.CallbackStatesComplete = true;
     States.RegistrationLifetimeComplete = true;
     States.HasSEHJumpCaptures = true;
     States.SEHJumpCaptures.push_back(
-        {0x1010, 0x1015, 10, 0x2000, 0x3000, -96, -128, 0});
+        {0x1010, 0x1015, 10, 0x2000, 0x3000, -96, -128, {0}});
     RegistrationSEHJumpResume Resume;
     Resume.Address = 0x1020;
     Resume.OpSeq = 20;
@@ -251,7 +253,7 @@ TEST(RegistrationSEHJumpABI,
     Chain.Scopes = {{-1, 0x4000, 0x4100, false}};
     auto &Resume = F.Function.RegistrationStates->SEHJumpResumptions.front();
     Resume.ResumedLevels = {-1, 0};
-    Resume.StateRestores = {{-1, -1}, {0, 0}};
+    Resume.StateRestores = {{-1, -1, 0}, {0, 0, 0}};
     switch (Mutation) {
     case 1:
       Resume.StateRestores.clear();
@@ -302,13 +304,13 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
                     {-1, 0x4400, 0x4500, false}};
     auto &Resume = F.Function.RegistrationStates->SEHJumpResumptions.front();
     Resume.ResumedLevels = {-1, 0};
-    Resume.StateRestores = {{-1, -1}, {1, 0}, {2, -1}};
+    Resume.StateRestores = {{-1, -1, 0}, {1, 0, 0}, {2, -1, 0}};
     switch (Mutation) {
     case 1:
-      Resume.StateRestores.push_back({2, 0});
+      Resume.StateRestores.push_back({2, 0, 0});
       break;
     case 2:
-      Resume.StateRestores.push_back({2, -1});
+      Resume.StateRestores.push_back({2, -1, 0});
       break;
     case 3:
       std::reverse(Resume.StateRestores.begin(), Resume.StateRestores.end());
@@ -326,7 +328,7 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
       Resume.StateRestores.back().ResumeLevel = 3;
       break;
     case 8:
-      Resume.StateRestores = {{1, 0}};
+      Resume.StateRestores = {{1, 0, 0}};
       break;
     case 9:
       Resume.ResumedLevels = {0};
@@ -341,7 +343,8 @@ TEST(RegistrationSEHJumpABI, ProjectsSkippedScopesAndRejectsAmbiguousMappings) {
     for (const auto &[Address, Call] : *Calls) {
       EXPECT_FALSE(Call.ResumeLevel);
       EXPECT_EQ(Call.ResumeStateMap,
-                (std::map<int32_t, int32_t>{{1, 0}, {2, -1}}));
+                (std::map<std::pair<int32_t, int32_t>, int32_t>{{{0, 1}, 0},
+                                                                {{0, 2}, -1}}));
     }
   }
 }
@@ -380,6 +383,45 @@ TEST(RegistrationSEHJumpABI, EH4RequiresTheCookieProtocolAndDisjointStorage) {
     if (Mutation == 8)
       EH.Personality = ExceptionPersonality::ExceptHandler3;
     EXPECT_EQ(bool(getX86RegistrationSEHJumpCalls(F.Function)), Mutation == 0);
+  }
+}
+
+TEST(RegistrationSEHJumpABI, CapturedBoundsDisambiguateTheSameVisibleState) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &States = *F.Function.RegistrationStates;
+    auto &Capture = States.SEHJumpCaptures.front();
+    auto &Resume = States.SEHJumpResumptions.front();
+    Capture.Levels = States.Blocks.front().Levels = {-1, 0};
+    Resume.ResumedLevels = {-1, 0};
+    Resume.StateRestores = {{0, -1, -1}, {0, 0, 0}};
+    if (Mutation == 1)
+      Capture.Levels.clear();
+    if (Mutation == 2)
+      Capture.Levels = {0, -1};
+    if (Mutation == 3)
+      Capture.Levels.push_back(0);
+    if (Mutation == 4)
+      States.Blocks.front().Levels = {0};
+    if (Mutation == 5)
+      Resume.StateRestores.front().CaptureLevel = -2;
+    if (Mutation == 6)
+      Resume.StateRestores.back().CaptureLevel = -1;
+    if (Mutation == 7)
+      Resume.StateRestores.clear();
+    const auto Calls = getX86RegistrationSEHJumpCalls(F.Function);
+    if (Mutation) {
+      EXPECT_FALSE(Calls);
+      continue;
+    }
+    ASSERT_TRUE(Calls);
+    for (const auto &[Address, Call] : *Calls) {
+      EXPECT_FALSE(Call.ResumeLevel);
+      EXPECT_EQ(
+          Call.ResumeStateMap,
+          (std::map<std::pair<int32_t, int32_t>, int32_t>{{{-1, 0}, -1}}));
+    }
   }
 }
 

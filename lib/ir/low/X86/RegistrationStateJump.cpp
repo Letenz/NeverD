@@ -94,14 +94,23 @@ bool RegistrationStateSolver::transferJumpCapture(
                                            Capture->UnwindTarget,
                                            Capture->BufferOffset,
                                            Capture->StackOffset,
-                                           Capture->Level,
+                                           {Capture->Level},
                                            Capture->Protocol,
                                            Capture->SecurityCookieVA};
   const auto [Found, New] =
       JumpCaptureOccurrences.emplace(std::make_pair(Op.Addr, Op.Seq), Receipt);
-  if (!New && Found->second != Receipt) {
-    Result.SEHJumpCapturesComplete = false;
-    return false;
+  if (!New) {
+    auto Previous = Found->second;
+    Previous.Levels = Receipt.Levels;
+    if (Previous != Receipt || !charge(Found->second.Levels.size() + 1)) {
+      Result.SEHJumpCapturesComplete = false;
+      return false;
+    }
+    auto &Levels = Found->second.Levels;
+    const auto At =
+        std::lower_bound(Levels.begin(), Levels.end(), Capture->Level);
+    if (At == Levels.end() || *At != Capture->Level)
+      Levels.insert(At, Capture->Level);
   }
   invalidateJumpCaptures(After, FrameValue::frame(Capture->BufferOffset),
                          SEHJumpCapture::BufferBytes);

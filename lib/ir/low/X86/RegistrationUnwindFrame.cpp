@@ -70,7 +70,8 @@ bool RegistrationStateSolver::runSEHUnwind(
       if (StateRestores) {
         if (!charge(1))
           return false;
-        StateRestores->insert({Current.VisibleLevel, Walk});
+        StateRestores->insert(
+            {Current.VisibleLevel, Walk, Jump ? Jump->Level : int32_t(Bound)});
       }
       if (!mergeSEHFrameOutcome(Outcomes, std::move(Current.Frame)))
         return false;
