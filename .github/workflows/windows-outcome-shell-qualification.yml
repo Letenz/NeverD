@@ -1,0 +1,94 @@
+name: Temporary Windows outcome shell qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - scripts/tests/test_audit_ci_test_results.py
+      - .github/workflows/ci.yml
+      - .github/workflows/windows-outcome-shell-qualification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  outcome-shell:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 32
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+      - name: Verify actual Windows workflow shell and CTest outcomes
+        timeout-minutes: 3
+        shell: bash
+        env:
+          PYTHON: python
+        run: |
+          export NEVERD_QUALIFICATION_SHELL="$(cygpath -w "$BASH")"
+          python - <<'PYCODE'
+          from pathlib import Path
+          import ast, hashlib, json, os, re, shutil, subprocess, sys, unittest
+          root = Path('build-ci/evidence')
+          root.mkdir(parents=True)
+          shell = Path(os.environ['NEVERD_QUALIFICATION_SHELL'])
+          assert shell.is_absolute() and shell.is_file() and shutil.which('ctest')
+          (root / 'head.txt').write_text(subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True))
+          baseline_source = subprocess.check_output([
+              'git', 'show', 'c0b38c231bad45f8f625ac278b4d31745e09306b:scripts/tests/test_audit_ci_test_results.py'
+          ], text=True, encoding='utf-8')
+          function = next(node for node in ast.parse(baseline_source).body
+                          if isinstance(node, ast.FunctionDef) and node.name == 'workflow_bash')
+          scope = {'sys': sys, 'shutil': shutil, 'Path': Path, 'unittest': unittest}
+          exec(compile(ast.Module(body=[function], type_ignores=[]), '<baseline-shell-selection>', 'exec'), scope)
+          baseline = {'git': shutil.which('git'), 'path_bash': shutil.which('bash'), 'running_shell': str(shell)}
+          try:
+              baseline['selected'] = scope['workflow_bash']()
+          except Exception as error:
+              baseline['error'] = type(error).__name__ + ': ' + str(error)
+          (root / 'baseline-discovery.json').write_text(json.dumps(baseline, indent=2))
+          workflow = Path('.github/workflows/ci.yml').read_text()
+          step = workflow.split('      - name: Verify Debug and Release target flags\n', 1)[1].split('\n      - name:', 1)[0]
+          body = step.split('        run: |\n', 1)[1].split('        env:\n', 1)[0]
+          body = '\n'.join(line[10:] for line in body.splitlines())
+          prefix = body.split('"$PYTHON" -m unittest', 1)[0]
+          script = prefix + '\n"$PYTHON" -m unittest scripts.tests.test_audit_ci_test_results -v\n'
+          (root / 'actual-workflow-prefix.sh').write_text(script, newline='\n')
+          result = subprocess.run([str(shell), '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script],
+                                  capture_output=True, timeout=120)
+          (root / 'tests.stdout').write_bytes(result.stdout)
+          (root / 'tests.stderr').write_bytes(result.stderr)
+          (root / 'exit-status.txt').write_text(str(result.returncode))
+          print(result.stdout.decode(errors='replace'))
+          print(result.stderr.decode(errors='replace'))
+          report = result.stderr.decode()
+          assert result.returncode == 0 and re.search(r'Ran 34 tests in ', report)
+          assert len([line for line in report.splitlines() if line.endswith(' ... ok')]) == 34
+          assert 'OK (skipped=' not in report
+          for name in ['test_running_workflow_shell_takes_precedence_over_another_git',
+                       'test_explicit_workflow_shell_must_exist_and_be_absolute',
+                       'test_workflow_run_script_preserves_failure_status_and_removes_stale_evidence']:
+              assert any(line.startswith(name + ' ') and line.endswith(' ... ok') for line in report.splitlines())
+          (root / 'receipt.json').write_text(json.dumps({
+              'accepted': True, 'tests': 34, 'skipped': 0, 'baseline_discovery': baseline,
+              'active_shell_sha256': hashlib.sha256(shell.read_bytes()).hexdigest(),
+              'inputs': {name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
+                         for name in ['.github/workflows/ci.yml', 'scripts/tests/test_audit_ci_test_results.py']},
+              'test_deadline_seconds': 120
+          }, indent=2))
+          PYCODE
+      - name: Retain exact Windows shell qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-outcome-shell
+          path: build-ci/evidence/
+          if-no-files-found: error
+          retention-days: 14
