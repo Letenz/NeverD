@@ -1843,3 +1843,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Capture bornée du contexte appelant noyau
 
 `WindowsX64Context.def` centralise le format et `WindowsX64Context.cpp` la collecte entière/les sélecteurs logiques. FP utilisateur complet et publication noyau limitée restent distincts. `DriverContextCapture.cpp` emprunte le CPU par callbacks synchrones sans réentrance ; `KernelModelContextCapture.cpp` possède admission, vrai retour et effets. Après toute admission, FLAGS est modifié atomiquement puis la RAM prévalidée est écrite. Aucun rollback arbitraire des écritures ou modifications concurrentes des mappings n’est promis.
+
+### Imports libSystem bornés
+
+`MachOProgramLinking` possède les faits classic/generic64 originaux stricts, la fermeture complète des symboles et les bornes de préparation. Le process Darwin admet fournisseurs/symboles et publie pointeurs, protections, entrées libSystem et errno. `DarwinLibSystemCalls.def` lie noms et arités aux effets typés de `DarwinServices` sans trap raw inventé. `DarwinMemory` possède réservations et protections maximales ; `ExecutionBudget` partage le délai et `ProcessReport` sérialise seul `darwin.native_calls` optionnel. Aucune bibliothèque hôte n’est chargée.

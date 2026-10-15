@@ -1681,3 +1681,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 제한된 커널 호출자 문맥 캡처
 
 `WindowsX64Context.def`는 공통 배치, `WindowsX64Context.cpp`는 정수 수집과 논리 선택자를 관리합니다. 사용자 전체 FP와 커널 제한 FP 정책은 분리됩니다. `DriverContextCapture.cpp`는 동기 비재진입 콜백으로 CPU를 빌리고 `KernelModelContextCapture.cpp`가 메모리 검사, 실제 반환 슬롯과 효과를 맡습니다. 모든 검사 후 FLAGS를 원자적으로 설정하고 검증된 RAM을 씁니다. 임의 쓰기 실패나 동시 매핑 변경의 롤백은 보장하지 않습니다.
+
+### 유한 libSystem 가져오기
+
+`MachOProgramLinking`은 원본 classic/generic64 사실, 완전한 미정의 심볼 폐쇄 및 준비 예산을 소유합니다. Darwin process는 공급자/심볼 허용, 포인터 게시, fixup 후 읽기 보호, libSystem 진입과 errno를 관리합니다. `DarwinLibSystemCalls.def`의 정확한 이름과 인수 개수는 `DarwinServices`의 타입 효과를 재사용하며 raw trap을 만들지 않습니다. 예약과 최대 보호는 `DarwinMemory`, 공통 기한은 `ExecutionBudget`, 선택적 `darwin.native_calls` 출력은 `ProcessReport`가 소유하고 호스트 라이브러리를 로드하지 않습니다.

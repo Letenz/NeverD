@@ -6292,3 +6292,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Bounded kernel caller-context capture
 
 `WindowsX64Context.def` owns the common x64 layout/field table. `WindowsX64Context.cpp` shares integer collection and logical selectors while user full-FP and kernel limited-FP publication remain separate. `DriverContextCapture.cpp` borrows the current CPU through synchronous, non-reentrant callbacks. `KernelModelContextCapture.cpp` owns buffer admission, real return-word reading and effects. All admission precedes the atomic FLAGS setter; prevalidated ordinary RAM is then written on the stopped CPU. This is not rollback for arbitrary write failures or concurrent mapping changes. All three transports use this owner.
+
+### Bounded libSystem imports
+
+`MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.

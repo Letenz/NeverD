@@ -1712,3 +1712,7 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 ### 有界内核调用者上下文捕获
 
 `WindowsX64Context.def` 统一 x64 布局和字段表，`WindowsX64Context.cpp` 共用整数采集和逻辑选择子；用户态完整 FP 与内核有限 FP 写入策略保持分离。`DriverContextCapture.cpp` 通过同步、不可重入回调借用当前 CPU，`KernelModelContextCapture.cpp` 负责缓冲区检查、实际返回地址和副作用。全部检查后先原子更新 FLAGS，再写入已验证的普通 RAM；不承诺任意写入失败或并发映射变化的回滚。三个后端共用此实现。
+
+### 有界 libSystem 导入
+
+`MachOProgramLinking` 负责原始字节的严格 classic/generic64 链事实、完整未定义符号闭合及准备预算。Darwin 进程负责库和符号准入、指针发布、fixup 后只读保护、经过认证的 libSystem 入口与主线程 errno。`DarwinLibSystemCalls.def` 绑定精确链接名、参数数量及类型化内核行为，复用 `DarwinServices` 而不伪造原始 trap。`DarwinMemory` 统一负责驻留模型保留页和原始最大权限。准备与执行共用 `ExecutionBudget`，可选 `darwin.native_calls` 仅由 `ProcessReport` 序列化；不加载宿主 dyld 或库代码。

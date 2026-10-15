@@ -1785,3 +1785,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Ограниченный захват контекста вызывающего кода ядра
 
 `WindowsX64Context.def` задаёт общий формат, `WindowsX64Context.cpp` — сбор целых регистров и логические селекторы. Полная пользовательская и ограниченная ядерная FP-публикации разделены. `DriverContextCapture.cpp` синхронно заимствует CPU без повторного входа; `KernelModelContextCapture.cpp` владеет проверками, настоящим возвратом и эффектами. После всех проверок атомарно меняется FLAGS, затем проверенная RAM. Произвольные ошибки записи или параллельные изменения отображений не имеют гарантии отката.
+
+### Ограниченные импорты libSystem
+
+`MachOProgramLinking` владеет строгими исходными classic/generic64-фактами, полным замыканием символов и пределами подготовки. Процесс Darwin допускает поставщиков/символы и публикует указатели, защиту после fixup, входы libSystem и errno. `DarwinLibSystemCalls.def` связывает имена и арности с эффектами `DarwinServices`, не выдумывая raw-traps. Резервирования и максимумы принадлежат `DarwinMemory`, общий срок — `ExecutionBudget`, необязательный `darwin.native_calls` сериализует только `ProcessReport`. Библиотеки хоста не загружаются.

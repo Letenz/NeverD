@@ -1704,3 +1704,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 制限付きカーネル呼び出し元コンテキスト取得
 
 `WindowsX64Context.def` が共通レイアウト、`WindowsX64Context.cpp` が整数取得と論理セレクタを所有します。ユーザーの完全 FP とカーネルの限定 FP は分離します。`DriverContextCapture.cpp` は同期・非再入コールバックで CPU を借用し、`KernelModelContextCapture.cpp` がメモリ、実際の戻り値、効果を管理します。全検証後に FLAGS を原子的に設定して検証済み RAM を書きます。任意の書き込み失敗や並行マッピング変更のロールバックではありません。
+
+### 有界 libSystem インポート
+
+`MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。

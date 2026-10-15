@@ -1632,3 +1632,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 有界核心呼叫者內容擷取
 
 `WindowsX64Context.def` 統一 x64 版面與欄位；`WindowsX64Context.cpp` 共用整數擷取與邏輯選擇子，保留使用者完整 FP 與核心有限 FP 的不同策略。`DriverContextCapture.cpp` 同步且不可重入地借用 CPU；`KernelModelContextCapture.cpp` 管理記憶體檢查、實際返回槽及副作用。完整檢查後先原子設定 FLAGS，再寫入已驗證 RAM；不保證任意寫入失敗或並行映射變更的回復。三個後端共用此層。
+
+### 有界 libSystem 匯入
+
+`MachOProgramLinking` 擁有嚴格原始 classic/generic64 事實、完整未定義符號閉合與準備預算。Darwin 進程管理庫/符號准入、指標發布、fixup 後唯讀、libSystem 入口與 errno。`DarwinLibSystemCalls.def` 將精確名稱和參數數量繫結到 `DarwinServices` 核心效果，不捏造原始 trap。`DarwinMemory` 管理保留頁與原始最大權限；`ExecutionBudget` 共用期限，`ProcessReport` 輸出可選 `darwin.native_calls`，不載入宿主庫。

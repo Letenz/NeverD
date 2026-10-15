@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 00509a4718fb83deef9b9430e71183313790e9707bed10468cdbd18f5c715de3 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -29,11 +29,11 @@ Die gesamte Datei einschließlich Metadaten und nachgestellter Bytes muss vor Pa
 
 Segmente behalten aktuelle/maximale Rechte und Nullfüllung. `__PAGEZERO` reserviert Adressen ohne große physische Allokation. Datei-/VM-Bereiche, OS-Seitenausrichtung, gerundete Überlappungen, Header-Zuordnung, ausführbarer Eintritt und Budget werden vor Ausführung geprüft. Das Headersegment muss lesbar und ausführbar sein; Schutzseiten und privates Rückkehrtor bleiben reserviert. Die letzte Dateiseite behält Bytes bis Seitengrenze oder EOF, spätere vollständige VM-Seiten werden genullt: [XNU-Loader](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c).
 
-`LC_MAIN` erhält `argc`, `argv`, `envp` und den apple-Vektor als vier ganzzahlige Argumente. Der Rückgabewert liefert die unteren acht Bits des Exitstatus. `/usr/lib/dyld` ist nur für diesen importfreien Eintritt zulässig; Host-dyld wird nicht ausgeführt. Ein von null verschiedener `stacksize` wird abgewiesen, weil die Aufruferoption `stack_size` das Budget besitzt.
+`LC_MAIN` erhält `argc`, `argv`, `envp` und den apple-Vektor als vier ganzzahlige Argumente. Der Rückgabewert liefert die unteren acht Bits des Exitstatus. `/usr/lib/dyld` ist für `LC_MAIN` im folgenden endlichen Importvertrag zulässig; Host-dyld wird nicht ausgeführt. Ein von null verschiedener `stacksize` wird abgewiesen, weil die Aufruferoption `stack_size` das Budget besitzt.
 
 `LC_UNIXTHREAD` verlangt genau einen vollständigen nativen 64-Bit-Allgemeinregistersatz, in dem nur PC belegt ist. Der Startstack enthält argc, terminierte argv/envp und einen terminierten apple-Vektor mit `executable_path=<input filename>`. Eigene SP/Flags, andere Register, zusätzliche Flavors und widersprüchliche Eintritte sind unzulässig. Hostumgebung und Linux-Hilfsvektor werden nicht übernommen. Grundlage: [dyld-Architektur](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-Externe Dylibs, Imports, Rebases/Chained Fixups, Konstruktoren/Destruktoren, TLS-Sektionen, arm64e/PAC, andere nicht unterstützte CPU-Untertypen, Verschlüsselung und nicht modellierte Ladebefehle scheitern vor Ausführung. PIE ohne Fixups verwendet bevorzugte Adressen, kein ASLR. Signaturblobs sind Metadaten und implementieren weder AMFI noch Entitlement-Regeln.
+Dylibs und Imports außerhalb des folgenden endlichen libSystem-Vertrags, Konstruktoren/Destruktoren, TLS-Sektionen, arm64e/PAC, andere nicht unterstützte CPU-Untertypen, Verschlüsselung und nicht modellierte Ladebefehle scheitern vor Ausführung. Unterstützte PIE verwendet bevorzugte Adressen, kein ASLR. Signaturblobs sind Metadaten und implementieren weder AMFI noch Entitlement-Regeln.
 
 ## Darwin-Dienste
 
@@ -1793,4 +1793,37 @@ lchown364 / final symbolic vnode / existing ownership_mutations grants
 lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / main58 stdoutW / virtual1281 guarded bytes
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
+```
+
+## Begrenzte libSystem-Imports
+
+Ein Thin-Programm der Basis-ISA kann genau eine starke Abhängigkeit `/usr/lib/libSystem.B.dylib` binden. Erforderlich sind `LC_MAIN`, `MH_TWOLEVEL`, ein gewöhnliches Bibliotheksordinal und eine Kompatibilitätsanforderung bis 1.0. Der Leser prüft klassische Zeigerströme oder generic64-Ketten vollständig, einschließlich undefinierter Symbole, genauer Slots und lokaler Rebases. Andere Abhängigkeiten, weak/lazy/threaded Bindungen, nicht unterstützte Relocations, Initialisierung, TLS und authentifizierte Zeiger werden vor Ausführung abgewiesen.
+
+Nur Imports erhalten authentifizierte Funktionszugänge und einen frischen Hauptthread-errno-Wert. Wrapper teilen die Darwin-Kerneleffekte: Fehler liefern `-1` und errno; Erfolg erhält errno. C `_exit` heißt in Mach-O `__exit`; C `exit` mit dem Linknamen `_exit` bleibt ununterstützt. Gewöhnliche Funktionen prüfen den Rückkehrrahmen; terminale Aufrufe benötigen kein Rückkehrziel. Berichte erhalten Anbieter, Linknamen, Argumentzahl und sämtliche Bits. Unvollständige oder nicht zurückkehrende Ergebnisse sind null; bestehende Raw-Berichte bleiben kompatibel.
+
+`SG_READ_ONLY` macht nach Fixups nur den aktuellen Schutz schreibgeschützt; der deklarierte Maximalschutz bleibt erhalten. Native O0/O1/O2-Beobachtungen bestätigen, dass `mprotect` bei Maximum RW wieder Schreiben erlauben kann. Reservierte Zugangs- und errno-Seiten verweigern Unmap/Reprotect durch den Gast. Vorbereitung und Ausführung teilen Frist, Ereigniskonto und bestehendes Speicherbudget.
+
+Dasselbe unabhängig erstellte Objekt läuft nach system/classic/chained-Linken gegen echtes libSystem. Process/C/CLI/Python prüfen fünf Plattform/ISA-Kombinationen sowie drei passende ARM64-HVF-Profile. Beliebige Dylibs, dlopen/dlsym, Shared Cache, Konstruktoren, Threads, Apple-Frameworks, Intel HVF und physische iOS-Abnahme bleiben offen.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+entry: LC_MAIN + MH_TWOLEVEL; ordinary positive ordinals; preferred addresses, slide 0
+fixups: classic non-lazy pointer bind/rebase; DYLD_CHAINED_PTR_64 / PTR_64_OFFSET
+unsupported: weak/lazy/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: complete 64-bit hex; exact arity; null result if incomplete/nonreturning
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+native common catalogue: 82; required methods/platform: 96; matching ARM64 identities: 288
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
 ```

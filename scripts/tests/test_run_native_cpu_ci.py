@@ -531,7 +531,13 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 95 * len(platforms))
+                    self.assertEqual(len(required), 96 * len(platforms))
+                    for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "LibSystemImportsPreserveErrnoAndRawKernelAuthority/"
+                            f"{platform}_{backend}", required,
+                        )
                     for platform in platforms:
                         self.assertIn(
                             "Transports/DarwinProcess."

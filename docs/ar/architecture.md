@@ -1706,3 +1706,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### التقاط محدود لسياق مستدعي النواة
 
 يمتلك `WindowsX64Context.def` التخطيط المشترك و`WindowsX64Context.cpp` جمع السجلات الصحيحة والمحددات المنطقية. تبقى سياسة FP الكاملة للمستخدم والمحدودة للنواة منفصلة. يستعير `DriverContextCapture.cpp` المعالج باستدعاءات متزامنة دون إعادة دخول؛ يمتلك `KernelModelContextCapture.cpp` الفحوص والرجوع الفعلي والآثار. تسبق كل الفحوص تحديث FLAGS الذري ثم كتابة RAM المتحقق منها. لا يوجد ضمان تراجع عن أخطاء كتابة عشوائية أو تغييرات تعيين متزامنة.
+
+### استيراد libSystem محدود
+
+يملك `MachOProgramLinking` حقائق classic/generic64 الأصلية الصارمة وإغلاق الرموز الكامل وحدود الإعداد. تدير عملية Darwin قبول المزوّد والرمز ونشر المؤشرات والحماية بعد fixups ومداخل libSystem وerrno. يربط `DarwinLibSystemCalls.def` الأسماء وأعداد المعاملات بتأثيرات `DarwinServices` دون اختراع traps خام. يملك `DarwinMemory` الحجوزات والحماية القصوى و`ExecutionBudget` الموعد المشترك، ويُسلسل `ProcessReport` وحده `darwin.native_calls` الاختياري. لا تُحمّل مكتبات المضيف.

@@ -1837,3 +1837,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Begrenzte Erfassung des Kernel-Aufruferkontexts
 
 `WindowsX64Context.def` besitzt das gemeinsame Layout, `WindowsX64Context.cpp` die Ganzzahl-Erfassung und logischen Selektoren. Vollständiges Benutzer-FP und begrenztes Kernel-FP bleiben getrennt. `DriverContextCapture.cpp` leiht die CPU synchron ohne Wiedereintritt; `KernelModelContextCapture.cpp` besitzt Speicherprüfung, echten Rückkehrslot und Effekte. Nach allen Prüfungen wird FLAGS atomar gesetzt und vorgeprüftes RAM geschrieben. Beliebige Schreibfehler oder nebenläufige Mapping-Änderungen werden nicht zurückgerollt.
+
+### Begrenzte libSystem-Imports
+
+`MachOProgramLinking` besitzt strikte originale classic/generic64-Fakten, vollständigen Symbolabschluss und Vorbereitungsgrenzen. Der Darwin-Prozess verwaltet Anbieter-/Symbolzulassung, Zeiger, Schutz nach Fixups, libSystem-Zugänge und errno. `DarwinLibSystemCalls.def` bindet Namen und Argumentzahlen an typisierte `DarwinServices`-Effekte ohne erfundene Raw-Traps. Reservierungen und Maximalschutz gehören `DarwinMemory`, die gemeinsame Frist `ExecutionBudget`, die optionale Ausgabe `darwin.native_calls` allein `ProcessReport`. Host-Bibliotheken werden nicht geladen.
