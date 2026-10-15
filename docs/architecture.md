@@ -4121,6 +4121,12 @@ preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
+The original instructions execute on the selected checked CPU transport; OS
+models do not replace them with scalar stubs. Optional/scalable forms still fail
+admission. Independent lane and full-state oracles cover both execution levels.
+
+
 ARM64 native adapters use 4 KiB, 48-bit virtual-address page tables and separate
 TTBR0/TTBR1 roots. Guest mappings cannot overlap the private vector and
 maintenance pages at `[0x1000, 0x3000)`. The backing arena stays below the

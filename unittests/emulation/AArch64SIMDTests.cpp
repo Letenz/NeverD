@@ -10,6 +10,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace neverd::emulation {
@@ -245,6 +246,103 @@ TEST_P(AArch64SIMD, CMHIProducesUnsignedElementMasksAndPreservesOtherState) {
     }
   }
 }
+TEST_P(AArch64SIMD, IntegerComparisonsAndReductionsPreserveFullState) {
+  enum Operation { Equal, Zero, Unzip, Narrow, NarrowHigh, Maximum };
+  struct LaneCase {
+    Operation Op;
+    uint32_t Word;
+    unsigned Bits, Elements;
+  };
+  constexpr LaneCase Cases[] = {
+#define NEVERD_AARCH64_REDUCTION_CASE(Op, Word, Bits, Elements)                \
+  {Op, Word, Bits, Elements},
+#include "AArch64ReductionCases.def"
+#undef NEVERD_AARCH64_REDUCTION_CASE
+  };
+  constexpr RegisterValue Left[] = {
+      {0, 0},
+      {UINT64_MAX, UINT64_MAX},
+      {0x80ff7f000102ff80ULL, 0xffffffff00000001ULL},
+      {0x1234000056780000ULL, 0x8000000000000000ULL}};
+  constexpr RegisterValue Right[] = {
+      {UINT64_MAX, 0},
+      {UINT64_MAX, UINT64_MAX},
+      {0x7fff80000102fe80ULL, 0x7fffffff00000002ULL},
+      {0x1234000056780000ULL, 0x8000000000000000ULL}};
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Word);
+    for (unsigned Destination : {31u, 1u, 2u}) {
+      SCOPED_TRACE(Destination);
+      for (unsigned Input = 0; Input != std::size(Left); ++Input) {
+        SCOPED_TRACE(Input);
+        vector(31, {InitialVectorLow, InitialVectorHigh});
+        vector(1, Left[Input]);
+        vector(2, Right[Input]);
+        auto ExpectedVectors = vectors();
+        auto ExpectedScalars = scalars();
+        ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+        const unsigned Bits = Case.Bits, Count = Case.Elements;
+        const uint64_t Mask =
+            Bits == 64 ? UINT64_MAX : (uint64_t(1) << Bits) - 1;
+        auto Element = [](RegisterValue Value, unsigned Index, unsigned Width) {
+          const uint64_t Mask =
+              Width == 64 ? UINT64_MAX : (uint64_t(1) << Width) - 1;
+          return (Value[Index * Width / 64] >> (Index * Width % 64)) & Mask;
+        };
+        RegisterValue Expected{};
+        if (Case.Op == NarrowHigh)
+          Expected[0] = ExpectedVectors[Destination][0];
+        for (unsigned I = 0; I < Count; ++I) {
+          uint64_t Value = 0;
+          if (Case.Op == Equal || Case.Op == Zero)
+            Value =
+                Element(Left[Input], I, Bits) ==
+                        (Case.Op == Zero ? 0 : Element(Right[Input], I, Bits))
+                    ? Mask
+                    : 0;
+          else if (Case.Op == Unzip)
+            Value = Element(I < Count / 2 ? Left[Input] : Right[Input],
+                            (I % (Count / 2)) * 2, Bits);
+          else if (Case.Op == Narrow || Case.Op == NarrowHigh)
+            Value = Element(Left[Input], I, Bits * 2) & Mask;
+          else {
+            Expected[0] = std::max(Expected[0], Element(Left[Input], I, Bits));
+            continue;
+          }
+          const unsigned At = I * Bits + (Case.Op == NarrowHigh ? 64 : 0);
+          Expected[At / 64] |= Value << (At % 64);
+        }
+        ExpectedVectors[Destination] = Expected;
+        ASSERT_NO_FATAL_FAILURE(
+            expectSuccess(run((Case.Word & ~31u) | Destination)));
+        EXPECT_EQ(vectors(), ExpectedVectors);
+        EXPECT_EQ(scalars(), ExpectedScalars);
+        std::array<uint8_t, 64> After;
+        llvm::cantFail(CPU->snapshotBacking(Stack, After));
+        EXPECT_EQ(After, Guard);
+      }
+    }
+  }
+}
+// Each refusal terminates its checked CPU; use a fresh fixture for each word.
+#define REJECT_REDUCTION(Name, Word)                                           \
+  TEST_P(AArch64SIMD, ReductionRejects##Name) { expectRejected(Word); }
+REJECT_REDUCTION(SingleLaneCompare, 0x2ee28c3f)
+REJECT_REDUCTION(ScalarByteCompare, 0x7e228c3f)
+REJECT_REDUCTION(ScalarByteZeroCompare, 0x5e20983f)
+REJECT_REDUCTION(SingleLaneUnzip, 0x0ec2183f)
+REJECT_REDUCTION(NarrowBeyond64BitElements, 0x0ee1283f)
+REJECT_REDUCTION(TwoLaneWordMaximum, 0x2eb0a83f)
+REJECT_REDUCTION(DoubleWordMaximum, 0x6ef0a83f)
+REJECT_REDUCTION(ScalableMaximum, 0x0409203f)
+REJECT_REDUCTION(ScalableUnzip, 0x0522683f)
+#undef REJECT_REDUCTION
 TEST_P(AArch64SIMD, CMHIReservedSingleLaneVectorIsRejected) {
   expectRejected(0x2ee2343f);
 }
