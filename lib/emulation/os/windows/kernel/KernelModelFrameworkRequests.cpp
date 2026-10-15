@@ -88,6 +88,7 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
     return frameworkRequestError(
         "IoStatus.Information exceeds the requested transfer buffer");
   if ((Request->Kind == DriverRequestKind::Cleanup ||
+       Request->Kind == DriverRequestKind::UnlockAll ||
        Request->Kind == DriverRequestKind::Close) &&
       Information)
     return frameworkRequestError(
@@ -132,7 +133,8 @@ void KernelModel::configureFrameworkRequestHost() {
                 Request->Kind == DriverRequestKind::DeviceControl
             ? Request->UserBuffer
             : 0,
-        Request->FileAddress};
+        Request->FileAddress,
+        Request->CallbackProcessID};
   };
   Host.Buffer = [this](uint64_t IRP, bool Output) -> llvm::Expected<uint64_t> {
     const auto *Request = requestForIRP(IRP);

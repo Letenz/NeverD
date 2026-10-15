@@ -1927,4 +1927,4 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 
 `KernelDeviceStackTests.cpp` 檢查目前鄰居、借用與持有結果、輸入或鄰居的刪除狀態、最後參考退役、無效或損壞輸入，以及在增加參考前拒絕過高 IRQL。原創 `fixtures/driver_device_queries.c` 透過 `DriverDeviceQueryTests.cpp` 在可用後端、兩種契約及兩個載入位址上執行，涵蓋協作排程和 17 條指令搶占排程。測試驗證 detach/delete 後的儲存保留，並以刻意洩漏的參考驗證卸載拒絕；原生驗收要求四種契約/位址組合。
 
-KernelFileObjectTests 涵蓋 CREATE 期間參考、型別不符、編號重用、暫止 CLOSE、裝置刪除、建立失敗及高 IRQL 最後釋放拒絕。原創 driver_file_objects.c 與 DriverFileObjectTests 在可用後端、兩種執行契約與基址、協作式及 17 指令排程下驗證同步與暫止關閉、建立失敗及刻意洩漏。巢狀關閉檢查實際執行緒、行程與 PreviousMode。原生驗收要求全部四種契約及基址組合；檔案控制代碼與檔案系統操作仍需另外涵蓋。
+KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別不符時清零輸出、通用權限、行程及全域計數、回呼內重開拒絕、錯誤路徑重試、請求行程結束、重複清理與暫止關閉。KernelPnpRequestTests 驗證延後 CLEANUP 的下層回應；KernelFrameworkFileTests 驗證回呼行程與 LOCK_CONTROL 路由。原創 driver_file_objects.c 保留指標生命週期測試。driver_file_handles.c 以協作式及 17 指令排程測試同步／暫止 CLEANUP、CLOSE、系統工作執行緒釋放、編號重用與刻意洩漏。真實 WDK 夾具 driver_kmdf_file_handles.c 驗證系統行程清理、恢復呼叫端關閉及無清理回呼；設定 NEVERD_KMDF_FILE_HANDLES_FIXTURE 與選用 NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE。DriverFileObjectTests 使用可用後端、兩種契約與基址。缺少 WDK 產物或後端會明確略過。檔案系統操作仍需另行涵蓋。 情境發起的 KMDF CLEANUP/CLOSE 保留呼叫行程、執行緒及 PreviousMode；測試 F 模式在另一檔案的 CLEANUP 中關閉保留控制代碼，並檢查返回後的內容恢復。

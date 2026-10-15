@@ -246,5 +246,272 @@ TEST_F(KernelFileObjects, ReparseDoesNotBecomeASuccessfulOpen) {
   rejects(Completed.takeError(), "reparse");
   EXPECT_FALSE(Result.Requests.back().Completed);
 }
+
+TEST_F(KernelFileObjects, HandlesSeparateProcessUnlockFromGlobalCleanup) {
+  const uint64_t File = open();
+  const uint64_t Type = call("ObGetObjectType", {File});
+  EXPECT_EQ(call("ObOpenObjectByPointer",
+                 {File, 0x200, 0, 0x80000000, Type, 0, Scratch + 8}),
+            0u);
+  const uint64_t First = read(Scratch + 8);
+  EXPECT_EQ(call("ObOpenObjectByPointer",
+                 {File, 0x200, 0, 0x40000000, 0, 0, Scratch + 8}),
+            0u);
+  const uint64_t Last = read(Scratch + 8);
+  EXPECT_EQ(call("ObReferenceObjectByHandle",
+                 {First, 0, Type, 0, Scratch + 16, Scratch + 24}),
+            0u);
+  EXPECT_EQ(read(Scratch + 16), File);
+  EXPECT_EQ(read(Scratch + 28, 4), 0x120089u);
+  call("ObfDereferenceObject", {File});
+  EXPECT_EQ(
+      call("ObReferenceObjectByHandle", {First, 0, Type, 1, Scratch + 16, 0}),
+      0xc0000008u);
+  EXPECT_EQ(call("ZwClose", {First}), 0u);
+  EXPECT_FALSE(Model->takeGuestCall());
+  EXPECT_EQ(Result.Requests.size(), 1u);
+  const auto Unlock = begin(DriverRequestKind::Cleanup);
+  ASSERT_EQ(Unlock.PC, 0u); // Default unsupported-major dispatch actually ran.
+  ASSERT_EQ(Result.Requests.size(), 3u);
+  EXPECT_EQ(Result.Requests[1].IRP, 0u);
+  EXPECT_FALSE(Result.Requests[1].Completed);
+  EXPECT_EQ(Result.Requests[2].Kind, DriverRequestKind::UnlockAll);
+  EXPECT_EQ(Result.Requests[2].Origin, DriverRequestOrigin::FileHandleClose);
+  EXPECT_TRUE(Result.Requests[2].Completed);
+  EXPECT_EQ(begin(DriverRequestKind::Close).IRP, 0u);
+  EXPECT_EQ(call("ZwClose", {Last}), 0u);
+  auto Cleanup = Model->takeGuestCall();
+  ASSERT_TRUE(Cleanup);
+  EXPECT_EQ(Cleanup->ProcessID, std::optional<uint32_t>{4});
+  ok(Model->beginGuestCall(Cleanup->Token));
+  const uint64_t IRP = Cleanup->Arguments[1];
+  EXPECT_EQ(read(read(IRP + IRPStackPointerOffset), 1), 18u);
+  complete(IRP);
+  EXPECT_FALSE(take(Model->finishGuestCall(Cleanup->Token, 0)));
+  auto Close = Model->takeGuestCall();
+  ASSERT_TRUE(Close);
+  ok(Model->beginGuestCall(Close->Token));
+  complete(Close->Arguments[1]);
+  EXPECT_EQ(take(Model->finishGuestCall(Close->Token, 0)),
+            std::optional<uint64_t>{0});
+  EXPECT_TRUE(Result.Requests[1].Completed);
+  EXPECT_EQ(Result.Requests[1].RequestorProcessID, 4u);
+  EXPECT_EQ(read(Device + DeviceReferenceCount, 4), 0u);
+  rejects(Model->validateGuestAccess(File, 2, false), "freed");
+  EXPECT_EQ(call("ZwClose", {Last}), 0xc0000008u);
+}
+
+TEST_F(KernelFileObjects, PendingHandleCleanupResumesItsOriginalCaller) {
+  const uint64_t File = open();
+  EXPECT_EQ(
+      call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+      0u);
+  const uint64_t Handle = read(Scratch + 8);
+  begin(DriverRequestKind::Cleanup);
+  begin(DriverRequestKind::Close);
+  ok(Model->setUserRequestContext(true, 0x2000));
+  const auto Caller = Model->captureExecutionContext();
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  auto Cleanup = Model->takeGuestCall();
+  ASSERT_TRUE(Cleanup);
+  ok(Model->beginGuestCall(Cleanup->Token));
+  const uint64_t Child = profile::CallbackStackBase;
+  ok(Model->inheritExecutionContext(Child, profile::StackBase,
+                                    Cleanup->ProcessID));
+  Model->enterExecution(Child, profile::StackBase, Cleanup->Token);
+  ok(Model->activateInheritedProcess());
+  EXPECT_EQ(call("PsGetCurrentProcessId", {}), 0x2000u);
+  EXPECT_EQ(call("PsGetProcessId", {call("IoGetCurrentProcess", {})}), 4u);
+  EXPECT_EQ(call("ExGetPreviousMode", {}), 1u);
+  const uint64_t IRP = Cleanup->Arguments[1];
+  write(read(IRP + IRPStackPointerOffset) + StackControlOffset,
+        StackPendingReturned, 1);
+  EXPECT_EQ(take(Model->finishGuestCall(Cleanup->Token, 0x103)),
+            std::optional<uint64_t>{0});
+  auto Wait = Model->takeWait();
+  ASSERT_TRUE(Wait);
+  EXPECT_FALSE(take(Model->pollWait(*Wait)));
+  complete(IRP);
+  EXPECT_EQ(take(Model->pollWait(*Wait)), std::optional<uint32_t>{0});
+  EXPECT_FALSE(Model->takeGuestCall());
+  ok(Model->restoreExecutionContext(Caller));
+  EXPECT_FALSE(take(Model->resumeFileHandleClose(Wait->Object)));
+  auto Close = Model->takeGuestCall();
+  ASSERT_TRUE(Close);
+  EXPECT_EQ(Close->ProcessID, std::optional<uint32_t>{0x2000});
+  EXPECT_EQ(Result.Requests[1].RequestorProcessID, 4u);
+  EXPECT_EQ(Result.Requests[3].RequestorProcessID, 0x2000u);
+  ok(Model->beginGuestCall(Close->Token));
+  complete(Close->Arguments[1]);
+  take(Model->finishGuestCall(Close->Token, 0));
+  EXPECT_EQ(call("PsGetCurrentProcessId", {}), 0x2000u);
+  EXPECT_EQ(read(Device + DeviceReferenceCount, 4), 0u);
+}
+
+TEST_F(KernelFileObjects, CleanedPointerCanAcquireAndCloseAnotherHandle) {
+  const uint64_t File = open();
+  call("ObfReferenceObject", {File});
+  close();
+  EXPECT_EQ(
+      call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+      0u);
+  call("ObfDereferenceObject", {File});
+  EXPECT_FALSE(Model->takeGuestCall());
+  EXPECT_EQ(call("ZwClose", {read(Scratch + 8)}), 0u);
+  auto Cleanup = Model->takeGuestCall();
+  ASSERT_TRUE(Cleanup);
+  EXPECT_EQ(Result.Requests.back().Origin,
+            DriverRequestOrigin::FileHandleClose);
+  ok(Model->beginGuestCall(Cleanup->Token));
+  complete(Cleanup->Arguments[1]);
+  EXPECT_FALSE(take(Model->finishGuestCall(Cleanup->Token, 0)));
+  auto Close = Model->takeGuestCall();
+  ASSERT_TRUE(Close);
+  ok(Model->beginGuestCall(Close->Token));
+  complete(Close->Arguments[1]);
+  take(Model->finishGuestCall(Close->Token, 0));
+  EXPECT_EQ(read(Device + DeviceReferenceCount, 4), 0u);
+}
+
+TEST_F(KernelFileObjects, HandleCloseFailurePreservesItsReference) {
+  const uint64_t File = open();
+  EXPECT_EQ(
+      call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+      0u);
+  const uint64_t Handle = read(Scratch + 8);
+  Model->enterExecution(profile::CallbackStackBase);
+  auto Bad = Model->call("ZwClose", {Handle});
+  ASSERT_FALSE(bool(Bad));
+  rejects(Bad.takeError(), "known PASSIVE_LEVEL caller");
+  Model->enterExecution(profile::StackBase);
+  EXPECT_EQ(
+      call("ObReferenceObjectByHandle", {Handle, 0, 0, 0, Scratch + 16, 0}),
+      0u);
+  EXPECT_EQ(read(Scratch + 16), File);
+  call("ObfDereferenceObject", {File});
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u); // Unregistered unlock dispatch.
+  EXPECT_FALSE(Model->takeGuestCall());
+  close();
+}
+
+TEST_F(KernelFileObjects, PointerOpenRequiresInitialHandleCreation) {
+  const auto Create = begin(DriverRequestKind::Create);
+  const uint64_t File = read(Create.IRP + IRPOriginalFileOffset);
+  auto Bad = Model->call("ObOpenObjectByPointer",
+                         {File, 0x200, 0, 0, 0, 0, Scratch + 8});
+  ASSERT_FALSE(bool(Bad));
+  rejects(Bad.takeError(), "initial successful handle");
+  finish(Create.IRP);
+  close();
+}
+
+TEST_F(KernelFileObjects, InvalidCloseRoutePreservesHandleForRetry) {
+  const uint64_t File = open();
+  EXPECT_EQ(
+      call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+      0u);
+  const uint64_t Handle = read(Scratch + 8);
+  begin(DriverRequestKind::Cleanup);
+  begin(DriverRequestKind::Close);
+  write(Device + DeviceStackCountOffset, 0, 1);
+  auto Bad = Model->call("ZwClose", {Handle});
+  ASSERT_FALSE(bool(Bad));
+  rejects(Bad.takeError(), "StackSize must be a positive CCHAR");
+  EXPECT_EQ(
+      call("ObReferenceObjectByHandle", {Handle, 0, 0, 0, Scratch + 16, 0}),
+      0u);
+  EXPECT_EQ(read(Scratch + 16), File);
+  call("ObfDereferenceObject", {File});
+  write(Device + DeviceStackCountOffset, 1, 1);
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  auto Cleanup = Model->takeGuestCall();
+  ASSERT_TRUE(Cleanup);
+  ok(Model->beginGuestCall(Cleanup->Token));
+  complete(Cleanup->Arguments[1]);
+  EXPECT_FALSE(take(Model->finishGuestCall(Cleanup->Token, 0)));
+  auto Close = Model->takeGuestCall();
+  ASSERT_TRUE(Close);
+  ok(Model->beginGuestCall(Close->Token));
+  complete(Close->Arguments[1]);
+  take(Model->finishGuestCall(Close->Token, 0));
+  EXPECT_EQ(read(Device + DeviceReferenceCount, 4), 0u);
+}
+
+TEST_F(KernelFileObjects, ScenarioLifecycleCallbacksRejectPointerReopening) {
+  for (bool Clone : {false, true}) {
+    SCOPED_TRACE(Clone);
+    const uint64_t File = open();
+    if (Clone)
+      EXPECT_EQ(
+          call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+          0u);
+    const uint64_t Handle = Clone ? read(Scratch + 8) : 0;
+    write(Model->driverObject() + DriverDispatchOffset + 17 * 8, Entry);
+    const auto Callback = begin(DriverRequestKind::Cleanup);
+    ASSERT_NE(Callback.IRP, 0u);
+    auto Bad = Model->call("ObOpenObjectByPointer",
+                           {File, 0x200, 0, 0, 0, 0, Scratch + 16});
+    ASSERT_FALSE(bool(Bad));
+    rejects(Bad.takeError(), "handle-close callback");
+    complete(Callback.IRP);
+    Bad = Model->call("ObOpenObjectByPointer",
+                      {File, 0x200, 0, 0, 0, 0, Scratch + 16});
+    ASSERT_FALSE(bool(Bad));
+    rejects(Bad.takeError(), "handle-close callback");
+    ok(Model->recordDispatchReturn(Callback.IRP, 0));
+    ok(Model->finalizeRequest(Callback.IRP));
+    const auto Close = begin(DriverRequestKind::Close);
+    if (!Clone) {
+      finish(Close.IRP);
+      continue;
+    }
+    EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+    auto Cleanup = Model->takeGuestCall();
+    ASSERT_TRUE(Cleanup);
+    ok(Model->beginGuestCall(Cleanup->Token));
+    complete(Cleanup->Arguments[1]);
+    EXPECT_FALSE(take(Model->finishGuestCall(Cleanup->Token, 0)));
+    auto Final = Model->takeGuestCall();
+    ASSERT_TRUE(Final);
+    ok(Model->beginGuestCall(Final->Token));
+    complete(Final->Arguments[1]);
+    take(Model->finishGuestCall(Final->Token, 0));
+  }
+}
+
+TEST_F(KernelFileObjects, ExitedRequestorStillUnlocksRetainedFile) {
+  const uint64_t File = open();
+  EXPECT_EQ(
+      call("ObOpenObjectByPointer", {File, 0x200, 0, 0, 0, 0, Scratch + 8}),
+      0u);
+  const uint64_t Handle = read(Scratch + 8);
+  DriverRequest Input;
+  Input.Kind = DriverRequestKind::DeviceControl;
+  Input.File = 1;
+  Input.ControlCode = 0x222003;
+  Input.Input = {0x41};
+  Input.RequestorExitAfterDispatch = true;
+  auto Transfer = take(Model->beginRequest(Input));
+  complete(Transfer.IRP);
+  ok(Model->recordDispatchReturn(Transfer.IRP, 0));
+  ok(Model->exitRequestorProcess(Transfer.IRP));
+  ok(Model->finalizeRequest(Transfer.IRP));
+  begin(DriverRequestKind::Cleanup);
+  EXPECT_EQ(Result.Requests.back().Kind, DriverRequestKind::UnlockAll);
+  EXPECT_TRUE(Result.Requests.back().Completed);
+  begin(DriverRequestKind::Close);
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  auto Cleanup = Model->takeGuestCall();
+  ASSERT_TRUE(Cleanup);
+  ok(Model->beginGuestCall(Cleanup->Token));
+  complete(Cleanup->Arguments[1]);
+  EXPECT_FALSE(take(Model->finishGuestCall(Cleanup->Token, 0)));
+  auto Close = Model->takeGuestCall();
+  ASSERT_TRUE(Close);
+  ok(Model->beginGuestCall(Close->Token));
+  complete(Close->Arguments[1]);
+  take(Model->finishGuestCall(Close->Token, 0));
+  EXPECT_EQ(read(Device + DeviceReferenceCount, 4), 0u);
+}
 } // namespace
 } // namespace neverd::emulation

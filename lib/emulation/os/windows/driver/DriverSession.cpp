@@ -580,11 +580,13 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     uint64_t ThreadKey = 0;
     std::shared_ptr<TimeSlice> Slice;
     std::optional<KernelModel::ExecutionContext> PausedModel;
+    std::optional<KernelModel::ExecutionContext> ScenarioCaller;
     bool Boundary = false;
     std::string Phase;
     std::unique_ptr<BackendContext> Context;
     std::optional<KernelModel::Wait> Wait;
     std::optional<uint64_t> ResumeValue;
+    std::optional<uint64_t> FileHandleContinuation;
     std::optional<uint8_t> ResumeIRQL;
     size_t WaitEvent = 0;
     bool PrivateStack = false;
@@ -839,13 +841,16 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       if (!Status)
         return Status.takeError();
       if (*Status) {
+        if (Frame->Wait->Type == KernelModel::Wait::Kind::FileHandleClose)
+          Frame->FileHandleContinuation = Frame->Wait->Object;
         if (Frame->Wait->Type !=
             KernelModel::Wait::Kind::InterruptSynchronization)
           Frame->ResumeIRQL = Frame->Wait->IRQL;
         const bool BeforeChild =
             Frame->Wait->Type ==
                 KernelModel::Wait::Kind::InterruptSynchronization ||
-            Frame->Wait->Type == KernelModel::Wait::Kind::FrameworkCallback;
+            Frame->Wait->Type == KernelModel::Wait::Kind::FrameworkCallback ||
+            Frame->Wait->Type == KernelModel::Wait::Kind::FileHandleClose;
         Frame->Wait.reset();
         if (Options.Scheduling) {
           auto Order = Kernel.issueReadyOrder();
@@ -931,6 +936,8 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                           Owner->ReturnToken.ID
                               ? Owner->ReturnToken
                               : Kernel.scheduledGuestCall(Owner->ID));
+    if (auto E = Kernel.activateInheritedProcess())
+      return E;
     if (Frame.Context) {
       if (auto E = CPU.restoreContext(*Frame.Context))
         return E;
@@ -1477,13 +1484,19 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     }
     return llvm::Error::success();
   };
-  auto Pump = [&](std::unique_ptr<Execution> Current,
-                  const std::string &ParentPhase) -> llvm::Error {
-    const bool Foreground = bool(Current) && !Current->ID;
+  auto Pump =
+      [&](std::unique_ptr<Execution> Current, const std::string &ParentPhase,
+          std::optional<KernelGuestCall> ScenarioCall = {}) -> llvm::Error {
+    const bool Foreground = (bool(Current) && !Current->ID) || ScenarioCall;
     auto StartDetachedCall =
         [&](const KernelGuestCall &Call,
             std::optional<KernelModel::Wait> ClockWait = {},
-            uint64_t ReadyOrder = 0) -> llvm::Error {
+            uint64_t ReadyOrder = 0,
+            const KernelModel::ExecutionContext *Caller = nullptr,
+            std::shared_ptr<TimeSlice> Slice = {}) -> llvm::Error {
+      if (Caller)
+        if (auto E = Kernel.restoreExecutionContext(*Caller))
+          return E;
       auto Wait = ReadyOrder ? std::move(ClockWait) : Kernel.takeWait();
       if (Wait &&
           Wait->Type != KernelModel::Wait::Kind::InterruptSynchronization)
@@ -1495,7 +1508,16 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                                 guestCallPhase(Call.Token), 0, true);
       if (!Frame)
         return Frame.takeError();
+      if (Caller) {
+        if (auto E = Kernel.inheritExecutionContext(
+                (*Frame)->Base, Caller->Execution, Call.ProcessID))
+          return E;
+        (*Frame)->ScenarioCaller = *Caller;
+        (*Frame)->ThreadKey = Caller->Thread;
+      }
       (*Frame)->ReturnToken = Call.Token;
+      if (Slice)
+        (*Frame)->Slice = std::move(Slice);
       if (ReadyOrder)
         (*Frame)->Slice->ReadyOrder = ReadyOrder;
       (*Frame)->SynchronizationObject = Call.SynchronizationObject;
@@ -1513,6 +1535,13 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       }
       return llvm::Error::success();
     };
+    if (ScenarioCall) {
+      const auto Caller = Kernel.captureExecutionContext();
+      if (auto E = StartDetachedCall(*ScenarioCall, {}, 0, &Caller)) {
+        ModelFailure(std::move(E));
+        return llvm::Error::success();
+      }
+    }
     auto ReadyDetachedCall = [&](const KernelGuestCall &Call) -> llvm::Error {
       if (!Options.Scheduling)
         return StartDetachedCall(Call);
@@ -1609,6 +1638,38 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
             return llvm::Error::success();
           }
           Current->PendingEntry.reset();
+        }
+        if (Current->FileHandleContinuation) {
+          Kernel.enterExecution(Current->Base, Current->ThreadKey,
+                                Current->ReturnToken.ID
+                                    ? Current->ReturnToken
+                                    : Kernel.scheduledGuestCall(Current->ID));
+          auto Continued =
+              Kernel.resumeFileHandleClose(*Current->FileHandleContinuation);
+          if (!Continued) {
+            ModelFailure(Continued.takeError());
+            return llvm::Error::success();
+          }
+          Current->FileHandleContinuation.reset();
+          Current->ChildCall = Kernel.takeGuestCall();
+          Current->Wait = Kernel.takeWait();
+          if (!Current->ChildCall && !Current->Wait) {
+            if (!*Continued) {
+              ModelFailure(failure(session_diagnostic::MissingModelCallback));
+              return llvm::Error::success();
+            }
+            Current->ResumeValue = **Continued;
+            Result.Calls[Current->WaitEvent].Result = **Continued;
+          } else if (!Current->ChildCall) {
+            Current->PausedModel = Kernel.captureExecutionContext();
+            if (Current->ID)
+              if (auto E = Kernel.suspendScheduled(Current->ID)) {
+                ModelFailure(std::move(E));
+                return llvm::Error::success();
+              }
+            Waiting.push_back(std::move(Current));
+            continue;
+          }
         }
         if (!Current->ChildCall)
           if (auto E = RunExecution(*Current)) {
@@ -1714,6 +1775,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                                 Current->ReturnToken.ID
                                     ? Current->ReturnToken
                                     : Kernel.scheduledGuestCall(Current->ID));
+          Current->PausedModel = Kernel.captureExecutionContext();
           if (auto E = Kernel.beginGuestCall(Call.Token)) {
             ModelFailure(std::move(E));
             return llvm::Error::success();
@@ -1725,8 +1787,8 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
             ModelFailure(Child.takeError());
             return llvm::Error::success();
           }
-          if (auto E = Kernel.inheritExecutionContext((*Child)->Base,
-                                                      Current->Base)) {
+          if (auto E = Kernel.inheritExecutionContext(
+                  (*Child)->Base, Current->Base, Call.ProcessID)) {
             ModelFailure(std::move(E));
             return llvm::Error::success();
           }
@@ -1836,6 +1898,14 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
               return llvm::Error::success();
             }
             auto Parent = std::move(Current->Parent);
+            if (Parent->PausedModel) {
+              if (auto E =
+                      Kernel.restoreExecutionContext(*Parent->PausedModel)) {
+                ModelFailure(std::move(E));
+                return llvm::Error::success();
+              }
+              Parent->PausedModel.reset();
+            }
             if (auto Wait = Kernel.takeWait()) {
               if (Parent->Wait) {
                 ModelFailure(failure(session_diagnostic::CallbackReplacesWait));
@@ -1893,11 +1963,25 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                 ModelFailure(failure(session_diagnostic::MissingModelCallback));
                 return llvm::Error::success();
               }
-              if (auto E = ReadyDetachedCall(*Call)) {
+              const auto Caller = Current->ScenarioCaller;
+              auto E = Caller ? StartDetachedCall(*Call, {}, 0, &*Caller,
+                                                  Current->Slice)
+                              : ReadyDetachedCall(*Call);
+              if (E) {
                 ModelFailure(std::move(E));
                 return llvm::Error::success();
               }
               continue;
+            }
+            if (Current->ScenarioCaller) {
+              if (auto E = Kernel.restoreExecutionContext(
+                      *Current->ScenarioCaller)) {
+                ModelFailure(std::move(E));
+                return llvm::Error::success();
+              }
+              if (auto E = Kernel.flushFrameworkCallbackDestructions())
+                ModelFailure(std::move(E));
+              return llvm::Error::success();
             }
             Current.reset();
             continue;
@@ -2220,6 +2304,39 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       // retain the body; that pointer's eventual release owns actual dispatch.
       if (!Invocation->IRP)
         continue;
+      // Framework file lifecycle dispatch can start a callback chain without
+      // a WDM dispatch PC. It still runs on this scenario's calling thread;
+      // unrelated scheduled callbacks retain their own execution context.
+      if (!Invocation->PC &&
+          (Options.Requests[Index].Kind == DriverRequestKind::Cleanup ||
+           Options.Requests[Index].Kind == DriverRequestKind::Close)) {
+        if (auto Call = Kernel.takeGuestCall()) {
+          Kernel.enterForeground();
+          Kernel.enterExecution(StackBase, StackBase);
+          if (auto E = Kernel.activateStack(StackBase, StackSize)) {
+            ModelFailure(std::move(E));
+            break;
+          }
+          if (auto E = Kernel.setUserRequestContext(
+                  true, Options.Requests[Index].RequestorProcessID)) {
+            ModelFailure(std::move(E));
+            break;
+          }
+          auto Invoked = Pump(nullptr, Result.Phase, *Call);
+          if (auto E = Kernel.setUserRequestContext(false)) {
+            ModelFailure(std::move(E));
+            break;
+          }
+          if (Invoked)
+            return std::move(Invoked);
+          if (Result.Stop != DriverStopReason::Returned)
+            break;
+          if (auto E = Kernel.retireStack(StackBase, StackSize)) {
+            ModelFailure(std::move(E));
+            break;
+          }
+        }
+      }
       if (Invocation->PC) {
         if (auto E = Kernel.setUserRequestContext(
                 Options.Requests[Index].Kind != DriverRequestKind::Pnp &&

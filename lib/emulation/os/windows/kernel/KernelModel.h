@@ -209,7 +209,8 @@ public:
       FrameworkWaitLock,
       FrameworkCallback,
       FrameworkCallbackLock,
-      FileClose
+      FileClose,
+      FileHandleClose
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -226,6 +227,7 @@ public:
   };
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
+  llvm::Expected<std::optional<uint64_t>> resumeFileHandleClose(uint64_t ID);
   std::optional<uint64_t> nextEventTime() const;
   bool hasQueuedDPC() const { return Scheduler.hasQueuedDPC(); }
   bool hasQueuedPriorityCallback() const {
@@ -268,7 +270,10 @@ public:
   }
   /// A synchronous nested callback retains its parent's process and memory
   /// authority while keeping its own execution and resource ownership.
-  llvm::Error inheritExecutionContext(uint64_t Child, uint64_t Parent);
+  llvm::Error
+  inheritExecutionContext(uint64_t Child, uint64_t Parent,
+                          std::optional<uint32_t> ProcessID = std::nullopt);
+  llvm::Error activateInheritedProcess();
   llvm::Error setUserRequestContext(
       bool Active,
       uint32_t ProcessID = DriverRequest::DefaultRequestorProcessID);
@@ -601,7 +606,9 @@ private:
   struct ExecutionProcessContext {
     uint32_t ProcessID, CreatingProcessID;
     uint8_t PreviousMode;
-    bool Attached;
+    /// Public KeStackAttachProcess currently admits only a bounded operation
+    /// set. Internal object-manager callbacks have their own continuation.
+    bool RestrictedAttachment;
   };
   std::optional<ExecutionProcessContext> executionProcessContext() const;
   struct InheritedExecutionContext {
@@ -925,6 +932,7 @@ private:
     uint32_t GrantedAccess;
     uint32_t Attributes;
     uint32_t ProcessID;
+    bool ScenarioOwned = false;
   };
   // External references have one owner. Execution and registered waits keep
   // their domain-owned holds until completion; they are not caller references.
@@ -1212,6 +1220,11 @@ private:
     uint64_t PnpDevice = 0;
     bool Asynchronous = false;
     FileState State = FileState::Opening;
+    uint64_t ScenarioHandle = 0;
+    uint32_t ScenarioID = 0;
+    bool ScenarioCleanupRequested = false;
+    uint32_t HandleCloseHolds = 0;
+    std::optional<DeferredFileClose> DeferredCleanup;
     std::optional<DeferredFileClose> DeferredClose;
   };
   // Scenario identifiers name an open instance, not its object-manager body.
@@ -1222,12 +1235,33 @@ private:
                                               std::optional<size_t> SourceIndex,
                                               size_t Index,
                                               uint64_t RetainedFile = 0);
-  llvm::Error retireFileIfUnreferenced(uint64_t Object);
+  llvm::Error retireFileIfUnreferenced(
+      uint64_t Object, std::optional<uint32_t> CallerProcess = std::nullopt);
   llvm::Error tryFinalizeFileClose(uint64_t IRP);
   llvm::Error waitForFileClose(uint64_t IRP);
   llvm::Expected<std::optional<uint64_t>>
   finishFileCloseDispatch(uint64_t Token, uint64_t ResultValue);
   std::set<uint64_t> InternalFileCloses;
+  struct FileHandleClose {
+    uint64_t File = 0;
+    uint64_t IRP = 0;
+    uint32_t CallerProcess = 0;
+  };
+  std::map<uint64_t, FileHandleClose> FileHandleCloses;
+  uint64_t NextFileHandleClose = 1;
+  llvm::Error validateFileHandleClose(uint64_t File, bool Scenario) const;
+  llvm::Expected<std::optional<DriverRequestKind>>
+  planFileHandleClose(uint64_t Handle) const;
+  void releaseFileHandle(uint64_t Handle);
+  llvm::Expected<Invocation> beginFileHandleRequest(uint64_t File,
+                                                    DriverRequestKind Kind,
+                                                    uint32_t ProcessID);
+  llvm::Error closeFileHandle(uint64_t Handle);
+  llvm::Error dispatchFileHandleClose(uint64_t ID, const Invocation &Call,
+                                      uint32_t ProcessID);
+  llvm::Error waitForFileHandleClose(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileHandleDispatch(uint64_t Token, uint64_t ReturnValue);
   bool Unloading = false;
   bool Unloaded = false;
   struct RequestedPower {
@@ -1332,6 +1366,9 @@ private:
     bool AsynchronousFile = false;
     uint32_t ProcessID = 0;
     uint32_t InputSize = 0;
+    /// Effective process of an object-manager file lifecycle callback. The
+    /// invoking thread's creating process and PreviousMode stay unchanged.
+    std::optional<uint32_t> CallbackProcessID;
     uint32_t TransferSize = 0;
     uint64_t ByteOffset = 0;
     bool Direct = false;
@@ -1354,7 +1391,8 @@ private:
     PowerDispatch,
     PowerCompletion,
     Cancel,
-    FileClose
+    FileClose,
+    FileHandleClose
   };
   struct IRPCall {
     IRPCallKind Kind;
@@ -1364,6 +1402,7 @@ private:
     uint64_t ReturnValue = 0;
     std::optional<uint64_t> ProviderReceiptIRP;
     std::optional<uint32_t> FrameworkDispatchStatus;
+    uint64_t FileHandleOperation = 0;
   };
   struct ProviderReceipt {
     uint64_t Device = 0;

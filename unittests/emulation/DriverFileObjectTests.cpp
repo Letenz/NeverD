@@ -99,6 +99,155 @@ TEST_P(KernelFileObjectExecution, OriginalDriverDefersCloseUntilLastReference) {
   }
 }
 
+TEST_P(KernelFileObjectExecution, OriginalDriverClosesSharedFileHandles) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  for (char Mode : {'S', 'P', 'C', 'B', 'W', 'L'}) {
+    for (bool Preemptive : {false, true}) {
+      SCOPED_TRACE(std::string(1, Mode) +
+                   (Preemptive ? " scheduled" : " cooperative"));
+      DriverOptions Options;
+      Options.Backend = Backend;
+      Options.Contract = Contract;
+      Options.Unload = true;
+      Options.ServiceName = std::string("FileHandles") + Mode;
+      if (Preemptive)
+        Options.Scheduling = DriverScheduling{17, 10};
+      if (Rebase)
+        Options.LoadAddress = 0x1c0000000;
+      for (uint32_t PID : {0x1000, 0x2000}) {
+        for (auto Kind :
+             {DriverRequestKind::Create, DriverRequestKind::DeviceControl,
+              DriverRequestKind::Cleanup, DriverRequestKind::Close}) {
+          DriverRequest Input;
+          Input.Kind = Kind;
+          Input.File = 1;
+          Input.RequestorProcessID = PID;
+          Options.Requests.push_back(std::move(Input));
+        }
+      }
+      auto Result =
+          emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                            "driver_file_handles.sys",
+                        Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      EXPECT_EQ(Result->Stop, Mode == 'L' ? DriverStopReason::ModelError
+                                          : DriverStopReason::Returned)
+          << Result->Diagnostic;
+      EXPECT_EQ(Result->UnloadCompleted, Mode != 'L') << Result->Diagnostic;
+      ASSERT_EQ(Result->Requests.size(), Options.Requests.size() + 1);
+      size_t Scenario = 0;
+      for (const auto &Request : Result->Requests) {
+        if (Request.Origin == DriverRequestOrigin::FileHandleClose) {
+          EXPECT_EQ(Request.Kind, DriverRequestKind::UnlockAll);
+          EXPECT_EQ(Request.RequestorProcessID, 0x1000u);
+          EXPECT_TRUE(Request.Completed);
+          EXPECT_EQ(Request.IOStatus, 0u);
+          continue;
+        }
+        const size_t Index = Scenario++;
+        if (Mode == 'L' && (Index == 2 || Index == 3)) {
+          EXPECT_FALSE(Request.Completed);
+          EXPECT_EQ(Request.IRP, 0u);
+          EXPECT_FALSE(Request.DispatchStatus);
+          continue;
+        }
+        EXPECT_TRUE(Request.Completed) << Index;
+        EXPECT_EQ(Request.IOStatus, 0u) << Index;
+        if (Index == 2) {
+          EXPECT_EQ(Request.RequestorProcessID, 4u);
+          EXPECT_EQ(Request.DispatchStatus,
+                    Mode == 'P' || Mode == 'B' ? 0x103u : 0u);
+        }
+        if (Index == 3) {
+          EXPECT_EQ(Request.RequestorProcessID, Mode == 'W' ? 4u : 0x2000u);
+          EXPECT_EQ(Request.DispatchStatus,
+                    Mode == 'C' || Mode == 'B' ? 0x103u : 0u);
+        }
+      }
+      if (Mode != 'L')
+        EXPECT_TRUE(Result->Devices.empty());
+    }
+  }
+}
+
+TEST_P(KernelFileObjectExecution, GenuineKmdfRestoresFileHandleCaller) {
+#ifndef NEVERD_KMDF_FILE_HANDLES_FIXTURE
+  GTEST_SKIP() << "NEVERD_KMDF_FILE_HANDLES_FIXTURE requires genuine WDK input";
+#else
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  std::vector<const char *> Images{NEVERD_KMDF_FILE_HANDLES_FIXTURE};
+#ifdef NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    for (char Mode : {'S', 'N', 'F'}) {
+      for (bool Scheduled : {false, true}) {
+        SCOPED_TRACE(std::string(1, Mode) +
+                     (Scheduled ? " scheduled" : " cooperative"));
+        DriverOptions Options;
+        Options.Backend = Backend;
+        Options.Contract = Contract;
+        Options.Unload = true;
+        Options.ServiceName = std::string("OriginalKmdfFileHandles") + Mode;
+        if (Scheduled)
+          Options.Scheduling = DriverScheduling{17, 10};
+        if (Rebase)
+          Options.LoadAddress = 0x1c0000000;
+        for (uint32_t PID : {0x1000, 0x2000}) {
+          for (auto Kind :
+               {DriverRequestKind::Create, DriverRequestKind::DeviceControl,
+                DriverRequestKind::Cleanup, DriverRequestKind::Close}) {
+            DriverRequest Input;
+            Input.Kind = Kind;
+            Input.File = 1;
+            Input.RequestorProcessID = PID;
+            if (Kind == DriverRequestKind::DeviceControl)
+              Input.ControlCode = 0x222000;
+            Options.Requests.push_back(std::move(Input));
+          }
+        }
+        auto Result = emulateDriver(Image, Options);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        ASSERT_EQ(Result->Stop, DriverStopReason::Returned)
+            << Result->Diagnostic;
+        EXPECT_TRUE(Result->UnloadCompleted) << Result->Diagnostic;
+        ASSERT_EQ(Result->Requests.size(), 9u);
+        for (const auto &Request : Result->Requests) {
+          EXPECT_TRUE(Request.Completed);
+          EXPECT_EQ(Request.IOStatus,
+                    Request.Kind == DriverRequestKind::UnlockAll ? 0xc0000010u
+                                                                 : 0u);
+        }
+        EXPECT_EQ(Result->Requests[2].RequestorProcessID, 4u);
+        EXPECT_EQ(Result->Requests[4].RequestorProcessID, 0x2000u);
+        EXPECT_TRUE(Result->Devices.empty());
+      }
+    }
+  }
+#endif
+}
+
 std::string fileObjectParameterName(
     const testing::TestParamInfo<KernelFileObjectExecution::ParamType> &Info) {
   const auto [Backend, Contract, Rebase] = Info.param;

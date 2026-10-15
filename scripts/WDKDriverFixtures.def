@@ -75,6 +75,8 @@ NEVERD_WDK_ARGUMENTS("seh_link", "/debug:dwarf")
 // sources.
 NEVERD_WDK_FIXTURE("KMDF", "driver_kmdf_lifecycle.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("KMDF_CONTROL", "driver_kmdf_control.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_FILE_HANDLES", "driver_kmdf_file_handles.c", "KMDF",
+                   "0", "")
 NEVERD_WDK_FIXTURE("KMDF_PNP", "driver_kmdf_pnp.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("WDM_DMA", "driver_wdm_dma.c", "WDM", "0", "")
 NEVERD_WDK_FIXTURE("WDM_DMA_CHANNEL", "driver_wdm_dma_channel.c", "WDM", "0",
