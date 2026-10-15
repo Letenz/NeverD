@@ -139,6 +139,11 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+The 64-bit Linux worker embeds a pinned mimalloc allocator in its executable.
+Its C++ code and loaded SDK use that one process heap, including cross-thread
+releases. No allocator replacement is exported by the SDK itself. Other hosts,
+allocation-sanitizer builds and `NEVERD_WORKER_MIMALLOC=OFF` use the platform
+allocator. The build keeps the worker's existing CPU instruction requirements.
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -6691,3 +6696,5 @@ stateful initialization, fields, hierarchy dispatch, objects and handlers.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
+
+KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. This preparatory owner does not enable CREATE/OPEN exports or relax route rejection.

@@ -9,10 +9,12 @@
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverFileSystemJSON.h"
 #include "os/windows/kernel/KernelFileSystem.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 
 #include <algorithm>
+#include <array>
 
 namespace neverd::emulation {
 namespace {
@@ -373,6 +375,238 @@ TEST(DriverFileSystemDeclaration,
   EXPECT_FALSE(Owner.ownsDevice(0));
   rejects(Owner.bindDevice(0, 0x12346000));
   rejects(Owner.initialize(Input), "twice");
+}
+
+struct OpenOwner {
+  KernelFileSystem Owner;
+  OpenOwner() {
+    auto Volumes = inventory();
+    Volumes[0].Nodes.push_back(node("\\Other", 6, Kind::File));
+    Volumes.push_back(Volumes.front());
+    Volumes.back().DeviceName = "\\Device\\SecondVolume";
+    ok(Owner.initialize(Volumes));
+    ok(Owner.bindDevice(0, 0x1000));
+    ok(Owner.bindDevice(1, 0x2000));
+  }
+  KernelFileSystem::OpenResult reserve(uint64_t Body, uint32_t Access,
+                                       uint32_t Share, uint64_t ID = 5,
+                                       uint64_t Device = 0x1000) {
+    return take(Owner.reserveOpen(Device, ID, Body, Access, Share));
+  }
+  void retire(uint64_t Token) {
+    ok(Owner.cleanupOpen(Token));
+    ok(Owner.closeOpen(Token));
+  }
+};
+
+TEST(DriverFileSystemOpen, NoDeclarationOrBindingCannotInventAnOpen) {
+  for (unsigned State = 0; State != 4; ++State) {
+    KernelFileSystem Owner;
+    if (State == 0)
+      rejects(Owner.validateOpenBindings({}), "uninitialized");
+    else if (State == 1)
+      ok(Owner.initialize(std::nullopt));
+    else if (State == 2)
+      ok(Owner.initialize(Inventory{}));
+    else
+      ok(Owner.initialize(inventory()));
+    auto Open = Owner.reserveOpen(0x1000, 5, 0x3000, 1, 7);
+    ASSERT_FALSE(bool(Open));
+    rejects(Open.takeError(), "bound volume");
+    EXPECT_EQ(Owner.openCount(), 0u);
+    if (State)
+      ok(Owner.validateOpenBindings({}));
+  }
+}
+
+TEST(DriverFileSystemOpen, SharingChecksExistingAndIncomingAccess) {
+  // The three access categories and all sharing combinations. Expected
+  // results use SHARE_ACCESS-style counts, independently of token storage.
+  // The same 4096 pairs were executed through the original public kernel
+  // share helpers; execute/append and metadata rights have separate cases.
+  constexpr std::array<uint32_t, 8> Access = {
+      0, 1, 2, 3, 0x10000, 0x10001, 0x10002, 0x10003};
+  OpenOwner S;
+  for (unsigned Existing = 0; Existing != 8; ++Existing)
+    for (unsigned Incoming = 0; Incoming != 8; ++Incoming)
+      for (unsigned OldShare = 0; OldShare != 8; ++OldShare)
+        for (unsigned NewShare = 0; NewShare != 8; ++NewShare) {
+          SCOPED_TRACE(::testing::Message()
+                       << Existing << ',' << Incoming << ',' << OldShare << ','
+                       << NewShare);
+          const auto First = S.reserve(0x3000, Access[Existing], OldShare);
+          ASSERT_EQ(First.Status, windows::StatusSuccess);
+          ASSERT_NE(First.Token, 0u);
+          bool Compatible = true;
+          if (Existing && Incoming)
+            for (unsigned Bit = 1; Bit <= 4; Bit <<= 1) {
+              const unsigned Users = bool(Existing & Bit);
+              const unsigned Sharers = bool(OldShare & Bit);
+              if ((Incoming & Bit) && Sharers != 1)
+                Compatible = false;
+              if (Users && !(NewShare & Bit))
+                Compatible = false;
+            }
+          const auto Second = S.reserve(0x4000, Access[Incoming], NewShare);
+          EXPECT_EQ(Second.Status, Compatible
+                                       ? windows::StatusSuccess
+                                       : windows::StatusSharingViolation);
+          EXPECT_EQ(Second.Token != 0, Compatible);
+          EXPECT_EQ(S.Owner.openCount(), Compatible ? 2u : 1u);
+          if (Second.Token)
+            S.retire(Second.Token);
+          S.retire(First.Token);
+          EXPECT_EQ(S.Owner.openCount(), 0u);
+        }
+}
+
+TEST(DriverFileSystemOpen, ExecuteAppendAndMetadataUseCorrectShareCategories) {
+  for (const auto [Access, Sharing] :
+       {std::pair{0x20u, 1u}, std::pair{4u, 2u}}) {
+    for (bool IncomingAlias : {false, true}) {
+      OpenOwner S;
+      auto First = S.reserve(0x3000, IncomingAlias ? Sharing : Access, 0);
+      auto Second = S.reserve(0x4000, IncomingAlias ? Access : Sharing, 7);
+      EXPECT_EQ(Second.Status, windows::StatusSharingViolation);
+      EXPECT_EQ(Second.Token, 0u);
+      S.retire(First.Token);
+    }
+  }
+  for (uint32_t Metadata : {0u, 8u, 0x10u, 0x80u, 0x100u, 0x20000u, 0x40000u,
+                            0x80000u, 0x100000u}) {
+    OpenOwner S;
+    const auto First = S.reserve(0x3000, Metadata, 0);
+    const auto Second = S.reserve(0x4000, 0x10023, 0);
+    const auto Third = S.reserve(0x5000, Metadata, 0);
+    EXPECT_EQ(First.Status, 0u);
+    EXPECT_EQ(Second.Status, 0u);
+    EXPECT_EQ(Third.Status, 0u);
+    ok(S.Owner.validateOpenBindings({{0x3000, First.Token},
+                                     {0x4000, Second.Token},
+                                     {0x5000, Third.Token}}));
+    S.retire(Second.Token);
+    S.retire(First.Token);
+    S.retire(Third.Token);
+  }
+}
+
+TEST(DriverFileSystemOpen, CleanupReleasesSharingWhileCloseRetiresIdentity) {
+  OpenOwner S;
+  const auto Before = driver_filesystem::stateJSON(take(S.Owner.snapshot()));
+  const auto First = S.reserve(0x3000, 1, 0);
+  ASSERT_NE(First.Token, 0u);
+  auto Failure = S.reserve(0x4000, 2, 7);
+  EXPECT_EQ(Failure.Status, windows::StatusSharingViolation);
+  EXPECT_EQ(Failure.Token, 0u);
+  rejects(S.Owner.closeOpen(First.Token), "cleaned");
+  EXPECT_EQ(S.Owner.openCount(), 1u);
+  ok(S.Owner.cleanupOpen(First.Token));
+  ASSERT_NE(S.Owner.findOpen(First.Token), nullptr);
+  EXPECT_TRUE(S.Owner.findOpen(First.Token)->Cleaned);
+  EXPECT_EQ(S.Owner.findOpen(First.Token)->FileID, 5u);
+  const auto Second = S.reserve(0x4000, 2, 0);
+  EXPECT_EQ(Second.Status, 0u);
+  EXPECT_EQ(Second.Token, First.Token + 1);
+  // Repeated CLEANUP on a retained/reopened body never cancels another open's
+  // reservation and does not recreate the old reservation.
+  ok(S.Owner.cleanupOpen(First.Token));
+  Failure = S.reserve(0x5000, 1, 7);
+  EXPECT_EQ(Failure.Status, windows::StatusSharingViolation);
+  ok(S.Owner.closeOpen(First.Token));
+  EXPECT_EQ(S.Owner.findOpen(First.Token), nullptr);
+  rejects(S.Owner.cleanupOpen(First.Token), "live");
+  rejects(S.Owner.closeOpen(First.Token), "live");
+  ok(S.Owner.validateOpenBindings({{0x4000, Second.Token}}));
+  S.retire(Second.Token);
+  const auto ReusedBody = S.reserve(0x3000, 1, 7);
+  EXPECT_GT(ReusedBody.Token, Second.Token);
+  S.retire(ReusedBody.Token);
+  EXPECT_EQ(driver_filesystem::stateJSON(take(S.Owner.snapshot())), Before);
+}
+
+TEST(DriverFileSystemOpen, FileIdentityIncludesVolumeAndAcceptsZeroID) {
+  OpenOwner S;
+  const auto First = S.reserve(0x3000, 1, 0, 0);
+  const auto OtherVolume = S.reserve(0x4000, 2, 0, 0, 0x2000);
+  const auto OtherNode = S.reserve(0x5000, 2, 0, 6);
+  EXPECT_EQ(First.Status, 0u);
+  EXPECT_EQ(OtherVolume.Status, 0u);
+  EXPECT_EQ(OtherNode.Status, 0u);
+  const auto Conflict = S.reserve(0x6000, 2, 7, 0);
+  EXPECT_EQ(Conflict.Status, windows::StatusSharingViolation);
+  const auto *Record = S.Owner.findOpen(First.Token);
+  ASSERT_NE(Record, nullptr);
+  EXPECT_EQ(Record->FileID, 0u);
+  EXPECT_EQ(Record->DeviceObject, 0x1000u);
+  EXPECT_EQ(Record->GrantedAccess, 1u);
+  EXPECT_EQ(Record->ShareAccess, 0u);
+  S.retire(First.Token);
+  S.retire(OtherVolume.Token);
+  S.retire(OtherNode.Token);
+}
+
+TEST(DriverFileSystemOpen, InvalidBindingsAndRightsCannotReserveOrReviveOpen) {
+  OpenOwner S;
+  const auto First = S.reserve(0x3000, 0, 0);
+  for (const auto &Arguments : {std::array<uint64_t, 5>{0, 5, 0x4000, 0, 7},
+                                {0x1000, 999, 0x4000, 0, 7},
+                                {0x1000, 5, 0, 0, 7},
+                                {0x1000, 5, 0x3000, 0, 7},
+                                {0x1000, 5, 0x4000, 0x80000000, 7},
+                                {0x1000, 5, 0x4000, 0x2000000, 7},
+                                {0x1000, 5, 0x4000, 0, 8}}) {
+    auto Invalid = S.Owner.reserveOpen(Arguments[0], Arguments[1], Arguments[2],
+                                       Arguments[3], Arguments[4]);
+    ASSERT_FALSE(bool(Invalid));
+    rejects(Invalid.takeError());
+    EXPECT_EQ(S.Owner.openCount(), 1u);
+  }
+  ok(S.Owner.cleanupOpen(First.Token));
+  auto Reopen = S.Owner.reserveOpen(0x1000, 5, 0x3000, 1, 7);
+  ASSERT_FALSE(bool(Reopen));
+  rejects(Reopen.takeError(), "already owns");
+  const auto Second = S.reserve(0x4000, 0, 0);
+  EXPECT_EQ(Second.Token, First.Token + 1);
+  ok(S.Owner.validateOpenBindings(
+      {{0x3000, First.Token}, {0x4000, Second.Token}}));
+  rejects(S.Owner.validateOpenBindings({}), "differ");
+  rejects(S.Owner.validateOpenBindings({{0x3000, First.Token}}), "differ");
+  rejects(S.Owner.validateOpenBindings(
+              {{0x3000, First.Token}, {0x3000, First.Token}}),
+          "duplicate");
+  rejects(S.Owner.validateOpenBindings(
+              {{0x3000, Second.Token}, {0x4000, First.Token}}),
+          "wrong");
+  S.retire(First.Token);
+  rejects(S.Owner.validateOpenBindings({{0x3000, First.Token}}), "missing");
+  S.retire(Second.Token);
+  ok(S.Owner.validateOpenBindings({}));
+}
+
+TEST(DriverFileSystemOpen, CleanedReferencesRetainBoundedCapacityUntilClose) {
+  OpenOwner S;
+  std::vector<KernelFileSystem::OpenBinding> Bindings;
+  for (size_t I = 0; I != MaxFileSystemOpens; ++I) {
+    const uint64_t Body = 0x3000 + I * 0x100;
+    const auto Open = S.reserve(Body, 0, 0);
+    ASSERT_NE(Open.Token, 0u);
+    Bindings.push_back({Body, Open.Token});
+    ok(S.Owner.cleanupOpen(Open.Token));
+  }
+  ok(S.Owner.validateOpenBindings(Bindings));
+  auto Exhausted = S.Owner.reserveOpen(0x1000, 5, 0x1000000, 0, 0);
+  ASSERT_FALSE(bool(Exhausted));
+  rejects(Exhausted.takeError(), "exhausted");
+  EXPECT_EQ(S.Owner.openCount(), MaxFileSystemOpens);
+  ok(S.Owner.closeOpen(Bindings.front().Token));
+  const auto New = S.reserve(0x1000000, 0, 0);
+  EXPECT_GT(New.Token, Bindings.back().Token);
+  EXPECT_EQ(S.Owner.openCount(), MaxFileSystemOpens);
+  Bindings.front() = {0x1000000, New.Token};
+  ok(S.Owner.validateOpenBindings(Bindings));
+  for (const auto &Binding : Bindings)
+    S.retire(Binding.Token);
+  ok(S.Owner.validateOpenBindings({}));
 }
 } // namespace
 } // namespace neverd::emulation

@@ -1743,3 +1743,5 @@ KernelModelObjects 在共用对象表中管理文件句柄和指针计数。Kern
 
 
 `KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` 保存输入；顶层 `filesystem` 来自独立状态所有者，增加 `device_object` 和节点 `end_of_file`，执行或投影校验停止后仍保留。通用 `devices` 只包含来宾设备。会话卷可在卸载后保留，但来宾对象、引用、句柄、挂接和 IRP 必须释放。任何声明，包括 `[]`，都保留未重建依赖并阻止可执行 UNPACK 恢复。旧 Unicorn 模式可能在停止前提交已拒绝的设备写入；诊断保留投影失败，文件状态仍可观察。
+
+KernelFileSystem 为每个 FILE_OBJECT 保留一个 provider token。私有共享操作接收已获准的节点及已映射权限，双向检查共享冲突；仅访问元数据的打开不参与冲突。CLEANUP 释放共享限制但保留 token，CLOSE 删除已清理的 token。仍被引用的已清理对象也计入 1024 个打开的上限。严格绑定校验将 token 与文件对象 owner 对照。这一前置层尚未启用 CREATE/OPEN 导出，也未放宽路由拒绝边界。

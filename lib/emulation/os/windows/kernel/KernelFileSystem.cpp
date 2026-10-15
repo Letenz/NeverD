@@ -8,10 +8,13 @@
 
 #include "KernelFileSystem.h"
 
+#include "WindowsKernelLayout.h"
+
 #include "neverd/emulation/DriverProfile.h"
 
 #include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -55,6 +58,12 @@ bool accumulate(uint64_t &Total, uint64_t Amount, uint64_t Limit) {
     return false;
   Total += Amount;
   return true;
+}
+uint32_t sharingDemand(uint32_t Access) {
+  // FILE_EXECUTE shares with readers; FILE_APPEND_DATA shares with writers.
+  // Metadata-only access does not contribute to shared-access counts.
+  return (Access & 0x21 ? 1u : 0u) | (Access & 0x6 ? 2u : 0u) |
+         (Access & 0x10000 ? 4u : 0u);
 }
 } // namespace
 
@@ -195,6 +204,82 @@ KernelFileSystem::volumeForDevice(uint64_t DeviceObject) const {
 bool KernelFileSystem::ownsDevice(uint64_t DeviceObject) const {
   return volumeForDevice(DeviceObject) != nullptr;
 }
+
+llvm::Expected<KernelFileSystem::OpenResult>
+KernelFileSystem::reserveOpen(uint64_t DeviceObject, uint64_t FileID,
+                              uint64_t FileObject, uint32_t GrantedAccess,
+                              uint32_t ShareAccess) {
+  const auto *Volume = volumeForDevice(DeviceObject);
+  if (!Initialized || !Volume || !FileObject)
+    return invalid("open requires a bound volume and a nonzero FILE_OBJECT");
+  if (GrantedAccess & ~windows::FileAllAccess || ShareAccess & ~7u)
+    return invalid("open requires mapped file rights and supported sharing");
+  if (std::none_of(Volume->Nodes.begin(), Volume->Nodes.end(),
+                   [&](const auto &Node) { return Node.FileID == FileID; }))
+    return invalid("open requires an existing node in its bound volume");
+  for (const auto &[Token, Existing] : Opens)
+    if (Existing.FileObject == FileObject)
+      return invalid("FILE_OBJECT already owns a provider open");
+
+  const auto Demand = sharingDemand(GrantedAccess);
+  if (Demand)
+    for (const auto &[Token, Existing] : Opens) {
+      if (Existing.Cleaned || Existing.DeviceObject != DeviceObject ||
+          Existing.FileID != FileID)
+        continue;
+      const auto ExistingDemand = sharingDemand(Existing.GrantedAccess);
+      if (ExistingDemand &&
+          ((Demand & ~Existing.ShareAccess) || (ExistingDemand & ~ShareAccess)))
+        return OpenResult{windows::StatusSharingViolation, 0};
+    }
+  if (Opens.size() >= MaxFileSystemOpens || NextOpen == UINT64_MAX)
+    return invalid("provider open inventory or token space exhausted");
+  const auto Token = NextOpen++;
+  Opens.emplace(Token, Open{Token, FileObject, DeviceObject, FileID,
+                            GrantedAccess, ShareAccess, false});
+  return OpenResult{windows::StatusSuccess, Token};
+}
+
+const KernelFileSystem::Open *KernelFileSystem::findOpen(uint64_t Token) const {
+  const auto Found = Opens.find(Token);
+  return Found == Opens.end() ? nullptr : &Found->second;
+}
+
+llvm::Error KernelFileSystem::cleanupOpen(uint64_t Token) {
+  const auto Found = Opens.find(Token);
+  if (Found == Opens.end())
+    return invalid("CLEANUP requires a live provider token");
+  // Closing a reopened handle can repeat CLEANUP. Its old reservation remains
+  // released even while pointer references or handles retain this body.
+  Found->second.Cleaned = true;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFileSystem::closeOpen(uint64_t Token) {
+  const auto Found = Opens.find(Token);
+  if (Found == Opens.end() || !Found->second.Cleaned)
+    return invalid("CLOSE requires a cleaned live provider token");
+  Opens.erase(Found);
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFileSystem::validateOpenBindings(
+    llvm::ArrayRef<OpenBinding> Bindings) const {
+  if (!Initialized)
+    return invalid("cannot validate opens on an uninitialized owner");
+  if (Bindings.size() != Opens.size())
+    return invalid("provider tokens and FILE_OBJECT bindings differ");
+  std::set<uint64_t> Seen;
+  for (const auto &Binding : Bindings) {
+    const auto *Open = findOpen(Binding.Token);
+    if (!Open || Open->FileObject != Binding.FileObject ||
+        !Seen.insert(Binding.Token).second)
+      return invalid("provider token has a missing, duplicate or wrong "
+                     "FILE_OBJECT binding");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<std::optional<std::vector<DriverFileSystemVolumeState>>>
 KernelFileSystem::snapshot() const {
   if (!Initialized)
