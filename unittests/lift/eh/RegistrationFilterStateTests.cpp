@@ -225,13 +225,13 @@ LowFunc filterFrame(Variant V) {
 }
 
 RegistrationStateAnalysis analyze(LowFunc F, Variant V) {
-  EH3JumpRuntime Runtime;
+  SEHJumpRuntime Runtime;
   Runtime.ImportSlots.insert(0x4100);
   Runtime.Capture = [V](const LowOp &Op, const FrameState &Frame, bool,
-                        size_t &) -> std::optional<EH3JumpCapture> {
+                        size_t &) -> std::optional<SEHJumpCapture> {
     if (Op.Addr != 0x1100)
       return std::nullopt;
-    EH3JumpCapture Capture;
+    SEHJumpCapture Capture;
     Capture.Call = Op.Addr;
     Capture.ReturnPC = 0x1105;
     Capture.BufferOffset = -144;

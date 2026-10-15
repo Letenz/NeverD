@@ -34,6 +34,7 @@ def source_cases(profile: str) -> dict[str, tuple[int, int]]:
     limit = 46 if profile == "r5" else 30
     return {name: case for name, case in CASES.items()
             if (profile == "all" or case[0] < limit) and
+            (profile == "all" or not (name.startswith("eh4-") and "longjmp-" in name)) and
             (profile != "seh3-eh4" or not name.startswith("eh4-gs-"))}
 
 

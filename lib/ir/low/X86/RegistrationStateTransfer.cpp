@@ -157,7 +157,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       const auto Address = Transfer.read(*Memory.Address);
       if (!Memory.Complete)
         CompleteCookies = false;
-      if (After.Installed && !RuntimeMemory &&
+      if (After.Installed && !RuntimeMemory && !Address.CallbackAddress &&
           (!Address.Offset && Address.MayBeFrame))
         CompleteCookies = false;
       if (After.Installed && Address.Offset) {
@@ -180,7 +180,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       if (Memory.StoredValue) {
         const uint64_t TableEnd =
             Chain.ScopeTableVA + 16 + uint64_t(Chain.Scopes.size()) * 12;
-        if (!Address.Offset &&
+        // The callback-memory owner above proves its private stack disjoint
+        // from the establisher and image. It cannot overwrite either cookie.
+        if (!Address.Offset && !Address.CallbackAddress &&
             (!Address.Constant ||
              (uint64_t(*Address.Constant) < SecurityCookieVA + 4 &&
               SecurityCookieVA <

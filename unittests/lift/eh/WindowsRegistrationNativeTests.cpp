@@ -3356,7 +3356,7 @@ TEST(WindowsRegistrationNative, JumpCapturesRequireAReplacementBufferReceipt) {
     RegistrationNativeFixture F;
     auto &States = *F.Source.RegistrationStates;
     if (Mutation == 0)
-      States.HasEH3JumpCaptures = true;
+      States.HasSEHJumpCaptures = true;
     if (Mutation == 1)
       States.SEHJumpResumptionsComplete = false;
     if (Mutation == 2)

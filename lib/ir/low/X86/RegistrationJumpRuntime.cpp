@@ -50,6 +50,8 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
     Binding.Routine = JumpRuntimeBinding::Kind::Resume;
   else if (Imported->Name == "_seh_longjmp_unwind")
     Binding.Routine = JumpRuntimeBinding::Kind::EH3Unwind;
+  else if (Imported->Name == "_seh_longjmp_unwind4")
+    Binding.Routine = JumpRuntimeBinding::Kind::EH4Unwind;
   else
     return std::nullopt;
   Binding.Target = Target;
@@ -70,7 +72,7 @@ checkedJumpRuntimeCall(const BinaryImage &Image, const LowFunc &Function,
   return Binding;
 }
 
-bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
+bool isSEHJumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
                                  uint16_t Size, llvm::ArrayRef<LowOp> Ops) {
   if (Size != 5 || Address > UINT32_MAX - Size)
     return false;

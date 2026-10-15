@@ -47,12 +47,12 @@ TEST(RegistrationPrivateCallState,
       Call.InstructionBoundaries.push_back({0x1185, 3, 1, 1});
       Call.EndAddr += 3;
     }
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.Capture = [](const LowOp &Op, const FrameState &Frame, bool,
-                         size_t &) -> std::optional<EH3JumpCapture> {
+                         size_t &) -> std::optional<SEHJumpCapture> {
       if (Op.Addr != 0x1100)
         return std::nullopt;
-      EH3JumpCapture Capture;
+      SEHJumpCapture Capture;
       Capture.Call = Op.Addr;
       Capture.ReturnPC = 0x1105;
       Capture.BufferOffset = -144;

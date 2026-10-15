@@ -60,9 +60,10 @@ static hash_code hash_value(const Domain::SEHCaller &Caller) {
                       Caller.OrdinaryCallStack, Caller.StackRestore);
 }
 
-static hash_code hash_value(const EH3JumpCapture &Capture) {
+static hash_code hash_value(const SEHJumpCapture &Capture) {
   return hash_combine(Capture.Call, Capture.ReturnPC, Capture.UnwindTarget,
                       Capture.BufferOffset, Capture.StackOffset, Capture.Level,
+                      unsigned(Capture.Protocol), Capture.SecurityCookieVA,
                       hash_combine_range(Capture.Nonvolatile));
 }
 

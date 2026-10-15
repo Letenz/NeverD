@@ -17,7 +17,7 @@ namespace neverd::registration_state {
 
 bool RegistrationStateSolver::runLocalFinally(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
-    std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
+    std::vector<RegistrationObjectExtent> *Writes, const SEHJumpCapture *Jump,
     const FrameValue *JumpValue, SEHFrameOutcomes *Outcomes) {
   return runSEHCallbackFrame(Target, Parent, OrdinaryInvocation, Writes, Jump,
                              JumpValue, nullptr, 0, std::nullopt, Outcomes);
@@ -25,7 +25,7 @@ bool RegistrationStateSolver::runLocalFinally(
 
 bool RegistrationStateSolver::runSEHCallbackFrame(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
-    std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
+    std::vector<RegistrationObjectExtent> *Writes, const SEHJumpCapture *Jump,
     const FrameValue *JumpValue, SEHFilterOutcomes *FilterOutcomes,
     unsigned Depth, std::optional<int32_t> ParentStackOffset,
     SEHFrameOutcomes *Outcomes) {
@@ -196,7 +196,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
             !validateSEHInvocationBlock(I) || !SP || SP->Entry != Target ||
             SP->Offset > -8 || !State.callbackMemoryIsPrivate(*SP, 8, true) ||
             State.loadCallback(SP->Offset, 4).Offset != Jump->BufferOffset ||
-            !hasEH3JumpCapture(State, *Jump))
+            !hasSEHJumpCapture(State, *Jump))
           return false;
         const auto Value = State.loadCallback(SP->Offset + 4, 4);
         const auto Normalize = [](const FrameValue &V) {
@@ -258,6 +258,8 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
                                         Write, WorkUsed) ||
               (Write &&
                (*Address.Constant < TableEnd && Chain.ScopeTableVA < End)) ||
+              (Write && EH4 && *Address.Constant < SecurityCookieVA + 4 &&
+               SecurityCookieVA < End) ||
               (Write && Transfer.read(*Memory.StoredValue).MayBeFrame))
             return false;
           if (!Write) {

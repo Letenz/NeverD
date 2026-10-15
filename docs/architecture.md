@@ -6308,13 +6308,15 @@ returns that identity and its scalar value to the caller's unwind owner.
 These are source-analysis facts; native lowering rejects them until a replacement
 call and buffer plan is proved.
 
-`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
-unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
-checks a current source CALL, complete buffer separation, the installed canonical
-frame and the explicit two-argument unwind protocol. It retains actual captured
-nonvolatile values, including unknown pointer provenance. `RegistrationJumpBuffer`
-owns the ten initialized DWORDs; the six unused unwind-data words retain their
-original contents. `RegistrationStateJump` retains captures across checked
+`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and
+EH3/EH4 unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
+checks a current source CALL, complete buffer separation and the installed canonical
+frame. `RegistrationJumpEH4` binds the three-argument EH4 protocol to the encoded
+scope pointer and image cookie address; EH3 requires two unwind arguments. The
+state owner additionally proves cookie initialization, lifetime and disjoint slots.
+Captures retain actual nonvolatile values, including unknown pointer provenance.
+`RegistrationJumpBuffer` owns ten initialized DWORDs for EH3 and eleven for EH4;
+the remaining unwind-data words retain their original contents. `RegistrationStateJump` retains captures across checked
 transfers, withdraws them on overlapping writes, released storage or unknown
 calls, and rejects an altered runtime import slot. An authenticated resume walks
 the current unwind levels, preserves checked finally writes, restores captured

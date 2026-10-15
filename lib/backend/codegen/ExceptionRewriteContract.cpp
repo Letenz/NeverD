@@ -432,9 +432,9 @@ validateCxxGroupRewriteContracts(const llvm::Module &Module,
         return cxxGroupError(CxxGroupContractErrorReason::NonCanonicalOrder,
                              *IdentityValue, *MemberVA);
       if (!SeenContractMembers.insert(*MemberVA).second)
-        return cxxGroupError(
-            CxxGroupContractErrorReason::DuplicateMember, *IdentityValue,
-            *MemberVA, "contract member belongs to more than one group");
+        return cxxGroupError(CxxGroupContractErrorReason::DuplicateMember,
+                             *IdentityValue, *MemberVA,
+                             "contract member belongs to more than one group");
       PreviousMember = *MemberVA;
       HavePreviousMember = true;
       HasCanonicalOwner |= *MemberVA == *CanonicalOwner;
@@ -857,8 +857,7 @@ resolveRequiredFunctionOwners(const Requirements &Requirements,
           ContractErrorReason::MissingCompiledFunction, Function.Name,
           "owner is not inside allocated generated code");
 
-    Owners.push_back(
-        {Function.Name, Match->OwnerSymbol, Match->OwnerVA});
+    Owners.push_back({Function.Name, Match->OwnerSymbol, Match->OwnerVA});
   }
   return Owners;
 }

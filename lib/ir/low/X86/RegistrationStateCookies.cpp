@@ -38,7 +38,9 @@ RegistrationStateSolver::cookieSlot(int32_t Displacement) const {
 
 bool RegistrationStateSolver::cookiesReady(const FrameState &Frame) const {
   const auto SP =
-      Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
+      Frame.CallbackEntry
+          ? Frame.load(*Chain.RegistrationOffset - 8, 4).Offset
+          : Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
   auto Matches = [&](std::optional<int32_t> Slot, int32_t XOROffset) {
     if (!Slot || !SP || *Slot < *SP)
       return false;

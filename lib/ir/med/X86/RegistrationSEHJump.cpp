@@ -28,16 +28,20 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   if (!Bound)
     return std::nullopt;
   if (!States.SEHJumpCapturesComplete || !States.SEHJumpResumptionsComplete ||
-      States.HasEH3JumpCaptures != !States.SEHJumpCaptures.empty())
+      States.HasSEHJumpCaptures != !States.SEHJumpCaptures.empty())
     return std::nullopt;
   std::map<va_t, X86RegistrationSEHJumpCall> Result;
   if (States.SEHJumpCaptures.empty() && States.SEHJumpResumptions.empty())
     return Result;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata ||
-      !Function.ExceptionMetadata->Registration ||
-      Function.ExceptionMetadata->Personality !=
-          ExceptionPersonality::ExceptHandler3)
+      !Function.ExceptionMetadata->Registration)
+    return std::nullopt;
+  const auto &EH = *Function.ExceptionMetadata;
+  const auto &Chain = *EH.Registration;
+  const bool EH4 = EH.Personality == ExceptionPersonality::ExceptHandler4;
+  if ((!EH4 && EH.Personality != ExceptionPersonality::ExceptHandler3) ||
+      (EH4 && (!States.SecurityCookiesComplete || !States.SecurityCookieVA)))
     return std::nullopt;
   std::map<va_t, const MedBlock *> Blocks;
   std::map<int, const MedBlock *> BlocksById;
@@ -85,10 +89,23 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         Capture.Address + 5 != Capture.EndAddress ||
         Capture.UnwindVA == InvalidVA || !Capture.UnwindVA ||
         int64_t(Capture.BufferOffset) + Capture.BufferBytes > -24 ||
-        int64_t(Capture.StackOffset) + 16 > Capture.BufferOffset ||
+        int64_t(Capture.StackOffset) + (EH4 ? 20 : 16) > Capture.BufferOffset ||
+        Capture.Protocol != (EH4 ? RegistrationSEHJumpCapture::Kind::EH4
+                                 : RegistrationSEHJumpCapture::Kind::EH3) ||
+        Capture.SecurityCookieVA != (EH4 ? States.SecurityCookieVA : 0) ||
         !Blocks.count(Capture.EndAddress) ||
         !Captures.emplace(Capture.Address, &Capture).second)
       return std::nullopt;
+    if (EH4) {
+      auto OverlapsCookie = [&](int32_t Offset) {
+        return int64_t(Capture.BufferOffset) + Capture.BufferBytes > Offset &&
+               int64_t(Offset) + 4 > Capture.BufferOffset;
+      };
+      if (Chain.RegistrationOffset != -16 || Chain.TryLevelOffset != -4 ||
+          Chain.EHCookieOffset >= -2 || OverlapsCookie(Chain.EHCookieOffset) ||
+          (Chain.GSCookieOffset != -2 && OverlapsCookie(Chain.GSCookieOffset)))
+        return std::nullopt;
+    }
     const auto *Block = BlocksById.at(Call->Block);
     const auto State = BlockStates.find(Call->Block);
     if (Block->Succs.size() != 1 ||
@@ -107,7 +124,6 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     bool Complete = true;
   };
   std::map<va_t, Resumption> ResumeLevels;
-  const auto &Chain = *Function.ExceptionMetadata->Registration;
   const auto ValidState = [&](int32_t State) {
     return Chain.SeededTryLevel &&
            (State == *Chain.SeededTryLevel ||

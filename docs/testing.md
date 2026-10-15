@@ -4162,6 +4162,17 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
+The EH4 jump matrix repeats eleven capture/resumption scenarios with and without
+GS cookies: parent and callback jumps, zero values, filter search, incoming
+parameters and retired scopes. Each case compares the original and nine generated
+variants at two bases under the authenticated native CRT. The source and MedIR
+mutation tests reject wrong unwind protocols, cookie addresses, argument extents
+and cookie overlap; callback scratch tests retain rejection of cookie/table writes
+and unknown addresses. The EH4 corpus regression separately requires a CFG block
+boundary at each physical `_setjmp3` return PC. Older replay profiles retain their
+historical case sets and exclude these new EH4 jump cases.
+
+
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
 inside a finally block and reordered edges. Selected handlers, unknown results,

@@ -580,7 +580,7 @@ TEST(RegistrationState, ReturningRuntimeCallCanPrecedeAFinallyReturn) {
         {RegistrationSEHControlContract::Kind::NearReturn, 0x1850, 0x1851,
          InvalidVA}};
     unsigned Invocations = 0;
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.Raise = [=, &Invocations](const LowOp &Op, const FrameState &,
                                       size_t &) {
       ++Invocations;

@@ -23,7 +23,7 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *SEHControls,
     ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
-    const EH3JumpRuntime *JumpRuntime)
+    const SEHJumpRuntime *JumpRuntime)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
       CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),

@@ -48,7 +48,7 @@ TEST(RegistrationConditionalFrame,
   EXPECT_TRUE(States.CallbackStatesComplete);
   EXPECT_TRUE(States.RegistrationLifetimeComplete);
   EXPECT_TRUE(States.SEHInvocationExitsComplete);
-  EXPECT_TRUE(States.HasEH3JumpCaptures);
+  EXPECT_TRUE(States.HasSEHJumpCaptures);
   EXPECT_TRUE(States.SEHJumpResumptionsComplete);
   EXPECT_FALSE(States.SEHInvocationExits.empty());
   EXPECT_FALSE(States.SEHJumpResumptions.empty());
@@ -214,15 +214,15 @@ TEST(RegistrationConditionalFrame, OriginalHelperResumesItsBorrowedCapture) {
     Parent.store(-308, 4, FrameValue::frame(-288));
     Parent.store(-304, 4, FrameValue::frame(-28));
     Parent.store(-28, 4, FrameValue::constant(1));
-    EH3JumpCapture Capture;
+    SEHJumpCapture Capture;
     Capture.Call = 0x4025fe;
     Capture.ReturnPC = 0x402603;
     Capture.UnwindTarget = 0x407c78;
     Capture.BufferOffset = -288;
     Capture.StackOffset = -316;
     Capture.Nonvolatile[0] = FrameValue::frame(0);
-    storeEH3JumpCapture(Parent, Capture);
-    std::map<int32_t, EH3JumpCapture> Captures{{-288, Capture}};
+    storeSEHJumpCapture(Parent, Capture);
+    std::map<int32_t, SEHJumpCapture> Captures{{-288, Capture}};
     size_t Work = 0;
     if (Mutation == 1)
       Captures.clear();

@@ -300,6 +300,44 @@ TEST(RegistrationState, EH4CookiesAndScopeEncodingRemainRuntimePrivate) {
   }
 }
 
+TEST(RegistrationState, EH4CallbackScratchCannotAliasCookieStorage) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeCookieFrame();
+    auto &Block = F.Blocks.emplace_back();
+    Block.Id = 4;
+    Block.StartAddr = 0x1800;
+    Block.EndAddr = 0x1811;
+    emitOp(Block, 0x1800, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    NdVar Address = NdVar::reg(x86reg::RSP, 4);
+    if (Mutation == 1 || Mutation == 2) {
+      emitOp(Block, 0x1803, NdOp::INT_ADD, NdVar::tmp(40, 4),
+             {NdVar::reg(x86reg::RBP, 4),
+              NdVar::cst(uint32_t(Mutation == 1 ? -28 : -8), 4)});
+      Address = NdVar::tmp(40, 4);
+    } else if (Mutation == 3)
+      Address = NdVar::cst(0x4000, 4);
+    else if (Mutation == 4)
+      Address = NdVar::reg(x86reg::RCX, 4);
+    emitOp(Block, 0x1803, NdOp::STORE, {}, {Address, NdVar::cst(1, 4)});
+    emitOp(Block, 0x180a, NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
+           {NdVar::reg(x86reg::RSP, 4)});
+    emitOp(Block, 0x180d, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    emitOp(Block, 0x1810, NdOp::RETURN, {}, {});
+    Block.InstructionBoundaries = {
+        {0x1800, 3}, {0x1803, 7}, {0x180a, 3}, {0x180d, 3}, {0x1810, 1}};
+    Block.InstructionBoundaries.back().Control = LowInstructionControl::Return;
+    const auto Result = analyzeRegistrationStates(F, 0x4000);
+    EXPECT_EQ(Result.SecurityCookiesComplete, Mutation == 0);
+    if (!Mutation) {
+      EXPECT_TRUE(Result.Complete);
+      EXPECT_TRUE(Result.CallbackStatesComplete);
+    }
+  }
+}
+
 TEST(RegistrationState, IncomingCallerFrameUsesTheFinalCFGValue) {
   for (bool Agree : {false, true}) {
     LowFunc F = makeBranchingFrame();
