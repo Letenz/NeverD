@@ -4205,7 +4205,7 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats thirteen capture/resumption scenarios with and without
+The EH4 jump matrix repeats fourteen capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
 parameters, retired scopes and private leaf/graph calls with a live buffer.
 The helper cases require exactly one observed helper effect after resumption.
@@ -4218,6 +4218,17 @@ and cookie overlap; callback scratch tests retain rejection of cookie/table writ
 and unknown addresses. The EH4 corpus regression separately requires a CFG block
 boundary at each physical `_setjmp3` return PC. Older replay profiles retain their
 historical case sets and exclude these new EH4 jump cases.
+
+`RegistrationMultiStateJump` checks a shared capture reached with two source
+states, including identical later active states, changed buffers, invalid stores,
+clobbered capture bytes and reversed block order. `RegistrationSEHJumpABI` checks
+that the captured bound disambiguates identical visible unwind states.
+`longjmp-multistate-capture` and its EH4/GS variants alternate the two bounds on
+four calls, unwind the same finally, check the restored state and nonvolatile
+register, then raise another exception. The native mutation tests alter the saved
+state slot, read address, volatile accesses, placement, use closure and captured
+projection key while retaining verifier-clean IR. The full source profile now
+contains 97 scenarios; older compiler profiles keep their original membership.
 
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared

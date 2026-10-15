@@ -20,7 +20,8 @@ unsigned registration_parameter_after;
 #endif
 static unsigned observed_caller;
 unsigned registration_trace;
-#if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49
+#if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
+    REGISTRATION_CASE == 52
 unsigned registration_iteration;
 #endif
 #if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
@@ -77,7 +78,8 @@ void mainCRTStartup(void) {
   int value = 0, chain_ok = 1;
   for (; iterations != 4; ++iterations) {
     registration_trace = 0;
-#if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49
+#if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
+    REGISTRATION_CASE == 52
     registration_iteration = iterations;
 #endif
 #if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51

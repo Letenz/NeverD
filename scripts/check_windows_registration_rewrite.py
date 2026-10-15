@@ -94,6 +94,8 @@ CASES.update({prefix + name: (number, 23)
               for prefix in ("eh4-", "eh4-gs-")
               for number, name in ((50, "longjmp-private-parent-call"),
                                    (51, "longjmp-private-parent-graph"))})
+CASES.update({prefix + "longjmp-multistate-capture": (52, 23)
+              for prefix in ("", "eh4-", "eh4-gs-")})
 
 
 
@@ -295,7 +297,9 @@ def main(argv: list[str] | None = None) -> int:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        sources = (["registration_jump_eh4.s" if jump else "registration_seh4.s",
+        sources = (["registration_multistate_jump.s"] +
+                   (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
+                   else ["registration_jump_eh4.s" if jump else "registration_seh4.s",
                     "registration_eh4_runtime.c"] if eh4
                    else ["registration_shared_calls.s" if case == 47 else
                          "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
@@ -313,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
                              "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
+                             *([f"-DREGISTRATION_MULTISTATE_EH4={int(eh4)}"] if case == 52 else []),
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),
                              "-o", str(output / (source + ".obj"))])

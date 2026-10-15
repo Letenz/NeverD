@@ -278,9 +278,29 @@ emitSEHJumps(const SEHJumpPlan &Plan, llvm::Function &Parent,
         Restore->setVolatile(true);
         Restore->setAlignment(Slot->getAlign());
       }
+      llvm::Value *Captured = nullptr;
+      if (Capture.Levels.size() > 1) {
+        auto *Saved = Entry.CreateAlloca(Before.getInt32Ty(), nullptr,
+                                         "registration.jump.level");
+        Saved->setAlignment(llvm::Align(4));
+        Saved->setMetadata(windows_eh_md::RegistrationJumpAttachment,
+                           Marker(Capture.Address, SEHJumpRole::CapturedState));
+        auto *State = Before.CreateInBoundsGEP(Before.getInt8Ty(), &Frame,
+                                               Before.getInt32(EntrySP - 8));
+        auto *Read = Before.CreateLoad(Before.getInt32Ty(), State);
+        Read->setVolatile(true);
+        Read->setAlignment(llvm::Align(1));
+        auto *Save = Before.CreateStore(Read, Saved);
+        Save->setVolatile(true);
+        Save->setAlignment(llvm::Align(4));
+        auto *Reload = After.CreateLoad(After.getInt32Ty(), Saved);
+        Reload->setVolatile(true);
+        Reload->setAlignment(llvm::Align(4));
+        Captured = Reload;
+      }
       auto *State = After.CreateInBoundsGEP(After.getInt8Ty(), &Frame,
                                             After.getInt32(EntrySP - 8));
-      auto *Level = emitSEHJumpState(Source, *Call, *State, After);
+      auto *Level = emitSEHJumpState(Source, *Call, *State, Captured, After);
       auto *Restore = After.CreateStore(Level, State);
       Restore->setAlignment(llvm::Align(1));
       Restore->setVolatile(true);

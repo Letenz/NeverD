@@ -660,6 +660,14 @@ every contributing path. LLVM reads the logical cell once after a returning
 capture and maps that original value to the final state. The independent COFF
 consumer checks the exact volatile read, projection keys/results, zero-return
 selector and contiguous restoration.
+For multi-state captures, `SEHFlowKey` partitions current states and saved buffer
+bounds while preserving existing frame joins within each partition. Publication
+unions only compatible source occurrences. MedIR maps the captured bound together
+with the last visible frame state to the final runtime state. LLVM saves the
+logical bound in a private volatile slot before the one physical capture; COFF
+replays its exact source-cell address, two uses, ordering and contiguous save and
+restore placement. The saved bound supplies no buffer initialization or callee
+privacy authority. All partitions and projections share the existing work budget.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate

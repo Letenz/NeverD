@@ -28,6 +28,8 @@ llvm::Error validateSEHJumpState(const X86RegistrationSEHJumpCall &Expected,
                                  const llvm::CallBase &Call,
                                  const llvm::StoreInst &State,
                                  const RegistrationFrame &Frame,
+                                 const llvm::AllocaInst *CapturedState,
+                                 std::set<const llvm::Instruction *> &Saves,
                                  std::set<const llvm::Instruction *> &Restores);
 
 /// Rebind source calls, private buffers, register snapshots and state restores

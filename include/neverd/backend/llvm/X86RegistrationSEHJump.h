@@ -50,6 +50,7 @@ enum class SEHJumpRole : unsigned {
   RegisterSnapshot = 1,
   StateRestore = 2,
   ResumeValue = 3,
+  CapturedState = 4,
 };
 } // namespace x86_registration
 

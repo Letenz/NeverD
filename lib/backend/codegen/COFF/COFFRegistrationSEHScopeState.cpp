@@ -88,6 +88,30 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
     const auto &Op = *Found->second;
     if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
       return Resolve(Op.Inputs[0], Address, Depth + 1);
+    // A semantically unreachable source block still exists in native IR.
+    // Its address temporaries have no execution receipt, but may derive from
+    // a proved frame value in a dominating block. Preserve that static
+    // address proof without inventing a reaching state or callback transfer.
+    if (Address && Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&
+        Op.Output.Size == 8 && Op.Inputs[0].Size == 4)
+      return Resolve(Op.Inputs[0], true, Depth + 1);
+    if (Address && (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+        Op.NumInputs == 2 && Op.Output.Size == 4 && Op.Inputs[0].Size == 4 &&
+        Op.Inputs[1].Size == 4) {
+      unsigned Constant = 1;
+      if (Op.Opcode == NdOp::INT_ADD && Op.Inputs[0].isConst())
+        Constant = 0;
+      if (!Op.Inputs[Constant].isConst())
+        return std::nullopt;
+      const auto Base = Resolve(Op.Inputs[1 - Constant], true, Depth + 1);
+      if (!Base)
+        return std::nullopt;
+      const int64_t Delta = int32_t(Op.Inputs[Constant].ConstVal);
+      const int64_t Offset =
+          Op.Opcode == NdOp::INT_ADD ? *Base + Delta : *Base - Delta;
+      if (Offset >= INT32_MIN && Offset <= INT32_MAX)
+        return Offset;
+    }
     return std::nullopt;
   };
   struct Write {

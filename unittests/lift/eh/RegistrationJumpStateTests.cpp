@@ -64,7 +64,7 @@ TEST(RegistrationJumpState, CaptureSurvivesOnlyCheckedStorageAndCalls) {
       EXPECT_EQ(Capture.UnwindVA, 0x3300u);
       EXPECT_EQ(Capture.BufferOffset, -144);
       EXPECT_EQ(Capture.StackOffset, -192);
-      EXPECT_EQ(Capture.Level, -1);
+      EXPECT_EQ(Capture.Levels, (std::vector<int32_t>{-1}));
       EXPECT_TRUE(Result.SEHJumpResumptionsComplete);
       ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
       const auto &Resume = Result.SEHJumpResumptions.front();

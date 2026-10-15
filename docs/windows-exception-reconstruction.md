@@ -268,9 +268,9 @@ initialization, scope-pointer encoding and lifetime are checked before capture
 and resumption. Private callback stack accesses retain their separate bounds
 proof. Native lowering keeps distinct EH3/EH4 unwind bridges and independently
 checks the matching runtime identity; it cannot substitute the EH3 protocol.
-Single-state captures, zero values, parent/finally/filter resumptions and retired
-scopes are covered, including EH4 frames with GS checks. Multi-state captures
-and borrowed-buffer helper protocols still require their own proofs.
+Single- and multi-state captures, zero values, parent/finally/filter resumptions
+and retired scopes are covered, including EH4 frames with GS checks. Borrowed
+buffer helper protocols still require their own proofs.
 
 Preserved EH3 helpers can borrow a generated parent buffer and resume it across
 their own registration frame. Each exact caller occurrence binds the helper's
@@ -346,7 +346,15 @@ state or hoist a later reset across the call. Installation checks the call's
 source segment, noinline/notail requirements and unique dynamic body, and
 rejects a marker copied onto a callee or another instruction. This preserves
 one source occurrence without cloning its effects per possible state.
-Multi-state source jump captures still require their own lifetime proof.
+A source capture can be reached with several checked states. Analysis keeps
+current states and each live buffer's saved bound correlated across parent and
+callback joins. It publishes one source call with a sorted state domain; changed
+buffer addresses, stacks, unwind imports or lifetimes still refuse. Native
+emission snapshots the logical bound before that single call and restores it on
+the initial return. Nonlocal resumption projects the pair of saved bound and
+last visible callback state, allowing one visible state to have different final
+results. COFF replay checks the private snapshot, exact frame read, memory
+ordering, placement, use closure and both projection keys.
 An ordinary private leaf or bounded acyclic helper graph may preserve an
 already captured EH3/EH4 parent jump buffer when it has no parent-frame or object
 borrow, no stack arguments, and zero callee cleanup. Code must remain immutable;
