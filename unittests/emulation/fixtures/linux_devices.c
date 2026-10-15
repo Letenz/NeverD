@@ -550,7 +550,7 @@ U64 devices_gpu_rejected(U64 Mode, U64 Buffer) {
   CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
   U32 context[2] = {0x12, 0};
   CHECK(invoke(0, 3, CreateContext, (U64)context), 0);
-  CHECK(raw6(Map, 0x22000000, 4096, 1, 0x11, 3, 4096), 0x22000000);
+  CHECK(raw6(Map, 0x22000000, 4096, 1, 1, 3, 4096), 0x22000000);
   U64 code = raw6(Map, 0, 4096, 3, 0x22, (U64)-1, 0);
   struct GPUMap cmd = {-1, 0, 4096, 0, code, 2, 0};
   struct GPUMap dst = {-1, 0, 4096, 0, Buffer, 2, Mode == 1 ? 0x01000000 : 0};
