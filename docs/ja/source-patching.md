@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
+<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
 
 [← Documentation Index](README.md)
 
@@ -177,3 +177,5 @@ C 専用の生成元検証 [cc91afb3b](https://github.com/NeverSight/NeverD/acti
 [統合検証 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) は、Windows/Linux の x64 と ARM64 ネイティブ環境で 312 回すべてのプロセス観測を再検証しました。最終的な 30 イメージは以前に検証したバイト列と一致し、ソースのハッシュと C 専用の出力レシートを更新して独立に確認しました。
 
 [0a6f6d768 の拡張 Linux 検証](https://github.com/NeverSight/NeverD/actions/runs/38626866257) は、元の 108 件、Swift 全体 55 件、CPU ターゲット 143 件、ネイティブセッション 117 件、LLVM-C 3 件、Clang/GCC C++ 3 件の計 429 件を、失敗・スキップなしで実行しました。この統合版ではローカルの全バイナリパッチ回帰 22,961 件もすべて成功しました。ネイティブプロセス数と CPU エミュレーションの検証範囲は区別して記録します。
+
+[0a6f6d768 の Windows インストーラー再ビルド検証](https://github.com/NeverSight/NeverD/actions/runs/38627581732)では、182 件の重点チェックと 474 回のネイティブプロセス実行がすべて成功し、失敗もスキップもありませんでした。独立した成果物監査で、各イメージのハッシュ、アーキテクチャ、シナリオ、反復回数を照合しました。その後の ABI/アンワインド修正を統合した `e1cac949f` でも、完全なバイナリパッチスイート 22,961 件が再度すべて成功し、失敗もスキップもありませんでした。NeverC は純粋な C のみを扱い、C++ の置換には Clang/GCC を使用します。

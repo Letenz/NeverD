@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
+<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
 
 [← Documentation Index](README.md)
 
@@ -177,3 +177,5 @@ AArch64 指令重定位要求顯式 RELA 加數。隱式 REL 指令加數會在�
 [合併後驗收 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) 已在 Windows/Linux 的 x64 與 ARM64 原生主機上重新通過全部 312 次程序驗證。30 個最終映像與先前驗證的位元組完全一致；原始碼摘要及純 C 發布回執已更新並獨立核驗。
 
 [0a6f6d768 的擴充 Linux 驗收](https://github.com/NeverSight/NeverD/actions/runs/38626866257) 執行了 429 項檢查，零失敗、零略過：原始 108 項、完整 Swift 55 項、CPU 目標矩陣 143 項、原生 Session 117 項、LLVM-C 3 項及 Clang/GCC C++ 3 項。該合併版本的本機完整二進位修補迴歸也通過全部 22,961 項。原生程序次數與 CPU 模擬驗證範圍分開統計。
+
+[0a6f6d768 的 Windows 安裝器重建驗證](https://github.com/NeverSight/NeverD/actions/runs/38627581732)通過全部 182 項專項檢查和 474 次原生程序執行，零失敗、零跳過。獨立產物稽核核對了每個映像的雜湊、架構、情境和重複次數。隨後合入 ABI/展開修正的 `e1cac949f` 再次通過全部 22,961 項完整二進位 patch 回歸，零失敗、零跳過。這些結果遵守 NeverC 僅支援純 C 的約定；C++ 替換使用 Clang/GCC。

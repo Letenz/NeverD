@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
+<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
 
 [← Documentation Index](README.md)
 
@@ -177,3 +177,5 @@ Die Qualifizierung des neu gebauten Installers [cc91afb3b](https://github.com/Ne
 Die [Integrationsqualifikation 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) bestätigte erneut alle 312 Prozessbeobachtungen auf nativem Windows/Linux mit x64 und ARM64. Alle 30 endgültigen Images entsprechen den zuvor qualifizierten Bytes; Quellcode-Prüfsummen und C-only-Veröffentlichungsbelege wurden erneuert und unabhängig geprüft.
 
 Die erweiterte [Linux-Qualifikation bei 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) bestand 429 ausgeführte Prüfungen ohne Fehler oder Überspringen: die ursprünglichen 108 Fälle, 55 vollständige Swift-Prüfungen, 143 CPU-Zielprüfungen, 117 native Sitzungsprüfungen sowie je drei LLVM-C- und Clang/GCC-C++-Prüfungen. Auch der vollständige lokale Binärpatch-Testbestand bestand bei dieser Integration alle 22.961 Fälle. Native Prozesszahlen und CPU-Emulationsabdeckung bleiben getrennt.
+
+Die [Qualifikation des neu gebauten Windows-Installers bei 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) bestand alle 182 gezielten Prüfungen und 474 nativen Prozessausführungen, ohne Fehler oder übersprungene Tests. Eine unabhängige Artefaktprüfung kontrollierte jeden Image-Hash, jede Architektur, jedes Szenario und jede Wiederholung. Nach der ABI-/Unwind-Integration bei `e1cac949f` bestand die vollständige Binärpatch-Suite erneut alle 22,961 Fälle, ohne Fehler oder übersprungene Tests. NeverC bleibt auf reines C beschränkt; C++-Ersetzungen verwenden Clang/GCC.

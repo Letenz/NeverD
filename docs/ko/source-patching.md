@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
+<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
 
 [← Documentation Index](README.md)
 
@@ -177,3 +177,5 @@ C 전용 생성기 검증 [cc91afb3b](https://github.com/NeverSight/NeverD/actio
 [통합 검증 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097)은 Windows/Linux의 x64 및 ARM64 네이티브 환경에서 312회의 프로세스 관측을 모두 재검증했습니다. 최종 이미지 30개는 이전에 검증한 바이트와 일치하며, 소스 해시와 C 전용 출력 영수증을 갱신하고 독립적으로 확인했습니다.
 
 [0a6f6d768의 확장 Linux 검증](https://github.com/NeverSight/NeverD/actions/runs/38626866257)은 원래 108개, 전체 Swift 55개, CPU 대상 143개, 네이티브 세션 117개, LLVM-C 3개, Clang/GCC C++ 3개를 합친 429개 검사를 실패나 건너뜀 없이 실행했습니다. 이 통합 버전에서 전체 로컬 바이너리 패치 회귀 22,961개도 모두 통과했습니다. 네이티브 프로세스 수와 CPU 에뮬레이션 검증 범위는 구분하여 기록합니다.
+
+[0a6f6d768의 Windows 설치기 재빌드 검증](https://github.com/NeverSight/NeverD/actions/runs/38627581732)에서 집중 검사 182개와 네이티브 프로세스 실행 474회가 모두 통과했으며 실패나 건너뛰기가 없었습니다. 독립적인 산출물 감사에서 각 이미지의 해시, 아키텍처, 시나리오와 반복 횟수를 확인했습니다. 이후 ABI/언와인드 수정을 통합한 `e1cac949f`에서도 전체 바이너리 패치 테스트 22,961개가 다시 모두 통과했으며 실패나 건너뛰기가 없었습니다. NeverC는 순수 C만 처리하며 C++ 대체 코드는 Clang/GCC를 사용합니다.

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
+<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
 
 [← Documentation Index](README.md)
 
@@ -177,3 +177,5 @@ La verifica dell’installatore ricompilato [cc91afb3b](https://github.com/Never
 La [verifica di integrazione 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) ha riconfermato tutte le 312 osservazioni di processo su Windows/Linux nativi x64 e ARM64. Le 30 immagini finali corrispondono ai byte già verificati; gli hash dei sorgenti e le ricevute di pubblicazione solo C sono stati aggiornati e controllati indipendentemente.
 
 La [verifica Linux estesa su 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) ha superato 429 controlli eseguiti, senza errori né casi saltati: i 108 originali, 55 controlli Swift completi, 143 dei target CPU, 117 delle sessioni native, tre LLVM-C e tre C++ Clang/GCC. Anche l’intera suite locale di patch binarie ha superato tutti i 22.961 casi su questa integrazione. I processi nativi e la copertura con emulazione CPU restano conteggiati separatamente.
+
+La [verifica dell’installer Windows ricompilato a 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) ha superato tutti i 182 controlli mirati e le 474 esecuzioni di processi nativi, senza errori né test saltati. Un controllo indipendente degli artefatti ha verificato ogni hash delle immagini, architettura, scenario e ripetizione. Dopo l’integrazione ABI/unwind a `e1cac949f`, la suite completa di patch binarie ha nuovamente superato tutti i 22,961 casi, senza errori né test saltati. NeverC resta limitato al C puro; le sostituzioni C++ usano Clang/GCC.

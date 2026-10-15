@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 71fd1562194f12bc1057fd9a9f598ddd32f9e89ad929e4451aecfc9ed72f3fe7 -->
+<!-- i18n-source: 86bb9e146961122ede1f7c0124d825154f1fbd76f2f7d725f9487ce5adc5487f -->
 
 [← Documentation Index](README.md)
 
@@ -177,3 +177,5 @@ ctest --test-dir build-source -L \
 أعاد [تأهيل الدمج 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627694097) التحقق من جميع ملاحظات العمليات الـ312 على Windows وLinux الأصليين بمعماريتي x64 وARM64. تطابق الصور النهائية الثلاثون البايتات المؤهلة سابقاً؛ حُدّثت بصمات المصدر وإيصالات النشر الخاصة بـ C فقط وتحقّق منها بصورة مستقلة.
 
 نجح [تأهيل Linux الموسع عند 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38626866257) في 429 فحصاً منفذاً دون فشل أو تجاوز: الحالات الأصلية الـ108، و55 فحص Swift كاملاً، و143 فحصاً لأهداف المعالج، و117 فحص جلسة أصلياً، وثلاثة فحوص LLVM-C وثلاثة فحوص Clang/GCC C++. كما نجحت مجموعة الترقيع الثنائي المحلية الكاملة في الحالات الـ22,961 عند هذا الدمج. تبقى أعداد العمليات الأصلية منفصلة عن تغطية محاكاة المعالج.
+
+اجتاز [تأهيل مُثبّت Windows المعاد بناؤه عند 0a6f6d768](https://github.com/NeverSight/NeverD/actions/runs/38627581732) جميع الفحوص المركزة البالغ عددها 182 وعمليات تشغيل البرامج الأصلية البالغ عددها 474، دون إخفاقات أو حالات متجاوزة. تحقّق تدقيق مستقل للمخرجات من تجزئة كل صورة ومعماريتها وسيناريو التشغيل وعدد التكرارات. وبعد دمج إصلاحات ABI وفك المكدس عند `e1cac949f`، اجتازت مجموعة اختبارات الترقيع الثنائي الكاملة جميع الحالات البالغ عددها 22,961 مرة أخرى دون إخفاقات أو حالات متجاوزة. يظل NeverC مخصصًا للغة C الخالصة؛ وتستخدم بدائل C++ المترجم Clang/GCC.
