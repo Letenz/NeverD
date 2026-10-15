@@ -174,6 +174,8 @@ validateIncomingCallerFrame(const llvm::Function &Parent, const MedFunc &Source,
       }
   if (Seen.size() != Expected.size())
     return rejectIR("incoming caller frame access set is incomplete");
+  if (Slot)
+    Setup.insert(Slot);
   return llvm::Error::success();
 }
 

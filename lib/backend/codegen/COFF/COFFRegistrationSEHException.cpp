@@ -73,6 +73,10 @@ llvm::Expected<RegistrationSEHExceptionContract> bindSEHExceptionReads(
   if (!Expected || !Frame.Slot || Frame.EntrySP < 24)
     return rejectIR("source SEH exception fields have no checked identities");
   RegistrationSEHExceptionContract Result;
+  auto NullReads = bindSEHNullReads(Source, Functions);
+  if (!NullReads)
+    return NullReads.takeError();
+  Result.NullReads = std::move(*NullReads);
   Result.Frame = Frame.Slot;
   Result.PointersOffset = Frame.EntrySP - 24;
   Result.Bridges = Bridges;

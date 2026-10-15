@@ -3778,6 +3778,30 @@ for registration_case in filter nested-finally continue-search continue-executio
 done
 ```
 
+The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
+`longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
+`longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
+and `longjmp-search-filter-zero`. These fixtures check a resumed
+nonvolatile register and try level, the requested jump value (including zero
+becoming one), finally's
+private-frame write, a subsequent exception, and FS:[0] restoration on four
+successive invocations. Original and generated caller PCs are distinguished,
+and each generated image is executed at preferred and forced-rebased addresses.
+The parameter case reads the real caller argument in both the resumed parent
+and its filter, including the caller-frame slot introduced during outlining.
+The callback cases resume from ordinary finally calls and runtime unwind
+dispatch, recover their parent's native buffer, and exercise private argument
+slots and zero-to-one conversion. Mutation controls reject a different parent
+frame, escape index, unused recovery, escaped buffer and redirected value load.
+CLI coverage includes both patch modes from emitted IR and directly from the
+original EXE, with default optimization and `--no-opt`. Both pipeline paths
+must preserve `optnone` runtime callback roots and register snapshots.
+The source-input unit rejects edits to capture/resume identities, the private
+buffer, register snapshots, restored state and argument slot. Its unwind-adapter
+controls change the copy extent, physical registration field, virtual EBP,
+original-buffer isolation, runtime identity and call attributes. All mutations
+must remain LLVM-verifier-clean and fail the independent installer proof.
+
 With genuine MSVC value/reference fixtures, run the source IR and machine-code
 checks once per image. Missing input is a skip and cannot count as verification:
 

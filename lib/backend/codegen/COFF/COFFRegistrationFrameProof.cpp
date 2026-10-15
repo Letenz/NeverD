@@ -10,6 +10,7 @@
 #include "COFFRegistrationFrameStores.h"
 #include "COFFRegistrationFrameTaint.h"
 #include "COFFRegistrationSEHException.h"
+#include "COFFRegistrationSEHJump.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -50,7 +51,8 @@ llvm::Error validateFramePrivacy(
     va_t SecurityCookieVA,
     llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges,
     const RegistrationCxxFrameContract *Cxx,
-    const RegistrationSEHExceptionContract *SEH) {
+    const RegistrationSEHExceptionContract *SEH,
+    const RegistrationSEHJumpContract *Jumps) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -171,6 +173,8 @@ llvm::Error validateFramePrivacy(
     }
     if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(Value))
       return Cell{Slot, 0};
+    if (const auto *Freeze = llvm::dyn_cast<llvm::FreezeInst>(Value))
+      return Locate(Freeze->getOperand(0), Depth + 1);
     if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Value);
         Global &&
         (parseNdDataSymbol(Global->getName()) ||
@@ -423,6 +427,8 @@ llvm::Error validateFramePrivacy(
           if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I)) {
             if (ChainProtocolReads.count(Load))
               continue;
+            if (SEH && SEH->NullReads.count(Load))
+              continue;
             auto Where = Locate(Load->getPointerOperand(), 0);
             if (SEH && (SEH->Reads.count(Load) ||
                         (Where && SEH->Roots.count(Where->Root)))) {
@@ -456,6 +462,9 @@ llvm::Error validateFramePrivacy(
             if (Where && CallbackStacks.count(Where->Root) &&
                 CallbackStacks.at(Where->Root) != Catch)
               return Reject("callback stack read outlived its invocation");
+            if (Jumps && Where && Where->Root == LogicalFrame &&
+                Jumps->readsSourceBuffer(Where->Offset, Size(Load->getType())))
+              return Reject("source reads physical jump buffer contents");
             const bool Private =
                 Where && llvm::isa<llvm::AllocaInst>(Where->Root);
             if (Cxx && Where && llvm::isa<llvm::GlobalVariable>(Where->Root) &&
@@ -645,6 +654,8 @@ llvm::Error validateFramePrivacy(
             continue;
           }
           if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I)) {
+            if (Jumps && Jumps->Calls.count(Call))
+              continue;
             if (Call->isInlineAsm() || llvm::isa<llvm::CallBrInst>(Call) ||
                 Call->isMustTailCall() ||
                 Call->hasFnAttr(llvm::Attribute::ReturnsTwice))

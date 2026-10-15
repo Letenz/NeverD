@@ -1,0 +1,23 @@
+//===- RegistrationSEHJumpNativeTestUtils.h - Jump edits --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_TEST_REGISTRATIONSEHJUMPNATIVETESTUTILS_H
+#define NEVERD_TEST_REGISTRATIONSEHJUMPNATIVETESTUTILS_H
+
+namespace llvm {
+class Function;
+}
+namespace neverd {
+struct BinaryImage;
+struct ExceptionFunction;
+namespace registration_test {
+void checkSEHJumpEdits(const llvm::Function &Parent,
+                       const ExceptionFunction &Source,
+                       const BinaryImage &Image);
+}
+} // namespace neverd
+
+#endif // NEVERD_TEST_REGISTRATIONSEHJUMPNATIVETESTUTILS_H

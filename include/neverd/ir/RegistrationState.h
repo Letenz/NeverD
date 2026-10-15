@@ -191,6 +191,22 @@ struct RegistrationSEHInvocationExit {
   bool operator==(const RegistrationSEHInvocationExit &) const = default;
 };
 
+/// Exact source invocation of the EH3 capture protocol. Native reconstruction
+/// must replace its physical register/PC contents and CRT state arguments;
+/// copying the original jump buffer is not a continuation contract.
+struct RegistrationSEHJumpCapture {
+  static constexpr uint16_t BufferBytes = 64;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  va_t UnwindVA = InvalidVA;
+  int32_t BufferOffset = 0;
+  int32_t StackOffset = 0;
+  int32_t Level = -1;
+  bool operator==(const RegistrationSEHJumpCapture &) const = default;
+};
+
 /// A live EH3 buffer supplies one physical capture PC and restored ESP. The
 /// source invocation is retired by the authenticated nonlocal runtime call;
 /// this is distinct from an ordinary CALL return or a target-wide noreturn.
@@ -207,6 +223,10 @@ struct RegistrationSEHJumpResume {
   /// runtime resume occurrence. These do not grant a callable native ABI.
   va_t CalleeVA = 0;
   va_t ResumeVA = 0;
+  /// Exact resume-value argument slot: established EBP-relative for parent
+  /// calls, or relative to EntryVA's private callback entry ESP. Cross-function
+  /// callees require a separate stack owner and do not publish this projection.
+  std::optional<int32_t> ValueOffset;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 
@@ -227,6 +247,8 @@ struct RegistrationStateAnalysis {
   /// Original EH3 captures retain their physical buffer and invocation. Native
   /// reconstruction requires a separate replacement-buffer contract.
   bool HasEH3JumpCaptures = false;
+  bool SEHJumpCapturesComplete = true;
+  std::vector<RegistrationSEHJumpCapture> SEHJumpCaptures;
   bool SEHJumpResumptionsComplete = true;
   std::vector<RegistrationSEHJumpResume> SEHJumpResumptions;
   /// Complete chain access ownership, including decoded boundaries and

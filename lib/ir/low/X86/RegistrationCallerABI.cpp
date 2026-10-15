@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationABIPrivate.h"
+#include "RegistrationJumpRuntime.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -92,6 +93,36 @@ bool hasRegistrationCallFrameABI(
             !coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, Check))
           return false;
         continue;
+      }
+      if (States && States->Complete && States->CallbackStatesComplete &&
+          States->SEHJumpCapturesComplete &&
+          States->SEHJumpResumptionsComplete) {
+        if (!chargeCalleeWork(Work, States->SEHJumpCaptures.size() +
+                                        States->SEHJumpResumptions.size()))
+          return false;
+        const auto Capture =
+            llvm::find_if(States->SEHJumpCaptures, [&](const auto &C) {
+              return C.Address == Op.Addr && C.OpSeq == Op.Seq;
+            });
+        const auto Resume =
+            llvm::find_if(States->SEHJumpResumptions, [&](const auto &R) {
+              return R.Address == Op.Addr && R.OpSeq == Op.Seq &&
+                     R.ValueOffset && !R.CalleeVA && !R.ResumeVA;
+            });
+        if (Capture != States->SEHJumpCaptures.end() ||
+            Resume != States->SEHJumpResumptions.end()) {
+          const auto Binding = registration_state::checkedJumpRuntimeCall(
+              Image, Function, Op, Work);
+          using Kind = registration_state::JumpRuntimeBinding::Kind;
+          if (!Binding ||
+              Binding->Routine != (Capture != States->SEHJumpCaptures.end()
+                                       ? Kind::Capture
+                                       : Kind::Resume))
+            return false;
+          // These exact invocations are replaced by the native buffer ABI.
+          // Their retained veneers are not ordinary frame-oblivious callees.
+          continue;
+        }
       }
       if (Function.ExceptionMetadata &&
           Function.ExceptionMetadata->Registration &&

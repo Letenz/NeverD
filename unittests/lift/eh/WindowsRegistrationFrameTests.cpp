@@ -187,6 +187,7 @@ TEST(WindowsRegistrationFrame, FinallyUsesItsParentFrameArgument) {
   ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
   llvm::Function &Callback = **Result;
   EXPECT_TRUE(Callback.getReturnType()->isVoidTy());
+  EXPECT_FALSE(Callback.doesNotReturn());
   ASSERT_EQ(Callback.arg_size(), 2u);
   EXPECT_TRUE(Callback.getArg(0)->getType()->isIntegerTy(8));
   EXPECT_TRUE(Callback.getArg(0)->hasAttribute(llvm::Attribute::ZExt));
@@ -196,6 +197,52 @@ TEST(WindowsRegistrationFrame, FinallyUsesItsParentFrameArgument) {
   ASSERT_EQ(Recover.size(), 1u);
   EXPECT_EQ(Recover[0]->getArgOperand(1), Callback.getArg(1));
   EXPECT_FALSE(llvm::verifyModule(F.Module));
+}
+
+TEST(WindowsRegistrationFrame, NonlocalFinallyRequiresAnExactTerminalCall) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Fixture F;
+    F.clearFilter();
+    llvm::IRBuilder<> B(F.Filter);
+    auto Callee = F.Module.getOrInsertFunction(
+        "resume", llvm::FunctionType::get(B.getVoidTy(), false));
+    auto *Call = B.CreateCall(Callee);
+    if (Mutation != 2)
+      Call->addFnAttr(llvm::Attribute::NoReturn);
+    if (Mutation == 3)
+      B.CreateStore(B.getInt32(4), F.Local);
+    B.CreateUnreachable();
+    X86RegistrationCallbackRequest Request;
+    Request.Entry = F.Filter;
+    Request.Blocks = {F.Filter};
+    Request.Kind = X86RegistrationCallbackKind::Finally;
+    Request.Name = "finally.nonlocal";
+    if (Mutation != 1)
+      Request.NonReturningCalls.push_back(Call);
+    if (Mutation == 4) {
+      llvm::IRBuilder<> Entry(F.Entry->getTerminator());
+      auto *Other = Entry.CreateCall(Callee);
+      Other->addFnAttr(llvm::Attribute::NoReturn);
+      Request.NonReturningCalls = {Other};
+    }
+    if (Mutation == 5)
+      Request.NonReturningCalls.push_back(Call);
+    ASSERT_FALSE(llvm::verifyModule(F.Module));
+    const auto Before = F.text();
+    auto Result = outlineX86RegistrationCallbacks(*F.Parent, {Request});
+    if (Mutation) {
+      ASSERT_FALSE(bool(Result));
+      llvm::consumeError(Result.takeError());
+      EXPECT_EQ(F.text(), Before);
+    } else {
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      ASSERT_EQ(Result->size(), 1u);
+      EXPECT_TRUE(llvm::isa<llvm::UnreachableInst>(
+          Result->front()->back().getTerminator()));
+      EXPECT_FALSE(llvm::verifyModule(F.Module));
+    }
+  }
 }
 
 TEST(WindowsRegistrationFrame, PreservesExistingEscapeIndices) {
