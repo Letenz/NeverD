@@ -200,4 +200,39 @@ five macOS/Linux addons' original virtual paths, exact temporary-file bytes,
 cached object identity and export descriptors. Device functions and original
 native source reconstruction remain unproven.
 
-The overall goal remains open.
+macOS x64 now has separate source, graph, Rosetta and native-loader evidence.
+Its 2,364 JavaScript modules and 245 assets produce a 132,347,408-byte client
+with SHA-256
+`ecb0c0ba3325b31d5347dd31b07e1ca7e18c92d4c5c7260afefa7a5861747942`.
+Two independent builds and two package builds reproduce that hash. NeverD
+independently reads back all 2,609 module names, storage hashes and loader
+metadata, plus the expected entry, startup count and runtime options. Its own
+seven configuration and 22 behavior cases pass and match the x64 original;
+version/help/unknown-option observations also match. The navigator contains
+228,498 anchored evidence records. All three x64 native addon records pass
+standalone and embedded loading, exact temporary-file materialization, export
+descriptor and repeated-require identity checks without calling device exports.
+
+Direct execution of the packaged output exposed a delivery defect: macOS
+builders had omitted the executable permission bit, which earlier smoke
+staging supplied on its copied executable. Both macOS recipes now set mode
+0500. A new ARM64 v2 delivery and the x64 delivery rebuild from fresh directories
+and directly verify the produced files, without a permission-adjusting staging
+step. Binary content hashes are unchanged; earlier packages and failed direct
+verification records remain available.
+
+Fresh x64 executable copies sometimes exceeded the 60-second Rosetta startup
+ceiling before producing any output. A self-authored probe isolated the effect:
+reusing the same pinned executable reduced a 51-second startup to 0.08 seconds
+while a newly created denied-file canary remained unreadable. The x64 matrix
+therefore shares only the read-only executable while retaining fresh state per
+case. Package verification records up to two bounded version warmups separately
+and retries only an output-free startup timeout; the three comparison cases
+themselves are not retried. Cold-start failures are retained and performance
+equivalence is not claimed. The Rosetta profile independently denies external
+file reads, child execution and IPv4/IPv6 networking, but does not claim the
+unobserved writable-file executable-mapping denial.
+
+Linux ARM64 source export and pinned compiler/image preparation have started.
+Its reconstruction and execution acceptance are not yet complete. The overall
+goal remains open.
