@@ -20,10 +20,33 @@ if __package__:
     from .check_windows_registration_cookie import require_cookie_outcome
     from .check_windows_registration_eh import run_image
     from .check_windows_registration_rewrite import CASES, PE32, observe
+    from .windows_registration_runtime import validate_runtime
 else:
     from check_windows_registration_cookie import require_cookie_outcome
     from check_windows_registration_eh import run_image
     from check_windows_registration_rewrite import CASES, PE32, observe
+    from windows_registration_runtime import validate_runtime
+
+
+def source_records(source: dict, case: str, trace: int) -> list[dict]:
+    labels = ["original", "patched", "product-patched", "collision-patched"]
+    if source.get("schema") == 2:
+        labels.extend(f"cli-{mode}-{kind}" for mode in ("section", "inplace")
+                      for kind in ("ir", "exe-no-opt", "exe-opt"))
+    elif source.get("schema") == 1:
+        labels.extend(("cli-section", "cli-inplace"))
+    else:
+        raise ValueError("unknown source reconstruction evidence schema")
+    expected = {(label + suffix + ".exe", label != "original", base)
+                for label in labels
+                for suffix, base in (("", 0x400000), ("-rebased", 0x18000000))}
+    records = source.get("observations", [])
+    if source.get("case") != case or source.get("passed") is not True or \
+            source.get("expected_trace") != trace or len(records) != len(expected) or \
+            {(Path(r["image"]).name, r["generated"], r["runtime_base"])
+             for r in records} != expected:
+        raise ValueError("source reconstruction evidence is incomplete")
+    return records
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wine")
     parser.add_argument("--wine-prefix", type=Path)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--source-only", action="store_true",
+                        help="replay every source case without separate cookie-object fixtures")
     parser.add_argument("--source-profile", choices=("all", "seh3-eh4"),
                         default="all", help="select an explicitly older evidence checkpoint")
     args = parser.parse_args(argv)
@@ -49,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {"schema": 1, "platform": platform.platform(),
               "evidence": "wine-replay" if launcher else "native-windows-replay",
               "passed": False, "source_profile": args.source_profile,
+              "source_only": args.source_only,
               "source_cases": [], "cookies": [], "failures": []}
 
     def checked_image(parent: Path, record: dict) -> Path:
@@ -65,22 +91,18 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             parent = root / ("source-" + case)
             source = json.loads((parent / "registration-rewrite.json").read_text())
-            records = source["observations"]
-            expected_images = {(label + suffix + ".exe", label != "original", base)
-                               for label in ("original", "patched", "product-patched",
-                                             "collision-patched", "cli-section", "cli-inplace")
-                               for suffix, base in (("", 0x400000), ("-rebased", 0x18000000))}
-            if source.get("case") != case or not source.get("passed") or \
-                    source.get("expected_trace") != trace or len(records) != 12 or \
-                    {(Path(r["image"]).name, r["generated"], r["runtime_base"])
-                     for r in records} != expected_images:
-                raise ValueError("source reconstruction evidence is incomplete")
+            records = source_records(source, case, trace)
+            runtime = source.get("seh_runtime")
+            case_environment = environment.copy()
+            if runtime is not None:
+                validate_runtime(parent, runtime)
+                case_environment["WINEDLLOVERRIDES"] = "vcruntime140=n"
             observations = []
             report["source_cases"].append({"case": case, "observations": observations})
             for record in records:
                 try:
                     observation = observe(checked_image(parent, record), record["generated"],
-                                          launcher, environment, args.timeout, trace)
+                                          launcher, case_environment, args.timeout, trace)
                     if observation["runtime_base"] != record["runtime_base"]:
                         raise ValueError("native loader changed the forced image base")
                     observations.append(observation)
@@ -91,7 +113,9 @@ def main(argv: list[str] | None = None) -> int:
             complete = len(observations) == len(records)
             print(f"{'PASS' if complete else 'FAIL'} {runtime_name} source {case}: "
                   f"{len(observations)}/{len(records)} executions", flush=True)
-        for name, gs in (("eh4-cookie-runtime", False), ("eh4-gs-cookie-runtime", True)):
+        cookie_cases = () if args.source_only else (("eh4-cookie-runtime", False),
+                                                   ("eh4-gs-cookie-runtime", True))
+        for name, gs in cookie_cases:
             parent = root / name
             source = json.loads((parent / "cookie-runtime.json").read_text())
             records = source["observations"]

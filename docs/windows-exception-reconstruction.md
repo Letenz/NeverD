@@ -197,8 +197,9 @@ and resume it with `_longjmpex` in the same parent or its checked finally
 callbacks and search filters. The source proof binds the
 capture, buffer lifetime, unwind import, continuation, argument slot and scope
 state. LLVM supplies the generated continuation and registration state. Native
-lowering separately restores logical register spills and the captured source
-try level, while retaining source-frame writes made by finally callbacks.
+lowering separately restores logical register spills and the source try level
+actually reached by local unwinding, while retaining source-frame writes made
+by finally callbacks. A retired scope is not reactivated by resumption.
 A checked unwind adapter copies the native buffer and substitutes the runtime
 registration's virtual EBP only for cleanup dispatch; the original physical EBP
 remains available for resumption. The installer independently verifies that
@@ -214,6 +215,17 @@ Literal null reads keep their actual volatile memory effect and asynchronous
 scope. Installation checks each source occurrence, address, width and ordering;
 a changed or missing read fails closed. Cross-callee resumptions and EH4 jump
 buffers require additional native contracts.
+
+Call-free parent blocks reached at several proved scope levels select their
+asynchronous SEH interval from the protected logical state slot. The body runs
+once; entry and exit use the same captured selector. Installation independently
+checks all state choices, CFG edges, source state stores and runtime restores,
+and rejects overlapping writes or altered selectors. Finally return values may
+flow through private spill chains only when the complete chain is unobservable.
+The `longjmp-retired-scope` and `longjmp-retired-inner-scope` fixtures distinguish
+retiring the entire scope from retaining an outer scope. The latter uses a
+captured Microsoft x86 CRT: Wine 9's builtin local unwind uses a different
+stopping rule when the current level is below the saved level.
 
 Incoming cdecl stack slots are projected onto the real caller frame at their
 original memory-operation occurrences, including reads and writes in outlined

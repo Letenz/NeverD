@@ -9,6 +9,7 @@
 #include "COFFRegistrationFrameBits.h"
 #include "COFFRegistrationFrameStores.h"
 #include "COFFRegistrationFrameTaint.h"
+#include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHJump.h"
 
@@ -52,7 +53,8 @@ llvm::Error validateFramePrivacy(
     llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges,
     const RegistrationCxxFrameContract *Cxx,
     const RegistrationSEHExceptionContract *SEH,
-    const RegistrationSEHJumpContract *Jumps) {
+    const RegistrationSEHJumpContract *Jumps,
+    const RegistrationSEHScopeState *Scopes) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -546,6 +548,18 @@ llvm::Error validateFramePrivacy(
           if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
             auto Where = Locate(Store->getPointerOperand(), 0);
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
+            if (Scopes && Scopes->Enabled) {
+              const bool State = Scopes->Writes.count(Store);
+              const bool Overlap =
+                  Where && Where->Root == LogicalFrame &&
+                  Where->Offset < Scopes->Offset + 4 &&
+                  (Where->Offset >= Scopes->Offset ||
+                   Bytes > uint64_t(Scopes->Offset - Where->Offset));
+              if ((State && (!Where || Where->Root != LogicalFrame ||
+                             Where->Offset != Scopes->Offset || Bytes != 4)) ||
+                  (Overlap && !State))
+                return Reject("dynamic scope state storage changed");
+            }
             if (SEH && Where &&
                 (SEH->Roots.count(Where->Root) ||
                  SEH->clobbersPointers(*Store, Where->Root, Where->Offset,

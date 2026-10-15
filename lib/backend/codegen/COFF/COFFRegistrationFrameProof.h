@@ -37,6 +37,7 @@ namespace neverd::coff_registration {
 
 struct RegistrationSEHExceptionContract;
 struct RegistrationSEHJumpContract;
+struct RegistrationSEHScopeState;
 
 struct RegistrationFrameBorrow {
   int64_t Offset = 0;
@@ -105,7 +106,8 @@ llvm::Error validateFramePrivacy(
     llvm::ArrayRef<ExceptionAddressRange> ImmutableImageRanges = {},
     const RegistrationCxxFrameContract *Cxx = nullptr,
     const RegistrationSEHExceptionContract *SEH = nullptr,
-    const RegistrationSEHJumpContract *Jumps = nullptr);
+    const RegistrationSEHJumpContract *Jumps = nullptr,
+    const RegistrationSEHScopeState *Scopes = nullptr);
 
 } // namespace neverd::coff_registration
 

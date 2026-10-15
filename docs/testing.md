@@ -3781,7 +3781,8 @@ done
 The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
 `longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
 `longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
-and `longjmp-search-filter-zero`. These fixtures check a resumed
+`longjmp-search-filter-zero`, `longjmp-retired-scope` and
+`longjmp-retired-inner-scope`. These fixtures check a resumed
 nonvolatile register and try level, the requested jump value (including zero
 becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
@@ -3796,6 +3797,17 @@ frame, escape index, unused recovery, escaped buffer and redirected value load.
 CLI coverage includes both patch modes from emitted IR and directly from the
 original EXE, with default optimization and `--no-opt`. Both pipeline paths
 must preserve `optnone` runtime callback roots and register snapshots.
+Use `--runtime-root` with the captured `runtime-libs` directory to bind SEH and
+jump imports to the authenticated Microsoft x86 CRT. This is required under
+Wine for the retired-inner-scope case: Wine 9's builtin CRT unwinds below the
+saved scope differently. The JSON report retains the provider manifest and
+the output directory contains the exact DLL. Focused CI captures this runtime
+from MSVC, runs all source cases in Wine, then replays the same 20 images per
+case on Windows with `replay_windows_registration.py --source-only`. Replay
+verifies every image hash, runtime DLL hash, code owner and relocation base.
+Dynamic-scope mutations alter selectors, state cases, restore values, source
+stores and overlapping aliases; each must fail installation. Dead-finally-result
+tests reject observable, aliased, volatile and atomic spill chains.
 The source-input unit rejects edits to capture/resume identities, the private
 buffer, register snapshots, restored state and argument slot. Its unwind-adapter
 controls change the copy extent, physical registration field, virtual EBP,

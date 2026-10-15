@@ -1856,3 +1856,12 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ### 显式物理内存清单
 
 `KernelPhysicalInventoryTests` 检查字节单位、终止项、独立分配、拒绝时无副作用、声明复制、捕获依赖、固定页面、物理身份和资源不足。`DriverPhysicalInventoryTests` 检查严格传输，以及 Unicorn/KVM/WHP 上首选和重定位地址的完整生命周期、动态查询和释放后读取。未使用声明的 UNPACK 对照仍拒绝还原。每个原生后端的 13 项均为必跑；本地不可用的平台执行仍记为跳过。
+
+`check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
+`longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+通过 `--runtime-root` 指定捕获的微软 x86 CRT 目录；报告保存 provider 清单及 SHA-256，
+输出目录保存同一份 DLL。内层作用域测试在 Wine 下必须使用该参数，因为 Wine 9 内置
+CRT 的局部展开停止规则不同。focused CI 使用原生 CRT 跑完全部源测试，然后通过
+`replay_windows_registration.py --source-only` 在 Windows 上重新执行每例完全相同的
+20 个原始及重建映像，重新核对映像和 DLL 哈希、代码归属及重定位基址。状态选择器、
+源状态写入、恢复值和重叠别名覆盖的负向变异必须被安装器拒绝。
