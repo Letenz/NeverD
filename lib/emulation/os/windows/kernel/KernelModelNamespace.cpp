@@ -86,6 +86,8 @@ KernelModel::findObjectHandle(uint64_t Handle) const {
   const auto Found = ObjectHandles.find(Handle);
   if (Found == ObjectHandles.end())
     return nullptr;
+  if (Found->second.ScenarioOwned)
+    return nullptr;
   const auto Context = executionProcessContext();
   const uint32_t ProcessID = Context ? Context->ProcessID : 0;
   if (!(Found->second.Attributes & ObjectKernelHandle) &&
@@ -96,6 +98,8 @@ KernelModel::findObjectHandle(uint64_t Handle) const {
 
 std::optional<uint32_t> KernelModel::objectAccessMask(ObjectKind Kind) {
   switch (Kind) {
+  case ObjectKind::File:
+    return 0x1f01ff;
   case ObjectKind::Key:
     return KeyAllAccess;
   case ObjectKind::Thread:
@@ -117,21 +121,29 @@ llvm::Expected<uint32_t> KernelModel::mapObjectAccess(ObjectKind Kind,
   if (!Valid)
     return namespaceError("unsupported object handle class");
   if (Kind == ObjectKind::Directory || Kind == ObjectKind::SymbolicLink ||
-      Kind == ObjectKind::Key) {
-    // WDK rights and the target kernel's generic mappings. These types are not
-    // waitable; SYNCHRONIZE and MAXIMUM_ALLOWED are not guessed grants.
+      Kind == ObjectKind::Key || Kind == ObjectKind::File) {
+    // WDK rights and the target kernel's generic mappings. The per-type valid
+    // mask controls SYNCHRONIZE; MAXIMUM_ALLOWED is not a guessed grant.
     const bool Directory = Kind == ObjectKind::Directory;
     const bool Key = Kind == ObjectKind::Key;
-    const uint32_t ReadExecute = 0x20000 | (Key ? 0x19 : Directory ? 3 : 1);
-    const uint32_t Write = 0x20000 | (Key ? 6 : Directory ? 12 : 0);
+    const bool File = Kind == ObjectKind::File;
+    const uint32_t Read = File ? 0x120089
+                               : 0x20000 | (Key         ? 0x19
+                                            : Directory ? 3
+                                                        : 1);
+    const uint32_t Execute = File ? 0x1200a0 : Read;
+    const uint32_t Write = File ? 0x120116
+                                : 0x20000 | (Key         ? 6
+                                             : Directory ? 12
+                                                         : 0);
     const uint32_t Generic = Access & 0xf0000000;
     Access &= ~0xf0000000;
     if (Generic & 0x80000000)
-      Access |= ReadExecute;
+      Access |= Read;
     if (Generic & 0x40000000)
       Access |= Write;
     if (Generic & 0x20000000)
-      Access |= ReadExecute;
+      Access |= Execute;
     if (Generic & 0x10000000)
       Access |= *Valid;
   }

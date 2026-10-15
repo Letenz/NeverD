@@ -289,6 +289,7 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
   const bool FileFree = IsPnp || IsPower || IsInternal;
   const bool FileLifecycle = Input.Kind == DriverRequestKind::Close ||
                              Input.Kind == DriverRequestKind::Cleanup;
+  const bool UnlockAll = Input.Kind == DriverRequestKind::UnlockAll;
   if (IsInternal && (File || Request->ProcessID))
     return ioError(
         "internal control packets require kernel file-free ownership");
@@ -297,6 +298,8 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
     Flags |= IRPCreate;
   if (FileLifecycle)
     Flags |= IRPClose | IRPSynchronous;
+  if (UnlockAll)
+    Flags |= 0x1000 | IRPSynchronous;
   if (Input.Kind == DriverRequestKind::Read)
     Flags |= IRPReadOperation;
   if (Input.Kind == DriverRequestKind::Write)
@@ -318,7 +321,7 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
             {IRPSystemBufferOffset, Request->SystemBuffer, 8},
             {IRPStatusOffset, FileFree ? StatusNotSupported : 0, 4},
             {IRPRequestorModeOffset,
-             FileFree || FileLifecycle ? KernelMode : UserMode, 1},
+             FileFree || FileLifecycle || UnlockAll ? KernelMode : UserMode, 1},
             {IRPUserBufferOffset, Request->UserBuffer, 8},
             {IRPOriginalFileOffset, File, 8},
             {Request->Stack - Packet, majorFunction(Input.Kind), 1}}})
@@ -329,6 +332,9 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
     return E;
   if (auto E = Memory.writeInteger(Request->Stack + StackFileOffset, File, 8))
     return E;
+  if (UnlockAll)
+    if (auto E = Memory.writeInteger(Request->Stack + StackMinorOffset, 3, 1))
+      return E;
   if (IsPnp) {
     if (auto E = Memory.writeInteger(Request->Stack + StackMinorOffset,
                                      uint8_t(Input.Pnp->Minor), 1))
@@ -506,8 +512,11 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     return E;
   uint64_t Device = 0;
   if (RetainedFile) {
-    if (FileIt == FileObjects.end() || Input.Kind != DriverRequestKind::Close)
-      return ioError("retained CLOSE lost its file object");
+    if (FileIt == FileObjects.end() ||
+        (Input.Kind != DriverRequestKind::Close &&
+         Input.Kind != DriverRequestKind::Cleanup &&
+         Input.Kind != DriverRequestKind::UnlockAll))
+      return ioError("retained lifecycle request lost its file object");
     Device = FileIt->second.Device;
   } else if (!Input.DeviceID.empty()) {
     auto Found = PnpDevices.find(Input.DeviceID);
@@ -551,6 +560,7 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
   }
   const bool LifecycleIo = PnpOwner &&
                            Input.Kind != DriverRequestKind::Cleanup &&
+                           Input.Kind != DriverRequestKind::UnlockAll &&
                            Input.Kind != DriverRequestKind::Close;
   if (PnpOwner) {
     const auto *Owner = pnpDeviceForPDO(PnpOwner);
@@ -609,6 +619,7 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
                    "client ID");
   if (ExitedUserProcesses.contains(Input.RequestorProcessID) &&
       Input.Kind != DriverRequestKind::Cleanup &&
+      Input.Kind != DriverRequestKind::UnlockAll &&
       Input.Kind != DriverRequestKind::Close)
     return ioError("requesting process has exited");
   if (Input.RequestorExitAfterDispatch &&
@@ -616,6 +627,8 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
        (Input.Input.empty() && !Input.OutputSize && Input.UserBuffers.empty())))
     return ioError("requestor exit requires a nonempty neither-I/O transfer");
   if (Input.Kind == DriverRequestKind::Create) {
+    if (NextObjectHandle > profile::SystemThreadHandleLimit)
+      return ioError("scenario file handle capacity exhausted");
     if (Devices.at(Device).DeletePending || Devices.at(*Top).DeletePending)
       return ioError("CREATE cannot target a delete-pending device");
     if (FileIt != FileObjects.end())
@@ -636,9 +649,13 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
     State.PnpDevice = PnpOwner;
     State.Asynchronous = Input.AsynchronousFile.value_or(false);
     State.State = FileState::Opening;
+    State.ScenarioID = Input.File;
+    State.ScenarioHandle = NextObjectHandle;
     FileIt = FileObjects.emplace(*File, std::move(State)).first;
     Files.emplace(Input.File, *File);
     ReferencedObjects.emplace(*File, ObjectReferences{ObjectKind::File});
+    retainObjectHandle(*File, CreateDesiredAccess, 0, Input.RequestorProcessID);
+    ObjectHandles.at(FileIt->second.ScenarioHandle).ScenarioOwned = true;
     struct Field {
       uint64_t Offset, Value;
       unsigned Size;
@@ -664,9 +681,17 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
       return ioError(
           "request requires a successful CREATE on the same device and file");
     const auto State = FileIt->second.State;
+    const bool DeferredScenarioClose =
+        Input.Kind == DriverRequestKind::Close && !RetainedFile &&
+        FileIt->second.ScenarioCleanupRequested &&
+        ReferencedObjects.at(FileIt->first).Handles;
+    const bool RetainedCleanup = RetainedFile && State == FileState::Cleaned &&
+                                 (Input.Kind == DriverRequestKind::Cleanup ||
+                                  Input.Kind == DriverRequestKind::UnlockAll);
     if ((Input.Kind == DriverRequestKind::Close &&
-         State != FileState::Cleaned) ||
-        (Input.Kind != DriverRequestKind::Close && State != FileState::Open))
+         State != FileState::Cleaned && !DeferredScenarioClose) ||
+        (Input.Kind != DriverRequestKind::Close && State != FileState::Open &&
+         !RetainedCleanup))
       return ioError(
           "file request order must be CREATE, READ/WRITE/DEVICE_CONTROL*, "
           "CLEANUP, CLOSE");
@@ -691,10 +716,38 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
       return ioError("asynchronous file lifecycle requires prior transfers "
                      "to finalize");
   }
+  if (Input.Kind == DriverRequestKind::Cleanup && !RetainedFile) {
+    auto &File = FileIt->second;
+    if (!File.ScenarioHandle || File.ScenarioCleanupRequested)
+      return ioError("scenario file handle has already been closed");
+    const auto Handle = File.ScenarioHandle;
+    if (ObjectHandles.at(Handle).ProcessID != Input.RequestorProcessID)
+      return ioError("scenario CLEANUP requires the handle-owning process");
+    auto Kind = planFileHandleClose(Handle);
+    if (!Kind)
+      return Kind.takeError();
+    Invocation Prepared;
+    if (*Kind) {
+      auto Call =
+          **Kind == DriverRequestKind::Cleanup
+              ? beginFileRequest(Input, SourceIndex, Index, File.Address)
+              : beginFileHandleRequest(File.Address, **Kind,
+                                       Input.RequestorProcessID);
+      if (!Call)
+        return Call.takeError();
+      Prepared = std::move(*Call);
+    }
+    releaseFileHandle(Handle);
+    File.ScenarioHandle = 0;
+    File.ScenarioCleanupRequested = true;
+    if (*Kind != DriverRequestKind::Cleanup)
+      File.DeferredCleanup = DeferredFileClose{Input, Index, SourceIndex};
+    return Prepared;
+  }
   if (Input.Kind == DriverRequestKind::Close) {
     auto &File = FileIt->second;
     const auto &References = ReferencedObjects.at(File.Address);
-    if (References.Pointers || References.Handles) {
+    if (References.Pointers || References.Handles || File.HandleCloseHolds) {
       if (RetainedFile)
         return ioError("retained CLOSE still has external references");
       File.DeferredClose = DeferredFileClose{Input, Index, SourceIndex};
@@ -727,6 +780,8 @@ KernelModel::beginFileRequest(const DriverRequest &Input,
   Record.FileId = Input.File;
   Record.AsynchronousFile = FileIt->second.Asynchronous;
   Record.ProcessID = Input.RequestorProcessID;
+  if (RetainedFile)
+    Record.CallbackProcessID = Input.RequestorProcessID;
   RequestorProcessIDs.insert(Input.RequestorProcessID);
   if (Input.CancelAfter100ns) {
     llvm::Expected<uint64_t> Deadline = Scheduler.now100ns();
@@ -1176,6 +1231,9 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
         return E;
     } else {
       Files.erase(Request->FileId);
+      ObjectHandles.erase(File.ScenarioHandle);
+      --ReferencedObjects.at(File.Address).Handles;
+      File.ScenarioHandle = 0;
       File.State = FileState::Failed;
       File.Device = 0;
       File.PnpDevice = 0;

@@ -1498,6 +1498,13 @@ transparent cycles retain the existing shared generation guard; memory-context
 resets also invalidate those entries in the value memo. Neither cache bypasses
 incomplete-proof rejection.
 
+Edge refinement shares one predicate policy with its local shape inspection.
+An exact, unguarded byte producer can establish that the current query cannot
+use a condition, avoiding reconstruction of its operands. Exact COPY and NOT
+transports preserve that classification. Needed predicates, guarded or partial
+definitions, and producers outside the local block retain the complete walk.
+All inspected definitions consume the ordinary evidence allowance.
+
 HighIR's call-argument projection uses the same checked affine equation core
 for entry-stack offsets in an immutable MedIR function. Each SSA definition is
 indexed once; PHIs require all incoming offsets to agree. Width and ambiguity
@@ -4476,7 +4483,7 @@ explicitly unsupported. Resource operations retain a recovery dependency.
 
 `KernelModelWaits` owns single/multiple wait registration, thread references, deadlines and opaque caller `KWAIT_BLOCK` lifetimes. `KernelDispatcher` validates the complete set before committing signal/count/mutex changes; `KernelScheduler` consumes selected synchronization-timer signals as one preflighted batch. `WaitRegistrations` retains this authoritative record. Each deferred wait has a never-reused identity and immutable captured state; polling a completed or altered wait fails before acquiring signals or releasing references.
 
-`KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
+`KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` counts associated file bodies.
 
 Attachment queries use the same topology and object-reference owner; returned pointer references retain allocation independently of driver-list membership and open-handle counts.
 
@@ -6368,7 +6375,9 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
-`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. Alone, this supplies no reachability or memory-ownership fact and cannot populate the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+
+If the same cache already holds a completed empty-projection proof for the identical predicate at limit one, `FrameOffsets` can combine it with the exact algebraic offset and cache the original query, preserving modular bias translation. Feasible predicates yield a singleton; proved infeasibility stays empty. Missing, incomplete or unrelated proofs cannot enable this reuse. No additional solver query or memory premise is introduced.
 
 For constant-only projections, `InterpreterSpecialization` reuses a completed empty-projection proof under the identical predicate and tuple limit, then reconstructs the literal tuple. Constants do not establish reachability. Observers still validate every original address and extent, including cache hits; rejected observations and incomplete enumeration never supply a completed proof.
 
@@ -6548,8 +6557,7 @@ adapters declare these contracts and never infer methods, services or commands.
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
 
-KernelModel keeps scenario identifiers separate from address-keyed file bodies. KernelModelObjects owns caller pointer counts; KernelModelFileObjects owns deferred CLOSE dispatch and waits. KernelModelIO retires bodies only after packet completion and dispatch/continuation return. Device and PnP holds inspect bodies, including bodies with no scenario identifier. DriverSession inherits the actual parent context for synchronous nested callbacks; independent scheduled callbacks keep their own context.
-
+KernelModelObjects owns file handle and pointer counts in the common object table. KernelModelFileObjects selects per-process unlock versus global cleanup, prepares the request before consuming a handle, and owns deferred CLOSE and caller waits. KernelModelIO retains scenario payloads and retires bodies only after packet completion and dispatch/continuation return. KernelFramework carries an optional effective-process override only for internal file lifecycle callbacks. DriverSession preserves the invoking thread and creating-process identity, activates the inherited address space, and restores the source context before final release. Independent scheduled callbacks retain their own context. Device and PnP holds inspect bodies rather than scenario identifiers.
 
 ## Shared Dalvik decode and bounded execution
 

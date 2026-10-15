@@ -204,6 +204,22 @@ TEST_F(KernelObjects, FailedOutputsDoNotAcquireReferencesOrConsumeHandles) {
   EXPECT_EQ(call("ZwClose", {Handle}), 0u);
 }
 
+TEST_F(KernelObjects, PointerOpenClearsOutputBeforeTypeMismatch) {
+  const auto Thread = call("PsGetCurrentThread", {});
+  const auto WrongType =
+      call("ObGetObjectType", {call("PsGetCurrentProcess", {})});
+  write(Scratch, 0xabcdef);
+  EXPECT_EQ(call("ObOpenObjectByPointer",
+                 {Thread, 0x200, 0, 0, WrongType, 0, Scratch}),
+            0xc0000024u);
+  EXPECT_EQ(read(Scratch), 0u);
+  EXPECT_EQ(call("ObOpenObjectByPointer", {Thread, 0x200, 0, 0, 0, 0, Scratch}),
+            0u);
+  EXPECT_EQ(read(Scratch), 0x60000000u);
+  EXPECT_EQ(call("ZwClose", {read(Scratch)}), 0u);
+  EXPECT_FALSE(fail("ObfDereferenceObject", {Thread}).empty());
+}
+
 TEST_F(KernelObjects, DetachedStackReuseKeepsOldIdentityAndExitPriority) {
   constexpr uint64_t Stack = Scratch + 0x8000;
   Model->enterExecution(Stack);

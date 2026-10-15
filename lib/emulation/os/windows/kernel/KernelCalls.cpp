@@ -119,7 +119,7 @@ llvm::Expected<uint64_t> KernelModel::call(
                       " requires IRQL <= " + std::to_string(*MaximumIRQL));
   }
   if (auto Context = executionProcessContext();
-      Context && Context->Attached &&
+      Context && Context->RestrictedAttachment &&
       Kind != KernelAPIKind::KeStackAttachProcess &&
       Kind != KernelAPIKind::KeUnstackDetachProcess &&
       Kind != KernelAPIKind::IoGetCurrentProcess &&

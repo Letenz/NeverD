@@ -195,18 +195,21 @@ TEST_F(DriverScenarioPublic, CLIRejectsUnknownFieldsNULAndOversizedFiles) {
 
 TEST_F(DriverScenarioPublic,
        CAPIAndCLIRejectKernelGeneratedRequestsBeforeImageLoading) {
-  constexpr char Scenario[] =
-      R"({"requests":[{"kind":"internal_ioctl","code":3}]})";
   constexpr char Image[] = "missing-kernel-request-public.sys";
-  EXPECT_EQ(
-      neverd_emulate_driver_scenario_json(Session, Image, Scenario, nullptr),
-      nullptr);
-  EXPECT_NE(error().find("kernel-generated"), std::string::npos);
-  EXPECT_FALSE(neverd_session_is_loaded(Session));
-  EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
-  std::ifstream Errors(Directory / "error.txt");
-  const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
-  EXPECT_NE(Diagnostic.find("kernel-generated"), std::string::npos);
+  for (const char *Scenario :
+       {R"({"requests":[{"kind":"internal_ioctl","code":3}]})",
+        R"({"requests":[{"kind":"unlock_all","file":1}]})"}) {
+    SCOPED_TRACE(Scenario);
+    EXPECT_EQ(
+        neverd_emulate_driver_scenario_json(Session, Image, Scenario, nullptr),
+        nullptr);
+    EXPECT_NE(error().find("kernel-generated"), std::string::npos);
+    EXPECT_FALSE(neverd_session_is_loaded(Session));
+    EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
+    std::ifstream Errors(Directory / "error.txt");
+    const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
+    EXPECT_NE(Diagnostic.find("kernel-generated"), std::string::npos);
+  }
 }
 
 TEST_F(DriverScenarioPublic, CAPIAndCLIReportIndependentDriverAllocatedIRP) {

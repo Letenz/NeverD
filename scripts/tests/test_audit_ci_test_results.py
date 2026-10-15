@@ -71,6 +71,13 @@ def junit(records, changes=None):
 
 
 def workflow_bash():
+    configured = os.environ.get("NEVERD_TEST_BASH")
+    if configured is not None:
+        bash = Path(configured)
+        if not bash.is_absolute() or not bash.is_file():
+            raise RuntimeError("NEVERD_TEST_BASH must name an existing absolute shell path")
+        return str(bash.resolve())
+
     if sys.platform != "win32":
         bash = shutil.which("bash")
         if bash:
@@ -93,7 +100,7 @@ def workflow_bash():
 
     for candidate in git_candidates():
         root = candidate.resolve().parent.parent
-        if root.name.lower() in ("mingw32", "mingw64", "usr"):
+        if root.name.lower() in ("mingw32", "mingw64", "ucrt64", "usr"):
             root = root.parent
         for relative in ("bin/bash.exe", "usr/bin/bash.exe"):
             bash = root / relative
@@ -106,13 +113,43 @@ def workflow_bash():
 
 
 class WorkflowShellTests(unittest.TestCase):
+    def setUp(self):
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("NEVERD_TEST_BASH", None)
+
+    def test_running_workflow_shell_takes_precedence_over_another_git(self):
+        with tempfile.TemporaryDirectory(prefix="neverd workflow shell ") as directory:
+            root = Path(directory)
+            bash = root / "full git" / "bin" / "bash.exe"
+            bash.parent.mkdir(parents=True)
+            bash.touch()
+            os.environ["NEVERD_TEST_BASH"] = str(bash)
+            with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
+                shutil, "which", return_value=str(root / "minimal git" / "cmd" / "git.exe")
+            ) as which:
+                self.assertEqual(workflow_bash(), str(bash.resolve()))
+                which.assert_not_called()
+
+    def test_explicit_workflow_shell_must_exist_and_be_absolute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for value in ("", "relative-bash.exe", str(Path(directory) / "absent.exe")):
+                with self.subTest(value=value), mock.patch.object(
+                    shutil, "which", return_value=None
+                ) as which:
+                    os.environ["NEVERD_TEST_BASH"] = value
+                    with self.assertRaisesRegex(RuntimeError, "NEVERD_TEST_BASH"):
+                        workflow_bash()
+                    which.assert_not_called()
+
     def test_windows_uses_git_bash_even_when_wsl_is_first_on_path(self):
         with tempfile.TemporaryDirectory(prefix="neverd git shell ") as directory:
             root = Path(directory)
             bash = root / "bin" / "bash.exe"
             bash.parent.mkdir()
             bash.touch()
-            for layout in ("bin", "cmd", "mingw32/bin", "mingw64/bin", "usr/bin"):
+            for layout in ("bin", "cmd", "mingw32/bin", "mingw64/bin", "ucrt64/bin", "usr/bin"):
                 with self.subTest(layout=layout), mock.patch.object(
                     sys, "platform", "win32"
                 ), mock.patch.object(

@@ -1747,6 +1747,11 @@ independent set-of-activation-IDs model, including sparse ancestors, completed
 memo hits, reused depths and the fixed bitset's word and capacity boundaries.
 Unrelated returns must preserve an exact snapshot; retiring any actual
 dependency must invalidate it, including beyond the exact tracking capacity.
+`ResolverPredicateDemand.*` places a deep operand behind conditions that the
+current query cannot use. The independent constant candidate must still be
+proved across four architectures and exact COPY/NOT transports. Needed
+conditions, guarded/partial definitions and cross-block producers retain their
+depth refusals; policy switches and evidence budgets agree cold and warm.
 `ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
 budget boundary, including completion flags and masks. It covers owned temporary
 overrides, equal-sized edge changes, roots, different builders, nested leases,
@@ -6714,6 +6719,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
@@ -6914,7 +6921,7 @@ native transports remain skips, not execution evidence.
 
 `KernelDeviceStackTests.cpp` checks current neighbors, borrowed versus retained results, deletion of either query input or neighbor, last-reference retirement, invalid/corrupted inputs and IRQL rejection before retention. Original `fixtures/driver_device_queries.c` runs through `DriverDeviceQueryTests.cpp` on available backends, both contracts and image bases, with cooperative and 17-instruction scheduling. It verifies held storage after detach/delete and rejects unload with a deliberately leaked reference; all four native contract/base outcomes are required.
 
-KernelFileObjectTests checks references during CREATE, type mismatch, reused identifiers, pending CLOSE, deletion, failed CREATE and rejection of elevated final release. Original driver_file_objects.c and DriverFileObjectTests execute synchronous/pending close, failed creation and deliberate leaks on available backends, both contracts and bases, with cooperative and 17-instruction scheduling. The nested close checks the actual thread, process and PreviousMode. Native acceptance requires all four contract/base outcomes. File handles and filesystem operations need separate coverage.
+KernelFileObjectTests and KernelObjectTests cover typed pointer opens, output clearing on type mismatch, generic access, process/global handle counts, callback reopening rejection, failed-route retry, requestor exit, repeated cleanup and pending final close. KernelPnpRequestTests preserves a delayed CLEANUP provider response; KernelFrameworkFileTests checks callback process ownership and LOCK_CONTROL admission. Original driver_file_objects.c keeps its pointer-lifetime coverage. Original driver_file_handles.c checks synchronous/pending CLEANUP and CLOSE, system-worker release, identifier reuse and deliberate leaks with cooperative and 17-instruction scheduling. Genuine WDK driver_kmdf_file_handles.c checks system-process cleanup, restored caller close and callback-free cleanup; configure NEVERD_KMDF_FILE_HANDLES_FIXTURE and optional NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE. DriverFileObjectTests runs available backends, both contracts and bases. Missing WDK artifacts or backends skip visibly. Filesystem operations require separate coverage. Scenario-originated KMDF CLEANUP/CLOSE retain the calling process, thread and PreviousMode; the F fixture mode closes a retained handle from another file’s CLEANUP and checks restoration afterward.
 
 ### Android method, transaction and command execution
 
