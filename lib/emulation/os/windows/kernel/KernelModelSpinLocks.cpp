@@ -124,6 +124,9 @@ KernelModel::releaseSpinLock(uint64_t Address,
     return Value.takeError();
   if (*Value != 1)
     return spinLockError("executive spin lock storage was modified");
+  if (auto E = validateExecutiveResourceRestoreIRQL(
+          RestoreIRQL ? Lock->second.OldIRQL : scheduler::DispatchLevel))
+    return E;
   if (auto E = Memory.writeInteger(Address, 0, 8))
     return E;
   CurrentIRQL = RestoreIRQL ? Lock->second.OldIRQL : scheduler::DispatchLevel;
@@ -240,6 +243,9 @@ llvm::Expected<uint64_t> KernelModel::releaseQueuedSpinLock(uint64_t Handle,
     return Value.takeError();
   if (*Value != Handle)
     return spinLockError("queued spin lock storage was modified");
+  if (auto E = validateExecutiveResourceRestoreIRQL(
+          Restore ? Lock->second.OldIRQL : scheduler::DispatchLevel))
+    return E;
   if (auto E = Memory.writeInteger(SpinLock, 0, 8))
     return E;
   if (Restore)

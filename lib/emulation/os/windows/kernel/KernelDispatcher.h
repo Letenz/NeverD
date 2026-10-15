@@ -81,7 +81,7 @@ public:
   llvm::Expected<std::optional<uint32_t>>
   tryAcquireSet(llvm::ArrayRef<WaitCondition> Conditions, bool All,
                 uint64_t ThreadKey, uint8_t CurrentIRQL);
-  bool ownsMutex(uint64_t ThreadKey) const;
+  bool ownsMutex(uint64_t ThreadKey, uint64_t ReleasingAddress = 0) const;
   /// Embedded fast-mutex events share this owner's event identity. The
   /// guarded initializer also publishes its target-specific byte layout.
   llvm::Error initializeFastMutexEvent(uint64_t Address);

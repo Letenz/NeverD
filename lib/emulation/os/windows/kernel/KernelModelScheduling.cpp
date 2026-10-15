@@ -200,6 +200,9 @@ llvm::Expected<uint64_t> KernelModel::terminateSystemThread(uint32_t Status) {
     return schedulingError("system thread termination lost its live object");
   if (threadHoldsFastMutex(CurrentThreadKey))
     return schedulingError("system thread termination retains a fast mutex");
+  if (threadHoldsExecutiveResource(CurrentThreadKey))
+    return schedulingError(
+        "system thread termination retains an executive resource");
   Thread->second.ExitStatus = Status;
   Thread->second.Terminating = true;
   PendingThreadTermination = Status;
@@ -728,6 +731,8 @@ KernelModel::canRevokeVirtualRange(uint64_t Base, uint64_t Size,
   if (auto E = UsbIdle.canReleaseRange(Base, Size, RetiringUsbIdle))
     return E;
   if (auto E = canReleaseLookasideRange(Base, Size, RetiringLookaside))
+    return E;
+  if (auto E = canReleaseExecutiveResourceRange(Base, Size))
     return E;
   for (const auto &[Address, Hold] : FastMutexHolds)
     if (Size && Address < Base + Size &&

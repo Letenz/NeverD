@@ -3025,6 +3025,13 @@ across the same backend/contract/base matrix. `KernelFastMutex` checks logical
 thread ownership, nested holds and callbacks, IRQL/region restoration, padding,
 corruption, read-only and paged storage, MDL borrowing in either order and
 failure before mutation. Contended waits remain explicit unsupported paths.
+`driver_eresource.c` executes all 22 legacy resource exports across that matrix,
+including three system threads holding shared ownership while parked on an event,
+table growth, recursive acquisition, downgrade, owner-pointer transfer and unload.
+`KernelExecutiveResource` covers table placement for different shared-acquisition
+forms, registration unlink preflight, APC/IRQL and mutex restoration, foreign
+release, owner-pointer lifetime, MDL borrowing, read-only/corrupt storage and
+thread/unload guards. Blocking contention is rejected before registering a waiter.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 

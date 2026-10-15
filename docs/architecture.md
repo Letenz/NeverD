@@ -4323,6 +4323,15 @@ returns, thread termination, memory retirement and unload check the same hold
 inventory. AutoBoost waiting and contended blocking acquisition stop explicitly;
 the uncontended model retains an unpack dependency.
 
+`KernelModelExecutiveResources` owns legacy ERESOURCE registration, logical-thread
+recursion, exclusive/shared mode, tagged owner transfers and private owner tables.
+The opaque guest bytes serialize that state, including table growth, reuse and
+retirement. Initialization and deletion preflight registration neighbors; MDL and
+storage-retirement guards cover both records and private tables. APC-region,
+IRQL, fast-mutex and final KMUTEX releases validate the remaining resource holds
+before changing state. Blocking contention and thread-referenced transfers are
+explicitly unsupported. Resource operations retain a recovery dependency.
+
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
 `KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.

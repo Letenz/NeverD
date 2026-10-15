@@ -1,0 +1,68 @@
+//===- KernelExecutiveResourceAPIs.def - ERESOURCE contracts -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Legacy ERESOURCE on Windows 10.0.19041.6456; FAST_RESOURCE is separate.
+// https://learn.microsoft.com/windows-hardware/drivers/kernel/introduction-to-eresource-routines
+NEVERD_KERNEL_RESOURCE_API(ExInitializeResourceLite, 1, Dispatch,
+                           initializeExecutiveResource(A[0]))
+NEVERD_KERNEL_RESOURCE_API(ExReinitializeResourceLite, 1, Dispatch,
+                           resetExecutiveResource(A[0], false))
+NEVERD_KERNEL_RESOURCE_API(ExDeleteResourceLite, 1, APC,
+                           resetExecutiveResource(A[0], true))
+NEVERD_KERNEL_RESOURCE_API(
+    ExAcquireResourceExclusiveLite, 2, APC,
+    acquireExecutiveResource(A[0], ExecutiveResourceMode::Exclusive,
+                             uint8_t(A[1]) != 0))
+NEVERD_KERNEL_RESOURCE_API(
+    ExTryToAcquireResourceExclusiveLite, 1, APC,
+    acquireExecutiveResource(A[0], ExecutiveResourceMode::Exclusive, false))
+NEVERD_KERNEL_RESOURCE_API(
+    ExAcquireResourceSharedLite, 2, APC,
+    acquireExecutiveResource(A[0], ExecutiveResourceMode::Shared,
+                             uint8_t(A[1]) != 0))
+NEVERD_KERNEL_RESOURCE_API(
+    ExAcquireSharedStarveExclusive, 2, APC,
+    acquireExecutiveResource(A[0], ExecutiveResourceMode::Shared,
+                             uint8_t(A[1]) != 0))
+NEVERD_KERNEL_RESOURCE_API(
+    ExAcquireSharedWaitForExclusive, 2, APC,
+    acquireExecutiveResource(A[0],
+                             ExecutiveResourceMode::SharedWaitForExclusive,
+                             uint8_t(A[1]) != 0))
+NEVERD_KERNEL_RESOURCE_API(ExConvertExclusiveToSharedLite, 1, APC,
+                           convertExecutiveResource(A[0]))
+NEVERD_KERNEL_RESOURCE_API(ExReleaseResourceLite, 1, Dispatch,
+                           releaseExecutiveResource(A[0], 0, false))
+NEVERD_KERNEL_RESOURCE_API(ExReleaseResourceForThreadLite, 2, Dispatch,
+                           releaseExecutiveResource(A[0], A[1], false))
+NEVERD_KERNEL_RESOURCE_API(ExIsResourceAcquiredExclusiveLite, 1, Dispatch,
+                           queryExecutiveResource(A[0], true, false))
+NEVERD_KERNEL_RESOURCE_API(ExIsResourceAcquiredSharedLite, 1, Dispatch,
+                           queryExecutiveResource(A[0], false, false))
+NEVERD_KERNEL_RESOURCE_API(ExGetExclusiveWaiterCount, 1, Dispatch,
+                           queryExecutiveResource(A[0], true, true))
+NEVERD_KERNEL_RESOURCE_API(ExGetSharedWaiterCount, 1, Dispatch,
+                           queryExecutiveResource(A[0], false, true))
+NEVERD_KERNEL_RESOURCE_API(ExDisableResourceBoostLite, 1, Dispatch,
+                           disableExecutiveResourceBoost(A[0]))
+NEVERD_KERNEL_RESOURCE_API(
+    ExEnterCriticalRegionAndAcquireResourceExclusive, 1, APC,
+    acquireExecutiveResource(A[0], ExecutiveResourceMode::Exclusive, true,
+                             true))
+NEVERD_KERNEL_RESOURCE_API(
+    ExEnterCriticalRegionAndAcquireResourceShared, 1, APC,
+    acquireExecutiveResource(A[0], ExecutiveResourceMode::Shared, true, true))
+NEVERD_KERNEL_RESOURCE_API(
+    ExEnterCriticalRegionAndAcquireSharedWaitForExclusive, 1, APC,
+    acquireExecutiveResource(A[0],
+                             ExecutiveResourceMode::SharedWaitForExclusive,
+                             true, true))
+NEVERD_KERNEL_RESOURCE_API(ExReleaseResourceAndLeaveCriticalRegion, 1, APC,
+                           releaseExecutiveResource(A[0], 0, true))
+NEVERD_KERNEL_RESOURCE_API(ExSetResourceOwnerPointer, 2, Dispatch,
+                           transferExecutiveResource(A[0], A[1], 0))
+NEVERD_KERNEL_RESOURCE_API(ExSetResourceOwnerPointerEx, 3, Dispatch,
+                           transferExecutiveResource(A[0], A[1],
+                                                     uint32_t(A[2])))

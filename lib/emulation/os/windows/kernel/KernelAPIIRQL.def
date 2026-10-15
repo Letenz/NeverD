@@ -109,6 +109,10 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelFastMutexAPIs.def"
 #undef NEVERD_KERNEL_FAST_MUTEX_API
+#define NEVERD_KERNEL_RESOURCE_API(Name, Arity, IRQL, Operation)               \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelExecutiveResourceAPIs.def"
+#undef NEVERD_KERNEL_RESOURCE_API
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioconnectinterrupt
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesynchronizeexecution
