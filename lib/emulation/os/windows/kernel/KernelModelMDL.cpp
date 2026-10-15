@@ -30,6 +30,10 @@ llvm::Error mdlError(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
 }
 
+bool overlaps(uint64_t A, uint64_t Size, uint64_t B, uint64_t Length) {
+  return Size && Length && A < B + Length && B < A + Size;
+}
+
 uint64_t pageBase(uint64_t Address) {
   return Address & ~(profile::PageSize - 1);
 }
@@ -48,6 +52,54 @@ llvm::Expected<uint64_t> mdlRecordSize(uint64_t Address, uint32_t Size) {
   return RecordSize;
 }
 } // namespace
+
+llvm::Error KernelModel::validateKernelObjectBorrow(uint64_t Address,
+                                                    uint64_t Size) const {
+  if (!Size)
+    return llvm::Error::success();
+  if (Size > UINT64_MAX - Address)
+    return mdlError("overflowing kernel object storage borrow");
+  // Image MDLs expose their whole owned pages; pool mappings retain the
+  // logical ByteCount boundary. Neither may bypass kernel-owned fields.
+  if (imageOwnerForRange(Address, Size)) {
+    const uint64_t Last = pageBase(Address + Size - 1);
+    Address = pageBase(Address);
+    Size = Last - Address + profile::PageSize;
+  }
+  if (auto E = validateExecutiveResourceAccess(Address, Size))
+    return E;
+  for (uint64_t Head : LookasideHeads)
+    if (Head && overlaps(Address, Size, Head, ListEntrySize))
+      return mdlError("MDL borrow intersects a private lookaside registry");
+  for (const auto &[Base, List] : Lookasides)
+    if (overlaps(Address, Size, Base, LookasideSize))
+      return mdlError("MDL borrow intersects a live lookaside list");
+  for (const auto &[Base, Hold] : FastMutexHolds)
+    if (overlaps(Address, Size, Base, FastMutexSize))
+      return mdlError("MDL borrow intersects a held fast mutex");
+  return llvm::Error::success();
+}
+
+llvm::Error KernelModel::validateUnborrowedKernelStorage(uint64_t Address,
+                                                         uint64_t Size) const {
+  for (const auto &[MDL, State] : MDLs) {
+    if (State.Owner == LockedMdl::Ownership::Driver ||
+        State.Owner == LockedMdl::Ownership::ReleasedPages)
+      continue;
+    uint64_t Backing = State.BackingAddress, Length = State.ByteCount;
+    if (Length && imageOwnerForRange(Backing, Length)) {
+      const uint64_t Last = pageBase(Backing + Length - 1);
+      Backing = pageBase(Backing);
+      Length = Last - Backing + profile::PageSize;
+    }
+    if (overlaps(Address, Size, Backing, Length) ||
+        (State.Mapped &&
+         overlaps(Address, Size, pageBase(State.Buffer), State.AllocationSize)))
+      return mdlError(
+          "kernel object storage already has an MDL borrow or alias");
+  }
+  return llvm::Error::success();
+}
 
 std::optional<uint64_t> KernelModel::imageOwnerForRange(uint64_t Address,
                                                         uint64_t Size) const {
@@ -154,6 +206,8 @@ llvm::Error KernelModel::buildNonPagedMDL(uint64_t MDL) {
     return mdlError("MmBuildMdlForNonPagedPool requires an unbuilt, live "
                     "driver-allocated MDL");
   auto &State = It->second;
+  if (auto E = validateKernelObjectBorrow(State.Buffer, State.ByteCount))
+    return E;
   auto Pool = Allocations.upper_bound(State.Buffer);
   if (Pool == Allocations.begin())
     return mdlError("MmBuildMdlForNonPagedPool requires a live nonpaged pool "
@@ -307,6 +361,9 @@ llvm::Error KernelModel::probeAndLockPages(uint64_t MDL, uint32_t Mode,
   // MDL's ByteCount. Retained opaque records exclude every intersecting page.
   if (auto E =
           validateBugCheckPageBorrow(State.OriginalAddress, State.ByteCount))
+    return E;
+  if (auto E =
+          validateKernelObjectBorrow(State.OriginalAddress, State.ByteCount))
     return E;
   const bool UserRange =
       State.OriginalAddress < profile::UserProbeLimit && !ImageRange;

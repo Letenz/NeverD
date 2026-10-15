@@ -1509,8 +1509,8 @@ Double-click to go to the declaration.</source>
         <translation>轉換目前函式</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>對此函式進行符號化簡</translation>
+        <source>Symbolic simplification</source>
+        <translation>符號化簡</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>

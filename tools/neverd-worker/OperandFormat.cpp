@@ -1044,8 +1044,8 @@ std::string_view sizeKeywordOf(std::uint64_t bytes) {
 
 std::optional<std::uint64_t> parseDummyName(std::string_view name) {
   static constexpr std::array prefixes = {
-#define NEVERD_DUMMY_NAME_PREFIX(Prefix) std::string_view(Prefix),
-#include "ListingVocabulary.def"
+#define NEVERD_AUTOMATIC_NAME_PREFIX(Prefix) std::string_view(Prefix),
+#include "neverd/AutomaticNames.def"
 #define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix)                      \
   std::string_view(Prefix),
 #define NEVERD_DATA_ITEM_NAME(Id, Prefix) std::string_view(Prefix),

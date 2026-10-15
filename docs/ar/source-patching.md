@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: ea95e492ed89405a4adc058cbf8d89873c3c2df48b902d55a21a390158b23f6e -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ neverd patch app --from-source=replacement.c --compiler=neverc \
 
 | المترجم | الناتج | ملف تنفيذ نظام التشغيل المتحقق |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | كائن أصلي | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | كائن أصلي | ELF x64/ARM64 C/C++ مع بيئة Itanium متوافقة; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | كائن أصلي | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | كائن أصلي | ELF x64/ARM64 C/C++ مع بيئة Itanium متوافقة; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 الوضع العادي | LLVM IR | ELF x64 C؛ Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / كائن أصلي | ELF / PE / Mach-O x64/ARM64: مصدر C خالص |
@@ -194,3 +194,7 @@ ctest --test-dir build-source -L \
 تُهيأ مؤشرات Mach-O القابلة للكتابة أثناء التنفيذ؛ وما زالت تهيئة العناوين الثابتة تحتاج إلى تسجيل إعادة تموضع وقت التحميل غير المدعوم، مع اختبار صريح للرفض. لا تُقبل دوال COMDAT في ELF ذات الحجم الصفري إلا إذا كان رمز التوقيع هو الدالة الوحيدة عند بداية قسمها التنفيذي وطابقت CFI القسم كاملًا بدقة. وتظل حالات الإزاحة الداخلية والقسم المشترك والحشو وغياب المجموعة أو CFI مرفوضة.
 
 لـ ELF ARM وThumb ملفا تحقق منفصلان. تتلقى أدوات إنتاج المصدر صراحةً `-marm` أو `-mthumb`، وتحافظ روابط الدوال الأصلية على بت حالة التعليمات. تستخدم عمليات ELF ذات 32 بت صور PIE بإعادة تموضع ديناميكية فعلية. يسجل تشغيل ARM32 عبر QEMU محمل glibc صريحًا `--loader` وsysroot؛ فحساب AUXV في QEMU لا يتبع رؤوس البرنامج المنقولة بالطريقة نفسها التي تتبعها نواة Linux. يتحقق هذا المسار من تحميل glibc والتنفيذ تحت QEMU، ولا يثبت التنفيذ على عتاد ARM32 أو بمحمل نواة أصلي.
+
+بالنسبة إلى صور ELF هذه بعد تطبيق التصحيحات، يتطلب كل من مساري Linux x86 وARM32 عبر `qemu-user` محمل glibc صريحًا `--loader` من sysroot المطابق لبنية الهدف. يستخدم مسار Linux x86 في وضع `compatibility` دعم 32 بت في نواة مضيف Linux x64، ويُسجَّل منفصلًا عن تنفيذ QEMU؛ ولا يثبت التنفيذ على مضيف x86 أصلي ذي 32 بت.
+
+اجتاز [تحقق العمليات](https://github.com/NeverSight/NeverD/actions/runs/38694434082) للإصدار `fcee81c9a5e2f20a71090ade23ae833175f64c59` جميع المشاهدات البالغ عددها 750: منها 576 على مضيفين أصليين بمعمارية مطابقة، و78 في وضع توافق x86، و96 لمعمارية ARM/Thumb عبر وضع المستخدم في QEMU. تحقق تدقيق مستقل من بصمات الصور الـ126، وبيئات التنفيذ، وقائمة السيناريوهات كاملة. اجتازت [إعادة البناء على Windows](https://github.com/NeverSight/NeverD/actions/runs/38694628242) عدد 194 من الاختبارات المركزة و474 مشاهدة لعمليات Windows/Linux. واجتازت [إعادة البناء على Linux](https://github.com/NeverSight/NeverD/actions/runs/38694638358) عدد 444 من الاختبارات، بما فيها جميع الحالات الأصلية البالغ عددها 62 حالة فشل و46 حالة تخطٍ، دون فشل أو تخطٍ. تظل حدود التحقق من العتاد ومحمّلات النظام المذكورة أعلاه سارية. يبقى NeverC مخصصًا للغة C الخالصة ولم يُعدّل مستودعه.

@@ -2315,11 +2315,17 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error(
           "invalid_request",
           "A name is not empty and has no spaces or control characters");
-    // A name in an automatic form reads as an address, and a name leads to
-    // one address.
-    if (parseDummyName(name))
+    // The engine's naming rules, which the command line's rename keeps too;
+    // an engine without them leaves the automatic forms to this check.
+    using NameCheck = int (*)(neverd_session_t, neverd_va_t, const char *);
+    static const auto nameCheck = engineSymbol<NameCheck>("neverd_name_check");
+    if (nameCheck ? nameCheck(session_, address, name.c_str()) != 0
+                  : parseDummyName(name).has_value())
       throw Error("invalid_request",
-                  name + " is an automatic name; choose another");
+                  nameCheck ? error()
+                            : name + " is an automatic name; choose another");
+    // A name leads to one address, the names only the listing gives
+    // included.
     if (const auto other = listing().resolveName(name);
         other && *other != address)
       throw Error("invalid_request",

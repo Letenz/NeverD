@@ -345,6 +345,17 @@ bool CFGBuilder::isTailCallTarget(va_t Target) const {
   return false;
 }
 
+bool calleeNeverReturns(const BinaryImage &Img, va_t Target,
+                        const libc::NoReturnTargetIndex *Names,
+                        const NoReturnCalleeProver *Prover, unsigned Depth) {
+  if (const auto Stated = Img.userNoReturnAt(Target))
+    return *Stated;
+  if (libc::isNoReturnTarget(Img, Target, Names))
+    return true;
+  return Prover && Img.hasExecutableCodeOwnerAt(Target) &&
+         Prover->mayNeverReturn(Target) && Prover->neverReturns(Target, Depth);
+}
+
 bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   if (!CurrentImg)
     return false;

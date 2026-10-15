@@ -183,7 +183,7 @@ hiding a pane stops its requests; showing it again resumes its own function.
 
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
-right-click **Symbolically simplify this function** to enable it. C through LLVM
+right-click **Symbolic simplification** to enable it. C through LLVM
 defaults to control-flow recovery and O2, with basic scalar cleanup, O0, O1, O3,
 and a custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE available
 in the same menu. Symbolic simplification is a separate choice for every LLVM
@@ -460,7 +460,10 @@ so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key. Menus, buttons and labels
 underline their access keys while Alt is held, as on Windows and GNOME, and a
 menu that Alt and its letter opened keeps them until it closes; Alt and the
-letter work either way.
+letter work either way. In a dialog, Return presses the default button, usually
+**OK**, from a check box or radio button too, as in IDA and on Windows, where
+GNOME would toggle the box; Space toggles it. Alt+P, Alt+O, Return thus states
+that a function does not return.
 
 A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 `cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
@@ -783,7 +786,11 @@ Functions window, as in IDA) opens IDA's Edit function dialog on the current
 function: its name, its start and end, its color, the frame sizes IDA lists
 and its flags. A new name is a rename. **Does not return** states that the
 function never returns, which ends every call to it, over its name and what
-analysis proves of its body, in either direction. **Library func**, **Static
+analysis proves of its body, in either direction. As IDA passes the flag on,
+a caller whose every path ends in such a call, or in a jump to the function,
+never returns either: analysis of a single function proves it of the
+functions it calls, as the whole program's analysis does, and the dialog
+shows it checked for that caller. **Library func**, **Static
 func** and the color are notes the dialog and the command line keep;
 analysis does not read them, and the listing does not paint the color yet.
 The bounds come from analysis and cannot be changed here. Of the frame sizes
@@ -792,7 +799,8 @@ NeverD shows the bytes x86's `ret imm` purges; the other sizes and the flags
 **Outlined code** describe IDA's frame model, which NeverD does not keep,
 and show disabled. The statements are kept in the function edits sidecar and
 go with a deleted function. A rename and a change of the flags are two steps
-of the history. The command line shows and states the same
+of the history; a name the worker refuses, such as an automatic name or one
+another address has, applies neither. The command line shows and states the same
 (`neverd function-edits <input> --show <address>`, `--edit <address> --set
 noreturn=true`, `--set color=#RRGGBB`, `--set library=default`).
 
@@ -801,9 +809,12 @@ show it: a name under the cursor renames what it denotes, otherwise the item
 the cursor is on. A data name replaces `qword_A410` in its label, every operand
 (`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
 name has no spaces, leads to one address and is never an automatic name such
-as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
-command line reads and writes too (`neverd rename <input> --addr <address>
---to <name>`, `--clear`).
+as `sub_1234`; the engine keeps these rules for every front end
+(`neverd_name_check`), and the listing adds its own names, such as a string's.
+A local copy may take an import's name, as a PDB or a map file names one,
+although the listing, which jumps by name, refuses it. Names are kept in
+`<input>.neverd-renames.json`, which the command line reads and writes too
+(`neverd rename <input> --addr <address> --to <name>`, `--clear`).
 
 **Edit → Code** (C) defines native instructions from the selected byte through
 one basic block, ending at a branch, return, unmodelled control transfer or

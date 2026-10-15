@@ -1199,6 +1199,12 @@ llvm::Error KernelModel::finishUnload() {
     return E;
   if (Registry.hasOpenHandles())
     return ioError("unload returned with live registry handles");
+  if (!Lookasides.empty())
+    return ioError("unload returned with live lookaside lists");
+  if (!ExecutiveResources.empty())
+    return ioError("unload returned with live executive resources");
+  if (!FastMutexHolds.empty())
+    return ioError("unload returned with held fast mutexes");
   for (const auto &[Object, Thread] : SystemThreads)
     if (!Thread.Exited || Thread.HandleOpen || Thread.PointerReferences ||
         WaitReferences.contains(Object))

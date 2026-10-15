@@ -92,6 +92,10 @@ def binary_file(executable, directory):
         same_as_full_rebuild(client, anchors, "binary file open")
         ok(client, "rename", {"address": callee, "name": "add_seven"})
         same_as_full_rebuild(client, anchors, "binary file function rename")
+        # A name leads to one address: another function cannot take it.
+        taken = client.call("rename", {"address": start, "name": "add_seven"})
+        assert taken["status"] != "ok", taken
+        assert f"is used at {callee}" in taken["error"]["message"], taken
         ok(client, "rename", {"address": text, "name": "label_text"})
         same_as_full_rebuild(client, anchors, "binary file string rename")
         ok(client, "item_define", {"address": text, "action": "data", "size": 4})

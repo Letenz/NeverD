@@ -61,7 +61,8 @@ public:
   Json strings(const Json &payload);
   /// The name the listing shows for \p address, automatic or not.
   std::string nameAt(std::uint64_t address);
-  /// Resolve an automatic or listing-local name to its address.
+  /// Resolve a name the listing shows, a function's, a data item's or an
+  /// automatic one, to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
   /// The entry of the function whose chunk, a part apart from its body,
   /// holds \p address.

@@ -198,6 +198,11 @@ llvm::Expected<uint64_t> KernelModel::terminateSystemThread(uint32_t Status) {
       Thread->second.CallbackID != Active->ID || Thread->second.Exited ||
       Thread->second.Terminating)
     return schedulingError("system thread termination lost its live object");
+  if (threadHoldsFastMutex(CurrentThreadKey))
+    return schedulingError("system thread termination retains a fast mutex");
+  if (threadHoldsExecutiveResource(CurrentThreadKey))
+    return schedulingError(
+        "system thread termination retains an executive resource");
   Thread->second.ExitStatus = Status;
   Thread->second.Terminating = true;
   PendingThreadTermination = Status;
@@ -701,7 +706,8 @@ llvm::Error KernelModel::prepareReleaseRange(uint64_t Base, uint64_t Size,
 }
 
 llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
-                                         uint64_t IgnoredDMAPin) const {
+                                         uint64_t IgnoredDMAPin,
+                                         uint64_t RetiringLookaside) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing object storage range");
   if (auto E = canReleaseUserViewsForBacking(Base, Size))
@@ -709,12 +715,13 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
   if (Size)
     if (auto E = Physical.canReleaseRange(Base, Size, IgnoredDMAPin))
       return E;
-  return canRevokeVirtualRange(Base, Size);
+  return canRevokeVirtualRange(Base, Size, {}, RetiringLookaside);
 }
 
-llvm::Error KernelModel::canRevokeVirtualRange(
-    uint64_t Base, uint64_t Size,
-    std::optional<UsbIdleKey> RetiringUsbIdle) const {
+llvm::Error
+KernelModel::canRevokeVirtualRange(uint64_t Base, uint64_t Size,
+                                   std::optional<UsbIdleKey> RetiringUsbIdle,
+                                   uint64_t RetiringLookaside) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing virtual storage range");
   if (auto E = DMA.canReleaseRange(Base, Size))
@@ -723,6 +730,14 @@ llvm::Error KernelModel::canRevokeVirtualRange(
     return E;
   if (auto E = UsbIdle.canReleaseRange(Base, Size, RetiringUsbIdle))
     return E;
+  if (auto E = canReleaseLookasideRange(Base, Size, RetiringLookaside))
+    return E;
+  if (auto E = canReleaseExecutiveResourceRange(Base, Size))
+    return E;
+  for (const auto &[Address, Hold] : FastMutexHolds)
+    if (Size && Address < Base + Size &&
+        Base < Address + windows::FastMutexSize)
+      return schedulingError("cannot release a held fast mutex");
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))
       return schedulingError("cannot release a held executive spin lock");

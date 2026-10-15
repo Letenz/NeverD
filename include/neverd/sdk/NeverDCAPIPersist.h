@@ -52,14 +52,23 @@ NEVERD_API int neverd_annotations_load(neverd_session_t Sess);
 
 NEVERD_API int neverd_rename_func(neverd_session_t Sess, const char *OldName,
                                   const char *NewName);
+/// 0 when \p Name may name \p Addr, else -1 with neverd_last_error saying why.
+/// A name has at most 4096 bytes and no spaces or control characters, is no
+/// automatic name such as `sub_1234` or `qword_3FB8`, and leads to one
+/// address: another address's function, user name or symbol (one the user
+/// has not renamed) may not have it.  An import's name may name a local copy,
+/// as a PDB or a map file names one.  An empty name, which takes the user's
+/// name away, passes.  neverd_rename_addr and neverd_rename_func refuse what
+/// this refuses; a front end asks it before it names an address itself.
+NEVERD_API int neverd_name_check(neverd_session_t Sess, neverd_va_t Addr,
+                                 const char *Name);
 /// Give \p Addr the user's name \p Name, or take the user's name away when
 /// \p Name is NULL or empty.  The name replaces a function's, a symbol's or
 /// an automatic name wherever the session names the address: the function
 /// list, neverd_symbols_json() and neverd_data_symbols_json() (a row of its
 /// own where no symbol names the address) and decompiled C, where it names
-/// image data.  A name has at most 4096 bytes and no spaces or control
-/// characters.  Saved at once to the renames sidecar; returns 0, or -1 with
-/// neverd_last_error.
+/// image data.  A name neverd_name_check refuses is refused.  Saved at once
+/// to the renames sidecar; returns 0, or -1 with neverd_last_error.
 NEVERD_API int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
                                   const char *Name);
 NEVERD_API const char *neverd_renames_json(neverd_session_t Sess);

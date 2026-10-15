@@ -96,6 +96,9 @@ target_sources(NeverDEmulation PRIVATE
   KernelRemoveLocks.cpp
   KernelModelRuntime.cpp
   KernelModelRundown.cpp
+  KernelModelLookaside.cpp
+  KernelModelFastMutex.cpp
+  KernelModelExecutiveResources.cpp
   KernelModelScheduling.cpp
   KernelModelSLists.cpp
   KernelModelWaits.cpp
