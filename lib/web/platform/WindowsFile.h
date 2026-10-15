@@ -60,12 +60,14 @@ Info inspect(HANDLE File, bool AdmitStreams = false);
 Handle openRoot(std::string_view Path, bool Directory = false);
 Handle openChild(HANDLE Parent, std::string_view Name);
 std::vector<Entry> entries(HANDLE Directory, uint64_t MaxEntries);
-Handle createDirectory(HANDLE Parent, std::string_view Name);
+enum class DirectoryAccess { Traverse, Remove };
+Handle createDirectory(HANDLE Parent, std::string_view Name,
+                       DirectoryAccess Access);
 Handle createFile(HANDLE Parent, std::string_view Name, bool Temporary = false);
 struct Destination {
   Handle Parent, Directory;
 };
-Destination newDirectory(std::string_view Path);
+Destination newDirectory(std::string_view Path, DirectoryAccess Access);
 Handle privateSpool();
 /// Duplicate with reduced access and close every writable handle at sealing.
 Handle readOnly(HANDLE File);

@@ -142,6 +142,17 @@ struct DriverPhysicalMemoryInventory {
   std::string Evidence;
 };
 
+/// Explicit class-196 system-information result for checked-x64 execution.
+/// Reports the declared low fourteen flags without implementing a hardware
+/// mitigation or inferring native host state. Reserved bits must be zero.
+struct DriverKernelVaShadowQuery {
+  uint32_t Version = 1;
+  /// Required value; an explicitly declared zero is distinct from omission.
+  std::optional<uint32_t> Flags;
+  /// Caller-supplied printable label, never authenticated provenance.
+  std::string Evidence;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
@@ -190,6 +201,9 @@ struct DriverOptions {
   /// Optional simulated inventory; even an unused declaration retains an
   /// unreconstructed environment dependency. Requires checked-x64 execution.
   std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
+  /// Optional diagnostic query; even unused declarations retain an
+  /// unreconstructed environment dependency. Requires checked-x64 execution.
+  std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
 };
 
 enum class DriverStopReason {

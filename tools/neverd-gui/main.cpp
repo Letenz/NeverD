@@ -200,7 +200,7 @@ int main(int argc, char **argv) {
   // Nobody answers the questions of a run that captures or measures.
   const bool unattended = automated || parser.isSet(QStringLiteral("capture"));
   if (unattended)
-    window.setAsksForPdb(false);
+    window.setAsksForDebugInfo(false);
   // Without a file the quick start greets alone; the workbench lays out its
   // desktop and shows once the user chooses how to start.  A file named here
   // asks what it asks before its load alone too, and shows the workbench as

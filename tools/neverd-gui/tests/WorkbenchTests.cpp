@@ -4,6 +4,7 @@
 #include "CodeView.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
+#include "DwarfPromptDialog.h"
 #include "ExtensionsView.h"
 #include "FunctionEditDialog.h"
 #include "GraphView.h"
@@ -2999,7 +3000,7 @@ private slots:
     const auto path =
         writeFixture(directory, QStringLiteral("symbols-missing.bin"));
     Workbench bench;
-    bench.window->setAsksForPdb(false);
+    bench.window->setAsksForDebugInfo(false);
     bool asked = false;
     QTimer watch;
     connect(&watch, &QTimer::timeout, this, [&] {
@@ -3014,6 +3015,137 @@ private slots:
     // Nor once the file lacks its PDB, which an answered run would offer.
     QTest::qWait(OfferWaitMs);
     QVERIFY(!asked);
+  }
+
+  void dwarfQuestionAtStartupGreetsAlone_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("accept");
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("embedded, yes") << QStringLiteral("dwarf-embedded.bin")
+                                   << true << QStringLiteral("dwarf");
+    QTest::newRow("embedded, no") << QStringLiteral("dwarf-embedded.bin")
+                                  << false << QStringLiteral("none");
+    QTest::newRow("split, no")
+        << QStringLiteral("dwarf-split.bin") << false << QStringLiteral("none");
+  }
+
+  void dwarfQuestionAtStartupGreetsAlone() {
+    // As IDA asks "Load DWARF debug information?": an image with DWARF asks
+    // in a window of its own before it loads, names the file that holds the
+    // DWARF when that is not the input, and No opens it without the DWARF.
+    QFETCH(QString, fixture);
+    QFETCH(bool, accept);
+    QFETCH(QString, kind);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, fixture);
+    const bool split = fixture == QLatin1String("dwarf-split.bin");
+    if (split)
+      QVERIFY(!writeFixture(directory, fixture + QStringLiteral(".debug"))
+                   .isEmpty());
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false, named = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<DwarfPromptDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      named = dialog->findChild<QLabel *>(QStringLiteral("path")) != nullptr;
+      if (auto *button = dialog->findChild<QPushButton *>(
+              accept ? QStringLiteral("yes") : QStringLiteral("no")))
+        button->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QCOMPARE(named, split);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("debug_info").toObject().value("kind").toString(),
+             kind);
+    QCOMPARE(metadata.value("dwarf").toObject().value("mode").toString(),
+             accept ? QString() : QStringLiteral("none"));
+  }
+
+  void unattendedRunsAskNoDwarfQuestion() {
+    // A capture or benchmark reads the DWARF that discovery finds.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("dwarf-embedded.bin"));
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<DwarfPromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    QCOMPARE(bench.session.metadata()
+                 .value("debug_info")
+                 .toObject()
+                 .value("kind")
+                 .toString(),
+             QStringLiteral("dwarf"));
+  }
+
+  void declinedDwarfStaysDeclinedInTheProject() {
+    // The answer is kept with the project, as IDA keeps it in its database:
+    // reopening the project asks nothing and reads no DWARF.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("dwarf-embedded.bin"));
+    const auto database = ProjectDatabase::pathFor(path);
+    {
+      Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+      QTimer answer;
+      connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *dialog = qobject_cast<DwarfPromptDialog *>(
+                QApplication::activeModalWidget()))
+          if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+            no->click();
+      });
+      answer.start(5);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      answer.stop();
+      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
+      QTRY_VERIFY(bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    Workbench bench;
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (auto *dialog = qobject_cast<DwarfPromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        dialog->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    const auto metadata = bench.session.metadata();
+    QCOMPARE(metadata.value("dwarf").toObject().value("mode").toString(),
+             QStringLiteral("none"));
+    QVERIFY(metadata.value("debug_info").toObject().value("kind").toString() !=
+            QLatin1String("dwarf"));
   }
 
   void quickStartShowsRecentFilesAndStartsAsChosen() {

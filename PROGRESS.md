@@ -1,5 +1,97 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-15
+
+- Cutoff: **2026-10-15 01:11 UTC / 09:11 Asia/Shanghai**. Source review pinned to dev [3273beda](https://github.com/NeverSight/NeverD/commit/3273bedaff24518dd40bc06febbf76a8dd47abb5); today's isolated fix is in draft [#987](https://github.com/NeverSight/NeverD/pull/987).
+- Incoming [841dc099…3273beda](https://github.com/NeverSight/NeverD/compare/841dc099a973dcf2196bcbc5acb9d4710400de7b...3273bedaff24518dd40bc06febbf76a8dd47abb5): **248 commits / 715 changed file paths** (246 added, 469 modified, none removed). Commit pagination was 100 + 100 + 48. Complete endpoint Git trees, excluding directories, replaced the comparison API's 300-file cap. This is an inventory, not a claim that every path received line-by-line review.
+- **One confirmed source-read placement defect repaired**, with remote source readback and exact diff inspection. Source commits [7032d2f9](https://github.com/NeverSight/NeverD/commit/7032d2f96948792e76c7670cdc5d6d9effd8b7ec) and [c9025b27](https://github.com/NeverSight/NeverD/commit/c9025b279e2ed8fa21249652ba36f9bce21286c6) total one file, +13/-0; the second only wraps the guard. No execution evidence is claimed.
+- Strictly source/diff/caller/interface/configuration and existing-record inspection. **No build, test, benchmark, project execution, repository script, formatter, dynamic analysis, manual CI dispatch or rerun.** Automatic checks caused by publishing are external results, not validation performed by this review.
+- Prior report [#956](https://github.com/NeverSight/NeverD/pull/956) merged externally at October 14 01:03:25 UTC as [55d5f368](https://github.com/NeverSight/NeverD/commit/55d5f3688f8de5e0ced29026545968d6840deafa). It was closed before this review, so a new dedicated draft PR was required. Report-only work is excluded from business progress.
+- The previous download fixes 0da5403b and 6d3c11e1 remain present in unchanged source blobs. Their presence is not new validation of the filesystem/network paths.
+
+## Activity and review queue
+
+**26 ordinary open issues / no pre-existing open PRs**, versus 29 / 20 in the previous snapshot. All 20 previously pending PRs merged externally. Today's new draft #987 makes the publication queue **26 issues / 1 draft PR**, with no requested reviewers or submitted reviews at 01:09 UTC.
+
+Since October 14 01:01 UTC, before today's new draft: **29 PRs opened / 49 merged / 0 closed without merge**. These include report #956; excluding it gives **28 opened / 48 merged**. Today's #987 adds one opening and no merge. No merge was performed or requested by this review.
+
+Two ordinary issues opened and five closed: new [#963](https://github.com/NeverSight/NeverD/issues/963) and [#973](https://github.com/NeverSight/NeverD/issues/973) are already closed; [#858](https://github.com/NeverSight/NeverD/issues/858), [#946](https://github.com/NeverSight/NeverD/issues/946), and [#947](https://github.com/NeverSight/NeverD/issues/947) also closed. Related author changes include [#958](https://github.com/NeverSight/NeverD/pull/958), [#974](https://github.com/NeverSight/NeverD/pull/974), and [#981](https://github.com/NeverSight/NeverD/pull/981). Issue closure is not proof of every acceptance criterion: the #858 discussion and [#966](https://github.com/NeverSight/NeverD/pull/966) still recorded a failing reconstruction path, followed by the source-only approach in [#969](https://github.com/NeverSight/NeverD/pull/969).
+
+Incoming implementation themes include Darwin/Swift integration [#962](https://github.com/NeverSight/NeverD/pull/962), kernel counted-string/runtime models [#976](https://github.com/NeverSight/NeverD/pull/976) / [#983](https://github.com/NeverSight/NeverD/pull/983), ABI repairs #974/#981, and PE32 registration-state/nonlocal-transfer work [#984](https://github.com/NeverSight/NeverD/pull/984)–[#986](https://github.com/NeverSight/NeverD/pull/986). Their test descriptions are author reports unless tied to an exact recorded workflow below.
+
+Statistics coverage: pre-publication open issues returned 26 then an empty page, and open PRs zero then empty. After #987, open issues returned 27 records (26 ordinary plus this PR), open PRs one, and both second pages were empty. Updated-since issue pagination returned 54 then empty; the 100 most recently updated all-state PR records extend before the cutoff and cover the interval. Counts may change after the stated snapshot.
+
+## Bounded static review
+
+Read root AGENTS.md and CONTRIBUTING.md before source work, the relevant architecture/testing contracts and roadmap. Complete tree discovery found no nested AGENTS.md. Execution instructions yield to the explicit static-only constraint. No usable connected authorized computer or saved coding environment was available; connector-based static inspection and minimal edits were used. Dev is reported unprotected and repository rulesets returned empty, but contribution guidance still requires a topic branch and PR against dev. No issue fields, dependencies, security settings or deployment were changed.
+
+### PE32 registration-state and native SEH transfer
+
+Full-file inspection at the pinned SHA covered:
+
+- include/neverd/backend/llvm/X86RegistrationSEHJump.h
+- lib/backend/llvm/X86/RegistrationSEHJump.cpp, RegistrationSEHJumpStack.cpp, RegistrationSEHJumpCallbackFrame.cpp
+- lib/backend/llvm/X86/MedLLVMRegistrationSEHJump.cpp and .h, MedLLVMRegistrationSEHJumpCallback.cpp, MedLLVMRegistrationSEHProof.cpp, MedLLVMNativeRegistration.cpp
+- lib/ir/low/X86/RegistrationStateJump.cpp
+- lib/backend/codegen/COFF/COFFRegistrationSEHJump.cpp and .h, COFFRegistrationSEHJumpArguments.cpp, COFFRegistrationSEHJumpRuntime.cpp, COFFRegistrationSEHNullAccess.cpp
+- lib/backend/codegen/COFF/COFFRegistrationFrameProof.cpp, COFFRegistrationIR.cpp, COFFRegistrationIRProof.cpp and .h, COFFNativeEHProvenance.h
+- unittests/lift/eh/RegistrationSEHJumpNativeTests.cpp, RegistrationSEHNullAccessTests.cpp, RegistrationSEHFrameProofTests.cpp, fixtures/registration_jump.s
+
+Patch-level inspection additionally covered #984–#986 state receipts and publication/invalidation, caller ABI, conditional-callee invalidation, capture/solver interfaces, shared COFF copy-edge extraction and C++ consumer, incoming-frame setup, emitter/PipelineOptimize integration, callback planning/private-stack interfaces, WindowsRegistrationFrame, MedCFGSimplify, SEH exception integration, focused fixture changes and reconstruction/testing documentation. A patch review is not a full-file audit of these additional consumers.
+
+**Confirmed and fixed:** COFFRegistrationSEHJumpArguments.cpp, original lines 74–84, did not completely bind an accepted resume-value read to the canonical generated call sequence. The minimal added guard enforces that placement while permitting the single independently authenticated protected-invoke provenance anchor. Detailed trigger analysis is retained for the private report rather than publishing adversarial construction details.
+
+Static proof includes the emitter order in MedLLVMRegistrationSEHJump.cpp:209–222, old-call removal in MedLLVMNativeRegistration.cpp:625–632, protected-invoke anchor insertion at 674–695, independent anchor authentication in COFFRegistrationIR.cpp:328–334 and 419–432, and next() debug/pseudo skipping in COFFRegistrationIRProof.h:24–28. The repair adds no new dependency or accepted lowering form. Remote full-file readback matched the intended content and the base-to-fix diff contains exactly the one source file, +13/-0. It has **not** been compiled or exercised; a focused regression and platform qualification remain outstanding.
+
+**Separate unresolved question:** ABI attribute admission needs a broader caller/normalization trace. This is not a second confirmed bug, has no patch, and must not be treated as an exploitability or correctness conclusion.
+
+### Kernel runtime counted strings and pool ownership
+
+Read complete current KernelModelRuntime.cpp/.h, KernelRuntimeCalls.cpp, KernelRuntimeStringAPIs.def, KernelRuntimeLimits.def, KernelDebugFormats.def, KernelDebugLengths.def and the driver_strings.c fixture. Read relevant ranges of KernelCalls.cpp (1–245 and 396–415), KernelPoolCalls.cpp, KernelMemoryCalls.cpp, KernelModel.cpp (669–815), KernelModel.h runtime/pool declarations, KernelUnpackState.cpp pool inventory, and the KernelAPIs.def/KernelAPIIRQL.def string-table includes.
+
+Reviewed KernelRuntimeTests.cpp ranges 1–185, 365–778, 837–1047 and 1118–1167, plus the implementation hunks introducing counted helpers and conversion release. Traced arity/IRQL table dispatch, the 1 MiB buffer budget, length/capacity/terminator handling, ASCII/case refusal, guest integer widths, integer parsing, and paged-pool allocation/free ownership. No additional statically proven defect was found in this bounded sample. Fixture source inspection is not a test result.
+
+### Explicitly uncovered
+
+No whole-repository assurance is implied. Uncovered or only partially sampled: the complete source runtime authentication/capture/buffer implementation, broad solver, loader/scope-table parser, callback outliner/private-stack analyzer beyond selected patches and consumers, LLVM fork machine-state pass and code generation, CRT behavior, most application corpus/SDK/CLI paths, full kernel object/IRQL/concurrency behavior, broad Darwin/Swift changes, complete tests outside the listed files, and most of the 715 changed paths. This review does not establish whole-application PE32 reconstruction correctness.
+
+## Existing CI evidence and limits
+
+At **01:09 UTC**, exact dev source **3273beda** had six workflow records:
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/38662488121): success, updated 00:55:34 UTC.
+- [Lift native qualification](https://github.com/NeverSight/NeverD/actions/runs/38662488130): success, updated 01:03:15 UTC.
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/38662488122): in progress.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/38662488178): queued.
+- [Source patch Windows runtime](https://github.com/NeverSight/NeverD/actions/runs/38662488116): pending.
+- [Mobile Real Applications](https://github.com/NeverSight/NeverD/actions/runs/38662559673): skipped.
+
+A successful workflow name does not establish that every platform-specific job ran. Earlier exact-head check inspection included skipped native-EH gates. Dev is not recorded as fully green.
+
+For PR #986's distinct source head **96dbb4635c4fad4f828ba981aac992ad2203e4cf**, existing [focused CI 38657310788](https://github.com/NeverSight/NeverD/actions/runs/38657310788) completed successfully at 00:48:55 UTC. Its event is workflow_dispatch and it predates this review; this review did not dispatch or rerun it. Other PR workflows include cancelled/skipped records after merge, and author-reported Wine/test totals are not independent checks performed here.
+
+The previous snapshot's dev **841dc099** now has three cancelled workflows and one skipped workflow, not a successful completed baseline.
+
+For this review's source-fix head **c9025b27**, automatic PR checks at 01:09 UTC were [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/38664057832) and [Source patch Windows runtime](https://github.com/NeverSight/NeverD/actions/runs/38664057831) in progress, with [CI](https://github.com/NeverSight/NeverD/actions/runs/38664057812) and [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/38664057800) queued. These are not terminal passing results and do not certify the later report-only head. No local or remote validation was initiated manually.
+
+## Suggested next priorities
+
+1. **Review the bounded SEH placement repair in #987.** Dependency: a maintainer familiar with the protected-invoke provenance contract and an independently authorized validation environment. Acceptance: focused positive/negative regression coverage, unchanged canonical lowering acceptance, exact tested commit/platform evidence, and a human review decision. Draft status and unexecuted regression coverage currently block merge-readiness claims.
+2. **Close PE32/native-EH evidence gaps.** Dependency: exact-head CI results/logs and the current reconstruction acceptance contract, including the unresolved history around #858/#966/#969. Acceptance: map source change, focused case, platform and terminal result individually; distinguish pending/skipped/cancelled gates from tested acceptance. No further feature completion should be inferred merely from closure or a merge.
+3. **Rotate the next bounded audit into remaining ownership/admission boundaries.** Dependency: stable source head and full runtime/callback/ABI-normalization caller inventory. Acceptance: trace one selected end-to-end ownership or ABI invariant, record explicit files and uncovered edges, and patch only a statically proven defect. Kernel conversion/pool error paths and the unconfirmed ABI question remain candidates, not scheduled commitments.
+
+## Daily log — 2026-10-15
+
+- Enumerated 248 incoming commits and 715 changed paths; selected the new PE32 transfer chain and kernel runtime strings/pool lifecycle for bounded source review.
+- Reconciled two new/five closed issues and 29 opened/49 merged PRs before today's draft, including the separately identified report-only activity.
+- Published one minimal source guard in new draft #987 after verifying that prior report #956 had already merged; no merge action was taken.
+- Recorded exact dev/PR CI snapshots and explicit missing validation rather than treating author reports or in-progress checks as completed validation.
+- Added this English snapshot and daily entry. Prior snapshots and human edits are preserved verbatim below.
+
+<details>
+<summary>Previous snapshots (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-14
 
 - Cutoff: **2026-10-14 01:01 UTC / 09:01 Asia/Shanghai**. Bounded review pinned to [c1ccbe23](https://github.com/NeverSight/NeverD/commit/c1ccbe2322d2fbcd47beeacc3a667530d304bb1d); the only later delta through current dev [841dc099](https://github.com/NeverSight/NeverD/commit/841dc099a973dcf2196bcbc5acb9d4710400de7b) is today's two fixes and their externally performed merge.
@@ -2119,5 +2211,8 @@ them are author reports unless separately confirmed by linked workflow results.
 </details>
 
 </details>
+
+</details>
+
 
 </details>

@@ -286,10 +286,12 @@ class WDKDriverFixtureTests(unittest.TestCase):
             ("KernelBugCheckTests.cpp", ()),
             ("KernelVersionQueryTests.cpp", ()),
             ("KernelPhysicalInventoryTests.cpp", ()),
+            ("KernelVaShadowQueryTests.cpp", ()),
             ("DriverLoaderViewTests.cpp", ("{backend}_checked",)),
             ("DriverBugCheckTests.cpp", ("{backend}",)),
             ("DriverVersionQueryTests.cpp", ("{backend}",)),
             ("DriverPhysicalInventoryTests.cpp", ("{backend}",)),
+            ("DriverVaShadowQueryTests.cpp", ("{backend}",)),
             ("DriverShadowStackTests.cpp",
              ("{backend}_driver", "{backend}_checked")),
         )

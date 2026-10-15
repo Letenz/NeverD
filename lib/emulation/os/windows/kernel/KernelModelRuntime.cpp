@@ -29,6 +29,25 @@ namespace {
 using namespace windows;
 constexpr uint64_t MaxASCII = 0x7f;
 
+// System time counts 100 ns units from 1601-01-01, a Monday, in the
+// Gregorian calendar. TIME_FIELDS holds eight CSHORTs, Year through Weekday.
+constexpr unsigned TimeFieldCount = 8;
+constexpr uint64_t TimeUnitsPerMillisecond = 10000;
+constexpr uint64_t MillisecondsPerDay = 86400000;
+constexpr uint64_t DaysPer400Years = 146097;
+constexpr uint64_t DaysPer100Years = 36524;
+constexpr uint64_t DaysPer4Years = 1461;
+constexpr uint64_t DaysPerYear = 365;
+constexpr int64_t FirstTimeFieldsYear = 1601;
+constexpr int64_t LastTimeFieldsYear = 30827;
+constexpr uint16_t DaysPrecedingMonth[2][13] = {
+    {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365},
+    {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366}};
+
+bool isLeapYear(uint64_t Year) {
+  return (Year % 4 == 0 && Year % 100 != 0) || Year % 400 == 0;
+}
+
 #define NEVERD_KERNEL_RUNTIME_STRING(Name, Value)                              \
   constexpr llvm::StringLiteral Name(Value);
 #include "KernelRuntimeStrings.def"
@@ -71,6 +90,29 @@ llvm::Expected<CountedString> readCountedString(const KernelModel &Model,
   if ((*Length & 1) || (*Maximum & 1) || *Length > *Maximum ||
       *Maximum > MaxCountedUnicodeBytes || (*Length && !*Buffer))
     return runtimeError("invalid counted UTF-16 string lengths or buffer");
+  return CountedString{static_cast<uint16_t>(*Length),
+                       static_cast<uint16_t>(*Maximum), *Buffer};
+}
+
+// STRING shares the UNICODE_STRING layout but counts bytes.
+llvm::Expected<CountedString> readCountedBytes(const KernelModel &Model,
+                                               GuestMemory &Memory,
+                                               uint64_t Address) {
+  if (!Address)
+    return runtimeError("STRING record must not be null");
+  if (auto E = Model.validateGuestAccess(Address, UnicodeRecordSize, false))
+    return E;
+  auto Length = Memory.readInteger(Address, 2);
+  if (!Length)
+    return Length.takeError();
+  auto Maximum = Memory.readInteger(Address + UnicodeMaximumOffset, 2);
+  if (!Maximum)
+    return Maximum.takeError();
+  auto Buffer = Memory.readInteger(Address + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (*Length > *Maximum || (*Length && !*Buffer))
+    return runtimeError("invalid counted 8-bit string length or buffer");
   return CountedString{static_cast<uint16_t>(*Length),
                        static_cast<uint16_t>(*Maximum), *Buffer};
 }
@@ -561,6 +603,193 @@ llvm::Expected<uint64_t> initializeAnsiString(const KernelModel &Model,
   if (auto E = Memory.writeInteger(A[0] + UnicodeBufferOffset, A[1], 8))
     return E;
   return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
+                                                   GuestMemory &Memory,
+                                                   llvm::ArrayRef<uint64_t> A) {
+  // RVA 0x32eb60 clears the record and stores Buffer before measuring; a
+  // source over 0x7FFE units fails with both lengths left zero.
+  uint64_t Length = 0;
+  if (A[1])
+    for (;; Length += 2) {
+      if (auto E = checkBufferRange(A[1], Length + 2))
+        return E;
+      auto Unit = readInteger(Model, Memory, A[1] + Length, 2);
+      if (!Unit)
+        return Unit.takeError();
+      if (!*Unit)
+        break;
+    }
+  if (auto E = Model.validateGuestAccess(A[0], UnicodeRecordSize, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[0], 0, 8))
+    return E;
+  if (auto E = Memory.writeInteger(A[0] + UnicodeBufferOffset, A[1], 8))
+    return E;
+  if (!A[1])
+    return StatusSuccess;
+  if (Length > MaxUnicodeBytes)
+    return StatusNameTooLong;
+  if (auto E = Memory.writeInteger(A[0], Length, 2))
+    return E;
+  if (auto E = Memory.writeInteger(A[0] + UnicodeMaximumOffset, Length + 2, 2))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
+                                          GuestMemory &Memory,
+                                          llvm::ArrayRef<uint64_t> A) {
+  // RtlTimeToTimeFields without recorded leap seconds. A negative time feeds
+  // the kernel's unsigned day arithmetic and has no calendar meaning.
+  auto Time = readInteger(Model, Memory, A[0], 8);
+  if (!Time)
+    return Time.takeError();
+  if (static_cast<int64_t>(*Time) < 0)
+    return runtimeError("RtlTimeToTimeFields requires a non-negative time");
+  const uint64_t Milliseconds = *Time / TimeUnitsPerMillisecond;
+  const uint64_t Fraction = Milliseconds % MillisecondsPerDay;
+  uint64_t Days = Milliseconds / MillisecondsPerDay;
+  const uint64_t Weekday = (Days + 1) % 7;
+  const uint64_t Cycles400 = Days / DaysPer400Years;
+  Days %= DaysPer400Years;
+  const uint64_t Cycles100 = std::min<uint64_t>(Days / DaysPer100Years, 3);
+  Days -= Cycles100 * DaysPer100Years;
+  const uint64_t Cycles4 = Days / DaysPer4Years;
+  Days %= DaysPer4Years;
+  const uint64_t Years = std::min<uint64_t>(Days / DaysPerYear, 3);
+  Days -= Years * DaysPerYear;
+  const uint64_t Year = FirstTimeFieldsYear + 400 * Cycles400 +
+                        100 * Cycles100 + 4 * Cycles4 + Years;
+  const auto &Preceding = DaysPrecedingMonth[isLeapYear(Year)];
+  unsigned Month = 0;
+  while (Days >= Preceding[Month + 1])
+    ++Month;
+  const uint64_t Fields[TimeFieldCount] = {Year,
+                                           Month + 1U,
+                                           Days - Preceding[Month] + 1,
+                                           Fraction / 3600000,
+                                           Fraction / 60000 % 60,
+                                           Fraction / 1000 % 60,
+                                           Fraction % 1000,
+                                           Weekday};
+  std::vector<uint8_t> Bytes(TimeFieldCount * 2);
+  for (unsigned I = 0; I < TimeFieldCount; ++I) {
+    Bytes[I * 2] = static_cast<uint8_t>(Fields[I]);
+    Bytes[I * 2 + 1] = static_cast<uint8_t>(Fields[I] >> 8);
+  }
+  if (auto E = Model.validateGuestAccess(A[1], Bytes.size(), true))
+    return E;
+  if (auto E = Memory.write(A[1], Bytes))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> timeFieldsToTime(const KernelModel &Model,
+                                          GuestMemory &Memory,
+                                          llvm::ArrayRef<uint64_t> A) {
+  // RtlTimeFieldsToTime without recorded leap seconds ignores Weekday and
+  // rejects fields outside the Gregorian calendar of 1601 through 30827.
+  auto Bytes = readBytes(Model, Memory, A[0], (TimeFieldCount - 1) * 2);
+  if (!Bytes)
+    return Bytes.takeError();
+  int64_t Field[TimeFieldCount - 1];
+  for (unsigned I = 0; I + 1 < TimeFieldCount; ++I)
+    Field[I] =
+        static_cast<int16_t>((*Bytes)[I * 2] | ((*Bytes)[I * 2 + 1] << 8));
+  const int64_t Year = Field[0], Month = Field[1], Day = Field[2];
+  const int64_t Hour = Field[3], Minute = Field[4], Second = Field[5];
+  const int64_t Milli = Field[6];
+  if (Month < 1 || Month > 12 || Day < 1 || Year < FirstTimeFieldsYear ||
+      Year > LastTimeFieldsYear)
+    return 0;
+  const auto &Preceding = DaysPrecedingMonth[isLeapYear(Year)];
+  if (Day > Preceding[Month] - Preceding[Month - 1] || Hour < 0 || Hour > 23 ||
+      Minute < 0 || Minute > 59 || Second < 0 || Second > 59 || Milli < 0 ||
+      Milli > 999)
+    return 0;
+  const uint64_t Elapsed = Year - FirstTimeFieldsYear;
+  const uint64_t Days = DaysPerYear * Elapsed + Elapsed / 4 - Elapsed / 100 +
+                        Elapsed / 400 + Preceding[Month - 1] + Day - 1;
+  const uint64_t Time = TimeUnitsPerMillisecond *
+                        (Milli + 1000 * (Second + 60 * (Minute + 60 * Hour)) +
+                         MillisecondsPerDay * Days);
+  if (auto E = Model.validateGuestAccess(A[1], 8, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[1], Time, 8))
+    return E;
+  return 1;
+}
+
+llvm::Expected<uint64_t> copyAnsiString(const KernelModel &Model,
+                                        GuestMemory &Memory,
+                                        llvm::ArrayRef<uint64_t> A) {
+  // RtlCopyString copies what fits and, unlike the UTF-16 copy, never writes
+  // a terminator. A null source only clears Length.
+  if (!A[0])
+    return runtimeError("STRING record must not be null");
+  if (auto E = Model.validateGuestAccess(A[0], UnicodeRecordSize, true))
+    return E;
+  uint64_t Length = 0;
+  if (A[1]) {
+    auto Source = readCountedBytes(Model, Memory, A[1]);
+    if (!Source)
+      return Source.takeError();
+    auto Maximum = Memory.readInteger(A[0] + UnicodeMaximumOffset, 2);
+    if (!Maximum)
+      return Maximum.takeError();
+    Length = std::min<uint64_t>(Source->Length, *Maximum);
+    auto Bytes = readBytes(Model, Memory, Source->Buffer, Length);
+    if (!Bytes)
+      return Bytes.takeError();
+    auto Buffer = Memory.readInteger(A[0] + UnicodeBufferOffset, 8);
+    if (!Buffer)
+      return Buffer.takeError();
+    if (auto E = Model.validateGuestAccess(*Buffer, Bytes->size(), true))
+      return E;
+    if (!Bytes->empty())
+      if (auto E = Memory.write(*Buffer, *Bytes))
+        return E;
+  }
+  if (auto E = Memory.writeInteger(A[0], Length, 2))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
+                                            GuestMemory &Memory,
+                                            llvm::ArrayRef<uint64_t> A,
+                                            bool EqualityOnly) {
+  // RtlEqualString and RtlCompareString compare unsigned bytes; the shorter
+  // length orders an equal prefix. Only unequal bytes consult the case table.
+  auto First = readCountedBytes(Model, Memory, A[0]);
+  if (!First)
+    return First.takeError();
+  auto Second = readCountedBytes(Model, Memory, A[1]);
+  if (!Second)
+    return Second.takeError();
+  if (EqualityOnly && First->Length != Second->Length)
+    return 0;
+  const unsigned Common = std::min(First->Length, Second->Length);
+  auto Left = readBytes(Model, Memory, First->Buffer, Common);
+  if (!Left)
+    return Left.takeError();
+  auto Right = readBytes(Model, Memory, Second->Buffer, Common);
+  if (!Right)
+    return Right.takeError();
+  for (unsigned I = 0; I < Common; ++I)
+    if ((*Left)[I] != (*Right)[I]) {
+      if (static_cast<uint8_t>(A[2]))
+        return runtimeError("case-insensitive 8-bit string comparison "
+                            "requires an unmodeled Windows case table");
+      if (EqualityOnly)
+        return 0;
+      return static_cast<uint32_t>(int32_t((*Left)[I]) - (*Right)[I]);
+    }
+  if (EqualityOnly)
+    return 1;
+  return static_cast<uint32_t>(int32_t(First->Length) - Second->Length);
 }
 
 llvm::Expected<uint64_t> appendUnicodeString(const KernelModel &Model,

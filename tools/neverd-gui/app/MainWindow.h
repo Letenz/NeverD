@@ -50,10 +50,11 @@ public:
   ~MainWindow() override;
 
   void openFile(const QString &path);
-  /// Whether opening a PE asks to load the PDB it names, before the load or
-  /// once it lacks one; automated runs, which nobody answers, load the PDB
+  /// Whether opening a file asks to load its debug information: the PDB a
+  /// PE names, before the load or once it lacks one, or the DWARF of an ELF
+  /// or Mach-O image.  Automated runs, which nobody answers, load what
   /// discovery finds.
-  void setAsksForPdb(bool asks);
+  void setAsksForDebugInfo(bool asks);
   /// Use a disposable layout file (tests and benchmarks).
   void setLayoutPath(const QString &path) { layoutPath_ = path; }
   /// Restore the saved desktop, or lay out the default one; later calls do
@@ -150,9 +151,13 @@ private:
   QString askForFile(QWidget *parent) const;
   /// Open \p path, first asking how to load it when NeverD keeps no project
   /// for it, as IDA's "Load a new file" dialog does.
-  /// Open \p path once the user answered whether to load the PDB it names,
-  /// as IDA asks when it loads a PE that names one.
-  void openAskingForPdb(const QString &path, LoadOptions options);
+  /// Open \p path once the user answered whether to load its debug
+  /// information, as IDA asks when it loads a PE that names a PDB or an
+  /// image with DWARF.
+  void openAskingForDebugInfo(const QString &path, LoadOptions options);
+  /// Open \p path once the user answered whether to load the DWARF of the
+  /// ELF or Mach-O image, if it has any.
+  void openAskingForDwarf(const QString &path, LoadOptions options);
   /// Show the workbench and start loading \p path.
   void openNow(const QString &path, const LoadOptions &options);
   void chooseLoader(const QString &path);
@@ -225,9 +230,10 @@ private:
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;
   MicrosoftSymbols *microsoftSymbols_ = nullptr;
-  /// A file to open once the worker has started, asking for its PDB then.
-  std::optional<std::pair<QString, LoadOptions>> pdbPromptPending_;
-  bool asksForPdb_ = true;
+  /// A file to open once the worker has started, asking for its debug
+  /// information then.
+  std::optional<std::pair<QString, LoadOptions>> debugPromptPending_;
+  bool asksForDebugInfo_ = true;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   ChooserView *functions_ = nullptr;

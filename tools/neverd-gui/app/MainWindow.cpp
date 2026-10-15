@@ -5,6 +5,7 @@
 #include "ConnectionsDialog.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
+#include "DwarfPromptDialog.h"
 #include "ExtensionsView.h"
 #include "FunctionEditDialog.h"
 #include "GnomeWindowEdges.h"
@@ -245,19 +246,19 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   connectSession();
   microsoftSymbols_ = new MicrosoftSymbols(session_, this);
   connect(&session_, &Session::stateChanged, this, [this] {
-    if (pdbPromptPending_ && session_.connected()) {
-      auto [path, options] = *std::exchange(pdbPromptPending_, std::nullopt);
-      openAskingForPdb(path, options);
+    if (debugPromptPending_ && session_.connected()) {
+      auto [path, options] = *std::exchange(debugPromptPending_, std::nullopt);
+      openAskingForDebugInfo(path, options);
     }
   });
   // A worker that cannot start leaves no question to ask; the workbench
   // shows the error instead of staying hidden.
   connect(&session_, &Session::message, this,
           [this](const QString &, int level) {
-            if (level >= ErrorMessageLevel && pdbPromptPending_ &&
+            if (level >= ErrorMessageLevel && debugPromptPending_ &&
                 !session_.connected()) {
               auto [path, options] =
-                  *std::exchange(pdbPromptPending_, std::nullopt);
+                  *std::exchange(debugPromptPending_, std::nullopt);
               openNow(path, options);
             }
           });
@@ -1526,11 +1527,11 @@ void MainWindow::openFile(const QString &path) {
   if (ProjectDatabase::hasState(path))
     openNow(path, {});
   else
-    openAskingForPdb(path, {});
+    openAskingForDebugInfo(path, {});
 }
 
-void MainWindow::setAsksForPdb(bool asks) {
-  asksForPdb_ = asks;
+void MainWindow::setAsksForDebugInfo(bool asks) {
+  asksForDebugInfo_ = asks;
   microsoftSymbols_->setOffers(asks);
 }
 
@@ -1541,18 +1542,24 @@ void MainWindow::openNow(const QString &path, const LoadOptions &options) {
   session_.open(path, options);
 }
 
-void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
+void MainWindow::openAskingForDebugInfo(const QString &path,
+                                        LoadOptions options) {
   // Whether the worker finds PDBs is known once it has started; a file named
   // on the command line can come first.
   if (!session_.connected()) {
-    pdbPromptPending_ = {path, options};
+    debugPromptPending_ = {path, options};
     return;
   }
   // IDA asks as it makes a database, so a project keeps the answer, and
-  // the user's own choice of debug information or PDB stands.
-  if (!asksForPdb_ || !options.debugInfo || !options.pdb.isEmpty() ||
-      !session_.findsPdbFiles() || ProjectDatabase::hasState(path)) {
+  // the user's own choice of debug information stands.
+  if (!asksForDebugInfo_ || !options.debugInfo ||
+      ProjectDatabase::hasState(path)) {
     openNow(path, options);
+    return;
+  }
+  // A PE names its PDB; an input that names none may carry DWARF.
+  if (!options.pdb.isEmpty() || !session_.findsPdbFiles()) {
+    openAskingForDwarf(path, options);
     return;
   }
   session_.read(
@@ -1560,7 +1567,7 @@ void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
       [this, path, options](const QJsonObject &payload) {
         const auto reference = payload.value("pdb").toObject();
         if (reference.isEmpty()) {
-          openNow(path, options);
+          openAskingForDwarf(path, options);
           return;
         }
         // A modal must run after the query delivery barrier is released.
@@ -1579,6 +1586,39 @@ void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
       [this, path, options](const QString &, const QString &message) {
         output_->append(
             tr("Could not tell which PDB %1 names: %2").arg(path, message), 1);
+        openNow(path, options);
+      });
+}
+
+void MainWindow::openAskingForDwarf(const QString &path, LoadOptions options) {
+  if (!options.dwarf.isEmpty() || !session_.findsDwarf()) {
+    openNow(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("dwarf_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("dwarf").toObject();
+        if (reference.isEmpty()) {
+          openNow(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          // Like the PDB question, it greets alone before the workbench
+          // shows; No, Escape and closing it load the input without it.
+          DwarfPromptDialog dialog(reference, isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
+          auto chosen = options;
+          if (dialog.exec() != QDialog::Accepted)
+            chosen.dwarf = {{"mode", "none"}};
+          openNow(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(
+            tr("Could not tell whether %1 has DWARF: %2").arg(path, message),
+            1);
         openNow(path, options);
       });
 }
@@ -1629,7 +1669,7 @@ void MainWindow::chooseLoader(const QString &path) {
             !processor.isEmpty() && processor != QLatin1String("auto"))
           QSettings().setValue(BinaryProcessorKey, processor);
         applyIndicator();
-        openAskingForPdb(path, dialog.options());
+        openAskingForDebugInfo(path, dialog.options());
       },
       [this, path](const QString &, const QString &message) {
         output_->append(

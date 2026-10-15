@@ -76,6 +76,16 @@ NEVERD_API const char *neverd_identify_json(const char *Path);
 /// Paths are UTF-8.  Free with neverd_free_string.
 NEVERD_API const char *neverd_pdb_reference_json(const char *Path,
                                                  const char *SymbolPath);
+/// The DWARF of the ELF or Mach-O image at \p Path, found without loading the
+/// image: {"dwarf":null} for another format, for an image without DWARF, or
+/// for one whose debug information is never read (SBF), and otherwise
+/// {"dwarf":{"path","location"}}.  "path" is the file that holds it, and
+/// "location" is where neverd_session_load() reads it from, in its order:
+/// "input" (the image's own sections), "dsym" (a .dSYM bundle beside a
+/// Mach-O image) or "beside" (a split .debug file beside the image, matched
+/// by name alone).  {"dwarf":null,"error"} when \p Path names no readable
+/// file.  Paths are UTF-8.  Free with neverd_free_string.
+NEVERD_API const char *neverd_dwarf_reference_json(const char *Path);
 /// Read the input of the next neverd_session_load() as \p OptionsJson says
 /// instead of by its header: {"loader":"binary","processor":"x86"|"x86_64"|
 /// "arm"|"thumb"|"aarch64","base","offset","size","entry"?,"platform"?}
@@ -205,6 +215,13 @@ NEVERD_API void neverd_session_set_debug_info_enabled(neverd_session_t Sess,
 /// the image.  Enabled by default.
 NEVERD_API void neverd_session_set_pdb_search(neverd_session_t Sess,
                                               int Enabled);
+
+/// Pass 0 to load an ELF or Mach-O image without its DWARF, from its own
+/// sections or a companion file: the next neverd_session_load() reads none,
+/// though other debug information is still found.  For a user who declined
+/// it.  Enabled by default.
+NEVERD_API void neverd_session_set_dwarf_search(neverd_session_t Sess,
+                                                int Enabled);
 
 /// Search the directories and symbol stores of \p SymbolPath, in
 /// _NT_SYMBOL_PATH syntax, for the PDB the next neverd_session_load() finds,

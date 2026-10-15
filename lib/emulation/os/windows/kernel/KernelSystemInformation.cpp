@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "KernelModel.h"
+#include "KernelVaShadowQuery.h"
 #include "WindowsKernelLayout.h"
 
 #include "llvm/Support/Endian.h"
@@ -16,7 +17,8 @@ KernelModel::querySystemInformation(llvm::ArrayRef<uint64_t> A, bool Trusted) {
   const auto Fail = [](const llvm::Twine &Why) {
     return llvm::createStringError("kernel system information: " + Why);
   };
-  if (uint32_t(A[0]) != 11)
+  const uint32_t Class = A[0];
+  if (Class != 11 && Class != kernel_va_shadow_query::InformationClass)
     return Fail("unsupported information class");
   if (!Trusted) {
     auto Context = executionProcessContext();
@@ -25,6 +27,8 @@ KernelModel::querySystemInformation(llvm::ArrayRef<uint64_t> A, bool Trusted) {
     if (Context->PreviousMode != windows::KernelMode)
       return Fail("Nt queries from user previous-mode require access probing");
   }
+  if (Class == kernel_va_shadow_query::InformationClass)
+    return queryKernelVaShadow(A);
   if (LoadedModules.empty())
     return Fail("module inventory is unavailable");
   // Win64 RTL_PROCESS_MODULES has an eight-byte prefix followed by 296-byte
