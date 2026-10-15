@@ -9,6 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Internal.h"
+#include "PathPolicy.h"
 #include "gtest/gtest.h"
 
 #include "neverd/web/Artifact.h"
@@ -165,6 +167,64 @@ TEST_F(WebArtifacts, RejectsLinksSpecialFilesAndPortableCollisions) {
     EXPECT_THROW(S.preview((Root / "input").string(), ""), Error);
 }
 
+#endif
+
+TEST(WebPathPolicy, SharedComponentsRejectPortableDeviceNames) {
+  for (const auto *Name : {"COM¹", "com².js", "LPT³.txt", "lpt¹", "NUL.js",
+                           "a/b", "../x", "x.", "x "})
+    EXPECT_THROW(neverd::web::validateMemberName(Name), Error) << Name;
+  for (const auto *Name : {"COM10", "xCOM¹", "component.js"})
+    EXPECT_NO_THROW(neverd::web::validateMemberName(Name)) << Name;
+}
+
+TEST(WebPathPolicy, CaptureAndArchiveUseTheSameUnicodeComparison) {
+  using neverd::web::archivePathKey;
+  using neverd::web::nameKey;
+  EXPECT_EQ(nameKey("Main.JS"), "main.js");
+  if (!neverd::web::archivePathsAvailable()) {
+    EXPECT_THROW(nameKey("é"), Error);
+    EXPECT_THROW(nameKey("Straße"), Error);
+    return;
+  }
+  for (const auto &[A, B] :
+       {std::pair{"é", "é"}, std::pair{"Straße", "STRASSE"},
+        std::pair{"가", "가"}, std::pair{"K", "K"}}) {
+    EXPECT_EQ(nameKey(A), nameKey(B));
+    EXPECT_EQ(nameKey(A), archivePathKey(A));
+    EXPECT_EQ(archivePathKey(std::string("Dir/") + A),
+              std::string("dir/") + nameKey(B));
+  }
+}
+
+TEST_F(WebArtifacts, CapturedUnicodeAliasesRefuseWithoutChangingEvidenceNames) {
+  if (!neverd::web::archivePathsAvailable()) {
+    write(Root / fs::path(u8"é.js"), "private");
+    Session S;
+    EXPECT_THROW(S.preview(Root.string(), ""), Error);
+    return;
+  }
+  write(Root / fs::path(u8"Straße.js"), "private");
+  const auto Original = neverd::web::capture(Root.string(), {});
+  ASSERT_EQ(Original.Artifacts.size(), 2U);
+  EXPECT_EQ(Original.Artifacts[1].MemberPath, "Straße.js");
+  write(Root / "STRASSE.js", "other");
+  // Some host filesystems already equate these names and cannot hold both.
+  if (std::distance(fs::directory_iterator(Root), fs::directory_iterator()) ==
+      2) {
+    Session S;
+    EXPECT_THROW(S.preview(Root.string(), ""), Error);
+  }
+}
+
+#ifndef _WIN32
+TEST_F(WebArtifacts, CapturedSuperscriptDevicesRefuseBeforePublication) {
+  for (const auto *Name : {"COM¹.js", "LPT²"}) {
+    write(Root / Name, "private");
+    Session S;
+    EXPECT_THROW(S.preview(Root.string(), ""), Error);
+    fs::remove(Root / Name);
+  }
+}
 #endif
 
 TEST_F(WebArtifacts, MetadataPolicyDoesNotExposeNamesOrContent) {

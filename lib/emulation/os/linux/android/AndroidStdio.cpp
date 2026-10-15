@@ -45,6 +45,12 @@ llvm::Expected<Bionic::InputStream *> Bionic::inputStream(uint64_t Handle) {
   auto I = InputStreams.find(Handle);
   if (I == InputStreams.end())
     return failure("invalid or retired Bionic FILE handle");
+  if (auto E = opaqueHandle(Handle))
+    return std::move(E);
+  return &I->second;
+}
+
+llvm::Error Bionic::opaqueHandle(uint64_t Handle) {
   // The token page deliberately has no readable FILE layout. Its second page
   // supplies the one-byte buffer used when allocation fails or buffering is
   // disabled. Both pages count against the workload's memory limit.
@@ -60,7 +66,7 @@ llvm::Expected<Bionic::InputStream *> Bionic::inputStream(uint64_t Handle) {
     if (*Changed)
       return failure("Bionic FILE storage must remain opaque");
   }
-  return &I->second;
+  return llvm::Error::success();
 }
 
 llvm::Expected<std::optional<uint64_t>> Bionic::streamBufferSize(uint32_t FD) {
@@ -73,15 +79,14 @@ llvm::Expected<std::optional<uint64_t>> Bionic::streamBufferSize(uint32_t FD) {
     // A known fstat failure selects BUFSIZ. Unknown metadata is not a failure.
     return std::optional<uint64_t>(1024);
   }
-  const auto *Metadata =
-      std::get<linux_model::LinuxFiles::DescriptorStatus>(*Status).Metadata;
-  if (!Metadata) {
+  const auto BlockSize =
+      std::get<linux_model::LinuxFiles::DescriptorStatus>(*Status).BlockSize;
+  if (!BlockSize) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = "stdio buffering requires explicit file metadata";
     return std::optional<uint64_t>();
   }
-  return std::optional<uint64_t>(Metadata->BlockSize ? Metadata->BlockSize
-                                                     : 1024);
+  return std::optional<uint64_t>(*BlockSize ? *BlockSize : 1024);
 }
 
 llvm::Expected<bool> Bionic::prepareStreamBuffer(InputStream &Stream) {
@@ -98,6 +103,8 @@ llvm::Expected<bool> Bionic::prepareStreamBuffer(InputStream &Stream) {
   Stream.Buffer = *Buffer ? *Buffer : Stream.Token + PageSize;
   Stream.Capacity = *Buffer ? **Size : 1;
   Stream.OwnBuffer = *Buffer != 0;
+  if (!*Buffer)
+    Stream.BufferMode = 2;
   return true;
 }
 
@@ -111,11 +118,19 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
   auto Mode = string(A[1]);
   if (!Mode)
     return Mode.takeError();
-  if (*First != 'r' || Mode->find('+') != std::string::npos) {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic = "stdio write and update modes are unmodeled";
-    return std::optional<BionicValue>();
-  }
+  const bool Update = Mode->find('+') != std::string::npos;
+  const uint32_t AccessMode = Update ? 2 : *First == 'r' ? 0 : 1;
+  uint32_t Flags = AccessMode;
+  if (*First != 'r')
+    Flags |= linux_model::OpenCreate;
+  if (*First == 'w')
+    Flags |= linux_model::OpenTruncate;
+  if (*First == 'a')
+    Flags |= linux_model::OpenAppend;
+  if (*First != 'r' && Mode->find('x') != std::string::npos)
+    Flags |= linux_model::OpenExclusive;
+  if (Mode->find('e') != std::string::npos)
+    Flags |= linux_model::OpenCloseOnExec;
   // API 28 ignores other suffix letters; 'x' only affects creation modes.
   const bool Adopt = Call.Name == symbol::Fdopen;
   uint32_t FD;
@@ -131,18 +146,17 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
       return std::optional<BionicValue>();
     if (const auto *Error = std::get_if<uint32_t>(&*Status))
       return streamError(*Error, 0);
-    if (std::get<linux_model::LinuxFiles::DescriptorStatus>(*Status)
-            .AccessMode == 1)
+    const auto &Descriptor =
+        std::get<linux_model::LinuxFiles::DescriptorStatus>(*Status);
+    if (Descriptor.AccessMode != 2 && Descriptor.AccessMode != AccessMode)
       return streamError(linux_model::InvalidArgument, 0);
+    if (*First == 'a' && !Descriptor.Append) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic = "fdopen append flag mutation is unmodeled";
+      return std::optional<BionicValue>();
+    }
   } else {
-    ProcessServiceEvent Event{0,
-                              0,
-                              {A[0],
-                               Mode->find('e') == std::string::npos
-                                   ? 0
-                                   : linux_model::OpenCloseOnExec,
-                               0, 0, 0, 0},
-                              std::nullopt};
+    ProcessServiceEvent Event{0, 0, {A[0], Flags, 0666, 0, 0, 0}, std::nullopt};
     auto Opened = Kernel.handle(linux_model::ServiceKind::Open, Event);
     if (!Opened)
       return Opened.takeError();
@@ -172,7 +186,18 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
     return Protected.takeError();
   if (!*Protected || **Protected)
     return failure("could not protect opaque FILE storage");
-  InputStreams.emplace(*Token, InputStream{FD, *Token});
+  auto &Stream =
+      InputStreams.emplace(*Token, InputStream{FD, *Token}).first->second;
+  Stream.CanRead = AccessMode != 1;
+  Stream.CanWrite = AccessMode != 0;
+  Stream.Writing = AccessMode == 1;
+  if (!Adopt && *First == 'a') {
+    auto Positioned = streamService(linux_model::ServiceKind::Lseek, FD, 0, 2);
+    if (!Positioned)
+      return Positioned.takeError();
+    if (!*Positioned)
+      return std::optional<BionicValue>();
+  }
   return value(*Token);
 }
 
@@ -180,8 +205,18 @@ BionicResult Bionic::streamCall(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   const auto &Name = Call.Name;
   const bool Flush = Name == symbol::Fflush || Name == symbol::FflushUnlocked;
-  if (Flush && !A[0])
-    return value(0); // All admitted streams are read-only.
+  if (Flush && !A[0]) {
+    bool Failed = false;
+    for (auto &[Token, Stream] : InputStreams) {
+      auto R = flushStream(Stream);
+      if (!R)
+        return R.takeError();
+      if (!*R)
+        return std::optional<BionicValue>();
+      Failed |= !**R;
+    }
+    return value(Failed ? End : 0);
+  }
   auto Found = inputStream(A[0]);
   if (!Found)
     return Found.takeError();
@@ -196,9 +231,22 @@ BionicResult Bionic::streamCall(const NativeCallEvent &Call) {
     Stream.Error = Stream.EndOfFile = false;
     return value(0);
   }
-  if (Flush)
-    return streamError(linux_model::BadDescriptor, End); // Read-only FILE.
+  if (Flush) {
+    if (!Stream.CanWrite)
+      return streamError(linux_model::BadDescriptor, End);
+    auto R = flushStream(Stream);
+    if (!R)
+      return R.takeError();
+    if (!*R)
+      return std::optional<BionicValue>();
+    return value(**R ? 0 : End);
+  }
   if (Name == symbol::Fclose) {
+    auto Flushed = flushStream(Stream);
+    if (!Flushed)
+      return Flushed.takeError();
+    if (!*Flushed)
+      return std::optional<BionicValue>();
     auto Closed = streamService(linux_model::ServiceKind::Close, Stream.FD);
     if (!Closed)
       return Closed.takeError();
@@ -210,11 +258,17 @@ BionicResult Bionic::streamCall(const NativeCallEvent &Call) {
     if (auto E = release(Stream.Token))
       return std::move(E);
     InputStreams.erase(A[0]);
-    return value(failed(**Closed) ? End : 0);
+    return value(failed(**Closed) || !**Flushed ? End : 0);
   }
   const bool GetPosition = Name == symbol::Fgetpos || Name == symbol::Fgetpos64;
   if (Name == symbol::Ftell || Name == symbol::Ftello ||
       Name == symbol::Ftello64 || GetPosition) {
+    auto Flushed =
+        flushStream(Stream); // API 28 ftell ignores flush's guest failure.
+    if (!Flushed)
+      return Flushed.takeError();
+    if (!*Flushed)
+      return std::optional<BionicValue>();
     auto Offset =
         streamService(linux_model::ServiceKind::Lseek, Stream.FD, 0, 1);
     if (!Offset)
@@ -248,6 +302,11 @@ BionicResult Bionic::streamCall(const NativeCallEvent &Call) {
   if (Whence > 2)
     return streamError(linux_model::InvalidArgument, End);
   if (Whence == 1) {
+    auto Flushed = flushStream(Stream);
+    if (!Flushed)
+      return Flushed.takeError();
+    if (!*Flushed)
+      return std::optional<BionicValue>();
     auto Current =
         streamService(linux_model::ServiceKind::Lseek, Stream.FD, 0, 1);
     if (!Current)
@@ -270,6 +329,16 @@ BionicResult Bionic::streamCall(const NativeCallEvent &Call) {
     return Ready.takeError();
   if (!*Ready)
     return std::optional<BionicValue>();
+  auto Flushed = flushStream(Stream);
+  if (!Flushed)
+    return Flushed.takeError();
+  if (!*Flushed)
+    return std::optional<BionicValue>();
+  if (!**Flushed) {
+    if (Rewind)
+      Stream.Error = Stream.EndOfFile = false;
+    return value(Rewind ? 0 : End);
+  }
   auto Moved =
       streamService(linux_model::ServiceKind::Lseek, Stream.FD, Offset, Whence);
   if (!Moved)
@@ -306,6 +375,11 @@ BionicResult Bionic::bufferStream(const NativeCallEvent &Call) {
   // Sizes outside the buffer's signed-int ABI are not silently truncated.
   if (Mode != 2 && Size > INT32_MAX)
     return failure("stdio buffer exceeds the supported signed-int extent");
+  auto Flushed = flushStream(Stream);
+  if (!Flushed)
+    return Flushed.takeError();
+  if (!*Flushed)
+    return std::optional<BionicValue>();
   std::optional<uint64_t> DefaultSize;
   if (Mode != 2) {
     auto Queried = streamBufferSize(Stream.FD);
@@ -318,6 +392,7 @@ BionicResult Bionic::bufferStream(const NativeCallEvent &Call) {
   if (Stream.OwnBuffer)
     if (auto E = release(Stream.Buffer))
       return std::move(E);
+  Stream.BufferMode = Mode;
   Stream.OwnBuffer = Stream.EndOfFile = false;
   Stream.Begin = Stream.End = 0;
   Stream.Buffer = Stream.Token + PageSize;

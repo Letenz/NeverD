@@ -36,15 +36,18 @@ public:
                     ProcessResult &Result);
   struct DescriptorStatus {
     uint32_t AccessMode;
-    const LinuxFileMetadata *Metadata;
+    std::optional<uint32_t> BlockSize;
+    bool Directory = false;
+    bool Append = false;
   };
-  /// Live open-description facts, or guest errno. Missing metadata stays
-  /// unknown; libc consumers must not infer it from a pathname or file bytes.
+  /// Open-description mode and unchanged filesystem block-size facts, or
+  /// guest errno. This does not expose invalidated stat snapshots after writes.
   std::optional<std::variant<DescriptorStatus, uint32_t>>
   descriptorStatus(uint32_t FD, ProcessResult &Result) const;
   std::optional<uint64_t> outputError(uint32_t FD) const;
   uint32_t outputTarget(uint32_t FD) const;
   bool isDevice(uint32_t FD) const;
+  bool isRegularFile(uint32_t FD) const;
   /// Missing descriptor returns EBADF; another descriptor kind returns null.
   /// The borrowed catalogue identity outlives every mapping in this process.
   std::variant<std::shared_ptr<LinuxDeviceState>, uint64_t>
@@ -78,13 +81,23 @@ private:
     llvm::ArrayRef<uint8_t> Bytes;
     const LinuxFileMetadata *Metadata = nullptr;
     uint64_t Offset = 0;
+    std::string Path;
+    uint32_t Flags = 0;
+  };
+  struct MutableFile {
+    std::vector<uint8_t> Bytes;
+    bool Changed = false;
+  };
+  struct OpenDirectory {
+    std::string Path;
+    uint64_t Offset = 0;
   };
   struct ProcessDescriptor {
     uint32_t PID, Flags;
   };
   using OpenDevice = std::shared_ptr<LinuxDeviceState>;
-  using Descriptor =
-      std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice>;
+  using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor,
+                                  OpenDevice, OpenDirectory>;
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;
@@ -98,6 +111,21 @@ private:
       {1, std::make_shared<Descriptor>(Stream::Output)},
       {2, std::make_shared<Descriptor>(Stream::Error)}};
   std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
+  std::map<std::string, MutableFile> MutableFiles;
+  std::map<std::string, uint64_t> Inodes;
+  std::set<uint64_t> UsedInodes;
+  uint64_t NextInode = 1;
+
+  llvm::ArrayRef<uint8_t> fileBytes(const OpenFile &File) const;
+  std::optional<std::string> descriptorPath(uint32_t FD) const;
+  static std::optional<uint32_t> procDescriptor(llvm::StringRef Path);
+  llvm::Expected<uint64_t> inode(const std::string &Path);
+  llvm::Expected<std::optional<uint64_t>>
+  directoryEntries(uint32_t FD, uint64_t Address, uint32_t Size,
+                   ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  writeDescriptor(ServiceKind Kind, uint32_t FD, uint64_t Address,
+                  uint64_t Size, ProcessResult &Result);
 
   static std::optional<uint64_t> unsupported(ProcessResult &Result,
                                              const char *Reason);
@@ -116,8 +144,9 @@ private:
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,
                                                         ProcessResult &Result);
-  llvm::Expected<std::optional<uint64_t>> open(uint64_t Address, uint32_t Flags,
-                                               ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  open(uint64_t Address, uint32_t Flags, ProcessResult &Result,
+       uint32_t Directory = AtCurrentDirectory);
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,
                                 uint64_t Size);
   uint64_t seek(OpenFile &File, uint64_t Offset, uint32_t Whence);

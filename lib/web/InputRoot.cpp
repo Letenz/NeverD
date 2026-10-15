@@ -13,9 +13,6 @@
 #include "Internal.h"
 #include "platform/WindowsFile.h"
 
-#include "llvm/Support/ConvertUTF.h"
-#include "llvm/Support/Unicode.h"
-
 #include <algorithm>
 #include <cerrno>
 #include <filesystem>
@@ -82,44 +79,6 @@ struct Reader {
 #endif
 
 namespace neverd::web {
-
-void validateMemberName(std::string_view Name) {
-  if (Name.empty() || Name == "." || Name == ".." || Name.size() > 255 ||
-      Name.back() == '.' || Name.back() == ' ' ||
-      !llvm::json::isUTF8(llvm::StringRef(Name)))
-    throw Error("unsafe_member_name");
-  for (unsigned char C : Name)
-    if (C < 32 || C == 127 ||
-        std::string_view("/\\:*?\"<>|").find(C) != std::string_view::npos)
-      throw Error("unsafe_member_name");
-  auto Stem = Name.substr(0, Name.find('.'));
-  std::string Upper(Stem);
-  for (auto &C : Upper)
-    if (C >= 'a' && C <= 'z')
-      C -= 'a' - 'A';
-  if (Upper == "CON" || Upper == "PRN" || Upper == "AUX" || Upper == "NUL" ||
-      (Upper.size() == 4 &&
-       (Upper.starts_with("COM") || Upper.starts_with("LPT")) &&
-       Upper[3] >= '1' && Upper[3] <= '9'))
-    throw Error("unsafe_member_name");
-}
-
-std::string nameKey(std::string_view Name) {
-  std::string Key;
-  const auto *Cursor = reinterpret_cast<const llvm::UTF8 *>(Name.data());
-  const auto *End = Cursor + Name.size();
-  while (Cursor != End) {
-    llvm::UTF32 Code;
-    if (llvm::convertUTF8Sequence(&Cursor, End, &Code,
-                                  llvm::strictConversion) != llvm::conversionOK)
-      throw Error("unsafe_member_name");
-    Code = llvm::sys::unicode::foldCharSimple(Code);
-    // Fixed-width scalar encoding is a comparison key, never a host path.
-    for (unsigned I = 0; I != 4; ++I)
-      Key.push_back(char(Code >> (I * 8)));
-  }
-  return Key;
-}
 
 #ifndef _WIN32
 namespace {

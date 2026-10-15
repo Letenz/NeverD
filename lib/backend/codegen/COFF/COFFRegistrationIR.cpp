@@ -149,12 +149,6 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       !hasCallerCleanupRegistrationABI(Replay, Image, &SourceCallerPCWrites))
     return rejectIR(
         "source or preserved callee has an unproved x86 stack cleanup ABI");
-  for (const auto &Block : Function)
-    for (const auto &I : Block)
-      if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-          Call && Call->getCallingConv() != llvm::CallingConv::C)
-        return rejectIR(
-            "generated call changes the checked x86 stack cleanup ABI");
   if (!Replay.RegistrationStates || !Replay.RegistrationStates->Complete ||
       !Replay.RegistrationStates->CallbackStatesComplete ||
       !Replay.RegistrationStates->RegistrationLifetimeComplete ||
@@ -288,6 +282,13 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                                                IncomingSetup, *CallbackMap);
   if (!Jumps)
     return Jumps.takeError();
+  for (const auto &Block : Function)
+    for (const auto &I : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+          Call && Call->getCallingConv() != llvm::CallingConv::C &&
+          !Jumps->Calls.count(Call))
+        return rejectIR(
+            "generated call changes the checked x86 stack cleanup ABI");
   const auto &States = *Replay.RegistrationStates;
   const auto &Scopes = Source.Registration->Scopes;
   struct Dispatch {

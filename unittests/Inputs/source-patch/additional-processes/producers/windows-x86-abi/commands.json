@@ -1,0 +1,56 @@
+{
+  "language": "c",
+  "commands": [
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=i686-pc-windows-msvc",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-c",
+        "<fixtures>/nonleaf.c",
+        "-o",
+        "<fixtures>/producers/windows-x86-abi/nonleaf-supplied-object.o"
+      ],
+      "object": "producers/windows-x86-abi/nonleaf-supplied-object.o",
+      "sha256": "03d5fd9c4b7e4bb0cef68626675715f1702c60047e2042e0743eff94dd6a0b0c"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=i686-pc-windows-msvc",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-c",
+        "<fixtures>/writable-pointer.c",
+        "-o",
+        "<fixtures>/producers/windows-x86-abi/writable-pointer-supplied-object.o"
+      ],
+      "object": "producers/windows-x86-abi/writable-pointer-supplied-object.o",
+      "sha256": "166a4cb641cfefa09bc79458e7cbd20b6b35b4d03a82be34b7e4f85ec042461c"
+    },
+    {
+      "producer": "clang",
+      "arguments": [
+        "clang",
+        "--target=i686-pc-windows-msvc",
+        "-O2",
+        "-fno-lto",
+        "-funwind-tables",
+        "-ffunction-sections",
+        "-c",
+        "<fixtures>/floating-stack.c",
+        "-o",
+        "<fixtures>/producers/windows-x86-abi/floating-stack-supplied-object.o"
+      ],
+      "object": "producers/windows-x86-abi/floating-stack-supplied-object.o",
+      "sha256": "f525eb55701f5499a7ae6c9f4ec670ce30534727ec65cbb6b79a37a2e5ca86a5"
+    }
+  ]
+}

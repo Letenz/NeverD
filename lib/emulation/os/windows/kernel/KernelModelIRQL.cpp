@@ -49,10 +49,9 @@ llvm::Expected<uint64_t> KernelModel::lowerIRQL(uint8_t RequestedIRQL) {
   if (RequestedIRQL < scheduler::DispatchLevel) {
     if (CancelLock.Held)
       return irqlError("cannot lower IRQL while holding the cancel spin lock");
-    for (const auto &[Address, Lock] : ExecutiveSpinLocks)
-      if (Lock.Execution == CurrentExecution)
-        return irqlError(
-            "cannot lower IRQL while holding an executive spin lock");
+    if (executionHoldsSpinLock(CurrentExecution))
+      return irqlError(
+          "cannot lower IRQL while holding an executive spin lock");
   }
   if (auto Required = Interrupts.manualHoldIRQL(CurrentExecution);
       Required && RequestedIRQL < *Required)

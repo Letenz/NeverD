@@ -22,11 +22,50 @@ std::optional<uint32_t> registrationCallStackPop(const LowFunc &Func,
                                                  const LowOp &Call) {
   if (!Func.ExceptionMetadata || !Func.RegistrationStates ||
       !Func.RegistrationStates->Complete ||
-      !Func.RegistrationStates->CallFrameEffectsComplete ||
-      Call.Opcode != NdOp::CALL || Call.NumInputs != 1 ||
-      !Call.Inputs[0].isConst() || Call.Inputs[0].Size != 4 || Call.Seq < 0)
+      (Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+      Call.NumInputs != 1 || !Call.Inputs[0].isConst() ||
+      Call.Inputs[0].Size != 4 || Call.Seq < 0)
     return std::nullopt;
   const auto &States = *Func.RegistrationStates;
+  if (Call.Opcode == NdOp::INDIR_CALL) {
+    if (!States.CallbackStatesComplete ||
+        !States.RegistrationLifetimeComplete || !States.SEHBoundCallsComplete ||
+        !States.HasBoundSEHCallees ||
+        States.SEHBoundCalls.size() > limits::kMaxRegistrationEHRecords ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Call.MemoryOrdering != NdMemoryOrdering::None)
+      return std::nullopt;
+    const RegistrationSEHBoundCall *Runtime = nullptr;
+    for (const auto &Bound : States.SEHBoundCalls)
+      if (Bound.Address == Call.Addr && Bound.OpSeq == Call.Seq) {
+        if (Runtime || Bound.TargetVA != Call.Inputs[0].Offset ||
+            !Bound.HasOrdinaryReturn ||
+            Bound.CalleeKind != RegistrationSEHBoundCall::Kind::RaiseException)
+          return std::nullopt;
+        Runtime = &Bound;
+      }
+    const auto Boundary = llvm::find_if(
+        Block.InstructionBoundaries, [&](const auto &Instruction) {
+          return Instruction.Address == Call.Addr;
+        });
+    const auto Operation =
+        llvm::find_if(Block.Ops, [&](const auto &Op) { return &Op == &Call; });
+    if (!Runtime || Boundary == Block.InstructionBoundaries.end() ||
+        Operation == Block.Ops.end() ||
+        Boundary->Control != LowInstructionControl::Call ||
+        Boundary->Size != 6 || Call.Addr < Block.StartAddr ||
+        Call.Addr > UINT32_MAX - 6 || Call.Addr + 6 > Block.EndAddr ||
+        !Func.ExceptionMetadata->ownsCode({Call.Addr, Call.Addr + 6}) ||
+        size_t(Operation - Block.Ops.begin()) < Boundary->FirstOp ||
+        size_t(Operation - Block.Ops.begin()) - Boundary->FirstOp >=
+            Boundary->OpCount)
+      return std::nullopt;
+    // The source runtime contract owns the stdcall pop. Reflect it before
+    // SSA so subsequent callback pushes use the same coordinate as analysis.
+    return 16;
+  }
+  if (!States.CallFrameEffectsComplete)
+    return std::nullopt;
   const auto *Effect = States.callFrameEffect(Call.Addr, Call.Seq);
   if (!Effect || Effect->Target != Call.Inputs[0].Offset ||
       Effect->CalleeIndex >= States.CalleeContracts.size() ||

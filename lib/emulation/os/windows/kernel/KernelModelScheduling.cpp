@@ -644,9 +644,8 @@ llvm::Error KernelModel::suspendScheduled(uint64_t ID) {
     if (Raise.Execution == CurrentExecution &&
         Raise.NewIRQL > windows::APCLevel)
       return schedulingError("cannot suspend with a raised dispatch IRQL");
-  for (const auto &[Address, Lock] : ExecutiveSpinLocks)
-    if (Lock.Execution == CurrentExecution)
-      return schedulingError("cannot suspend with an executive spin lock");
+  if (executionHoldsSpinLock(CurrentExecution))
+    return schedulingError("cannot suspend with an executive spin lock");
   if (hasProcessAttachment(CurrentExecution) && Scheduler.active() &&
       Scheduler.active()->ID == ID)
     return schedulingError("cannot suspend a process-attached work item");
@@ -725,6 +724,9 @@ llvm::Error KernelModel::canRevokeVirtualRange(
   if (auto E = UsbIdle.canReleaseRange(Base, Size, RetiringUsbIdle))
     return E;
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
+    if (Address < Base + Size && Base < Address + sizeof(uint64_t))
+      return schedulingError("cannot release a held executive spin lock");
+  for (const auto &[Address, Lock] : QueuedSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))
       return schedulingError("cannot release a held executive spin lock");
   for (const auto &[Object, References] : WaitReferences)

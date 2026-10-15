@@ -27,6 +27,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
 
+`direct-driver-x64-v1` は既存のドライバーとカーネルモデルを使い、x64 KVM でスーパーバイザーコードを直接実行します。カーネルエクスポート、コールバックの復帰、guard サンク、停止時の観測は明示的な実行境界で処理します。時間と API イベントで実行を制限し、取得できない命令数はゼロで報告します。命令単位のスケジューリング、書き込みごとのトレース、独自の CPUID 表は拒否します。CPU 識別とタイムスタンプは実行バックエンドに従い、環境依存として記録します。未対応の特殊レジスター変更は明示的に失敗します。この実行契約だけで SYS ファイルの復元が完了するわけではありません。
+
+カーネルフィールドの初期化追跡には、コミットされた書き込み範囲の正確な記録が必要です。監視対象ページでは、直接実行は現在スカラー MOV/MOVABS/XOR と対応済みの従来の SSE ストアを受け入れ、それ以外の書き込み形式は明示的に失敗します。同じ値の書き込みや部分フィールドにも既存の初期化検査が適用されます。
+
+KVM の物理読み取り専用スロットは、CR0.WP の一時的な変更による書き込み監視の回避から監視対象 RAM ページを保護します。拒否された二段目の書き込みは保留中の MMIO 操作を完了せずに実行を終了します。診断の RIP は完全なコミット済み CPU コンテキストではありません。スロット不足は明示的に失敗します。特殊状態は実行境界で検証するため、一時的な CR3 やマッピングの変更がなかったことは証明しません。
+
 ## ビルドと実行
 
 この機能は明示的に有効化する必要があり、`BUILD_TESTING` には依存しません。
@@ -369,6 +375,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `KeGetCurrentIrql` | 明示的な引き上げと復元を含む現在の IRQL/CR8 を読みます。ディスパッチとワーク項目は `PASSIVE_LEVEL`、DPC は `DISPATCH_LEVEL` で開始します |
 | `KfRaiseIrql`, `KeLowerIrql` | 実際の x64 WDK IRQL 昇降インポートとインライン補助関数。各実行は復帰前に保存値を LIFO 順に復元します。IRQL <= APC_LEVEL の合法な待機は保存した昇降状態を維持し、待機時の IRQL で再開します。DISPATCH_LEVEL のロック保持中は中断できません。CR8 は各変更を反映し、設定した CPU0 イベントの先取りには `scheduling` を使用します。任意の割り込みネストは未対応です。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上の常駐・整列済み実行スピンロック。所有者、取得と解放の対応、IRQL の復元を検査します。競合するブロッキング取得は明示的に停止します。 |
+| `KeAcquireInStackQueuedSpinLock`, `KeReleaseInStackQueuedSpinLock`, `KeAcquireInStackQueuedSpinLockAtDpcLevel`, `KeReleaseInStackQueuedSpinLockFromDpcLevel` | CPU0 上のインスタック・キュー付きスピンロック。呼び出し側の `KLOCK_QUEUE_HANDLE` がロックを記録し、昇格形式では保存した IRQL も記録します。取得は `DISPATCH_LEVEL` へ昇格してハンドルをロックに格納し、`AtDpcLevel` 形式は呼び出し側が既にその IRQL にあることを要求します。解放はロックを解除し、昇格形式は保存した IRQL を復元します。解放の種類は取得と一致していなければなりません。この協調プロセッサーでは他プロセッサーが保持するロックを待てず、明示的に停止します。ページ対象・ユーザーモード・ロックと重なるハンドル記憶域も同様です。 |
 | `ExInterlockedInsertHeadList`、`ExInterlockedInsertTailList`、`ExInterlockedRemoveHeadList`、`ExInterlockedPushEntryList`、`ExInterlockedPopEntryList`、`ExInterlockedAddUlong`、`ExInterlockedAddLargeInteger` | 任意の IRQL で、空いている常駐実行スピンロックの下、割り込みをマスクし IRQL を変えずに 1 回更新します。挿入は以前の隣接エントリまたは NULL を返し、削除は取り除いたエントリ自身のリンクを残し、加算はラップして元の値を返します。壊れたリンクはカーネルの `FAST_FAIL_CORRUPT_LIST_ENTRY` と同様に停止し、保持中のロックと、ページング可能・ユーザーモード・ロックと重なる記憶域は明示的に停止します。 |
 | `InitializeSListHead`、`ExpInterlockedPushEntrySList`、`ExpInterlockedPopEntrySList`、`ExpInterlockedFlushSList`、`ExQueryDepthSList`、`FirstEntrySList` | x64 のロックフリー `SLIST_HEADER` リストです。`InterlockedPushEntrySList`、`InterlockedPopEntrySList`、`InterlockedFlushSList` マクロとその `ExInterlocked` 形式は `Exp` エクスポートに到達します。プッシュは Depth と Sequence を同時に 1 増やし、ポップは Depth だけを減らし、フラッシュは Depth と先頭エントリをクリアします。取り出したエントリやフラッシュしたエントリはリンクを保持します。`InitializeSListHead` はカーネルと同様に未整列のヘッダーに対して `STATUS_DATATYPE_MISALIGNMENT` を発生させ、その他の未整列のヘッダーとエントリは明示的に停止します。`ExQueryDepthSList` は `DISPATCH_LEVEL` 以下、その他は任意の IRQL で呼べます。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | デバイスが所有する不透明なワーク項目。`DelayedWorkQueue` のみ。`PASSIVE_LEVEL` でデバイスとコンテキストをコールバックに渡す。キュー内の項目は解放不可 |
@@ -387,6 +394,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `IoMarkIrpPending` | 現在の生存する IRP を保留にする。WDM マクロによるスタック制御フィールドへの等価な書き込みにも対応。ディスパッチは `STATUS_PENDING` を返す必要がある |
 | `IofCompleteRequest`、`IoCompleteRequest` | `IO_NO_INCREMENT` で完了を展開。停止／再開をサポートし、最終展開時にだけ IRP／MDL／バッファーを解放 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | ゲストバッファー操作は 1 呼び出しあたり最大 1 MiB。重複不可のコピー API は重複範囲を拒否する |
+| `strlen`、`wcslen`、`strnlen`、`wcsnlen`、`strcmp`、`wcscmp`、`strncmp`、`wcsncmp`、`_stricmp`、`_wcsicmp`、`_strnicmp`、`_wcsnicmp`、`strchr`、`wcschr`、`strrchr`、`wcsrchr`、`strstr`、`wcsstr`、`strspn`、`wcsspn`、`wcscspn` | エクスポートされた C ランタイム文字列ヘルパーは、任意の IRQL で呼び出し側メモリーを 1 単位ずつ読み取り、終端のない走査は 1 MiB のモデル上限で停止する。カウントと検索結果は標準 C の意味論に従う。`strcmp`、`wcscmp`、`strncmp` は -1、0、1 に正規化し、`wcsncmp` と大文字小文字を区別しない一群は生の差を返し、折りたたむのは ASCII A-Z のみ。検索対象は単位幅に切り詰められ、終端も検索対象になるため、0 の検索はそのアドレスを返す。`strstr`/`wcsstr` の空の部分文字列は元の文字列を返す。NULL レコード、またはカウントなしでマップ済みメモリーを越える走査は明示的に失敗する。 |
 
 `MmProbeAndLockPages` は IRQL <= APC_LEVEL で、入力ドライバー画像のローダー所有の単一連続範囲を `KernelMode` でロックできます。画像ページは読み取り可能で、物理ページ上限内である必要があります。モデルの画像ストレージは既に専有かつ常駐しているため、元の画像ビューが読み取り専用でも `IoWriteAccess` と `IoModifyAccess` は書き込み可能な MDL 別名を許可します。`IoReadAccess` の別名は読み取り専用のままです。元の画像保護は変更しません。画像の穴や無関係なマッピングは除外し、ユーザーアドレス境界より下の画像も所有権で識別します。ロック解除と記述子解放が必要です。ローダー所有の画像ページに対する一時 MDL は、すべての別名の解除、すべてのロック解除、すべての記述子の解放が完了すると、追加の復元依存性を残しません。この契約では指定アドレスのないカーネルモードのキャッシュ付き別名を許可します。存続する MDL、他の所有権やマッピング形式、ゲストによる物理 PFN 識別値の読み取りは依存性として残り、モデル化されたコピー・移動・比較サービスによる読み取りも含みます。
 

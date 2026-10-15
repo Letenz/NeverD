@@ -27,6 +27,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
 
+`direct-driver-x64-v1`은 기존 드라이버와 커널 모델을 재사용하여 x64 KVM에서 커널 코드를 직접 실행합니다. 커널 내보내기, 콜백 반환, guard 썽크와 중단 관찰은 명시적인 실행 경계에서 처리합니다. 시간과 API 이벤트로 실행을 제한하며, 사용할 수 없는 명령 수는 0으로 보고합니다. 명령별 스케줄링, 쓰기별 추적과 사용자 지정 CPUID 표는 거부합니다. 프로세서 식별과 타임스탬프는 실행 백엔드에서 가져오며 환경 의존성으로 기록합니다. 지원하지 않는 특수 레지스터 변경은 명시적으로 실패합니다. 이 실행 계약만으로 캡처한 SYS 파일이 복원되는 것은 아닙니다.
+
+커널 필드의 초기화 추적에는 커밋된 쓰기 범위의 정확한 기록이 필요합니다. 감시 대상 페이지에서 직접 실행은 현재 스칼라 MOV/MOVABS/XOR 및 지원되는 기존 SSE 저장 명령을 허용하며, 다른 쓰기 형식은 명시적으로 실패합니다. 같은 값 쓰기와 부분 필드에도 기존 초기화 검사가 적용됩니다.
+
+KVM의 물리 읽기 전용 슬롯은 일시적인 CR0.WP 변경으로 쓰기 감시를 우회하지 못하도록 감시 대상 RAM 페이지를 보호합니다. 거부된 두 번째 계층 쓰기는 대기 중인 MMIO 작업을 완료하지 않고 실행을 종료하며, 진단의 RIP는 완전히 커밋된 CPU 컨텍스트가 아닙니다. 슬롯 부족은 명시적으로 실패합니다. 특수 상태는 실행 경계에서 검사하므로 일시적인 CR3 또는 매핑 변경이 없었음을 증명하지는 않습니다.
+
 ## 빌드 및 실행
 
 이 기능은 명시적으로 활성화해야 하며 `BUILD_TESTING`과 독립적입니다.
@@ -366,6 +372,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `KeGetCurrentIrql` | 명시적인 상승과 복원을 포함한 현재 IRQL/CR8을 읽습니다. 디스패치와 작업 항목은 `PASSIVE_LEVEL`, DPC는 `DISPATCH_LEVEL`에서 시작합니다 |
 | `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 설정된 CPU0 이벤트 선점에는 `scheduling`을 사용합니다. 임의의 중첩 인터럽트는 지원하지 않습니다. |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0의 상주 정렬 실행 스핀록입니다. 소유자, 획득·해제 쌍, IRQL 복원을 검사하며, 경합 중 차단 획득은 명시적으로 중단합니다. |
+| `KeAcquireInStackQueuedSpinLock`, `KeReleaseInStackQueuedSpinLock`, `KeAcquireInStackQueuedSpinLockAtDpcLevel`, `KeReleaseInStackQueuedSpinLockFromDpcLevel` | CPU0의 인스택 큐 스핀록입니다. 호출자의 `KLOCK_QUEUE_HANDLE`가 록을 기록하고, 승격 형식은 저장된 IRQL도 기록합니다. 획득은 `DISPATCH_LEVEL`로 올리고 핸들을 록에 저장하며, `AtDpcLevel` 형식은 호출자가 이미 그 수준에 있어야 합니다. 해제는 록을 지우고 승격 형식은 저장된 IRQL을 복원하며, 해제 형식은 획득과 일치해야 합니다. 이 협조적 프로세서에서는 다른 프로세서가 보유한 록을 기다릴 수 없어 명시적으로 중단하며, 페이징·사용자 모드·록과 겹치는 핸들 저장소도 마찬가지입니다. |
 | `ExInterlockedInsertHeadList`, `ExInterlockedInsertTailList`, `ExInterlockedRemoveHeadList`, `ExInterlockedPushEntryList`, `ExInterlockedPopEntryList`, `ExInterlockedAddUlong`, `ExInterlockedAddLargeInteger` | 모든 IRQL에서, 비어 있는 상주 실행 스핀록 아래 인터럽트를 마스크하고 IRQL을 바꾸지 않은 채 한 번 갱신합니다. 삽입은 이전 이웃 또는 NULL을 반환하고, 제거는 제거된 항목 자체의 링크를 남기며, 덧셈은 랩어라운드하여 원래 값을 반환합니다. 손상된 링크는 커널의 `FAST_FAIL_CORRUPT_LIST_ENTRY`처럼 중단되고, 보유 중인 락과 페이징 가능·사용자 모드·락과 겹치는 저장소는 명시적으로 중단합니다. |
 | `InitializeSListHead`, `ExpInterlockedPushEntrySList`, `ExpInterlockedPopEntrySList`, `ExpInterlockedFlushSList`, `ExQueryDepthSList`, `FirstEntrySList` | x64의 잠금 없는 `SLIST_HEADER` 목록입니다. `InterlockedPushEntrySList`, `InterlockedPopEntrySList`, `InterlockedFlushSList` 매크로와 그 `ExInterlocked` 형식은 `Exp` 익스포트로 도달합니다. 푸시는 Depth와 Sequence를 함께 1 늘리고, 팝은 Depth만 줄이며, 플러시는 Depth와 첫 항목을 지웁니다. 꺼내거나 플러시한 항목은 링크를 유지합니다. `InitializeSListHead`는 커널처럼 정렬되지 않은 헤더에 `STATUS_DATATYPE_MISALIGNMENT`를 발생시키고, 그 밖의 정렬되지 않은 헤더와 항목은 명시적으로 중단합니다. `ExQueryDepthSList`는 `DISPATCH_LEVEL` 이하, 나머지는 모든 IRQL에서 호출할 수 있습니다. |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 장치 소유의 불투명 작업 항목. `DelayedWorkQueue`만 지원하며 `PASSIVE_LEVEL`에서 장치와 컨텍스트를 콜백에 전달. 대기열에 있는 항목은 해제 불가 |
@@ -384,6 +391,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `IoMarkIrpPending` | 현재 유효한 IRP를 보류로 표시. WDM 매크로의 스택 제어 필드 쓰기도 지원. 디스패치는 `STATUS_PENDING`을 반환해야 함 |
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`로 완료 해제를 수행. 중단/재개를 지원하고 최종 경계에서만 IRP/MDL/버퍼를 폐기 |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | 호출당 최대 1 MiB의 제한된 게스트 버퍼 작업. 비중첩 복사 API는 겹치는 범위를 거부함 |
+| `strlen`, `wcslen`, `strnlen`, `wcsnlen`, `strcmp`, `wcscmp`, `strncmp`, `wcsncmp`, `_stricmp`, `_wcsicmp`, `_strnicmp`, `_wcsnicmp`, `strchr`, `wcschr`, `strrchr`, `wcsrchr`, `strstr`, `wcsstr`, `strspn`, `wcsspn`, `wcscspn` | 내보낸 C 런타임 문자열 헬퍼는 임의의 IRQL에서 호출자 메모리를 한 단위씩 읽으며, 종결자가 없는 스캔은 1 MiB 모델 한계에서 멈춘다. 개수와 검색 결과는 표준 C 의미를 따른다. `strcmp`, `wcscmp`, `strncmp`는 -1, 0 또는 1로 정규화하고, `wcsncmp`와 대소문자 구분 없는 계열은 원시 차이를 반환하며 ASCII A-Z만 접는다. 검색 대상은 단위 폭으로 잘리고 종결자도 검색하므로 0 검색은 그 주소를 반환한다. `strstr`/`wcsstr`의 빈 부분 문자열은 원본 문자열을 반환한다. 널 레코드나, 개수 없이 매핑된 메모리를 넘어가는 스캔은 명시적으로 실패한다. |
 
 `MmProbeAndLockPages`는 IRQL <= APC_LEVEL에서 입력 드라이버 이미지의 로더 소유 단일 연속 범위를 `KernelMode`로 잠글 수 있습니다. 이미지 페이지는 읽을 수 있어야 하며 물리 페이지 한도를 따릅니다. 모델의 이미지 저장소는 이미 전용 상주 메모리이므로 원래 이미지 뷰가 읽기 전용이어도 `IoWriteAccess`와 `IoModifyAccess`는 쓰기 가능한 MDL 별칭을 허용합니다. `IoReadAccess` 별칭은 읽기 전용 계약을 유지합니다. 원본 이미지 보호 속성은 바꾸지 않습니다. 이미지의 빈 영역과 무관한 매핑은 제외하며 사용자 주소 경계 아래의 이미지도 소유권으로 식별합니다. 잠금 해제와 설명자 해제가 필요합니다. 로더 소유 이미지 페이지의 임시 MDL은 모든 별칭 매핑과 잠금을 해제하고 모든 설명자를 해제하면 추가 복원 의존성을 남기지 않습니다. 이 계약은 요청 주소가 없는 커널 모드 캐시 별칭을 허용합니다. 살아 있는 MDL, 다른 소유권이나 매핑 유형, 게스트의 물리 PFN 식별값 읽기는 의존성으로 남으며 모델링된 복사·이동·비교 서비스의 읽기도 포함합니다.
 

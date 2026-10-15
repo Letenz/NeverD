@@ -1,19 +1,21 @@
 # JavaScript epic acceptance audit
 
-This audit was rechecked against the GitHub issue bodies on 2026-10-13.
-All five issues remain open, with no comments or later requirement changes.
-The earlier blanket statement that all five were complete was too broad.
-The follow-up v2 passive report implements both confirmed #717 gaps described
-below: component-level request syntax and field-level observed structure.
-The qualification recommendations remain separate from those repaired gaps.
-Passing a named profile's tests does not establish universal issue coverage.
+This audit was rechecked against all five GitHub issue bodies and comments on
+2026-10-15. The required operations are implemented within the named profiles
+below. The v2 passive report resolves the two earlier #717 findings; the final
+#716 review found and repaired a shared input/archive filename-policy mismatch.
+All five issues were closed as completed on 2026-10-15 after the final
+shared-path regression and Windows qualification. The implementation ledger
+records exact source baselines, passed checks and explicit optional skips.
+
 A passed fixture or captured sample qualifies its selected profile and
 operation; it does not establish general framework support, source equivalence,
-publisher trust or runtime behavior.
+publisher trust or runtime behavior. Explicit future adapters and unsupported
+semantics remain visible boundaries rather than implied implementation claims.
 All new implementation and authored fixtures use C++. Target samples are never
 executed, and the analyzer uses no external scripts, runtimes or network tools.
 
-## Issue evidence and remaining work
+## Required issue coverage and supported boundaries
 
 | Issue | Implemented, reviewable evidence | Explicit supported boundary |
 | --- | --- | --- |
@@ -25,15 +27,16 @@ executed, and the analyzer uses no external scripts, runtimes or network tools.
 
 The [support matrix](web-support-matrix.md) is authoritative for individual
 profiles. The [implementation ledger](web-analysis-implementation.md) records
-build/test receipts and their exact baselines. This audit does not change issue
-state or replace those narrower contracts.
+build/test receipts and their exact baselines. The GitHub issue state records
+closure; this audit supplies its acceptance evidence without replacing those
+narrower contracts.
 
-## Re-audit findings and follow-up
+## Historical re-audit findings and resolution
 
 Source review used implementation `03acf4d03` and compared the affected Web
 owners with fetched `dev` at `587227e57`; those owners were unchanged. Issue
-bodies and comment counts were read from GitHub on 2026-10-13. This review does
-not close, edit or comment on any issue.
+bodies and comment counts were read from GitHub on 2026-10-13. That earlier
+review did not close, edit or comment on any issue.
 
 1. **#717 request structure: original finding, resolved by v2.**
    `interfaces/SourceContext.cpp` records unresolved template expression counts;
@@ -117,7 +120,8 @@ This qualifies named syntax navigation and recorded original anchors, not
 runtime requests, effective policy or full dynamic client reconstruction.
 
 No additional blocking gap was established for the already named #714, #715
-or #718 profiles in this review. Useful follow-up qualification remains:
+or #718 profiles in that review. Subsequent qualification addressed these
+recommendations:
 
 - **#714 real-client navigation:** the independent [file navigation profile](web-configuration-file-profile.md)
   now completes all 2,364 original units and retains 973 literal sites, 592 local
@@ -155,9 +159,15 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   the qualified macOS host. The [Windows product lane](web-windows-product.md)
   now qualifies the Windows Server 2025 x64 NTFS reader, private spool and
   export owners, with 110 native cases, two adapter checks and six extracted
-  package checks at `d7af8fd05`, all without failures or skips. Formal product
-  publication requires Windows and complete producer/resource qualification
-  at the same source commit and publishes the exact verified archive.
+  package checks at `5e126750ae75`, all without failures or skips. The same
+  [qualification run](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
+  passes eleven full producer and fifteen CEF/resource cases on macOS arm64,
+  also without failures or skips. Both final gates and publication succeeded;
+  the [formal Windows Web product Release](https://github.com/NeverSight/NeverD/releases/tag/web-product-windows-x64-2026-10-15)
+  contains the exact qualified archive. Independent public downloads verified
+  its receipt, all asset checksums, all 139 ZIP members and the tagged source
+  tree. [Product details and SHA-256](web-windows-product.md) record this
+  Windows Server 2025 x64 delivery boundary.
 
 Erased TypeScript information, general JSC/V8 bytecode decompilation, universal
 framework support and fabricated live traffic are not missing acceptance work.
@@ -235,9 +245,9 @@ absent optional samples are omissions, never passed acceptance cases.
 
 Final build, omission, transport, GUI and integration receipts are recorded in
 the [implementation ledger](web-analysis-implementation.md). This document
-records reviewed coverage, not a GitHub issue-state mutation. Historical
-increment and completion receipts remain historical evidence; this re-audit
-supersedes their blanket completion conclusion.
+records reviewed coverage, not a GitHub issue-state mutation. Earlier increment
+receipts remain historical evidence; the criterion and profile mapping above
+supersedes their blanket issue-status conclusions.
 
 The earlier Tauri source research remains relevant but separate from the
 new binary qualification. At the pinned

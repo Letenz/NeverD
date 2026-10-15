@@ -2673,6 +2673,52 @@ TEST_F(ProcessPublic, AndroidStdioStateAndProviderLifetimeMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidMutableFilesAndLiveProcMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "stdio-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Entry : {"filesystem_shared", "filesystem_proc"}) {
+    llvm::json::Object Request{
+        {"backend", "unicorn"},
+        {"android",
+         llvm::json::Object{
+             {"entry_symbol", Entry},
+             {"initialize", false},
+             {"arguments", llvm::json::Array{0x20000000}},
+             {"memory", llvm::json::Array{llvm::json::Object{
+                            {"address", 0x20000000}, {"size", 4096}}}},
+             {"read_memory", llvm::json::Array{llvm::json::Object{
+                                 {"address", 0x20000000}, {"size", 88}}}}}},
+        {"linux_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{llvm::json::Object{
+                           {"path", "/fixture/input"},
+                           {"bytes_hex", "616c7068610a626574610a6c617374"},
+                           {"write_limit", 64}}}},
+             {"directories", llvm::json::Array{"/fixture/sub"}},
+             {"dynamic_proc_fds", true}}}};
+    const auto Options = jsonText(std::move(Request));
+    const auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned");
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

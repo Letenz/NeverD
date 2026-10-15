@@ -213,8 +213,31 @@ leave only through a nonlocal jump. Search filters recover their parent through
 `llvm.eh.recoverfp` with the exact owning function and runtime frame depth.
 Literal null reads keep their actual volatile memory effect and asynchronous
 scope. Installation checks each source occurrence, address, width and ordering;
-a changed or missing read fails closed. Cross-callee resumptions and EH4 jump
-buffers require additional native contracts.
+a changed or missing read fails closed. EH4 jump buffers require an additional
+native contract.
+
+Preserved EH3 helpers can borrow a generated parent buffer and resume it across
+their own registration frame. Each exact caller occurrence binds the helper's
+immutable code, cdecl argument slots, initialized four-byte parent objects and
+opaque capture identities. The helper must retire its local scopes before
+resuming the borrowed capture. Ordinary returning helpers use the same object
+projection. Their incidental EAX result must be unobserved in both current source
+SSA and generated IR. Native admission rejects dependencies on physical frame
+addresses, incoming register values, return PCs or the previous chain, including
+partial aliases. Exception code/flags comparisons retain their scalar semantics
+without losing conservative address-alias taint. Installation replays the source
+proof and checks every argument, target, call attribute and private buffer use.
+
+Checked EH3 parents can also call the original `RaiseException` IAT slot with
+zero exception arguments and a null argument array, and `_controlfp_s` with a
+proved mask and private four-byte output object. Native lowering supplies the
+actual argument values, stdcall/cdecl convention and import indirection. A
+continuable exception can return to the parent after a nonlocal resumption;
+the `_controlfp_s` result remains observable. Installation replays the source
+runtime proof, provider identity, exact IAT slot and invocation-local argument
+reads. It rejects altered imports, values, attributes and reordered reads.
+Closed ordinary and callback instruction graphs exclude trailing helper code
+from inferred registration ranges, even without alignment padding.
 
 Call-free parent blocks reached at several proved scope levels select their
 asynchronous SEH interval from the protected logical state slot. The body runs
@@ -235,8 +258,8 @@ and callee-saved registers and SP must be restored. Frame provenance survives
 flags, vector aliases, spills and calls. A return-address observer may record
 the regenerated call site for an external observer; reloading that value inside
 the source/callee closure is rejected. Opaque imports other than authenticated
-`RaiseException` and the jump routines described above, and memory intrinsics without a checked access contract, are
-outside this native subset.
+`RaiseException`, `_controlfp_s` and the jump routines described above, and
+memory intrinsics without a checked access contract, are outside this native subset.
 
 The compiler emits indexed scope rows with exact table extent, enclosing state,
 filter/handler targets and source semantic receipts. The PE transaction checks

@@ -21,12 +21,25 @@ llvm::Expected<uint64_t> buildX64PageTables(
     MemoryProjection &Memory, bool UserMode, bool ExceptionMonitor,
     llvm::ArrayRef<ExecutionWatch> NoExecutePages, uint64_t WatchEpoch,
     bool WatchWrites, std::optional<uint64_t> WriteGuard,
-    X64PageTableCache *Cache) {
+    X64PageTableCache *Cache, bool WatchInitialization) {
   // The watch epoch occupies the bits above the gateway and write variants.
   // Neither a changed overlay nor a temporary step can reuse the other root.
   const uint64_t Variant =
       (ExceptionMonitor ? x64::gateway::ProjectionVariant : 0) |
-      (WatchWrites ? 2 : 0) | (WriteGuard ? 4 : 0) | (WatchEpoch << 3);
+      (WatchWrites ? 2 : 0) | (WriteGuard ? 4 : 0) |
+      (WatchInitialization ? 8 : 0) | (WatchEpoch << 4);
+  const auto Initialization = WatchInitialization
+                                  ? Memory.physicalInitializationWatches()
+                                  : llvm::ArrayRef<MemoryWriteWatch>();
+  const auto PhysicalWrites = Memory.physicalWriteWatches();
+  std::vector<MemoryWriteWatch> PhysicalGuards(Initialization.begin(),
+                                               Initialization.end());
+  if (WatchWrites)
+    PhysicalGuards.insert(PhysicalGuards.end(), PhysicalWrites.begin(),
+                          PhysicalWrites.end());
+  if (WriteGuard)
+    PhysicalGuards.push_back({*WriteGuard, x64::PageSize});
+  Memory.setProjectionWriteGuards(PhysicalGuards);
   const uint64_t PreviousRoot = Memory.projectionRoot(GuestArchitecture::X64);
   if (!Memory.needsProjection(GuestArchitecture::X64, UserMode, Variant))
     return Memory.transportPhysical(PreviousRoot);
@@ -34,7 +47,7 @@ llvm::Expected<uint64_t> buildX64PageTables(
                             ? x64::SecondTableRoot
                             : x64::FirstTableRoot;
   if (Cache && Cache->update(Memory, UserMode, Root, Variant, NoExecutePages,
-                             WatchWrites, WriteGuard))
+                             WatchWrites, WriteGuard, Initialization))
     return Memory.transportPhysical(Root);
   if (Cache) {
     Cache->Root = 0;
@@ -88,7 +101,6 @@ llvm::Expected<uint64_t> buildX64PageTables(
     }
     return llvm::Error::success();
   };
-  const auto PhysicalWrites = Memory.physicalWriteWatches();
   for (const auto &[VA, P] : Memory.mappings()) {
     if (P.IO) {
       // One bounded operand may use private scratch to obtain the original
@@ -114,7 +126,7 @@ llvm::Expected<uint64_t> buildX64PageTables(
       Entry |= x64::NoExecute;
     const uint64_t BaseEntry = Entry;
     Entry = x64WatchEntry(Entry, VA, P.Physical, NoExecutePages, PhysicalWrites,
-                          WatchWrites, WriteGuard);
+                          WatchWrites, WriteGuard, Initialization);
     if (auto E = MapPage(VA, Entry, BaseEntry, P.Physical))
       return E;
   }
@@ -138,7 +150,7 @@ llvm::Expected<uint64_t> buildX64PageTables(
   Memory.commitProjection(GuestArchitecture::X64, UserMode, Variant, Root);
   if (Cache)
     Cache->remember(Memory, Root, Variant, NoExecutePages, WatchWrites,
-                    WriteGuard);
+                    WriteGuard, Initialization);
   return Memory.transportPhysical(Root);
 }
 } // namespace neverd::emulation

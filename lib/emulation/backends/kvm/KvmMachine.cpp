@@ -27,6 +27,18 @@
 
 namespace neverd::emulation {
 namespace {
+constexpr uint32_t FSBaseMSR = 0xc0000100, KernelGSBaseMSR = 0xc0000102;
+llvm::Expected<uint64_t> kernelGSBase(int CPU) {
+  struct {
+    uint32_t Count = 1, Padding = 0;
+    kvm_msr_entry Entry{};
+  } Value;
+  static_assert(offsetof(decltype(Value), Entry) == sizeof(kvm_msrs));
+  Value.Entry.index = KernelGSBaseMSR;
+  if (ioctl(CPU, KVM_GET_MSRS, &Value) != 1)
+    return diagnostic::error(diagnostic::KvmState);
+  return Value.Entry.data;
+}
 bool sameState(const kvm_segment &L, const kvm_segment &R) {
 #define NEVERD_KVM_X64_SEGMENT_FIELD(Field)                                    \
   if (L.Field != R.Field)                                                      \
@@ -82,6 +94,58 @@ public:
   X64BranchModel BranchModel = X64BranchModel::Intel;
   X64BranchModel branchModel() const override { return BranchModel; }
   explicit KvmMachine(MemoryProjection &Memory) : Memory(Memory) {}
+  llvm::Error enableDirectSupervisor() {
+#if defined(KVM_CAP_X86_MSR_FILTER) && defined(KVM_CAP_X86_USER_SPACE_MSR)
+    if (ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_X86_MSR_FILTER) <= 0 ||
+        ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_X86_USER_SPACE_MSR) <= 0 ||
+        ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_DEBUGREGS) <= 0 ||
+        ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_READONLY_MEM) <= 0)
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
+    kvm_enable_cap Capability{};
+    Capability.cap = KVM_CAP_X86_USER_SPACE_MSR;
+    Capability.args[0] = KVM_MSR_EXIT_REASON_FILTER;
+    if (ioctl(VM, KVM_ENABLE_CAP, &Capability) < 0)
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
+    // KVM owns reads in its ordinary architectural/vendor MSR windows. The
+    // default-deny rule intercepts every write except the two TLS bases that
+    // our public context retains. It also refuses other read windows without
+    // supplying invented register values or completing an unhandled exit.
+    std::array<uint8_t, KVM_MSR_FILTER_MAX_BITMAP_SIZE> Readable;
+    Readable.fill(0xff);
+    uint8_t TLS = 3;
+    kvm_msr_filter Filter{};
+    Filter.flags = KVM_MSR_FILTER_DEFAULT_DENY;
+    unsigned Index = 0;
+    for (uint32_t Base : {0u, 0x40000000u, 0xc0000000u, 0xc0010000u})
+      Filter.ranges[Index++] = {KVM_MSR_FILTER_READ,
+                                uint32_t(Readable.size() * 8), Base,
+                                Readable.data()};
+    Filter.ranges[Index] = {KVM_MSR_FILTER_WRITE, 2, FSBaseMSR, &TLS};
+    if (ioctl(VM, KVM_X86_SET_MSR_FILTER, &Filter) < 0)
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
+    const int Slots = ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_NR_MEMSLOTS);
+    if (Slots <= 0)
+      return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                     BackendAvailability::MissingCapability);
+    MaxMemorySlots = unsigned(Slots);
+    for (const auto &Mapping : Memory.registrations()) {
+      kvm_userspace_memory_region Region{};
+      Region.slot = NativeSlots.size();
+      Region.guest_phys_addr = Mapping.Physical;
+      Region.memory_size = Mapping.Size;
+      Region.userspace_addr = reinterpret_cast<uintptr_t>(Mapping.Backing);
+      NativeSlots.push_back(Region);
+    }
+    DirectSupervisor = true;
+    return llvm::Error::success();
+#else
+    return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                   BackendAvailability::MissingCapability);
+#endif
+  }
   void initializeSynchronizedRegisters() {
     const int Supported = ioctl(System, KVM_CHECK_EXTENSION, KVM_CAP_SYNC_REGS);
     if (Supported > 0)
@@ -113,11 +177,101 @@ public:
   }
 
 private:
+  llvm::Error protectPhysicalWrites() {
+    std::vector<MemoryWriteWatch> Guards;
+    for (const auto &W : Memory.projectionWriteGuards()) {
+      const uint64_t First = W.Address & ~(x64::PageSize - 1);
+      const uint64_t End = (W.Address + W.Size - 1) | (x64::PageSize - 1);
+      Guards.push_back({First, End - First + 1});
+    }
+    llvm::sort(Guards, [](const auto &L, const auto &R) {
+      return L.Address < R.Address;
+    });
+    std::vector<MemoryWriteWatch> Merged;
+    for (const auto &G : Guards) {
+      if (!Merged.empty() &&
+          G.Address <= Merged.back().Address + Merged.back().Size) {
+        auto &Last = Merged.back();
+        Last.Size = std::max(Last.Address + Last.Size, G.Address + G.Size) -
+                    Last.Address;
+      } else {
+        Merged.push_back(G);
+      }
+    }
+    std::vector<kvm_userspace_memory_region> Next;
+    for (const auto &Mapping : Memory.registrations()) {
+      const uint64_t Begin = Memory.transportOffset(Mapping.Physical);
+      const uint64_t End = Begin + Mapping.Size;
+      uint64_t At = Begin;
+      const auto Append = [&](uint64_t Last, bool ReadOnly) {
+        if (Last == At)
+          return;
+        kvm_userspace_memory_region Region{};
+        Region.slot = Next.size();
+        Region.flags = ReadOnly ? KVM_MEM_READONLY : 0;
+        Region.guest_phys_addr = Memory.transportPhysical(At);
+        Region.memory_size = Last - At;
+        Region.userspace_addr =
+            reinterpret_cast<uintptr_t>(Mapping.Backing) + At - Begin;
+        Next.push_back(Region);
+        At = Last;
+      };
+      for (const auto &G : Merged) {
+        const uint64_t First = std::max(Begin, G.Address);
+        const uint64_t Last = std::min(End, G.Address + G.Size);
+        if (First >= Last)
+          continue;
+        Append(First, false);
+        Append(Last, true);
+      }
+      Append(End, false);
+    }
+    if (Next.size() > MaxMemorySlots)
+      return diagnostic::error(diagnostic::KvmDirectSlots);
+    const bool SameLayout =
+        llvm::equal(NativeSlots, Next, [](const auto &L, const auto &R) {
+          return L.slot == R.slot && L.guest_phys_addr == R.guest_phys_addr &&
+                 L.memory_size == R.memory_size &&
+                 L.userspace_addr == R.userspace_addr;
+        });
+    if (!SameLayout) {
+      // KVM permits neither resizing a slot nor changing its READONLY flag.
+      // The vCPU is stopped; remove the old layout before registering its
+      // split.
+      for (auto Region : NativeSlots) {
+        Region.memory_size = 0;
+        if (ioctl(VM, KVM_SET_USER_MEMORY_REGION, &Region) < 0)
+          return diagnostic::error(diagnostic::KvmMap);
+      }
+    }
+    for (size_t I = 0; I < Next.size(); ++I) {
+      if (SameLayout && NativeSlots[I].flags == Next[I].flags)
+        continue;
+      if (SameLayout) {
+        auto Previous = NativeSlots[I];
+        Previous.memory_size = 0;
+        if (ioctl(VM, KVM_SET_USER_MEMORY_REGION, &Previous) < 0)
+          return diagnostic::error(diagnostic::KvmMap);
+      }
+      if (ioctl(VM, KVM_SET_USER_MEMORY_REGION, &Next[I]) < 0)
+        return diagnostic::error(diagnostic::KvmMap);
+    }
+    NativeSlots = std::move(Next);
+    return llvm::Error::success();
+  }
+  bool physicalWriteProtected(uint64_t Address) const {
+    return llvm::any_of(NativeSlots, [&](const auto &R) {
+      return (R.flags & KVM_MEM_READONLY) && Address >= R.guest_phys_addr &&
+             Address - R.guest_phys_addr < R.memory_size;
+    });
+  }
   /// One hardware entry. A single step ends at the next instruction boundary;
   /// a free entry ends only at a synchronous exception or an interruption.
   llvm::Error enter(X64MachineState &State, uint64_t Root,
                     MachineRunControl Control, bool Single,
                     llvm::ArrayRef<uint64_t> Stops = {}) {
+    if (DirectSupervisor && (State.UserMode || Poisoned))
+      return diagnostic::error(diagnostic::KvmDirectState);
     if (Stops.size() > x64::ExecutionStopCount ||
         llvm::any_of(Stops, [](uint64_t PC) { return !x64::canonical(PC); }))
       return diagnostic::error(diagnostic::DirectExecutionUnsupported);
@@ -131,6 +285,12 @@ private:
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
     kvm_sregs S{};
+    kvm_sregs EntrySpecial{};
+    kvm_debugregs EntryDebug{};
+    uint64_t EntryKernelGS = 0;
+    std::vector<uint8_t> EntryMonitor;
+    bool Prepared = false, Captured = false, UnsupportedMSR = false;
+    bool UnsupportedWrite = false;
     const uint64_t Monitor = x64ExceptionMonitorBase(Memory);
     if (Monitor < x64::KernelMin ||
         !x64::canonicalRange(Monitor, x64::gateway::Bytes))
@@ -145,6 +305,9 @@ private:
                                        MXCSRMask))
         return E;
     auto Prepare = [&]() -> llvm::Error {
+      if (DirectSupervisor)
+        if (auto E = protectPhysicalWrites())
+          return E;
       if (WasRunnable && (SynchronizedRegisters & KVM_SYNC_X86_SREGS))
         S = CapturedSpecial;
       else if (ioctl(CPU, KVM_GET_SREGS, &S) < 0)
@@ -215,6 +378,19 @@ private:
       // Without an in-kernel APIC, KVM_RUN takes CR8 from the shared run area,
       // even when KVM_SET_SREGS already installed that register.
       Run->cr8 = State.reg(X64Register::CR8);
+      if (DirectSupervisor) {
+        EntrySpecial = S;
+        if (ioctl(CPU, KVM_GET_DEBUGREGS, &EntryDebug) < 0)
+          return diagnostic::error(diagnostic::KvmState);
+        auto KernelGS = kernelGSBase(CPU);
+        if (!KernelGS)
+          return KernelGS.takeError();
+        EntryKernelGS = *KernelGS;
+        EntryMonitor.resize(2 * x64::PageSize);
+        std::memcpy(EntryMonitor.data(), Memory.data() + x64::gateway::DataGPA,
+                    EntryMonitor.size());
+      }
+      Prepared = true;
       return llvm::Error::success();
     };
     auto Capture = [&]() -> llvm::Error {
@@ -225,10 +401,19 @@ private:
       const bool Debugged = !Single && !Stops.empty() &&
                             Run->exit_reason == KVM_EXIT_DEBUG &&
                             Run->debug.arch.exception == x64::DebugVector;
+#if defined(KVM_EXIT_X86_RDMSR) && defined(KVM_EXIT_X86_WRMSR)
+      UnsupportedMSR =
+          DirectSupervisor && (Run->exit_reason == KVM_EXIT_X86_RDMSR ||
+                               Run->exit_reason == KVM_EXIT_X86_WRMSR);
+#endif
+      UnsupportedWrite =
+          DirectSupervisor && Run->exit_reason == KVM_EXIT_MMIO &&
+          Run->mmio.is_write && physicalWriteProtected(Run->mmio.phys_addr);
       // Synchronous exceptions enter a private IDT/IST and complete one HLT.
       // There is no unfinished KVM IO/MMIO operation to carry into a new entry.
       // Authenticate that gateway before publishing any architectural state.
-      if (!Stepped && !Exception && !Debugged) {
+      if (!Stepped && !Exception && !Debugged && !UnsupportedMSR &&
+          !UnsupportedWrite) {
         (void)ioctl(CPU, KVM_GET_REGS, &R);
         (void)ioctl(CPU, KVM_GET_SREGS, &S);
         return llvm::createStringError(
@@ -238,6 +423,8 @@ private:
                               ? Run->debug.arch.exception
                           : Run->exit_reason == KVM_EXIT_FAIL_ENTRY
                               ? Run->fail_entry.hardware_entry_failure_reason
+                          : Run->exit_reason == KVM_EXIT_INTERNAL_ERROR
+                              ? Run->internal.suberror
                               : 0,
                           R.rip, S.cr2)
                 .str());
@@ -250,14 +437,78 @@ private:
         return diagnostic::error(diagnostic::KvmState);
       if (SynchronizedRegisters & KVM_SYNC_X86_SREGS)
         S = Run->s.regs.sregs;
-      else if (Exception && ioctl(CPU, KVM_GET_SREGS, &S) < 0)
+      else if ((Exception || DirectSupervisor) &&
+               ioctl(CPU, KVM_GET_SREGS, &S) < 0)
         return diagnostic::error(diagnostic::KvmState);
       if (ioctl(CPU, KVM_GET_XSAVE, &F) < 0)
         return diagnostic::error(diagnostic::KvmState);
+      Captured = true;
       return llvm::Error::success();
     };
     auto Next = State;
+    const auto ValidateSpecial = [&](const X64Exception *Trap,
+                                     bool DebugBoundary) -> llvm::Error {
+      if (!DirectSupervisor)
+        return llvm::Error::success();
+      const auto Refuse = [&]() {
+        Poisoned = true;
+        State = Next;
+        return llvm::make_error<X64UnsupportedStateError>(
+            diagnostic::KvmDirectState);
+      };
+      Next.GSBase = S.gs.base;
+      Next.FSBase = S.fs.base;
+      Next.reg(X64Register::CR8) = S.cr8;
+      auto Normalized = S;
+      // The public context represents these fields. All other live special
+      // state must match the entry; do not erase a guest change on re-entry.
+      Normalized.cr8 = EntrySpecial.cr8;
+      Normalized.fs.base = EntrySpecial.fs.base;
+      Normalized.gs.base = EntrySpecial.gs.base;
+      if (Trap) {
+        // Only an authenticated monitor frame authorizes normalization of
+        // the gateway's CS/SS and a processor-written page-fault address.
+        Normalized.cs = EntrySpecial.cs;
+        Normalized.ss = EntrySpecial.ss;
+        if (Trap->Vector == unsigned(x64::ExceptionVector::PageFault))
+          Normalized.cr2 = EntrySpecial.cr2;
+      }
+      if (!sameState(Normalized, EntrySpecial) ||
+          !std::equal(EntryMonitor.begin(), EntryMonitor.end(),
+                      Memory.data() + x64::gateway::DataGPA))
+        return Refuse();
+      kvm_debugregs Debug{};
+      if (ioctl(CPU, KVM_GET_DEBUGREGS, &Debug) < 0)
+        return diagnostic::error(diagnostic::KvmState);
+      auto KernelGS = kernelGSBase(CPU);
+      if (!KernelGS)
+        return KernelGS.takeError();
+      if (!llvm::equal(Debug.db, EntryDebug.db) ||
+          Debug.dr7 != EntryDebug.dr7 || Debug.flags != EntryDebug.flags ||
+          *KernelGS != EntryKernelGS)
+        return Refuse();
+      // Ignore only status bits produced by our private step/watch. A guest
+      // debug exception may itself change state the public context cannot
+      // retain, in which case this conservative profile must stop.
+      const uint64_t Instrumentation =
+          DebugBoundary ? x64::DebugSingleStep | 0xf : 0;
+      if ((Debug.dr6 ^ EntryDebug.dr6) & ~Instrumentation)
+        return Refuse();
+      return llvm::Error::success();
+    };
     auto Complete = [&]() -> llvm::Error {
+      if (UnsupportedWrite) {
+        // MMIO has a pending kernel operation. Its complete architectural
+        // state is unavailable until reentry, which would finish the rejected
+        // write. Keep this a terminal diagnostic; publish no partial context.
+        Poisoned = true;
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            llvm::formatv("{0} (KVM RIP=0x{1:x}, physical=0x{2:x})",
+                          diagnostic::KvmDirectMemory, R.rip,
+                          Run->mmio.phys_addr)
+                .str());
+      }
       if (auto E =
               decodeX64XsaveState(Next, {Bytes, sizeof(F.region)}, MXCSRMask))
         return E;
@@ -265,6 +516,14 @@ private:
   Next.reg(X64Register::Name) = R.Field;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
+      if (UnsupportedMSR) {
+        if (auto E = ValidateSpecial(nullptr, false))
+          return E;
+        State = Next;
+        Poisoned = true;
+        return llvm::make_error<X64UnsupportedStateError>(
+            diagnostic::KvmDirectMSR);
+      }
       if (Run->exit_reason == KVM_EXIT_HLT) {
         if (S.cs.selector != x64::CodeSelector)
           return diagnostic::error(x64::exceptiontext::Gateway);
@@ -272,40 +531,63 @@ private:
             consumeX64ExceptionMonitor(Memory, Next, State, S.cr2, Single);
         if (!Trap)
           return Trap.takeError();
+        if (auto E = ValidateSpecial(&*Trap, false))
+          return E;
         State = Next;
         return llvm::make_error<X64ExceptionError>(*Trap);
       }
       if (!Single && Run->exit_reason == KVM_EXIT_DEBUG) {
         if (!x64::executionStopHit(Stops, R.rip, Run->debug.arch.dr6)) {
+          X64Exception Trap{x64::DebugVector, std::nullopt, std::nullopt};
+          if (auto E = ValidateSpecial(nullptr, true))
+            return E;
           State = Next;
-          return llvm::make_error<X64ExceptionError>(
-              X64Exception{x64::DebugVector, std::nullopt, std::nullopt});
+          return llvm::make_error<X64ExceptionError>(Trap);
         }
         Next.reg(X64Register::FLAGS) &= ~x64::ResumeFlag;
       }
+      if (auto E = ValidateSpecial(nullptr, Run->exit_reason == KVM_EXIT_DEBUG))
+        return E;
       return llvm::Error::success();
     };
     if (auto E = runUntilExit(Control, Prepare, Capture, Complete)) {
       // A cancelled free entry stopped at an instruction boundary inside the
       // kernel. Its registers are the only record of the work done so far.
-      if (!Single && E.isA<MachineInterruptedError>()) {
+      if ((!Single || DirectSupervisor) && E.isA<MachineInterruptedError>() &&
+          (!DirectSupervisor || Prepared)) {
         if (ioctl(CPU, KVM_GET_REGS, &R) < 0 ||
-            ioctl(CPU, KVM_GET_XSAVE, &F) < 0)
+            (DirectSupervisor && ioctl(CPU, KVM_GET_SREGS, &S) < 0) ||
+            ioctl(CPU, KVM_GET_XSAVE, &F) < 0) {
+          llvm::consumeError(std::move(E));
+          Poisoned |= DirectSupervisor;
           return diagnostic::error(diagnostic::KvmState);
-        if (auto Decoded =
-                decodeX64XsaveState(Next, {Bytes, sizeof(F.region)}, MXCSRMask))
+        }
+        if (auto Decoded = decodeX64XsaveState(Next, {Bytes, sizeof(F.region)},
+                                               MXCSRMask)) {
+          llvm::consumeError(std::move(E));
+          Poisoned |= DirectSupervisor;
           return Decoded;
+        }
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Next.reg(X64Register::Name) = R.Field;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
+        if (auto Invalid = ValidateSpecial(
+                nullptr, Captured && Run->exit_reason == KVM_EXIT_DEBUG)) {
+          llvm::consumeError(std::move(E));
+          Poisoned |= DirectSupervisor;
+          return Invalid;
+        }
         State = Next;
       }
+      if (DirectSupervisor && !E.isA<MachineInterruptedError>() &&
+          !E.isA<X64ExceptionError>())
+        Poisoned = true;
       return E;
     }
+    State = Next;
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::KvmRun, Control);
-    State = Next;
     // Only acknowledged, fully decoded debug exits establish reusable state.
     // Host writes or context restoration are compared against this capture;
     // faults, failed transfers and cancellation invalidate it on next entry.
@@ -320,6 +602,9 @@ private:
   kvm_sregs CapturedSpecial{};
   uint64_t SynchronizedRegisters = 0;
   bool Runnable = false;
+  bool DirectSupervisor = false, Poisoned = false;
+  unsigned MaxMemorySlots = 0;
+  std::vector<kvm_userspace_memory_region> NativeSlots;
 };
 // KVM returns zeros from CPUID until userspace installs a table. Advertise
 // the host vendor and a leaf-1 identity without XSAVE or the hypervisor bit.
@@ -361,7 +646,7 @@ llvm::Error installUserCpuIdentity(int, int CPU) {
 }
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>
-createKvmMachine(MemoryProjection &Memory) {
+createKvmMachine(MemoryProjection &Memory, bool DirectSupervisor) {
   auto M = std::make_unique<KvmMachine>(Memory);
   if (auto E = M->initialize(Memory.registrations()))
     return E;
@@ -381,14 +666,17 @@ createKvmMachine(MemoryProjection &Memory) {
   if (auto E =
           verifyX64Machine(*M, Memory, &M->MXCSRMask, true, &M->BranchModel))
     return E;
+  if (DirectSupervisor)
+    if (auto E = M->enableDirectSupervisor())
+      return E;
   return std::unique_ptr<X64Machine>(std::move(M));
 }
 } // namespace neverd::emulation
 #else
 
 namespace neverd::emulation {
-llvm::Expected<std::unique_ptr<X64Machine>>
-createKvmMachine(MemoryProjection &) {
+llvm::Expected<std::unique_ptr<X64Machine>> createKvmMachine(MemoryProjection &,
+                                                             bool) {
   return diagnostic::unavailable(diagnostic::Unavailable);
 }
 } // namespace neverd::emulation

@@ -1705,6 +1705,10 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `WindowsX64Context.def` が共通レイアウト、`WindowsX64Context.cpp` が整数取得と論理セレクタを所有します。ユーザーの完全 FP とカーネルの限定 FP は分離します。`DriverContextCapture.cpp` は同期・非再入コールバックで CPU を借用し、`KernelModelContextCapture.cpp` がメモリ、実際の戻り値、効果を管理します。全検証後に FLAGS を原子的に設定して検証済み RAM を書きます。任意の書き込み失敗や並行マッピング変更のロールバックではありません。
 
+### ゼロをまたぐシンボリック領域座標
+
+`SymState` が 2^64 を法とする相対座標を使うのは、シンボリックな基底が 64 ビットの領域だけです。相対座標のゼロをまたぐ読み取りは、折り返さない二つの範囲に分割し、各入力の由来を一つの範囲内に保ちます。書き込みは値全体を保存します。絶対メモリ、レジスタ、一時記憶域の範囲オーバーフローは引き続き拒否します。この索引規則は実アドレスの有効性、非エイリアス性、フレーム分離を前提として与えません。通常の領域間無効化と STORE ごとの保存証明は変わらず、Unicorn、KVM、WHP が同じ解析規則を共有します。
+
 ### 有界 libSystem インポート
 
 `MachOProgramLinking` は元の classic/generic64 形式、完全な未定義シンボル閉包、準備予算を所有します。Darwin process は提供元/シンボル許可、ポインタ公開、fixup 後の読み取り専用化、libSystem 入口と errno を管理します。`DarwinLibSystemCalls.def` の名前と引数数は `DarwinServices` の型付き効果に結び付き、raw trap を捏造しません。予約と最大保護は `DarwinMemory`、共有期限は `ExecutionBudget`、任意の `darwin.native_calls` 出力は `ProcessReport` が所有し、ホストのライブラリはロードしません。

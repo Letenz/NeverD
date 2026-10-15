@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -19,6 +20,9 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   if (!Function.RegistrationStates)
     return std::nullopt;
   const auto &States = *Function.RegistrationStates;
+  const auto Bound = getX86RegistrationSEHBoundCalls(Function);
+  if (!Bound)
+    return std::nullopt;
   if (!States.SEHJumpCapturesComplete || !States.SEHJumpResumptionsComplete ||
       States.HasEH3JumpCaptures != !States.SEHJumpCaptures.empty())
     return std::nullopt;
@@ -98,17 +102,30 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     const auto Capture = Captures.find(Resume.CaptureCall);
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
         Capture == Captures.end() || (Call->Capture && !Call->Resume) ||
-        Resume.CalleeVA || Resume.ResumeVA || !Resume.ValueOffset ||
         Resume.ResumedLevels.size() != 1 ||
         Resume.TargetVA != Capture->second->EndAddress ||
         Resume.BufferOffset != Capture->second->BufferOffset ||
-        Resume.StackOffset != Capture->second->StackOffset ||
-        !Call->Operation->DoesNotReturn)
+        Resume.StackOffset != Capture->second->StackOffset)
+      return std::nullopt;
+    if (Resume.CalleeVA || Resume.ResumeVA) {
+      const auto Callee = Bound->find(Resume.Address);
+      if (Callee == Bound->end() || Resume.ValueOffset || Resume.EntryVA ||
+          Resume.OrdinaryCall || !Resume.ResumeVA ||
+          Callee->second.Source->TargetVA != Resume.CalleeVA ||
+          !llvm::any_of(Callee->second.Source->Arguments, [&](const auto &Arg) {
+            return Arg.ArgumentKind ==
+                       RegistrationSEHBoundArgument::Kind::JumpBuffer &&
+                   Arg.Capture == Resume.CaptureCall;
+          }))
+        return std::nullopt;
+    } else if (!Resume.ValueOffset || !Call->Operation->DoesNotReturn)
       return std::nullopt;
     const auto [Level, NewLevel] =
         ResumeLevels.emplace(Resume.CaptureCall, Resume.ResumedLevels.front());
     if (!NewLevel && Level->second != Resume.ResumedLevels.front())
       return std::nullopt;
+    if (Resume.CalleeVA)
+      continue;
     if (Resume.EntryVA) {
       const auto &Scopes = Function.ExceptionMetadata->Registration->Scopes;
       Work += Scopes.size() + States.SEHControls.size();

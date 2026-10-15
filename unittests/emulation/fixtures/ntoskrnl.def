@@ -126,3 +126,28 @@ EXPORTS
   ExpInterlockedFlushSList
   ExQueryDepthSList
   FirstEntrySList
+  strlen
+  wcslen
+  strnlen
+  wcsnlen
+  strcmp
+  wcscmp
+  strncmp
+  wcsncmp
+  _stricmp
+  _wcsicmp
+  _strnicmp
+  _wcsnicmp
+  strchr
+  wcschr
+  strrchr
+  wcsrchr
+  strstr
+  wcsstr
+  strspn
+  wcsspn
+  wcscspn
+  KeAcquireInStackQueuedSpinLock
+  KeReleaseInStackQueuedSpinLock
+  KeAcquireInStackQueuedSpinLockAtDpcLevel
+  KeReleaseInStackQueuedSpinLockFromDpcLevel

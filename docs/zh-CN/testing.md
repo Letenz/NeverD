@@ -1666,11 +1666,11 @@ MSVC 单元测试目标使用 `/bigobj`，允许 GoogleTest 和 LLVM 模板实�
 
 ## 源码与原生对象 patch
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-当前矩阵要求 143 项检查成功，覆盖源码／IR／原生对象、四架构三格式、ARMv7k watchOS 与 ARMv7 iOS、可写／只读状态、浮点／栈参数和两次非零基址变化。旧 32 位 Mach-O 使用真实编译器代码和元数据的容器执行测试，不代表操作系统运行验证；原生对象不伪造 MC 范围身份。
+当前矩阵要求 154 项检查成功，覆盖源码／IR／原生对象、四架构三格式、ARMv7k watchOS 与 ARMv7 iOS、可写／只读状态、浮点／栈参数和两次非零基址变化。旧 32 位 Mach-O 使用真实编译器代码和元数据的容器执行测试，不代表操作系统运行验证；原生对象不伪造 MC 范围身份。
 
 [源码与原生对象 patch](source-patching.md)
 
@@ -1871,6 +1871,19 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 `check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
 `longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+`longjmp-runtime-raise` 与 `longjmp-runtime-continue` 在非局部恢复后调用原
+`RaiseException` 导入，分别验证 handler 进入和 filter 允许继续执行。
+`longjmp-control-fp` 在捕获前观察 `_controlfp_s` 的返回值和私有输出对象。
+每个场景执行 16 项契约破坏检查，覆盖运行时 ABI、provider/IAT 身份、实际参数、
+import 存储、调用属性和读取顺序。继续执行场景还验证没有填充的相邻 helper 不会
+继承父函数 EH 范围；`RegistrationInstructionRange.*` 覆盖全部运行时入口、未解析或
+逃逸的边、重叠指令及工作预算耗尽。
+
+`longjmp-callee` 与 `longjmp-returning-callee` 分别执行跨注册帧恢复和普通返回的
+父栈对象借用；`longjmp-scalar-callee` 检查标量参数投影，并拒绝将参数读取提前到
+源写入之前的 IR 变异。独立反例拒绝物理帧观察、错误缓冲区或对象、调用属性变化及被观察的附带
+返回值。共享帧测试检查异常标量经过部分 spill 后仍保留地址别名检查，且不能掩盖混入的
+物理指针位。
 通过 `--runtime-root` 指定捕获的微软 x86 CRT 目录；报告保存 provider 清单及 SHA-256，
 输出目录保存同一份 DLL。内层作用域测试在 Wine 下必须使用该参数，因为 Wine 9 内置
 CRT 的局部展开停止规则不同。focused CI 使用原生 CRT 跑完全部源测试，然后通过
@@ -1889,3 +1902,7 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 ### 有界内核调用者上下文捕获
 
 `KernelContextCaptureTests` 检查全部记录和保护字节、栈暂存、标志、别名、重叠、对象、权限、IRQL 及采集/设置失败。`DriverContextCaptureTests` 检查实时 GPR/FPCW/MXCSR/XMM、重定位后的入口/请求/卸载、导入和动态调用、无效目标及依赖保留。12 次逐字节校验明确采用 400000 条测试指令预算；夹具使用 checked 初始 FPCW，独立 collector 用例改变该值。每个原生后端的 17 项均为必跑；Linux 上不可用的 WHP 明确跳过。已有 x64/ARM64 用户上下文测试保护原行为。
+
+### 跨过零点的符号区域坐标
+
+`SymRegionWrap.*` 检查两种字节序、跨相对零点的完整和局部访问、不回绕的输入来源、复制后的未知状态纪元、精确和不足的保存预算，以及绝对／标量范围溢出的拒绝。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` 断言符号地址仍为 `base - 1`，并用独立字节校验器检查完整 STORE 副作用、原生返回地址字和恢复后的栈状态。缺少分离证明或入口对齐时仍须拒绝。

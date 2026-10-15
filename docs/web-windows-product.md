@@ -46,14 +46,25 @@ the existing complete producer/resource gate at the same source commit before
 publishing those exact verified bytes. The receipt and checksum identify the
 source, dependency pins, selected host profile and qualification run.
 
-The [native and extracted archive qualification](https://github.com/NeverSight/NeverD/actions/runs/38675592150)
-at `d7af8fd059fdee3c9fcaf05713d6f9f2061a459b` passes 110 native cases,
+The [native and extracted archive qualification](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
+at `5e126750ae7513591b6d79056c02358fe55da0f1` passes 110 native cases,
 two adapter checks and all six installed checks with zero failures/skips on
 Windows Server 2025 x64. The native selection includes sixteen NTFS ownership
 cases and eight self-contained native handoff cases. The installed consumer
 uses only System32 in PATH, loads this archive's DLL/ICU, and exercises immutable
 export, ASAR, CLI metadata/inventory JSONL, the worker handshake and MCP import
 preview. The product receipt binds every archive member and its exact bytes.
+The same run also passes all eleven full producer and fifteen CEF/resource
+cases on the named macOS arm64 reader, with zero failures or skips.
+
+The [2026-10-15 Windows Web product Release](https://github.com/NeverSight/NeverD/releases/tag/web-product-windows-x64-2026-10-15)
+publishes this exact qualified source and archive. Both final gates and the
+publication job succeeded. Independent public downloads matched all eight
+entries in `SHA256SUMS`; the ZIP's 139 files matched the qualified receipt,
+and all 8,134 source files and `REBUILD.md` matched the tagged Git tree.
+The archive is `neverd-web-windows-x64-5e126750ae75.zip`, 60,769,171 bytes,
+with SHA-256
+`4b0f0d2b082fce4762ec0b346fb408eec09c53e098dac03d69562d45435d4982`.
 
 The Windows x64 host qualification does not establish ARM64 host support,
 universal framework coverage or general bytecode semantics. Existing named

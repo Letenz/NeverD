@@ -23,12 +23,17 @@ FrameValue join(FrameValue Left, const FrameValue &Right) {
   if (Left == Right)
     return Left;
   const bool MayBeFrame = Left.MayBeFrame || Right.MayBeFrame;
-  return {{},
-          {},
-          false,
-          MayBeFrame,
-          MayBeFrame && (!Left.MayBeFrame || Left.FrameOnlyFromCall) &&
-              (!Right.MayBeFrame || Right.FrameOnlyFromCall)};
+  FrameValue Result{{},
+                    {},
+                    false,
+                    MayBeFrame,
+                    MayBeFrame &&
+                        (!Left.MayBeFrame || Left.FrameOnlyFromCall) &&
+                        (!Right.MayBeFrame || Right.FrameOnlyFromCall)};
+  Result.FrameOnlyFromSEHScalar =
+      MayBeFrame && (!Left.MayBeFrame || Left.FrameOnlyFromSEHScalar) &&
+      (!Right.MayBeFrame || Right.FrameOnlyFromSEHScalar);
+  return Result;
 }
 
 namespace {
@@ -148,7 +153,8 @@ FrameValue FrameTransfer::read(const NdVar &Value) const {
         Byte + Value.Size <= 4)
       return FrameValue::constant((*Register.Constant >> (Byte * 8)) &
                                   (UINT32_MAX >> ((4 - Value.Size) * 8)));
-    return {{}, {}, false, Register.MayBeFrame};
+    return FrameValue::taint(Register.MayBeFrame,
+                             Register.FrameOnlyFromSEHScalar);
   }
   if (Value.isReg()) {
     FrameValue Result;
@@ -191,6 +197,9 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Result.FrameOnlyFromCall =
           (!Result.MayBeFrame || Result.FrameOnlyFromCall) &&
           Input.FrameOnlyFromCall;
+      Result.FrameOnlyFromSEHScalar =
+          (!Result.MayBeFrame || Result.FrameOnlyFromSEHScalar) &&
+          Input.FrameOnlyFromSEHScalar;
       Result.MayBeFrame = true;
     }
   }
@@ -210,7 +219,7 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
     const auto Input = read(Op.Inputs[0]);
     if (Op.Output.Size >= 4 && Op.Inputs[0].Size >= 4)
       return Input;
-    return {{}, {}, false, Input.MayBeFrame};
+    return FrameValue::taint(Input.MayBeFrame, Input.FrameOnlyFromSEHScalar);
   }
   if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
       Op.Inputs[1].isConst() && Op.Inputs[1].Offset == 0 && Op.Output.Size == 4)
@@ -380,17 +389,22 @@ void FrameTransfer::write(const LowOp &Op, FrameValue Value,
         State.Registers[Op.Output.Offset / x86reg::GeneralRegStride];
     if (Op.Output.Offset % x86reg::GeneralRegStride == 0 && Op.Output.Size >= 4)
       Register = Value;
-    else
-      Register = {{}, {}, false, Register.MayBeFrame || Value.MayBeFrame};
+    else {
+      const auto Merged = join(Register, Value);
+      Register =
+          FrameValue::taint(Merged.MayBeFrame, Merged.FrameOnlyFromSEHScalar);
+    }
   } else if (Op.Output.isReg()) {
     for (uint64_t Byte = 0; Byte < Op.Output.Size; ++Byte)
       if (Value.Constant && !Value.MayBeFrame && Op.Output.Size <= 4)
         State.OtherRegisterBytes[Op.Output.Offset + Byte] =
             FrameValue::constant((*Value.Constant >> (Byte * 8)) & UINT8_MAX);
-      else if (Value.MayBeFrame || State.OtherRegistersMayBeFrame)
+      else if (Value.MayBeFrame || State.OtherRegistersMayBeFrame) {
         State.OtherRegisterBytes[Op.Output.Offset + Byte] = {
             {}, {}, false, Value.MayBeFrame, Value.FrameOnlyFromCall};
-      else
+        State.OtherRegisterBytes[Op.Output.Offset + Byte]
+            .FrameOnlyFromSEHScalar = Value.FrameOnlyFromSEHScalar;
+      } else
         State.OtherRegisterBytes.erase(Op.Output.Offset + Byte);
   }
 }

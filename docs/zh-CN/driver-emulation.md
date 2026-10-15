@@ -27,6 +27,12 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
   --backend auto --execution-contract checked-x64-v1
 ```
 
+`direct-driver-x64-v1` 在 x64 KVM 上直接执行内核态代码，并复用现有驱动与内核模型。内核导出、回调返回、guard 跳板和停止观察点仍通过明确的执行边界处理。执行受时间与 API 事件预算约束；无法逐条计数，指令数报告为零。按指令调度、逐写入跟踪和自定义 CPUID 表会被拒绝。处理器标识与时间戳来自执行后端，并保留为捕获状态的环境依赖。不支持的特殊寄存器变化会明确失败。此执行契约本身不代表已恢复捕获的 SYS 文件。
+
+内核字段的初始化跟踪需要精确记录已提交的写入范围。在受监控的页面上，直接执行目前接受标量 MOV/MOVABS/XOR 和已支持的传统 SSE 存储指令，其他写入形式会明确失败。同值写入和部分字段仍按原有规则检查初始化。
+
+KVM 的物理只读槽还会保护受监控的 RAM 页，避免临时修改 CR0.WP 绕过写入监视。被拒绝的二级写入会终止执行，不会完成尚未提交的 MMIO 操作；诊断中的 RIP 不代表完整的已提交 CPU 上下文。槽位不足会明确失败。特殊状态在执行边界处检查，这不能证明执行期间没有临时修改 CR3 或映射。
+
 ## 构建与运行
 
 该功能需显式启用，且不依赖 `BUILD_TESTING`：
@@ -369,6 +375,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `KeGetCurrentIrql` | 读取当前 IRQL/CR8，包括显式升降级；派发和工作项从 `PASSIVE_LEVEL` 开始，DPC 从 `DISPATCH_LEVEL` 开始 |
 | `KfRaiseIrql`, `KeLowerIrql` | 真实的 x64 WDK IRQL 升降导入，包含内联辅助函数；每个执行必须在返回前按 LIFO 顺序恢复保存值。IRQL <= APC_LEVEL 的合法等待保留升降配对，并按等待时的 IRQL 恢复；DISPATCH_LEVEL 持锁不能挂起。CR8 反映每次变化；配置的 CPU0 事件抢占使用 `scheduling`；任意嵌套中断仍不受支持。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上驻留且对齐的执行自旋锁；检查所有者、获取与释放配对和 IRQL 恢复。竞争的阻塞获取会显式停止。 |
+| `KeAcquireInStackQueuedSpinLock`, `KeReleaseInStackQueuedSpinLock`, `KeAcquireInStackQueuedSpinLockAtDpcLevel`, `KeReleaseInStackQueuedSpinLockFromDpcLevel` | CPU0 上的在栈排队自旋锁。调用方的 `KLOCK_QUEUE_HANDLE` 记录锁，升高形式还记录保存的 IRQL；获取会升到 `DISPATCH_LEVEL` 并把句柄存入锁，而 `AtDpcLevel` 形式要求调用方已在该级别。释放会清除锁，升高形式恢复保存的 IRQL，且释放形式必须与获取相匹配。本协作处理器无法等待其他处理器持有的锁，会显式停止；分页、用户态或与锁重叠的句柄存储同样会停止。 |
 | `ExInterlockedInsertHeadList`、`ExInterlockedInsertTailList`、`ExInterlockedRemoveHeadList`、`ExInterlockedPushEntryList`、`ExInterlockedPopEntryList`、`ExInterlockedAddUlong`、`ExInterlockedAddLargeInteger` | 在任意 IRQL 下，于空闲的驻留执行自旋锁内屏蔽中断、保持 IRQL 不变完成一次更新。插入返回原来的相邻项或 NULL，移除保留被移除项自身的链接，加法回绕并返回原值。损坏的链接如内核的 `FAST_FAIL_CORRUPT_LIST_ENTRY` 一样停止；已被持有的锁，以及可分页、用户模式或与锁重叠的存储会显式停止。 |
 | `InitializeSListHead`、`ExpInterlockedPushEntrySList`、`ExpInterlockedPopEntrySList`、`ExpInterlockedFlushSList`、`ExQueryDepthSList`、`FirstEntrySList` | x64 无锁 `SLIST_HEADER` 列表，`InterlockedPushEntrySList`、`InterlockedPopEntrySList`、`InterlockedFlushSList` 宏及其 `ExInterlocked` 形式经由 `Exp` 导出到达这里。压入把 Depth 和 Sequence 同时加一，弹出只减少 Depth，清空会清除 Depth 和首项，弹出或清空的项保留各自的链接。`InitializeSListHead` 像内核一样对未对齐的表头引发 `STATUS_DATATYPE_MISALIGNMENT`；其他未对齐的表头和项会显式停止。`ExQueryDepthSList` 要求 `DISPATCH_LEVEL` 或更低，其余可在任意 IRQL 调用。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 设备拥有的不透明工作项；仅支持 `DelayedWorkQueue`，在 `PASSIVE_LEVEL` 将设备和上下文传给回调；禁止释放仍在队列中的项 |
@@ -387,6 +394,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `IoMarkIrpPending` | 标记当前存活的 IRP；也支持 WDM 宏对栈控制字段的等效写入；派发必须返回 `STATUS_PENDING` |
 | `IofCompleteRequest`、`IoCompleteRequest` | 使用 `IO_NO_INCREMENT` 执行完成展开，支持暂停／继续；仅在最终展开边界释放 IRP、MDL 和缓冲区 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | 有界的来宾缓冲区操作，每次调用最多 1 MiB；要求不重叠的复制 API 会拒绝重叠 |
+| `strlen`、`wcslen`、`strnlen`、`wcsnlen`、`strcmp`、`wcscmp`、`strncmp`、`wcsncmp`、`_stricmp`、`_wcsicmp`、`_strnicmp`、`_wcsnicmp`、`strchr`、`wcschr`、`strrchr`、`wcsrchr`、`strstr`、`wcsstr`、`strspn`、`wcsspn`、`wcscspn` | 导出的 C 运行时字符串辅助函数在任意 IRQL 下逐个单元读取调用方内存；没有终止符的扫描在 1 MiB 模型上限处停止。计数和查找结果遵循标准 C 语义：`strcmp`、`wcscmp`、`strncmp` 归一化为 -1、0 或 1，而 `wcsncmp` 和不区分大小写的一组返回原始差值，且仅折叠 ASCII A-Z。查找目标会被截断到单元宽度，并且连终止符一起查找，因此查找 0 会返回其地址；`strstr`/`wcsstr` 的空子串返回原串。空记录，或没有计数且越过已映射内存的扫描，都会明确失败。 |
 
 `MmProbeAndLockPages` 支持在 IRQL <= APC_LEVEL 下，以 `KernelMode` 锁定输入驱动镜像中由加载器拥有的单个连续区间。镜像页必须可读，并受物理页配额限制。模型已持有私有且驻留的镜像后备存储：即使原镜像视图只读，`IoWriteAccess` 和 `IoModifyAccess` 也允许可写 MDL 别名；`IoReadAccess` 仍只允许只读别名。原镜像保护属性保持不变。镜像空洞和无关映射不属于该所有权；低于用户地址边界的镜像也通过所有权识别。锁定后必须解锁并释放描述符。加载器拥有的镜像页上，临时 MDL 的全部别名解除、全部锁释放且全部描述符释放后，不再额外阻止恢复。此契约允许未指定地址的内核态缓存别名。存活 MDL、其他所有权或映射类型，以及来宾对物理 PFN 身份的读取仍保留恢复依赖；建模的复制、移动和比较服务读取也计入。
 

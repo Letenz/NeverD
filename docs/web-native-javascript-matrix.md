@@ -1,14 +1,15 @@
 # Native JavaScript extraction matrix
 
-This matrix records the bounded #718 contracts qualified on 2026-10-11.
+This matrix records the bounded #718 contracts and qualification evidence
+through 2026-10-15.
 All analysis code is C++; targets, embedded runtimes and package scripts are
 never executed. SDK, CLI, worker and MCP use the same backend evidence.
 Input target coverage and analyzer host qualification are separate.
 
 | Adapter / versioned contract | Qualified input targets | Detection / inventory | Source and asset extraction | Maps | Bytecode / snapshots |
 | --- | --- | --- | --- | --- | --- |
-| [Bun 1.4.2](web-bun-profile.md) | Linux ELF64, macOS thin Mach-O64, Windows PE32+; x64 and ARM64 for each | Validated container and graph; producer version not authenticated | Yes, six real producer targets, original ranges/hashes retained | Raw preservation; bounded decoding needs native LLVM Zstd | Raw JavaScriptCore caches preserved, decoding unsupported |
-| [Bun `71d0d439` prelinked extension](web-bun-profile.md) | Real Claude Code Linux x64; other five container extensions have synthetic boundary tests only | Flags 11/12, checked prelinked table and runtime-options record | Yes for qualified Linux x64 sample; cross-target producer qualification remains absent | Raw preservation; same separate decoder boundary | Prelinked cache opaque; flag 13 linked-bytecode layout refused |
+| [Bun 1.4.2](web-bun-profile.md) | Linux ELF64, macOS thin Mach-O64, Windows PE32+; x64 and ARM64 for each | Validated container and graph; producer version not authenticated | Yes, six real producer targets, original ranges/hashes retained | Raw preservation; twelve full producer images qualify bounded decoding with the native Zstandard 1.5.7 SDK; native LLVM Zstd is also supported | Raw JavaScriptCore caches preserved, decoding unsupported |
+| [Bun `71d0d439` prelinked extension](web-bun-profile.md) | Eight captured Claude Code 2.1.296 npm platform packages: Linux, macOS and Windows x64/ARM64, including both supplied Linux libc variants | Flags 11/12, checked prelinked table and runtime-options record; producer version not authenticated | All 18,794 shipped JS units preserved across the eight inputs; independent archive/executable/member evidence | All eight inputs have no source maps; the baseline producer corpus separately qualifies map decoding | Prelinked cache opaque; flag 13 linked-bytecode layout refused |
 | [Node SEA 22.15.0 LE64](web-sea-profile.md) | Preparation blob plus real injected Linux ELF64, macOS thin Mach-O64 and Windows PE32+, each x64/ARM64 | Explicit blob or native-resource profile; runtime activation not inferred | Stored CommonJS and assets; snapshot-only resources expose no invented source | No SEA-specific map reconstruction contract | V8 cache and snapshot preserved as opaque artifacts |
 | [pkg 5.8.1 uncompressed VFS](web-pkg-profile.md) | Real pkg-fetch Node 18.5.0 Linux/macOS/Windows bases, each x64/ARM64 | Fixed loader/prelude envelope; native prefix and target labels not authenticated by this reader | Typed content stores, files and native members; links never followed | Selected stored map content uses the shared map consumer | Cache store opaque; cache/source equivalence not checked |
 | [nexe 4.0.0-rc.7 EOF resources](web-nexe-profile.md) | Real Node 14.15.3 Linux/macOS/Windows x64 bases; ARM64 producer builds unqualified | Fixed EOF/bootstrap/resource envelope; native prefix not authenticated | Bootstrap and resource bytes, with checked source/native/package selection | Selected resource maps use the shared map consumer | No bytecode decompilation or snapshot recovery claim |
@@ -27,15 +28,22 @@ The producer corpora are recorded independently of the production readers:
 They cover plain/minified input, stored resources and applicable cache/map
 variants; pkg additionally pins separate original/stored BOM and shebang bytes.
 Core C++ hostile fixtures and exact original-input oracles remain the primary
-tests. Optional large producer artifacts are selected explicitly, never fetched
-or built by tests. Missing artifacts produce explicit skips.
+tests. Ordinary local runs may explicitly skip unavailable large images.
+The [required producer lane](web-producer-corpus-qualification.md) verifies the
+fixed public corpus archive and requires all eleven registered producer cases;
+missing inputs, consumers or test registrations fail. Tests never build or
+execute a producer or target. The separate workflow supplies the pinned corpus.
 
-The qualified analyzer host is macOS ARM64 Release, with prebuilt LLVM 23.0.0
-r4 and native ICU/zlib. This LLVM distribution lacks native Zstd: compressed
-map decoding cases skip while raw map preservation and capability/refusal
-checks still run. Native Linux/Windows host capture and distribution are not
-qualified by cross-target input tests. Local export uses the documented POSIX
-writer; raw source is excluded from worker/MCP replies.
+The complete producer lane uses the macOS ARM64 Release reader, prebuilt LLVM
+23.0.0 r4, native ICU/zlib and the pinned Zstandard 1.5.7 SDK. At
+`5e126750ae7513591b6d79056c02358fe55da0f1`,
+[run 38677375352](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
+passes all eleven producer cases with zero failures or skips. The separately
+qualified [Windows Server 2025 x64 product](web-windows-product.md) passes 110
+native cases, two adapter checks and six installed checks, including selected
+Bun source/map/export consumers. That Windows selection does not qualify all
+full producer images on Windows. Other analyzer hosts require separate evidence.
+Raw source is excluded from worker/MCP replies.
 
 ## Fixed-version Claude Code cross-track status
 
@@ -63,7 +71,9 @@ actual CLI report; no package script or external analyzer ran.
 
 The standalone-to-container byte equality concerns one platform/release only. An SRI or
 manifest match does not authenticate a publisher or establish benign behavior.
-Missing desktop samples, runtime traces, feature-specific client navigation,
-advisories and other platforms remain visible gaps. These extraction results
-do not complete the other four epics or reconstruct original TypeScript,
-variable names, native Rust/Go sources, server behavior or effective policy.
+The later [eight-platform qualification](web-claude-code-cross-platform-qualification.md)
+and [per-input cross-track table](web-epic-acceptance.md#fixed-claude-code-cross-track-selections)
+record all eight supplied npm packages independently. Missing desktop samples,
+runtime traces and unselected analyses remain explicit limitations. Extraction
+does not reconstruct original TypeScript, variable names, native Rust/Go
+sources, server behavior or effective policy.

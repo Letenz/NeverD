@@ -59,6 +59,8 @@ const Profile Profiles[] = {
      "arm64-apple-macos14.0"},
     {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "thumbv7-apple-ios5.0",
      "armv7-apple-ios5.0"},
+    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32_Thumb",
+     "thumbv7-unknown-linux-gnueabihf"},
 };
 std::string take(const char *Text) {
   std::string Result = Text ? Text : "";
@@ -242,12 +244,21 @@ protected:
       const auto Source = Directory / "original.c",
                  Object = Directory / "original.o";
       std::ofstream(Source) << originalSource();
-      ASSERT_EQ(run({NEVERD_TEST_CLANG,
-                     std::string("--target=") +
-                         llvmCodegenTriple(P.Architecture, P.Format),
-                     "-O0", "-funwind-tables", "-fno-pie", "-c",
-                     Source.string(), "-o", Object.string()}),
-                0);
+      std::vector<std::string> Command{NEVERD_TEST_CLANG,
+                                       std::string("--target=") +
+                                           P.ReceiptTriple,
+                                       "-O0",
+                                       "-funwind-tables",
+                                       "-fno-pie",
+                                       "-c",
+                                       Source.string(),
+                                       "-o",
+                                       Object.string()};
+      if (P.Architecture == Arch::ARM)
+        Command.push_back(llvm::StringRef(P.ReceiptTriple).starts_with("thumb")
+                              ? "-mthumb"
+                              : "-marm");
+      ASSERT_EQ(run(Command), 0);
       const auto Linker = linker(P.Format == BinaryFormat::ELF    ? "ld.lld"
                                  : P.Format == BinaryFormat::COFF ? "lld-link"
                                                                   : "ld64.lld");
@@ -373,7 +384,7 @@ TEST_P(SourcePatchMatrix, SuppliedIRUsesTheSameInstallationContract) {
       (P.Format == BinaryFormat::MachO && P.Architecture == Arch::ARM
            ? (P.FrontendTriple ? "thumbv7-apple-ios5.0"
                                : "thumbv7k-apple-watchos")
-           : llvmCodegenTriple(P.Architecture, P.Format)) +
+           : P.ReceiptTriple) +
       "\"\n" + "target datalayout = \"e-p:" +
       std::to_string(Image.getPointerSize() * 8) + ":" +
       std::to_string(Image.getPointerSize() * 8) + "\"\n" +
@@ -524,10 +535,14 @@ TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
                                    O.string()};
   if (Image.Format == BinaryFormat::MachO && Image.Arch == Arch::ARM) {
     Args[1] = "--target=arm" + Target->substr(5);
-    Args.push_back("-mthumb");
     Args.push_back("-fno-omit-frame-pointer");
     Args.push_back("-mno-omit-leaf-frame-pointer");
   }
+  if (Image.Arch == Arch::ARM)
+    Args.push_back(
+        llvm::StringRef(GetParam().ReceiptTriple).starts_with("thumb")
+            ? "-mthumb"
+            : "-marm");
   if (Image.Format == BinaryFormat::COFF)
     Args.push_back("-ffunction-sections");
   else

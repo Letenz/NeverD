@@ -182,6 +182,11 @@ using PdbSearchFunction = void (*)(neverd_session_t, int);
 using DwarfReferenceFunction = const char *(*)(const char *);
 /// Whether the next load reads the DWARF of an ELF or Mach-O image.
 using DwarfSearchFunction = void (*)(neverd_session_t, int);
+/// An image's static symbol table and the first names it holds, before or
+/// after the image is open.
+using SymbolTableReferenceFunction = const char *(*)(const char *);
+/// Whether the next load reads the image's static symbol table.
+using SymbolTableFunction = void (*)(neverd_session_t, int);
 
 using IdentifyFunction = const char *(*)(const char *);
 IdentifyFunction identifyFunction() {
@@ -557,6 +562,11 @@ bool Engine::findsDwarf() {
   return engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json") &&
          engineSymbol<DwarfSearchFunction>("neverd_session_set_dwarf_search");
 }
+bool Engine::findsSymbolTables() {
+  return engineSymbol<SymbolTableReferenceFunction>(
+             "neverd_symbol_table_reference_json") &&
+         engineSymbol<SymbolTableFunction>("neverd_session_set_symbol_table");
+}
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
@@ -704,7 +714,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     }
   // A hit answers from its finished document without pretending the mutable
   // Session still holds this function. Graph/IR requests prepare it normally.
-  prepareFunction(address);
+  prepareFunction(address, representation);
   // Whole-program VM preparation can analyze(), invalidating the listing and
   // advancing the revision. Rebuild aliases and stamp the prepared context;
   // never keep an alias reference across that invalidation.
@@ -949,7 +959,8 @@ void Engine::analyze() {
     listing_->loadSwitches();
   ++revision_;
 }
-void Engine::prepareFunction(std::uint64_t address) {
+void Engine::prepareFunction(std::uint64_t address,
+                             std::string_view representation) {
   if (analyzed_ || preparedFunction_ == address)
     return;
   // VM images analyze the whole program as one unit.
@@ -967,8 +978,16 @@ void Engine::prepareFunction(std::uint64_t address) {
   using PrepareFunction = int (*)(neverd_session_t, neverd_va_t);
   static const auto prepare =
       engineSymbol<PrepareFunction>("neverd_prepare_function");
-  if (prepare) {
-    if (!prepare(session_, address)) {
+  using PrepareView = int (*)(neverd_session_t, neverd_va_t, const char *);
+  static const auto prepareView =
+      engineSymbol<PrepareView>("neverd_prepare_function_view");
+  if (prepare || prepareView) {
+    const std::string view =
+        representation.empty() ? "source" : std::string(representation);
+    const bool ready = prepareView
+                           ? prepareView(session_, address, view.c_str())
+                           : prepare(session_, address);
+    if (!ready) {
       const auto message = error();
       throw Error("analysis_failed",
                   message.empty() ? "Function analysis failed" : message);
@@ -1106,6 +1125,7 @@ Json Engine::metadata() const {
           {"pdb", pdbInput_},
           {"pdb_download", mayDownload ? symbol : Json()},
           {"dwarf", dwarfInput_},
+          {"symbols", symbolsInput_},
           // What the load read: {"enabled","kind","path"}, kind "dwarf",
           // "pdb", "map" or "none".
           {"debug_info", debug},
@@ -1211,6 +1231,7 @@ Json Engine::analysisSnapshot() {
           {"signatures", signatureInputs_},
           {"pdb", pdbInput_},
           {"dwarf", dwarfInput_},
+          {"symbols", symbolsInput_},
           {"string_options", stringOptions_.empty()
                                  ? Json::object()
                                  : Json::parse(stringOptions_)}};
@@ -1232,9 +1253,12 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
       pdb.is_object() && pdb.value("mode", Json("")) == "none";
   if (pdbDeclined)
     options["pdb"] = pdb;
-  // And the DWARF it declined.
+  // And the DWARF and the symbol table it declined.
   if (const auto dwarf = snapshot.value("dwarf", Json()); dwarf.is_object())
     options["dwarf"] = dwarf;
+  if (const auto symbols = snapshot.value("symbols", Json());
+      symbols.is_object())
+    options["symbols"] = symbols;
   execute("open", options);
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
@@ -1318,6 +1342,19 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         engineSymbol<DwarfReferenceFunction>("neverd_dwarf_reference_json");
     if (!reference)
       throw Error("unsupported", "This engine cannot find DWARF");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(reference(path.c_str()));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
+  if (operation == "symbol_table_reference") {
+    // The image's static symbol table and the first names it holds, before
+    // the image is opened as after.
+    const auto reference = engineSymbol<SymbolTableReferenceFunction>(
+        "neverd_symbol_table_reference_json");
+    if (!reference)
+      throw Error("unsupported", "This engine cannot find symbol tables");
     const auto path = stringField(p, "path", {}, 32768);
     auto result = backendJson(reference(path.c_str()));
     if (result.contains("error"))
@@ -1441,6 +1478,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
          p.at("dwarf").value("mode", Json("")) != "none"))
       throw Error("invalid_request", "DWARF selection is {\"mode\":\"none\"}");
     const bool dwarfDeclined = p.contains("dwarf");
+    // And for the image's static symbol table: none, which loads the image
+    // as if stripped.
+    if (p.contains("symbols") &&
+        (!p.at("symbols").is_object() ||
+         p.at("symbols").value("mode", Json("")) != "none"))
+      throw Error("invalid_request",
+                  "Symbol table selection is {\"mode\":\"none\"}");
+    const bool symbolsDeclined = p.contains("symbols");
     const bool readOnly = p.value("read_only", false);
     // The loader the load dialog chose when the file names none itself: EVM
     // bytecode, or a binary file with its processor and placement, as the
@@ -1521,6 +1566,16 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                     "This engine cannot open an image without its DWARF");
       search(next.get(), 0);
     }
+    // Reading would load the symbol table the user declined.
+    if (symbolsDeclined) {
+      const auto read =
+          engineSymbol<SymbolTableFunction>("neverd_session_set_symbol_table");
+      if (!read)
+        throw Error("unsupported",
+                    "This engine cannot open an image without its symbol "
+                    "table");
+      read(next.get(), 0);
+    }
     if (!chosenLoader.empty() &&
         loadOptions().set(next.get(), chosenLoader.c_str()) != 0)
       throw Error("invalid_request",
@@ -1543,9 +1598,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     openOptions_ = p;
     openOptions_.erase("pdb");
     openOptions_.erase("dwarf");
+    openOptions_.erase("symbols");
     signatureInputs_ = Json::array();
     pdbInput_ = nullptr;
     dwarfInput_ = dwarfDeclined ? Json{{"mode", "none"}} : Json(nullptr);
+    symbolsInput_ = symbolsDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
     dirty_ = false;
@@ -2670,7 +2727,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       if (!options.empty())
         throw Error("unavailable",
                     error().empty() ? "Source transformation failed" : error());
-      prepareFunction(address);
+      prepareFunction(address, representation);
       if (const auto view = irViewFunction()) {
         auto result = backendJson(
             view(session_, address, representation.c_str(), offset, limit),
@@ -2699,7 +2756,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                                  : error().empty()
                                      ? "This representation is unavailable"
                                      : error());
-    prepareFunction(address);
+    prepareFunction(address, representation);
     const auto key = hexAddress(address) + ":" + representation;
     if (textKey_ != key) {
       textKey_.clear();

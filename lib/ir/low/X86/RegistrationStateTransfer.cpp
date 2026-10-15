@@ -74,7 +74,14 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       RegisterBytes += Op.Inputs[Input].Size;
     if (!charge(1 + RegisterBytes + MemoryWork))
       break;
-    const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+    FrameValue Value = Transfer.evaluate(Op, After.Installed);
+    if (Conditional) {
+      // The caller's physical registration address changes during native
+      // reconstruction. Preserve its provenance through arithmetic and spills
+      // while retaining the exact identity for chain install/remove checks.
+      Value.MayBeFrame |= Value.PreviousChain;
+      checkConditionalNativeFrame(After.Frame, Op, Transfer, *Conditional);
+    }
     if (Memory.Address && Memory.StoredValue &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       invalidateJumpRuntimeBindings(After, Transfer.read(*Memory.Address),
@@ -453,10 +460,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         JumpRuntime->Raise(Op, After.Frame, WorkUsed)) {
       const auto SP =
           After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
-      if (SP.Offset && *SP.Offset <= int64_t(*Chain.RegistrationOffset) - 24)
+      if (SP.Offset && *SP.Offset <= int64_t(*Chain.RegistrationOffset) - 24) {
+        recordSEHRuntimeCall(After, Op,
+                             RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::frame(*SP.Offset + 16);
-      else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
-                                         *SP.CallbackAddress, 16, true))
+      } else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
+                                           *SP.CallbackAddress, 16, true))
         CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
                                            SP.CallbackAddress->Offset + 16);
     }

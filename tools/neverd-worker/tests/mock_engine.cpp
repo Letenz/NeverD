@@ -75,6 +75,8 @@ struct MockSession {
   bool pdbLoaded = false;
   /// Whether a load reads the DWARF of the DWARF fixtures.
   bool dwarfSearch = true;
+  /// Whether a load reads the static symbol table of symtab.bin.
+  bool symbolTable = true;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
@@ -96,6 +98,7 @@ struct MockSession {
   /// and refuse graph/IR reads against a different restricted pipeline.
   std::uint64_t preparedEntry = 0;
   unsigned sourcePrepares = 0, sourcePages = 0, sourceRenders = 0;
+  std::string preparedView;
   bool rejectedPreparation = false;
   bool wholeProgramPrepared = false;
   bool sourceCacheVMFixture() const {
@@ -177,6 +180,12 @@ bool dwarfFixture(const std::filesystem::path &input) {
   return name == "dwarf-embedded.bin" || name == "dwarf-split.bin";
 }
 
+/// symtab.bin alone has a static symbol table; read without it, its
+/// functions have no names, as in a stripped image.
+bool symbolTableFixture(const std::filesystem::path &input) {
+  return input.filename() == "symtab.bin";
+}
+
 bool matchingFixturePdb(const std::filesystem::path &path) {
   std::ifstream input(path, std::ios::binary);
   const std::string bytes((std::istreambuf_iterator<char>(input)), {});
@@ -252,6 +261,25 @@ const char *neverd_dwarf_reference_json(const char *path) {
 
 void neverd_session_set_dwarf_search(neverd_session_t s, int enabled) {
   session(s)->dwarfSearch = enabled != 0;
+}
+
+const char *neverd_symbol_table_reference_json(const char *path) {
+  const auto input = std::filesystem::u8path(path);
+  if (!std::filesystem::is_regular_file(input))
+    return copy(Json{{"symbols", nullptr},
+                     {"error", std::string("cannot read ") + path}}
+                    .dump());
+  if (!symbolTableFixture(input))
+    return copy(Json{{"symbols", nullptr}}.dump());
+  return copy(Json{{"symbols",
+                    {{"table", ".symtab"},
+                     {"count", 3},
+                     {"names", {"function_0", "function_1", "function_2"}}}}}
+                  .dump());
+}
+
+void neverd_session_set_symbol_table(neverd_session_t s, int enabled) {
+  session(s)->symbolTable = enabled != 0;
 }
 
 int neverd_session_load(neverd_session_t s, const char *path) {
@@ -516,7 +544,10 @@ const char *neverd_func_name(neverd_session_t s, int index) {
     return copy("_ZN3BarC1Ev");
   if (it != session(s)->names.end())
     return copy(it->second);
-  if ((address - Base) % 16 == 0)
+  const bool named =
+      session(s)->symbolTable ||
+      !symbolTableFixture(std::filesystem::u8path(session(s)->path));
+  if (named && (address - Base) % 16 == 0)
     return copy("function_" + std::to_string((address - Base) / 16));
   char name[32];
   std::snprintf(name, sizeof name, "sub_%llX",
@@ -879,6 +910,12 @@ static int prepareMockFunction(neverd_session_t s, neverd_va_t address) {
   return 1;
 }
 int neverd_prepare_function(neverd_session_t s, neverd_va_t address) {
+  session(s)->preparedView = "legacy";
+  return prepareMockFunction(s, address);
+}
+int neverd_prepare_function_view(neverd_session_t s, neverd_va_t address,
+                                 const char *representation) {
+  session(s)->preparedView = representation ? representation : "";
   return prepareMockFunction(s, address);
 }
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
@@ -1152,6 +1189,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                      {"library_regions", Json::array()},
                      {"source_names", Json::array()},
                      {"fixture_prepares", state.sourcePrepares},
+                     {"fixture_prepared_view", state.preparedView},
                      {"fixture_pages", state.sourcePages},
                      {"fixture_renders", state.sourceRenders}}
                     .dump());

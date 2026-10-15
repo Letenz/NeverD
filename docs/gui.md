@@ -92,11 +92,12 @@ Analysis uses the shared C++ backend and never launches the input. See the
 
 A start without a file shows the quick start alone, as IDA does: the workbench
 appears once you choose how to start, and closing the quick start quits. The
-questions asked before a file loads, **Load a new file**, **Load PDB file** and
-**DWARF info found**, greet alone too while the workbench has not shown yet, after the quick start or
-for a file named on the command line; the workbench appears as the file starts
-to load, or when you cancel the load. A run that captures or measures asks
-nothing and loads the debug information that discovery finds. Drag
+questions asked before a file loads, **Load a new file**, **Symbol table
+found**, **Load PDB file** and **DWARF info found**, greet alone too while the
+workbench has not shown yet, after the quick start or for a file named on the
+command line; the workbench appears as the file starts to load, or when you
+cancel the load. A run that captures or measures asks nothing and loads the
+symbol table and the debug information that discovery finds. Drag
 its window edges or lower-right grip to resize it; the next opening remembers
 that size. The action pane stays the same width while the recent files use the
 available space. Its side pane holds the ways to start: **New** (N) asks for a
@@ -198,6 +199,13 @@ visible. **Cancel transformation** stops that request, and **Restore default
 source** returns to the ordinary view. Failed enhancements retain the preceding
 source. Required machine control-flow, ABI and exception recovery still run.
 These display defaults do not change the conservative binary patch pipeline.
+
+The native **LLVM IR** view shows lifted IR with temporary slots promoted to
+SSA. It does not run LLVMC's O2 profile or optional symbolic transformations.
+Machine control-flow, ABI and exception recovery still run before emission;
+the inspection and optimized source views keep separate cached modules.
+LLVM views construct HighIR only if a later source view needs it, while keeping
+shared ABI and return recovery in the initial preparation.
 
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
@@ -675,6 +683,24 @@ because the engine reads DWARF whole or not at all. Projects, files opened with
 **Load debug information** cleared, and SBF programs, whose debug information
 is never read, are not asked. The command line reads the image without its
 DWARF with `--no-dwarf`.
+
+Anyone can write names into a symbol table, to mislead whoever reads the
+program. Opening an image with a static symbol table, the table `strip`
+removes, therefore first asks **Symbol table found** — *Load the symbol
+table?* — before the PDB and DWARF questions. IDA asks no such question; it
+follows the PDB and DWARF ones. The dialog shows the table — `.symtab` for ELF
+and SBF, the COFF symbol table of a PE, or `LC_SYMTAB` for the symbols a
+Mach-O image does not export — with its first function names, global ones
+first, and its tooltip lists them. **Yes** loads it. **No**, Escape or closing
+the dialog opens the image as if it had been stripped: its functions take
+`sub_` names and their extents come from the code, while the names dynamic
+linking needs — imports, exports and `.dynsym` — still load. The project keeps
+the answer. The `.symtab` and `.strtab` sections still show in the section
+list, since the file has them. The answer covers the symbol table alone:
+DWARF and PDB names have their own questions, and `main` is still named when
+the analysis finds it from the start-up code. Object files, whose relocations
+need their symbols, are not asked. The command line reads the image without
+its symbol table with `--no-symtab`.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and

@@ -1,0 +1,73 @@
+//===- LinuxFileWrite.cpp - Bounded workload-owned mutable files --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Mutable contents are inode state; cursors and append/access flags belong to
+/// shared open descriptions. Captured stat observations are invalidated by IO.
+#include "LinuxFiles.h"
+
+#include <algorithm>
+
+namespace neverd::emulation::linux_model {
+bool LinuxFiles::isRegularFile(uint32_t FD) const {
+  auto I = Descriptors.find(FD);
+  return I != Descriptors.end() && std::holds_alternative<OpenFile>(*I->second);
+}
+llvm::ArrayRef<uint8_t> LinuxFiles::fileBytes(const OpenFile &File) const {
+  auto I = MutableFiles.find(File.Path);
+  return I == MutableFiles.end() ? File.Bytes
+                                 : llvm::ArrayRef<uint8_t>(I->second.Bytes);
+}
+llvm::Expected<std::optional<uint64_t>>
+LinuxFiles::writeDescriptor(ServiceKind Kind, uint32_t FD, uint64_t Address,
+                            uint64_t Size, ProcessResult &Result) {
+  using Reply = std::optional<uint64_t>;
+  auto I = Descriptors.find(FD);
+  if (I == Descriptors.end())
+    return Reply(uint64_t(0) - BadDescriptor);
+  auto *F = std::get_if<OpenFile>(I->second.get());
+  if (!F)
+    return unsupported(Result, DeviceOperation);
+  if (!(F->Flags & 3))
+    return Reply(uint64_t(0) - BadDescriptor);
+  if (Kind != ServiceKind::Write)
+    return unsupported(Result, "vectored mutable-file writes are unmodeled");
+  if (Address > Layout.UserLimit || Size > Layout.UserLimit - Address)
+    return Reply(uint64_t(0) - BadAddress);
+  // The VFS validates the original cursor and count before the file operation
+  // chooses EOF for an append. A small EOF must not hide signed overflow.
+  if (Size > MaxSignedIOSize - F->Offset)
+    return Reply(uint64_t(0) - InvalidArgument);
+  auto &Object = MutableFiles.at(F->Path);
+  uint64_t Position = (F->Flags & OpenAppend) ? Object.Bytes.size() : F->Offset;
+  Size = std::min(Size, MaxReadWriteSize & ~(Layout.PageSize - 1));
+  const auto Limit = Options->WriteLimits.at(F->Path);
+  if (Size && (Position > Limit || Size > Limit - Position))
+    return unsupported(Result,
+                       "memory-file write exceeds explicit reservation");
+  uint64_t Done = 0;
+  while (Done < Size) {
+    const auto At = Address + Done;
+    const auto Count =
+        std::min(Size - Done, Layout.PageSize - At % Layout.PageSize);
+    auto Accessible = CPU.canAccess(At, Count, Read | UserAccessible);
+    if (!Accessible)
+      return Accessible.takeError();
+    if (!*Accessible)
+      return Done ? Reply(Done) : Reply(uint64_t(0) - BadAddress);
+    std::vector<uint8_t> Bytes(Count);
+    if (auto E = CPU.read(At, Bytes))
+      return std::move(E);
+    if (Position + Count > Object.Bytes.size())
+      Object.Bytes.resize(Position + Count, 0);
+    std::copy(Bytes.begin(), Bytes.end(), Object.Bytes.begin() + Position);
+    Object.Changed = true;
+    Done += Count;
+    Position += Count;
+    F->Offset = Position;
+  }
+  return Reply(Done);
+}
+} // namespace neverd::emulation::linux_model

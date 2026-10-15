@@ -86,11 +86,29 @@ void recoverRegistrationCallbackRanges(ExceptionFunction &F,
   }
   const va_t Entry = F.CodeRange.Begin;
   F.FragmentRanges.clear();
-  for (const auto &Chunk : Chunks)
+  const bool KnownSEH =
+      (F.Personality == ExceptionPersonality::ExceptHandler3 &&
+       F.Encoding == ExceptionEncoding::X86ScopeTableEH3) ||
+      (F.Personality == ExceptionPersonality::ExceptHandler4 &&
+       F.Encoding == ExceptionEncoding::X86ScopeTableEH4);
+  size_t Work = 0;
+  for (auto Chunk : Chunks) {
+    if (KnownSEH && !F.Cxx && Chain.RegistrationOffset &&
+        Chain.TryLevelOffset) {
+      std::vector<va_t> Roots;
+      if (Chunk.contains(Entry))
+        Roots.push_back(Entry);
+      for (va_t Callback : Callbacks)
+        if (Chunk.contains(Callback))
+          Roots.push_back(Callback);
+      if (auto End = checkedRegistrationRangeEnd(Img, Chunk, Roots, Work))
+        Chunk.End = *End;
+    }
     if (Chunk.contains(Entry))
       F.CodeRange = Chunk;
     else
       F.FragmentRanges.push_back(Chunk);
+  }
 }
 
 } // namespace neverd::coff_loader::registration_detail

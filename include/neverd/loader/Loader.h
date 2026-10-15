@@ -57,6 +57,10 @@ public:
     ARMFunctionModes = std::move(Modes);
   }
 
+  /// Whether the next load reads the image's static symbol table, or reads
+  /// the image as if stripped (BinaryImage::ReadsStaticSymbols).
+  void setReadsStaticSymbols(bool Reads) { ReadsStaticSymbols = Reads; }
+
   /// Auto-detect the binary format from file content and return the
   /// appropriate loader.  Follows LLVM's factory pattern
   /// (cf. llvm::object::ObjectFile::createObjectFile).
@@ -72,6 +76,7 @@ public:
 protected:
   std::set<va_t> RestrictFunctionEntries;
   std::map<va_t, InstructionMode> ARMFunctionModes;
+  bool ReadsStaticSymbols = true;
 
   /// File and buffer entry points share the same format parser.
   static llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>>

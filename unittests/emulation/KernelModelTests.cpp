@@ -1032,5 +1032,160 @@ TEST_F(DriverKernelModel,
   EXPECT_EQ(Result.MajorFunctions[1], 0u); // No guest registration observed.
 }
 
+TEST_F(DriverKernelModel, CRuntimeStringsReadLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t A = Scratch + 0x100, B = Scratch + 0x140, C = Scratch + 0x180,
+                 D = Scratch + 0x1c0, E = Scratch + 0x200, F = Scratch + 0x240,
+                 G = Scratch + 0x280;
+  const uint64_t WA = Scratch + 0x300, WB = Scratch + 0x340,
+                 WC = Scratch + 0x380, WH = Scratch + 0x3c0,
+                 WL = Scratch + 0x400;
+  ascii(A, "hello world");
+  ascii(B, "world");
+  ascii(C, "abc");
+  ascii(D, "abd");
+  ascii(E, "ABC");
+  ascii(F, "");
+  ascii(G, "hel ");
+  utf16(WA, u"hello");
+  utf16(WB, u"HELLO");
+  utf16(WC, u"ll");
+  utf16(WH, u"hel");
+  utf16(WL, u"l");
+
+  // Lengths, bounded and unbounded; a satisfied count never reads further.
+  EXPECT_EQ(invoke("strlen", {A}), 11u);
+  EXPECT_EQ(invoke("wcslen", {WA}), 5u);
+  EXPECT_EQ(invoke("strnlen", {A, 3}), 3u);
+  EXPECT_EQ(invoke("strnlen", {A, 50}), 11u);
+  EXPECT_EQ(invoke("wcsnlen", {WA, 10}), 5u);
+
+  // Ordered compares normalize to -1/0/1; wcsncmp reports the raw difference.
+  EXPECT_EQ(invoke("strcmp", {C, D}), uint64_t(uint32_t(-1)));
+  EXPECT_EQ(invoke("strcmp", {D, C}), 1u);
+  EXPECT_EQ(invoke("strcmp", {C, C}), 0u);
+  EXPECT_EQ(invoke("strncmp", {C, D, 2}), 0u);
+  EXPECT_EQ(invoke("strncmp", {C, D, 3}), uint64_t(uint32_t(-1)));
+  EXPECT_EQ(invoke("wcscmp", {WA, WA}), 0u);
+  EXPECT_EQ(invoke("wcsncmp", {WA, WB, 5}), 32u); // 'h' - 'H'
+
+  // Case-insensitive compares fold ASCII A-Z before differencing.
+  EXPECT_EQ(invoke("_stricmp", {C, E}), 0u);
+  EXPECT_EQ(invoke("_wcsicmp", {WA, WB}), 0u);
+  EXPECT_EQ(invoke("_strnicmp", {C, E, 2}), 0u);
+  EXPECT_EQ(invoke("_wcsnicmp", {WA, WB, 5}), 0u);
+
+  // Character search truncates the target and includes the terminator.
+  EXPECT_EQ(invoke("strchr", {A, 'o'}), A + 4);
+  EXPECT_EQ(invoke("strrchr", {A, 'o'}), A + 7);
+  EXPECT_EQ(invoke("strchr", {A, 'z'}), 0u);
+  EXPECT_EQ(invoke("strchr", {A, 0}), A + 11);
+  EXPECT_EQ(invoke("strchr", {A, 0x100 | 'o'}), A + 4); // high bits ignored
+  EXPECT_EQ(invoke("wcschr", {WA, 'l'}), WA + 4);
+  EXPECT_EQ(invoke("wcsrchr", {WA, 'l'}), WA + 6);
+
+  // Substring search; an empty needle returns the haystack.
+  EXPECT_EQ(invoke("strstr", {A, B}), A + 6);
+  EXPECT_EQ(invoke("strstr", {A, C}), 0u);
+  EXPECT_EQ(invoke("strstr", {A, F}), A);
+  EXPECT_EQ(invoke("wcsstr", {WA, WC}), WA + 4);
+
+  // Spans of the initial run in and out of the control set.
+  EXPECT_EQ(invoke("strspn", {A, G}), 4u);
+  EXPECT_EQ(invoke("wcsspn", {WA, WH}), 4u);
+  EXPECT_EQ(invoke("wcscspn", {WA, WL}), 2u);
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringsFoldOnlyAsciiAndRefuseBadBuffers) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t P = Scratch + 0x100, Q = Scratch + 0x140;
+  // Latin-1 letters that differ by 0x20 are not ASCII A-Z, so they never fold.
+  success(Memory->write(P, std::vector<uint8_t>{0xc1, 0x00}));
+  success(Memory->write(Q, std::vector<uint8_t>{0xe1, 0x00}));
+  EXPECT_EQ(invoke("_stricmp", {P, Q}), uint64_t(uint32_t(-0x20)));
+
+  // A null record is a clear refusal, not a synthesized fault.
+  EXPECT_EQ(failure("strlen", {0}), "invalid or overflowing guest buffer");
+  EXPECT_EQ(failure("wcscmp", {0, Q}), "invalid or overflowing guest buffer");
+  // A zero count returns zero without dereferencing either pointer.
+  EXPECT_EQ(invoke("strnlen", {0, 0}), 0u);
+  EXPECT_EQ(invoke("strncmp", {0, 0, 0}), 0u);
+  EXPECT_EQ(invoke("_wcsnicmp", {0, 0, 0}), 0u);
+}
+
+TEST_F(DriverKernelModel, QueuedSpinLocksRaiseStoreAndRestoreLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4b51534c; // 'KQSL'
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  const uint64_t Handle = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  const uint64_t Other = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  ASSERT_NE(Lock, 0u);
+  ASSERT_NE(Handle, 0u);
+  ASSERT_NE(Other, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  // Acquire raises to DISPATCH_LEVEL, stores the handle in the lock, and stores
+  // the lock and saved IRQL in the handle.
+  EXPECT_EQ(invoke("KeAcquireInStackQueuedSpinLock", {Lock, Handle}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  EXPECT_EQ(integer(Lock), Handle);
+  EXPECT_EQ(integer(Handle + windows::LockQueueLockOffset), Lock);
+  EXPECT_EQ(integer(Handle + windows::LockQueueNextOffset), 0u);
+  EXPECT_EQ(integer(Handle + windows::LockQueueOldIrqlOffset, 1), 0u);
+  // A second acquisition of a held lock cannot make progress here.
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLock", {Lock, Other}),
+            "executive spin lock would deadlock on this cooperative processor");
+  // Initializing a held lock would clobber the token, so it is refused.
+  EXPECT_EQ(failure("KeInitializeSpinLock", {Lock}),
+            "cannot initialize a held executive spin lock");
+  // A corrupted saved IRQL in the handle is caught before the lock is cleared.
+  success(Memory->writeInteger(Handle + windows::LockQueueOldIrqlOffset, 7, 1));
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock handle's saved IRQL was modified");
+  success(Memory->writeInteger(Handle + windows::LockQueueOldIrqlOffset, 0, 1));
+  // Release restores the saved IRQL and frees the lock.
+  EXPECT_EQ(invoke("KeReleaseInStackQueuedSpinLock", {Handle}), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+  invoke("ExFreePoolWithTag", {Handle, Tag});
+  invoke("ExFreePoolWithTag", {Other, Tag});
+}
+
+TEST_F(DriverKernelModel, QueuedSpinLocksAtDpcLevelAndRefuseMismatches) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4b51534c;
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  const uint64_t Handle = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  ASSERT_NE(Lock, 0u);
+  ASSERT_NE(Handle, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  // The AtDpcLevel form requires the caller already at DISPATCH_LEVEL.
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLockAtDpcLevel", {Lock, Handle}),
+            "DPC-level queued spin-lock acquisition requires DISPATCH_LEVEL");
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_EQ(invoke("KeAcquireInStackQueuedSpinLockAtDpcLevel", {Lock, Handle}),
+            0u);
+  EXPECT_EQ(integer(Lock), Handle);
+  // The raising release does not match a DPC-level acquisition.
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock release variant does not match acquisition");
+  // The matching release leaves IRQL at DISPATCH_LEVEL.
+  EXPECT_EQ(invoke("KeReleaseInStackQueuedSpinLockFromDpcLevel", {Handle}), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  invoke("KeLowerIrql", {Previous});
+
+  // A contended lock stops clearly, and an unheld handle is not owned.
+  success(Memory->writeInteger(Lock, 0x1234, 8));
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLock", {Lock, Handle}),
+            "executive spin lock must be initialized and free");
+  success(Memory->writeInteger(Handle + windows::LockQueueLockOffset, 0, 8));
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock is not owned by this thread");
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+  invoke("ExFreePoolWithTag", {Handle, Tag});
+}
+
 } // namespace
 } // namespace neverd::emulation

@@ -1,0 +1,140 @@
+//===- RegistrationSEHRuntimeNativeTests.cpp - Imported SEH call edits ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Reject changed runtime identities, ABI properties and source arguments.
+
+#include "RegistrationSEHJumpNativeTestUtils.h"
+#include "gtest/gtest.h"
+
+#include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/loader/BinaryImage.h"
+
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+
+namespace neverd::registration_test {
+
+void checkSEHRuntimeEdits(const llvm::Function &Parent,
+                          const ExceptionFunction &Source,
+                          const BinaryImage &Image) {
+#ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+  for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Module = llvm::CloneModule(*Parent.getParent());
+    auto *Function = Module->getFunction(Parent.getName());
+    llvm::CallBase *Runtime = nullptr;
+    for (auto &Block : *Function)
+      for (auto &I : Block)
+        if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+          if (const auto *Callee = Call->getCalledFunction();
+              Callee && (Callee->getName() == "RaiseException" ||
+                         Callee->getName() == "_controlfp_s")) {
+            ASSERT_FALSE(Runtime);
+            Runtime = Call;
+          }
+    ASSERT_TRUE(Runtime);
+    auto *Callee = Runtime->getCalledFunction();
+    const bool ControlFP = Callee->getName() == "_controlfp_s";
+    auto *Scalar = llvm::dyn_cast<llvm::LoadInst>(
+        Runtime->getArgOperand(ControlFP ? 1 : 0));
+    ASSERT_TRUE(Scalar);
+    llvm::IRBuilder<> B(Runtime);
+    auto ChangedImage = Image;
+    uint8_t *ChangedByte = nullptr;
+    uint8_t OriginalByte = 0;
+    auto Restore = llvm::scope_exit([&] {
+      if (ChangedByte)
+        *ChangedByte = OriginalByte;
+    });
+    if (Mutation == 0)
+      Callee->setDLLStorageClass(llvm::GlobalValue::DefaultStorageClass);
+    if (Mutation == 1)
+      Runtime->setCallingConv(ControlFP ? llvm::CallingConv::X86_StdCall
+                                        : llvm::CallingConv::C);
+    if (Mutation == 2)
+      Callee->setCallingConv(ControlFP ? llvm::CallingConv::X86_StdCall
+                                       : llvm::CallingConv::C);
+    if (Mutation == 3)
+      rewrite_source::setOriginalVA(*Callee, Source.CodeRange.Begin);
+    if (Mutation == 4)
+      Runtime->setArgOperand(
+          0, ControlFP
+                 ? B.CreateInBoundsGEP(B.getInt8Ty(), Runtime->getArgOperand(0),
+                                       B.getInt32(4))
+                 : static_cast<llvm::Value *>(B.getInt32(42)));
+    if (Mutation == 5)
+      Scalar->setVolatile(false);
+    if (Mutation == 6) {
+      B.SetInsertPoint(Scalar);
+      Scalar->setOperand(0, B.CreateInBoundsGEP(B.getInt8Ty(),
+                                                Scalar->getPointerOperand(),
+                                                B.getInt32(4)));
+    }
+    if (Mutation == 7) {
+      B.SetInsertPoint(Scalar->getNextNode());
+      B.CreateStore(B.getInt32(0), Scalar->getPointerOperand())
+          ->setVolatile(true);
+    }
+    if (Mutation == 8)
+      Runtime->addFnAttr(llvm::Attribute::NoUnwind);
+    if (Mutation == 9)
+      Runtime->addFnAttr(llvm::Attribute::NoCallback);
+    if (Mutation == 10)
+      Runtime->addFnAttr(llvm::Attribute::NoReturn);
+    if (Mutation == 11)
+      Runtime->setMetadata(windows_eh_md::RegistrationOperationAttachment,
+                           nullptr);
+    if (Mutation == 12)
+      Runtime->setArgOperand(ControlFP ? 2 : 3,
+                             ControlFP
+                                 ? static_cast<llvm::Value *>(B.getInt32(0))
+                                 : B.CreateAlloca(B.getInt32Ty()));
+    if (Mutation == 13)
+      Callee->setName("unproved_runtime");
+    if (Mutation == 14) {
+      auto Identity = rewrite_source::getOriginalVA(*Callee);
+      ASSERT_TRUE(bool(Identity)) << llvm::toString(Identity.takeError());
+      ASSERT_TRUE(*Identity);
+      bool Changed = false;
+      for (auto &Import : ChangedImage.Imports)
+        if (Import.IATAddr == **Identity) {
+          Import.Module = "unproved-runtime.dll";
+          Changed = true;
+        }
+      ASSERT_TRUE(Changed);
+    }
+    if (Mutation == 15) {
+      const auto *Marker =
+          Runtime->getMetadata(windows_eh_md::RegistrationOperationAttachment);
+      ASSERT_TRUE(Marker);
+      const auto *Address =
+          llvm::mdconst::dyn_extract<llvm::ConstantInt>(Marker->getOperand(1));
+      ASSERT_TRUE(Address);
+      const auto *Push =
+          ChangedImage.readVA(Address->getZExtValue() - (ControlFP ? 8 : 7), 2);
+      ASSERT_TRUE(Push);
+      ASSERT_EQ(Push[0], 0x6a);
+      ASSERT_LE(Push[1], ControlFP ? 0 : 1);
+      ChangedByte = const_cast<uint8_t *>(Push + 1);
+      OriginalByte = *ChangedByte;
+      // Invalid exception flags or a mask admitting parameter-error hooks
+      // must invalidate the source runtime contract, not inherit the old IR.
+      *ChangedByte = ControlFP ? 0xff : 2;
+    }
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    auto Error = validateCOFFRegistrationIR(*Function, Source, ChangedImage);
+    ASSERT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+#endif
+}
+
+} // namespace neverd::registration_test

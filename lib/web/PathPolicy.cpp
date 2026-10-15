@@ -34,6 +34,69 @@ bool archivePathsAvailable() {
 #endif
 }
 
+void validateMemberName(std::string_view Name) {
+  if (Name.empty() || Name == "." || Name == ".." || Name.size() > 255 ||
+      Name.back() == '.' || Name.back() == ' ' ||
+      !llvm::json::isUTF8(llvm::StringRef(Name)))
+    throw Error("unsafe_member_name");
+  for (unsigned char C : Name)
+    if (C < 32 || C == 127 ||
+        std::string_view("/\\:*?\"<>|").find(C) != std::string_view::npos)
+      throw Error("unsafe_member_name");
+  auto Stem = Name.substr(0, Name.find('.'));
+  std::string Upper(Stem);
+  for (auto &C : Upper)
+    if (C >= 'a' && C <= 'z')
+      C -= 'a' - 'A';
+  // Windows reserves superscript 1, 2 and 3 as COM/LPT device suffixes too.
+  // This validation does not need or imply compatibility normalization.
+  const auto Suffix =
+      Upper.size() > 3 ? std::string_view(Upper).substr(3) : std::string_view{};
+  if (Upper == "CON" || Upper == "PRN" || Upper == "AUX" || Upper == "NUL" ||
+      ((Upper.starts_with("COM") || Upper.starts_with("LPT")) &&
+       ((Suffix.size() == 1 && Suffix[0] >= '1' && Suffix[0] <= '9') ||
+        Suffix == "¹" || Suffix == "²" || Suffix == "³")))
+    throw Error("unsafe_member_name");
+}
+
+std::string nameKey(std::string_view Name) {
+  validateMemberName(Name);
+  bool ASCII = true;
+  for (unsigned char C : Name)
+    ASCII &= C < 128;
+  if (ASCII) {
+    // NFC and full folding on this admitted subset are exactly ASCII folding.
+    // Safe ASCII capture stays available without the optional Unicode owner.
+    std::string Key(Name);
+    for (auto &C : Key)
+      if (C >= 'A' && C <= 'Z')
+        C += 'a' - 'A';
+    return Key;
+  }
+  if (!archivePathsAvailable())
+    throw Error("archive_path_policy_unavailable");
+#ifdef NEVERD_WEB_ICU
+  UErrorCode Status = U_ZERO_ERROR;
+  const auto *NFC = icu::Normalizer2::getNFCInstance(Status);
+  if (U_FAILURE(Status))
+    throw Error("archive_path_policy_unavailable");
+  auto Text = icu::UnicodeString::fromUTF8(
+      icu::StringPiece(Name.data(), int32_t(Name.size())));
+  icu::UnicodeString Normalized;
+  NFC->normalize(Text, Normalized, Status);
+  Normalized.foldCase(U_FOLD_CASE_DEFAULT);
+  Text.remove();
+  NFC->normalize(Normalized, Text, Status);
+  if (U_FAILURE(Status))
+    throw Error("archive_path_policy_unavailable");
+  std::string Key;
+  Text.toUTF8String(Key);
+  return Key;
+#else
+  throw Error("archive_path_policy_unavailable");
+#endif
+}
+
 std::string archivePathKey(std::string_view Path) {
   if (!archivePathsAvailable())
     throw Error("archive_path_policy_unavailable");
@@ -43,35 +106,9 @@ std::string archivePathKey(std::string_view Path) {
   while (!Path.empty()) {
     const auto Slash = Path.find('/');
     const auto Name = Path.substr(0, Slash);
-    validateMemberName(Name);
-#ifdef NEVERD_WEB_ICU
-    UErrorCode Status = U_ZERO_ERROR;
-    const auto *NFC = icu::Normalizer2::getNFCInstance(Status);
-    if (U_FAILURE(Status))
-      throw Error("archive_path_policy_unavailable");
-    auto Text = icu::UnicodeString::fromUTF8(
-        icu::StringPiece(Name.data(), int32_t(Name.size())));
-    icu::UnicodeString Normalized;
-    NFC->normalize(Text, Normalized, Status);
-    Normalized.foldCase(U_FOLD_CASE_DEFAULT);
-    Text.remove();
-    NFC->normalize(Normalized, Text, Status);
-    if (U_FAILURE(Status))
-      throw Error("archive_path_policy_unavailable");
-    std::string Component;
-    Text.toUTF8String(Component);
-    // Windows also reserves COM/LPT with superscript 1, 2 or 3. Do not
-    // compatibility-normalize the actual evidence path to implement this.
-    const auto Stem =
-        std::string_view(Component).substr(0, Component.find('.'));
-    if ((Stem.starts_with("com") || Stem.starts_with("lpt")) &&
-        (Stem.substr(3) == "¹" || Stem.substr(3) == "²" ||
-         Stem.substr(3) == "³"))
-      throw Error("unsafe_member_name");
     if (!Key.empty())
       Key += '/';
-    Key += Component;
-#endif
+    Key += nameKey(Name);
     if (Slash == std::string_view::npos)
       break;
     Path.remove_prefix(Slash + 1);

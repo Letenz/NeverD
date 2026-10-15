@@ -561,7 +561,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       rejectEscapingAddressFragment(Arg, "a call argument");
 
   llvm::Value *Target = nullptr;
-  if (Op.Opcode == NdOp::INDIR_CALL) {
+  if (Op.Opcode == NdOp::INDIR_CALL &&
+      !getX86RegistrationSEHRuntimeTarget(Op)) {
     if (Op.NumInputs > 0)
       Target = tryResolveIndirectCallTarget(Op.Inputs[0], Builder);
     if (!Target)
@@ -1051,6 +1052,11 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   if (!Callee && Target)
     Callee = llvm::dyn_cast_or_null<llvm::Function>(KnownTarget);
+  if (auto *Runtime = prepareX86RegistrationSEHRuntimeCall(Op, Builder, Args)) {
+    Callee = Runtime;
+    KnownTarget = Runtime;
+    Target = nullptr;
+  }
   std::vector<int> ArgumentIndices;
   for (unsigned I = 0; I < Args.size(); ++I)
     ArgumentIndices.push_back(I);

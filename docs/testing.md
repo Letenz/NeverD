@@ -51,7 +51,13 @@ prebuilt-LLVM guidance.
 `SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and
-module cache identities. `HighSymSimplify.OrdinaryConversion*` keeps optional
+module cache identities. `NativeLLVMInspection*` preserves inspection branches
+across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
+checks integer and floating call results, unchanged LLVM/source output and
+resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
+prepared function on invalid view names. Worker source-cache tests also check
+that preparation receives the requested LLVM representation.
+`HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
 enable it through the production converter. `SymSimplifyGuard.SourceProfiles*`
 checks that the optional expression pass stays off when disabled and evaluates
@@ -1303,7 +1309,11 @@ The fixed native ICU policy is required; omission tests check an explicit
 [fixture manifest](../unittests/web/fixtures/asar/README.md).
 
 `NeverDWebArtifactTests` covers artifact identity, immutable import publication,
-input links/collisions, aggregate budgets and bounded JSON admission. Its blob
+input links/collisions, aggregate budgets and bounded JSON admission. Shared
+`WebPathPolicy` owner cases check portable device names and
+NFC/full-fold equivalence; captured Unicode aliases refuse before publication
+without changing original evidence names. Both owner cases and the portable
+capture case are mandatory in the Windows product receipt. Its blob
 tests additionally check immutable disk snapshots, shared descriptor lifetime,
 range/overflow limits, concurrent reads and a C++ child with a lowered file-size
 limit to inject storage-write failure. The maximum-size case streams two 256 MiB
@@ -3948,7 +3958,13 @@ The SEH rewrite script also runs `longjmp-finally`, `longjmp-zero`,
 `longjmp-filter`, `longjmp-parameter`, `longjmp-callback`,
 `longjmp-unwind-callback`, `longjmp-callback-zero`, `longjmp-search-filter`
 `longjmp-search-filter-zero`, `longjmp-retired-scope` and
-`longjmp-retired-inner-scope`. These fixtures check a resumed
+`longjmp-retired-inner-scope`, `longjmp-callee`,
+`longjmp-returning-callee` and `longjmp-scalar-callee`. The helper fixtures
+execute cross-frame resumption, ordinary returning object borrows and scalar
+argument projection. Independent mutations reject frame observers, changed
+buffers/objects, ABI attributes, observed incidental results and scalar reads
+moved before source writes. Shared frame tests retain exception-scalar alias taint across partial
+spills and reject mixing it with physical pointer bits. These fixtures check a resumed
 nonvolatile register and try level, the requested jump value (including zero
 becoming one), finally's
 private-frame write, a subsequent exception, and FS:[0] restoration on four
@@ -3963,6 +3979,15 @@ frame, escape index, unused recovery, escaped buffer and redirected value load.
 CLI coverage includes both patch modes from emitted IR and directly from the
 original EXE, with default optimization and `--no-opt`. Both pipeline paths
 must preserve `optnone` runtime callback roots and register snapshots.
+`longjmp-runtime-raise` and `longjmp-runtime-continue` call the original
+`RaiseException` import after resumption and exercise handler entry and filter
+continuation. `longjmp-control-fp` observes both `_controlfp_s`'s scalar result
+and private output before capture. Sixteen mutations per fixture check the
+runtime ABI, provider/IAT identity, exact argument values, import storage,
+attributes and argument-read ordering. The continuation fixture also checks
+that a helper immediately following a closed registration body does not
+inherit its EH ownership. `RegistrationInstructionRange.*` covers all runtime
+roots, unresolved/escaping edges, overlapping instructions and budget refusal.
 Use `--runtime-root` with the captured `runtime-libs` directory to bind SEH and
 jump imports to the authenticated Microsoft x86 CRT. This is required under
 Wine for the retired-inner-scope case: Wine 9's builtin CRT unwinds below the
@@ -5491,6 +5516,17 @@ contents and metadata are synthetic explicit inputs; no device or host stdio
 is an oracle for the Android ABI. Run `ctest -R AndroidStdio` after building
 `NeverDAndroidNativeTests`; unsupported backends remain skips, not passes.
 
+The same `AndroidStdio` fixture covers full/line/unbuffered writes, read/write
+transitions, append with competing opens, flush failures, raw-versus-buffered
+pointer faults, dynamic proc FD reuse and directory buffering/cookies.
+`LinuxFileNamespace` in `NeverDLinuxProcessTests` independently checks both
+LP64 architectures, complete defined dirent bytes and untouched padding,
+partial source-page writes, closed FD slots, EOF cookies and budget refusal.
+C/CLI and Python exercise fresh mutable-file and proc workloads through the
+public JSON contract. None of these fixtures needs a phone or a host filesystem
+oracle. These bounded contracts do not establish dynamic maps/task procfs,
+creation, timestamp maintenance or complete Android filesystem equivalence.
+
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only
@@ -6306,7 +6342,7 @@ source replay also rejects replacing the generated finally return with
 or supplied IR, reloads the result and invokes the patched original entry in
 Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
 PE, Mach-O) require successful source, supplied-IR and native-object installation,
-reload and exact execution. The 143-case inventory includes both ARMv7k watchOS
+reload and exact execution. The 154-case inventory includes both ARMv7k watchOS
 and ARMv7 iOS, mutable/readonly state, original floating-point and stack-argument
 bindings, and source/object entries at two nonzero image-base slides. Every
 invocation must reach the return address within a finite instruction/time budget.
@@ -6600,3 +6636,7 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Bounded kernel caller-context capture
 
 `KernelContextCaptureTests` covers all record/guard bytes, stack scratch, flags, aliases, overlaps, objects, permissions, IRQL and injected collector/setter failures. `DriverContextCaptureTests` checks live GPR/FPCW/MXCSR/XMM values and imported/dynamic calls through rebased entry/request/unload lifecycles, including rejected outputs and retained dependencies. Its bytewise twelve-record oracle has an explicit 400000-instruction test budget. The fixture uses the checked initial FPCW; separate collector cases vary it. All 17 identities per native backend are mandatory; unavailable WHP execution remains an explicit Linux skip. Existing x64/ARM64 user context tests protect unchanged behavior.
+
+### Symbolic region coordinates across zero
+
+`SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.

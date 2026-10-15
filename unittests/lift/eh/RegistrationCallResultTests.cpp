@@ -68,6 +68,21 @@ TEST_F(RegistrationCallResult, AcceptsOnlyUnobservedSSATransports) {
   EXPECT_FALSE(unused());
 }
 
+TEST_F(RegistrationCallResult, KeepsDirectAndIndirectOccurrencesDistinct) {
+  auto &Root = Function.Blocks.front().Ops.front();
+  Root.Opcode = NdOp::INDIR_CALL;
+  EXPECT_FALSE(unused());
+  size_t Work = 0;
+  EXPECT_TRUE(hasUnusedX86RegistrationCallResult(Function, Call, Work, true));
+  Root.Inputs[0] = value(5);
+  Work = 0;
+  EXPECT_FALSE(hasUnusedX86RegistrationCallResult(Function, Call, Work, true));
+  Root.Inputs[0] = MedVar::makeConst(Call.Target, 4);
+  use(NdOp::RETURN, value(1));
+  Work = 0;
+  EXPECT_FALSE(hasUnusedX86RegistrationCallResult(Function, Call, Work, true));
+}
+
 TEST_F(RegistrationCallResult, DoesNotConfuseSharedSourceProvenanceWithACall) {
   use(NdOp::COPY, MedVar::makeConst(0, 4), value(2));
   Function.Blocks[0].Ops.back().Addr = Call.Address;

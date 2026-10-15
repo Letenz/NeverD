@@ -21,9 +21,11 @@ privately and never followed. Input permissions are metadata only. Member paths
 use `icu-77.1-nfc-casefold-portable-v1`: strict UTF-8 and portable components,
 NFC/full case fold/NFC comparison keys, plus Windows device-name rules.
 Comparison keys never rename evidence. The selected unpacked subtree is checked
-under the same policy, including extra entries. Original directory capture and
-future export have their own boundaries; this does not qualify Windows capture
-or a general exporter.
+under the same policy, including extra entries. Directory capture now uses
+the same component validation and NFC/full-fold comparison owner. Fixed-name
+local exporters share its device-name checks; original member names remain
+manifest data and never become output paths. Native host qualification is
+recorded separately in the [Windows product profile](web-windows-product.md).
 
 SHA-256 integrity declarations are optional. For the supported algorithm, both
 the whole-file digest and every declared block must match. This pinned writer
@@ -112,13 +114,15 @@ reads. No full-member copy is needed for inventory or integrity verification.
 `NEVERD_ENABLE_WEB_ASAR=ON` requires native ICU4C 77.1 (`ICU_ROOT` can locate a
 prepared installation); runtime checks require Unicode 16.0. Without this
 exact policy, capabilities mark ASAR unavailable, with no helper fallback.
-ICU's tools are never invoked. ICU binaries are currently supplied by the
-build/deployment environment; they are not downloaded or bundled by this
-feature. Redistribution must provide their matching runtime libraries or a
-qualified static link, in addition to the staged license notices.
+ICU's tools are never invoked during analysis. Developer builds supply the
+matching native library; the [Windows product](web-windows-product.md) packages
+its qualified ICU runtime and notices. Other redistributions must provide
+matching runtime libraries or a qualified static link and retain the notices.
 
-Local qualification and missing host/release coverage are tracked in the
+Local qualification and host/release boundaries are tracked in the
 [support matrix](web-support-matrix.md). Preserved upstream fixtures have an
-independent [manifest](../unittests/web/fixtures/asar/README.md). Electron
-manifest/IPC inference, NW.js/VSIX extraction and safe raw export remain
-separate work; this reader alone does not complete issue #716.
+independent [manifest](../unittests/web/fixtures/asar/README.md). The
+[desktop adapter matrix](web-desktop-adapter-matrix.md) links the implemented
+Electron manifest/IPC, NW.js/VSIX, Tauri/Wails and CEF/WebView consumers.
+ASAR extraction supplies immutable members for explicit inspection and
+downstream analysis; it does not export an entire application tree to disk.

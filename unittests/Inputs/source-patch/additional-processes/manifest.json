@@ -1,0 +1,1389 @@
+{
+  "schema": "neverd.source-patch.native-snapshot.v1",
+  "producer_commit": "binary-sha256:3ce9a273bde75b5922a10bb03eb92ad8db30d0e280c89e8e4f88d9988c6929be",
+  "engine_source_commit": "e292363bb5e4da472c9a2029c46fc40b189cbba4",
+  "engine_source_digest": "c52e4b29ca1caf3da3e3cc0664577f441e3802e093d9a40ca78e507bc8f029d0",
+  "engine_sha256": "f3bae2fb914b792f1dbc2cfb5173e5442c37800a4c7d09b61c91e39e13bccc7b",
+  "original_paths": "fixture",
+  "receipt_paths": "portable",
+  "producers": {
+    "clang": {
+      "version": "Homebrew clang version 22.1.6",
+      "executable_sha256": "3ec747aca494276d2720e742d95efc5850b8c31aa93bcd0e4d0a5bbb4bc79d0c"
+    },
+    "neverc": {
+      "version": "neverc version 3389.1.5",
+      "executable_sha256": "3ce9a273bde75b5922a10bb03eb92ad8db30d0e280c89e8e4f88d9988c6929be"
+    },
+    "gcc_x86": {
+      "version": "i686-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "executable_sha256": "4a4214f2939a68f1e3ce2f2eb7f299ee6d14b9849309b0849064a25e62fd2b01"
+    },
+    "gcc_arm32": {
+      "version": "arm-linux-gnueabihf-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "executable_sha256": "ad0534ebe3d22126838389e0a6db6967fd80e314e68a4a6fd49ee740fd575ab1"
+    }
+  },
+  "images": [
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-original",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-original.json",
+      "delta_sha256": "2ede551eb1a8298f4f02bb32ced3b735056b95f47702f005abaed95fbb95f03b",
+      "receipts": []
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-nonleaf-ir",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-nonleaf-ir.json",
+      "delta_sha256": "c56fc4f020a5f8b43a8f334c3a3c5b3d9176686678bb3ba825a9511b82f60082",
+      "receipts": [
+        {
+          "sha256": "499d9b3622f86794c7edf8b9fe873e779b504e71aa1b588ea374be0c783e2d94",
+          "data": "eJydVMlu2zAQvecrBJ1LbZa1GKkvzaFAU+SQHgoUhUGRI5sIRSok5aVB/70jKZbsJoeigCyRb4bDN8vzy43n+dQ4UVPm/JUXfeiBSigu1NYi8AP3nvcyvNHyhJaz2wBoI7ZCUbnZU8TTpEzLPFkks4MVv+DqhD01lZYIzWd3IFsw/uDxG98/BxZMN62QiJ9pnYENNduuAeVmgj6TVG398RKfPCTTsu7UAUkTRysJdoaVJlxYRg0neyo7IIo2F3ZhT9Zo7c5AeC8qQ80pvIM9SI10w0+6aaji90LBN62lDR/vvtjwK2UPj98Dy5/mWM+ddnDe3hpotRVOm9M6rDohObG6MwxISx3bhUzvwdAtEMq5cEJjgQjDewSnDki8mMJiSmYL7uOxyDZZSmjbSiANZdrGaRBdZSqdnvbQCEek3DcT8jitjucVm6Dp4K2DptV9Ddah7lzbuUDK94xjNv6bPm64oFulrROsb5zvX1sx+10Pz52cbVgRi5XozZ91A5WBgzf4ea8WL0mCOMjGY1goupH0hCz7E1iUlSZtkkerRYJPv4znZbLKUnyIeP3ESbHCH6mLaPgq3Ga9OxofERjvEAoLsLmUA0LWUSmBv5XNuypJy2yW0UFhmrM0NjgkkjLop9yfvC7Ai0jFIivek9dliL+k1ZeuwxmbuDeaz5uxu1NDbg/aPK3DYbLIsZ+0SoRKKwm0JsKM9TDw3IF1/5X8P1G2bAdNH8BXqEDDg0vRBPt4pDGCm17LA/VaHF1nwK7PhAN25Wh3NFlmw5SwmFUFlDUt6jQq60VcpBXgX9kyjtO4Kouq5CWNFos653meLuvlMuJRnmdZkedRCa9hO8bA9uPtTAcDNKq0v+KtUI+9UlGrN79v/gD1Bo4f"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-nonleaf-object",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-nonleaf-object.json",
+      "delta_sha256": "dca3106cdd91dc728fe5d621a59b7d8497e992945b4c513e76519857cc11af64",
+      "receipts": [
+        {
+          "sha256": "d374cd0f2bd6625cf70063773a7f51b557337e40972a4be474b6b8ac586bf1b7",
+          "data": "eJydVEtvnDAQvudXIM5hwbyp0lySQ6umSqX0UKmqVn4MrBtjE9vsZhvlv9csu0CaVKp6QZ5vHp755jNPZ57nY215jan133nofAAIl4zLxjjgu7M97+nwdZ5753FodH4ClOYNl1ist9jhaVylVREn8Rxg+C94kWH2LVHCQXPuBkQH2j9EPLvvj0MXVLUdFw4/Zk/AGuumb0HauUGfCiwbf7zED27j6Vj3cueaDiwmAswMSxUwbijWLNhi0UMgcbvwc7M3Wil7AsIbTjTW+/AatiCUaze8Um2LJbvhEr4qJUx4d/3JhJ8xvb37tjLsfq710CsLJ/NCQ6cMt0rvL0PSc8ECo3pNIeiwpZuQqi1o3ECAGeOWK0dQQN09nGELAUqmsm4k3YB9/1jm6zwNcNcJCFpMlUHpKnoxqbBqtr98vJoMOp0eT6cZmnIuLLSdGsa/DFVvu96u3vSNc/ivNrhmHDdSGcvpsDLff+l1c28GeN7h7HNcGMfB4P6gWiAadt4hzjt6vDheoVU+pnHpelsvReogY7EQwF6L+U3tplU+i3snXQuzYN3mBKYwSM+fghbgolCZ5OVbml+W+EPvw1S9W/zUeqvYbCjyE6hdk72FgcNj9RNsNjjO8uGCuixYUuc0j4HVwzFiCUqyrMoIRXGW5oRGLE1SqApU4MSFkZqkLIvKrMhRciRy3PK0mYud0veX4UFcweMgNsJDqaQAXAdjC2OehocejP0vtv+JJEM30A4FfOkeomar5dtZbdHYxgguWAGKKCmhqnFZp1FVJ6hMCbgfVYZQikhVkopVOEoSR1lRpFmdZRGLiiLPy6KIKjiW7SkFM9BvdQ8HaHyDwxV/eYZnz2e/AVgkg/A="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-nonleaf-supplied-object",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-nonleaf-supplied-object.json",
+      "delta_sha256": "dca3106cdd91dc728fe5d621a59b7d8497e992945b4c513e76519857cc11af64",
+      "receipts": [
+        {
+          "sha256": "e19ba392064a774c1b372614247afdb7cf9b9248b4face4736ee67ced546a2b6",
+          "data": "eJydkstupDAQRff9Fcjr0OFpIBrNj4xGyI8CPDE240enkyj/Hhs6oWeSRZSNhU+Vr+8t83xIEkSMEwNhDt0l+U0EVCgu1GgD+BX2SfK8rqFyHyqBZjdvQBsxCkVkfyKBV0VXdU1RFnuDFU/wzwn7OFMtA9rPTiAXMGjteAnr79UF0/MiZOB3ifJSrkyoxbv+4qK4IOuIlMA/uv3UXNXh3f2DAtPvjgwskjCYQTn03nQFr4TaErefhbqW+C+QJGr0ZHwfB5o13zea/gHmevroIA7+ov6G7USKGscLhrbh5YAZLoAP8TPjZV7WdVdTlhd1hSnLeFVW0DV5Q8rQRgda8Tpr6wbnJUabrHdxkgtxUxT98aDN/c/bmTBt0zOuUkLFrdJKAhlS65dFCuDp5mUTWIzmnq2vg+DswIQ5bxUDfz1Y960H+dIcLZtgjgJIwQkMP1rtDYM0hGHT8ZRvNqxnDGwcpTMeVuSIGSH+5ujc4j6mDMEgXVPn1TFDh5fDKzZ72WM="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-writable-pointer-ir",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-writable-pointer-ir.json",
+      "delta_sha256": "41361caebbd9145a8728e482bf701b00c982c434fa58ccae7efcdf8b64e88644",
+      "receipts": [
+        {
+          "sha256": "6dc22065594be7f85fc1c8094a00d765a28c95f7fce4367ac9c8855584ac6fc3",
+          "data": "eJydU8lu2zAQvecrBJ1LbVZk2Uh9aQ4FmiIH91AgKASKGtlEKFIhKS8N8u8dSrFk1zkUBbQM3yyc7b3eeJ5PteU1ZdZfetEnB5RcVlxuDAJPePa81/6LmmfUnMx6QGm+4ZKKYkcRT5NFupgns2QyMPw3XHiYY1MqgdDkuwXRgvZ7izf8/uqzYKppuUD8lNYJKKjedA1IOyXoM0Hlxh8u8cljMop1J/eYNLG0FGAmWCpSccOorsiOig6IpM2Znpuj0UrZExA+8FJTfQzvYQdCYbrhF9U0VFYPXMIPpYQJ1/ffTPidssf1z8BUz1Osl05ZOB3vNLTKcKv0cRWWHRcVMarTDEhLLduGTO1A0w0QWlXccoUNIgzv4RW1QOLZGBZL0huwnw95VmQpoW0rgDSUKROnQXRRqbBqPEPDLRFi14zIepQOJ4mN0Oh4Z6FplevBKlSdbTsbCPGRcqjGv5pjUXG6kcpYztzgfP9Si9VvHTxNctJhRwx2wqm/qgZKDXuvt/PeNV6SBHGQDW7YKFoIesQsnQc2ZalIm8yj5SzBx4nxJCbLLMWH8PdfnORLfEmdR/1f4jFz5qhcIzDcwSU2oDinA0LGUiGguqbNhyxJF9lEo73EMidqFLgkgjJwW+6PVmfgWaR8luUf0es8xF/Ucq3rcMfG3BtVTYdhuuNA7vZKP6/CfrPIwW1aycO95j2jSKu4tKAJ10NjNLx0YOx/deGfcjdsC40L4Eukoq6Cc/YEu3hIYwALR+q+hpofbKfBrK4z1520vIGAXXiaLU1uM+ebpFDHZVrVJTDIorpMaRnTMk8gni/KpJ6xeUTreX6bQc1QsVhEaTmHJJ5HeR3dRu9hO8bAuMW3uoMeGvjrrrim8MFxGFl883bzB0ZYmh0="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-writable-pointer-object",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-writable-pointer-object.json",
+      "delta_sha256": "b5dc529e1a126e97fba0adb2020242bf52483d3a32a3328701a7d8fa0e8a3986",
+      "receipts": [
+        {
+          "sha256": "f4cc3459e5ee122a6ad25b28429dd1201e5ee403385ef89ba9e25d559cf6f554",
+          "data": "eJydU8FunDAQvecrEOd4AS+wUKW5JIdWTZVK6aFSVa3G9rDrBjCxzW62Uf69BnaBNKlU9QKeN57xzJs3T2ee54O2sgBu/XdedN4BTNZC1hvjgO/O9ryn/us8987j0PD8BCgtN7KGcr0Dh8c0j/MVXdLpgpG/8EWEOVRMlQ6aYrdYNqj9/saz+/7oq+CqamTp8GP0CKxBb9oKazsV6PMS6o0/POKTWzoei7beu6KJBVaimeBaESENBy3IDsoWSQ3VzC/NwWil7AkIbiTToA/BNe6wVK7c4EpVFdTiRtb4VanSBHfXn0zwGfjt3beFEfdTrodWWTyZFxobZaRV+nAZsFaWghjVao6kAcu3AVc71LBBAkJIK5UjiHD3jhRgkUTLMa1rSW/Qvn/M0nUaE2iaEkkFXJkoXoQvOi2tmuwvH69Gg4+nx9NpgsaYC4tVo7r2LwPV2qa1izd9Qx/+qwmuhYRNrYyVvBuZ77/0ur63HTzNcPI5LozjoHN/UBUyjXuvv+cdPR6li2iRDmGydrWt5yJ1kLFQlihei/lN7cZ5Ool7X7sSJsG6yZXAsZOeP16agbNE2TLN3tL8PMUfeu+6at3gx9IrJSZDsZ/I7ZodLHYc5qt0Dpst0CTtSQxTkcRZGOZhBlmc8iyLcp7k0ZIlkNAiFzQKMwHLAt0vSpaCh0lOIU6A04KygchhyuNkLvZK318GvbjIYyc2JoO9lv1SkUbJ2qImQy1DAo0PLRr7X7T/E1uGb7HqEvi120gtFvMlWuyioYwBnNFDYywiFouCIcc0LFgMLAKWUYxWOaPFkq9CKFZZkmLBnSPPw5itkEarMCvCJDymbTlH083B6hZ7aFjG7om/7OPZ89lvcZ+I3Q=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-writable-pointer-supplied-object",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-writable-pointer-supplied-object.json",
+      "delta_sha256": "b5dc529e1a126e97fba0adb2020242bf52483d3a32a3328701a7d8fa0e8a3986",
+      "receipts": [
+        {
+          "sha256": "de9d594a4779a5c381bfcf910a4ee3e80e5dcabcb93af7a4601652edb8b0c66d",
+          "data": "eJydkt1u3CAQhe/3KSyu442Nf2JHVV+kqqwxzNo0GCg/u5tGefeCncbbNhdVb7D4ZjicOfjlkGUErBcnYJ48ZuVdAqNQXKjJRfAl7rPsZV1j5SlWIi3ufgFtxSQUyOEMkde0r/sHWtG9wYkf+NsJ97yMWka0n51RGrRk7XiN69fVBdOLETLyx0wFKVcmlAl+eHNB35DzICXyv91+aK7u2939RaEddkcWjQSGCypP3ptu4I1QV7XdR0PdSvwxkAQ1BZje4yCL5vtGj9+Q+WF89piC7x/aW+xmoE2bLmBFy5u6K4q+6KCrW9Z1Zc+avqzGBhp66jkti45DdcL4KZuKs6LpKdQNMHqiI9lkg09JGvBzEv100fbp8/0CTLv82tY5jOL+YoWHUWJutFAebe6CMVIgzzdTm5Kxmge2PhPBa2yLgW8Vi98DOv9fL/NPgTo245IEiMIzWn50OlgW/YJn8/FcbjZcYAxdytTbgCvyYCdM/zu5du2Qxo2DYb6OX9bHghxeDz8BdbHczQ=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-floating-stack-ir",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-floating-stack-ir.json",
+      "delta_sha256": "4c61dd65f3ee3c7473e02fab65c6dacaaf6579b78714dde6d6661d9b81e3e6a0",
+      "receipts": [
+        {
+          "sha256": "1c618655ebd9d6f84ef614dc63fdae824f912d794f4e98f2100326db1b3a0696",
+          "data": "eJydVMlu2zAQvecrBJ1La7UsG6kvzaFAU+SQHgoUhUCRI5swJSok5aVB/r1DKZbsJIeigCwN3yyc7fn5xvN8qq2oKLP+ygs/OaAUDRfNxiDwC8+e99y/UbNDzdmsB5QWG9FQWewp4mm8TJeLOJnHo4ERf+DKw5zqUkmEJt+q9XvtC75/9xkwVbdCgh5TOgMF1ZuuhsZOyflM0mbjDxf45CEexaprDpgwsbSUYCa4UYQLw6jmZE9lB6Sh9YVemJPRStkzENyLUlN9Cu5gD1K1oIMvqq5pw+9FAz+UkiZ4vPtmgu+UPTz+nBm+m2I9dcrC+XiroVVGWKVP66DshOTEqE4zIC21bBswtQdNN0Ao58IKhc0hDO8RnFogUTKGxZL0BuznY54VWUpo20ogNWXKROksvKpUWjWeoRaWSLmvR+RxlI5niY3Q6HhroW6V68E6UJ1tOzuT8iPlUI3/bo4FF3TTKGMFc4Pz/WstVr918DTJSYcdMdgJp/6qaig1HLzeznvVeHE8i2bZ4IaNooWkJ8zSeWBTVoq08SJcJTE+TowmMV5lKT5EvH6iOF/hj1R52H8bPGbOHJWPCAx3iAYbUFxSASFjqZTA31PmQ4aky2yi0KHBMidaFLgkkjJwW+6PVhfgRaQ8yfKPqHUZ4g21XOs63LEx91rx6TBMdxzI7UHp3TroN4sc3aaVIqikohb/HwjWzHZE6KEtGp46MPa/evBPmRu2hdoF8BskouazS+7M9tGQxgAWjtJ9BZU42k6DWb/Je8au7M2WxvPMeSRhMs8TSGMa54xnZUqTkIZptFxUwJKoLBHOysWchxVfVEkZwiKqcrasoiWDRV69hu0YA+OW3eoOemjgrLviPW2PjrfI3JuXm7+l/JLk"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-floating-stack-object",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-floating-stack-object.json",
+      "delta_sha256": "f1a94f33fe0b4ff460cb2fef656fa06406974e17198105fbd3bac571c62846c1",
+      "receipts": [
+        {
+          "sha256": "87922a411cf3afd477ce4787f446d566d262199aad4e282e06bfc2e7476dea87",
+          "data": "eJydVMlu2zAQvecrBJ1Da7WWIs0lObRoihRIDwWKwhiSQ5u1JCokZccN8u+lrFhSmhQoehE4bzjbm0c9nnmeD9pKAcz677zovAeobLhs1sYB353teY/Hr/Nsnceh4fkJUFquZQPVagcOT+MyLfM4WcbjBSN/4YsIc6ipqhw0xYrWP3qf3PfHsQOm6lZWqE+RI7ACve5qbOzUnM8qaNb+UMAnt/F4FF2zdw0TC7RCM8GNIlwaBpqTHVQdkgbqmV+ag9FK2RMQ3EiqQR+Ca9xhpVrUwZWqa2j4jWzwq1KVCe6uP5ngM7Dbu28Lw7dTrvtOWTyZFxpbZaRV+nAZ0E5WnBjVaYakBcs2AVM71LBGApxLK5UjhzBXR3KwSKJkTOtG0mu07x+KbJWlBNq2QlIDUyZKF+GLSSurJvvLx6vRYOPp4XSaoDHmwmLdqn78y0B1tu3s4k3fMIf/aoMrLmHdKGMl61fm+y+9bu5ND087nHyOC+M46N0fVI1U49473vOePV4cL6JFNoTJxvW2mgvUQcZCVSF/LeQ3dZuW2STsfeNamMTqNlcBw156/nhpBs4SFUlWvKX3eYo/9N5P1bnFj63Xik+Goj+R2RU9WOw5LMN0DpsNxMusL7AEQZlIWbYsMI0Y5kALFDHloozztMhAsDhKwjIpE8wpo0mMeZxRjimgoPyZyGHL42Yu9kpvL4OjuMhDLzYqA1EpsO4XQRzBbEuGToZwjfcdGvtfpP8TV4ZtsO4T+I17j5ov5k9osYuGNgZwRk4SJssiwTSGuGA8oykkIYRpVOYCWRJR6uCM5kseCp6LhIaYR6JgpYhKx2QhntN2jKHpt2B1h0doeIp9ib+8xrOns98rr4fg"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "abi-floating-stack-supplied-object",
+      "original": "originals/macos-x64-abi.macho",
+      "delta": "macos-x64-abi-floating-stack-supplied-object.json",
+      "delta_sha256": "f1a94f33fe0b4ff460cb2fef656fa06406974e17198105fbd3bac571c62846c1",
+      "receipts": [
+        {
+          "sha256": "cba57bc1f44bba094c5b1f200a6207538cf062233b4c74fa3130b9203cfd938b",
+          "data": "eJydkstu2zAQRff+CoHryLEompKKoj9SFAIfI5k1Rap8OE6D/HtJKbWdxyLIhgDPDIf3XvJpUxSIuaAGJgL6VlR3GXBlpDKjT+Bn2hfF07KmyjFVEt3d/QfWqVEZpvsTS5zgjnQNrvf40uDVX3h1wj9O3OqErmeHGS3V57T+WhQIO81Kg0ttJmq9MGXmGPoXBfgF+cC0Bvle6YfCSEevyh8MuP6qxsGsmYAJTECXpht4M6itafuRodsRbwxpZsbIxksUaLLyurH8N4jQ88cAOfRuR26xPzC8p/mCPRu4GIig+xZIJaBhvIUBczl0uCEtZYPAVb3r6q6GhgteY2gw5RIIg4FLitaxMeQkZxYOeej3B+uOP+4nJqwvz5SUjKv7QVsW0h8oU8DiWPo4z1qBLFdJ65zZWRnF8kgIzgFcinutOPgTwYcvvcun4vTiAFMegAycwMmtt9EJKJMncdieqlWGj0KAz4kGF2FBgbkR8k9H55b22WwyBuViviLbHdo8b/4BZl3cUQ=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-original",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-original.json",
+      "delta_sha256": "873a3c524bf9ca3a92d88d65408af66a315703164034ce8fefbfe48f36f98949",
+      "receipts": []
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-nonleaf-ir",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-nonleaf-ir.json",
+      "delta_sha256": "30b250e4a10c70a2a6e2cee3d84158f73fe5e8952c4ba62b88752f1709f3cb89",
+      "receipts": [
+        {
+          "sha256": "655632e1abbb03fa686e97bdf819a46c60ae9643d4c912ec0cf0365af8eede26",
+          "data": "eJydU8lu2zAQvecrBJ1L7dZipL40KAo0RQ7uoUBRGBQ5solQpEJSdtwg/15SsiW7yaEooGX4Zjh8M5z3cuN5PlaGNZgYf+lFHxxQM0GZ2GoL/LRrz3sZvtbzaD3nsAGQim2ZwHyzxxbPkiqriiSJ5gDNfsPVDn1sa8ktNO/dAe9A+UPEq/3+GlgQ2XaMW/xM6wxssNr2LQgzE/QJx2Lrj4f46CGZzKYXB0saGVxz0DMsJKJME6wo2mPeAxK4vfAzfdRKSnMGwntWK6yO4R3sgUtLN/wk2xYLes8EfJeS63B991WH3zB5WP8INH2ccz310sB5eaugk5oZqY6rsO4Zp0jLXhFAHTZkFxK5B4W3gDClzDBpG4SIPYdRbADF6ZTWlqS2YD5i1eYZwl3HAbWYSB1nQXRVKDdyWkPLDOJ8307IerKezxaZoGnjrYG2k64Fq1D2putNwPl7zrEY/801bijDWyG1YcTdm+9fe23xOwfPFzn7bEO0bYRzf5Et1AoO3hDnnTxekgRxkI/bbJ/whuOjZel22KYsJeqSIlqmiX2cGc9msswz+yB2+sVJubQvEqnzoLWzP9vFmJsJW/jmUgUW0gZzDvStWt4VR5aXs3oOwpY3K2JjZ4NjAm64/SnqArzIVKZ5+Z6qLlP8pSjXst6O1sS9lXRejLc6XcTtQarHVThMFDrNWM1CIQUH3CCmxo4oeOpBm/8q/59Ia7KD1iXwhZWeosGlWoJ9PNIYwY0T8UC+Yc+mV6BXZ8IBuQrUO5ws8mE+SEzqEqoGl00WVU0al1kNSZos4jiL66qsK1rhKE2bghZFtmgWi4hGRZHnZVFEFZzS9oSAdoNtVA8DNMrTHfFGoc9OolakN683fwA5c407"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-nonleaf-object",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-nonleaf-object.json",
+      "delta_sha256": "51dca18c93cb6b1c75095ee584b58630c20bc4e69417b5d138850b11e98b1563",
+      "receipts": [
+        {
+          "sha256": "8c9fb9ec83c8f4ddff6e6466d3b5f0c73fc505b6e87b290053f650a789a17e00",
+          "data": "eJydU01v2zAMvfdXGD7X8ffX0PXSHjasQwd0hwHDEFASnWiVpVSSk2VF//vkOLHdNYdhF0F8FMlH8un5wvN80JY3QK3/zosve4BwybhcGQd8d7bnPR9O53l0HodGlydAab7iEsRyCw7PkjqryySJpgeG/8ZXEWbfEiUcNMWuUWxQ+4cXL+78cWBBVbvhwuHH6BFYgl51LUo7EfSpALnyhyJ+cJ+M16aTO0c6sEAEmgmWKmDcUNAs2ILoMJDQzvzc7I1Wyp6A8I4TDXof3uIWhXJ0wxvVtiDZHZf4VSlhwofbTyb8DPT+4dvCsMcp11OnLJ7MK40bZbhVen8dko4LFhjVaYrBBixdh1RtUcMKA2CMW67cgALq6nAGFoM4HdO6lvQK7XvQbZEFsNkIDFqgysTZInrVqLBqsr98vBkNOt5+nW4TNMZcWWw3qu/+OlSd3XR2cdY3tOG/WeCScVhJZSyn/cZ8/7XXtb3u4WmFk8+NwrgR9O4PqkWicecd3nlHj5cki3hRDGFcOm7LuUYdZCwIgeytls9KNyuqSds76ShMenWLE0CxV54/PpqBs0RVWlTnJD9P8Zfc+646t/eReqvYZCjyE6ldkr3FfoZ5ncxhs4YkL/oCTU1o2tSM5LSkUVmkrG6yCihNyiKnWYNJkqZAsqZM65JlKctJQ5Miq6GGpMoH3fjDlsfNXO2UfrwOD+IKjnIjPJRKCoQmGEgMkRqfOjT2v+b9T2MydI1tn8CX7idqtph/nsU2HmgM4GwuSGNKKqwbqJosqps0rjKCSZrkcZzFpK5IzWqI0rQpWVlmeZPnEYvKsiiqsoxqPKbtKEXTL8DqDg/Q8An7Euf/4cXLxR+rCYV3"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-nonleaf-supplied-object",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-nonleaf-supplied-object.json",
+      "delta_sha256": "51dca18c93cb6b1c75095ee584b58630c20bc4e69417b5d138850b11e98b1563",
+      "receipts": [
+        {
+          "sha256": "989911848d37fbd46aa2f2d3759522a331e1a7aea4c2eef7293426a9a3f44e4b",
+          "data": "eJydks1unDAUhffzFMjrMGGM+XFU9UWqanSxL+DG2NQ/k6ZR3r0GpmHaZFF1Y8nftQ/nHPNyyDICLqgeRCAP2eluAZ0yUpnBJ/Al7bPsZV3T5DFNEi3ufgPr1KAM6PMFEmeUM95QWuwHvPqJf9zwz1NndUL73RH1jI6sJ17T+nV1Iew0K534Q2ai1itTZo7hfHVBr8gH0Brle7cfmmN1u7t/MujOuyOHswaBE5pA3g7dwBuhtqzbj0LdSvwVSIMZIgxvdZDJyn1ju28owrl7DrgUX3F6i/0ItKqXD/S8E2XPZVeJRhRNXUresxaEoE1dCdYjpWUJHeubkjeSlbLqekFrxoEDbauCbLIxLE3OEMZF9NOTdY+f7ycQ1ufgpprl0Kl7Y41G6HMf51krlPnmZpOYnZVRrO9D8EdAl5reJg6/R/Thv57kn5r0YsRpESAGL+jk0dvoBOYpjhiPl9Nmw0ch0C9lBhdxRQHcgMuPTq4hUy7M19gndizI4fXwCz9V2u8="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-writable-pointer-ir",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-writable-pointer-ir.json",
+      "delta_sha256": "42e84b08b30cbf1987b660fa063338319849a369a64820d222dd4f6241dae7b4",
+      "receipts": [
+        {
+          "sha256": "0840971a9ba69e82c1830f0f3a9d9f6c836bdfec1970a335a5d8277eedfd174a",
+          "data": "eJydU8lu2zAQvecrBJ1LLbQiL0h9aVAUaIoc3EOBojAoamQToUiFpOy4Qf69Q8mW7DqHooCW4ZuFs73XmyAImXGiYtyFiyD54IFCqFKojUXgJ56D4LX7ouYJNSezDtBGbIRicr1jiGd0ns2nlCajgRW/4cLDHupCS4RG3y3IBkzYWbzh91eXBdd1IyTip7ROwJqZTVuDcmOCIZdMbcL+kpA80kGsWrXHpIljhQQ7wkqTUljOTEl2TLZAFKvP9MIerNHanYD4QRSGmUN8DzuQGtONP+m6Zqp8EAq+ay1tvLr/auNvjD+ufkS2fBpjPbfawel4Z6DRVjhtDsu4aIUsidWt4UAa5vg25noHhm2AsLIUTmhsEOF4jyiZA5JOhrBYktmA+8hMnWeENY0EUjOubZpFyUWh0unhDLVwRMpdPSCrQXo5SXyABsc7B3WjfQuWsW5d07pIyveUfTHh1RjXpWAbpa0T3M8tDC+1WPzWw+MgRx02xGIjvPqLrqEwsA86u+CoCSiN0ijv3bBPbC3ZAbP0HtiUhSYNnSaLCcXHi+ko0kWe4UPE8ZfS2QJfoiZeQ1Ze/oyHPrZQWPj6nAUIWcekhPKaLe+SI8tnI3v2CssbGbHG3ZCMg1/ucLA6A88izSb57D1WnYf4i1G+ZS2u1pB7rcvx0E91GMTdXpunZdxtFDnuWCHivREdlUijhXJgiDB9aww8t2Ddf/Xhn7K3fAu1DxAq5KApo3PaRLu0T6MH157NXRWVeHGtAbu8zty0yokaIn7habeM3ubel2ZQpUVWVgVwyJOqyFiRsmJGIZ3OC1pN+DRh1XR2m0PFUTGfJ1kxBZpOk1mV3CbHsC3nYP3KO9NCB/XE9VdccffFkxfpe/N28wdoG5k5"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-writable-pointer-object",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-writable-pointer-object.json",
+      "delta_sha256": "d3c90de68c2bad2d4b468e8857cbf523b2ed5f03f16e83ab1f2f02eb36217268",
+      "receipts": [
+        {
+          "sha256": "846c7d4023d1a6618c76a403209000e40d04001c6c3a99e29cb032787ca89b81",
+          "data": "eJydU01v2zAMvfdXGD7Xsaw4/hi6XtrDhnXogO4wYBgCfdCJVllyJTlZVvS/T7YT211zGHYRxEeReiQfny+CICTGiYowF74LkssOoEJxoTbWA9+9HQTP/ek9j97jUXR5ArQRG6GIXO+Ix1NcpmWOMZoeWPEbXkXYQ0219NAUuwXZgAn7Fy/+/NGzYLpuhPT4MXoE1sRs2hqUmwiGTBK1CYdPwugej9eqVXtPOnKESrATrHTEhWXE8GhHZAuRIvXML+zBGq3dCYjvBDXEHOJb2IHUnm58o+uaKH4nFHzVWtr44faTjT8Tdv/wbWH545TrqdUOTuaVgUZb4bQ5XMe0FZJHVreGQdQQx7Yx0zswZAMR4Vw4oX2DIub/EZw4iJLlmNaXZDbg3hNTZ2lEmkZCVBOmbZIu0KtCpdOT/eXjzWiw8fbrdJugMebKQd3orvrrWLeuad3irG8oI3wzwDUXZKO0dYJ1EwvD115f9raDpxFOPt8K61vQuT/oGqiBfdC/C46eAONFssiGMKE8t/Vcox6yjkgJ/K2Wz0o3zYpJ23vlKUx69YOThEGnvHB8NANniYplVpyT/DzFX3Lvqmr93EfqteaToelPYG5NDw66HpZ5NoftluBV1n1QpasEgKeYQp4D4oDwckmAUr4ChBjJMWO05EWxQgmpYIkRz1mZFzljy8QHDY0cpjxO5mqvzeN13IsrOsqNinhvRL9VUaOFcmCigc2QwsBTC9b9V+P/qV+WbaHuEoTKr6Thi/kWLXbJQGMAZw3CKVQJTXlFgUGGKpoSmhBaYEjykuJqyXJEqrxYZVAx7yhLlNIccJKjokIrdEzbMga2m4QzLfTQsI3dF+cX8uLl4g8paIs8"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-writable-pointer-supplied-object",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-writable-pointer-supplied-object.json",
+      "delta_sha256": "d3c90de68c2bad2d4b468e8857cbf523b2ed5f03f16e83ab1f2f02eb36217268",
+      "receipts": [
+        {
+          "sha256": "1f455a2b6d48ef095ccd9c5d5e50bca57fa6509c23a0617a525a9c6bed59a34f",
+          "data": "eJydkstu2zAQRff+CoHryKEe1iMo8iNFYQzJscSGIhk+7KZB/r2U5EZuk0XRDQGembm6c6nXXZYRcEGegAfykBV3M2BSC6kHn8DXdM+y1+VMladUSZTe/QbGyUFqUMczJF6Xfd23ZUm3Bi9/4h8T/mViRiW0zY6oLDqydLyl89vigpvJSpX4Q6ajUguT2sZwvLoor8gHUArFR7efmqubbnN/0eiOmyOHVgHHCXUg70038Eaoq5rus6VuJf5aSIEeIgzvcZDJiO1i2Hfk4cheAs7B921zi/0I5aGZP3CqDwWiqEuGbYtUIC2rCpAxcUBKObQl56wXXXegBZywKqloed92LedVkYbIKhvDnKSFMM6iXy7GPT3eT8CNz8FNTZ0Dk/cXJwMwhbk1Ugd0uY/WKokiX22tWtYZEfnyUAR/pLYU+Vpx+BzRh/96m3+K1PMRp1mAaDyjE3tvouPJLwQ+7s/FasNHztHPqQYXcUEB3IDzH0+u26a9MF/2L+o9Jbu33S+5MN8x"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-floating-stack-ir",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-floating-stack-ir.json",
+      "delta_sha256": "494c51c09363c2c8164c92297c84b902c6450cb03fd0f4079cfc45ce6839bd18",
+      "receipts": [
+        {
+          "sha256": "a9eab46f3fe023b86a83b5ae90352e2b38c5dc586b55f47523bb17c4b8d67437",
+          "data": "eJydVMlu2zAQvecrBJ1L7ZFlI/WlQVGgKXJwDwWKwqDIkU2YEhWSsuMG/fcOJVuykxyKArI8fLNwtqeXG8/zqbaiosz6Cy/64IBSNFw0G4PATzx73kv/Rs0ONWezHlBabERD5XpPEc+SeTafJUmajAZG/IYrD3OsSyURmnyr1u+1f/D9q8+AqboVEvSY0hlYU73pamjslJzPJG02/nCBTx6TUay65oAJE0tLCWaCG0W4MIxqTvZUdkAaWl/ohTkarZQ9A+GDKDXVx/Ae9iBVCzr8pOqaNvxBNPBdKWnC1f1XE36j7HH1IzB8N8V66pSF8/FOQ6uMsEofl2HZCcmJUZ1mQFpq2TZkag+aboBQzoUVCptDGN4jOLVA4nQMiyXpDdiPVNd5RmjbSiA1ZcrEWRBdFSqtGs9QC0uk3Ncjshql57PERmh0vLNQt8q1YBmqzradDaR8TzkU478Z45oLummUsYK5ufn+tRaL3zp4GuSkw4YYbIRTf1E1lBoOXm/nnTRekgRxkA9u2Ce6lvSIWToPbMpCkTaZRYs0wceJ8SQmizzDh4jTX5wUC/yRJnUasnLyZzwMsUWDha8vGYCQsVRK4G+Z8i4xsryYmHNosLyJDWvcDUkZuOX2R6sL8CJSkebFe4y6DPGKUa5lHa7WmHut+HQYpjoO4u6g9G4Z9htFTjtWirCSilr8MBCsmu2I0ENjNDx1YOx/deGfcjdsC7UL4DfIQM2DS9IE+3hIYwDXjst9DZV4tp0Gs3yVd8Cu7M2WJre580ij9LZIIUtoUjCelxlNIxpl8XxWAUvjskQ4L2e3PKr4rErLCGZxVbB5Fc8ZzIrqFLZjDIxbc6s76KGBrO6KN3x9doRFyt78ufkL5PmSAA=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-floating-stack-object",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-floating-stack-object.json",
+      "delta_sha256": "4c17c97c110eb0e00c848e981762bb02e0340945228ff9e1c404d8f0693a53dc",
+      "receipts": [
+        {
+          "sha256": "574adf101af114049e4ba015a857437104334e1111673846bb5be3f546d0d8a0",
+          "data": "eJydVMtu2zAQvOcrBJ1D60FZlos0l+TQoilSID0UKApjSa5s1pSokJRdN8i/l7JiSWl8KHoRuLPc1+xQTxdBEIJxsgTuwndBctkBTNZC1mvrge/eDoKn49d7tt7j0fjyBGgj17IGtdqBx7N0mS0XaUrT4YKVv/FVhD1UTCsPjbFlEx69z/7749gB11UjFZpT5ACswKzbCms3NhdyBfU67AuE5D4djmVb733DxAFTaEe41kRIy8EIsgPVIqmhmvilPVijtTsB0Z1kBswhusUdKt2giW50VUEt7mSNX7VWNnq4/WSjz8DvH77NrNiOuR5b7fBkXhlstJVOm8N1xFqpBLG6NRxJA45vIq53aGCNBISQTmpPDuG+jhTgkCR0SOtHMmt078FUeUagaRSSCri2STaLXw2qnB7tLx9vBoMPp1+n0wgNMVcOq0Z3019HunVN62Znff0Y4ZsFroSEda2tk7zbWBi+9vqxNx08rnD0eSqsp6Bzf9AVMoP74HgvePEEaTpLZnkfJmvf22qqTw9ZB0qheKvjs7LN8mLU9b72LYxa9YtTwLFTXjhcmoCTRAXNi3Nyn6b4S+7dVK3f+9B6pcVoaPYTuVuxg8OOwzwuprDdQDrPuwJ0QYtYlEUyp7mYxzFj+ZIVnOdpknDIiyzORclZiTAvKfA89lgc0yJLcDmntOiJ7Lc8bOZqr832OjqKi7zIjcmoVBqc/0cQTzHfkr6XPoHBxxat+y/a/4ktyzdYdQnC2j9II2bTNzTbJX0bPTilJ6bzgmKWQlpwkbMMaAxxliwXJXKaMObhnC3mIi7FoqQsxkVSFnxZJkuOi6J8SdtyjrbbgzMtHqH+LXYlzj/Hi+eLP3W/hqg="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "abi-floating-stack-supplied-object",
+      "original": "originals/macos-arm64-abi.macho",
+      "delta": "macos-arm64-abi-floating-stack-supplied-object.json",
+      "delta_sha256": "4c17c97c110eb0e00c848e981762bb02e0340945228ff9e1c404d8f0693a53dc",
+      "receipts": [
+        {
+          "sha256": "57b0ea58818355f7ddd570d8ec72c2eaa53eb14f2498df8f9365f4d6b09fa344",
+          "data": "eJydkt1y2yAQhe/9FBquIwcJieBOpy+SyXhWsJKpEaj8OE0zefciybWdNBed3jDDt8tyzoHXTVEQ8FH3ICP5UlR3M+i0VdoOIYPHvC+K12XNlWOuZErv/gDn9aAtmP0JMm/qXbN7qGtWXxqC/oXvToSXsXMmo+vZfiJL9S2vT4sC6cZJG/S5zSZjFqbtlOL+rKA+oxDBGFR/K/1UWMPFVfmzRb+/qvE4GZA4oo3k0nQDbwYJxsVnhm5HfDBkwA4JhksUZHTqunHdd5Rx371EnEPnVNzicIC65fMF7IEJqnpRtYyrltKu47tOSMnrqpLARUO56mXXI7Q9A8lpZpQy0VS4axkTZB2b4pzkBPEwD/367Pzx2/0I0oUS/MibEjp93xsHMf+CMkcsj2VI02Q0qnIVtU6avFNJLs9E8GdEnwNfKx5/JAzxv17mnwIN8oDjPIBYPKFX2+CSl1hmV/KwPVWrjJCkxDBnGn3CBUXwA85/nZy9Zl9YLu6rZkvJ5m3zG/Su2x4="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-original",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-original.json",
+      "delta_sha256": "61ce0dbfcfee3ceac2dd2c5247a461be3f837a6467094961961c4296665ea899",
+      "receipts": []
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-nonleaf-ir",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-nonleaf-ir.json",
+      "delta_sha256": "eae6827425716f74480e19bebc41c4fb1be19d39126f188a3fbb4365d9b81b35",
+      "receipts": [
+        {
+          "sha256": "ee183ab13a93dca7cc9e772c521d8cbc4bf9f4b0d3a9b899595db773ffb75791",
+          "data": "eJyVU01zmzAQvedXMJwrzJf58KQ599ZDjp0OI8SCNRESkYTtNNP/3hUYsJsc2hlAu293xdPq7fuD5/lUW95SZv2DF35xQM1lw2VnEPiBvue9T1+MvGBkSZsApXnHJRXViSKeRmWRhlvU8F9wl27e+loJhLbCI4gBtD9l/Mbvz4kCU/3ABeILpwWoqO7GHqTd2PlMUNn580988j1ezXaUZ2RMLK0FmA2WijTcMKobcqJiBCJpfxPnr6OysLiPGgZluFX67WlXj1w0xKhRMyADtey4Y+oEmnZAaNNwyxUeijCKHWyoBRIl67ZIQ3dgv/KsyMjAiKOmzob05sTuuAmrVh96bokQp35Fnlfrslhb+Vr4aKEflKaOtBrtMNpAiM+C81n8D52vGk47qYzlzLXa9++jePajg7febzHsh8E+uPA31UOt4exNed414sVxEAXZXIZtopWgb8jSVQDpDxcyHJIYHzLEebiZ0WbGhyzFh/DrEsXFAV/SFuG0SnQzl0sPbgPynMyy8LnEXlS3QkbIWCoENB8F/1Hf+zLe1H+WeNxN1BVKRVAGTp/+mnUDXreJozArik+m4rb+r4lw/RtRZivrXjWbM1/xeiuPZ6VfnnaLwi4oOFrznVRSAG0J13MvNLyOYOz/H/yfGBt2hN5V+xLw4pvgdmyCUzRzmMHKTeDEvOUXO2owTwvbgN0lmiON99mkFBaxuoCypUWbhmWbREVaQ5zE+yhKo7os6rIpaZgkbd7kebpv9/uwCfM8y4o8D0u4bjsyBsZJ3OoRJmieU/eLz0Y1KoMkCUL/4ffDH8QWd+8="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-nonleaf-object",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-nonleaf-object.json",
+      "delta_sha256": "685252542c2c054b32fd1686fdf1876a2e812917e48ae7724474a3232dd3a15a",
+      "receipts": [
+        {
+          "sha256": "1fb00825fcc44cbecda63cb86da300992711f0512f38ee276e85451fcc0700de",
+          "data": "eJyVU01z2yAQvedXaHQOttAn6qQ599Yf0Ol4+FhkGgkUQHbSTP57wbItucmhvSDtW3Z5vH283SVJSq1XknKffknwfQSY0kLpzgXgR4iT5O20hsxTyAQ0u78AxqpOadrvDjTgJW5JmS1Zp37DzXb3OjDTB2gp3EM/gk1PO97D+vNEgZthVH3Az9VXYEdtNw2g/cIu5T3VXTofkqLv+fVXTvoYGCNPWQ9ugbVBQjlOrUAH2k+ANB1WefU8GQ+X8MHCaJzyxr4+btmkeoGcmSwHNFLP91tuDmBpB4gKobwy4VKI06CgoB4QLq5tAw3bgf+qalKjkaNIzRwdGtyB33DrvVnicAceuyIHp+9Ccyl6ufwt0LXDg4dhNJZG9mby4+Q3n+bmO6UfJrATinbaOK94lDxNb7NBg32ElxksuaCLC4xj+psZgFk4Jqd9yTmT5PkGb+q5TOnAbbd2WICcp30P4qMTPxqvavPFlkcdzl/cFkbYUw7RN+l10wo8d8lxVhPyiVvX9X85Nd5nCuO/kh6MWALDfoWx7dirh6hek5M17PY0r+p4QNvIpi5lVQosAYiQLS8olVkmAlRxXOASGKOkwrwoSsBQZryVFa1KSaqcyFnCeb7XmTwcjX163F589hJsR5naaqN7oBLNJOZKC88TOP//Sv+TRo7vYYjVqYYwerFZP6DNAc8cZnAlCnDMGYFWUiLLrJUFJiWDvMgrjEvMWsJa0dKsKGQjmqasZFVlImuauiZNk7VwbjtxDi6q7+0EJ2h+iPGIT9/i3fvdH/DAcaw="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-nonleaf-supplied-object",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-nonleaf-supplied-object.json",
+      "delta_sha256": "685252542c2c054b32fd1686fdf1876a2e812917e48ae7724474a3232dd3a15a",
+      "receipts": [
+        {
+          "sha256": "7305f23bf0c17c52e8565638cc3795685c79cb14bc1e8b67e258e6b1387a90db",
+          "data": "eJyVktlOxCAUhu/nKRqurVJsaccYX8SYCYXTFqWALDMu8d2l7WjH5UJvSM53Fv7zw+smyxBzQXaMB3SVFWcTaKUWUvc+gdsUZ9nrfKbMQ8okis8+gHGyl5qp3Z4lXhbbpsRr1ssX+FLun8fWqITWxgGUBYfmird03s0SuBmtVIlfZToqNTOpbQy7owRyRD4wpUD8lPpTWbUlq+6DBrdb5TiwinEYQQf0WXQCj1NIgWnT/LLOaf+3VRTTfWT9pxFoNGINTHsPPOza5wCT3zVpTrEfGKnodAG+FFUntrxsayjbFnPoaEMJpXVVF1VX1JhwinFZA8ElAVyXl9B121IIynAqR8vYGCYPLQvDNPT6YNzDzcUhWWoOPn9qaM5aeaGNVsC63EdrlQSRL2qWEdYZEfn8MgieArjk8ZJx8BjBh/8/xp9s9HyAcepGGvbgxLk30XHI0y58ON8XiwYfOQc/ORlchBkF5nqYPjeSybHc8vxj39HvOdq8bd4BHADYLg=="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-ir",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-writable-pointer-ir.json",
+      "delta_sha256": "dc4771ec6e70aa6a7e43798e651a7676adf31acd0e11a462fb3cdee4e15e0ceb",
+      "receipts": [
+        {
+          "sha256": "274d6c7c828f7204be7f34bdde8a1cae4a20ce26bcd7c3e595938c7476a07561",
+          "data": "eJyVU01zmzAQvedXMJwrLD6MwZPm3FsPOXY6HiEtWBOBiCRsp5n8967ABjvOoZ3hY/V2Vzw93r4/BEHIjJM14y7cBvSbByrZCdk1FoFfuA6C9/GJmRfMXMpGQBvZyI6p3YEhnsVlkdEla+UfuCm3b22lFUJL4x5UDyYcKz7w+XukwHXbS4X4hdMF2DHTDC10bmEXcsW6Jpw+EpKfyRzWQ3dExsSxSoFd4E4TIS1nRpADUwOQjrVXefk6aAeX5aOBXlvptHl7WlWDVIJYPRgOpGeO71dcH8CwBggTQjqp8VCEM1RQMAckTudtkYZpwH2XeZGTnhNPTR8tae2B33BTTs9raKUjSh3aGXmeo9MlWtrnxkcHba8N86T14PrBRUp9lZzOEt4pvxOSNZ22TnIvdRjeZvHsew8v2i851MOiDj79Q7dQGTgGY11wzgRJEsVRPrWhTGyn2Buy9B1A2u2J9Ns0wYv0yYYuYbyEyTbP8CLy/IqTYos3qQs6vjtc5r6Wbf0G5DmdbBHKDrXYXRsZIeuYUiDuDX/v73WZLO4/dnjcxdQ7tIpiHLw/w7nqCjxvk8Q0L4ovpuK6/9NEeP0GtNnMutViWUy/eP4rj0dtXp5WF4ed0HCskqujkeMokF7LzoEh0kyiGHgdwLr/V+CfqFu+h9Z3hx2gA0R0PT/RIZ44TODOj+J4hFqe3GDAPt3RjvhNh92zZJ37ngzWJdR1lWZ0LSjNM1rSSmyyLC5KgWGclpui4BxiBlBtSqB5nrG0juk6pqyk520HrLDe9M4MMELT5PpPfDW8cRmlaUTDh4+Hv4m4f0c="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-object",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-writable-pointer-object.json",
+      "delta_sha256": "be54a8e1729b2447cc98d9d7d64a55ff49220c31abf22c78b1425515eff1da37",
+      "receipts": [
+        {
+          "sha256": "2750b01ca982f071ac3e38ed0508066cc9e5d714a3642a35198718bf1e9f0f38",
+          "data": "eJyVU8tu2zAQvOcrBJ1Dm9RbRZpzb/2AojBW5EpmI4kKSdlJg/x7V5Jt2U0OLWDI3NkHh7uzb3dBEIL1ugbpwy+BuJ+ASvdK940j4AfZQfA2f8nzRB5C+f0ZMFY3uod2dwDCE1EWCV+9Tv/Gm3D32lWmJWhN3GM7oA3niHf6/pwpSNMNuiX8lH0BdmCbscPer+xC2ULfhMslIfseXY712B+JMfNQtehWuDdMaSfBKnaAdkTWQ3fl18+j8Xg2HywOxmlv7Ovjthp1q5gzo5XIBvByv5XmgBYaZKCU9trQo5gE6qACj0zEl7JEwzbov+qsyNgg2UTNHB3r3EHecGu9WW16g5yqMofz/0pzTXo5n1boUuHBYzcYCxN7M/ph9JtPfcubwg8T2CkNTW+c13JqeRjeeqkH+wleZ7D6qC+OGE/ub6bDyuIxmOOCkyeIoo3YZEua7onb7lphBDkPbYvqoxI/Ci8to1WWx57uX9VGI2xB4qSb8BJ0BZ6qRIJnRfGJWq/z/1Lq9J6Rxn8h3Rm1Gqb6RWPbVa8ep+4VIr6G3R6iNJvbJ6IceBXFoCBNMREiVoqMMucZYFKXdS5BRjyPRCXyrI7TUtAvRl7VtHHL3MNlvpeZPByNfXrcnnX2QrKDSm+PVs8LwQaje4+WLWyWEhafR3T+/1v+T81yco/dlB32SBpQm+tN2hzEwmEBr7qTYFpiXVdxwlPFeZbwklcqTxJRlIqOIi7zopASBSBWeYk8yxKIa8FTwaHkp7IjRbhpDN6OOEPLRk5XfLqUd+93fwAUunSc"
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-supplied-object",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-writable-pointer-supplied-object.json",
+      "delta_sha256": "be54a8e1729b2447cc98d9d7d64a55ff49220c31abf22c78b1425515eff1da37",
+      "receipts": [
+        {
+          "sha256": "0bc4c94a9dc23f326e0723abb02aa8151aeb15094cf1b0b2f4105a0abf2acf03",
+          "data": "eJyVkttO4zAQhu/7FJGvCSSp46ZoxYsgVNmTaeLFsY0PDSzi3ddJCukuXMCNpfnm4H9++3WTZYS7II8cArnNyqsJCKlbqTufwH2Ks+x1PlPmMWUSLa7egXGyk5qrw4knTst9Q4s16+Uf/KfcvwzCqITWxh6VRUfmird0PswSwAxWqsRvMx2VmpnUNobDWUJ1Rj5wpbD9LPWzsnpfrbpHje6wynFoFQccUAfyUXQBz1OqsmBN88U6l/3/raK47iLvPowgg2nXwIjfCOEgXgJOfjfl9hL7nlc1my4oGeMUBKMlHPHIi72A3Z7WDe5AtFUhmNjWgrbFljeVwC0VO6THpkYoaEVZCWQZG8PkoeWhn4b+Go17vLsZk6Vm9Plzw3Iu5M3oZOBCYW6N1AFd7qO1SmKbL7KWWdaZNsL8RASfU1kye8k4fIrow89f5Vt+euhxmLqJxhO69tqb6CCJ5QH661O5aPARAP1kaXARZxS463D65USytKmF/H3xwZ+AbN42fwGe8NyJ"
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-floating-stack-ir",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-floating-stack-ir.json",
+      "delta_sha256": "ce5fe0825afb35eee8f83da42b1077b5da4769302674acd58c1c088f4e40bfc4",
+      "receipts": [
+        {
+          "sha256": "96b8748782ddd77483de7ceaf99938d4d9cf01ff64029cb4b3efdbe25057b401",
+          "data": "eJyVU01v2zAMvfdXGD5Pjj8Sxwm6nnfbocdhCGiJdoTKlivJSbqi/32UndhJ08MG+IN6JKVH6vH9IQhCME5WwF24DeJvHihlK2RbWwJ+0ToI3ocveV7IcwkbAG1kLVtQuwMQvkw2xTJLJ6+Vf/Am3L41pVYEzYlVFw7eD/r+Ho7nuumkQjPxuQA7MHXfYOtmZiFX0NbheEDIfqaTWfXtkdgyB6VCO8OtZkJaDkawA6geWQvNlV++9trhZflosNNWOm3enhZlL5VgVveGI+vA8f2C6wMaqJGBENJJTQUxDtQ9AQ5Zkk3bEg1To/su8yJnHWeemj5a1tgDv+GmnJ7W2EjHlDo0E/I8WaeLNadPiY8Om04b8KR177reRUp95RxrCe86vxMS6lZbJ7lvdRjeeqn2vYfn3s8+6oelPnj3D91gafAYDHHB2ROkaZRE+ZhGbYKdgjdi6TOQNdsT67ZZSg/r0nU8m8lsptt8SQ+T51+SFlt6WVXEw7+lZe5jYes3YM/ZKItQttSL3bWICbIOlEJxL/Z7ba82s7b1saVyZ0HvSCoKOHp9hlPUFXjeJk3ivCi+mIjr/E8T4fvXk8wm1o0W82K84ulWHo/avDwtLgo7keCglItKaXA01Yzq5S9MmrElBl97tO7/6/8n4pbvsfHZYYt0/yK6np7okIwcRnDnB3EooJIn1xu0T59IR/wm3u4hXeU+I4uzVZHhMoW04CIvl5DFEBPjdYU8S8qS4Lxcr0RciXWVlTGuk6rgmyrZcFwX1XnbnnO0XvDO9DhA49T6I74a3GQTZVkUhw8fD38Btet8tA=="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-floating-stack-object",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-floating-stack-object.json",
+      "delta_sha256": "1b376214ff80ce012326375159c9e9585c55a576f20eb455ba23301e528bcf29",
+      "receipts": [
+        {
+          "sha256": "461e9ca5da2bbe5df30c23657ba7627f62e654412c8a1c2a827af74522e786ed",
+          "data": "eJyVU8FymzAQvecrGM6RjQBj6KQ599YP6HQ8i7TCagARSdhJM/n3rkwMpMmhvQj0Vqt9evv25SaKYrBeKxA+/hLx2wDUupe6bxwBP2gfRS+XlSIPFCE0ub0CxupG99AeTkB4zqsyz9I56vRvfHfcPXe1aQlaEtUQX6KvtP68lBemG3SL9po5Awewzdhh7xdmsWihb+KpQMy+p/OvGvszsWUe6hbdAveGSe0EWMlO0I7IeuhWcf04Go/X7Z3FwTjtjX2+39ajbiVzZrQC2QBeHLfCnNBCgwyk1F4behATQOpJ8Mh4Nl9LNGyD/qsuyoINggVq5uxY507iHbfWm2VPbxDhVubw8l1oLklP178Fmm+489gNxkJgb0Y/jH7zaWx6U/yhAwepoemN81oEyeP4fZQ0OAZ46cESI10cMQ7hb6bD2uI5upyL3iJRmm74ppjSdE/cDmt3EeQ8tC3Kjy78aLpdtZjOnHuqvziNWtiCwOCbeD60At9uSXlSlOUnTl3n/+XU8J6R2j+T7oxcNqb+RW071M8eg3pVydewO0K6K0KBNM0lwJ6qp0WS5Qq4TFSSZyopiqriCaCUBVc0ojJHUezLXVkUwDHJy1JJpSYJp/7OPbk7G/twv7367IlsB7XeqtaAp9lmJK54YBOX6QKLjyM6//+C/5NUThyxC9lxj+QAuVnP0ebEJw4TuNImS7JdmWGeQloKWdQ5ZAkkxGCvUGS8rgku6v2OFJN7ldUJ7rkqRaV4JXBfvmnjRiHQhSZ4O+IFmuYxlPh0JG9eb/4AVaFzXA=="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x86",
+      "case": "abi-floating-stack-supplied-object",
+      "original": "originals/windows-x86-abi.exe",
+      "delta": "windows-x86-abi-floating-stack-supplied-object.json",
+      "delta_sha256": "1b376214ff80ce012326375159c9e9585c55a576f20eb455ba23301e528bcf29",
+      "receipts": [
+        {
+          "sha256": "e1eb8700fead41deb4d4f66de4e3d0e85d70ed777ca8cac62d9961d518b329f1",
+          "data": "eJyVUstu2zAQvPsrBJ6jRJJFPYqiPxIExmq1kllTJMuHnTTIv5eSHNtJemgvBHZmH7OzfN0kCQPrxQDo2bckv5uBTqheqNFF4DHGSfK6vJE5RCai2d07oK0YhQK5O0LEy7xtym1xYZ34TR/S3cvUaRmha+Fg2MK+xfdpGY96MkKSjWkqSLlgQpngd+fxxRlyHqSk/qvMr6p4e1WlT4rs7irFkpGANJHy7JJ0A567FHlWNc1fVrmt/7SKBDUGGC8msEn310B3Pwn9rnvxNHvdNvkt7PZQ8GoeMPCCU8d5neUDL9sWaqAK26EkrOoMaZvxbVkXdQw5dl3V1S1sayiIIzQVcLa2DX720IDfz02/n7Q9/Hg4RUv1yaXPTZVCJx4GqcHH46fRXDykLhgjBfXpKmrtZKzuAy4HYvTsyUarV8bSr0DO//9N/slNh3ua5mqm6Ei2v3c6WKQ0roT7+2O+anABkdxsqLeBFsiDHWn+30xUcU+D6fvakzsi27xt/gCKfNm3"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-original",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-original.json",
+      "delta_sha256": "c7c3f64388bb93d6ad2f8a3dcd63deaf52bc1880dbc2ad8e0b7a14bcf45012c9",
+      "receipts": []
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-nonleaf-ir",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-nonleaf-ir.json",
+      "delta_sha256": "2085c68cbfde7e4bc0d8d5f2d5dc30e588baab6268641fd9929d4eba52c418d8",
+      "receipts": [
+        {
+          "sha256": "7e133471a1ce55fed2025e0d2a57fbbb22bf9df109ccdf2fd4dd3b4ff53279ed",
+          "data": "eJyVU8tu2zAQvOcrBJ1LWw9bDyPNubceciwKgyJXMhGKVPiwnQb59y6lWrKTFGgBSVjO7pLD0ezrXRTF1DjRUubiXZR8CUAjFBeqswj8wHUUvY5fzDxh5lI2AtqITigq90eK+KYsqjllxS+4qbUvfaMlQkvXAeQAJh4r3vD7czyf6X4QEvELoQuwp6bzPSi3UIuZpKqLp0Ni8j2bw9arE9IljjYS7AIrTbiwjBpOjlR6IIr2V3nx7LWDy/LewKCtcNq8PKwbLyQnVnvDgAzUscOa6SMY2gGhnAsnNF6KMIryceqApPm8LdIwHbivIq8K4tWT0idFpFD+TDrlb9hJp+c19MIRKY/9jDzO0fkSsRmaG+8d9IM2NNDW3g3eraT8LDndJv6g/Z4L2iltnWBB7Di+zeLtDwFe1F9yqIhFJUL6m+6hMXCKxrroTybKslW6KqY2FIruJX1BlqEDSL9DcXd5hg8ZsjJZwnQJs12xwYeINKt2+JIW13lASVuFFqIQL0LwiOnpKKFQh/21hxGyjkoJ/KPX31m7Lq5cf1J4z8XPaBJJGQRnxnPRFThtkRY34/Fp97tJCKp5tNfMt9d8WUw/dv4X9ydtnh7Wk6nOaDPaiLXSSgJtiTCTBgaePVj3nxf+J7KWHaAPrbEC/NN8dT0pq2M6EZjAfRi6kXQrzs4bsA8Xqit2U2gPNNsWozVYypoK6pZW7Sap2zytNg1kebZN003a1FVT85omed6WvCw323a7TXhSlkVRlWVSw59tPWNgg6ed8TBC02iGI/4ynXdvd78Bhd1z8w=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-nonleaf-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-nonleaf-object.json",
+      "delta_sha256": "6ee2fa93d27af7bbe9d5b808c72c2b92e4702f5e148af4463c87c7b838f9e169",
+      "receipts": [
+        {
+          "sha256": "8d2d297b9f88cdfafe51d4fba5747da73fc70f517285891cd0a823eead30e90e",
+          "data": "eJyVU0tv2zAMvvdXGD5Xid+Poetll+203YchoCTa0SpLqR5Ju2L/fXLc2k7bAdtFED+SIvnx09NVFMVgnOiAufhDlF6PABWKC9XbAHwPdhQ9nc/guQuegCbXL4A2ohcK5O4IAS/qqpldVvzCi1j7OFAtA7Rk7VEe0MTniN/h/HGuz/RwEDLgz9kzsAPT+wGVW1qLmQTVx1ORmHzN5mvn1Sm0SxxQiXaBlSZcWAaGkyNIj0TBsPKLe68dvpg3Bg/aCqfN4+2WeiE5sdobhuQAju23TB/RQI8EOBdO6DAUYRDo4+CQpPn8bGjD9Og+irypiFd3Sp8UkUL5B9Irf9GddHqxv335NBtsvj283BZozrlxOBy0gbFj7d3Bu827vmmO+A3rOy6gV9o6wUaa4/jSG+bej/DC++ILXNjAwej+rAekBk/ROS569kRZtkk31ZQmVOhtt5ZUgKwDKZG/ld4rpbXVSoQnFYov8go7k8BwFEo8B63A6Ym0ulDru9mvhDmO4sO2534HzRdD05/I3I4+OhyJa6piDds9ZGU1Fsg4a9u2yqq8YVjnbZ53XctYRzveJMhSKDOa5QVQwAJT6LKkTqsy76qkaQreNhN702rnddyctLm73U6KeggaAyq2SiuJ0JGphSnP4L1H6/6T4n+ix7I9DmNqrDAsnG/WX2VzTKcGJnDFRxiZ0QbbDpquSNouT5uCYpZnZZoWKW0b2vIWkkBTzeu6KLuyTHhS11XV1HXS4vOznjG0I/HOeDxD05cbS/zl1139vvoDpOhqAw=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-nonleaf-supplied-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-nonleaf-supplied-object.json",
+      "delta_sha256": "dad3839a7d69665db375c05c85018f1ebfc72bca0ace80fd586fc34e1f4ecd85",
+      "receipts": [
+        {
+          "sha256": "e0bc971240f35324155ccf82022aaedb13862cf7cdc8c2a040cbf429d8ca3630",
+          "data": "eJyVkttOwzAMhu/3FFWuKbTZWtoJ8SIITU7itmFpUnIYGxPvTtrCNg4XcBMpnx379+8cF0lCwHrZAPdkneRXI2BSC6lbF8FDvCfJcTpjZBsjkWZXn8BY2UoNarODyFe3ZXUKOfmKX3LdoWdGRXR+1aEa0JIp4y2ej1N/bvpBqsjXiQ5KTUzqIfjNR3/6gZwHpVD81PlNVl1eKH7RaDdnLRYHBRx71J6cki7gXCIvv4z26+tvUyjQbYD25AHpjThfDHtC7jfs4HH0uc7pJXYd0KIcGyzrIlsKyKuc5ryiAqkoAKuqZCueQ1aUFQCt6hXjGWVZwZoG8HbVFFnNBF3WDZnLBj/aN4DvxqJ3L8Zu72+U1GGf7qsyBSZvtNEKoUldGAYlUaSzlrnAYI0IfFoJwb1HG82dIxafAzr/zy38yUHHO+zHp0TjDq24diZYjmkcg3fXu3wW4ALn6EYTvQ04IQ+2xfE/E7mM0wW91XHt6TxvqwNZvC3eAa5w1mA="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-nonleaf-gcc-source",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-nonleaf-gcc-source.json",
+      "delta_sha256": "bf2fb963e0ed8b1e2d769e924ac4ddf718780e915d0023e950526530cb106bc8",
+      "receipts": [
+        {
+          "sha256": "e324c715767a1959d28cee4449729dd559154510cc830e1d1d09bff541ca6df4",
+          "data": "eJyVVE1vnDAQvedXIE6tFFhsjIEoyqWnntpLT1W1MvbAumHtDbbz0Sj97R0ggd0kh/Ried7MeGbePHg8i6JYDF63Qvr4IiLnI9Boo7TpHAI/0Y6ix+lEzzV6EM3OXwA76E4b0W9vBeKs5NXicvoPnMS6h31je4TWrB30BxjiKeIJz19TfWn3B90jfhHRE2Arhi7swfi1NfTdwiA6SDopk/uKx3O9OPlGl2sbzB12nnjR9OAWWN8E6+HFvBzgYJ32dni42jRB9ypxNgwSkoPwcrdZCgmltNcW+0+kQKaU8JCQfK1mbNJ7u9rfv35ZDLnc7l9uK7TkXHrYH+wgxlZs8Ifg03d9c4PxG+a2SovOWOe1HKmK41MvDrQb4Xe5W8PQ6XDOMVLziie9NuE+6UwY46NPP5pgfIhInuZplvAwmfQvZWnGUvL52TG/qQ3OsD2WD0LOi74H9VZmr1RV8yPB3RnsbJUSLq0XEkZRxEvQETg/QfiJMt/NfiXCXpguIDdLv3urVsM2v0H6bfPgYSSYUM6OcbcTtOBjhYILlYNQohCiLgRTbU5rIJTSjJVZmxPKGGdtpSgpOc+UUIRDnXFGGKvrclZVPGtg2dvlnR2urzbzPnBviWj0xljTg2inXT7rYsod4CaA8//J84c4cnIH+zE1NoBiUenxB5PekrmBGTziBCSRTQV1K6qWZTWSULEGaE4LQhhp6qqpVS2yPG9LVZasaIsiU1mJ/FRlmdXPc7kgJbiRfT8EmCCP/wfwk15zZCWYa4N6WXUbnz2d/QNYMGKY"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-nonleaf-gcc-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-nonleaf-gcc-object.json",
+      "delta_sha256": "e137a5124a29bfeb780734f8f2be669c6888cecb3bbc9f4339c3f18f7d7dc822",
+      "receipts": [
+        {
+          "sha256": "5cdac1bc488c0ef09c8571a9d73a0f5d873c74be6032ce52dd512ae3784b6978",
+          "data": "eJyVkt1O4zAQhe/7FJGvCcQJddJqtS+yQtXYniTeOnbwTykg3h0ngZYCF3Bjyd/MeM6c8fMqywi4oFoQgWwzejUBroxUpvMJ/Ev3LHuezxTZp0iixdU7sE51yoDeHSDx25o1p5BXT3iR6x8HbnVC56oe9YiOzBkv6byb+ws7jEonvs1M1Hpmyowx7N76l2/IB9Aa5Vedn2Rt2AfFDwbd7qzF4ahB4IAmkFPSB7g8QdnFaN9Wf5pCg+kidCcPyGDl+WL5fxRhxx8DTj7TqrzgvodyzaYO68265g0FWrBivRGcAmskY1VVy7Jqy7KlLTa8klA0JYVa1G3BxaYuORf0tigkWZ6NYfJvhNBPj/55sG7/90YrE4/5sWE5cHVjrNEIbd4JkS8yltrRWRnFvA6Cx4AuGbtEHN5H9OGXG/iRe170OEylxOABnbz2NjqBeZpA9NcHugjwUQj0k4HBRZxRANfh9JeJqtJg0exNWnm+jNqZSFYvq1cAAdPq"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-ir",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-writable-pointer-ir.json",
+      "delta_sha256": "77328e648218a07c1b11e2401ee5b054995ab60009d8c3bc24613fbdda898817",
+      "receipts": [
+        {
+          "sha256": "f1335b5b6f5959873d3a8f0859cd9ad2e1ebbf306f76943f76cd0ce84ebd9f38",
+          "data": "eJyVU8tu2zAQvOcrBJ1LWy/LkpHm3FsPORaFQZErmQhFKnzYToP8e5dSLdlJCrSAJCxnd8nhaPb1LopiapxoKXPxLkq+BKARigvVWQR+4DqKXscvZp4wcykbAW1EJxSV+yNFvNiW1Zyy4hfc1NqXvtESoaXrAHIAE48Vb/j9OZ7PdD8IifiF0AXYU9P5HpRbqMVMUtXF0yEx+Z7NYevVCekSRxsJdoGVJlxYRg0nRyo9EEX7q7x49trBZXlvYNBWOG1eHtaNF5ITq71hQAbq2GHN9BEM7YBQzoUTGi9FGEX5OHVA0nzeFmmYDtxXkVcl8epJ6ZMiUih/Jp3yN+yk0/MaeuGIlMd+Rh7n6HyJ2AzNjfcO+kEbGmhr7wbvVlJ+lpxuE3/Qfs8F7ZS2TrAgdhzfZvH2hwAv6i85VMSiEiH9TffQGDhFY130JxNl2SpdlVMbCkX3kr4gy9ABpN+huLs8w4cM2TZZwnQJs11Z4ENEmlU7fEmL6zygpK1CC1GIlyF4xPR0lFCow/7awwhZR6UE/tHr76xdl1euPym85+JnNImkDIIz47noCpy2SMub8fi0+90kBNU82mvm22u+LKYfO/+L+5M2Tw/ryVRntBltxPpkxDgAZNBCOTBEmEkMA88erPvPm/8Ta8sO0IfWWAH+cr66HpnVMZ0ITOA+TN/IvhVn5w3Yhw+cV+ymwx5otilDTwGbGtq2yYtkw5OkLJI6afi2KNKq5himeb2tKsYgpQDNtoakLAuat2mySRNaJ3+29Vhhg8ud8TBC07CGI/4yr3dvd78B4WR7Sw=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-writable-pointer-object.json",
+      "delta_sha256": "d8ad21126f9559c97a2e642f72ddc034e0925a4a71176914db924b25e328e928",
+      "receipts": [
+        {
+          "sha256": "e36a8efcf2d2d1197432d26daf89232d8fa08ea22d59729f1dfbfcddc34c2846",
+          "data": "eJyVU8lu2zAQvecrBJ1DW5RoLUWaSy/tqb0XhcFlJLORSIWLnTTIv5cyY8lOUiC9EJw3K988Pl0lSUqNky3lLv2U4OsJYFIJqTobgJ/BTpKn4xk8d8ET0Oz6BGgjO6lov93TgJOqrGeXlX/gItY+Dkz3AVqydtCPYNJjxHM4fx37cz2Msg/4S/YMbKnp/ADKLaOlvKeqS2OTFH3P52vr1SGMixxlPdgFVhoJaTk1Au1p7wEpOpz55b3XDk7mjYFRW+m0ebxdMy97gaz2hgMaqeO7Ndd7MLQDRIWQTurwKMRpoE9QBwgXc9kwhunAfZZFXSKv7pQ+KNRL5R9Qp/zFdL3Ti/3j25fZ4PPt4XRboDnnxsEwakOnibV3o3erd33xHekb1rdC0k5p6ySfaE7TS294926CF94XX+DCBg4m91c9ADNwSI5xyYsnyfMVXpUxTaow2/ZcUgGyjvY9iLfSe6W0pjwT4UGF5ou8ws56ymESSjoHnYGxBC4v1Ppu9ithTk/xYdvzvIMWi6HZb+Buyx4dTMThLJY/4XZH8005dSBYNMChruq8JrilhBa4JtBuWFlXpG14XjQsI6QilLO8hqaijBQkZzjfMAF1pC/udt7HzUGbu9t1lNRDEBllcn0w8ih/NGqpHBgUZ4kFDNx7sO4/yf4QUZbvYJhSUwVh9WJ1/mlWexwHiOA5MbBpoG1ZQbKNyLKSZE3GREUIrhsRrrhoqrrmHDAFYFUDWVkG8lqcbXBGm+ylrA8RdlqBMx6OUPx8U4t//L+r56u/PTNtgA=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-supplied-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-writable-pointer-supplied-object.json",
+      "delta_sha256": "ec077bf32aca89b1c7b1abe595285938d2a0d3db0769b3fa5a30decf394a2202",
+      "receipts": [
+        {
+          "sha256": "d0fb9fe71572f367ff937035e64acf034f8c49489c056937b3287ddbc2e8e90d",
+          "data": "eJyVkttO4zAQhu/7FJGvCcRpTqDVvsgKVWN7knjr2F4f2gLi3XESaAvLxe6NJX9z+ue3XzZZRsAF2QMP5CGjNzNgUgupB5/Ar3TPspflTJF9iiRa3HwA4+QgNajdARKv2qY7h7x8xk+5/mliRiV0qRpRWXRkyXhN5+Myn5vJSpX4Q6ajUguT2sawe59fviMfQCkUf+v8Iuu+uVJ81Oh2Fy0OrQKOE+pAzklXcG1Bm0+rfVv9ZQsFeogwnD0gkxGXi2G/kYcdewo4+0xpWV1zP0JZN/OErmfYF+W2rBiHmrZdX4mtqFNUQNvWrKYlFU3VQFFgd88LaKGjUHOBPaei5WRtG8Psn4Uwzk1/HI3b/7xTUsdTfuqaHJi8OzoZgCnMrZE6oMt9tFZJFPkqau1knRGRL49D8JTSks1rxOGfiD7853v8k5eejzjNpUTjAZ249SY6npRC4OPtga4CfOQc/WxncBEXFMANOP9sIrdpzaj3On2AfF180JFsXjdvVyXakQ=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-gcc-source",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-writable-pointer-gcc-source.json",
+      "delta_sha256": "e94062b09edffea25e996323ddc7693fa2bef313a5d5c681fd4bda4485a14ee7",
+      "receipts": [
+        {
+          "sha256": "e302cdf0e37a448888fa18e92ab36d9e69970a5af2a21137d7b92dc15257a005",
+          "data": "eJyVVD1v3DAM3fMrDE8tEPkkf8pBkKVTp3bpVBQHWaZ9anzSRR+5pEH720vbiX2XZGgXgXwkRerx2U8XURQL61UnpI+vInY5Ao3SrdK9Q+A7+lH0NJ0YucUIovTyBTBW9UqLYXsvEM+rki8hp37BWa573DdmQGit2sFwABtPGb/x/DH1l2Z/UAPiV1F6BmyF7cMetF9Hw9g9WNED6aUkD7yM534x+ZIuZhf0EScnXjQDuAVWd8F4eHGvLRyMU97Yx5tNE9TQEmeClUAOwsvdZmkk2lZ5ZXB+IgUy1QoPhGVrN23I4M3qf/38aXHkYj28WCu01Fx72B+MFeMoJvhD8Mm7sXnA+A1z21aJXhvnlRypiuPzKD5oN8LvcremYdDhO8dMVfKSDEqHB9LrMOZHH741QfsQsSzJEkrKMLnpnzRPaJ6wj8+B+U6l8Q3bU/kg5LwYBmjfyuyVquryRHBHjZOtUsKlDULCKIp4SToB5ytYeabMd6tfiXAQug/IzTLv3rSrY5qfIP22efQwEswKeoa7nUiLcuzAi7TmkjeshoJL6FgnaV0y3qVpk3d1keUF52UugFZSthyKrGJ1xqqKi6yjMKsqnjWw7O36aOztzWbeB+6NiEZtjlZN+iYHo7QHOy31WSDTJRbuAjj/n4T/E1lO7mA/lsYaUDVtcvrlJPdsHmAGT8jJoaih65osp0VLaZnTmjZtleeM1y2aLKsrzqUEJgCaqgZaIlVZx2jBqKifteUCZrhxDd4GmCCPPwrwk3AzpCfoW43CWQUcX/y++At44Gam"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-writable-pointer-gcc-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-writable-pointer-gcc-object.json",
+      "delta_sha256": "96a8508d1184ad34ba2aeab4a8572c2db1f9f846817b15322854880381004aff",
+      "receipts": [
+        {
+          "sha256": "14b14f94abaa2373b61f4d084a80726f68d6daf219eefa4328dd3eebc2c0fc48",
+          "data": "eJyVktlugzAQRd/zFcjPIQkEs0RVf6SqIi8TcGNs6iVLo/x7DaRZ2j60QrLkM+OZO3c4TaIIEePEhjCHVlEy7QEVigtV2wBewj2KTsMZItsQCXQx/QLaiFooItc7EnhW5OU1ZMUHPOTaY0u1DOj2qgHZgUFDxjmcr0N/pttOyMBXkfJSDkyozrv1pX96QdYRKYH/1PlNVpXfKd4rMOubFgOdJAxaUA5dk+7gWCLJH0b79fW3KSRRtSf11QPUan67aPoGzK3p0UHvc4LzB24bkuK875AywLwCXBRZlVZ4WeWQ8owsOE8oLnOepcWywIwTGj7AeAGAKbBksSmzssIcjWW96/3riGv6ok97bbbPcymUP8SHMo8JFfO9EY5QCXGnhXJg4pqxeNQzFumM5p4Ne0FwCBnB4TFi4N2Ddf9cxZ9stKyBtn+KFOzA8JnV3rAgkjjWzHbJKMB6xsD2TjrjYUCOmBr6nxqJZZjQq60Ku4/HmWvl0eQ8+QRasNhL"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-floating-stack-ir",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-floating-stack-ir.json",
+      "delta_sha256": "bc80b0cad2f7befe5f46fa505f8f5c8c6e3f68ab1f2554b4de0d3603feaa117f",
+      "receipts": [
+        {
+          "sha256": "896391ce1b47b6d77be9b8cdfbc60520255dee35a203d6afdd7383aa4a52fd73",
+          "data": "eJyVU01vozAQvfdXIM7rhI8USNTteW976HG1iow9ECvGpv5I0q3633cMDSRpK+1KgMbveew3j5nXuyiKqXGioczFmyj5FoBaKC5UaxH4hesoeh2+yOyROW8bAG1EKxSV2wNFfFUlM2XFH7jaa1+6WkuE5qymjwf2Db+/h7uZ7nohwUxizsCWmtZ3oNwsK2aSqjYeL4jJz2wKG6+OKJU4WkuwM6w04cIyajg5UOmBKNpd8OLZawfn5YOBXlvhtHl5XNZeSE6s9oYB6aljuyXTBzC0BUI5F05oLIgwitZx6oCk+XQsyjAtuO8irwri1V7poyJSKH8irfJX6qTT0xo64YiUh25CnqbodI7YBE2JDw66XhsaZGvveu8WUn5GjtXEH7zfckFbpa0TLJgdx9csVr8L8Oz+zKEjFp0I9A/dQW3gGA37oncmyrJFuijGNDSKbiV9QZUhA0i3QXM3eYYP6bMymcN0DrNNscKHiDSrNviSBtd5QElThRSiEC9C8IT0eJVQ6MP2sn8Rso5KCfxjn9+09bq46PijwjrnXsYmkZRB6Mx42nQBjkekRVlUn0zCZfbNJATXPLbXpLfTfF6MP3b6Fw9HbfaPy7GpTthmtBbLRmrqcJAJ1sn2RJjRCgPPHqz7z7r/SbNlO+hCaqwAfzhfXA7M4pCOAkZwG2Zv0N6Ik/MG7OON4gW72m93NLsvQkae5PdVDquMZhXjRb2ieUKTVbouG2B5WtcIF3V5z5OGl01eJ1CmTcXWTbpmUFbN+7GeMbChw53xMEDjoIYrvpjVu7e7v+n9eKY="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-floating-stack-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-floating-stack-object.json",
+      "delta_sha256": "ec7bba4dba69c2461caa07ebefeb14206e18796192da197bfec3565edbd95adb",
+      "receipts": [
+        {
+          "sha256": "7ecf5bac5295b172d07009e1d55303927401638c5c771bffea741a2a3c79195f",
+          "data": "eJyVU8lu2zAQvecrBJ1DR/tSpLn00p7ae1EYQ3Ios5ZIh4udNMi/l7JqSVkKtBeC8x6HM3zz+HQVRTEYJwUwF3+I0usRoFJxqTobgO8hjqKn8xqYfWACmlxfAG1kJxX02yMEvGiShbLyF744ax8HqvsALVniEJ/Z57D+ONdmejjIHs0lcwa2YDo/oHJLWzHrQXXxVCAmX7N5K7w6hVaJA9qjXWClCZeWgeHkCL1HomBY8fLea4eX8NbgQVvptHm8u6Fe9pxY7Q1DcgDHdjdMH9FAhwQ4l07q8CDCIEjHwSFJ8/na0Ibp0H2UeVMRr/ZKnxTppfIPpFP+RXe900v87cunOWDz7uGyW6A559bhcNAGxo61dwfvNu9y0zviN6pvuYROaeskG2WO45dsePduhBfdFy5oYYMGI/1ZD0gNnqLzuegPE2XZJt1UU5pUobft2k4Bsg76Hvlb271yWVutDHhSofhirTCzHhiORonnQytwuiKt6qp5x5jr7FfGHJ/iw7TnfgfNl0DTn8jclj46HIVLk6xZ43YHWVmNFdqaZRVmdVtjIUDkqRBlQRvIG2iqpmwoRZoU2PKA8rxt25ImZZUUiWBYlzWd5JtmO8/j9qTN/u5mstRDMBlQeSN6DS58YxJkZXsydTKlG7z3aN1/Sv1PMlm2w2FMjRWGwfPN+stsjunUwASuZMmTvGxyLDLIGsYrWkCeQFKkbS2Q5SmlAa5oXfJE8FrkNME6FQ1rRdoGXRrx51rPGNpxAM54PEPT1xtL/OX3XT1f/QZPVmwO"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-floating-stack-supplied-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-floating-stack-supplied-object.json",
+      "delta_sha256": "fa93853170d82c7311450987b2a0967e481583f8b95920fea388d86f36bf0464",
+      "receipts": [
+        {
+          "sha256": "5c4824cdd3c1c2b975bc0c49bb07781dbd15cb1e40f2ec8a513549a27834cece",
+          "data": "eJyVUstu2zAQvPsrBJ6jRJQsigqC/EhRGCtyJTOmSIUPx26Qfy8lpbGb5NBeCOzsa2aWr5ssI+CC6kEEcp/RmxnolJHKDD4BP1KcZa/LmzKHlElocfMHsE4NyoDeHSHhW15cUl79wr9q/XnsrE7QpaufyJJ9S+/PZbew46Q0ulRmotYLpswUw+59d/kO+QBao/zK8ROlll2xfTHodhceDicNAkc0gXwUXYHrCMoaxr9Rcd39SYUGM0QYPvST0cpLYLsnFGHXnQPOHtOiYde430NZs3kDcGS1pLzhtK9lUVSMASskNtB225Ji19a0rqBuueirvitr2siykrLitKEt5WQdG8Ps3wRhPw99eLHu8HinlYmn/MRZDp2667WFkG6eJ1vFIfdxmrRCma+U1jmTszKK5TQETwFdMnnNOHyO6MN/XuOfnPRij+PcSgwe0clbb6MTmCc1Yn97pCsBH4VAP5sZXMQFCuAGnP80UVUSGc3BpPPnq+zBRLJ52/wGFgHWtw=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-floating-stack-gcc-source",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-floating-stack-gcc-source.json",
+      "delta_sha256": "c031e60d7b1f6d8722dc83ae25644cf3b1e1a1f63f7ddeff5cb720f066ef2fb8",
+      "receipts": [
+        {
+          "sha256": "385ba33e810d5809e29f192569f5f3f6059127e056d153d7c2d38fd836374cfb",
+          "data": "eJyVVE1zmzAQvedXeDi1MwFLCAR0Mrn01FN76anT8ehjwaqx5ICUj2bS394FbLCTHNqLRvveSrt6++D5arWKROdNLZSPPq3o9QBIY7WxTY/AD4xXq+dxRWaHDKLk+gS4zjTGinZzLxDPSrJQvfkNF7n90166FqHlVH2IRvYF159jbeX2B9NCh2npBbARXRP2YP3SFnL30IkG4kap+LHk0VQrir+m87YO9gG7jr2QLfQzbO6C83AKbzo4uN541z3drmUwrY57FzoF8UF4tV3PhYTWxhuHvcdKoEpaeIgpW6pZF7feLfG3L5/nQM27x9NugeYzNx72B9eJoRUX/CH45F1uajB6o9xGG9FY13ujBqmi6JLFB20H+F3tljQke3znkGl4yePW2PAYNzYM+asP32WwPqwoS1hCYh7GMP2TZgnJEvrxSEx3Gotv2JxbB6Hei7YF/dZirxxV8TOzPVjsbLERDq0VCgZTRHPSGThdQXnBy3dMeH76lQlbYZuA2sz97p1eAid/gfIb+eRhEJiy7ALvtyLN+VCBM5IyoHUOac4IJzTXBZU8lbquqpwzIRjTACmnLJckA1FlpSRVqcucpRToJN/kgXluNw+u292up3ng3GIhzbpunfD4ycYoq9qNIz3aY7yig7sAvf9Puf9Jql5tYT8cjSygZ3Ry/t0k98c3TOCZNIywvGSQpSItleYyE4wIktGqqEExKiXCXBa5JrUuaiYJFLQuVVXTSkFR1sdrg1LQD0PwXYAR8vibAD/alqE4we4s2maxb3T1cvUXr8NkjA=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "x86",
+      "case": "abi-floating-stack-gcc-object",
+      "original": "originals/linux-x86-abi.elf",
+      "delta": "linux-x86-abi-floating-stack-gcc-object.json",
+      "delta_sha256": "7a9dfff38b96a0c0425f9554ad2b4d8556067efe6343f29366bd1bd8e3822ea9",
+      "receipts": [
+        {
+          "sha256": "e0b4311c008690f483600440aa989a2e5179725fd1a068b04fe4211a58699993",
+          "data": "eJyVkttu2zAMhu/zFIau49ZHxS6KvcgwBDJFO2pkydUhTVf03UfbbZN2vdhuBOgjRf78qZdNkjDhguoFBHaX5NsZdMpIZQZP4Cfdk+RlOSlypAjRbPsOrFODMkLvT4J41WSXkFe/8VOufx47qwldXvUTW6KvdP5aeoMdJ6XRUZqJWi9MmSmG/Vvv4g35ILRG+bfGL5JafqX2yaDbX3Q4nLQAHNEE9pF0BdcSOd/x5psprl9/mUILM0QxfMzPRisvF9s9IIR99xxw9jivsuqa+4Moaj53KBrR9DXnjawJAW/zjJcZQNvLtsxbLqHBsq6yXVsC73m5q5FSK97yAvqikWwtG8Ps3yTCYS56/2Td8cetViae03PDU9Gp215bEWjnKdkKx3QASFc1a4nJWRlh2QrDc0BH/q4Rh48RffjPRfyTiR4OOM5PmcETOnnjbXSAKQ0Ch5tTvgrwEQD97GNwERcUhBtw/s5MlTRfNEdDm0/XiQcT2eZ18wcemNRv"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-original",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-original.json",
+      "delta_sha256": "05ed9bca756dd9c625dc3f1ac9e8cbdaa82ab2c06fc8eb9c3e29fc4c1ee33542",
+      "receipts": []
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-nonleaf-ir",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-nonleaf-ir.json",
+      "delta_sha256": "46faeaf449f64914defd333a3dbfbc04db1809db3d78566205b220835e21beaa",
+      "receipts": [
+        {
+          "sha256": "9e9afc57115fe44dbeaa2e4c6f4093c5912fad692bde8d2609b23ec27f244fd1",
+          "data": "eJyVU01v2zAMvfdXGD5Pib9iO0HX47DbDj0OQ0DLtCNUllJ9OO2K/vfRdmMnbTFsgC1Lj6T8SD6+3ARBCMaJBrgLd0H0ZQAqoWqhWkvATzoHwcu4kuWBLGe3EdBGtEKB3PdAeJ5Hm2S2WfEbr5ztc1dpSdASdkB5RBOOHq+0/hoJcN0dhST8zOgM7MG0vkPlFm4hl6DacPpJyH4k87bx6kR8mYNKol1gpVktLAdTsx6kR6agu7CLR68dno+3Bo/aCqfN89268kLWzGpvOLIjOH5Yc92jgRYZ1LVwQlNSjAPVrwaHLE7na4mGadF9BdP1BfPqQemTYlIo/8Ra5REqcWhm747crhhLp+czdsIxKfvF437ePZ13fIbmwFuH3VEbGFLR3h29W0n5mXHKMPzQj30toFXaOsGHBoThtZUqchjgpSOLjapkqTqD+bvusDJ4Cka/4M0SJMkqXuVTGBUP9hKeieUQgazbUcF3aUIP+yZKJvJsl2esj5OSvjv6MNhFg1XRe59n0z1CUZL7S9USZB1IifVHdb8Xcxpli9BPirJYFEyykMBx0GI4O12A0x1JFEdl+ckAXIa/E/9QFE+Kmhl3ul4OU9/mUt+etHm4W08yIs1Q8rSulVYSoWHCTHUw+OjRuv9N+p/4Wn7AbogNFVIv69XlfKz6eGIwgfth1EbejXhy3qC9O3Nd8StHe4Bkk4/N5zGvStw2UDZZtG3SuMwqTNJkE8dZXG3LaltvIUrTpqiLIts0m01UR0WR52VRRFt8u9ZzjnZQrTMeR2gayOEXf5/Jm9ebP1KUd0g="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-nonleaf-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-nonleaf-object.json",
+      "delta_sha256": "d6bcf6aa0c774e339a0a06f1c584db790a72ca43a81fe3c5fef3747bea2c233b",
+      "receipts": [
+        {
+          "sha256": "a4ab1903ffbe623d3aac258b247ad38f44d0095499654879e433c66c67b04e2e",
+          "data": "eJyVU01v3CAQvedXWD6HXeNvV2kuvbSn9l5VqwHGXhoMGwy7SaP89+J1YjsfqtILYt6bgeHN4+EiimKwTrbAXfwpopcjwKQWUndDAH6GOIoezmtgbgIT0OTyGTBWdlKD2h0h4GWZFOnMDfIPvkge7ntmVICWsj2qA9r4nPEY1l/nBrjpD1IF/Kl6BnZgO9+jdktvMVegu3i6JCbf03nben0K/RIHTOGwwNoQIQcOVpAjKI9EQ7/i5a03Dp/DK4sHM0hn7P31lnmpBBmMtxzJARzfb7k5ooUOCQghnTThUYRD0E+AQ0Kz+djQhu3QfQbbHyvi9Y02J02U1P6OdNojMLlv5+w+pL3oWDmzxD++fZkDPu/unncLNNdcOewPxsL4CuPdwbvNu9z0tvjNJHZCQqfN4CQfpY/jl2zQYj/CyywWLugzBF1G+qvpkVk8Ree86ImJ0nRDN+VUJnXobbf2WYAGB0qheOvH1/bLknyx5kmH2xfPhUEq4Di6J56TVuB0RprQpK7fsey6/JVdx8f44IG5496IJTDsN3K3Y/cOR+maNF/Dwx7SohwvyDhrW6iwqVkFYZ9n0GZC0CzBusEaKqgZo2WTtSGijBVQ84zyohR5jsBh0m8a7jyQq5OxN9fbyWbBU1k6rltttEJoydTEVGnx1uPg/lfmDyk08D32Y22sMUxdbNZ/aHOkUwcTuJIEOeWsxqaFus2Tps1onTNMs7SgNKcsKNWIBpIsaytRVXnRFkUikqoqy7qqkgafjvWc4zBq76zHMzT9xfGKf3/Hi8eLvxDCdk8="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-nonleaf-supplied-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-nonleaf-supplied-object.json",
+      "delta_sha256": "a380e6bcc1e3514bc086dd7a601bd36b1fd58bc416edf8d840a63e38a20feb56",
+      "receipts": [
+        {
+          "sha256": "e8d9c45c3c39b11a6a39f1a0b90e89fd85a447e83b87572d19f3d08ac74515d9",
+          "data": "eJyVkttO5DAMhu/nKapcU2g7PaLVvshqNXJdp81OmnRzGGAR707SwgywXMCNpXx2nN+/87hLEgbGCQ7o2G2SX0XQCzUINdoAfoVzkjyuMWSOIRNodvUKtBGjUCAPJwi8rrOqOOes+Efviu3D3GsZ0OXaRHIhw9aKpxB/rwJQz4uQgd8myku5MqEW7w4vAooXZB1IScP/Qj/q2mflRfOdInO4iDG0SECaSTl2LnoDtx5Flmdt+8ksb69/mEOCGj2MZxfYrIfLQfd/CN2hf3AUre627q/YTlBUdXyAQ4dVjW2PeYkEOdS8azjxIqM+Kwdq9nXeVC3SHnOo+hxb6sqy6YYaB86Lmm1tvYsGLuCm2PTHnTbHnzdSKH+fgpn3RYw3SitJwFPrl0UKGtJNzdZiMXrwuK6F0b0jEwzeMob+erLuu5v4kokWJ5rjXaboRGa4ttobpDRMgtP1Kd8UWI9INvrojKcVOTAjxV8dfvh8alKvjirsPt1mHpUn6MXE2e5p9wyniNxC"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-nonleaf-gcc-source",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-nonleaf-gcc-source.json",
+      "delta_sha256": "f96e1244f6fae38780fc88fe1a91ce380bd410ba2fbaa6d4741d3374c561a1c2",
+      "receipts": [
+        {
+          "sha256": "c798e7f00d6eb4e63841c290c0fa67886f3115ab90466e06fd4f84e9649aaebe",
+          "data": "eJyVVD1v3DAM3fMrDE8tEPskfzsIsnTq1C6diuKgD9qnxpYulnRJGqS/vbR9se+SFGgXQXwkRfLx2U8XQRCywamGCRdeBfRyBLjSUunWIvAd7SB4mk703KIHUXL5AphBtUqzbntgiBcFyZPFZ9UvOAu2jz03HUJr2g66PQzhFPGM54+pAWH6veoQvwqSM2DLhtb3oN3aG/oOMLAWolaIiA19moRzxTD6sl4br++x+cgx3oFdYHXnjYMX83qAvbHKmeHxZsO96mRkjR8ERHvmxG6zlGJSKqcMThAJhmRJ5iCi6fJsj32spbWJOmdW++vnT4shltvDy22FlpxrB/3eDGzsy3i39y5+1zd3G74hcisVa7WxTomRuTA89+J0uxH+C5VrILotjj3GojvqlPYPUas9MK52zZgWfPjGvXY+oGmcxiQq/GQmv5MsJllMPx4d88NK4yjbU1UhZB3rOpBv1fdabCnJViHea+xvVRhusmMCRq2ES9AJOL+REEqq6h2Bnqa/EmfHdOuRpKXj3sjVMPwnCLfljw5GpmlCznC7Y0lejBUkECK4LEta1UkhIAFCy5JA05CMi1IWkArGRIMGk1w0TZPmImVcVpCVNZQzgbMYlgVe35vh9mYz72Va4HhutNEdsGk/R0HP2QPcebDuf7n+J5qs2EE/5oYaUDYyPv2S4gOdO5jBE1pAUMErqBtWNRmpm5RWGYckTXJKM8rriteyZiRNmxK5y/Imz4kkZVkUFbJXHwezXgiw4wLc4GGCHP46wB2Veygjr281iua1hsOL54s/ppZxPg=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-nonleaf-gcc-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-nonleaf-gcc-object.json",
+      "delta_sha256": "6987969a190aedfa8425981f1dc33ec9d2d5794f0df49ee989cb5d689c51893e",
+      "receipts": [
+        {
+          "sha256": "f4383f3950b2060d4ddff17a118eaa69f3f05be53a731ab9fcc07901f8731587",
+          "data": "eJyVkttO4zAQhu/7FJGvCSRO46QV4kVWq8qHceKtYwcfCizi3ddO2LYLXLA3I/mbGfuff/y6KQpEXVCS8oD2RX2TAVNGKDP4BH6kc1G8LjFljimTaHXzF1inBmWoPpxo4oRULT7nvPoN/xT7l4lZndClbQQ9g0NLxVuKPxcB3E6z0onvCxO1XpgycwyHdwH4HflAtQbxWehHXU21vWh+MuAOFzEOZk05TGACOhddwfUOXNVV338xy3X7hzk0NUOkw9kFNFlxOVj2C3g4sJcA2eq6qfpr7keKW5JfIN121+JG4L7uQOxER3mzZayBHdsSSSiRrGtrCoTLtpOy70iLoWolx23d8Vqg9doYsoMzDWO+9P7JuuPDnVYmPpfUTQ3O8c5Yo4HKcuC8XIWs3bOzIvJlJQieA7hk7ppx8BjBh//dwrcM9HyEKfciAydw4tbb6DiUaQg+3p7qVYGPnIPPHgYXYUGBugHyj06/ezp1ZTRHk/ZeruMOJgJlapRo87b5Ax692UY="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-writable-pointer-ir",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-writable-pointer-ir.json",
+      "delta_sha256": "1d696a266a17678f2a9f0733f02918501fe3cc93c77508b5dbe7075c899d555c",
+      "receipts": [
+        {
+          "sha256": "52352fc4851042e532eff04728e346f475f26fd58c8fff05a3b4b57727d9c96a",
+          "data": "eJyVU01v2zAMvfdXGD5Piew4zge6HofdduhxGAJZoh2hsuTqw2lX9L+Pshs7aYthA2xZeiTlR/Lx5SZJUma9rBn36T6hXyJQSS2kbhwCP/GcJC/DipYHtJzdBsBY2UjN1KFniJclXeeTzcnfcOXsntvKKITmsCOoDmw6eLzi+msgwE3bSYX4mdEZODDbhBa0n7mlXDHdpONPUvIjn7Z10CfkSzyrFLgZ1oYI6TizgvRMBSCatRd2+RiMh/Px1kJnnPTGPt8tqyCVIM4Ey4F0zPPjkpseLGuAMCGklwaTIpxh/QTzQLLVdC3SsA34r8y2/YYE/aDNSRMldXgijQ7AKnmsJ+8W3a4YK2+mM7TSE6X62eN+2j2dd3yCpsBbD21nLIupmOC74BdKfWYcM0w/9OMgJGu0cV7y2IA0vbZiRY4Rnjsy27BKDqsTzd9NC5WFUzL4JW+WJM8X2aIcw7B47KDYM7KMEUDaPRZ8v8rxId/klsiy2JcF6bN8i989fgjb02jV+N6XxXiP1Jjk4VK1CDnPlALxUd3vxbyixSz0k8YsZgWjLBTjELWYTk4X4HhHTjO63X4yAJfh78QfixJQURPj1oj5MPZtKvXtydiHu+UoI9QMJo/r8mTloHrSGak9WCLtWBALjwGc/9/s/4m440doY2yqAZsqFpeDsuizkcEIHuLMDQnU8skHC+7uA+kFv4pwR5avyxhTwHoHdV2tCroWlJYF3dFKbIoi2+4EbrPVbrPdcg4ZA6g2O6BlWbBVndF1RtmOvl0b0MNFHXsbYIDGEY2/+PuU3rze/AHkzn6g"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-writable-pointer-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-writable-pointer-object.json",
+      "delta_sha256": "3de8ade8c96c535b0f60c02fc8e8e698bb9ae43c79e3096a05208e5fcf1ed0d1",
+      "receipts": [
+        {
+          "sha256": "8bbe3ac5c69f4936590158384c4ba6b3a71c2f5a5ec633afab14ed216f31b884",
+          "data": "eJyVU01v3CAQvedXWD6HDfjbVZpLL+2pvVfVagxjL40NGwy7SaP+947Xib35UNVeEPPeDAxvHo8XURSD87oF6eMPkbicgEYbpU03EvCd4ih6PK3E3BJDKL98BqzTnTbQbw9AeFHwPFm4Uf/CF8njw9DYnqC1bIf9Hl18yvhN649TA9IOe90T/lS9AFtwXRjQ+LW3WPZguni+JGZfk2XbBnOkfpmHpsdxhY1lSo8SnGIH6AMyA8MZr++C9fgcXjvc21F76x5urpqge8VGG5xEtgcvd1fSHtBBhwyU0l5behSTQPop8MhEuhxLbbgO/Udww6FkwdwaezSs1ybcs84EhEbv2iV7oLQXHffervG3L5+WQC67++fdCi011x6HvXUwvcIGvw9+8y43vy1+M4mt0tAZO3otJ+nj+CVLWuwmeJ3FypE+I+ky0Z/tgI3DY3TKi56YKEk2YlPMZdpQb9tznxE0euh7VG/9+Np+Kc9Wax4N3b56jgbZg8TJPfGSdAbOZyRc8Kp6x7Ln5a/sOj0mkAeWjger1sA2P1H6bfPgcZJOiLw4x8cdJHkx3VBVWZ5Uqi4FYJvxGpKszqsCAGpImxJ5IbOkTStsBC9F24o8raqklUqVXKZlMws4T3eZyPXRutubq9lnZKo0mdaro9Onb8H2VhuPjs3dzEc4vAs4+v8V/J+0GuUOh6k2NkjzV5vz37Q5iLmDGTzTJsO8xrZt0oznivOC5OGNKrNMVLWirUjrsqqkRNIOm7ImsYoM0lbwXHCo+dOxgTLGaQreBTxB86+crvj7x7z4ffEH3u94Vw=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-writable-pointer-supplied-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-writable-pointer-supplied-object.json",
+      "delta_sha256": "102e2ed28d16abc9dba27fd48fa2716e1282b50568621d9ea2ecf5beaf8d9fd2",
+      "receipts": [
+        {
+          "sha256": "432afc9f8f96d5c1df24e6f517443191fd5a8818b762a10e1fb003ac5747ab95",
+          "data": "eJyVktty2yAQhu/9FBquo0TCFpIznb5IJuNZwVqiRkA52EkzefeC5NhO2ov2Zmf49sC/P7ytioKAC3IPPJDHor7LoJdaSD34BJ7SuSje5pgyh5RJtLr7AMbJQWpQuyMkzljV0EvOy1/4qdi/Tr1RCV3bRlQWHZkr3lN8ngVwM1mpEn8sdFRqZlLbGHZnAfSMfAClUPwp9KuudbW5aj5pdLurGIdWAccJdSCXohu4zKBVXXXdX3a5bf+yhwI9RBguLpDJiOvB9D+Qh13/GjBbXVPa3XI/Am1YvqFp+n0HvEbKmoqu6YY1giOvoGZbvmWia5tmI2hLATvYt1DDZs3bbUspq4CxmixjY8gOWghjHvrtZNzh+4OSOr6U4KY1zfHh5GSAXmFpjdQBXemjtUqiKBdZyyzrjIh8fiCCL6ksWb1kHP6M6MP/vsk/2en5iFPuJRqP6MS9N9HxJBUCH++P5z195Bx9djS4iDMK4AbM/zv99enYllEfdPoF5bL8oCNCL8c9Wb2vfgOw095I"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-writable-pointer-gcc-source",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-writable-pointer-gcc-source.json",
+      "delta_sha256": "3a64274347b6a4ab12b895f78f6ecf69b2a45abd38cb0c9ded3b0c7ba7b57cdf",
+      "receipts": [
+        {
+          "sha256": "1faa67e3d530b5b8b40578a7ffb0459c1e3390fca32fe730a013b07fe08306da",
+          "data": "eJyVVEtvnDAQvudXIE6tFFgbDLtEUS499dReeqqqlR8D6wbsjbF3k0bpb+8AG9g8KrUXa+abh8fffPB4EUUxd17XXPr4KqKXAyC0Udo0PQLf0Y+ix/HEyC1GECWXz4B1utGGt9sDR7wsSZHNsV7/ghfJ/UMnbIvQUraDdg8uHjOe8PwxDiBtt9ct4ldR9gLYcteEDoxfZsPYARxvIGmkTLjr8iyeboyTL4tZB3PE4RPPRQv9DOu7YD08u9cO9rbX3rqHm5UIulVJb4OTkOy5l7vVfBVXSntt8QWJ5EiW4h4Sms9tO5xjudrYpPV28b9+/jQ7crbun60FmmuuPXR76/gwlw1+H3z6bmyaNn5D5FZp3hjbey0H5uL4ZRRftxvgv1C5JGK4x2cPuRhOWm3CfdKYAFzoXT2URR++iWB8iGie5ilJyjC62e+MpYSl9OMpMDXWBp+yPVcVQr3nbQvqrfpeiy0nbBHi0eB8i8Jwky2XMGglnpPOwKlHRijZbN4R6Hn5K3G23DQBSZon7qxaHCt+gvRb8eBhYJqyojzH+x3PinK4YS0ZV7kAhoYo83xd5JkEqjZlRQkTHJioS6iFYBUmUk7rSkFWcZmv64ITNhE4iWFe4PXRutub1bSXcYHDuTo6Peo+2VttPLhxvyetjG0c3AXo/f+S/k989XIH3VAbG0D9qPT8k0oPdJpgAs/4YVBUUNciZ6RQhJSMVESoNWN0Uyk0aV6tNxuJlHEAsa6AlCXjeU1JQQmvTgLrA2b0wya8CzBCHv8h4E8SPqyTYG4Nque1mOOLp4s/Qr5z2A=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-writable-pointer-gcc-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-writable-pointer-gcc-object.json",
+      "delta_sha256": "016d064cccc8d7fc20b90be2b6e947b0926dd8f5def7919517cd599149a5ee75",
+      "receipts": [
+        {
+          "sha256": "c7a5a91eb97c109d302723415aefd3101e41ccfcd6accc40c30f9545d71b9684",
+          "data": "eJyVkttymzAQhu/9FIyuQwISEjjTyYt0Op5FLKBaCKqDnTSTd68Eqe0mvWhvdkbfHvTvL73usoyA9aoH6cljVt4l0CrTKTO4CL7Gc5a9rjFmjjETaXH3G8xWDcqAPpwgciEKTi85p37iH8XuZWpnHdG1bUS9oCVrxVuM31YBcp4WpSN/zEzQemXKLMEf3gXQd+Q8aI3dZ6EfdbGiumo+G7SHqxiLiwaJExpPLkU3cJtBi7Jomr/sctv+YQ8NZggwXFwg09xdD3P7HaU/tC8ek9Ulr8UtdyNQLtINFe4ZZV0hkDeskJSXDFtWNFXZlzVtBBeyr1hT1YCSi0qyfc1B7hte7WkvBJBtbPDJwQX8mIZ+Oc/2+PSglQnPOdiJ0RQfzlZ5aDXmy6yMR5sPUuabom3MYucuyPVtCD7HiujylrH4I6Dz//sc/+SkkyNOqZcYPKHt7t0crIwqwcvx/lRuClyQEl0y09uAK/JgB0xfO37z6VTnwRxN/AD5tvdgAkKrxp7s3na/ANHp220="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-floating-stack-ir",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-floating-stack-ir.json",
+      "delta_sha256": "20326695ced07bb24eb2a3a73723e1b56acdb7b5e53b33895469e1ac8c3c00dd",
+      "receipts": [
+        {
+          "sha256": "1f12236798ee6ac1dbb815c89fe2558088a2c7470087597a97a62316462a6ce8",
+          "data": "eJyVU8tu2zAQvOcrBJ1LW6/IspHmWPTWQ45FYayolUyYIh0+5KRB/r1LK5bsJChawKbImV1ydjl8uYmiGIwTLXAXb6LkSwBqoRqhOkvAT1pH0ctpJGZPzDnsBGgjOqFAbgcgvCyTdTZxVvzGq2D73NdaEjSntYf4xL7S+Ot0ONf9QUg0k5ozsAXT+R6Vm3XFXILq4vGAmP3Ipmnr1ZG0Mge1RDvDSrNGWA6mYQNIj0xBf8GLR68dnpd3Bg/aCqfN8/2y9kI2zGpvOLIDOL5bcj2ggQ4ZNI1wQlNBjAP1rgGHLM2nbUmG6dB9BdMPK+bVXumjYlIo/8Q65RFqsWun6J7CrhRLp6c19sIxKYc54mGaPZ1nfIKmxDuH/UEbCKVo7w7eLaT8jBwrjD/cx7YR0CltneDhAuL4mqWO7AI838jMUZcsdSfQ33WPtcFjdIqL3pgoyxbpohzTqHmwlfBMKkMGsn5DDd/kGf3YN1ExURabsmBDmlX03dCHwSYJrKL/Q1mM+whFRW4vHUuQdSAlNh+d/d7IeVLMJj8qqmJ2L9lCAsfgxXgKugDHPbIkTarqE/Nfpr8zf2iKJ0dNinvdzIvx3qZW3x212d8vRxuRZ6h4Gpet1ODo+TKqle+ZMGM7DD56tO5/a/8n2ZbvsA+5sUK60mZx+UwWQzoqGMFteHEn+a14ct6gvX8necGv4u0OstsyZORJflvlWGSQVbwp6wLyBJIiXa9a5Hla1wSX9eq2Sdpm1eZ1gqu0rfi6TdccV1X7tq3nHG3wsDMeT9D4PMMRf3+hN683fwA9a3wM"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-floating-stack-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-floating-stack-object.json",
+      "delta_sha256": "da0c5360c167b4265a2a493fcac5212eb913ef4e857f1ae37e6bb25df5d8b0e6",
+      "receipts": [
+        {
+          "sha256": "ae310d9fddec657ff17bda17d070677f6f9a9478865ae0d8c16b02ad2ad1be0e",
+          "data": "eJyVU01z2yAQvedXaHQONvqwPjppLr20p/be6XgWWGRqCRwEdtJM/nuRFUvKx3TSC8O+twvL28fjVRTFYJ2SwF38KUquB4ApLZRu+gD8DHEUPZ7XwOwDE1B6fQGMVY3S0G6PEPCioHU6cb36gy+S+4eOmTZAc5k8xGf2Kay/zpdz0x1Ui/ZSOQFbsI3vULu5r5i3oJt4vCAm39NpK70+hV6JA9ZiP8PaEKF6DlaQI7QeiYZuwas7bxxewhuLB9MrZ+zD7Zp51QrSG285kgM4vltzc0QLDRIQQjllwoMIh6CdAIckyaZjQxu2QfcZbHcsidd7bU6atEr7e9Joj8DUTk7ZXUh70XHrzBz/+PZlCvi0u7/sZmiquXHYHYyF4RXGu4N3q3e58W3xm0lshYJGm94pPkgfxy/ZoMVugOdZzFzQpw+6DPRX0yGzeIrOedEzE6XpKlkVY5nSobft0mMB6h20LYq3XnxtvYzmsy1POtw++y0MsgWOg3viKWkBjmekNKFV9Y5dl+Wv7Do8xgcPTB13RsyBYb+Ruy17cDhIVxf5Eu53kG6Ks3aCljTNc1khRYmbXKa5AFmytCxyWQpISsExS3Jeh1QqagZY1xXmNAveE/mo3zjcaSA3J2P3t+vRZsFTWTqsa9kacOF7k6As35Oxl/EAi3cee/e/an9IqJ7vsBtqY41h+GK1/EqrYzJ2MIILZTKabaoM8xTSiouC5ZBRoHlSlxJ5ljAW4IKVG0GlKGXGKJaJrHgtk5pjWcnnYz3n2A8jcNbjGRq/5HDFv3/l1dPVX0Jsd84="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-floating-stack-supplied-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-floating-stack-supplied-object.json",
+      "delta_sha256": "f2a2fcc3b39e52318db59c8fd9eb2879a3461ff0f18efc04af4140c6820cc74b",
+      "receipts": [
+        {
+          "sha256": "82b657989f2a3daba1d40df8a9fa84ac375be2dc53fe34a590617cde8e3b5a15",
+          "data": "eJyVUslu2zAQvfsrBJ6jhNrouAj6I0FgDMmRxJoiFS7Ohvx7SCm13TSH9jLAvNnevJm3TVEQcEH1IAL5UVRXGeDKSGUGn4D75BfF22JT5JAiCaVXvwHr1KAM6P0REs4Y3dWnmFev+Eeyf5m41Qk6l/UzWaLvyT4sw4WdZqXRpTQTtV4wZeYY9p/D60/IB9Aa5d8kv3JqaHvm+2TQ7c9EHM4aBE5oAjklXYBrj5pW9Pb2mz0uy7/socEMEYaTAmSy8uxY/gtF2POXgFnmijbsEvcj1B3LE7bA2o7tcAcgGe23vGcUdlvkvZCAtBPYsZrTtm1kJ1jFaNNhz1touqqi0Aiyto0hKzhDGHPTuyfrDj9vtDLxuQQ3NXW2N722ENLhyyStOJQ+zrNWKMuV1NppdlZGsZyH4HNAl4ReIw4fI/rwvxf5JzG9GHHKtcTgEZ289jY6gWVaSIzXx2pl4KMQ6LOewUVcoABuwPzZ6cun47aM5mDSD5Tr6oOJCFyNPdm8bz4ARuvcvg=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-floating-stack-gcc-source",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-floating-stack-gcc-source.json",
+      "delta_sha256": "d090cf14a9240c64b955092d6ed93a2957db4829bee0419889e4b6dc1ee1a603",
+      "receipts": [
+        {
+          "sha256": "145a2a17bd1c76cad7d07191f0cbbd2d96c6b7cf6d46bf8c414bd1da501c76d7",
+          "data": "eJyVVE1vnDAQvedXrDi1UszawPJRRbn01FN76amqVmMzsO6CvQF7kzRqf3sH2MBukkrtxfK8+fSbB09Xq1UAndMVKBd8WInrAZDalNrUPQHfyF6tnsaTPHvyEMqvnwHb6VobaLZHIDxNeRHNvl7/xIvg/rGVtiFoSasOwej9Ref3sbmy7UE32FFYdAFsoat9i8Ytc5HviB3UyGqlGHRtHAVTt4B9Xq6VN/c0OHMgG+xnWN956/DZvOnwYHvtbPd4u5ZeNyXrre8UsgM4tVvPraAstdOWpmcKiKgSHDIRz2VbmmNpbSxrnF3sL58+zoaabw/PtwWac24ctgfbwTCX9e7gXfimb5o2eEXkttRQG9s7rQbmguDSS6/bDfBfqFwCyd3Ts4dYcrNGG//AauMRpN5VQ9rq3VfpjfMrEYdxyFnqRzP6HSUhT0Lx/uSYCmtDT9meK4qg3kHTYPlaeS+FFvNkEeG9ofkWddEmG1A4aCWYg87AqUbEBc/zN8R5nv5CnA2Y2hNJ88StLRfDyh+o3FY+OhyYFlFygfc7iDbp0EEIWcg0yosUkgJjIfMIIEfYFHmieJYmApCXuYryJE+zBLNCCJ7EUcFBqDg+ETiJYV7gzb3t9rfraS/jAodzXTUWHH3NjKhV+3G7J6WMRTq889i7/6X8n9jq1Q7bITcwSOopw/MPKjyKaYIJPGMn5vEmjzGJIMpVmcoEYg48EUVWoSKyJMGpzDYlr8qsiiXHTFS5KipRKMzy6lTWK4X9sAfXeRwhR38QdCcBHzPmzd6Qdl5KObj6dfUHwbJv8g=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "arm-floating-stack-gcc-object",
+      "original": "originals/linux-arm32-arm.elf",
+      "delta": "linux-arm32-arm-floating-stack-gcc-object.json",
+      "delta_sha256": "b94c82ee34a57eb78100d155e17ef90b710fa44ca3f8f178d7986719a78d3790",
+      "receipts": [
+        {
+          "sha256": "5104d65d3382e75740c99a4566cefb31b945c7a89de8077d49ed5e6d529a2652",
+          "data": "eJyVUstu2zAQvPsrBJ6thNSDkoKgP1IUBkmtJMYUqfDhJA3y7yWlxHbSHNrLApzZx+wsX3dZhpj1cmDCo7uM7BPApe6lHl0EfsZ3lr2uMTLHyEQU7z8AY+UoNVOHE4s4pbgrzpyTv+FTsnuZuVERupQNC1rZtxh/rcOFmRepwMY0HZRaMamX4A/vw4t3yHmmFPR/i/yqqcTVRe+TBnu4CLGwKCZgBu3ROekK3HoUmOC2/WaP6/Iveyimx8DGswNoNv3lYfgDCH/gLx6SzaSs6TXuJlbUNE2oB9yRrqG4amvcA6+qGtO+IaziHWZD2wxd09KaV7hsKKdtxwnhFeGkrCD24GhrG3xycGF+Sk3vn4w9/rhVUofnnNm5LFK8HZRhPh4+j9aKYz4KkW96tiaLNX0Q62UQPHuw0eONsfAYwPn/PcY/+ejEBHOqRRpOYPsbZ4IVkMddxHRzIpsCF4QAl6z0NsAKeWZHSJ86fvD51ORBH3U8f75tPeoAjMtpQLu33R86eNjx"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-original",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-original.json",
+      "delta_sha256": "7fdf9b311d0e963a80cad1faf92911da9cd9f2a87de3bdac4479593a09090c45",
+      "receipts": []
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-nonleaf-ir",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-nonleaf-ir.json",
+      "delta_sha256": "9d55d7ce29347125e95a87ce9f38390ee4fbe1af2e4e42827b67f7342e4acb7f",
+      "receipts": [
+        {
+          "sha256": "e28a8d3a5afa79b3485866ebcfbb46812ba309a74980d447df02f69c519fe1e0",
+          "data": "eJyVU0tv2zAMvvdXGD5PiR+J7QRdj8NuO/Q4DIEs0bZQPVI9nHZF//tou7GTtsA2wLakj6T8kfz4chNFMbVeNJT5eB8lXwagFpoL3ToEfuI5il7GL1oe0HJ2GwFjRSs0lYeeIl4UyTabbU78hitn96xqIxFawjqQR7Dx6PGK318jAWbUUUjEz4zOwIHaNijQfuEWM0l1G08/icmPbN42QZ+QL/G0luAWWBvChWPUctJTGYBoqi7s4jEYD+fjrYWjccIb+3y3roOQnDgTLANypJ51a2Z6sLQFQjkXXhhMijCK9ePUA0nz+VqkYVvwX30XVN2XJOgHbU6aSKHDE2l1AFqLrpn91eh4xVp6M59BCU+k7NWM3M+7p/OOzdAceOtBHY2lQzom+GPwKyk/M05Zxh96cuCCtto4L9jQhDi+tmJVugFeurLYsFIOKzSYvxsFtYVTNPpFb5Yoy1bpqpjCsID0IOkzshwigKg9Fn2fZ/iQb6Iiotjsiw3p06zCdY8LoftksGp874vNdI/QmOThUrkIOU+lBP5R4e8FneUXYj9pzGJRMUpDUgaDHuPZ6QKc7siSNKmqT4bgMvzdAAxFCaiqmbEyfDlMfZtLfXsy9uFuPQmJWoXJj9pZa6Ml0IYIO1XCwmMA5/837X9i7FgHaoiNNWA3+epySlZ9OjGYwMMwcCPzRjz5YMHdnbmu2JWj62i2Lcb2s5TVFewaWjWbZNfkabWpIcuzbZpu0npX1Tu+o0meNyUvy8222W4TnpRlUVRlmezg7drAGLhBt94GGKFpLIdf/G0yb15v/gC3+nrE"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-nonleaf-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-nonleaf-object.json",
+      "delta_sha256": "9ec785f1e5116b9161070ac8f5cf49a1e6a6c51d00fdc5aa817d07e42691cbf7",
+      "receipts": [
+        {
+          "sha256": "942ed018541a225339978fe1e85dd4145e0f145901ab01c06f617cc7da480f36",
+          "data": "eJyVU8ty3CAQvPsrVDqbXfSWUo4vuSSn5J5KbfEYJGIEawS7dlz+9yDJluRHVZwLxfTMQNPTPFxEUUysk4IwF3+KkssRoFJzqdshAD9DHEUP0xoyNyETUHz5DBgrW6mJOpxIwMsSF+mSG+QfeFE83PfUqACtbR2oI9h4qngM66+JADP9UaqAP3UvwIHY1veg3cotZoroNp4vidH3dNkKr8+BL3KEKhhWWBvE5cCI5ehElAekSb/Jy1tvHDyHVxaOZpDO2PvrPfVScTQYbxmgI3Gs2zNzAktaQIRz6aQJj0KMBP04cYCSbDk20LAtuM+u8z09VcjrG23OGimp/R1qtQdCZSeW+n4qfMFaObPGP759WQK27O6edyu09Fw56I/GkvElxrujd7t3c/P74jfTOHBJWm0GJ9kofxy/zAY9uhFe57HmgkZD0GZMfzU9UAvnaKqLnjJRmu6SXTm3SR24HbZeC9DgiFLA33rytQXTbGPPsw63r74Lw1SEweigeCnagPMZKU5wXb9j2237K8uOj/HBBwvj3vA1MPQ3MHeg9w5G6Zok3cJDR9KiHC+AjCcQFgxVjrOyqPMsz0uRZjwXOAMmGpqkZZ4RWuNalAQXVAhR1Aw4VJgWs37zcJeBXJ2Nvbnez0Yjts9SNHlrr41WQASaacy9Fm49DO5/hf6QRgProB97Yw1h7ny3/Um7UzIzmMGtKCxhtIZGkFrkuBFZUucU0iwtkiRPaFPThjcEZ5moeFXlhSgKzHFVlWVdVbiBp2M9YzCM6jvrYYLmHzle8a9PefF48RdGiXhy"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-nonleaf-supplied-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-nonleaf-supplied-object.json",
+      "delta_sha256": "3f6bf30fef4be85f4204b9521113aaab7410270312211c98f4c629b7e3771567",
+      "receipts": [
+        {
+          "sha256": "d9ec645007d97f125aebad86ec3afe53665894266e972416707183dc06aed175",
+          "data": "eJyVkslOwzAQhu99ishnAk6CnRYhXgShyp5MElPHDl7KJt4dJ4G2LAe4WPI3i//5x6+rLCPCBdUKCOQqK84mIJVplOl8ArfpnmWv85kiuxRJlJ59AutUp4zQ271InHPKykPMqxf8kuyfB2l1QseyHvWIjswZb+m8mwWAHUalE7/KTNR6ZsqMMWw/BJQfyAehNTY/hX7XVVYnmh8Nuu1RjMNRC8ABTSCHpBO49ChpQdfrX2Y5Lf82hxami6I7uEAG2xwvVt4jhK18DjhZvan5Kfa9KBmfHtjQAjhjTAJUKBmVFUhJJeNSSFqVbV0zBvUaKN9waLkEBFk0nG8uqUBeAlnaxjAZOIrQT02vH63b3VxoZeJTLtxQlXno4yAvjDUaRZv7OI5aYZMvepYmo7NNhHkxBJ8CumTxEnH4ENGH/+7iTzZ66HGYaonBPbrm3NvoAPM0C/Tn+2JR4CMA+snJ4CLOKAjX4fSvyTzbvs6j2Zm0/3yZuzMRhVR9S1Zvq3ejkd14"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-nonleaf-gcc-source",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-nonleaf-gcc-source.json",
+      "delta_sha256": "4f1eaafb7c938569b15ccc144e3ce893fe29d77dbf2d57009b8dd70078749d20",
+      "receipts": [
+        {
+          "sha256": "30308d826f970403ef0ddea894263aba0719974266539f1549f6dcc4d26e048d",
+          "data": "eJyVVEtvnDAQvudXIE6tFLO2eUerXHrqqb30VFUr2wzgLtgbbG+SRulvr4Fd2DwqtRfk+ebhmW8+/HQVBCEbrKyZsOFNQK5HgEtVSdUYD3z3dhA8TV/v2XuPR/H1GdCDbKRi3e7IPJ5lOKWLz8hf8CLYPPZcdx5a01roDjCEU8Sz//6YGhC6P8jO4zcBfQHs2NC4HpRde/O+IwysAdQIgdjQxzScbwzRl/VYO3Xvm0eW8Q7MAss7py2cze0AB22k1cPj7YY72VXIaDcIQAdmRbtZrmJVJa3UfgIkmCerYhYQiZeyvW1dz9fLlUad1av99fOnxRDL6eF8WqElZ2uhP+iBjZ1pZw/ORu/65n7DN1TuKskapY2VYuQuDF96/XztCP+FzDXQu40ffIz1btRJ5R5QoxwwLtt6TAs+fONOWReQOIojjDI3mfQ3TSKcROTjyTEXlsqPsrvUlYeMZV0H1Vv9vZYbjS+keK98f6vG/C47JmBUS7gEXYBzDYoJLop3JHqZ/kqeHVON8yQtHfe6Wg3Nf4KwO/5oYWSakLn8GTcto2k23lASWuQZAK0LHsckyUoCCRUZFjlnOElFSiAnIqFExKKsSxzzktcpzkValjytZwJnMSwL3N7rYX+7mfcyLRBNWtworTpg04ZOop7zB7hzYOz/sv1PRBnRQj/mhgq8cKro8m+KjmTuYAYviAFBBC+grFlRJ7isY1IkHGhMU0ISwsuCl1XJcBzXeZXnSVqnKa5wnmdZkee4PA1mnBBgxhXYwcEEWf98wPjOhRMnxxw5tVdeOK91HF49X/0BFNZxVQ=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-nonleaf-gcc-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-nonleaf-gcc-object.json",
+      "delta_sha256": "c6fbf0025357b16fb8ce59cd6a08e8409314728847700f515ae8676c932651b9",
+      "receipts": [
+        {
+          "sha256": "610c3a8bf561a22aebac11ea50465d0795483d24142bdb4d49a4ee8b5880d304",
+          "data": "eJyVkttO4zAQhu/7FJGvCTgOORSteJHVqho748Rbxw4+tGUR746TQFtYLnZvLPmbg//5xy+bLCPggpIgAnnIipsZcGU6ZXqfwM90z7KX5UyRfYokSm8+gHWqVwb07gCJ1zWt2Dnm1R/8lOyfR251QpeyAfWEjiwZr+n8tQgQdpyUTvwhM1HrhSkzxbB7F8DekQ+gNXZ/C/2qi5VXmo8G3e4ixuGkQeCIJpBz0hVcezBa0Lb9Zpbr8i9zaDB9hP7sAhltd7lY/htF2PHngLPVBdvW19wPwKp6fqFhLQPaVB1lnFaNFLRh8r6R0JT1tgREWSBua97WpeRFW1RJDm0LUQvKWCspWdvGMDs4QRjmpj+O1u0f77Qy8ZSDG0uWhyGO/M5YoxFk3guRr1LW+snZLoplKQRPAV2yd404fIrow//u4Z8s9GLAca4lBg/oultvoxOYpzHEcHsoVgU+CoF+djG4iAsK4Hqc/zRZxjo0eTR7k3afryP3JiJwNUiyed28ATSx2ok="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-writable-pointer-ir",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-writable-pointer-ir.json",
+      "delta_sha256": "29b18c9ce7c6c8b3494e14a52cfd5ab491098276819dbd48483af0594af0e8af",
+      "receipts": [
+        {
+          "sha256": "249b6b4b1660e5eeaec91677f5c72f81feff3de655b1a06359d137435a3f7970",
+          "data": "eJyVU01vm0AQvedXIM5de8EYYyvNseqthxyrylqWAVbZD7IfOGmU/94BYrCTSG0lG3bfm1nezL55uYmimFkvasZ9fIjolwEoha6EbhwCP3EfRS/jE5kHZM5hI2CsaIRm8tgzxPOcbtOZc+I3XAW7Z1UaidCS1oLswMZjxCs+f40CuFGdkIifFZ2BI7NNUKD9oi3mkukmnj4Skx/pvKyDPqFe4lkpwS2wNqQSjjNbkZ7JAEQzdcGLx2A8nLe3FjrjhDf2+W5dBiEr4kywHEjHPG/X3PRgWQOEVZXwwmBRhDPsX8U8kGQzH4sybAP+q2+DKvsdCfpBm5MmUujwRBodgJWired4NQZeqZbezHtQwhMpezUj9/Pq6bziMzQn3npQnbFsKMcE3wW/kvIzcqoy/nAnx0qwRhvnBR8uIY6vWexKO8DLrSwcdsphhwb6u1FQWjhFY1z0xkRpukpW+ZSGDWRHyZ5R5ZABRB2w6YdNij/yTRRE5Nkhz0ifpAW+D/gi7EAHVuP/Ps+mc4TGIo+XzkXIeSYlVB8d/t7Q6ebC7CeNVSwuRmtIxmHwYzwHXYDTGSlNaFF8MgSX6e8GYGhKQFfNipWpls10b3Orb0/GPtytJyMxq7D40TvrkxWj90lnhPZgibBTSyw8BnD+f+v/J+mOt6CG3FgDXmu1uhyXVZ9MCibwOEzeWEItnnyw4O4+iF7xqwzXsnSbDzkZbPdQ1+Umo9uK0jyje1pWuyxLin2Fy2Sz3xUF55AwgHK3B5rnGdvUCd0mlO3p27EBI9zgZG8DjNA0qMMn/jarN683fwCH/YIc"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-writable-pointer-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-writable-pointer-object.json",
+      "delta_sha256": "b28cbb00b4539e3bd13a94fd5f59fb2ca0e7424da3ef17f9ad1d20c5862e0ee3",
+      "receipts": [
+        {
+          "sha256": "4bc6e382cef4aead798a165c866a7846e8d498f630436b529a35fef8a707d8c0",
+          "data": "eJyVU0tv3CAQvudXWD6HXfBzXaW59NKe2ntVrQYYe2ls2GDYTRrlvxfbie08pKYXxHzzYOabj4eLKIrBOlWDcPGniF0OAFdaKt30AfgZ7Ch6GM/guQmegNLLZ8BY1SgN7f4EAS8Kmiezr1d/8EVwf99x0wZoSTtge0QbjxGP4fw1NiBMd1RtwJ+yZ2APtvEdarf0FosWdBNPj8TkezJfa6/PoV/igLfYL7A2RKpegJXkBK1HoqFb+dWtNw6fzSuLR9MrZ+z99ZZ71UrSG28FkiM4cdgKc0ILDRKQUjllwlBEQOBPgkPC0rlsaMM26D67g+/4qSRe32hz1qRV2t+RRnsErg71HN+NgS+6bp1Z7B/fvsyGmG93z7cFmnOuHHZHY2GYxHh39G7zrm+aL36zjb1U0GjTOyUG+uP4pTfwcRjgZR+LL3DUB24G91fTIbd4jsa46MkTJcmGbYopTenQ236ttQD1DtoW5VtNvpZgkq7kedbh9UV3YZktCBwUFM9BK3CqkVBGd7t3ZLtOfyXZYRgfdDB33Bm5GIb/RuH2/N7hQB1jSbbG+wMkeTG8sOMAWSESWQ2DyDylUOW8FKxkskSaVwKzHZUlFDLJGKuhFmnNaZXmssjrJJsInLY7b+TqbOzN9XZSGtguTcgoru3ZqvFzkKNR2qElUz9TEYu3Hnv3v5R/iK1eHLAbcmONQQFys/5TmxObOpjAFTsZ5hXWNU8zmktKi4xWlMsyy9iukuHK0qrc7YRABoi8rJAWRQZpzWjOApH0qawPEf2wB2c9jtD0N4cn/vU9Lx4v/gJ9v3vu"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-writable-pointer-supplied-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-writable-pointer-supplied-object.json",
+      "delta_sha256": "152601dcba9e0b6002f6be466879f3aee6db2ef98c84ea1e34d0e655a7eedfaf",
+      "receipts": [
+        {
+          "sha256": "021ab9ac0ff94504e76cf90fc6fcbc9e7bbfacd46e525af42c56a14eda0e2886",
+          "data": "eJyVktty2yAQhu/9FBquo0RgC0uZTl6k0/EssJKoEagc7KSZvHuRlNpu0ov2hpn99sC/P7xuioKAj7oDGcljQe9mILRV2vYhg685LorX5cyZY85kWt39Bs7rXlswhxNkznlVs0su6J/4R3F4GYUzGV3bBjQTerJUvOXz2yJAunHSJvPHwiZjFqbtlOLhXQB7RyGCMag+C/2oi21vNJ8t+sNVjMfJgMQRbSSXohu4zmAVrZrmL7vctn/Yw4DtE/QXF8jo1DVw4jvKeBAvEWerKW35LQ8DsJrPN3SirdqKc4Uo9g3jTDUSt4I3dN8K1tR1W9cdFxwb1e52Ha0UBUZFs93vRAsdkHVsirODE8RhHvrl7Pzx6cFom55L8OOWlXFIo3g4ex1BGCwnp21EX4Y0TUajKldh67TJO5Xk8kQEn3NZNnvNePyRMMT/fZV/MjTIAce5l1g8oVf3wSUvs1SIcrg/0VVBSFJimD2NPuGCIvge5x9OliVP+zLZo80/oVwN6G1CEHroyOZt8wsTUuCI"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-writable-pointer-gcc-source",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-writable-pointer-gcc-source.json",
+      "delta_sha256": "6bc57325ba71edc2d6dad961abde0a95bfdbfd8605ad08e04c1dc385e8d1bf9f",
+      "receipts": [
+        {
+          "sha256": "6ad97f2aa7f44a93cee0c4eabf217a829bf74dda0a80acafc32d4ea4bcaebb5c",
+          "data": "eJyVVE1vnDAQvedXIE6tFO+ab4iiXHrqqb30VFUrfwysG7A3xt5NGqW/vQNsgHxUai/I896MPX7z8ONFEITMOlUz4cKrILocAK60VLrpEfiOcRA8jl9kbpFBlF4+A8aqRmnW7o4M8TynWTxzvfoFL5L7h46bFqGlbA/tAWw4Zjzh98fYgDDdQbWIXwXxC2DHbOM70G7pDbkjWNYAaYQgzHZJHE4nhuTLsqy9PmHzxDHeQj/D6s4bB8/htYWD6ZUz9uFmy71qJemNtwLIgTmx385HMSmVUwZvQARDsSRzQKJk3rZze9/x5XBtSOvMEn/9/GkOxLy6f14t0Fxz7aA7GMuGzox3B+8273JTv+EbKXdSsUab3ikxaBeGL1m8336A/yLmkoh0jxcfcpEmrdL+njTaA+NqXw9lwYdv3GvngyjZJBtKcj+G8e843dB0E308E9PGSuNVdmtfIdQ71rYg3/rvtd3iZGXFk8b+Fo/hLFsmYHBLOCetwGmPmEa0LN+x6Lr8lT1bphuPIs0dd0YugeE/Qbgdf3AwKB2lSb7G+z2Ls3w4QVJIeZGVeUHrvEqqTPIkYpBAwUrIZSbzsoyzikEVVzmNYwSSmoukSmkqRFFNAk5mmAd4fTL29mY7zWUcIBm9uD1ZNXqfHIzSDuw44bNbxo0s3Hno3f/K/k+K9WIP3VAbakAHyc36t9oco6mDCVwplEJWQV3zJKWZpDRPaUW5LNI0KiuJyyipirIUAlA24EUFNM9TltQRzSLKqrPFeo8Z/TALZz2MkMN3BIYHLxzFORbE61uNDnpt6PDi6eIPgJF1Hw=="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-writable-pointer-gcc-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-writable-pointer-gcc-object.json",
+      "delta_sha256": "4d784ae15000e591f450b39e42b535e3382ad1fd06e2b689865d0c38024051e3",
+      "receipts": [
+        {
+          "sha256": "9fe0b21e10c5b54dea73e280983c764d9295653359f96e166817d34cbfaf0465",
+          "data": "eJyVkttu4yAQhu/zFBbXdWuDYyfVqi9SVdEAY5sNBi+HpAf13YvtNkkPF90bpPnmwD8/vKyyjIALqgURyG1WXk2AKyOV6XwC9ynOspf5TJl9yiRaXH0A61SnDOjdARKv62JNTzmvnvFTsX8auNUJndt61CM6Mle8pvNhFiDsMCqd+G1motYzU2aMYfcugL4jH0BrlN+FftVF2YXmo0G3O4txOGoQOKAJ5FR0AZcZtCiLzeaHXS7bv+yhwXQRupMLZLDyHFj+F0XY8aeAk9Xlel1fct8DXdfTDRSZbGldCs62opHYSF4wVjUla+t2U245A1lUrKl4Q6EtKsmwrgoOsqm2bSkbsoyNYXJwhNBPQ/8crdvf3Whl4mMObmA0D30c+M3RqQBcYz5aZQK6vBMiXzQtg0ZnZRTz6xB8TBXJ5yXj8F9EH/73QX7lpRc9DlMvMXhAJ6+9jU4klRBEf30oFwU+CoF+sjO4iDMK4DqcPjeZ9zs0eTR7kz5BvuzemYjAVd+S1evqDVqe3oo="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-floating-stack-ir",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-floating-stack-ir.json",
+      "delta_sha256": "8cdff1a36593711ca00e2b5c082da7cfdadc92ee87e89105465872ec83c6556a",
+      "receipts": [
+        {
+          "sha256": "bfda6e796ba60390b2b788b51711ce9b564408fbba0499ac316133e77786a9ad",
+          "data": "eJyVU8lu2zAQvecrBJ1LW4sjK0aaY9FbDzkWhTGiRjJhinS4yEmD/HuHUizZToC2gBbyvRlyljevN1EUg3GiAe7iTZR8CUAlVC1Uawn4Sfsoeh2+xOyJOZkNgDaiFQrktgfCiyJZZxNnxW+8MLYvXaUlQbNbc4gH9o2+v4bLue4OQqKZojkBWzCt71C5Oa6YS1BtPF4Qsx/ZtGy8OlKszEEl0c6w0qwWloOpWQ/SI1PQnfHiyWuHp+29wYO2wmnz8rCsvJA1s9objuwAju+WXPdooEUGdS2c0JQQ40C1q8EhS/PpWArDtOi+up3vqn7NvNorfVRMCuWfWas8QiV2zWTfDYYXUUunpz12wjEp+25CHqfV82nFJ2hyvHfYHbSBkI727uDdQsrPyDHL+ENPtrWAVmnrBA9NiONLlqqyC/DclZmjSlmqUKC/6w4rg8dosIvemSjLFumiGN2ogLCV8EJRBg9k3YaKvskzetg3UTJRrDbFivVpVtJ/Qz8GmySwit7HYjWeIxQluT1XLUHWgZRYf1T3tZiz/EzoR0VZzAomaUjgGPQYT0Zn4HhGlqRJWX4yAOfuVwMQiuJJVVPEna7nzdi3qdT3R232D8tRSGA6Sn7QzrKRGhwNMaNs+Z4JMxbE4JNH6/43+38K3PIddsE3VkhNrRfnw7Lo0zGCEdyGuRsSaMSz8wbtw1XIC35hb3eQ3RbBI0/y2zLHVQZZyeuiWkGeQLJK79YN8jytKoKLan1bJ029bvIqwXXalPyuSe84rsvm/VjPOdqgYmc8DtA4pOGKv83pzdvNH707f4Y="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-floating-stack-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-floating-stack-object.json",
+      "delta_sha256": "c0d9d19c7f76c0cff96f893a3115f99727990dd33a379e351d4c90c84664bb01",
+      "receipts": [
+        {
+          "sha256": "e1a7338869576035209213e912ba6b46cda906ca1eedfa89eaccc0a7930b83f2",
+          "data": "eJyVU01zmzAQvedXMJwjGyQMuJPm0kt7au+djkcfC1YNkiMkO2km/70L1ICTzLTlwGjf7mp33z4930RRzJ3XFZc+/hCltz0gtFHa1B0C39GOoufhj54DehBNbi+AdbrWhje7E0c8z5OCTr5O/4Kr4O6pFbZBaE6rjvHgfcH/j6G4tO1RN+AumROw464OLRg/9xXLhps6HgvE5CudjlUwZ+yVeC4a6GbYWKJ0J7lT5MSbAMTwduHXD8F6uJh3Do620966p/u1CLpRpLPBSSBH7uV+Le0JHK+BcKW01xYHIpIjd4p7ICmbrsU2XA3+o9+HVpwKEszB2LMhjTbhkdQmABd6X03x7RB41XXj7Wx/+/JpMuR0erycZmjKufPQHq3j/SQ2+GPwq3d943zxm23slOa1sZ3Xsqc/jq+9yMe+h+d9zD7kqENuevdn24JwcI6GuOiPJ6J0la7yMU0b7G231BlCnedNA+qtHl/Lj7KFNM8Gq8+aw2U2XEKvoHgKWoDjHTRJk7J8R7LL9FeS7YcJqIOp49aq2bDiJ0i/E08eeuq22RXc7Tnd5H0BCirPhExKgATKrOJZRkvKyjIv0qqi+KVlgjbbsFIxmmdFpljCWbrJ6DbJ1cjfuNxpIXdn6w7361Fo3LWMkkFb66qx3OMjJ8itPJCxm/EKBw8BOv+/fP8TVZ3cQ9vnxgZw/Wq1fFCrUzp2MIILbljCNiWDjHJaSpWLjOPkSZZuiwokS4VAOBfFRiWVKiomEkDOSrmt0q2Eoqz+XBukhK5fgncBBmh8mH2Jv73Nm5eb32B7eGw="
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-floating-stack-supplied-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-floating-stack-supplied-object.json",
+      "delta_sha256": "4ef21e028230eb71037432c5a19f5b965bfee267e81925031b2d2f43b7c4838b",
+      "receipts": [
+        {
+          "sha256": "a945e9cbd1e92303478554306b81fa216b28fcf1e1d990ab0bd22810b18bb2a1",
+          "data": "eJyVUslOwzAUvPcrIp8JOE6zgBA/glDl2C+JqWMHL20B8e+8JNCW5QA+WPK8bWaeX1dJQrgLquUikJsku5iARhmpTOcRuMd3krzON0a2GEGUXnwC1qlOGa43O454WdKKHWNevcCXZP88NFYjdCprRzJH3/B+mIcLO4xKg8M0E7WeMWXGGDYfw9kH5APXGuRPkt85sfyM796A25yIOBg1FzCACeSYdAYuPRjNaF3/ouO8/JsOzU0XeXd0gAxWnh62eQQRNs1zgMnmjGbsHPc9Z0U5TVhLaHKKEqq65QW0ZVlCntUV0II1Fc9ksW7Xed0iAJTSUlwXlbyWUDKBR1KytI1hcnDkoZ+a3u6t295daWXiIeVuyFka+jg0V622PODqUzRXbFMfx1ErkOlCa+k1OiujmBdE4BDAodVLxMFTBB/+u5M/2elFD8NUSwzswMlLb6MTkKIk0V/usoWBj0KAnxwNLsIMBe46mP42mSXuqjSarcF/kC7yOxOBN6pvyept9Q50kt4k"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-floating-stack-gcc-source",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-floating-stack-gcc-source.json",
+      "delta_sha256": "a8b1d22df8bcf18ee2e35bc6abe5535f55373d132887373761ceb6c4bd998249",
+      "receipts": [
+        {
+          "sha256": "65a7a69f2b95439a5397b59f03eb97a35563b37037531f3df48c6fbb74264ed8",
+          "data": "eJyVVMtunDAU3ecrEKtWihlsZgxTRdl01VW76aqqRn5cGHfAnoA9SRql394LTIC8pHaDfM99+tyDHy6iKBatN6VQPv4U0csekMZqY6sOgR9oR9HD8EXPAT2IppdPgGtNZayodyeBOOdpziZfZ37Ds+DuvpGuRmhOK4/x4H3E78+huXLN0dTQYhh7BuxEW4UGrJ/nQt8JWlEBqZQiom0yFo/dYvJ1PpbB3uLgxAtZQzfB5iY4D0/mVQtH1xnv2vvrlQym1qRzoVVAjsKr/WpqJbQ23jicniiBRGnhgdBsKtv4fWjk3Nw6Uns329++fJ4MNZ3unk4zNOVceWiOrhX9ZC74Y/DJm75x3vgVlTttRGVd543quYvj5168376H3yFzDkR3hxfvY9FNamPDHalsACHNvuzTog/fZbA+RDRLsiQlPAwm+8PWSbpO6MezYyxsLF5lt9QUQp0XdQ36tfZeSo1lCxneWpxv1hfushYKerXEU9ACHGuwlKZF8YY8l+kv5FkLWwUkaZq4cXo2nPwFyu/kvYeeacooX+LdXrAN7zvIDZNZvuFFsc0KoLLYcJDA5FbRXPEtX3MJacEKLphWpSoRoumGcsHLPNOSjgSOYpgWeHXr2sP1atzLsEAyaHFV1k54/KMJkqsOw37PWhnKtHAToPP/S/o/8dWpPTR9bmwB9aOT5U+VnM4XGcEFP1mabYoM1kywQmku1yJLRbqm27wElVEpEeYy3+i01HmZyRRyWhZqW9Ktgrwoz2WDUtD1m/BtgAHy+IpA/9TFAzWnnAR7sKifl3KOLx4v/gJsG3Oc"
+        }
+      ]
+    },
+    {
+      "system": "linux",
+      "architecture": "arm32",
+      "case": "thumb-floating-stack-gcc-object",
+      "original": "originals/linux-arm32-thumb.elf",
+      "delta": "linux-arm32-thumb-floating-stack-gcc-object.json",
+      "delta_sha256": "4f891f5cc222302624ca336b6959c3b5a5faa3b9752f9185ffbfe872e51073d4",
+      "receipts": [
+        {
+          "sha256": "6c870675da04dc4d90c57d960c5988ca333b527429ffaa582d31c4d5d5633198",
+          "data": "eJyVkttOwzAMhu/3FFWuKaTp1m4I8SIITanjtGFpUnIYJ/HupO3YxuECbiLls2P7/523RZYR7oKSHAK5zoqLETTKCGVan8BdumfZ23SmyC5FEqUXn8A61SrD9XbPE68qWrNjzKtX/JLsX/rG6oROz+RApuh7Ou+n5mD7QWl0Kc1ErSemzBDD9tCcHZAPXGsUP4f8PhMrz+Z9Mui2p0EcDpoD9mgCOSadwbkGowVdr3/Rcf78mw7NTRt5e3SA9FacLrZ5QAjb5iXgaHNRluyc+46zVTV2KCuoCr6ksCmWVNSiKWpGN0AZSiGh5iBZLcuSbgRrKMiKbVaS1mtWyZVYSlaQuWwMo4MDD91Y9ObJut3tlVYmPufc9SXLQxf75kpqy0NafZ7MhV3eAuTzRHOZwVkRYdoNweeALrk8Rxw+RvThv+v4k5MeOuzHt8TgHp249DY6wDypge5yf5DoIwD60czgIk4ocNfi+K3JpG5f59HsTPoC+ay8NRF5ozpJFu+LDz+c27Y="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "x64",
+      "case": "original-eh",
+      "original": "originals/windows-x64-original-eh.exe",
+      "delta": "windows-x64-original-eh.json",
+      "delta_sha256": "3ad9a78e3d469d36b756b028ee01bf4ddb83873691522f91ff5810350ae92e17",
+      "receipts": []
+    },
+    {
+      "system": "windows",
+      "architecture": "x64",
+      "case": "exceptions",
+      "original": "originals/windows-x64-original-eh.exe",
+      "delta": "windows-x64-exceptions.json",
+      "delta_sha256": "6e98ad067a154c4ed8b3ca1077561c4d3cfa9d201bc03d2326bbfda449b46b24",
+      "receipts": [
+        {
+          "sha256": "0b45a088c65b06ae7fd17a990c36a2ed691241596ab68ab0735d2c10b248946e",
+          "data": "eJy9VEtz2zYQvvtXYHhJMjFoPiRSYt3E01NvPeTQQ5xwQHBJYQwCDABKch33t3dJiqScaDpJD8XwsfgWi31g8T1dEeIx40TFuPMyElz3QCFUKVRtEfiIc0Kehi9qHlCDaHQ9AdqIWigm8z1DfB0nmzQKk2g1L7DiL0DNGfDYFFoi5HEJTHVtznWnnDfon68v+gv/zV+YxlHwrb/NBX/v3+epe2whF6rSd3fJb3cnp/j9NCTOddMKCWauxATkzNRdA8otNcHwmaq90Y9H/4hmserUAeOmjhUS7AIrTUthOTMl3TPZAVWsOdOLL512ME1vDbTaCqfN47ubohOypFZ3hgNtmeO7G673YFgNlJWlcEJjTShneG4lc0DDeAksmEWMyNTgfj1ukjxZ0ZbTPk59sLSxe/4iUOn0PIdGOCrlvpmRD7N0nCT+9u0Mzqa3DppWG9bnoDvXds6X8pJyTM377iDyUrBaaesE7yt/wSYLN9kqyciBGYU9m5FXhdEPoF6RHbOEEaUVdTujMdOawJFD2xeL2Ba4qARnw6zoHMHiEfQjJRmWk4/0z3m5/XSvMORwQ76SPC+By97+tdJCSaHgDRHKkdHv6zfocjQkT6et4vAX8jzsgOMr+anx+V5dTjrCpBU2TEaw3/iQRh8YM1C+THoHBv6X8D9Pwt+nca/C6VxIDQr71UHp3yvv5RljQ+9GPpgu1KLDJreYWq/+XTdQGDiQYR05aUgU+aGfjGbY+yyX7BF7rbcA2mQH2kZpkMURPr0YLmKUJSt8qDj9wmiT4UurTTD8FU6TfjkqPyAw+hAK2zg/EVNwgqxjUkL5PWFe4qs4ShY61AesS76QFF57yTj0XOPNi87As43iOE2TCzx3vsU3BNdXrkPWmDjVa3QJcx7jFZ3P4/agzcO7m4kjjliG5UbcLKIPx5G20POXDqz7T4X4ofgt30HTb+ApwAYo/XNO9PfhGMYI5j29DnlU4ug6A3bJ5Sx43rYvrOyOReuktyuLiofxdl0FcbFep1W1LrbFCpVJDHHMV2USlyzYBEWableMrXjC4k0VrsstZyzg0WnbjnOwPXs508EAjTTcu7jMxOHWj2M/8K6er/4BX5QuKg=="
+        }
+      ]
+    },
+    {
+      "system": "windows",
+      "architecture": "arm64",
+      "case": "original-eh",
+      "original": "originals/windows-arm64-original-eh.exe",
+      "delta": "windows-arm64-original-eh.json",
+      "delta_sha256": "2ec67f1367ed6599b06752cb364ce113c4fc6e7d3d218b90f93424c5c73a773a",
+      "receipts": []
+    },
+    {
+      "system": "windows",
+      "architecture": "arm64",
+      "case": "exceptions",
+      "original": "originals/windows-arm64-original-eh.exe",
+      "delta": "windows-arm64-exceptions.json",
+      "delta_sha256": "e42d0e910ed2dc736c31c982fdea25b8a3686625282dcaee14469e6139e694bb",
+      "receipts": [
+        {
+          "sha256": "f7e85ac1f5323ec95f5b717e5ca74a682868061d213ce67ece3b8c43fcc4f2e2",
+          "data": "eJy9VUtz2zYQvvtXYHhJMjFkPiSKYt3E00Ontx5y6CFOOCC4lDAGAQYAJbuO89uzIEVSTtROk0M5ErX4dhf7wOLT4wUhATNO1Iy7ICfhpQdKoSqhthaB97gm5LF/o+YONYjGlyOgjdgKxWSxZ4ivkjRbx6s0CycDK/4G1Cxn4KEptUQo4BKY6tqC6065oNc/XZ6NF/1rvGgZpd/Gy87Ee/u2WLuHFgqhan1zk/52cwyK7w994Vw3rZBgpk6MQMHMtmtAubknmD5T22CIE9A/40msO3XAvKljpQQ7w0rTSljOTEX3THZAFWtO9OJTpx2My2sDrbbCafPw5qrshKyo1Z3hQFvm+O6K6z0YtgXKqko4obEnlDM8t4o5oFEyJxZOImZktuB+ZczwXbqkLac+UX2wtLF7/ixT6fS0hkY4KuW+mZB3k3Q/Svz16wmcXK8dNK02zBehO9d2biHlOeVQW/DdSRSVYFulrRPct/6MTx5l+TLNyYEZhUObkxel0XegXpAds4QRpRV1O6Ox0i2Bew6t7xaxLXBRC876Vdk5gt0jGEdK0puT9/Svydx+uFWYcpSRz6QoKuDS+79UWigpFLwiQjkyxH35CkMOjuTxuFUS/UKe+h3w+Ux+6Pl4q84XHWPRCicmJzhwvC/DJ8YMVM+L3oGB/yX9j6Pw5fjcqmg8F7IFhQProFrcquD5GeNE7wZCGG/UrMMpt1iaV/+hGygNHEhvR44aEseLaJEObjj8rJDsAWfNewBt8gNt43WYJzF+vBjNYpyny9zfg+OvGDTiuIriLMcvVYk3pO+8/DsuhlBC4TQXR4IKj5B1TEqovifOM7wVJXE206I+YHuKmazw+kvGwXNOMBmdgCcbJetslZ7hu9MtviE638AO2WPk1qDRFUx1DDd1OpbrgzZ3b65GqmCmwW7MV+NqFhdwPxAYxv7UgXU/1Yr/VIHlO2j8BoECnIRqccqOi300pDGAhSfavpJa3LvOgJ2rOUmet+0zL7tj+F/m/aqy5lGyWdVhUq5W67pelZtyico0gSThyypNKhZmYbleb5aMLXnKkqyOVtWGMxby48TYjnOwnsac6aCHBkL2If6Bk6PNIkkWYXDxdPEVKJwyVg=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "original-eh",
+      "original": "originals/macos-x64-original-eh.macho",
+      "delta": "macos-x64-original-eh.json",
+      "delta_sha256": "d9599ba8a0951fa1968ac949839ea7eab9a1c7e91ad7a0665798e0ab0169f95d",
+      "receipts": []
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "original-callback",
+      "original": "originals/macos-x64-original-callback.macho",
+      "delta": "macos-x64-original-callback.json",
+      "delta_sha256": "ea2a36b5faa83821cff7fdc4ea4296501fef3e8ad919e0e4f76a1ad55e2ff5c3",
+      "receipts": []
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "c-ir",
+      "original": "originals/macos-x64-original-eh.macho",
+      "delta": "macos-x64-c-ir.json",
+      "delta_sha256": "328f99b3257c2819fc070bbb144c7a6ddaf1eca62561ae64ad170c3b71f2b1e2",
+      "receipts": [
+        {
+          "sha256": "3cbbe7b4290fe4f6e105c96000197a24881a34c80f5a9e3b892efd01d4f10161",
+          "data": "eJydUstugzAQvOcrEOdAgFJCUJWf6DGqkGM2YMXY1I+EKMq/d21SyLGq5OfMer0z2vsqCEKiDDsRasIqSNYOODLRMNFqBA5fHqGyHxgHhYiwnHusIYbUnNykdS9DiPpKRkO2Taq3DIc7pssxq4ocR8SeW5qVFc7oVCZ+F3gtXDiSnwiE/g8mBmvqM9aDX6RPSBvCOTjkgEAQ3P2KlFSsZYLw+kKQzLNdvttm2zJfzwFXAarWt/4ouau5VjBwQqEHYcI56gWcM70naZHn5Ryz5HhN4dkHrpNrnIjWkhZmY3vZLBf0zYkbiOlcno+rVOf9pidU6mhEFwYlG0tB6Q2NmIqR6OTkyi/jbR8NKNQ8MQq+LWjzL3P+JEnTDnqXIBRwAdXEWlpFIUIVtIsv6VTGBNaC9OClndhorAK93yyiUOIkjD9r15ZS0K7pjLLgIUNUC767xrKo0RMyDBwbzXk0pnmcxEm4eqx+AAx5x90="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "c-object",
+      "original": "originals/macos-x64-original-eh.macho",
+      "delta": "macos-x64-c-object.json",
+      "delta_sha256": "111d24f0224e9b04c31f7f83522f6983545bca18515f25dca7038d20a58a3650",
+      "receipts": [
+        {
+          "sha256": "4e19f0613b3b563e9c34b28fb0f0e1f491c23da960e9d2412f5911987bdfd5ba",
+          "data": "eJydks1ugzAQhO95CsS5JIQaA1XVF6kqtCzLT2Ns6p80VZR3rw1tmkMPVS8r8c148A6cN1EUg7ZjB2jjh2h/F0AzynaUvfHg+WUhqKZ5FKQ9kU6IhY1ydrY+eK+n2RcyFoSgQJ49iKLzMr2k9NiPEkR9BC+yrGJVkRUlu7sa3iXp2nxMjRLeEWuaBSBNJG18Nd3Aa1Ce7jlj5dXze8SiXvxcFxIgewc9eVu6gEm1Pw+qeSW0dfNhKZTAM3aLzQBZzsML2pw61iErsOrKCohDQzxH6Krm3g9eAKR5gYzSrOQFgzLFhrdERckpbRHjNdbZ0OQMdgihj+9KH552E6AyyYmzZNaqdUja7DBZr7D14qDW099qOEonS9qXvCqa3hwZ+6+v8acSDQ40hYBY0pF0uzXKaaTEb4LD9rhfr2EcIpnQo9WOFmRB9xT+t/hU8tqvCPMsKFlW3rNtGm8um09sbr44"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "c-hosted",
+      "original": "originals/macos-x64-original-eh.macho",
+      "delta": "macos-x64-c-hosted.json",
+      "delta_sha256": "111d24f0224e9b04c31f7f83522f6983545bca18515f25dca7038d20a58a3650",
+      "receipts": [
+        {
+          "sha256": "002315a282cbe3d025ff7232cbde6a8d0c79ef5565d10b137b45de5ad4a4d2b7",
+          "data": "eJydks1OhDAUhffzFIS1jIUppRjjixhDLu0dQEuL/RnHGN/dFnR04cK4acJ3Tk+5p33bZVkO1k9HED6/ycqrBPpJy0kPLoL7h5UIMy+TQhuJDkqtbNJL8N1T9EZafSLnQSlM5D6CLHtb1ygZOw2TBtWdIIq0amnbVA2nVxfDi0bbude5Nyo6couLAoEzap9fTD/gJagmJaOUXzy/R6zqe1y3gRToIcCA0UZWMBv5/WH6RxS+6189phJYRX9iN0JVs3RA1bKWcwaSIxGVKAk5HmjPJSO8ZHBgPfbAD/SARJbQ11i39RGIbBreIjayzrfY4FOTC/gxhd6+GPt0dz2DMK44M1os1sgg0LprUYzGeZT7KI5m2/2lpq149mhjyZti8Tlgsv/jNv5UohMjzikg13hCK/fOBCuwiJOIcX8qt99wQQh0qUdvA67Igx0wvbf8zFkXR4RlUVisI5d0T/Ld++4Ddlu8uQ=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "hosted",
+      "original": "originals/macos-x64-original-callback.macho",
+      "delta": "macos-x64-hosted.json",
+      "delta_sha256": "4f0fa115c87ee172b2387d46d22eaacc2278c4ac00e36f7c2237f00d4d37cb74",
+      "receipts": [
+        {
+          "sha256": "d7cffb6f3cc66671fa7d6ad11a61bed0b9fc008de0adaf2095e1a1073c17f3c6",
+          "data": "eJydkslOwzAURff9ishrWpLUjVOE+BGEIg8vA3Xs4KGDKv6d5wQKCxaILCzl3Otr35dcV1lGuAtDy2UgD1lxl4AYjBpM5xE8v8xE2nEaNDgkJmo9s8FMMTQH9CItP5EPXGtI5BlBll3nFSXrhm4wXDdHjiIt93TPyormdzfDyYBr/GUUVqODOJg0lzCCCeRm+gFvQbscn4rePL9HzOo7rkshzU0XeQdom69ARqu+X6x4BRkacQmQhsBq+hP7npe7Kh3AckoLySrB6kLst2rfYi9R79qiVlRUUJbFlpVC7QrVirzlNc2rlgmGXpAlk2SJjSFNcuKhT6GPJ+sOT/cjl9avzxVdT86qKMH5+976AGqDUm+XvV9a2gjnAA5HvCgO3iIk+z++xZ9G6GUPYwogBo7g1Mbb6CSssYfsN8diuYaPUoJPUwwuwowCdx2kv42c66rBgnyaNKznwgXd5GT1vvoAmva74Q=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "x64",
+      "case": "exceptions",
+      "original": "originals/macos-x64-original-eh.macho",
+      "delta": "macos-x64-exceptions.json",
+      "delta_sha256": "6af6fc8a25da24c477b64c36327778442c8aaefe9c184ed5cfdbbcc2232f1148",
+      "receipts": [
+        {
+          "sha256": "312784d0ed821fd7ba995807a25b3cfa48ecf2500bf1e5f87f6f50ab10140c7a",
+          "data": "eJy9VEtv3DYQvvtXELrERqzVY3clWXV9aQ4FmiAHF2iBOBEocnaXMEUqJLWPOu5v70haSet4C7Q9lNBj+M0MhzMcfk8XhHjUOLGizHk5Ca9boBSKC7W2CHzCOSFP3Rc1j6hBNL4eAG3EWigqiy1FfBHfLEMcyWI0sOIPaDUTcKhKLRHymASqmrpgulHO6/TP12fjhX8fb3GTxmkcfh8vPBNv9HUbo3dgjiHx+7lLm+mqFhLxoQ4DUFCzbipQbqoIbp6qtddH8fyP8SiuGrXDXfuOlhLsBCvtc2EZNdzfUtmAr2h1ohf2YI3WbgCC96I01ByCd7AFqWswwU+6qqji74WCX7WWNrh/94sNPlD28f73meWP01pfG+1gmN4aqLUVTpvDXVA2QnLf6sYw8Gvq2CZgeguGrsGnnAsnNFbIZxhHcOrAj+ZTkuEoYnZmDe7HfZYUycKndS3BryjTNlrMwhdJS6fHOVTC+VJuqxG5H6X9ILG3b0dwdL11UNW6LchdoBtXN24m5Tlln5r36lALLuhaaesEa0/xjE8epfkyysmOGoXdn5M3pdGPoN6QDbWEEqWV33UOKgnsGdRtsYitgYmVYLSblY0jWDyCcaQknTn55P82mtvPDwq3HKXkGykK6pwR6AJFcXmptFASz/bqigjlSB/88grj9t7k6bjePPqBPHfL4PhG/v348qDOpz/H9BW2Tk6wi1mXEAfsdAP8ZfobMPA/J/JlEP48jgcVDWdF1qCwhx3w2YPyXp47NvmmZ5vhwk46bHyLSbbqn3UFpYEd6ezIUUPieBbNkt4N7wMtJD1g/7Ue2PC59us4DfN5jE8rRpMY58kCH18cf1Gc5fj6qyzs/gqnSWuOynsE+hhCYWsXp7SHkHVUSuCv6fg8G2YT2eod1qWYKLBALpCUQUtm3mh1Ap7weJQs4+wMjZ4u8R2DtqVrkErQLOqASvORjb3+3o4HcrvT5vEu6FjD32MVaqN5w7DwwXRdZqje9CyAgb82YN1/KsQ/2r5lG6jaBTyFpGv47JQnZ9uo30YPFi19d2msxN41Buzd6bZZXb+wthsaL5PWvlxEMc0YJGUar5KUwjws0zTMbqIyhcVyGZdZlqQLKG/oCqflYsmjEJZLnq04C7NhEw1jYFsmc6aBDuopuQ3xmpX3LS0jMV88X/wFoFJFPQ=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "original-eh",
+      "original": "originals/macos-arm64-original-eh.macho",
+      "delta": "macos-arm64-original-eh.json",
+      "delta_sha256": "a38aff3b98dd1cda32b677a40efb1ece69d4a2d1fa03b4872b1ca34c8c9a35ec",
+      "receipts": []
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "original-callback",
+      "original": "originals/macos-arm64-original-callback.macho",
+      "delta": "macos-arm64-original-callback.json",
+      "delta_sha256": "f27ee6af9d0fd79464d80f65ad67ab65a5f1f9aeb54c5e3bdf905b0366a61639",
+      "receipts": []
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "c-ir",
+      "original": "originals/macos-arm64-original-eh.macho",
+      "delta": "macos-arm64-c-ir.json",
+      "delta_sha256": "d5896fbf362020f3a7aca9282af7b90b140ddd01d281e5573afe08b78eb07dc2",
+      "receipts": [
+        {
+          "sha256": "3e4069eba73073bc2bfb547c0301d408902e286cf3921a60b8edb8c48c5efe59",
+          "data": "eJydUstuwjAQvPMVUc4kkDTlEVX8RI+oihZnCRZ+pGubhxD/XtuhgWPVQ6x4Zne8M9rbJElSIMv3wGxaJ/NpAHZctVx1xgPbr4gwLXsukDyinBARa8FCI+CqXehMMZO1zviiqhdVxotyVfsvU29luH/6/zR2cdU72xz9C76peEDGghAYkK0HkuQWT09p4h1XIJoTeLIq19V6WS4X1XQsOCukxlzlToswRUPYC2AoUdl0rHoBR6X3ebGoqtVY89R4lYjs3Z9DDgJU56DDMSqp2+fFJxHM9WAPQefjrOm4mUlg2mRA0ufQk24dQzIzlnHKPXXQQy6/TIzyYpG864Eh/HZo7L/i+ZMpww4og0Cq8ITU5kY7Yph5H+yQn4phjAFsFEiM5vb8Yh2h2cyepqLJwZp4TG8cY2jCKllyGCEL1GHcmSEU6HvhtyfEdCmqfJ7P08l98gPdPr8Y"
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "c-object",
+      "original": "originals/macos-arm64-original-eh.macho",
+      "delta": "macos-arm64-c-object.json",
+      "delta_sha256": "b8e159cbd7ebcbd1d63336eb822356b33083843372bdf67adbd297e9d37c71b4",
+      "receipts": [
+        {
+          "sha256": "6e3a89022e519bb4b51251ff6b436f1caef1a693bec8b9a6e4e572a9a112f09f",
+          "data": "eJydkstugzAURPf5CsQ6JJgYQ6qqPxJVkR/XQGNs6kfSqOq/14Y2zaKLqhtLnBkPvmO/r7Isp9YPknKfP2RonQAbtBh05yI4PM+Em3EaFNhIdFBqZoOegj+eojfS6gs5T5WCRA4RZNn7vEbJ2KEbNFXHM40irvZ431QNweub4aLBHt11ZEZFR25hUpTDCNrnN9MdvAXVJSIYtzfP7xGz+hHXZSBFdRdoB9FWzmA04ufDsBfg/siuHlIJddXeY9fTqibpBxhJhEkjEakZE5IjiZEgDSpbjnZsh1i7Q5UoeblvWSOJFFKKPUV1RSTFQuzyJTb41OREfZ9CHy/Gnp62I+XGFdSOBBeTNSJwsG7Li+UQmyj3Ztn/rabN8ObBxpoXxcJrAOf/dR9/qtHxHsYUkGs4gxUbZ4LlUMRZeL85o+UYLnAOLjXpbYAZeWo7SC8uXyak06SgmGdGeFPmq4/VJ7VfvbQ="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "c-hosted",
+      "original": "originals/macos-arm64-original-eh.macho",
+      "delta": "macos-arm64-c-hosted.json",
+      "delta_sha256": "3cf6d2ebcdd88d63e4a1cf8a41645c2c9f1a609f0ad83f9974c9c643131f9cfb",
+      "receipts": [
+        {
+          "sha256": "3de1735f9ea6ecb088b8d51f03907e20e341272ca3f108f28242c0be523619e1",
+          "data": "eJydkstOwzAQRff9iihrUuLUzQMhfgShajKePKhjBz9aKsS/YydQWLBAbCzl3Otx7rXfNkmSgnFjB+jSu4TdRNCOSoyqtwE8Pi0E9TSPkkwgyku5sFHN3h2OwRto8YmsAykpkscAkuRtWYOkzdiPCuThBEHkRcObqqhKfnM1nBWZg71MrZbBkRqaJSBNpFx6Nf2A10H7nJWc11fP7yMW9T2sayAJqvfQU7DlC5i0+P7Q7TOhO7QXR7GE/a78ie0Axb6MB2AHFfEOSlbnTd0ig5AJBYq6AA6iQ7YTedMx1raY11SJJq9EteugEI1omjxdx3oXm5zBDXHo/Vmb48PtBKhtBmYqeTYbLTySsbeYDdo6EtsgD3rd/6XGzfTqyISaV8XQi6do/8d9/KlGiwNNcUCq6ERGbK32BikLWXDYntj6G9Yjko1NOuNpQQ5MT/HFpWtCmGdJ2ZKZ8W2ebt43H9wNvpA="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "hosted",
+      "original": "originals/macos-arm64-original-callback.macho",
+      "delta": "macos-arm64-hosted.json",
+      "delta_sha256": "42bad37ed22c62d732a24d10dae205f88449f9c2280546514068c0f40a58ed0b",
+      "receipts": [
+        {
+          "sha256": "727206677e8f0ae94e287878b11762d73ee77f279998a5d65e7b63943484e372",
+          "data": "eJydkstOwzAQRff9iihrWuwocRqE+JEKVZPJ5EEdO/jRUlX9d+wEShcsEFlY8rl3rj3jXFZJkoJxQwvo0qeEP0RQD6oZVGcD2L3OBPU4DZJMIMpLObNBTd7tD8EbaPaFrAMpKZJdAElymdcgaTN0gwK5P0IQ86zKqzITfK5bDCdFZm/PY61lcKSGJglIIymX3kx38BZUsPCJ/Ob5PWJWr2FdGpKgOg8dBRubwaibn42u3wjdvj47ikMQZXaPbQ9ZIeIBiFtWVBXfoiBGGWfARcMqXuMWyjJs27zlRVEVnFrWiArzvNiCyJALzBhv0yXWuzjJCVwfQ59P2hxeHkdAbddgRpGvJ6Mbj2TsY6+to2YTxF4v1d9aLKUPRyYMeVEMvXuK9n+8xp+GaLGnMQakio5kmo3V3iCtQyfYb458uYb1iGTjHJ3xNCMHpqP4v6VLfzBNktZzxzzfsHR1XX0CB5K8Jg=="
+        }
+      ]
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "case": "exceptions",
+      "original": "originals/macos-arm64-original-eh.macho",
+      "delta": "macos-arm64-exceptions.json",
+      "delta_sha256": "6aac3acfd020893e338f0b8bb7ca4c9dc307b85976701ceb6821afdc42801847",
+      "receipts": [
+        {
+          "sha256": "972ead1a14f2c6292e41b0ec2e680a735d49dd6b98d083978f4f319b81e89fd9",
+          "data": "eJy9VEtv4zYQvudXELpsgg2th2XJUdNcuigKdIs9pEALbHYFihzbRChSS1J23Gz62zuSItnZuEDbQwk9ht/McDjD4fd4RkjArJcrxn1QkOiyAyqphdRrh8BHnBPy2H9Rc48aRJPLETBWrqVmqtwyxNPkahHhyNLJwMk/oNMcgH1dGYVQwBUw3TYlN632Qa9/ujwZL/r7eOlVnmTL5bfxohPxJl+/sWYH9jkkfj/1aXNTN1IhPtZhBEpm120N2h8qgptneh0MUQL6IZnEVat3uGvqWaXAHWBtqJCOMyvolqkWqGb1kV66vbPG+BEI38vKMrsP38EWlGnAhj+YumZavJcafjVGufD23c8u/IXxD7e/z5y4P6z1pTUexum1hcY46Y3d34RVK5WgzrSWA22Y55uQmy1YtgbKhJBeGqwQ5RhHCuaBxvNDktEkYnZ2Df57ZusspaxpFNCacePidBa9yFl5M82hlp4qta0n5HaSHkaJv307gZPrtYe6MV09bkLT+qb1M6VOKYfMgldnWgrJ1to4L3l3iCd8ijgvFnFBdsxqbP6CvKmsuQf9hmyYI4xoo2nfOKgk8MCh6WpFXANcriRn/axqPcHaEYyjFOnNyUf622TuPt1p3HKck6+kLJn3VqILlOX5uTZSKzzaiwsitSdD8PMLjDt4k8fn9ebxd+SpXwbHV/Lvx+c7fTr9OaavsXMKgk3M+4QEYKNbEC/T34CF/zmRz6Pw5/O40/F4VmQNGlvYg5jd6eDluWOPbwayGe/rQYd97zDJTv2TqaGysCO9HXnWkCSZxbNscMPrwErF9th/nQc2fGFok+RRMU/w6cT4ICZFluJD5fMvTpYFvlTPOw297eQfcTKsLTW2dHnMdgg5z5QC8ZqFT5JgfkS6Zof1KA/MVyIFKMah47BgsjoCj+g7zhZxdoI9j5f4hji7krXIIGgW90BtxETCwXBfp4O43hl7fxP2bEEH/misES3HkoeHizJDg81w/zH0lxac/0+l+EcJOL6Bulsg0Mi2VsyOCXK2jYdtDGDZ8XafyEo++NaCuzneNm+aF9Zuw5JF1tlXaZywJYesypNVljOYR1WeR8uruMohXSySarnM8hSqK7bCaZUuRBzBYiGWK8Gj5biJlnNwHYd520IPDVzchXhFxw8dHyMjnz2d/QVBE0Rk"
+        }
+      ]
+    }
+  ],
+  "source_formatter": {
+    "version": "clang-format version 22.1.2",
+    "executable_sha256": "ffd62949ae43857441d6035759eaa0643ec51c52dccfd4e2eeb38f55997fe18f",
+    "style": ".clang-format",
+    "style_sha256": "ca8a6c0a15256319ada6e61cddad6c6fc4147c381bb9767aa6880d275f069e79"
+  },
+  "producer_inputs": {
+    "unittests/Inputs/source-patch/native-processes/windows-original.cpp": "89e7019242708d308930c47322ede85e3a2aca5b61c031e41b6e50d672a836ae",
+    ".clang-format": "ca8a6c0a15256319ada6e61cddad6c6fc4147c381bb9767aa6880d275f069e79"
+  },
+  "source_sha256": {
+    "abi-linux.c": "7cfeb68058d325321191fded985aead612a86e723181a9a98c11d229ba6ce34c",
+    "abi-original.c": "998a958511538ad114d2d406777345cabb3b5450b688c8bbfdfb9f1a92b9b419",
+    "abi-windows.c": "435d9e2e35e46b6389b8648e913f8e94dcf2088a56a05853ec7b43a72666ed8c",
+    "exceptions.cpp": "b412a8ce6b72f67ae30b770891b7e4552b88674eb9af455b45d10e55d8fdc081",
+    "floating-stack.c": "303583e42a28cd6b4a30a04197fec31bb28c6b75d0fd7f3b0e71f8c9f19ce78f",
+    "hosted.c": "00311b0f078d7ea4c904d17d6050aeddb686cf56e21518d68bbe9ec3a3dbce5b",
+    "nonleaf.c": "ec1cb8e9fa8f409f3184be23251141b98b9d9a033f7d7745f550d0776687709e",
+    "original-callback.cpp": "099849d0fe3b0d449af0121562a5993f903777d90525ba9d75c273c79912ab8b",
+    "original-eh.cpp": "15c964e831d287078d0980a489904f8acbee46b5661181a21cc31a0702dae8cf",
+    "producers/arm64/c-hosted.audit.json": "bed6251a5a506e238465141225e22a600c3368f3e6eff9b35e1d656d7dfdc431",
+    "producers/arm64/c-hosted.bin": "550cbee07f61789d11107dceb0551ff978843d5556e5f321df6477406a79496f",
+    "producers/arm64/c-hosted.o": "cfa7e4fa618098bc1a727cdcd82a4adfc13d09f11bbc08e7d907d73fa2d9d990",
+    "producers/arm64/c-ir.ll": "e8dcedccf4d4e53cfce006453824c368d7aebb23fb71aedefa3590a906cb9058",
+    "producers/arm64/c-object.o": "41f1467f165bbdfc1f41d67108c13b31b8312d0c098b7f6fdffd9a1526fa4dd3",
+    "producers/arm64/commands.json": "07ae01b34e5f8f008503f9054d29a83b031883fbc8780af5c96c0de7ff8c9bb1",
+    "producers/arm64/hosted.audit.json": "7be5b9396864b28ae7d3265a188182a26448fc4646b53f98e6f636f713863e16",
+    "producers/arm64/hosted.bin": "a53c16b00c5769b07e56c0e6228dd6c94a84a73dc3fa44aabc61d6a1d4d8ea46",
+    "producers/arm64/hosted.o": "cc8059918c6e0e210a16d091bc8a7710af4f155951ef0d69c4458a62c16c201f",
+    "producers/linux-arm32-arm/commands.json": "1d3a4d8f39caee5d3e8502a16523afa9572a43cddf8c2759e86e0b94d58cbe9b",
+    "producers/linux-arm32-arm/floating-stack-gcc-object.o": "5f09197604850deb44506d71a4b90af87f97865b40376b689b11b41b134ea25b",
+    "producers/linux-arm32-arm/floating-stack-supplied-object.o": "7a64569e9aad60f7bf60a97ebfcdae05ce562b0443d5c616035efb4a35110a3c",
+    "producers/linux-arm32-arm/nonleaf-gcc-object.o": "6749523d2817ed9d7ac34bb3e9b46f6a6fb751ae6cf57ff87652e05fc2517c1d",
+    "producers/linux-arm32-arm/nonleaf-supplied-object.o": "fa9c56c8bc14cea1a6f97fef20eb04de7361758ce3c1a5b1c8e94479d6cdff26",
+    "producers/linux-arm32-arm/writable-pointer-gcc-object.o": "4e9323d06e5830c2513eb30841f1728656cf43847aec564c3975ac985492f66a",
+    "producers/linux-arm32-arm/writable-pointer-supplied-object.o": "55bf8ac1e2650232465dcec0a169c96d87554d272ae8af7a1a43c7972260a661",
+    "producers/linux-arm32-thumb/commands.json": "cd13a501cfa5538a03cb4bc9e4e56a67a6fd6714036f413a9eeb156db101c717",
+    "producers/linux-arm32-thumb/floating-stack-gcc-object.o": "36c61a40c9140d7db17209c02efdfc7acf27f3309d2b0cf6295f07826f5d4f21",
+    "producers/linux-arm32-thumb/floating-stack-supplied-object.o": "4deb3023078fa5ef666e3187e052b7a1d54f438f7e0e0006c957d9de62ccccd0",
+    "producers/linux-arm32-thumb/nonleaf-gcc-object.o": "7282a075d02b057fc072f47fa73693aeef1ee96b863fb1815ace081c6c0228f0",
+    "producers/linux-arm32-thumb/nonleaf-supplied-object.o": "901c6555bcc3eb50b3cbb0b56bab032f7755c78c0696cf6bcecb1d66940ae62c",
+    "producers/linux-arm32-thumb/writable-pointer-gcc-object.o": "2e3df261cb39c7de7db0334713f6f819b3ad04374b72af04d3e640bad749f1d7",
+    "producers/linux-arm32-thumb/writable-pointer-supplied-object.o": "fb909066deeb78262d8ce3b68179b2855955f6b6e8d944f10d1a21b8374b9afa",
+    "producers/linux-x86-abi/commands.json": "fdeb81595ec65e0b66183aec9d1eba8e391eeb1137de9642980913e954eb1bb0",
+    "producers/linux-x86-abi/floating-stack-gcc-object.o": "28a8f5668d5a25c6910630cc9fd93196dc8e3540793c6f6375e8d546962cf28d",
+    "producers/linux-x86-abi/floating-stack-supplied-object.o": "a8e65d18781f5d00366a60de7a9b421eb95153a598cf3fb2517d23dd38171918",
+    "producers/linux-x86-abi/nonleaf-gcc-object.o": "5957b81a106059cb1a68d66337d23f22f1fe8b3da0821a7c7f0bc972bbc1400d",
+    "producers/linux-x86-abi/nonleaf-supplied-object.o": "39503da18121c82de2d5ae886b4c1a0568aa2894bc02b05bffae74f509bd239f",
+    "producers/linux-x86-abi/writable-pointer-gcc-object.o": "2ce5d9e57749295396e2d4a0dd1b586d427375cdababae550ee5bec10f84895d",
+    "producers/linux-x86-abi/writable-pointer-supplied-object.o": "8fbef02324bca5178f4d3d5256da775b5121d646a00e89c0a7a81a5cdefc1d7c",
+    "producers/macos-arm64-abi/commands.json": "f21427d3a900f1e5a3084e4c6b260bb8a73230c6c70207e2223fb2df61a43ba8",
+    "producers/macos-arm64-abi/floating-stack-supplied-object.o": "37380df81536d500bb69b8cc6211ca68406dfcbfea5f3ac60a68003841e95338",
+    "producers/macos-arm64-abi/nonleaf-supplied-object.o": "f9bc3f9db5c7c0763d9f48acc2765c4fe2233ab4f7397d43d5bfc2649a9a2850",
+    "producers/macos-arm64-abi/writable-pointer-supplied-object.o": "f451eed42be77e0de0233aebbd5e00ca72ccb9d88501afe320d7c9787cc312be",
+    "producers/macos-x64-abi/commands.json": "6717c38f6aa9ed709dd2add65d3f57f264687285610af401bd963995c74ae84d",
+    "producers/macos-x64-abi/floating-stack-supplied-object.o": "5afbcf4c658e41ce7ab8ef2bdf927486afc21309393e7bcb32e726bde4aefbd6",
+    "producers/macos-x64-abi/nonleaf-supplied-object.o": "f87d3f6c62edf7d3f0d3135595bc12546bc0d434e9717a362ebfb4d508576136",
+    "producers/macos-x64-abi/writable-pointer-supplied-object.o": "c06d54800908a846c8819c5913b5a52f9d2108da3fe08d153dc0592a45ac2f2b",
+    "producers/windows-x86-abi/commands.json": "ea9d643a3bcc3c146d40af2580f34b5c808d7e8f23b07d85630139942b5ee4e5",
+    "producers/windows-x86-abi/floating-stack-supplied-object.o": "f525eb55701f5499a7ae6c9f4ec670ce30534727ec65cbb6b79a37a2e5ca86a5",
+    "producers/windows-x86-abi/nonleaf-supplied-object.o": "03d5fd9c4b7e4bb0cef68626675715f1702c60047e2042e0743eff94dd6a0b0c",
+    "producers/windows-x86-abi/writable-pointer-supplied-object.o": "166a4cb641cfefa09bc79458e7cbd20b6b35b4d03a82be34b7e4f85ec042461c",
+    "producers/x64/c-hosted.audit.json": "34ad3aeb320148dae749a02315c19ae983191f8a8cf913bbca35a5b82a55517c",
+    "producers/x64/c-hosted.bin": "77dd4b81e28f854547fb9afc5077a0000b0508e39e5e13f41ba376f7a649c03e",
+    "producers/x64/c-hosted.o": "2969886ad8e0c2c100f34b8d60816a36beba8343e0d1ab5e595fa0d7789ee7d5",
+    "producers/x64/c-ir.ll": "9edae83d84f915868f8e2874146e11c1e7fa002080e5ce34e7bc929f03573f28",
+    "producers/x64/c-object.o": "d5ef4fc47c9f89ae6abe65caf9b3af967aa057c4e028674a80cb6dee786e0dcc",
+    "producers/x64/commands.json": "72006bcf7084eaffc4252e9e7ffb75d9ef2bfe84aa92a554a2d3b7ac937a1dc8",
+    "producers/x64/hosted.audit.json": "6c66ad507557f6ffe694d330edf26ffd0075f1653783531ba6f8aa8e945a14dc",
+    "producers/x64/hosted.bin": "7f2a8dd79b7bf0c124dc6d2402dbc6c4c014f8873824cf59037ed59976025b5c",
+    "producers/x64/hosted.o": "70441c76b781b93d9f294b85f18d4b6e221372bd51dfb0fa8406f7b7b93ec27c",
+    "replacement.c": "b19c76edc0d39484f32a15704db8652e788f2d1d71471971ab63ee53eda03152",
+    "windows-exceptions.cpp": "dbfc1395f03b557ff5b9b425663e33c4d63da080b7794aa4c6a38f15d9caa0c2",
+    "writable-pointer-runtime.c": "24ef1b4dfbece60fb4ab1ab82e179b2f3c70af7856efc1ab9904b7e21708f050",
+    "writable-pointer.c": "4e59effb3405d0064090bd744189d90b139788cce1aeeb79e0664a3f10510a90"
+  }
+}

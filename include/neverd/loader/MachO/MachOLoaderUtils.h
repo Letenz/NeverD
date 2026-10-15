@@ -29,6 +29,14 @@
 namespace neverd {
 namespace macho_loader {
 
+/// Whether strip removes the defined symbol \p NType describes from a linked
+/// image: a local symbol, or a private external one, which no other image
+/// links to.  An image read without its static symbol table skips these.
+inline bool isStrippedSymbol(uint8_t NType) {
+  return (NType & llvm::MachO::N_EXT) == 0 ||
+         (NType & llvm::MachO::N_PEXT) != 0;
+}
+
 struct SectionInfo {
   std::string Name;
   std::string SegName;

@@ -50,8 +50,7 @@ public:
   bool MalformedRead = false;
   uint16_t MalformedReadSize = 0;
 
-  void add(va_t Address, std::vector<LowOp> Ops,
-           va_t Fallthrough = InvalidVA) {
+  void add(va_t Address, std::vector<LowOp> Ops, va_t Fallthrough = InvalidVA) {
     SpecializationInstruction Instruction;
     Instruction.Ops = Ops;
     Instruction.Origin.Address = Address;
@@ -3150,6 +3149,95 @@ TEST(InterpreterSpecialization, HighAddressCallsPreserveNativeWordsAndStack) {
     EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
     EXPECT_TRUE(Short.Residual.Blocks.empty());
   }
+}
+
+TEST(InterpreterSpecialization,
+     NativeReturnCellProofKeepsStoreAcrossRelativeZero) {
+  // Keep the constant displacement separate from the symbolic base: the base
+  // is 1 modulo 16, so base - 1 stores bytes [0, 8) of an aligned block.
+  // Both physical return words occupy [8, 16), without a nonalias premise.
+  const std::vector<LowOp> AddressOps{
+      op(NdOp::LOAD, reg(40), {reg(x86reg::RDX)}),
+      op(NdOp::INT_OR, reg(40), {reg(40), constant(1)}),
+      op(NdOp::INT_AND, reg(40), {reg(40), constant(~uint64_t{14})}),
+      op(NdOp::INT_SUB, reg(40), {reg(40), constant(1)})};
+  SymContext Ctx;
+  SymState State(Ctx);
+  SymExec Exec(Ctx, State);
+  for (const auto &O : AddressOps)
+    ASSERT_EQ(Exec.step(O), StepResult::Continue);
+  const auto Address = Exec.operandValue(reg(40));
+  ASSERT_EQ(Ctx.width(Address), 64u);
+  ASSERT_EQ(Ctx.op(Address), SymOp::Add);
+  const auto Terms = Ctx.operands(Address);
+  ASSERT_EQ(Terms.size(), 2u);
+  ASSERT_TRUE(Ctx.isConst(Terms[0]));
+  EXPECT_EQ(Ctx.constValue(Terms[0]).getZExtValue(), UINT64_MAX);
+  EXPECT_FALSE(Ctx.isConst(Terms[1]));
+
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_SUB, reg(x86reg::RSP), {reg(x86reg::RSP), constant(8)})});
+  P.add(0x101, {op(NdOp::CALL, reg(0), {constant(0x200)})});
+  P.Code.at(0x101).NativeStackControl = SpecializationNativeStackControl::Call;
+  P.add(0x102,
+        {op(NdOp::INT_ADD, reg(x86reg::RSP), {reg(x86reg::RSP), constant(8)})});
+  P.add(0x103, {ret()});
+  P.Code.at(0x103).NativeStackControl =
+      SpecializationNativeStackControl::Return;
+  auto Body = AddressOps;
+  Body.push_back(op(NdOp::STORE, {}, {reg(40), reg(x86reg::RCX)}));
+  Body.push_back(op(NdOp::LOAD, reg(0), {reg(40)}));
+  P.add(0x200, std::move(Body));
+  P.add(0x201, {ret()});
+  P.Code.at(0x201).NativeStackControl =
+      SpecializationNativeStackControl::Return;
+  auto O = separatedStoreOptions();
+  ASSERT_FALSE(O.ExternalStoresPreserveEntryReturnSlot);
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(count(R.Residual, NdOp::STORE), 2u);
+  EXPECT_EQ(count(R.Residual, NdOp::RETURN), 1u);
+
+  for (uint64_t Stack : {uint64_t{0x8018}, uint64_t{0x9018}})
+    for (uint64_t Pointer :
+         {uint64_t{0x8000}, uint64_t{0x800f}, uint64_t{0x8010},
+          uint64_t{0x801f}, uint64_t{0x400f}, uint64_t{0xffff80001234000f}})
+      for (uint64_t Value :
+           {uint64_t{0}, uint64_t{0x0123456789abcdef}, UINT64_MAX}) {
+        SCOPED_TRACE(Stack);
+        SCOPED_TRACE(Pointer);
+        SCOPED_TRACE(Value);
+        WideByteOracle Oracle(llvm::endianness::little);
+        Oracle.word(reg(x86reg::RSP), Stack);
+        Oracle.word(reg(x86reg::RCX), Value);
+        Oracle.word(reg(x86reg::RDX), 0x4000);
+        for (unsigned I = 0; I != 8; ++I) {
+          Oracle.Memory[0x4000 + I] = uint8_t(Pointer >> (I * 8));
+          Oracle.Memory[Stack + I] = 0xa0 + I;
+        }
+        ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+        EXPECT_EQ(Oracle.number(reg(0)), Value);
+        EXPECT_EQ(Oracle.number(reg(x86reg::RSP)), Stack);
+        const uint64_t Destination = Pointer & ~uint64_t{15};
+        for (unsigned I = 0; I != 8; ++I) {
+          EXPECT_EQ(Oracle.Memory.at(Destination + I),
+                    uint8_t(Value >> (I * 8)));
+          EXPECT_EQ(Oracle.Memory.at(Stack - 16 + I),
+                    uint8_t(uint64_t{0x102} >> (I * 8)));
+          EXPECT_EQ(Oracle.Memory.at(Stack + I), 0xa0 + I);
+        }
+      }
+
+  O.ProveStoreReturnSlotSeparation = false;
+  const auto NoProof = specializeInterpreter(P, {0x100}, O);
+  EXPECT_FALSE(NoProof.complete());
+  EXPECT_TRUE(NoProof.Residual.Blocks.empty());
+  O.ProveStoreReturnSlotSeparation = true;
+  O.EntryFrameAlignment.reset();
+  const auto NoAlignment = specializeInterpreter(P, {0x100}, O);
+  EXPECT_FALSE(NoAlignment.complete());
+  EXPECT_TRUE(NoAlignment.Residual.Blocks.empty());
 }
 
 TEST(InterpreterSpecialization,

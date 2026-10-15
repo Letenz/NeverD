@@ -27,6 +27,7 @@
 #include "SecondaryTextDelegate.h"
 #include "Session.h"
 #include "SettingsKeys.h"
+#include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFrame.h"
@@ -1550,10 +1551,53 @@ void MainWindow::openAskingForDebugInfo(const QString &path,
     debugPromptPending_ = {path, options};
     return;
   }
-  // IDA asks as it makes a database, so a project keeps the answer, and
-  // the user's own choice of debug information stands.
-  if (!asksForDebugInfo_ || !options.debugInfo ||
-      ProjectDatabase::hasState(path)) {
+  // IDA asks as it makes a database, so a project keeps the answers.
+  if (!asksForDebugInfo_ || ProjectDatabase::hasState(path)) {
+    openNow(path, options);
+    return;
+  }
+  openAskingForSymbols(path, options);
+}
+
+void MainWindow::openAskingForSymbols(const QString &path,
+                                      LoadOptions options) {
+  if (!options.symbols.isEmpty() || !session_.findsSymbolTables()) {
+    openAskingForDebugFiles(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("symbol_table_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("symbols").toObject();
+        if (reference.isEmpty()) {
+          openAskingForDebugFiles(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          // Like the debug questions, it greets alone before the workbench
+          // shows; No, Escape and closing it load the image as if stripped.
+          SymbolTablePromptDialog dialog(reference,
+                                         isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
+          auto chosen = options;
+          if (dialog.exec() != QDialog::Accepted)
+            chosen.symbols = {{"mode", "none"}};
+          openAskingForDebugFiles(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(tr("Could not tell whether %1 has a symbol table: %2")
+                            .arg(path, message),
+                        1);
+        openAskingForDebugFiles(path, options);
+      });
+}
+
+void MainWindow::openAskingForDebugFiles(const QString &path,
+                                         LoadOptions options) {
+  // The user's own choice of debug information stands.
+  if (!options.debugInfo) {
     openNow(path, options);
     return;
   }

@@ -111,6 +111,7 @@ The pinned [Node 22.15 CLI](https://nodejs.org/download/release/v22.15.0/docs/ap
 and its [entry dispatch](https://github.com/nodejs/node/blob/v22.15.0/src/node.cc#L379-L385)
 define the admitted command boundary. [npm scripts](https://docs.npmjs.com/cli/v11/using-npm/scripts/)
 documents working directories and shell-dependent activation; those facts do
-not establish activation for a supplied package. Source-behavior version diffs,
-advisory/provenance imports, dispositions and reviewed reports remain separate
-#715 work.
+not establish activation for a supplied package. Source-behavior version diffs
+use the [comparison profile](web-package-behavior-diff-profile.md). The
+[assessment profile](web-package-assessment-profile.md) composes selected
+installation, comparison, advisory/provenance and analyst-review evidence.

@@ -1497,6 +1497,46 @@ TEST(KernelRuntimeExecution, CompiledDriverCachesEntriesOnASequencedList) {
   EXPECT_EQ(Calls["FirstEntrySList"], 1u);
 }
 
+TEST(KernelRuntimeExecution, CompiledDriverUsesCRuntimeStringHelpers) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_cstrings.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // Lengths | ordered/raw/folded compares | char search | substrings | spans.
+  EXPECT_EQ(Result->Messages[0],
+            "cstrings 11 5 3 5 | -1 0 0 0 0 0 0 0 | 2 2 9 3 -1 | 6 0 2 | "
+            "4 2 2");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["strlen"], 1u);
+  EXPECT_EQ(Calls["strchr"], 2u); // first hit and a miss
+  EXPECT_EQ(Calls["wcsstr"], 1u);
+  EXPECT_EQ(Calls["strspn"], 1u);
+  EXPECT_EQ(Calls["wcscspn"], 1u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverGuardsWithAnInStackQueuedSpinLock) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_qspinlock.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // PASSIVE before, DISPATCH while held, PASSIVE after; the counter updates.
+  EXPECT_EQ(Result->Messages[0], "qspin before 0 held 2 after 0 value 7");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["KeAcquireInStackQueuedSpinLock"], 1u);
+  EXPECT_EQ(Calls["KeReleaseInStackQueuedSpinLock"], 1u);
+  EXPECT_EQ(Calls["KeInitializeSpinLock"], 1u);
+}
+
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
                               "driver_identity.sys");

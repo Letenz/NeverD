@@ -18,7 +18,7 @@
 namespace neverd {
 bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
                                         const RegistrationCallFrameEffect &Call,
-                                        size_t &Work) {
+                                        size_t &Work, bool Indirect) {
   auto Charge = [&](size_t Amount) {
     if (Work > limits::kMaxRegistrationEHStateWork ||
         Amount > limits::kMaxRegistrationEHStateWork - Work) {
@@ -38,9 +38,10 @@ bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
       if (Op.Addr != Call.Address || Op.OriginSeq != Call.OpSeq ||
           (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL))
         continue;
-      if (Root || Op.Opcode != NdOp::CALL || !Op.NumInputs ||
-          !Op.Inputs[0].isConst() || Op.Inputs[0].ConstVal != Call.Target ||
-          Op.DoesNotReturn || !Op.IntrinsicOutputs.empty())
+      if (Root || Op.Opcode != (Indirect ? NdOp::INDIR_CALL : NdOp::CALL) ||
+          !Op.NumInputs || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].ConstVal != Call.Target || Op.DoesNotReturn ||
+          !Op.IntrinsicOutputs.empty())
         return false;
       Root = &Op;
     }

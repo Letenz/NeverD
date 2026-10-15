@@ -43,6 +43,13 @@ bool RegistrationStateSolver::transferBoundSEHCallee(
         const auto SP = parentStackOffset(After);
         if (SP && int64_t(*SP) + Effect->StackPopBytes <= INT32_MAX) {
           Result.HasBoundSEHCallees = true;
+          if (Effect->NativeCall) {
+            const auto [It, New] = BoundCalls.emplace(
+                std::make_pair(Op.Addr, Op.Seq), *Effect->NativeCall);
+            if (!New && It->second != *Effect->NativeCall)
+              Result.SEHBoundCallsComplete = false;
+          } else
+            Result.SEHBoundCallsComplete = false;
           CallSP =
               FrameValue::frame(int32_t(int64_t(*SP) + Effect->StackPopBytes));
           if (!Effect->Writes.empty()) {

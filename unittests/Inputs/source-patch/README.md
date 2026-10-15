@@ -55,3 +55,38 @@ Its C images are installed from the pinned producer artifacts above; actual
 compiler selection and hosted DynCode source compilation are checked by the
 separate NeverC source matrix. The snapshot manifest records the input-manifest
 hashes as well as the engine identity.
+
+`additional-processes` adds native macOS x64/ARM64 C ABI, Clang C++ exceptions
+and existing NeverC pure C IR/object/hosted outputs; native Windows x64/ARM64
+FH3 replays; Windows/Linux x86 compatibility processes; and explicit Linux
+ARM32 QEMU processes in both ARM and Thumb mode. Execution identity is part of
+the report: Rosetta, compatibility and QEMU results cannot satisfy a matching
+native-host requirement. Every observation is repeated three times, with an
+independent case inventory and expected result. Mach-O signatures and installed
+hosted payload bytes are checked separately.
+
+The additional producer records the actual existing NeverC executable hash
+and C-only commands; it does not claim the earlier pinned compiler produced
+these new Mach-O inputs, and does not build or modify NeverC. Source files,
+producer inputs, originals, deltas and successful publication receipts are
+authenticated before replay. Regenerate into new candidate/work directories
+with `scripts/prepare_source_patch_additional_fixtures.py --help`, then verify
+the candidate before replacing the committed fixture directory. The tool needs
+the current built CLI/shared library, Clang/LLD, an existing NeverC, and matching
+ELF x86/ARM32 GCC drivers. Pass `--formatter /path/to/clang-format` using the
+repository's pinned clang-format 22.1.2. The generator records the formatter
+version, executable hash and `.clang-format` hash, and explicitly applies that
+policy before compiling any new C/C++ source, even outside the repository.
+New C++ sources receive the required filename/purpose and Doxygen banners while
+preserving existing notices. A source cannot change after its first use;
+compiler-produced objects, IR, payloads and audits are never reformatted.
+
+The existing Windows x64/ARM64 original executables remain exact pinned copies.
+Their existing `native-processes/windows-original.cpp` is authenticated in
+`producer_inputs`; the generator does not create a reformatted source that
+could be mistaken for the source of those earlier binaries.
+
+`scripts/check_source_patch_additional_runtime.py` requires an explicit
+`--execution` value and records actual host architecture independently of the
+target. PE ARM32 and legacy Mach-O i386/iOS/watchOS CPU profiles remain in the
+154-case matrix; their CPU results do not establish a native OS or unwinder.
