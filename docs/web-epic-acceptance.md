@@ -4,7 +4,9 @@ This audit was rechecked against all five GitHub issue bodies and comments on
 2026-10-15. The required operations are implemented within the named profiles
 below. The v2 passive report resolves the two earlier #717 findings; the final
 #716 review found and repaired a shared input/archive filename-policy mismatch.
-Final closure verification is recorded in the implementation ledger.
+All five issues were closed as completed on 2026-10-15 after the final
+shared-path regression and Windows qualification. The implementation ledger
+records exact source baselines, passed checks and explicit optional skips.
 
 A passed fixture or captured sample qualifies its selected profile and
 operation; it does not establish general framework support, source equivalence,

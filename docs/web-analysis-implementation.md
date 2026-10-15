@@ -4091,3 +4091,91 @@ and both worker/MCP adapters pass without skips. These local receipts do not
 replace the separate Windows or formal same-source publication gates. Windows
 ARM64/other host releases, additional package managers, general module/dataflow
 resolution and wider framework coverage remain outside this delivery profile.
+
+### Final issue audit and portable member-name repair (2026-10-15)
+
+All five original GitHub issue bodies and comment histories were re-read.
+The [acceptance audit](web-epic-acceptance.md) maps mandatory criteria to the
+implemented profiles and distinguishes later adapters from required work.
+The new [desktop matrix](web-desktop-adapter-matrix.md) independently states
+detection, listing, extraction and analysis for each named version/layout.
+
+The final #716 review found a real shared-boundary defect: directory capture
+accepted superscript Windows device names and did not equate NFC/full-fold
+aliases that archive readers already rejected. Commit `fe12a9815` moves component
+validation and comparison into `PathPolicy`; both directory walkers and archive
+namespaces use it. Original evidence names and IDs are not normalized. Fixed-name
+export writers use the same component validator. Without pinned ICU, directory
+member comparison admits only the exact ASCII subset and explicitly refuses
+non-ASCII members; selected root paths are not member comparison keys.
+Independent no-ICU compilation verifies that boundary without a Unicode fallback.
+
+At integrated source `200eac54bf900d9f02844a20d1853296d1439d07`, the local
+macOS arm64 run contains **856 distinct cases: 811 passed, 45 explicit optional
+or omission skips, zero failures**. All eleven required producer cases and all
+fifteen CEF/resource cases passed with fixed supplied inputs. Their subset XMLs
+are derived from that full receipt, not additional independent runs. The worker,
+MCP and enabled-backend API checks pass; the disabled-backend-only API case is
+explicitly skipped. A fresh serialized CTest inventory removed a local concurrent
+discovery race; the earlier duplicate-count receipt is retained as diagnostic
+material and is not acceptance evidence.
+
+The same repaired capture owner also passes all eight pinned Claude platform
+packages plus the official matching Linux standalone input: nine cases, zero
+failures or skips, with an unusable external-tool PATH. The eight packages retain
+18,794 JS units and 358,539,894 UTF-8 bytes with their independent hashes. This
+rerun covers capture, integrity, layout and decoding; earlier readable-export
+and cross-track receipts retain their original scope. The focused passive
+selection and supplied-source follow-ups also pass, including the exact-hash
+Linux input after correcting a path that referred to a truncated download.
+
+Local receipts are retained in `build-web-dev/issue-final-audit/`, including
+`web-unique-inventory.json`, `web-full.xml`, `local-closure-receipt.json`,
+`transport-api.xml` and `718-claude-capture-fix-receipt.json`. These receipts name
+their source baselines and do not automatically qualify later unrelated merges.
+
+After the loader/worker integration at
+`8167d7cd396303bdf94bfa5bdd222811c520df1c`, the affected SDK/native selection is
+rebuilt and passes 230 of 238 cases, with eight explicit optional/omission
+skips. Worker/MCP and the enabled-backend API checks pass again; the one
+backend-omission-only API case remains skipped. Their receipt is
+`dev-integration-results.json`, with separate JUnit reports. The Web core owner
+is unchanged by that upstream integration.
+
+The independently downloaded [Windows run 38696359332](https://github.com/NeverSight/NeverD/actions/runs/38696359332)
+qualifies repair commit `fe12a9815bec2492121490e5893ba4e8c52e686f`:
+**113 native cases, two adapters and six installed checks, all passed with zero
+failures or skips**. The native inventory includes both `WebPathPolicy` cases
+and the captured-Unicode-alias regression as required entries. The receipt,
+JUnit inventories, installed checks and all 139 packaged file hashes were
+independently reverified. Its 60,793,059-byte ZIP has SHA-256
+`e579fe8b5ed548305b38fe71bacb4c97c8bec7a52b08569be88b5fb07c5b32e5`.
+This is a new qualified CI product artifact; the earlier formal Release remains
+unchanged at its recorded `5e126750ae75` source and does not contain this repair.
+
+The pinned Teams WebView2 154 resource SDK case additionally passes on the
+integrated local build, preserving all 5,814 resource IDs, 633 aliases and the
+selected JS source anchor. Prior Tauri/Wails/VSIX fixed captures were not found
+in existing local storage for this rerun; their historical receipts remain
+scoped to the original runs and are not counted as fresh passes. No replacement
+sample was downloaded or invented. Self-authored adapter cases remain in the
+full successful owning selection.
+
+The separate [automatic integrated-ref producer/resource run](https://github.com/NeverSight/NeverD/actions/runs/38698074172)
+was still pending when these closure receipts were assembled and is not counted
+as a CI pass. The superseded manual producer/resource dispatch was cancelled
+before its preflight started. The fixed eleven-plus-fifteen local cases above
+passed without skips; the separately completed Windows run is the new native
+host evidence. No new formal Release is claimed by this issue closure.
+
+The user requested closure of completed issues. All five are now closed with
+`state_reason: completed` and individual acceptance comments:
+[#714](https://github.com/NeverSight/NeverD/issues/714#issuecomment-6186796347),
+[#715](https://github.com/NeverSight/NeverD/issues/715#issuecomment-6186798946),
+[#716](https://github.com/NeverSight/NeverD/issues/716#issuecomment-6187011700),
+[#717](https://github.com/NeverSight/NeverD/issues/717#issuecomment-6186802702), and
+[#718](https://github.com/NeverSight/NeverD/issues/718#issuecomment-6187013598).
+The verified Windows artifact and independent receipts are also retained in
+`/Users/gmh/code/neverd-web-issue-closure-2026-10-15`, separate from the earlier
+formal Release downloads. Issue completion retains all documented profile
+limits; future adapters and unknown runtime semantics are not newly claimed.
