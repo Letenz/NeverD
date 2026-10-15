@@ -1773,15 +1773,15 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 行列は、コンパイル済みおよび外部のネイティブオブジェクトについて、独立した ABI 一覧と `target` 証跡を照合します。不正なオブジェクトのテストでは、未変更の有効なオブジェクトもインストールして実行する必要があります。
 
-任意の `NeverCProfiles/*` は六つの x64/ARM64 構成で 30 件を追加し、C++ IR/オブジェクト/hosted DynCode、非インライン補助関数・再帰、未対応 C++ の拒否を扱います。`NeverDSourcePatchDynCodeTests` はハッシュ、入口、対象、状態、検証の偽造を拒否します。`SourcePatchException.NeverC*` は実プロセスで寿命と二つのフレームを通る例外を検証します。Windows 検査は九つの置換シナリオと元の対照を三回実行し、マシン・コミット・ハッシュと native x64/ARM64 ホストを要求します。
+任意の `NeverCProfiles/*` は六つの x64/ARM64 構成で 30 項目を検証します。対象は C IR、C オブジェクト、C hosted DynCode、非インライン補助関数と再帰、C++ の拒否です。`SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler` は NeverC 未導入でも起動前の拒否を証明します。`SourcePatchException.NeverC*` は C の実行結果と二層の hosted C フレームを通る例外コールバックを検証し、Clang C++ 例外は別に扱います。Swift のレジスタ・メモリのスカラー変換は二つの最適化レベルで結果ビットと MXCSR を検査します。モバイル解析器は C バックエンドの厳密な丸め pragma 接頭辞だけを許可し、条件付き宣言や改変した指令は拒否します。
 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
 
-ネイティブ検証は NeverC リビジョン `182fd2c5dc`、独立してコンパイルした元プログラム、現在の NeverD インストーラを使用します。`check_source_patch_hosted_pe_runtime.py` は各アーキテクチャで 36 回のネイティブ Windows 観測を要求し、C++ IR/オブジェクト/hosted のライフタイムと二つの hosted フレームを通る例外コールバックを確認します。`check_source_patch_elf_runtime.py` は各アーキテクチャで 66 回のネイティブ Linux 観測を要求し、C++ IR/オブジェクト/hosted、hosted の例外伝播、九つの Clang 例外シナリオを確認します。レシート、成果物ハッシュ、実際のホストアーキテクチャは一致しなければなりません。実際のコンパイラ出力をインストールする検証であり、CI ホスト上で NeverC 実行ファイルを動かしたとは主張しません。
+ネイティブ検証は NeverC `182fd2c5dc`、独立した元プログラム、現在の NeverD インストーラを使います。`check_source_patch_hosted_pe_runtime.py` は Windows の各アーキテクチャで C IR・オブジェクト・hosted と二層 C フレームの例外伝播を 36 回観測します。`check_source_patch_elf_runtime.py` は Linux の各アーキテクチャで C、hosted 伝播、九つの Clang C++ 例外シナリオを 120 回観測します。証跡、ハッシュ、実際のホスト構成の一致が必須で、CI ホスト上の NeverC 本体実行を意味しません。 Linux の x64 と ARM64 では Clang IR、Clang ネイティブオブジェクト、GCC ネイティブオブジェクトそれぞれの九つの例外シナリオを検証します。NeverC は C 専用です。
 
-ネイティブ検証 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) は全 204 回の観測に成功しました。Windows x64/ARM64 は各 36 回、Linux x64/ARM64 は各 66 回です。公開ソース API で C++ IR、通常オブジェクト、C++ hosted DynCode を生成し、二つの NeverC フレームを通る例外も確認しました。再生時に現在のソースとサブモジュールのダイジェスト、元と最終のバイト、発行レシート、実際のネイティブホストを確認します。macOS ARM64 と Rosetta x64 でも三つの C++ 経路と二フレームの伝播が成功しました。Clang FH3 の検証 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) は Windows x64/ARM64 の九つの例外シナリオと対照、各 36 回にも成功しました。
+旧変換プロファイルの 204 回の観測は履歴であり、現在の C 専用契約の証拠にはなりません。現在の三つの NeverC 経路は C を使用し、Clang C++ FH3 は別途検証します。macOS x64 は Rosetta 2 を使います。Unicorn/QEMU の CPU 結果はネイティブ OS やアンワインダの検証を代替しません。
 
 `InterpreterSpecialization.HighAddress*` と `BinaryLowIRRefinement.HighAddress*` は高位アドレス、重複命令範囲、CALL の戻りバイト、スタック復元、ラベルと同じ値のデータ、不正・欠落コード、正確・不足予算を検証します。独立したバイト実行器と戻り値を改変する負例により、実行時の値と CFG ラベルを区別します。
 
@@ -1810,6 +1810,10 @@ python3 scripts/run_lift_qualification.py \
 ネイティブ構成では LLVM-C の広幅整数定数・格納検証と、i386 合成テーブルのネイティブ実行も必須です。Swift のシグナル観測には独立した生メモリを使い、両最適化レベルで未書き込みの正常例と、状態・結果を早期に書き込む別々の異常例を検証します。シグナルハンドラから使用中の Swift `inout` 変数を読むと排他的アクセス違反が発生し、例外の観測が無効になります。
 
 `NeverDFPParameterMaskTests` は共有 ABI と `FPParameterMask.*` を実行し、有効バイト、先行ストア、曖昧な定義、マスクされない戻り経路を保持して、完全に消去・置換されたバイトだけを除外します。D0 中間転送、D16-D31 作業レジスタ、FP 戻り値合流の両経路を検証します。`NeverDARM32ObjectImmediateTests` は ARM32 ホスト C 差分 5 件を独立実行し、Windows EH CI は Clang 23 と異なる NEON zip/mask 形状も Clang 18 で確認します。ABI オペランド未回復の直接／間接 CALL は明示的に準備された FP レジスタを保持します。
+
+ネイティブ Linux x64 ジョブは Clang IR、Clang ネイティブオブジェクト、GCC ネイティブオブジェクトの三つの C++ 例外置換も必須とします。XML とプロセス終了を別途監査し、失敗やスキップは検証失敗です。これらの C++ 入力には NeverC を使いません。
+
+ネイティブ検証ジョブは、x64 PLT/AArch64 指定子のスコープ修正を含む、固定された LLVM フォークをソースからビルドします。r4 の事前ビルドパッケージだけでは、Clang IR の例外経路の能力検証は完了しません。
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -1876,9 +1880,9 @@ DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB 
 
 ## Swift scalar instruction completion
 
-復元された x86_64 Swift は、スカラーのレジスター ADD/SUB/MUL/DIV と、Float32、signed32、signed64 のレジスターから Double への変換をサポートし、数値ビットと完全な入出力 MXCSR を保持します。その他の変換、メモリー、パック演算、SQRT/MIN/MAX、FMA、丸め、近似演算は未対応です。確認された Swift スタック引数と混合関数の復元失敗を修正しますが、完全な macOS/iOS ランタイムとフレームワーク環境は未完成です。
+復元された x86_64 Swift は、レジスタとメモリのスカラー ADD/SUB/MUL/DIV、符号付き 32/64 ビット整数から Float32/Float64 への変換、Float32/Float64 の双方向変換と VEX 形式をサポートします。数値ビットと完全な入出力 MXCSR を対で保持します。パック演算、SQRT/MIN/MAX、FMA、丸め専用演算と近似演算は拒否され、完全な macOS/iOS フレームワーク環境は未完成です。
 
-HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers, GenericScalarCompletionRejectsOtherShapesAndControls, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper and ScalarDoubleConversionsRejectOtherEffectsAndLayouts check shared contracts, helper identities and explicit unsupported/malformed refusal. GenericScalarCompletionCompilesAndExecutesCompleteState, MixedScalarCompletionDeduplicatesHelpersAndExecutesState, ScalarDoubleConversionSourceExecutesCompleteState and MixedScalarDoubleConversionsDeduplicateAndExecuteState compile and execute literal numerical/MXCSR cases at Onone/O, comparing emitted Swift with independently authored original SSE arithmetic and CVTSI2SD32/CVTSI2SD64/CVTSS2SD observers. Coverage includes signed boundaries,2^53+1 precision, all rounding modes, sticky flags, DAZ/FTZ, subnormals, signed zeros, infinities and quiet/signaling NaN payloads. Compiler/native bounds remain120/5 seconds. Separate legacy/generic divide-by-zero and conversion precision/invalid trap tests require native Intel macOS and untouched numerical/state sentinels. They skip explicitly on ARM64 because Rosetta forces exception masks; translated masked execution never qualifies Intel unmasked traps.
+旧形式/汎用および旧形式/VEX の混在で、数値/状態契約ごとにヘルパーが一つであることを確認します。独立した元の SSE 観測とリテラル値を使い、Onone/O で丸め、粘着フラグ、DAZ/FTZ、非正規数、符号付きゼロ、NaN と全スカラー変換方向を比較します。非マスク算術/変換トラップはネイティブ Linux x64 または Intel macOS と未変更の結果/状態番兵を必要とします。Rosetta は例外をマスクするため ARM64 ホストでは明示的にスキップします。
 
 ## Explicit ordinary directory modes
 
@@ -1930,3 +1934,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ### 明示的なカーネル VA シャドウ情報
 
 `KernelVaShadowQueryTests` は独立フラグ、短い/正確な/ページ跨ぎ出力、ULONG 切り詰め、両出力、重複、権限、エイリアス、オブジェクト、状態、IRQL、依存を検証します。`DriverVaShadowQueryTests` は厳格な転送と Unicorn/KVM/WHP の再配置ライフサイクル、静的/動的照会を検証します。未使用宣言も UNPACK 復元を拒否します。各ネイティブバックエンドで 19 件が必須で、使用不能時は明示的スキップです。既存のバージョン照会テストも共通検証を確認します。
+
+## 統合後のソースパッチ検証
+
+Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジスタとメモリの変換、legacy/VEX 間のヘルパー共有、元の SSE との比較、マスクされていない例外を確認します。修正済み LLVM をソースからビルドしてください。r4 は i386 PIC の GOT アンカーを誤って符号化する場合があり、現在は変位が不正ならパッチの出力を拒否します。Linux/ELF 専用の `SessionCAPITest` 10 件は macOS と Windows で明示的なプラットフォームスキップを維持します。監査は正確な名前、所有者ラベル、元の理由を照合し、Linux ネイティブ実行を引き続き必須とし、スキップを成功に数えません。ホストでコンパイルする no-return テストは Mach-O のシンボル表記と復元された引数幅を考慮します。

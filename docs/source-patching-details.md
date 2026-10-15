@@ -56,9 +56,9 @@ explicit mappings; native objects require explicit mappings.
 
 | Producer | Artifact | Target and language verified |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
-| Clang 22.1.6 | Native object | ELF x64 C/C++; PE x86/x64/ARM64 C |
-| GCC/G++ 13.3.0 | Native object | ELF x64 C/C++ with a matching Itanium ABI runtime |
+| Clang 22.1.6 | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | Native object | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C |
+| GCC/G++ 13.3.0 | Native object | ELF x64/ARM64 C/C++ with a matching Itanium ABI runtime |
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
@@ -78,16 +78,16 @@ checked through this route: every non-relocation text byte, including the
 compiler's added entry padding, survived installation. Other MIR/obfuscation
 transformations need their own relocation and runtime verification.
 
-NeverC is optional. Ordinary compilation does not enable dyncode. NeverC C++
-uses the built-in `cpp-core-v2` C++17-to-C23 translator with an explicit target,
-verified manifest/source-map hashes and a C export. Hosted
+NeverC is optional and accepts pure C only. NeverD refuses NeverC with C++
+source before starting the compiler. C++ replacements use Clang or the verified
+ELF GCC object profile. Ordinary C compilation does not enable dyncode. Hosted
 `--compile-mode=dyncode` requires its producer's `-fdyncode-hosted` capability,
 one native code section, one explicit entry and no original bindings. It
 verifies the kept object and final payload digests and compares linked code
 bytes/entry layout before publication. The compiler retains actual unwind
 records and disables implicit runtime lowering and mutable/TLS state.
-NeverC's translator does not admit C++ EH, RTTI, virtual dispatch or cleanup
-during foreign exception propagation; select Clang for C++ exception code.
+Hosted C frames retain the unwind information needed for a surrounding C++
+image's exception to propagate through them; NeverC does not compile C++.
 Clang source IR admits x64/ARM64 PE FH3 with bounded compiler xdata and exact
 funclet/FuncInfo ownership. GCC cannot
 produce the LLVM IR artifact. Native ELF, COFF and Mach-O objects are accepted

@@ -5740,10 +5740,24 @@ TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
   if (Binary.empty())
     GTEST_SKIP() << "the host compiler builds no program";
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
+#if defined(__APPLE__)
+  // The host linker exports C symbols with Mach-O's leading underscore.
+  // Give the two functions the source names used by the assertions below;
+  // the annotation contract is independent of linker spelling.
+  const int Stop = neverd_func_find_by_name(Session, "_stop");
+  const int Main = neverd_func_find_by_name(Session, "_main");
+#else
   const int Stop = neverd_func_find_by_name(Session, "stop");
   const int Main = neverd_func_find_by_name(Session, "main");
+#endif
   ASSERT_GE(Stop, 0);
   ASSERT_GE(Main, 0);
+#if defined(__APPLE__)
+  ASSERT_EQ(
+      neverd_rename_addr(Session, neverd_func_entry(Session, Stop), "stop"), 0);
+  ASSERT_EQ(
+      neverd_rename_addr(Session, neverd_func_entry(Session, Main), "main"), 0);
+#endif
   const auto Entry = neverd_func_entry(Session, Main);
   ASSERT_EQ(neverd_func_edit(Session, neverd_func_entry(Session, Stop),
                              "{\"noreturn\":true}"),
@@ -5751,7 +5765,11 @@ TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
       << takeString(neverd_last_error(Session));
   const std::string One = takeString(neverd_decompile(Session, Entry));
   EXPECT_NE(One.find("stop(arg0);"), std::string::npos) << One;
-  EXPECT_NE(One.find("main(int32_t arg0)"), std::string::npos) << One;
+  // Without a debug prototype, the recovered entry carrier may retain the
+  // full native register width. It must still be a parameter of main and
+  // reach the callee, rather than being lost with the no-return annotation.
+  EXPECT_TRUE(std::regex_search(One, std::regex("main\\(int(32|64)_t arg0\\)")))
+      << One;
   EXPECT_EQ(One.find("return 7;"), std::string::npos) << One;
   neverd_session_restrict_function(Session, 0);
   ASSERT_EQ(neverd_session_analyze(Session), 1);

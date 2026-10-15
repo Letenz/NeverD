@@ -1,6 +1,6 @@
-#include "FloatingPointContract.h"
 #include "MobileIOSInternal.h"
 
+#include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -69,6 +69,15 @@ std::vector<Token> tokens(std::string_view s) {
   size_t p = 0;
   while (p < s.size()) {
     auto start = p;
+    // The C backend publishes one exact pragma-only prefix. Admit it as a
+    // complete unit before any declarations, while retaining the ordinary
+    // refusal of conditional bodies, macros and modified policy text.
+    if (result.empty() &&
+        llvm::StringRef(s.substr(p)).starts_with(c_float::ContractionPolicy)) {
+      p += c_float::ContractionPolicy.size();
+      result.push_back({c_float::ContractionPolicy.str(), start, p, 2});
+      continue;
+    }
     char c = s[p];
     if (std::isspace(static_cast<unsigned char>(c))) {
       ++p;
@@ -133,14 +142,6 @@ std::vector<Token> tokens(std::string_view s) {
       line = line == s.npos ? 0 : line + 1;
       if (!llvm::StringRef(s.data() + line, p - line).trim().empty())
         throw Error("preprocessor marker outside a directive");
-      // Preserve the emitter's fixed contraction pragmas as one directive.
-      // General conditional branches still require a real preprocessor.
-      if (s.substr(p).starts_with(c_float::ContractionPolicy)) {
-        p += sizeof(c_float::ContractionPolicy) - 1;
-        result.push_back(
-            {std::string(s.substr(start, p - start)), start, p, 2});
-        continue;
-      }
       for (;;) {
         auto end = s.find('\n', p);
         if (end == s.npos) {
@@ -208,10 +209,13 @@ std::vector<Definition> definitions(const std::vector<Token> &t,
   for (size_t i = 0; i < t.size(); ++i) {
     auto v = t[i].text;
     if (t[i].kind == 2) {
+      if (llvm::StringRef(v) == c_float::ContractionPolicy) {
+        start = i + 1;
+        continue;
+      }
       auto text = llvm::StringRef(v).drop_front().ltrim();
       auto d = text.take_front(text.find_first_of(" \t\r\n"));
-      if (v != c_float::ContractionPolicy && d != "include" && d != "import" &&
-          d != "pragma")
+      if (d != "include" && d != "import" && d != "pragma")
         throw Error(
             "conditional or mutating preprocessor directives are unsupported");
       start = i + 1;

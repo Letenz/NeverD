@@ -1697,15 +1697,15 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 
 矩阵还会按独立的 ABI 清单核对编译对象和外部原生对象的 `target` 回执。错误对象测试随后必须安装并执行未修改的对象，作为有效输入对照。
 
-可选 `NeverCProfiles/*` 为六个 x64/ARM64 配置增加 30 项测试，覆盖 C++ IR、对象、hosted DynCode、非内联辅助函数/递归和不支持 C++ 的拒绝。`NeverDSourcePatchDynCodeTests` 拒绝伪造摘要、入口、目标、状态和最终验证。`SourcePatchException.NeverC*` 在真实进程检查生命周期及穿过两个 hosted 帧的异常回调。Windows C++ 检查器要求九种补丁场景、原始对照、三次执行以及匹配的机器、提交、摘要和原生 x64/ARM64 主机。
+可选 `NeverCProfiles/*` 矩阵在六种 x64/ARM64 配置上验证 30 项：C IR、C 对象、C hosted DynCode、非内联辅助函数和递归，以及拒绝 C++。`SourcePatch.NeverCRejectsCppBeforeStartingTheCompiler` 不依赖安装 NeverC，证明拒绝发生在启动前。`SourcePatchException.NeverC*` 执行纯 C 结果及穿过两层 hosted C 栈帧的抛异常回调。Clang 的 C++ 异常验证独立进行。Swift 寄存器、内存标量转换在两种优化级别校验结果位与 MXCSR；移动端只接收 C 后端准确的舍入 pragma 前缀，继续拒绝条件声明及被修改的指令。
 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
 
-原生生产器验证固定 NeverC 提交 `182fd2c5dc`，使用独立编译的原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 要求每种架构完成 36 次原生 Windows 观测，覆盖 C++ IR/对象/hosted 生命周期，以及异常穿过两个 hosted 帧的回调。`check_source_patch_elf_runtime.py` 要求每种架构完成 66 次原生 Linux 观测，覆盖 C++ IR/对象/hosted、hosted 异常传播及九种 Clang 异常场景。回执、制品哈希和实际主机架构必须匹配。这些检查安装真实编译器产物，不表示在 CI 主机上运行过 NeverC 编译器。
+原生生产语料固定 NeverC `182fd2c5dc`，使用独立原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 在每种 Windows 架构要求 36 次 C IR/对象/hosted 结果与两层 hosted C 展开观测；`check_source_patch_elf_runtime.py` 在每种 Linux 架构要求 120 次 C、hosted 传播和九种 Clang C++ 异常场景观测。凭据、文件摘要及真实主机架构必须一致；这些检查不代表 CI 主机执行了 NeverC 编译器本身。 Linux 清单在 x64、ARM64 上分别覆盖 Clang IR、Clang 原生对象和 GCC 原生对象各九种异常场景；NeverC 仍仅处理 C。
 
-原生验证 [21ac20341](https://github.com/NeverSight/NeverD/actions/runs/38431902780) 的 204 次进程观测全部通过：Windows x64/ARM64 各 36 次，Linux x64/ARM64 各 66 次。公共源码接口生成 C++ IR、普通对象和 C++ hosted DynCode，并验证异常穿过两层 NeverC 栈帧。重放核对当前引擎源码与子模块摘要、原件和最终字节、安装回执及实际原生主机。macOS ARM64 与 Rosetta x64 在本地通过相同的三条 C++ 路径和两层异常传播。Clang FH3 原生验证 [75b6079e6](https://github.com/NeverSight/NeverD/actions/runs/38413109780) 另在 Windows x64/ARM64 各通过九种异常场景及对照，共各 36 次观测。
+旧翻译配置的 204 次观测凭据仅保留为历史记录，不能证明当前纯 C 编译契约。当前三条 NeverC 路径都使用 C，Clang C++ FH3 另行验证。macOS x64 使用 Rosetta 2；Unicorn/QEMU 的 CPU 结果不能代替原生操作系统与异常展开验证。
 
 `InterpreterSpecialization.HighAddress*` 与 `BinaryLowIRRefinement.HighAddress*` 覆盖高地址入口和转移、重叠指令范围、原始返回字节、栈恢复、与标签数值相同的数据、无效或缺失代码及精确／不足预算。独立字节执行器与修改返回字的反例区分运行时数值和 CFG 标签。
 
@@ -1734,6 +1734,10 @@ python3 scripts/run_lift_qualification.py \
 原生配置还要求通过 LLVM-C 宽整数常量与存储检查，以及 i386 合成表的原生执行。Swift 信号观察器使用独立的原始存储，在两种优化级别下分别验证未写入的正例、提前写入状态与结果的反例。信号处理器读取仍处于 Swift `inout` 访问期的变量会触发排他访问错误，使异常观察失效。
 
 `NeverDFPParameterMaskTests` 执行共享 ABI 套件与 `FPParameterMask.*`，保留有效字节、先前存储、歧义定义和未屏蔽返回路径，只排除完全清零或替换的字节；覆盖 D0 中间传递、D16-D31 临时寄存器及浮点返回汇合的两条路径。`NeverDARM32ObjectImmediateTests` 单独执行五项 ARM32 宿主 C 差分，Windows EH CI 用 Clang 18 检查包括与 Clang 23 不同的 NEON zip/mask 形式。直接和间接调用在 ABI 操作数尚未恢复时，保留明确准备的浮点寄存器。
+
+原生 Linux x64 任务还强制验证三条 C++ 异常替换路径：Clang IR、Clang 原生对象与 GCC 原生对象。XML 和进程退出状态单独审计，任何失败或跳过都会使验收失败；这些 C++ 输入不使用 NeverC。
+
+原生验证任务从源码构建固定版本的 LLVM 分支，包含 x64 PLT/AArch64 说明符作用域修正。仅使用 r4 预编译包不能完成 Clang IR 异常路径的能力验证。
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -1800,9 +1804,9 @@ DarwinMountEnumerationOptions and DarwinMountEnumerationTest exercise both 4KiB 
 
 ## Swift scalar instruction completion
 
-恢复的 x86_64 Swift 支持标量寄存器 ADD/SUB/MUL/DIV，以及 Float32、signed32、signed64 寄存器到 Double 的转换，保留数值位和完整的输入、输出 MXCSR。其他转换、内存、打包算术、SQRT/MIN/MAX、FMA、舍入和近似运算仍不支持。这些修复解决已观察到的 Swift 栈参数与混合函数恢复失败；完整 macOS/iOS 运行时和框架环境仍未完成。
+恢复的 x86_64 Swift 支持寄存器和内存形式的标量 ADD/SUB/MUL/DIV、有符号 32/64 位整数到 Float32/Float64 的转换，以及 Float32/Float64 双向转换，包括 VEX 形式。结果位与完整输入/输出 MXCSR 成对保留。打包运算、SQRT/MIN/MAX、FMA、舍入及近似运算仍明确拒绝；完整 macOS/iOS 框架环境仍未完成。
 
-HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers, GenericScalarCompletionRejectsOtherShapesAndControls, ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper and ScalarDoubleConversionsRejectOtherEffectsAndLayouts check shared contracts, helper identities and explicit unsupported/malformed refusal. GenericScalarCompletionCompilesAndExecutesCompleteState, MixedScalarCompletionDeduplicatesHelpersAndExecutesState, ScalarDoubleConversionSourceExecutesCompleteState and MixedScalarDoubleConversionsDeduplicateAndExecuteState compile and execute literal numerical/MXCSR cases at Onone/O, comparing emitted Swift with independently authored original SSE arithmetic and CVTSI2SD32/CVTSI2SD64/CVTSS2SD observers. Coverage includes signed boundaries,2^53+1 precision, all rounding modes, sticky flags, DAZ/FTZ, subnormals, signed zeros, infinities and quiet/signaling NaN payloads. Compiler/native bounds remain120/5 seconds. Separate legacy/generic divide-by-zero and conversion precision/invalid trap tests require native Intel macOS and untouched numerical/state sentinels. They skip explicitly on ARM64 because Rosetta forces exception masks; translated masked execution never qualifies Intel unmasked traps.
+混合旧式/通用及旧式/VEX 用例验证每个数值/状态契约只有一个辅助函数。独立原始 SSE 观测与常量结果在 Onone/O 下比较舍入、粘滞标志、DAZ/FTZ、非正规数、有符号零与 NaN；寄存器/内存控制覆盖全部标量转换方向。未屏蔽算术及转换陷阱要求原生 Linux x64 或 Intel macOS，且结果/状态哨兵保持原值。ARM64 主机因 Rosetta 屏蔽异常而明确跳过这些陷阱检查。
 
 ## Explicit ordinary directory modes
 
@@ -1857,6 +1861,19 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 
 `KernelPhysicalInventoryTests` 检查字节单位、终止项、独立分配、拒绝时无副作用、声明复制、捕获依赖、固定页面、物理身份和资源不足。`DriverPhysicalInventoryTests` 检查严格传输，以及 Unicorn/KVM/WHP 上首选和重定位地址的完整生命周期、动态查询和释放后读取。未使用声明的 UNPACK 对照仍拒绝还原。每个原生后端的 13 项均为必跑；本地不可用的平台执行仍记为跳过。
 
+`check_windows_registration_rewrite.py` 的 `longjmp-retired-scope` 与
+`longjmp-retired-inner-scope` 验证非局部恢复不会重新激活已经退出的作用域。
+通过 `--runtime-root` 指定捕获的微软 x86 CRT 目录；报告保存 provider 清单及 SHA-256，
+输出目录保存同一份 DLL。内层作用域测试在 Wine 下必须使用该参数，因为 Wine 9 内置
+CRT 的局部展开停止规则不同。focused CI 使用原生 CRT 跑完全部源测试，然后通过
+`replay_windows_registration.py --source-only` 在 Windows 上重新执行每例完全相同的
+20 个原始及重建映像，重新核对映像和 DLL 哈希、代码归属及重定位基址。状态选择器、
+源状态写入、恢复值和重叠别名覆盖的负向变异必须被安装器拒绝。
+
 ### 显式内核虚拟地址隔离状态查询
 
 `KernelVaShadowQueryTests` 检查独立标志值、精确/短/跨页输出、ULONG 截断、两个目标、重叠、权限、别名、对象、上下文、IRQL 和依赖保留。`DriverVaShadowQueryTests` 检查严格传输及 Unicorn/KVM/WHP 重定位生命周期中的导入和动态查询。未使用声明仍拒绝 UNPACK 还原。每个原生后端的 19 项均为必跑；不可用的执行仍明确跳过。原有版本查询用例覆盖共享缓冲区检查。
+
+## 合并后的源代码补丁验收
+
+Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存器与内存转换、legacy/VEX 辅助函数共享、原始 SSE 对照以及未屏蔽异常。请从修正后的 LLVM 源码构建：r4 可能错误编码 i386 PIC 的 GOT 锚点，发布前现在会拒绝错误位移。10 项仅适用于 Linux/ELF 的 `SessionCAPITest` 在 macOS 和 Windows 上保留明确的平台跳过；审计严格匹配名称、所属标签及原始原因，在 Linux 上仍要求原生执行，跳过不计为通过。使用宿主编译器的无返回函数测试会处理 Mach-O 符号命名和恢复出的原生参数宽度。

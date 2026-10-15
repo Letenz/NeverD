@@ -28,8 +28,8 @@ class HostedProducerEvidenceTests(unittest.TestCase):
             self.assertGreater(len(payload), 40)
 
     def test_changed_source_payload_object_audit_and_revision_are_rejected(self):
-        for name in ("replacement.c", "replacement.cpp", "x64.obj", "x64.bin", "x64.audit.json",
-                     "x64/cpp.ll", "x64/cpp.obj", "x64/cpp-hosted.obj", "x64/cpp-hosted.bin"):
+        for name in ("replacement.c", "scalar.c", "x64.obj", "x64.bin", "x64.audit.json",
+                     "x64/c.ll", "x64/c.obj", "x64/c-hosted.obj", "x64/c-hosted.bin"):
             with self.subTest(name=name):
                 path = self.root / name
                 original = path.read_bytes()
@@ -60,6 +60,17 @@ class HostedProducerEvidenceTests(unittest.TestCase):
         self.assertEqual(checker.image_bytes(path, 0x140001000, 4), b"code")
         with self.assertRaisesRegex(ValueError, "extent"):
             checker.image_bytes(path, 0x140001000, 5)
+
+    def test_bitcode_cannot_be_blessed_as_a_native_object_by_a_new_digest(self):
+        path = self.root / "x64/c.obj"
+        path.write_bytes(b"BC\xc0\xde" + b"bitcode" * 4)
+        manifest_path = self.root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        row = next(row for row in manifest["entries"] if row["architecture"] == "x64")
+        row["c_files"]["c.obj"]["sha256"] = checker.pe.digest(path)
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "native COFF object"):
+            checker.producer_fixture(self.root, "x64")
 
 
 class HostedRuntimeEvidenceTests(unittest.TestCase):
@@ -106,7 +117,7 @@ class HostedRuntimeEvidenceTests(unittest.TestCase):
                    lambda: self.manifest.update(producer_commit="other"),
                    lambda: self.manifest["images"][0].update(sha256="0" * 64),
                    lambda: self.manifest["images"].pop(),
-                   lambda: self.manifest["images"][0].update(case="cpp-ir")]
+                   lambda: self.manifest["images"][0].update(case="c-ir")]
         baseline = json.dumps(self.manifest)
         for change in changes:
             self.manifest = json.loads(baseline)

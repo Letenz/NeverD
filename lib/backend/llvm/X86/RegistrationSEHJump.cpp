@@ -92,16 +92,22 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
       return std::nullopt;
     Call->Capture = &Capture;
   }
+  std::map<va_t, int32_t> ResumeLevels;
   for (const auto &Resume : States.SEHJumpResumptions) {
     auto *Call = Bind(Resume.Address, Resume.OpSeq);
     const auto Capture = Captures.find(Resume.CaptureCall);
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
         Capture == Captures.end() || (Call->Capture && !Call->Resume) ||
         Resume.CalleeVA || Resume.ResumeVA || !Resume.ValueOffset ||
+        Resume.ResumedLevels.size() != 1 ||
         Resume.TargetVA != Capture->second->EndAddress ||
         Resume.BufferOffset != Capture->second->BufferOffset ||
         Resume.StackOffset != Capture->second->StackOffset ||
         !Call->Operation->DoesNotReturn)
+      return std::nullopt;
+    const auto [Level, NewLevel] =
+        ResumeLevels.emplace(Resume.CaptureCall, Resume.ResumedLevels.front());
+    if (!NewLevel && Level->second != Resume.ResumedLevels.front())
       return std::nullopt;
     if (Resume.EntryVA) {
       const auto &Scopes = Function.ExceptionMetadata->Registration->Scopes;
@@ -147,6 +153,11 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     Call->Resume = &Resume;
   }
   std::erase_if(Result, [](const auto &Item) { return !Item.second.Capture; });
+  for (auto &[Address, Call] : Result) {
+    const auto Level = ResumeLevels.find(Call.Capture->Address);
+    Call.ResumeLevel =
+        Level == ResumeLevels.end() ? Call.Capture->Level : Level->second;
+  }
   return Result;
 }
 

@@ -12,6 +12,7 @@ from unittest import mock
 from scripts.audit_ci_test_inventory import TestRecord, parse_inventory
 from scripts.audit_ci_test_results import (
     NON_APPLE_CORPUS_SKIPS,
+    NON_LINUX_SESSION_SKIPS,
     ResultError,
     audit_results,
     check_ctest_version,
@@ -367,6 +368,41 @@ class OutcomePolicyTests(unittest.TestCase):
                     },
                 )
                 self.assertFalse(report["ok"])
+
+    def test_linux_session_cases_still_require_native_linux_execution(self):
+        for test, reason in NON_LINUX_SESSION_SKIPS.items():
+            for profile in ("linux-semantic", "windows-focused", "macos-patch"):
+                with self.subTest(test=test, profile=profile):
+                    report = self.audit(
+                        policy_records(profile) + (test,),
+                        {test: ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", reason)},
+                        profile,
+                    )
+                    self.assertEqual(report["ok"], profile != "linux-semantic")
+                    self.assertEqual(report["counts"]["permitted_platform_skips"],
+                                     int(profile != "linux-semantic"))
+                    self.assertEqual(report["counts"]["skipped"], 1)
+                    self.assertEqual(report["counts"]["passed"],
+                                     len(policy_records(profile)))
+
+    def test_linux_session_platform_skips_match_identity_reason_and_status(self):
+        for test, reason in NON_LINUX_SESSION_SKIPS.items():
+            for changed_test, message, output in (
+                (test, "SKIP_REGULAR_EXPRESSION_MATCHED", "needs a host compiler"),
+                (record(test.name + "New", *test.labels),
+                 "SKIP_REGULAR_EXPRESSION_MATCHED", reason),
+                (record(test.name, "NeverDSessionCAPITests", "different-owner"),
+                 "SKIP_REGULAR_EXPRESSION_MATCHED", reason),
+                (test, "SKIP_RETURN_CODE=77", reason),
+            ):
+                for profile in ("windows-focused", "macos-patch"):
+                    with self.subTest(test=changed_test, profile=profile,
+                                      message=message, output=output):
+                        report = self.audit(
+                            policy_records(profile) + (changed_test,),
+                            {changed_test: ("notrun", message, output)}, profile,
+                        )
+                        self.assertFalse(report["ok"])
 
     def test_deleting_an_entire_required_suite_cannot_pass_vacuously(self):
         records = policy_records()

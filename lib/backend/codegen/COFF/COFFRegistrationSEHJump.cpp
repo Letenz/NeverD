@@ -232,14 +232,31 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
     const auto *GEP =
         llvm::dyn_cast<llvm::GetElementPtrInst>(State->getPointerOperand());
     llvm::APInt Offset(32, 0);
+    const int32_t ResumeLevel = Expected->at(Address).ResumeLevel;
+    const llvm::Value *Initial = State->getValueOperand();
+    if (ResumeLevel != Receipt.Level) {
+      const auto *Select = llvm::dyn_cast<llvm::SelectInst>(Initial);
+      const auto *Compare =
+          Select ? llvm::dyn_cast<llvm::ICmpInst>(Select->getCondition())
+                 : nullptr;
+      if (!Select || !Compare || Compare->hasPoisonGeneratingFlags() ||
+          !Select->hasOneUse() || !Compare->hasOneUse() ||
+          Compare->getPredicate() != llvm::ICmpInst::ICMP_EQ ||
+          Compare->getOperand(0) != Call ||
+          integer(Compare->getOperand(1), 32) != 0 ||
+          integer(Select->getFalseValue(), 32) != uint32_t(ResumeLevel))
+        return rejectIR("native jump changed its resumed source try level");
+      Initial = Select->getTrueValue();
+      Restores.insert({Compare, Select});
+    }
     if (!GEP || GEP->getPointerOperand() != Frame.Slot || Frame.EntrySP < 8 ||
         !GEP->accumulateConstantOffset(Parent.getParent()->getDataLayout(),
                                        Offset) ||
         Offset.getZExtValue() != Frame.EntrySP - 8 ||
-        integer(State->getValueOperand(), 32) != uint32_t(Receipt.Level) ||
-        State->isAtomic() || !State->isVolatile() ||
-        State->getAlign() != llvm::Align(1))
+        integer(Initial, 32) != uint32_t(Receipt.Level) || State->isAtomic() ||
+        !State->isVolatile() || State->getAlign() != llvm::Align(1))
       return rejectIR("native jump changed its restored source try level");
+    Result.StateRestores.insert(State);
     Restores.insert({GEP, State});
     const llvm::Instruction *Before = Call->getPrevNode();
     while (Before && !Saves.empty()) {

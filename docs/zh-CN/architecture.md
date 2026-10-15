@@ -13,7 +13,7 @@ NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部
 
 `sourcePatchTargetTriple` 从镜像确定 ARM 指令模式、ELF 浮点 ABI 和 Mach-O CPU 子类型。`COFFPatchObject` 与 `MachOPatchObject` 使用对象自身的符号、辅助／区段定义和展开记录验证范围，原生对象不伪造 MC 标识；格式安装器负责注册实际展开表。
 
-`SourcePatchCompiler` 组合 NeverC `cpp-core-v2` 翻译和 C23 生成；`validateDynCodePatchImage` 将 hosted 审计绑定到实际对象/载荷摘要及最终代码和入口布局。格式安装器注册真实展开记录。ARM64 源 FH3 使用加载器拥有的 xdata 范围和 MC 拥有的 funclet/FuncInfo 分组。原始 Mach-O 没有 DWARF 节时，必须由原生 compact 记录覆盖全部函数。
+`SourcePatchCompiler` 负责在启动编译器前限制 NeverC 为纯 C；C++ 编译由 Clang 或匹配的 ELF GCC 驱动负责。`validateDynCodePatchImage` 将 hosted C 审计绑定到真实对象、载荷摘要及准确的代码和入口布局。格式安装器注册真实展开记录；ARM64 Clang FH3 使用加载器拥有的 xdata 范围与 MC 拥有的 funclet/FuncInfo 组，Mach-O 仍支持完整原生 compact 记录。
 
 `CompiledImage` 在同一个入口规范化 AArch64 ELF 冒号重定位标记，供实时解析和记录后的 fixup 共用。ELF 解析器与加载器重定位发布共用准确的 ABS/GOT 身份，TLS 和未知形式仍明确拒绝。COFF 原生函数范围可采用解码后的运行时记录；hosted 代码必须具备完整的编译器展开覆盖。
 
@@ -1568,6 +1568,8 @@ LLVM 发射器只在当前不可变 MedFunc 内复用已完成、使用默认预
 
 `MedCallingConvFP` 统一负责浮点/向量输入的字节需求。AND/OR 常量掩码仅在唯一、有界的 SSA 常量证明下排除完全清零或替换的字节，包括首写版本为零的拼接掩码；缺失、歧义、加载或调用产生的掩码保留输入。浮点返回寄存器的中间写入仍是值传递；返回读取依据当前 CFG 中到达各 RETURN 的定义，未知路径保守保留需求。恢复显式 ABI 操作数前，经浮点返回寄存器转发的值也是 CALL 的可能读取。向量寄存器用自身低字节扩展（`vzeroupper`）时，只有它自己的入参字节算原地保留；从其他寄存器移入的字节与其他写入一样会到达返回。ARM32 寄存器定义覆盖完整 D0-D31，与 D0-D7 参数组独立。
 
+ELF 对象解析、原生重定位写入和加载器来源证明共用字段宽度表。AArch64 `PREL64` 使用八字节，并保留有符号 `S + A - P`，包括完整宽度的 REL 隐式加数。越界、写入重叠和有符号溢出会在发布前失败。
+
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 
 DarwinFiles extends its sole authorizer with typed OwnershipSearch and OwnershipChange and an explicit UID/GID request. DarwinOwnership.cpp owns chown16/fchown123/fchownat468 import and the atomic active UID/GID/ctime commit; DarwinServices only forwards. The shared path walker and statusMetadata owner supply actual current records. Target membership and change-derived TAKE_OWNERSHIP/WRITE_SECURITY decisions stay in the sole authorizer. Contents retains a separate initial ownership provider/time grant; both inactive IDs still require it and preserve every field. Mode/data/namespace/xattr/storage/VM grants remain independent, creation/name reuse never inherits authority and invalidated records remain unknown. Strict JSON uses the existing vocabulary/admission/time owners. Static query closures deny all57 other file routes before preflight. This ordinary environment excludes ACL/MAC/listeners/bypass/revocation/native leases and unmodeled setattr lifecycle; it does not establish general DAC or a complete macOS/iOS environment.
@@ -1627,9 +1629,9 @@ DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fs
 
 ## Swift scalar instruction completion
 
-恢复的 x86_64 Swift 支持标量寄存器 ADD/SUB/MUL/DIV，以及 Float32、signed32、signed64 寄存器到 Double 的转换，保留数值位和完整的输入、输出 MXCSR。其他转换、内存、打包算术、SQRT/MIN/MAX、FMA、舍入和近似运算仍不支持。这些修复解决已观察到的 Swift 栈参数与混合函数恢复失败；完整 macOS/iOS 运行时和框架环境仍未完成。
+恢复的 x86_64 Swift 支持寄存器和内存形式的标量 ADD/SUB/MUL/DIV、有符号 32/64 位整数到 Float32/Float64 的转换，以及 Float32/Float64 双向转换，包括 VEX 形式。结果位与完整输入/输出 MXCSR 成对保留。打包运算、SQRT/MIN/MAX、FMA、舍入及近似运算仍明确拒绝；完整 macOS/iOS 框架环境仍未完成。
 
-The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits register X86FPArithState with scalar control16|optional8|kind for 4/8-byte Add/Subtract/Multiply/Divide, normalizing its intrinsic/width helper key and dropping only Control at operand0. X86FPScalarConvertState admits only controls4/5/7 and VEX variants12/13/15 for Float32/signed32/signed64 to Double. Its conversion-specific full-layout key removes only VEX bit8, keeps all three source kinds distinct, and drops only the literal Control at operand1. Source and State retain their order. Legacy/VEX and legacy/generic occurrences share one helper per numerical/state contract. Signed32 truncates and reinterprets its raw bits; signed64 reinterprets its full source, and Float32 preserves its low32 bit pattern. Target guards, file-level module_preamble, optimization-disabled numerical work and complete96-bit result/MXCSR packing remain required. The lifter still owns vector upper lanes. No ARM64 MXCSR substitution or memory/packed lowering is inferred.
+共享 X86FPState 形状校验器保持权威。旧式和通用算术共用指令/宽度辅助键；转换键保留源类别、源/目标宽度及寄存器/内存传输，仅去掉 VEX 上半向量位，向量高位仍由提升器负责。源和状态顺序不变，数值计算禁用优化，完整结果/MXCSR 保留在 64/96 位容器中。不推断 ARM64 的 MXCSR 替代。
 
 ## Explicit ordinary directory modes
 

@@ -84,7 +84,12 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
     return Import && Import->Name == "_except_handler3" &&
            Img.readVA(Import->IATAddr, 4) &&
            (llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") ||
-            llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll"));
+            llvm::StringRef(Import->Module)
+                .equals_insensitive("ucrtbase.dll") ||
+            llvm::StringRef(Import->Module)
+                .equals_insensitive("vcruntime140.dll") ||
+            llvm::StringRef(Import->Module)
+                .equals_insensitive("vcruntime140d.dll"));
   }
   return false;
 }

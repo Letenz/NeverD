@@ -372,6 +372,18 @@ bool collectDeadFinallyResult(llvm::CallInst &Call,
           !Slot->getAllocatedType()->isIntegerTy())
         return false;
       for (auto *SlotUser : Slot->users()) {
+        if (++Work > limits::kMaxRegistrationEHStateWork)
+          return false;
+        if (auto *Read = llvm::dyn_cast<llvm::LoadInst>(SlotUser)) {
+          if (Read->getPointerOperand() != Slot || Read->isVolatile() ||
+              Read->isAtomic() || Read->getType() != Slot->getAllocatedType())
+            return false;
+          if (Seen.insert(Read).second) {
+            Dead.push_back(Read);
+            Pending.push_back(Read);
+          }
+          continue;
+        }
         auto *Definition = llvm::dyn_cast<llvm::StoreInst>(SlotUser);
         if (!Definition || Definition->getPointerOperand() != Slot ||
             Definition->isVolatile() || Definition->isAtomic())
