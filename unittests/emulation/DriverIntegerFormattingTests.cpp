@@ -43,6 +43,9 @@ protected:
         Options.Unload = true;
         // Three complete value/capacity matrices exceed the small default.
         Options.InstructionLimit = 500000;
+        // This checks formatting and scheduling, not host throughput. Keep the
+        // instruction bound while allowing contended runners to finish.
+        Options.TimeoutMilliseconds = 30000;
         Options.ServiceName = std::string("IntegerFormatting") + Mode;
         if (Rebase)
           Options.LoadAddress = 0x1c0000000;
