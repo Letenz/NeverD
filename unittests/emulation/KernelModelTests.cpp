@@ -1187,5 +1187,71 @@ TEST_F(DriverKernelModel, QueuedSpinLocksAtDpcLevelAndRefuseMismatches) {
   invoke("ExFreePoolWithTag", {Handle, Tag});
 }
 
+TEST_F(DriverKernelModel, RundownProtectionCountsReferencesLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252; // 'RRUN'
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  // Initialization clears the whole word regardless of prior contents.
+  success(Memory->writeInteger(Ref, ~uint64_t(0), 8));
+  invoke("ExInitializeRundownProtection", {Ref});
+  EXPECT_EQ(integer(Ref), 0u);
+  // Each acquisition adds two and returns TRUE; release subtracts two.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(integer(Ref), 4u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 0u);
+  // With nothing outstanding the wait runs the object down in place.
+  EXPECT_EQ(invoke("ExWaitForRundownProtectionRelease", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // Further acquisitions fail while run-down is in effect and write nothing.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // A repeat wait on an already run-down object is a no-op.
+  EXPECT_EQ(invoke("ExWaitForRundownProtectionRelease", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // Reinitialization makes it usable again.
+  invoke("ExReInitializeRundownProtection", {Ref});
+  EXPECT_EQ(integer(Ref), 0u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionRefusesUnreachableCooperativePaths) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252;
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  invoke("ExInitializeRundownProtection", {Ref});
+  // A release with nothing outstanding underflows, so it is refused and the
+  // count is untouched.
+  EXPECT_EQ(failure("ExReleaseRundownProtection", {Ref}),
+            "run-down protection release without a matching acquisition");
+  EXPECT_EQ(integer(Ref), 0u);
+  // Waiting while a reference is still outstanding would block on an event.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(failure("ExWaitForRundownProtectionRelease", {Ref}),
+            "cannot wait for outstanding run-down references on this "
+            "cooperative processor");
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  // Releasing after run-down has completed follows the kernel's null wait-block
+  // path and is refused.
+  invoke("ExRundownCompleted", {Ref});
+  EXPECT_EQ(integer(Ref), 1u);
+  EXPECT_EQ(failure("ExReleaseRundownProtection", {Ref}),
+            "cannot release run-down protection once run-down has started on "
+            "this cooperative processor");
+  EXPECT_EQ(integer(Ref), 1u);
+  // A null record is a clear refusal.
+  EXPECT_EQ(failure("ExAcquireRundownProtection", {0}),
+            "run-down protection requires 8-byte aligned kernel storage");
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
 } // namespace
 } // namespace neverd::emulation

@@ -688,6 +688,14 @@ private:
   llvm::Expected<uint64_t> acquireQueuedSpinLock(uint64_t SpinLock,
                                                  uint64_t Handle, bool Raise);
   llvm::Expected<uint64_t> releaseQueuedSpinLock(uint64_t Handle, bool Restore);
+  // Run-down protection keeps its whole state in the caller's EX_RUNDOWN_REF
+  // Count word, so these operations only validate and update guest memory.
+  llvm::Expected<uint64_t> readRundownCount(uint64_t RunRef);
+  llvm::Expected<uint64_t> initializeRundownProtection(uint64_t RunRef);
+  llvm::Expected<uint64_t> acquireRundownProtection(uint64_t RunRef);
+  llvm::Expected<uint64_t> releaseRundownProtection(uint64_t RunRef);
+  llvm::Expected<uint64_t> waitForRundownProtectionRelease(uint64_t RunRef);
+  llvm::Expected<uint64_t> rundownCompleted(uint64_t RunRef);
   llvm::Error validateInterlockedLock(uint64_t Lock) const;
   llvm::Error validateInterlockedStorage(uint64_t Lock, uint64_t Address,
                                          uint32_t Size, bool IsWrite) const;

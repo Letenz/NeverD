@@ -1537,6 +1537,26 @@ TEST(KernelRuntimeExecution, CompiledDriverGuardsWithAnInStackQueuedSpinLock) {
   EXPECT_EQ(Calls["KeInitializeSpinLock"], 1u);
 }
 
+TEST(KernelRuntimeExecution, CompiledDriverDrainsWithRundownProtection) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_rundown.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // Two protected accesses succeed, the acquire after the wait fails because
+  // the object ran down, and a reinitialized object protects again.
+  EXPECT_EQ(Result->Messages[0], "rundown 1 1 0 1");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["ExAcquireRundownProtection"], 4u);
+  EXPECT_EQ(Calls["ExReleaseRundownProtection"], 3u);
+  EXPECT_EQ(Calls["ExWaitForRundownProtectionRelease"], 1u);
+  EXPECT_EQ(Calls["ExReInitializeRundownProtection"], 1u);
+}
+
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
                               "driver_identity.sys");

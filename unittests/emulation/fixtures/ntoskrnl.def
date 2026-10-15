@@ -151,3 +151,9 @@ EXPORTS
   KeReleaseInStackQueuedSpinLock
   KeAcquireInStackQueuedSpinLockAtDpcLevel
   KeReleaseInStackQueuedSpinLockFromDpcLevel
+  ExInitializeRundownProtection
+  ExReInitializeRundownProtection
+  ExAcquireRundownProtection
+  ExReleaseRundownProtection
+  ExWaitForRundownProtectionRelease
+  ExRundownCompleted
