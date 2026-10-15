@@ -361,6 +361,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 独立または IRP に関連付けた非ページプール／ユーザー MDL、変更可能なチェーンリンク、独立したロックとシステム別名。クォータは未対応 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明示的なセッションレジストリ、ハンドルごとの権限と寿命、クエリバッファーサイズと変更。ホストレジストリは使用しない |
 | `ZwEnumerateValueKey` | 作成順で Basic、Full、Partial 値情報を列挙。置換は索引を維持し、削除は索引を詰め、再作成は末尾に追加。`KEY_QUERY_VALUE` が必要で、範囲外は `STATUS_NO_MORE_ENTRIES`。値照会と直列化を共有し、x64 Full データは8バイト境界、空データのオフセットは `0xffffffff`。パディングと不完全な UTF-16 単位は保持 |
+| `ZwQueryKey`, `ZwEnumerateKey` | Basic、Node、Full、Name、Cached のキー照会と、Basic/Node/Full による直下の有効なサブキーの大文字 ASCII 順列挙。照会は `KEY_QUERY_VALUE`（Name は任意の付与済み権限）、列挙は `KEY_ENUMERATE_SUB_KEYS` が必要。短いバッファーの結果と過去の最大長を保持し、時刻を含む出力には明示した時刻が必要 |
 | `ExAllocatePool` | 従来の 2 引数によるプール種別 `0`、`1`、`512` のデータ割り当て。共通の整列、未初期化バイトモデル、サイズ／IRQL 検査を使い、枯渇時は NULL。`ExFreePool` またはタグがゼロの `ExFreePoolWithTag` で解放し、残存割り当てはカーネル依存状態として保持。 |
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | プール種別 `0`、`1`、`512` のデータ割り当て。サイズ／タグは正で、タグ付き解放は割り当てと一致する必要があり、アドレスは再利用しない |
 | `IoCreateDevice`、`IoDeleteDevice` | デバイス種別 `0x22`、characteristics は `0` または `0x100`、拡張領域のサイズは有限、名前は ASCII の `\Device\Name` |
@@ -439,7 +440,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 省略可能なルートフィールド `"load_address": "0x190000000"` はベースアドレスの変更を要求します。省略または `"0x0"` なら優先アドレスを使用します。イメージは再配置の要件を満たす必要があります。元の初期化コマンドや C API が暗黙にシナリオを実行することはありません。
 
-ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
+ルートで受け付けるフィールドは `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry_system_time_100ns`, `registry`、`pnp_devices` だけです。通常のファイル要求は `kind`、任意の `device` または `device_id`（併用不可）、任意の `file` を受け付けます。IOCTL は `code` が必須で、`input`、`output_size`、`direct_input` を受け付けます。`read` は `output_size` と `byte_offset`、`write` は `input` と `byte_offset` を受け付けます。オフセットのデフォルトはゼロで、整数または 16 進文字列を使えますが、非負の符号付き 64 ビット値に収まる必要があります。ライフサイクルのリクエストは転送フィールドを拒否します。未知のフィールドや重複フィールドは拒否します。`code` は符号なし 32 ビット JSON 整数または `0x` で始まる 16 進文字列を受け付けます。`input` は、プレフィックスや空白を含まない、長さが偶数の 16 進バイト文字列です。省略すると空の入力になります。`output_size` は符号なし JSON 整数で、省略時はゼロです。小数や浮動小数点形式の表記は拒否します。
 
 READ／WRITE／IOCTL 要求だけが省略可能な `cancel_after_100ns` を受け付けます。値は 0 から `INT64_MAX`（9223372036854775807）までの JSON 整数です。要求の提出時点を基準に、実時間ではなく仮想時間の 100 ns 単位でキャンセルを予約します。KMDF ではゼロをフレームワークのルーティング後、ゲスト I/O コールバックの前に適用します。ルーティングが既に要求を完了していれば、完了が優先されます。WDM ではディスパッチの復帰後にゼロを適用します。正の遅延では、実行可能なコールバックやフレームがないときだけ、タイマー、待機、キャンセルの期限へ時間を進めます。保留中の WDM IRP は、登録されたキャンセルルーチンをキャンセルスピンロック保持下の `DISPATCH_LEVEL` で呼び出します。完了前に `Irp->CancelIrql` を使ってロックを解放する必要があります。一般のキューや PnP のキャンセルは未対応です。各要求レポートの `cancel_requested_at_100ns` は、キャンセルが実際に発生した絶対仮想時刻、または発生しなかった場合の null です。先に完了した場合も null のままです。キャンセル要求だけでは IRP は完了せず、最終ステータスも決まりません。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock`、`IoCancelIrp` は同じ IRP 状態とキャンセルスピンロックを使います。`IoCancelIrp` は登録済みルーチンを同期的に呼び出し、呼び出したかどうかを返します。
@@ -482,6 +483,10 @@ READ/WRITE では、`DO_BUFFERED_IO` または `DO_DIRECT_IO` が buffered/direc
 `ZwQueryValueKey` は Basic、Full、Partial および定義済み Align64 情報クラスを実装し、正確な長さ、データ整列、部分出力、`STATUS_BUFFER_TOO_SMALL` と `STATUS_BUFFER_OVERFLOW` の区別に対応します。`ZwSetValueKey` と `ZwDeleteValueKey` はこのセッションだけを変更します。`ZwDeleteKey` は子キーの残るキーを拒否し、削除済みキーのハンドルは閉じるまで `STATUS_KEY_DELETED` を返します。`ZwClose` はキーとは独立してハンドルを解放し、レジストリハンドルが残った状態のアンロードは失敗します。
 
 上限は祖先を含む 256 キー、合計 1024 値、値ごとに 65536 バイト、値データ合計 512 KiB、キーパス 1024 ASCII バイト、値名 256 バイト、同時に開くハンドル 256 個です。作成と変更にもシナリオ事前検証と同じ制限が適用されます。報告の `configuration.registry` は元の入力、`registry` は停止前の変更を含む最終的なキーと値を保持します。未指定なら null です。この値スナップショットには揮発性属性とハンドル識別子は含まれません。
+
+各キーの `last_write_time_100ns`、またはルートの `registry_system_time_100ns` で時刻を宣言できます。後者は仮想時刻ゼロでの Windows 絶対時刻（1601 年からの 100 ns 単位）で、明示的な `registry` が必要です。どちらも 0..9223372036854775807 の JSON 整数で、ゼロも有効です。キー固有の値を優先し、それ以外の初期キーと暗黙の祖先は時計を継承します。時刻が不明でも Name とサイズ照会は可能ですが、時刻を返す出力は明示的に停止します。変更時は時計にスケジューラーの経過時間を加え、桁あふれは変更前に拒否します。時計なしの変更は対象キーの既知時刻を無効にし、同じ型とデータの書き込みは維持します。子キーの作成・削除は親の時刻を更新します。報告は既知の時刻と元の時計設定を保持し、不明な時刻を省略します。
+
+Full/Cached は現在の件数と過去の最大長を返し、対応する子キー／値のリストが空になると最大長をゼロにします。x64 Cached は 40 バイトを要求し、末尾の 4 バイトを変更しません。削除済みキーの Name 照会もパスをコピーし、完全な出力は `STATUS_KEY_DELETED`、短い出力は通常のサイズ状態を返します。スナップショットにはキャッシュの最大値がなく、完全な実行チェックポイントではありません。
 
 ## Microsoft サンプルの受け入れ検証
 

@@ -358,6 +358,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 독립 또는 IRP 연결 비페이지 풀/사용자 MDL, 변경 가능한 체인 링크, 독립 잠금과 시스템 별칭. 할당량은 미지원 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 명시적인 세션 레지스트리, 핸들별 권한과 수명, 쿼리 버퍼 크기와 변경. 호스트 레지스트리에 접근하지 않음 |
 | `ZwEnumerateValueKey` | 생성 순서로 Basic, Full, Partial 값 정보를 열거. 교체는 인덱스를 유지하고 삭제는 인덱스를 압축하며 재생성은 끝에 추가. `KEY_QUERY_VALUE` 필요, 범위 밖은 `STATUS_NO_MORE_ENTRIES`. 값 조회와 직렬화를 공유하며 x64 Full 데이터는 8바이트 정렬, 빈 데이터 오프셋은 `0xffffffff`. 패딩과 불완전한 UTF-16 단위는 유지 |
+| `ZwQueryKey`, `ZwEnumerateKey` | Basic, Node, Full, Name, Cached 키 조회와 Basic/Node/Full 직접 하위 키 열거를 지원하며, 살아 있는 하위 키를 대문자 ASCII 순으로 열거합니다. 조회에는 `KEY_QUERY_VALUE`(Name은 부여된 권한 중 하나), 열거에는 `KEY_ENUMERATE_SUB_KEYS`가 필요합니다. 짧은 버퍼 결과와 과거 최대 길이를 유지하며 시간 출력에는 명시된 시간이 필요합니다 |
 | `ExAllocatePool` | 기존 두 인수 인터페이스로 풀 유형 `0`, `1`, `512`의 데이터를 할당합니다. 정렬, 초기화되지 않은 바이트 모델, 크기/IRQL 검사를 공유하고 고갈 시 NULL을 반환합니다. `ExFreePool` 또는 태그가 0인 `ExFreePoolWithTag`로 해제하며 남은 할당은 커널 종속 상태로 유지됩니다. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | 풀 유형 `0`, `1`, `512`의 데이터 할당. 크기/태그는 양수이며, 태그가 있는 해제는 일치해야 하고 주소를 재사용하지 않음 |
 | `IoCreateDevice`, `IoDeleteDevice` | 장치 유형 `0x22`, 특성 `0` 또는 `0x100`, 제한된 확장, ASCII `\Device\Name` 이름 |
@@ -436,7 +437,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 선택적인 루트 필드 `"load_address": "0x190000000"`는 베이스 재배치를 요청합니다. 생략하거나 `"0x0"`을 지정하면 선호 주소를 사용합니다. 이미지는 재배치 요구 사항을 충족해야 합니다. 기존 초기화 명령이나 C API에는 암묵적인 시나리오가 없습니다.
 
-루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
+루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
 
 READ/WRITE/IOCTL 요청만 선택적 `cancel_after_100ns` 필드를 허용합니다. 값은 0부터 `INT64_MAX`(9223372036854775807)까지의 JSON 정수입니다. 실제 시간이 아니라 요청 제출 시점을 기준으로 한 가상 100 ns 단위로 취소를 예약합니다. KMDF에서 0은 프레임워크 라우팅 후 게스트 I/O 콜백 전에 적용하며, 라우팅이 이미 요청을 완료했다면 완료가 우선합니다. WDM에서는 디스패치 반환 후 0을 적용합니다. 양수 지연에서는 준비된 콜백이나 실행 프레임이 없을 때만 타이머, 대기 또는 취소 기한으로 시간을 진행합니다. 보류 중인 WDM IRP는 등록된 취소 루틴을 취소 스핀락을 잡은 `DISPATCH_LEVEL`에서 호출합니다. 완료 전에 `Irp->CancelIrql`로 잠금을 해제해야 합니다. 일반 큐와 PnP 취소는 여전히 지원하지 않습니다. 각 요청 보고서의 `cancel_requested_at_100ns`는 취소가 실제 발생한 절대 가상 시간이거나, 완료가 먼저 발생하는 경우를 포함해 취소가 발생하지 않았다면 null입니다. 취소 요청만으로 IRP가 완료되거나 최종 상태가 정해지지는 않습니다.
 `IoSetCancelRoutine`, `IoAcquireCancelSpinLock`, `IoReleaseCancelSpinLock`, `IoCancelIrp`는 같은 IRP 상태와 취소 스핀락을 사용합니다. `IoCancelIrp`는 등록된 루틴을 동기적으로 호출하고 호출 여부를 반환합니다.
@@ -479,6 +480,10 @@ READ/WRITE에서는 `DO_BUFFERED_IO` 또는 `DO_DIRECT_IO`가 버퍼 방식이�
 `ZwQueryValueKey`는 Basic, Full, Partial과 정의된 Align64 정보 클래스를 구현하여 정확한 길이, 데이터 정렬, 부분 출력, 서로 다른 `STATUS_BUFFER_TOO_SMALL` / `STATUS_BUFFER_OVERFLOW` 결과를 제공합니다. `ZwSetValueKey`와 `ZwDeleteValueKey`는 현재 세션의 트리만 변경합니다. `ZwDeleteKey`는 자식이 남은 키를 거부하며 삭제된 키의 핸들은 닫기 전까지 `STATUS_KEY_DELETED`를 반환합니다. `ZwClose`는 키와 독립적으로 핸들을 해제합니다. 열린 레지스트리 핸들이 남으면 언로드가 실패합니다.
 
 상위 키를 포함한 키 256개, 총 값 1024개, 값당 65536바이트, 전체 값 데이터 512 KiB, 키 경로 1024 ASCII 바이트, 값 이름 256바이트, 동시 열린 핸들 256개로 제한합니다. 생성과 변경에도 시나리오 사전 검사와 같은 제한을 적용합니다. 보고서의 `configuration.registry`는 원래 입력을 보존하고 `registry`는 중단 전 변경을 포함한 최종 키 경로와 값을 나열합니다. 미지정 상태는 null로 보고합니다. 값 스냅샷에는 휘발성 속성과 핸들 식별자가 포함되지 않습니다.
+
+키별 `last_write_time_100ns` 또는 루트의 `registry_system_time_100ns`로 시간을 선언합니다. 후자는 가상 시간 0에서의 Windows 절대 시간(1601년 이후 100 ns 단위)이며 명시적인 `registry`가 필요합니다. 두 값은 0..9223372036854775807 범위의 JSON 정수이며 0도 유효합니다. 키별 시간이 우선하고 나머지 초기 키와 암시적 상위 키는 시계를 상속합니다. 시간이 없어도 Name 및 크기 조회는 가능하지만 시간을 반환하는 출력은 명시적으로 중단합니다. 변경 시 시계에 스케줄러 경과 시간을 더하며 오버플로는 변경 전에 거부합니다. 시계가 없는 변경은 해당 키의 기존 시간을 무효화하고 동일한 유형과 데이터 쓰기는 시간을 유지합니다. 하위 키 생성과 삭제는 상위 키 시간을 갱신합니다. 보고서는 알려진 시간과 원래 시계 설정을 보존하고 알 수 없는 시간은 생략합니다.
+
+Full/Cached는 현재 개수와 과거 최대 길이를 반환하며 해당 하위 키/값 목록이 비면 최대 길이를 0으로 만듭니다. x64 Cached는 40바이트가 필요하고 마지막 4바이트는 보존합니다. 삭제된 키의 Name 조회도 경로를 복사하며 완전한 출력은 `STATUS_KEY_DELETED`, 짧은 출력은 일반 크기 상태를 반환합니다. 스냅샷에는 캐시된 최대값이 없으므로 완전한 실행 체크포인트가 아닙니다.
 
 ## Microsoft 예제 검증
 

@@ -202,8 +202,11 @@ registryJSON(const std::optional<std::vector<DriverRegistryKey>> &Registry) {
           {field::Type, Value.Type},
           {field::Data,
            llvm::toHex(llvm::ArrayRef<uint8_t>(Value.Data), true)}});
-    Keys.push_back(llvm::json::Object{{field::Path, Key.Path},
-                                      {field::Values, std::move(Values)}});
+    llvm::json::Object Entry{{field::Path, Key.Path},
+                             {field::Values, std::move(Values)}};
+    if (Key.LastWriteTime100ns)
+      Entry[field::LastWriteTime100ns] = *Key.LastWriteTime100ns;
+    Keys.push_back(std::move(Entry));
   }
   return Keys;
 }
@@ -774,6 +777,10 @@ std::string driverResultJSON(const DriverResult &Result) {
       {userField::UserMemory,
        userMemoryConfigurationJSON(Result.Configuration)},
       {field::KernelExports, std::move(Exports)}};
+  if (Result.Configuration.RegistrySystemTime100ns)
+    (*Root[field::Configuration]
+          .getAsObject())[field::RegistrySystemTime100ns] =
+        *Result.Configuration.RegistrySystemTime100ns;
   if (Result.Configuration.Scheduling)
     (*Root[field::Configuration].getAsObject())[driver_scheduling::Scheduling] =
         driverSchedulingJSON(*Result.Configuration.Scheduling);

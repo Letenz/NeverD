@@ -563,6 +563,7 @@ The initial API model deliberately has a finite contract:
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Standalone or IRP-associated nonpaged-pool/user descriptors, mutable chain links, independent locks and shared system aliases; no quota |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Explicit session registry, per-handle rights and lifetime, query buffer sizing and mutations; no host registry access |
 | `ZwEnumerateValueKey` | Basic, Full and Partial value enumeration in creation order; replacement keeps its index, deletion compacts indices, recreation appends. Requires `KEY_QUERY_VALUE`; out-of-range indices return `STATUS_NO_MORE_ENTRIES`. Shares value-query serialization: x64 Full data is 8-byte aligned, empty data uses offset `0xffffffff`, and padding and incomplete UTF-16 units remain untouched |
+| `ZwQueryKey`, `ZwEnumerateKey` | Basic, Node, Full, Name and Cached key queries; Basic/Node/Full enumeration of immediate live subkeys in uppercase ASCII order. Query needs `KEY_QUERY_VALUE` (Name accepts any granted access); enumeration needs `KEY_ENUMERATE_SUB_KEYS`. Exact short-buffer results and retained maximum lengths; timestamp-bearing output requires declared time |
 | `ExAllocatePool` | Legacy two-argument data allocation for pool types `0`, `1`, and `512`; shared alignment, uninitialized-byte model, size/IRQL checks and NULL on exhaustion. Free through `ExFreePool` or a zero-tag `ExFreePoolWithTag`; retained allocations remain kernel dependencies. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Data allocations for pool types `0`, `1`, and `512`; positive size/tag, matching tagged frees, no address reuse |
 | `IoCreateDevice`, `IoDeleteDevice` | Device type `0x22`, characteristics `0` or `0x100`, bounded extensions, ASCII `\Device\Name` names |
@@ -703,7 +704,7 @@ omission or `"0x0"` uses the preferred address. Relocation requirements must be
 satisfied by the image. No scenario is implied by the original initialization
 command or C API.
 
-Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, and `pnp_devices` are accepted at
+Only `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry`, and `pnp_devices` are accepted at
 the root. Ordinary file requests accept `kind`, optional `device` or `device_id` (mutually exclusive), and optional `file`.
 IOCTLs require `code` and accept `input`, `output_size`, and `direct_input`.
 A `read` accepts `output_size` and `byte_offset`; a `write` accepts `input` and
@@ -981,6 +982,31 @@ the same limits as scenario preflight. The report's `configuration.registry`
 retains the original input; `registry` lists final live key paths and values,
 including mutations observed before a stop. Unspecified registry state reports
 as null. Volatility and handle identities are not part of that value snapshot.
+
+`ZwQueryKey` supports Basic, Node, Full, Name and Cached information;
+`ZwEnumerateKey` supports Basic, Node and Full for immediate live children,
+sorted by uppercase ASCII name. Full paths retain each ancestor's spelling,
+including after deletion. Enumeration requires `KEY_ENUMERATE_SUB_KEYS`;
+query requires `KEY_QUERY_VALUE`, except Name accepts any nonzero granted key
+access. Full/Cached report live counts but retain historical maximum name and
+data lengths until the corresponding child/value list becomes empty. Cached
+requires 40 bytes on x64 and leaves its final four padding bytes untouched.
+Name queries can copy a deleted handle's retained path: a complete output returns
+`STATUS_KEY_DELETED`, while short buffers retain the usual sizing status.
+
+Each key may declare `last_write_time_100ns`. The root-level
+`registry_system_time_100ns` declares absolute Windows time (100 ns since 1601)
+at virtual time zero and requires an explicit `registry`. Both fields are JSON
+integers in 0..9223372036854775807; zero is a supplied value. A key's explicit
+time wins; otherwise initial keys and implicit ancestors inherit the declared
+clock. Without either source, time remains unknown. Name queries and sizing
+calls need no time; output containing an unknown timestamp stops explicitly.
+Mutations use the declared clock plus the shared scheduler's elapsed 100 ns;
+overflow stops before mutation. Without a clock, a mutation invalidates the
+affected key's known time. Identical type/data writes preserve it. Child creation
+and deletion update the parent's time. Reports preserve known per-key times and
+the original clock configuration; unknown times are omitted. Snapshots omit
+cached maxima and are not complete execution checkpoints.
 
 ## Microsoft sample acceptance check
 

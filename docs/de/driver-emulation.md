@@ -399,6 +399,7 @@ Das anfängliche API-Modell besitzt bewusst einen begrenzten Vertrag:
 | `KeFlushIoBuffers` | Kohärenter CPU-Cache-Flush über einen gültigen gesperrten/nicht auslagerbaren MDL, ohne DMA-Abbildungen freizugeben |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Expliziter sitzungslokaler Registry-Baum, Rechte pro Handle, Abfragen mit exakten Ausgabegrößen und Lebensdauer nach dem Löschen; siehe Registry-Szenarien |
 | `ZwEnumerateValueKey` | Basic-, Full- und Partial-Werte in Erstellungsreihenfolge; Ersetzen behält den Index, Löschen verdichtet und Neuerstellen hängt an. Erfordert `KEY_QUERY_VALUE`; außerhalb des Bereichs: `STATUS_NO_MORE_ENTRIES`. Gemeinsame Abfrageserialisierung: x64-Full-Daten mit 8-Byte-Ausrichtung, Offset `0xffffffff` bei leeren Daten; Füllbytes und unvollständige UTF-16-Einheiten bleiben erhalten |
+| `ZwQueryKey`, `ZwEnumerateKey` | Basic-, Node-, Full-, Name- und Cached-Abfragen; Basic/Node/Full-Aufzählung direkter lebender Unterschlüssel in ASCII-Großbuchstabenreihenfolge. Abfragen erfordern `KEY_QUERY_VALUE` (Name akzeptiert jedes gewährte Recht), Aufzählung `KEY_ENUMERATE_SUB_KEYS`. Exakte Ergebnisse bei kurzen Puffern, gespeicherte Höchstlängen und deklarierte Zeit für Zeitstempel |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | KernelMode-/UserMode-Sichten derselben Seiten mit geerbtem Cache und getrennten Rechten; nicht auslagerbare MDLs verwenden über den sicheren Helfer ihre ursprüngliche Abbildung |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Eigenständige oder IRP-zugeordnete Pool-/Benutzerdeskriptoren, veränderbare Kettenverknüpfungen, unabhängige Sperren und Systemaliase; keine Kontingente |
 | `ExAllocatePool` | Historische Datenallokation mit zwei Argumenten für Pooltypen `0`, `1` und `512`; gemeinsame Ausrichtung, Modell uninitialisierter Bytes und Größen-/IRQL-Prüfungen, NULL bei Erschöpfung. Freigabe durch `ExFreePool` oder `ExFreePoolWithTag` mit Tag null; verbleibende Allokationen bleiben Kernelabhängigkeiten. |
@@ -515,7 +516,7 @@ Basisverschiebung an; ohne dieses Feld oder mit `"0x0"` gilt die bevorzugte
 Adresse. Das Image muss die Relokationsanforderungen erfüllen. Der ursprüngliche
 Initialisierungsbefehl und die C-API implizieren kein Szenario.
 
-An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` und `pnp_devices`
+An der Wurzel sind nur `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry` und `pnp_devices`
 erlaubt. Gewöhnliche Dateianforderungen akzeptieren `kind`, optional `device` oder `device_id` (gegenseitig exklusiv) und optional `file`. IOCTLs benötigen `code` und akzeptieren `input`, `output_size` und
 `direct_input`. Ein `read` akzeptiert `output_size` und `byte_offset`; ein
 `write` akzeptiert `input` und `byte_offset`. Offsets sind standardmäßig null,
@@ -650,6 +651,10 @@ Eingabe; `registry` enthält die am Ende aktiven Schlüsselpfade und Werte,
 einschließlich der vor einem Stopp beobachteten Änderungen. Ein nicht
 festgelegter Registry-Zustand wird als null ausgegeben. Flüchtigkeit und
 Handle-Identitäten sind nicht Teil dieses Wert-Snapshots.
+
+Jeder Schlüssel kann `last_write_time_100ns` angeben. Das Wurzelfeld `registry_system_time_100ns` legt die absolute Windows-Zeit (100 ns seit 1601) zur virtuellen Zeit null fest und benötigt ein explizites `registry`. Beide sind JSON-Ganzzahlen von 0 bis 9223372036854775807; null ist ein gültiger Wert. Der Schlüsselwert hat Vorrang, sonst erben Anfangsschlüssel und implizite Vorfahren die Uhr. Ohne Quelle bleibt die Zeit unbekannt: Name- und Größenabfragen funktionieren, Ausgaben mit Zeitstempel stoppen ausdrücklich. Änderungen addieren die verstrichene Scheduler-Zeit; Überlauf wird vor der Änderung abgewiesen. Ohne Uhr wird die betroffene Zeit ungültig. Identische Typ-/Datenwerte erhalten sie, Erstellen/Löschen eines Kindes aktualisiert den Elternschlüssel. Berichte behalten bekannte Zeiten und die ursprüngliche Konfiguration, unbekannte Zeiten entfallen.
+
+Full/Cached liefern aktuelle Anzahlen und behalten historische Höchstlängen bis zur Leerung der jeweiligen Liste. Cached verlangt auf x64 40 Bytes und lässt die letzten vier unverändert. Name kopiert auch den Pfad gelöschter Schlüssel: vollständig mit `STATUS_KEY_DELETED`, sonst mit dem üblichen Puffergrößenstatus. Momentaufnahmen enthalten keine zwischengespeicherten Maxima und sind keine vollständigen Ausführungsprüfpunkte.
 
 ## Abnahme mit dem Microsoft-Beispiel
 

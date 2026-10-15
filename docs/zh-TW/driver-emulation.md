@@ -361,6 +361,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 獨立或 IRP 關聯的非分頁集區／使用者描述元；可修改鏈指標，鎖頁與系統別名獨立；不支援配額 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明確配置的工作階段登錄、每個控制代碼的權限與生命週期、查詢緩衝區大小及修改；不存取主機登錄 |
 | `ZwEnumerateValueKey` | 依建立順序列舉 Basic、Full、Partial 值資訊；取代保留索引，刪除壓縮索引，重建附加至尾端。需要 `KEY_QUERY_VALUE`，超出範圍傳回 `STATUS_NO_MORE_ENTRIES`。與值查詢共用序列化：x64 Full 資料按 8 位元組對齊，空資料位移為 `0xffffffff`，填補和不完整 UTF-16 單元維持原值 |
+| `ZwQueryKey`, `ZwEnumerateKey` | 查詢支援 Basic、Node、Full、Name、Cached；列舉支援 Basic/Node/Full，依大寫 ASCII 順序遍歷直接存活子鍵。查詢需 `KEY_QUERY_VALUE`（Name 接受任意已授予權限），列舉需 `KEY_ENUMERATE_SUB_KEYS`。保留精確短緩衝區結果和歷史最大長度；含時間的輸出需要明確時間 |
 | `ExAllocatePool` | 舊版雙參數介面，支援集區類型 `0`、`1`、`512` 的資料配置；共用對齊、未初始化位元組模型及大小／IRQL 檢查，耗盡時傳回 NULL。透過 `ExFreePool` 或零標籤的 `ExFreePoolWithTag` 釋放；存活配置仍屬於核心相依狀態。 |
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | 對集區類型 `0`、`1`、`512` 提供資料配置；大小／標籤必須為正，帶標籤釋放必須相符，位址不重複使用 |
 | `IoCreateDevice`、`IoDeleteDevice` | 裝置類型為 `0x22`，characteristics 為 `0` 或 `0x100`，擴充區大小有界，名稱為 ASCII `\Device\Name` |
@@ -439,7 +440,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 選用根欄位 `"load_address": "0x190000000"` 請求變更載入基底位址；省略此欄位或指定 `"0x0"` 時使用慣用位址。映像必須滿足重新定位需求。原有的初始化命令或 C API 不會隱含執行任何請求情境。
 
-根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
+根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`kernel_va_shadow_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry_system_time_100ns`, `registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
 
 僅 READ／WRITE／IOCTL 請求接受選用欄位 `cancel_after_100ns`，它必須是 0 到 `INT64_MAX`（9223372036854775807）之間的 JSON 整數。此值相對於請求提交時刻，以虛擬 100 ns 為單位，並非實際時間。對 KMDF，零表示框架路由後、客體 I/O 回呼前觸發取消；若路由已直接完成請求，則完成優先。對 WDM，零在派送傳回後生效。正數延遲僅在沒有就緒回呼或執行框架時，隨時間推進至計時器、等待或取消期限而觸發。掛起的 WDM IRP 會在持有取消自旋鎖的 `DISPATCH_LEVEL` 呼叫已註冊的取消常式；常式必須使用 `Irp->CancelIrql` 釋放鎖後再完成請求。一般佇列與 PnP 取消仍不支援。每個請求報告都包含 `cancel_requested_at_100ns`，值為取消實際發生時的絕對虛擬時間；若未發生取消，包括完成先發生的情況，則為 null。請求取消本身不會完成 IRP，也不規定最終狀態。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 與 `IoCancelIrp` 共用相同的 IRP 狀態及取消自旋鎖；`IoCancelIrp` 同步呼叫已註冊常式，並傳回是否實際呼叫。
@@ -482,6 +483,10 @@ IOCTL 的 `output_size` 非零時，`Information` 不得超過該大小，即使
 `ZwQueryValueKey` 實作 Basic、Full、Partial 及其有定義的 Align64 資訊類別，包括精確長度、資料對齊、部分輸出，以及不同的 `STATUS_BUFFER_TOO_SMALL`／`STATUS_BUFFER_OVERFLOW` 結果。`ZwSetValueKey` 與 `ZwDeleteValueKey` 只修改此工作階段的樹。`ZwDeleteKey` 拒絕刪除仍有子機碼的機碼；已刪除機碼的控制代碼在關閉前傳回 `STATUS_KEY_DELETED`。`ZwClose` 獨立釋放控制代碼，不刪除機碼；卸載時仍有開啟的登錄控制代碼會導致失敗。
 
 限制為包含祖先的 256 個機碼、總計 1024 個值、每值 65536 位元組、值資料總計 512 KiB、機碼路徑 1024 個 ASCII 位元組、值名稱 256 位元組，以及同時開啟 256 個控制代碼。建立與修改遵守和情境預檢相同的限制。報告的 `configuration.registry` 保留原始輸入；`registry` 列出最終存活的機碼路徑和值，包括停止前的修改。未指定登錄時報告 null。此值快照不包含揮發性屬性及控制代碼識別。
+
+每個鍵可宣告 `last_write_time_100ns`；根欄位 `registry_system_time_100ns` 定義虛擬時間零點的 Windows 絕對時間（自 1601 年起的 100 ns 單位），並要求明確的 `registry`。兩者均為 0..9223372036854775807 的 JSON 整數，零是有效宣告。鍵的明確時間優先，否則初始鍵和隱含祖先繼承時鐘；缺少來源則時間未知。Name 查詢和大小探測無需時間，其他輸出遇到未知時間會明確停止。修改使用時鐘加排程器經過時間，溢位在修改前停止；未設定時鐘時，修改使受影響鍵的時間變為未知。相同類型及資料的寫入保留時間，子鍵建立／刪除更新父鍵時間。報告保留已知時間與原始時鐘設定，省略未知時間。
+
+Full/Cached 傳回目前計數，但名稱和資料最大長度保留歷史峰值，直到對應子鍵／值列表為空才歸零。Cached 在 x64 需要 40 位元組，最後 4 位元組填補不寫入。Name 查詢可以複製已刪除鍵的路徑：完整輸出傳回 `STATUS_KEY_DELETED`，短緩衝區傳回一般大小狀態。快照不含快取峰值，不能作為完整執行檢查點。
 
 ## Microsoft 範例驗收檢查
 

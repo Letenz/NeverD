@@ -400,6 +400,7 @@ Le modèle initial d’API possède volontairement un contrat limité :
 | `KeFlushIoBuffers` | Vidage cohérent du cache CPU sur un MDL actif verrouillé/non paginé, sans libérer les mappages DMA |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Arborescence de registre explicite limitée à la session, droits par handle, requêtes avec sorties de taille précise et durée de vie après suppression ; voir les scénarios de registre |
 | `ZwEnumerateValueKey` | Énumération Basic, Full et Partial dans l’ordre de création ; remplacement sans déplacement, suppression avec compactage et recréation en fin de liste. Exige `KEY_QUERY_VALUE` ; hors limites : `STATUS_NO_MORE_ENTRIES`. Sérialisation commune avec les requêtes : données Full x64 alignées sur 8 octets, décalage `0xffffffff` sans données, remplissage et unités UTF-16 incomplètes préservés |
+| `ZwQueryKey`, `ZwEnumerateKey` | Requêtes Basic, Node, Full, Name et Cached ; énumération Basic/Node/Full des sous-clés directes actives, triées en ASCII majuscule. Requête : `KEY_QUERY_VALUE` (Name accepte tout droit accordé) ; énumération : `KEY_ENUMERATE_SUB_KEYS`. Résultats exacts des petits tampons, maxima conservés et temps déclaré pour les sorties horodatées |
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | Vues KernelMode/UserMode des mêmes pages, cache hérité et permissions indépendantes ; les MDL non paginés réutilisent leur mappage initial via la macro sûre |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Descripteurs de pool non paginé/utilisateur autonomes ou associés à un IRP, liens de chaîne modifiables, verrouillages et alias système indépendants ; sans quota |
 | `ExAllocatePool` | Allocation historique à deux arguments pour les pools `0`, `1` et `512` ; alignement, modèle des octets non initialisés et contrôles taille/IRQL partagés, NULL en cas d’épuisement. Libération par `ExFreePool` ou `ExFreePoolWithTag` avec tag nul ; les allocations conservées restent des dépendances du noyau. |
@@ -519,7 +520,7 @@ de base ; son absence ou `"0x0"` utilise l’adresse préférée. L’image doit
 satisfaire les exigences de relocalisation. La commande d’initialisation et
 l’API C d’origine n’impliquent aucun scénario.
 
-Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry` et `pnp_devices` sont acceptés
+Seuls `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry_system_time_100ns`, `registry` et `pnp_devices` sont acceptés
 à la racine. Les requêtes ordinaires de fichier acceptent `kind`, ainsi que `device` ou `device_id` (exclusifs) et `file`, facultatifs. Les IOCTL exigent `code` et acceptent `input`,
 `output_size` et `direct_input`. Un `read` accepte `output_size` et `byte_offset` ;
 un `write` accepte `input` et `byte_offset`. Les offsets valent zéro par défaut,
@@ -655,6 +656,10 @@ originale dans le rapport ; `registry` énumère les chemins et valeurs des clé
 actives à la fin, y compris les modifications observées avant un arrêt. Un état
 de registre non spécifié est représenté par null. La volatilité et les identités
 des handles ne font pas partie de cet instantané des valeurs.
+
+Chaque clé peut déclarer `last_write_time_100ns`. Le champ racine `registry_system_time_100ns` définit le temps Windows absolu (unités de 100 ns depuis 1601) à l’instant virtuel zéro et exige un `registry` explicite. Les deux champs sont des entiers JSON de 0 à 9223372036854775807 ; zéro est valide. Le temps propre à la clé prime ; sinon les clés initiales et leurs ancêtres implicites héritent de l’horloge. Sans source, le temps est inconnu : Name et le calcul de taille restent possibles, mais une sortie horodatée s’arrête explicitement. Les mutations ajoutent le temps écoulé de l’ordonnanceur ; un débordement est refusé avant mutation. Sans horloge, elles invalident le temps affecté. Une écriture de type/données identiques le conserve ; créer ou supprimer un enfant met à jour le parent. Le rapport conserve les temps connus et la configuration initiale, et omet les temps inconnus.
+
+Full/Cached donnent les comptes actuels et conservent les longueurs maximales historiques jusqu’à ce que la liste correspondante soit vide. Cached exige 40 octets sur x64 et préserve les quatre derniers. Name copie aussi le chemin d’une clé supprimée : sortie complète avec `STATUS_KEY_DELETED`, sinon état habituel de tampon court. Les instantanés omettent les maxima en cache et ne sont pas des points de reprise complets.
 
 ## Validation avec l’exemple Microsoft
 

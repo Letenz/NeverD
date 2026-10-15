@@ -394,6 +394,7 @@ El modelo inicial de API tiene deliberadamente un contrato limitado:
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | Clase `11` (`SystemModuleInformation`) en PASSIVE_LEVEL: consultas de tamaño con longitud cero y registros Win64 completos de los proveedores modelados y del controlador de entrada. Los búferes parciales y las clases desconocidas detienen la ejecución explícitamente. La clase `196` utiliza `kernel_va_shadow_query` explícito; consulte su sección. |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Árbol explícito del registro limitado a la sesión, derechos por handle, consultas con tamaños de salida exactos y duración tras la eliminación; véanse los escenarios del registro |
 | `ZwEnumerateValueKey` | Enumeración Basic, Full y Partial por orden de creación; reemplazar conserva el índice, eliminar compacta y recrear añade al final. Requiere `KEY_QUERY_VALUE`; fuera de rango devuelve `STATUS_NO_MORE_ENTRIES`. Serialización compartida con consultas: datos Full x64 alineados a 8 bytes, desplazamiento `0xffffffff` sin datos; conserva relleno y unidades UTF-16 incompletas |
+| `ZwQueryKey`, `ZwEnumerateKey` | Consultas Basic, Node, Full, Name y Cached; enumeración Basic/Node/Full de subclaves directas vigentes en orden ASCII en mayúsculas. Consulta: `KEY_QUERY_VALUE` (Name acepta cualquier permiso concedido); enumeración: `KEY_ENUMERATE_SUB_KEYS`. Resultados exactos con búferes cortos, máximos conservados y tiempo declarado para devolver marcas temporales |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | Mappings no almacenados en caché de subrangos declarados, alias compartidos RO/RW y desasignación con base/longitud exactas |
 | `IoGetDmaAdapter` | Descripción explícita Internal de maestro de bus versión 0/1 y tabla vinculada de versión uno a PASSIVE_LEVEL; versiones posteriores devuelven NULL |
 | `AllocateCommonBuffer`, `FreeCommonBuffer`, `GetDmaAlignment`, `PutDmaAdapter` | Métodos de tabla del adaptador sobre RAM coherente compartida, identidad exacta de asignación y vida independiente del adaptador |
@@ -522,7 +523,7 @@ requisitos de reubicación. El comando de inicialización y la API C originales
 no implican ningún escenario.
 
 En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`,
-`kernel_exports`, `registry` y `pnp_devices`. Las solicitudes ordinarias de archivo aceptan `kind`, `device` o `device_id` opcionales (excluyentes) y un `file` opcional. Los IOCTL requieren `code` y aceptan `input`, `output_size`
+`kernel_exports`, `registry_system_time_100ns`, `registry` y `pnp_devices`. Las solicitudes ordinarias de archivo aceptan `kind`, `device` o `device_id` opcionales (excluyentes) y un `file` opcional. Los IOCTL requieren `code` y aceptan `input`, `output_size`
 y `direct_input`. Un `read` acepta `output_size` y `byte_offset`; un `write`
 acepta `input` y `byte_offset`. Los desplazamientos valen cero por defecto,
 aceptan enteros o cadenas hexadecimales y deben caber en un valor con signo de
@@ -656,6 +657,10 @@ informe; `registry` enumera las rutas y valores de las claves activas al final,
 incluidos los cambios observados antes de una detención. El estado del registro
 sin especificar se representa como null. La volatilidad y las identidades de
 handles no forman parte de esta instantánea de valores.
+
+Cada clave puede declarar `last_write_time_100ns`. El campo raíz `registry_system_time_100ns` define el tiempo Windows absoluto (100 ns desde 1601) en el instante virtual cero y exige un `registry` explícito. Ambos son enteros JSON de 0 a 9223372036854775807; cero es válido. Prevalece el tiempo de la clave; las demás claves iniciales y sus antecesores implícitos heredan el reloj. Sin fuente, el tiempo queda desconocido: Name y las consultas de tamaño funcionan, pero devolver una marca temporal detiene la ejecución explícitamente. Las mutaciones suman el tiempo transcurrido del planificador; el desbordamiento se rechaza antes de modificar. Sin reloj invalidan el tiempo afectado. Escribir el mismo tipo y datos lo conserva; crear/eliminar un hijo actualiza al padre. El informe conserva tiempos conocidos y configuración original, y omite tiempos desconocidos.
+
+Full/Cached devuelven recuentos actuales y conservan máximos históricos hasta que la lista correspondiente queda vacía. Cached requiere 40 bytes en x64 y conserva los últimos cuatro. Name también copia la ruta de una clave eliminada: salida completa con `STATUS_KEY_DELETED`, o estado habitual de búfer corto. Las instantáneas omiten los máximos almacenados y no son puntos completos de reanudación.
 
 ## Comprobación de aceptación con el ejemplo de Microsoft
 
