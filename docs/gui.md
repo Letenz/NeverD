@@ -809,9 +809,12 @@ show it: a name under the cursor renames what it denotes, otherwise the item
 the cursor is on. A data name replaces `qword_A410` in its label, every operand
 (`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
 name has no spaces, leads to one address and is never an automatic name such
-as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
-command line reads and writes too (`neverd rename <input> --addr <address>
---to <name>`, `--clear`).
+as `sub_1234`; the engine keeps these rules for every front end
+(`neverd_name_check`), and the listing adds its own names, such as a string's.
+A local copy may take an import's name, as a PDB or a map file names one,
+although the listing, which jumps by name, refuses it. Names are kept in
+`<input>.neverd-renames.json`, which the command line reads and writes too
+(`neverd rename <input> --addr <address> --to <name>`, `--clear`).
 
 **Edit → Code** (C) defines native instructions from the selected byte through
 one basic block, ending at a branch, return, unmodelled control transfer or

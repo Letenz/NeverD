@@ -6020,6 +6020,71 @@ TEST_F(SessionCAPITest, AStatedNoReturnReachesTheCallersOfItsCallers) {
   EXPECT_EQ(Whole.find("return 7;"), std::string::npos) << Whole;
 }
 
+TEST_F(SessionCAPITest, ANameLeadsToOneAddress) {
+  // The naming rules every front end keeps: an automatic form, or a name
+  // another address's function or symbol has, is refused; the address's own
+  // name, an empty one and an import's (a local copy may take it, as the
+  // safety tests' sinks do) pass, and a symbol the user named otherwise
+  // leaves its name free.
+  const std::string Binary = buildProgram(
+      "names", "#include <stdio.h>\n"
+               "int counter;\n"
+               "__attribute__((noinline)) int bump(int v) { counter += v; "
+               "return counter; }\n"
+               "int main(int argc, char **argv) { (void)argv; puts(\"x\"); "
+               "return bump(argc); }\n");
+  if (Binary.empty())
+    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
+#if defined(__APPLE__)
+  const std::string Prefix = "_";
+#else
+  const std::string Prefix;
+#endif
+  const auto named = [&](const char *Name) { return Prefix + Name; };
+  const auto entryOf = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, named(Name).c_str());
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? neverd_va_t(0) : neverd_func_entry(Session, Index);
+  };
+  const auto Bump = entryOf("bump"), Main = entryOf("main");
+  ASSERT_NE(Bump, 0u);
+  const auto refused = [&](int Result, const char *Why) {
+    const std::string Error = takeString(neverd_last_error(Session));
+    return Result == -1 && Error.find(Why) != std::string::npos;
+  };
+
+  EXPECT_TRUE(refused(neverd_name_check(Session, Bump, "sub_1234"),
+                      "is an automatic name"));
+  EXPECT_TRUE(refused(neverd_name_check(Session, Bump, "qword_4010"),
+                      "is an automatic name"));
+  EXPECT_TRUE(
+      refused(neverd_name_check(Session, Bump, "two words"), "no spaces"));
+  EXPECT_TRUE(refused(neverd_rename_addr(Session, Bump, named("main").c_str()),
+                      "is used at"));
+  EXPECT_TRUE(
+      refused(neverd_name_check(Session, Bump, named("counter").c_str()),
+              "is used at"));
+#if defined(__linux__)
+  EXPECT_EQ(neverd_name_check(Session, Bump, "puts"), 0)
+      << takeString(neverd_last_error(Session));
+#endif
+  EXPECT_EQ(neverd_name_check(Session, Bump, named("bump").c_str()), 0);
+  EXPECT_EQ(neverd_name_check(Session, Bump, ""), 0);
+
+  // Renamed, main's symbol no longer names its address, and its name is
+  // free for another function; neverd_rename_func keeps the same rules.
+  ASSERT_EQ(neverd_rename_addr(Session, Main, "entry_main"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(neverd_rename_addr(Session, Bump, named("main").c_str()), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(refused(neverd_rename_func(Session, "entry_main", "sub_10"),
+                      "is an automatic name"));
+  EXPECT_TRUE(
+      refused(neverd_rename_func(Session, "entry_main", named("main").c_str()),
+              "is used at"));
+}
+
 TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
   // After the entry routine: "hello", then a word, in the image's one
   // segment.

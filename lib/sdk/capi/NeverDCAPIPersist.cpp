@@ -230,6 +230,82 @@ int neverd_annotations_load(neverd_session_t Sess) {
 // Symbol renaming
 // ===--------------------------------------------------------------------===//
 
+namespace {
+/// The address an automatic name such as `loc_F2329` or `qword_3FB8` reads
+/// as (neverd/AutomaticNames.def, neverd/DataNames.def), else nothing.
+std::optional<va_t> automaticNameAddress(llvm::StringRef Name) {
+  static constexpr llvm::StringLiteral Prefixes[] = {
+#define NEVERD_AUTOMATIC_NAME_PREFIX(Prefix) Prefix,
+#include "neverd/AutomaticNames.def"
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix) Prefix,
+#define NEVERD_DATA_ITEM_NAME(Id, Prefix) Prefix,
+#include "neverd/DataNames.def"
+  };
+  constexpr size_t MaxHexDigits = 16;
+  for (llvm::StringRef Prefix : Prefixes) {
+    llvm::StringRef Digits = Name;
+    va_t Address = 0;
+    if (Digits.consume_front(Prefix) && !Digits.empty() &&
+        Digits.size() <= MaxHexDigits && !Digits.getAsInteger(16, Address))
+      return Address;
+  }
+  return std::nullopt;
+}
+
+/// Why \p Name cannot name \p Addr, as neverd_name_check answers; nothing
+/// when it can.  The function list must be synchronized.
+std::optional<std::string> nameProblem(const Session &S, va_t Addr,
+                                       llvm::StringRef Name) {
+  constexpr size_t MaxNameBytes = 4096;
+  if (Name.size() > MaxNameBytes ||
+      llvm::any_of(Name, [](unsigned char C) { return C <= ' ' || C == 0x7f; }))
+    return std::string("a name has at most 4096 bytes and no spaces or "
+                       "control characters");
+  if (Name.empty())
+    return std::nullopt;
+  if (automaticNameAddress(Name))
+    return Name.str() + " is an automatic name; choose another";
+  // A name leads to one address: a function's, the user's, or a symbol's no
+  // user name replaces.  An import's name, which the image gives the import's
+  // stub and slot, a local copy may take, as a PDB or a map file names one.
+  const auto usedAt = [&](va_t Other) {
+    return "the name " + Name.str() + " is used at " + vaHex(Other);
+  };
+  const auto importing = [&](va_t At) {
+    return At == 0 || S.Img.findImportAt(At) != nullptr;
+  };
+  for (const FuncInfo &F : S.Functions)
+    if (F.Entry != Addr && F.Name == Name && !importing(F.Entry))
+      return usedAt(F.Entry);
+  for (const auto &[Other, Renamed] : S.Renames)
+    if (Other != Addr && Renamed == Name)
+      return usedAt(Other);
+  for (const Symbol &Sym : S.Img.Symbols)
+    if (Sym.Addr != Addr && Sym.Name == Name && !S.Renames.count(Sym.Addr) &&
+        !importing(Sym.Addr))
+      return usedAt(Sym.Addr);
+  return std::nullopt;
+}
+} // namespace
+
+int neverd_name_check(neverd_session_t Sess, neverd_va_t Addr,
+                      const char *Name) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  (void)neverd_func_count(Sess);
+  if (const auto Problem = nameProblem(*S, Addr, Name ? Name : "")) {
+    S->setError(*Problem);
+    return -1;
+  }
+  return 0;
+}
+
 int neverd_rename_func(neverd_session_t Sess, const char *OldName,
                        const char *NewName) {
   auto *S = toSession(Sess);
@@ -239,6 +315,10 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
 
   for (auto &F : S->Functions) {
     if (F.Name == OldName) {
+      if (const auto Problem = nameProblem(*S, F.Entry, NewName)) {
+        S->setError(*Problem);
+        return -1;
+      }
       const auto PreviousName = F.Name;
       const auto PreviousOrigin = F.Origin;
       const auto PreviousRenames = S->Renames;
@@ -270,19 +350,15 @@ int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
     return -1;
   }
   const llvm::StringRef NewName = Name ? Name : "";
-  constexpr size_t MaxNameBytes = 4096;
-  if (NewName.size() > MaxNameBytes ||
-      llvm::any_of(NewName,
-                   [](unsigned char C) { return C <= ' ' || C == 0x7f; })) {
-    S->setError("a name has at most 4096 bytes and no spaces or control "
-                "characters");
+  (void)neverd_func_count(Sess);
+  if (const auto Problem = nameProblem(*S, Addr, NewName)) {
+    S->setError(*Problem);
     return -1;
   }
   if (!S->Img.readVA(Addr, 1)) {
     S->setError(vaHex(Addr) + " is not in the image");
     return -1;
   }
-  (void)neverd_func_count(Sess);
   const auto PreviousRenames = S->Renames;
   const auto PreviousOriginals = S->OriginalNames;
   if (NewName.empty()) {
