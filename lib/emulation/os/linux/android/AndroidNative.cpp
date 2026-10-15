@@ -175,6 +175,9 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock());
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
+  if (auto E = Kernel.initializeProc())
+    return std::move(E);
+  Kernel.setTaskProvider([&] { return Threads.procTasks(); });
   Bionic LibC(CPU, Kernel, Layout, Options, Result, *Resources, *Linked,
               &Threads);
   size_t NextConstructor = 0;

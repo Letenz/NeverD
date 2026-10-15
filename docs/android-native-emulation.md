@@ -427,6 +427,15 @@ The output transition contracts are pinned to AOSP's
 and [byte writer](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/fvwrite.c),
 with independent model code and synthetic tests.
 
+### Live process observations
+
+The optional [live proc and file metadata contract](linux-live-proc.md) supplies
+maps, task/status, fdinfo and FD links from the shared Linux owners. Bionic
+FILE/DIR buffering observes the same records as raw calls. Explicit tracked
+memory files maintain complete stat metadata using the virtual realtime clock.
+Unknown status fields, proc inode metadata and broader filesystem policies
+remain explicit boundaries; a live view does not imply complete Android procfs.
+
 ### Directory streams
 
 `opendir`, `fdopendir`, `readdir`/`readdir64`, `closedir`, `dirfd`, `telldir`,

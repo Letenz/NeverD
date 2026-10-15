@@ -23,15 +23,19 @@ public:
                 ProcessResult &Result)
       : CPU(CPU), Layout(Layout), Options(Options), Result(Result),
         Memory(*CPU.addressSpace(), Layout, InitialBreak, Options),
-        Files(CPU, Layout, Options.LinuxFiles, &Memory),
-        Signals(Options.LinuxSignals), Priority(Options.LinuxPriority),
-        Clock(Options.LinuxTime) {}
+        Clock(Options.LinuxTime),
+        Files(CPU, Layout, Options.LinuxFiles, &Memory, &Clock),
+        Signals(Options.LinuxSignals), Priority(Options.LinuxPriority) {}
 
   llvm::Expected<std::optional<uint64_t>>
   handle(const ProcessServiceEvent &Event, ThreadContext *Thread = nullptr);
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ThreadContext *Thread = nullptr);
+  llvm::Error initializeProc() { return Memory.initializeProc(); }
+  void setTaskProvider(std::function<std::vector<ProcTask>()> Provider) {
+    Files.setTaskProvider(std::move(Provider));
+  }
   auto descriptorStatus(uint32_t FD) const {
     return Files.descriptorStatus(FD, Result);
   }
@@ -54,10 +58,10 @@ private:
   const ProcessOptions &Options;
   ProcessResult &Result;
   LinuxMemory Memory;
+  LinuxClock Clock;
   LinuxFiles Files;
   LinuxSignals Signals;
   LinuxPriority Priority;
-  LinuxClock Clock;
 };
 
 } // namespace neverd::emulation::linux_model

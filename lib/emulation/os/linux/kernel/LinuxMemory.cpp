@@ -35,8 +35,9 @@ bool supportedProtection(uint64_t Protection) {
 
 LinuxMemory::LinuxMemory(AddressSpace &Space, const MemoryLayout &Layout,
                          uint64_t InitialBreak, const ProcessOptions &Options)
-    : Space(Space), PageSize(Layout.PageSize), UserLimit(Layout.UserLimit),
-      Limit(Options.MemoryLimit), MinimumBreak(InitialBreak),
+    : Space(Space), Options(Options), PageSize(Layout.PageSize),
+      UserLimit(Layout.UserLimit), Limit(Options.MemoryLimit),
+      MinimumBreak(InitialBreak),
       GuardBase(StackTop - Options.StackSize - PageSize),
       GuardEnd(StackTop + PageSize), ProgramBreak(InitialBreak) {}
 
@@ -128,6 +129,7 @@ llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
       return std::move(E);
     setMergeable(Begin, End - Begin, false);
     retireDeviceRanges(Begin, End - Begin);
+    retireProcMappings(Begin, End - Begin);
     Removed = true;
   }
   return Removed;

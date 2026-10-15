@@ -16,6 +16,10 @@ namespace neverd::emulation::linux_model {
 #undef NEVERD_LINUX_DIAGNOSTIC
 #undef NEVERD_LINUX_VALUE
 
+inline std::string procProcessPath() {
+  return "/proc/" + std::to_string(ProcessID);
+}
+
 inline llvm::Error failure(const char *Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }
@@ -33,6 +37,10 @@ struct MemoryLayout {
 /// Explicit OS-owned thread identity. The caller consumes Exit after a
 /// nonreturning SYS_exit; exit_group still terminates the whole process.
 /// An absent context retains the Linux single-thread workload contract.
+struct ProcTask {
+  uint32_t ID;
+  char State; // R: runnable, S: cooperative wait, Z: exited group leader.
+};
 struct ThreadContext {
   uint64_t ID = ThreadID;
   std::optional<uint64_t> Exit;

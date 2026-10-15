@@ -94,6 +94,48 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
   };
   for (const auto &[Key, V] : *Object) {
     llvm::StringRef Name = Key;
+    if (Name == field::DynamicProc) {
+      const auto *P = V.getAsObject();
+      auto Comm = P ? P->getString(field::Name) : std::nullopt;
+      const auto *Parent = P ? P->get(field::ProcParentPID) : nullptr;
+      auto PID =
+          Parent ? process_json::integer<uint32_t>(*Parent) : std::nullopt;
+      if (!P ||
+          P->size() != 2 + unsigned(P->get(field::ProcMappings) != nullptr) ||
+          !Comm || !PID)
+        return invalid(Name);
+      Out.DynamicProc = LinuxProcOptions{Comm->str(), *PID};
+      if (const auto *Rows = P->get(field::ProcMappings)) {
+        const auto *Array = Rows->getAsArray();
+        if (!Array || Array->size() > linux_model::FileCountLimit)
+          return invalid(field::ProcMappings);
+        for (const auto &Row : *Array) {
+          const auto *R = Row.getAsObject();
+          if (!R || R->size() != 7)
+            return invalid(field::ProcMappings);
+          LinuxProcMapping M;
+          auto N = [&](llvm::StringRef Key, auto &Value) {
+            using T = std::remove_reference_t<decltype(Value)>;
+            const auto *V = R->get(Key);
+            auto Number = V ? process_json::integer<T>(*V) : std::nullopt;
+            if (!Number)
+              return false;
+            Value = *Number;
+            return true;
+          };
+          auto Path = R->getString(field::Path);
+          auto Shared = R->getBoolean(field::ProcShared);
+          if (!Path || !Shared || !N(field::Address, M.Address) ||
+              !N(field::Size, M.Size) || !N(field::ProcOffset, M.Offset) ||
+              !N(field::FileDevice, M.Device) || !N(field::FileInode, M.Inode))
+            return invalid(field::ProcMappings);
+          M.Path = Path->str();
+          M.Shared = *Shared;
+          Out.DynamicProc->Mappings.push_back(std::move(M));
+        }
+      }
+      continue;
+    }
     if (Name == field::DynamicProcFDs) {
       auto B = V.getAsBoolean();
       if (!B)
@@ -168,9 +210,10 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
       return invalid(Name);
     for (const auto &File : *Files) {
       const auto *F = File.getAsObject();
-      if (!F ||
-          F->size() != 2 + unsigned(F->get(field::FileMetadata) != nullptr) +
-                           unsigned(F->get(field::FileWriteLimit) != nullptr))
+      if (!F || F->size() !=
+                    2 + unsigned(F->get(field::FileMetadata) != nullptr) +
+                        unsigned(F->get(field::FileWriteLimit) != nullptr) +
+                        unsigned(F->get(field::TrackWriteMetadata) != nullptr))
         return invalid(Name);
       auto Path = F->getString(field::Path);
       auto Bytes = F->getString(field::Bytes);
@@ -183,6 +226,13 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
                         std::vector<uint8_t>(Data.begin(), Data.end()))
                .second)
         return invalid(field::Path);
+      if (const auto *Track = F->get(field::TrackWriteMetadata)) {
+        auto Enabled = Track->getAsBoolean();
+        if (!Enabled)
+          return invalid(field::TrackWriteMetadata);
+        if (*Enabled)
+          Out.TrackWriteMetadata.insert(Path->str());
+      }
       if (const auto *Limit = F->get(field::FileWriteLimit)) {
         auto N = process_json::integer<uint64_t>(*Limit);
         if (!N)

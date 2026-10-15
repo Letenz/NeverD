@@ -3541,9 +3541,11 @@ do not need vocabulary entries.
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
 Mutable bytes are one object per granted catalogue path; independent opens
-have independent offsets, while dup shares its open description. Mutation
+have independent offsets, while dup shares its open description. Without a metadata provider, mutation
 invalidates captured stat observations, retaining only unchanged block-size
-facts for libc buffer selection. Directory and stdio buffers belong to Bionic,
+facts for libc buffer selection. Opt-in tracked memory files keep complete
+metadata and sparse allocated-page state in the same mutable object, borrowing
+time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
@@ -6374,3 +6376,14 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 `KernelModelObjects.cpp` owns process/thread pointer references, handle metadata and retirement. Scheduling owns execution holds and exit; waits retain their existing domain holds. Referenced borrowed threads survive callback/stack retirement. Reused stacks get new identities and priorities, while retained old objects preserve their exit priority. Process identities remain session-owned; registry handles still route to the registry owner pending integration.
 
 `KernelDataExports.def` owns the kernel data inventory and layout outside the PE forwarder span. `KernelExportRegistry` separates data addresses from function gates without consuming thunk slots. `KernelModelDataExports.cpp` initializes identities through the object owner and protects data pages before entry. `KernelModelMemory` observes successful model reads; CPU read hooks cover guest instructions. Preflight and diagnostic snapshots remain pure. Declared debugger facts and consumed data retain recovery dependencies; retained data pointers remain borrowed state.
+
+### Live proc and maintained file metadata
+
+`LinuxProc` classifies the optional live namespace, borrowing task snapshots
+directly from GuestThreads through LinuxServices. It owns no second scheduler.
+`LinuxProcRead` retains record buffering in the shared open description, and
+fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
+`LinuxProcMaps` intersects optional backing identities and device aliases with
+AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
+labels on unmap. JSON supplies explicit identity/provider declarations only.
+See [live proc](linux-live-proc.md) for the supported fields and boundaries.

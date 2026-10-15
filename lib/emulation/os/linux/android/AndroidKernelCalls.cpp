@@ -9,6 +9,12 @@
 #include <algorithm>
 
 namespace neverd::emulation::android_model {
+llvm::Expected<std::optional<uint64_t>>
+Bionic::kernelService(linux_model::ServiceKind Kind,
+                      const ProcessServiceEvent &Event) {
+  return Kernel.handle(Kind, Event, Threads ? Threads->kernel() : nullptr);
+}
+
 BionicResult Bionic::kernelCall(std::optional<linux_model::ServiceKind> Kind,
                                 const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
@@ -27,7 +33,7 @@ BionicResult Bionic::kernelCall(std::optional<linux_model::ServiceKind> Kind,
   // Raw Linux service semantics are shared. Bionic alone owns errno/-1.
   auto *Thread = Threads ? Threads->kernel() : nullptr;
   auto Returned =
-      Kind ? Kernel.handle(*Kind, Event, Thread) : Kernel.handle(Event, Thread);
+      Kind ? kernelService(*Kind, Event) : Kernel.handle(Event, Thread);
   if (!Returned)
     return Returned.takeError();
   return kernelResult(*Returned);

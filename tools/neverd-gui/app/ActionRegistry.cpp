@@ -89,10 +89,15 @@ void ActionRegistry::buildMenus(QMenuBar *bar, const PlaceholderFiller &fill) {
     if (auto *menu = menus_.value(QString::fromLatin1(menuId)))
       fill(menu, QString::fromLatin1(name));
   };
+  const auto setMenuIcon = [&](const char *menuId, const char *name) {
+    if (auto *menu = menus_.value(QString::fromLatin1(menuId)))
+      menu->setIcon(icon(QString::fromLatin1(name)));
+  };
 #define NEVERD_MENU(Id, Parent, Text) makeMenu(#Id, #Parent, Text);
 #define NEVERD_MENU_ITEM(Menu, Action) addItem(#Menu, #Action);
 #define NEVERD_MENU_SEPARATOR(Menu) addSeparator(#Menu);
 #define NEVERD_MENU_PLACEHOLDER(Menu, Name) addPlaceholder(#Menu, #Name);
+#define NEVERD_MENU_ICON(Menu, Icon) setMenuIcon(#Menu, Icon);
 #include "Menus.def"
   retranslate();
 }
