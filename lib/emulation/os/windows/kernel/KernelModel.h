@@ -865,6 +865,10 @@ private:
   bool EntryFinished = false;
   std::optional<std::map<uint64_t, std::vector<uint8_t>>> UnpackBaseline;
   bool UnpackOpaqueEffects = false;
+  llvm::Error validateQueryBuffer(uint64_t Address, uint32_t Size,
+                                  bool Writable, llvm::StringRef API);
+  std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  llvm::Expected<uint64_t> queryKernelVaShadow(llvm::ArrayRef<uint64_t> Args);
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
   std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;

@@ -50,6 +50,9 @@ target_sources(NeverDEmulation PRIVATE
   KernelModel.cpp
   KernelLoaderView.cpp
   KernelVersionQuery.cpp
+  KernelVaShadowQuery.cpp
+  KernelModelVaShadow.cpp
+  KernelQueryBuffer.cpp
   KernelModelVersion.cpp
   KernelUnpackState.cpp
   KernelCalls.cpp

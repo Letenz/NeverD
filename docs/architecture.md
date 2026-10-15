@@ -6040,3 +6040,7 @@ The default-false public C++ option and FileSystemCreatedSymbolicLinkObjects wir
 DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains the sole2168-byte serializer. fstatfs64 on O_SYMLINK selects LinkNode.FileSystem; path statfs64 retains FollowFinal and effective ancestor SEARCH. A link and its followed target can carry different snapshots, even with equal declared IDs. Opaque streams remain kind-unsupported. Snapshot pointers survive dup, rename, moved/exchanged parents and held unlink; replacement names bind new objects. Querying does not repair invalid stat or confer I/O, mode/ownership/time/namespace/quota or mount identity authority. C functions, constructor, dispatch, dependency pins and scheduling are unchanged.
 
 `WindowsRegistrationStackCopies` separately checks emitter-private ESP copies at PHI joins. All defining values must retain the same independently derived displacement, and every load needs a definition on every predecessor or a checked callback-entry definition. Missing paths, unknown values, changed offsets and unproved resumes remain rejected.
+
+### Declared kernel VA shadow query
+
+`KernelSystemInformation.cpp` owns class and previous-mode dispatch. `KernelModelVaShadow.cpp` owns the four-byte result. `KernelQueryBuffer.cpp` shares object, permission and physical-alias admission with version queries; class 11 retains its existing behavior. Declaration parsing never supplies memory or mitigation authority.
