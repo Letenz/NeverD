@@ -2,19 +2,20 @@
 
 This table records implemented behavior separately from plans. The criterion
 audit for #714–#718 is [separate](web-epic-acceptance.md); no single foundation
-milestone implies epic completion. Qualification below is local
-macOS arm64 Release. The integrated-LLVM full, parser-disabled and
+milestone implies epic completion. Unless an entry names another host,
+qualification below is local macOS arm64 Release. The integrated-LLVM full, parser-disabled and
 backend-disabled configurations were built and checked on that host. The
 separate current-dev integration uses prebuilt LLVM 23.0.0 r4 without Zstd
 and an optional pinned native static Zstandard 1.5.7 SDK; its checks and
 omissions are recorded in the
 [implementation ledger](web-analysis-implementation.md).
-Other hosts require separate evidence.
+The selected Windows Server 2025 x64 product has separate native and extracted
+archive [qualification](web-windows-product.md). Other hosts require separate evidence.
 
 | Surface | Implemented profile | Qualification / outstanding work |
 |---|---|---|
-| Artifact import | `posix-descriptor-v1` / `windows-ntfs-handle-v1` | Immutable capture and revision checks; the Windows implementation admits local fixed NTFS and refuses reparses, alternate streams and hard links. Native Windows qualification is pending in the [product lane](web-windows-product.md) |
-| Original-byte storage | `posix-unlinked-spool-v1` / `windows-private-unlinked-spool-v1` | Private unlinked spools, bounded immutable range reads and owned lifetime; POSIX 512 MiB input qualified locally. Windows adds protected ACLs and closes writable access at seal; native qualification pending |
+| Artifact import | `posix-descriptor-v1` / `windows-ntfs-handle-v1` | Immutable capture and revision checks. Windows Server 2025 x64 qualifies local fixed NTFS and reparse, alternate-stream and hard-link refusal in the [product lane](web-windows-product.md) |
+| Original-byte storage | `posix-unlinked-spool-v1` / `windows-private-unlinked-spool-v1` | Private unlinked spools, bounded immutable range reads and owned lifetime; POSIX 512 MiB input qualified locally. Windows qualifies protected ACLs, closing writable access at seal and a 65 MiB + 1 byte C API capture without expanding parser budgets. [Windows qualification](web-windows-product.md) |
 | JavaScript syntax | `hermes-602befee-js-v3` | Script/module/CommonJS, byte spans, async-rest location/comma regressions, `using`/`await using`, module await, selected modern syntax and malformed/deep input tested; [resource profile](web-resource-management-profile.md), complete syntax/semantic coverage not claimed |
 | Explicit large-source syntax/navigation | `hermes-602befee-large-source-js-v1` | Same grammar with separate 8 MiB/1.5M-node admission, one large source per revision, profile-bound identities, original anchors and existing paginated consumers; independent analysis budgets can still refuse. See the [selection contract](web-passive-report-profile.md#explicit-large-source-selections). |
 | Source maps | `source-map-v3-offline-v1` | Basic and inline indexed maps, UTF-16/bytes, malformed offsets/VLQ, budgets and private embedded content tested; no automatic association or URL retrieval |
@@ -39,8 +40,8 @@ Other hosts require separate evidence.
 | Bun standalone | Bun 1.4.2 ELF/Linux, thin Mach-O/macOS and PE/Windows, each x64 and ARM64; prelinked graph extensions | 25 self-authored full compiler outputs qualify the six baseline container layouts; [eight captured Claude Code 2.1.296 npm packages](web-claude-code-cross-platform-qualification.md) additionally qualify real prelinked/runtime-options data and complete shipped-JS recovery on the six targets, including supplied Linux libc variants. Linked-bytecode refused, caches opaque, version unauthenticated. [Exact matrix](web-bun-profile.md) |
 | Explicit Bun local export | `bun-local-evidence-export-v1`, `hermes-602befee-recovery-js-v2` | C++ CLI/C API preserve original/regions, decoded JS and reparse-verified readable copies in a fresh private directory with an inert index; no worker export, original TypeScript recovery or native/cache decompilation. [Real artifact qualification](web-claude-code-qualification.md) |
 | Bun serialized maps | `bun-1.4.2-serialized-source-map-v1` | C++ windows/varints and bounded in-process Zstd; preserved compiler maps and hostile C++ fixtures; retained anchors only, producer-discarded names/unmapped boundaries stay unknown; requires LLVM Zstd or the exact native static SDK 1.5.7. [Dependency profile](web-bun-profile.md#serialized-source-maps) |
-| Explicit native handoff | `immutable-native-handoff-v1` | C++ snapshot/file parity for x64 ELF/PE/thin Mach-O and AArch64 ELF, snapshot lifetime, Bun native assets and a full pinned Bun container; 9 cases passed locally. Universal slices and other host qualification pending; native loading does not qualify an extractor |
-| ASAR | `asar-pickle-json-v1` | Fixed upstream archives and C++ malformed fixtures, explicit packed/unpacked association, integrity, source/map/anchor/native consumers and direct/framed parity qualified locally; ICU 77.1 runtime deployment and other hosts remain unqualified. [Profile](web-asar-profile.md) |
+| Explicit native handoff | `immutable-native-handoff-v1` | C++ snapshot/file parity for x64 ELF/PE/thin Mach-O and AArch64 ELF, snapshot lifetime, Bun native assets and a full pinned Bun container; 9 cases passed locally and eight self-contained cases on the qualified Windows host. Universal slices and other hosts remain pending; native loading does not qualify an extractor |
+| ASAR | `asar-pickle-json-v1` | Fixed upstream archives and C++ malformed fixtures, explicit packed/unpacked association, integrity, source/map/anchor/native consumers and direct/framed parity qualified locally. The Windows product also qualifies native ASAR and app-local ICU 77.1; other hosts need separate evidence. [Profile](web-asar-profile.md) |
 | Archive name comparison | `icu-77.1-nfc-casefold-portable-v1` | Native NFC/full folding with Unicode 16.0, device/path/collision checks for ASAR and selected unpacked members; original input capture and general export are not yet unified under this policy |
 | Module-origin source candidates | `javascript-module-origin-candidates-v2` | ESM/require, exact import-row identity, lexical aliases, object destructuring and construction boundaries; shared class declaration projection; writes/dynamic lookup/eval/budgets refuse links. No runtime module/object value proof |
 | Electron manifest / source boundaries | `electron-40-package-entry-candidates-v1` / `electron-static-boundaries-v1` | Captured exact-file main candidates and source-visible window/preload/renderer/IPC/bridge records; framework/version/target verification and app-level entry graph remain pending. [Profile](web-electron-profile.md) |
@@ -68,8 +69,8 @@ Other hosts require separate evidence.
 | Sequential local readable source | `source-local-readable-export-v1`, `hermes-602befee-recovery-js-v2` | Explicit immutable direct-byte selections, 32 MiB recovery/output, exact original/expanded origins, fixed exclusive exports and same-parser-tree checks. Large models never enter interactive semantic caches; deleted source information and runtime equivalence are unverified. [Profile](web-readable-export-profile.md) |
 | Tauri | `tauri-phf-0.10-macho-x64-five-store-brotli-v1` | Native LowIR initializer selection, complete PHF lookup and bounded in-process Brotli admission. A real lencx/ChatGPT v1.1.0 release provides 15 exact assets, 9 verified readable JS members, nested old-GNU archive evidence and original native handoff. Other layouts/ISAs/encodings, Rust type/version identity and runtime mounts/bridges remain unqualified. [Profile](web-tauri-profile.md) |
 | CEF/WebView supplied local assets | `cef-webview-local-resource-descriptor-v1` | Explicit local descriptor, exact captured directory/ZIP asset/native links, opaque/missing states and verified fixed-name local export. Supplied framework/version claims are unverified; custom/native `.pak` embedding remains unsupported. [Profile](web-desktop-resource-profile.md) |
-| C++ worker | `web_` operations in protocol 1.1 | Real framed-process, direct-query parity, web/native revision isolation and private-output checks passed locally |
-| C++ MCP transport | `neverd-offline-web-mcp-v1`, MCP 2025-06-18 stdio | Shared worker/C API adapter, launch-configured input indices and capability-filtered tools; structural views only, no raw export/deep native analysis. [Profile and qualification limits](web-mcp-profile.md) |
+| C++ worker | `web_` operations in protocol 1.1 | Real framed-process, direct-query parity, web/native revision isolation and private-output checks passed locally; the extracted Windows product also qualifies its actual framed worker process |
+| C++ MCP transport | `neverd-offline-web-mcp-v1`, MCP 2025-06-18 stdio | Shared worker/C API adapter, launch-configured input indices and capability-filtered tools; structural views only, no raw export/deep native analysis. The extracted Windows product qualifies actual initialization and import preview. [Profile and qualification limits](web-mcp-profile.md) |
 
 The ASAR increment restored the backend, JavaScript parser, ASAR and LLVM Zstd
 options to ON. Its final local run passed 185 of 186 registered web cases;
@@ -79,8 +80,9 @@ behavior was also checked, including explicit refusal through SDK/CLI/worker.
 An earlier worker initial-handshake timeout remains unisolated despite three
 unchanged isolated passes and the final full-worker pass. See the
 [implementation ledger](web-analysis-implementation.md#asar-and-captured-unpacked-members--2026-10-10)
-for the per-profile counts, skipped coverage and failure evidence. Fixed native
-ICU runtime packaging and other host qualification remain outstanding.
+for the per-profile counts, skipped coverage and failure evidence. Subsequent
+Windows product qualification includes app-local ICU 77.1; other hosts still
+require separate evidence.
 
 The subsequent manifest/source increment passed 201 of 202 web cases after
 restoring all options, with one expected ASAR-omission-only skip, and all nine

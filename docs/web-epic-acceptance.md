@@ -152,9 +152,12 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   at `e669ac89e` passes all eleven producer and fifteen CEF/resource cases
   with zero failures/skips. Explicit invalid HTTP selection still fails
   preflight and the final gate. Windows input formats are supported on
-  the qualified macOS host. The Windows analysis-host reader, private spool,
-  export owners and product release gate are implemented; native and extracted
-  package qualification remain pending in the [Windows product lane](web-windows-product.md).
+  the qualified macOS host. The [Windows product lane](web-windows-product.md)
+  now qualifies the Windows Server 2025 x64 NTFS reader, private spool and
+  export owners, with 110 native cases, two adapter checks and six extracted
+  package checks at `d7af8fd05`, all without failures or skips. Formal product
+  publication requires Windows and complete producer/resource qualification
+  at the same source commit and publishes the exact verified archive.
 
 Erased TypeScript information, general JSC/V8 bytecode decompilation, universal
 framework support and fabricated live traffic are not missing acceptance work.

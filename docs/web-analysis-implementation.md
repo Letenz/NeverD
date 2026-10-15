@@ -36,7 +36,7 @@ their existing scope; no Python support for web APIs is claimed.
 | Work | Current state | Evidence required before completion |
 |---|---|---|
 | P0 identity/schema/profile contract | [Schema](web-artifact-schema.md), [support matrix](web-support-matrix.md) and pinned parser documented | Container layout dependencies and fixture manifests remain |
-| P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified | Broader host qualification and redaction/export remain; Windows pending |
+| P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified. Windows Server 2025 x64 now passes native ownership and extracted product checks, recorded below | Other hosts, unified input/archive/export filename rules and additional size qualification remain |
 | P2 SDK/CLI/worker | Thirty-four SDK/CLI tests passed, including navigation/storage/view anchors and direct Bun navigation/view/anchor commands; C++ worker adapter/framed-process and all nine worker regressions passed | Broader host, cancellation/resource and distribution qualification remain |
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
@@ -4022,3 +4022,47 @@ is skipped as intended. Both public source-companion download/envelope and
 all 205 contained source archive hashes are verified. The new qualified-ref
 receipt and both JUnit reports are retained as additional corpus Release
 assets; earlier receipts remain unchanged.
+
+### Native Windows host and extracted product qualification (2026-10-15)
+
+The [Windows product contract](web-windows-product.md) now has actual Windows
+Server 2025 x64 evidence. `platform/WindowsFile` owns fixed local NTFS traversal,
+retained identities, reparse/stream/hard-link refusals, private current-user
+creation, unlinked spools and no-clobber publication. Input capture, blob
+storage and both export owners use that layer. Captured bytes survive source
+deletion; sealing removes writable access and serializes shared range reads.
+
+NTFS can retain stale directory timestamps in enumeration records. The native
+regression binds the enumerated identity/type and compares authoritative
+opened-handle revisions before and after capture. File revision checks remain
+in place. A changed directory revision and replacement still refuse. Native
+manifest publication uses retained directory handles and does not replace an
+existing target; rewrite rollback preserves foreign files.
+
+The [complete native/archive run](https://github.com/NeverSight/NeverD/actions/runs/38675592150)
+at `d7af8fd059fdee3c9fcaf05713d6f9f2061a459b` passes **110 native cases,
+two adapter checks and six installed checks**, with zero failures or skips.
+The selection includes sixteen Windows ownership cases and eight independent
+native handoff cases. The 65 MiB + 1 byte original import retains separate
+source/map parser bounds. The extracted archive's independent C++ consumer
+loads its DLL/ICU and drives its CLI, framed worker and MCP with development
+paths removed. It checks the worker's initial hello/schema and both CLI JSONL
+records, plus immutable source export, ASAR and private stderr.
+
+The product contains the CLI, public C ABI DLL/import library and headers,
+worker, MCP, ICU 77.1, matching app-local CRT and notices. Native dependency
+paths are normalized before generating install rules. The LLVM producer's
+MSVC 14.51.36231 runtime boundary is enforced and a small LLVM consumer links
+and runs before the full engine build. Native source/toolchain/dependency
+pins, every required test and every archive member are bound by the receipt.
+The formal release gate also requires all eleven producer and fifteen CEF
+resource cases at the same source commit; it reaudits and publishes the
+qualified ZIP without rebuilding or overwriting an existing Release.
+
+The local owning rebuild at `b2523a9f0` passes 807 of 852 Web cases with 45
+explicit optional/omission skips and no failures. After the subsequent native
+integration at `b86f9c4e5`, the rebuilt nine native cases, including full Bun,
+and both worker/MCP adapters pass without skips. These local receipts do not
+replace the separate Windows or formal same-source publication gates. Windows
+ARM64/other host releases, additional package managers, general module/dataflow
+resolution and wider framework coverage remain outside this delivery profile.

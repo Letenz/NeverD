@@ -46,6 +46,15 @@ the existing complete producer/resource gate at the same source commit before
 publishing those exact verified bytes. The receipt and checksum identify the
 source, dependency pins, selected host profile and qualification run.
 
+The [native and extracted archive qualification](https://github.com/NeverSight/NeverD/actions/runs/38675592150)
+at `d7af8fd059fdee3c9fcaf05713d6f9f2061a459b` passes 110 native cases,
+two adapter checks and all six installed checks with zero failures/skips on
+Windows Server 2025 x64. The native selection includes sixteen NTFS ownership
+cases and eight self-contained native handoff cases. The installed consumer
+uses only System32 in PATH, loads this archive's DLL/ICU, and exercises immutable
+export, ASAR, CLI metadata/inventory JSONL, the worker handshake and MCP import
+preview. The product receipt binds every archive member and its exact bytes.
+
 The Windows x64 host qualification does not establish ARM64 host support,
 universal framework coverage or general bytecode semantics. Existing named
 input/profile limitations remain in the [support matrix](web-support-matrix.md).
