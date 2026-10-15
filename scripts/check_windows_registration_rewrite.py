@@ -89,7 +89,10 @@ EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-search-filter", "longjmp-search-filter-zero",
                   "longjmp-retired-scope", "longjmp-retired-inner-scope",
                   "longjmp-callee", "longjmp-returning-callee",
-                  "longjmp-scalar-callee")
+                  "longjmp-scalar-callee", "longjmp-filter-correlated-state",
+                  "longjmp-filter-shared-state", "longjmp-filter-captured-cursor",
+                  "longjmp-filter-negative-disposition", "longjmp-filter-skipped-scope",
+                  "longjmp-filter-two-resume-mappings", "longjmp-filter-callback-activation")
 CASES.update({prefix + name: CASES[name]
               for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
 CASES.update({prefix + name: (number, 23)
@@ -309,7 +312,8 @@ def main(argv: list[str] | None = None) -> int:
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_multistate_jump.s"] +
                    (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
-                   else ["registration_jump_eh4.s" if jump else "registration_seh4.s",
+                   else ["registration_filter_state_eh4.s" if 36 <= case <= 42 else
+                         "registration_jump_eh4.s" if jump else "registration_seh4.s",
                     "registration_eh4_runtime.c"] if eh4
                    else ["registration_shared_calls.s" if case == 47 else
                          "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
