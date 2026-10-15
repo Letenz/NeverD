@@ -233,6 +233,26 @@ equivalence is not claimed. The Rosetta profile independently denies external
 file reads, child execution and IPv4/IPv6 networking, but does not claim the
 unobserved writable-file executable-mapping denial.
 
-Linux ARM64 source export and pinned compiler/image preparation have started.
-Its reconstruction and execution acceptance are not yet complete. The overall
+Linux ARM64 also completes the same acceptance with its own captured sample,
+pinned independent compiler and architecture-specific Debian image digests.
+Its 2,345 JavaScript modules and 244 assets rebuild to 140,036,904 bytes with
+SHA-256 `728c0066f8c60b2cffd325ed21b7710ff357455b2a68da35df79121d90b01cc9`.
+Two independent builds and the relocatable package's clean build match;
+direct package smoke verification passes. NeverD independently reads back all
+2,589 module records and their storage hashes. All seven configuration and
+22 behavior cases pass and match the ARM64 original. Its two native addons
+pass both standalone and embedded loading, matching export descriptors,
+cached identity and exact materialized bytes, with a separately pinned ARM64
+ALSA library and no device calls. Navigation has 226,839 anchored records.
+
+The native ARM64 environment exposed a fixture assumption: opening the running
+ELF for writing returns ETXTBSY before mount permissions are checked. A separate
+non-executing read-only canary returns EROFS and now qualifies that property;
+the original failed probe remains evidence. Existing amd64 images were retained
+when Docker rejected assigning their multi-architecture digest to a second
+architecture; the ARM64 compiler uses its verified architecture-specific digest.
+
+The Linux x64 and ARM64 musl variants now have independent runtime downloads
+verified against the pinned official checksums; source export is in progress.
+They have not yet completed reconstruction and runtime acceptance. The overall
 goal remains open.
