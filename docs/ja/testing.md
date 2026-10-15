@@ -1794,6 +1794,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` は正確な恒等式、追加入力、ルートの同一性、証人をキャッシュしない到達不能述語、既定動作、構造准入と測定の課金、呼び出し後のノード超過拒否を検査します。`FrameNormalizationPreservesStoresAndNativeReturns` と `RawCodeFrameNormalization*` は独立したバイト評価器で元のメモリ効果と実際の戻り先を検査し、適用可能な両バイト順序、過不足のない予算と不足予算、レシート改変を扱います。`FrameNormalizationStrategyBindsIndependentProof` は両方のバイナリ証明の識別を検査します。
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` は、キャッシュ済み履歴への再課金を防ぎ、追加した幅広定数の課金、作業量・ノード上限不足での拒否、可読性キャッシュのコピー独立性を検証します。
+
 ## ネイティブ Lift 検証
 
 `Lift native qualification` ワークフローは、以前検証できなかった 108 件（失敗 62 件、スキップ 46 件）を担当します。ネイティブ Linux x86-64 ランナーに Clang 23 以降、GNU GCC、i386 開発ライブラリを導入し、固定リビジョンのバイナリコーパスを初期化します。`unittests/Inputs/lift-qualification.json` は元の全テスト識別子を保持します。`scripts/run_lift_qualification.py` は欠落、重複、無効化、スキップ、失敗、非ゼロ終了を拒否します。`qualification.json` は個別の成功、ソースとコーパスのリビジョン、コンパイラのバージョン、バイナリハッシュを記録します。

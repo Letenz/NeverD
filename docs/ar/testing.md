@@ -1819,6 +1819,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 تغطي `FrameOffsets.*Normalization*` المتطابقات الدقيقة والمدخلات الإضافية وهوية الجذر والشروط المستحيلة دون شهود مخبأة والسلوك الافتراضي وتكاليف البنية والقياس والرفض عند تجاوز عدد العقد. تختبر `FrameNormalizationPreservesStoresAndNativeReturns` و`RawCodeFrameNormalization*` آثار الذاكرة الأصلية وعناوين العودة الفعلية بمراجع بايتات مستقلة، وترتيبي البايتات حيث ينطبقان، وميزانيات العمليات الكافية تمامًا أو الناقصة وتعديل الإيصالات. تتحقق `FrameNormalizationStrategyBindsIndependentProof` من هويتي الإثبات الثنائي.
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` يتحقق من عدم احتساب السجل المخزن مؤقتًا مرة أخرى، واستمرار احتساب الثوابت العريضة المضافة، ورفض ميزانيات العمل والعقد غير الكافية، واستقلال نسخ مخبأ قابلية القراءة.
+
 ## التحقق الأصلي من Lift
 
 يغطي سير العمل `Lift native qualification` الحالات الـ108 التي لم يكتمل التحقق منها سابقًا (62 فشلًا و46 تخطيًا). يثبت Clang 23 أو أحدث وGNU GCC ومكتبات تطوير i386 على مشغّل Linux x86-64 أصلي، ويهيئ مجموعة الملفات الثنائية عند مراجعتها المثبتة. يحتفظ `unittests/Inputs/lift-qualification.json` بجميع معرفات الاختبارات الأصلية. يرفض `scripts/run_lift_qualification.py` الحالات المفقودة أو المكررة أو المعطلة أو المتخطاة أو الفاشلة، وكذلك رمز خروج العملية غير الصفري. يسجل `qualification.json` كل نجاح ومراجعات المصدر ومجموعة الملفات وإصدارات المترجمات وبصمات الملفات الثنائية.

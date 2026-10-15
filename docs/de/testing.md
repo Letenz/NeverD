@@ -1910,6 +1910,8 @@ Die 204 Beobachtungen des früheren Übersetzungsprofils sind historische Belege
 
 `FrameOffsets.*Normalization*` prüft exakte Identitäten, zusätzliche Eingaben, Wurzelidentität, unerfüllbare Prädikate ohne gespeicherten Zeugen, Standardverhalten, Struktur- und Messkosten sowie Ablehnung nach Überschreiten des Knotenlimits. `FrameNormalizationPreservesStoresAndNativeReturns` und `RawCodeFrameNormalization*` prüfen ursprüngliche Speichereffekte und physische Rücksprungwörter mit unabhängigen Byte-Orakeln, beide anwendbaren Byte-Reihenfolgen, exakte oder zu kleine Operationsbudgets und veränderte Belege. `FrameNormalizationStrategyBindsIndependentProof` prüft beide binären Beweisidentitäten.
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` prüft, dass zwischengespeicherte Historie nicht erneut berechnet wird, angehängte breite Konstanten weiterhin Zulassungskosten haben, knappe Arbeits- und Knotenbudgets ablehnen und kopierte Lesbarkeitscaches unabhängig bleiben.
+
 ## Native Lift-Qualifikation
 
 Der Workflow `Lift native qualification` prüft die zuvor nicht qualifizierten 108 Fälle (62 Fehler und 46 übersprungene Tests). Er installiert Clang 23 oder neuer, GNU GCC und die i386-Entwicklungsbibliotheken auf einem nativen Linux-x86-64-Runner und initialisiert den festgelegten Binärkorpus. `unittests/Inputs/lift-qualification.json` erhält jede ursprüngliche Testidentität. `scripts/run_lift_qualification.py` weist fehlende, doppelte, deaktivierte, übersprungene oder fehlgeschlagene Fälle sowie einen Prozessrückgabewert ungleich null zurück. `qualification.json` protokolliert einzelne Erfolge, Quellcode- und Korpusrevisionen, Compilerversionen und Binärhashes.
