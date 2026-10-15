@@ -38,8 +38,11 @@ public:
 
 protected:
   void resizeEvent(QResizeEvent *event) override;
+  void showEvent(QShowEvent *event) override;
 
 private:
+  /// Fix the height to what the lines need at the dialog's width.
+  void fitHeight();
   /// Show the detail line elided to the room it has.
   void elideDetail();
 
