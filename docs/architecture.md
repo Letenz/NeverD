@@ -160,6 +160,29 @@ source MedIR call/return recovery. A later HighC request resumes only that
 projection through the ordinary HighIR completion boundary; it does not relift
 instructions or mutate the MedIR retained by LLVM emission.
 
+The LLVM IR view of a function (`neverd_ir_llvm`, and the `llvm` pages of
+`neverd_ir_view_json`) is that function moved into a module of its own, as
+`llvm-extract` moves it (`lib/sdk/capi/LLVMFunctionView.cpp`). Every global its
+instructions, own operands and attached metadata reach, and those the
+declarations' metadata reach, is declared without an initializer; the body is
+cloned and the original module's flags kept, so the text verifies alone. Other
+named metadata stays with the whole module, and a slice that does not verify
+shows the function alone after a comment that says why. Comments read image
+addresses only from authoritative identities: NeverD's mirrors by their
+`__nd_data_`/`__nd_codeptr_` spelling plus constant offsets, functions by their
+source identity. Data is named as the listing names it (user names, import
+slots with the suffix `DataNames.def` shares with the listing, debug and image
+symbols, strings). Pages publish where the prelude ends and the epilogue
+begins, and, line by line, the image address each spelled global stands for.
+A mirror an instruction reaches at several offsets maps its spellings in
+printing order only when the counts agree, otherwise to its first byte. The
+rendered view is kept with the inspection module and dropped with the user's
+names. Its rows stay unmapped (`unsupported_representation`), and the worker's
+named view renames the references' spellings with the text. Bytecode keeps its
+whole module as its text (`neverd_ir_llvm`), and its `llvm` pages report its
+architecture as unsupported, as its C pages do. A function another
+module only declares has no identity there, so the GUI resolves its name.
+
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only
 replicas and database packing. Source identity and exact row anchors prevent

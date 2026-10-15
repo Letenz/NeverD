@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "InstructionFlow.h"
+#include "LLVMFunctionView.h"
 #include "NativeMobileSession.h"
 #include "SessionImpl.h"
 #include "SessionTestAccess.h"
@@ -15,8 +16,12 @@
 #include "neverd/support/ProjectWriteLock.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
@@ -25,6 +30,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SHA256.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -4388,13 +4394,12 @@ TEST_F(SessionCAPITest,
   EXPECT_EQ(VM.getString("mapping_status"), "unsupported_architecture");
   EXPECT_TRUE(VM.getArray("rows")->empty());
   EXPECT_FALSE(VM.getString("text"));
-  for (const char *Stage : {"high", "llvm"}) {
-    auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
-    EXPECT_EQ(Unsupported.getString("mapping_status"),
-              "unsupported_representation");
-    EXPECT_TRUE(Unsupported.getArray("rows")->empty());
-  }
-  for (const char *Stage : {"c", "llvmc"}) {
+  auto High = takeView(neverd_ir_view_json(Session, 0, "high", 0, 2));
+  EXPECT_EQ(High.getString("mapping_status"), "unsupported_representation");
+  EXPECT_TRUE(High.getArray("rows")->empty());
+  // Bytecode shows its whole LLVM module (neverd_ir_llvm); only native code
+  // pages one function's.
+  for (const char *Stage : {"c", "llvmc", "llvm"}) {
     auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
     EXPECT_EQ(Unsupported.getString("mapping_status"),
               "unsupported_architecture");
@@ -4982,6 +4987,230 @@ TEST_F(SessionCAPITest,
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), Source);
     }
   }
+}
+
+TEST_F(SessionCAPITest, LLVMViewShowsTheFunctionInAModuleOfItsOwn) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "builds an x86-64 glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // _start calls __libc_start_main through the slot its GOT holds, and main
+  // reads its strings from .rodata: both through NeverD's image mirrors.
+  const std::string Binary =
+      buildProgram("llvm-view", "#include <stdio.h>\n"
+                                "int main(int argc, char **argv) {\n"
+                                "  printf(\"%d\\n\", argc);\n"
+                                "  puts(\"after printf\");\n"
+                                "  return 0;\n"
+                                "}\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const neverd_va_t Start = neverd_session_entry_addr(Session);
+  const int MainIndex = neverd_func_find_by_name(Session, "main");
+  ASSERT_GE(MainIndex, 0);
+  const neverd_va_t Main = neverd_func_entry(Session, MainIndex);
+  std::optional<neverd_va_t> Slot;
+  auto Slots = llvm::json::parse(takeString(neverd_import_slots_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Slots)) << llvm::toString(Slots.takeError());
+  for (const llvm::json::Value &Row : *Slots->getAsArray())
+    if (Row.getAsObject()->getString("name") == "__libc_start_main")
+      Slot =
+          std::stoull(Row.getAsObject()->getString("addr")->str(), nullptr, 16);
+  ASSERT_TRUE(Slot);
+  const auto Hex = [](uint64_t Address) {
+    return "0x" + llvm::utohexstr(Address);
+  };
+
+  ASSERT_EQ(neverd_prepare_function_view(Session, Start, "llvm"), 1);
+  const std::string IR = takeString(neverd_ir_llvm(Session, Start));
+  ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
+  // A module of its own: it assembles and verifies alone.
+  {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Diagnostic;
+    const auto Parsed = llvm::parseAssemblyString(IR, Diagnostic, Context);
+    ASSERT_NE(Parsed, nullptr) << Diagnostic.getLineNo() << ": "
+                               << Diagnostic.getMessage().str() << "\n"
+                               << IR;
+    std::string Problems;
+    llvm::raw_string_ostream Verifier(Problems);
+    EXPECT_FALSE(llvm::verifyModule(*Parsed, &Verifier)) << Problems << IR;
+  }
+  EXPECT_NE(IR.find("target triple = \"x86_64"), std::string::npos) << IR;
+  // What the function refers to is declared before it; its attribute groups
+  // follow it.
+  const size_t Defined = IR.find("define ");
+  ASSERT_NE(Defined, std::string::npos) << IR;
+  EXPECT_LT(IR.find("@main("), Defined) << IR;
+  EXPECT_LT(IR.find("@__nd_"), Defined) << IR;
+  EXPECT_NE(IR.find("attributes #", Defined), std::string::npos) << IR;
+  // The slot __libc_start_main is read from, named as the listing names it.
+  EXPECT_NE(IR.find("; " + Hex(*Slot) + " __libc_start_main_ptr\n"),
+            std::string::npos)
+      << IR;
+
+  const auto Page =
+      takeView(neverd_ir_view_json(Session, Start, "llvm", 0, 2048));
+  ASSERT_EQ(Page.getString("text"), IR);
+  EXPECT_EQ(Page.getString("mapping_status"), "unsupported_representation");
+  ASSERT_TRUE(Page.getArray("rows") && Page.getArray("library_regions"));
+  EXPECT_TRUE(Page.getArray("rows")->empty());
+  EXPECT_EQ(Page.getInteger("byte_offset"), 0);
+  EXPECT_EQ(Page.getBoolean("complete"), true);
+  // The prelude ends where the function's own lines begin.
+  const auto *Prelude = Page.getObject("prelude");
+  ASSERT_NE(Prelude, nullptr);
+  const auto End = Prelude->getInteger("end_byte");
+  ASSERT_TRUE(End && *End > 0 && static_cast<size_t>(*End) < IR.size());
+  EXPECT_EQ(IR[*End - 1], '\n');
+  EXPECT_EQ(Prelude->getInteger("lines"),
+            std::count(IR.begin(), IR.begin() + *End, '\n'));
+  const std::string Own = "; Address: " + Hex(Start) + "\n";
+  EXPECT_EQ(IR.compare(*End, Own.size(), Own), 0) << IR;
+  // The epilogue, after the function's closing brace, holds its attribute
+  // groups and metadata.
+  const auto *Epilogue = Page.getObject("epilogue");
+  ASSERT_NE(Epilogue, nullptr);
+  const auto Begin = Epilogue->getInteger("begin_byte");
+  ASSERT_TRUE(Begin && *Begin > *End &&
+              static_cast<size_t>(*Begin) < IR.size());
+  EXPECT_EQ(IR.compare(*Begin - 2, 2, "}\n"), 0) << IR;
+  EXPECT_NE(IR.find("attributes #", *Begin), std::string::npos) << IR;
+  EXPECT_EQ(Epilogue->getInteger("lines"),
+            std::count(IR.begin() + *Begin, IR.end(), '\n'));
+  // Each name of a global with an image address, by line: the mirror the
+  // load reads stands for the slot, the function for its entry.
+  std::vector<std::string> Lines;
+  for (llvm::StringRef Rest = IR; !Rest.empty();) {
+    auto [Line, Next] = Rest.split('\n');
+    Lines.push_back(Line.str());
+    Rest = Next;
+  }
+  const auto *References = Page.getArray("references");
+  ASSERT_NE(References, nullptr);
+  bool SlotNamed = false, StartNamed = false;
+  for (const llvm::json::Value &Value : *References) {
+    const auto *Reference = Value.getAsObject();
+    ASSERT_NE(Reference, nullptr);
+    const auto Line = Reference->getInteger("line");
+    const auto Name = Reference->getString("name");
+    const auto Address = Reference->getString("address");
+    ASSERT_TRUE(Line && Name && Address);
+    ASSERT_LT(static_cast<size_t>(*Line), Lines.size());
+    EXPECT_NE(Lines[*Line].find(Name->str()), std::string::npos);
+    SlotNamed |= Name->starts_with("@__nd_") && *Address == Hex(*Slot) &&
+                 Lines[*Line].find(" = load ") != std::string::npos;
+    StartNamed |= *Name == "@_start" && *Address == Hex(Start);
+  }
+  EXPECT_TRUE(SlotNamed) << IR;
+  EXPECT_TRUE(StartNamed) << IR;
+  // Small pages keep the regions and divide the references by their lines.
+  const auto Serialized = [](const llvm::json::Value &Value) {
+    std::string Text;
+    llvm::raw_string_ostream(Text) << Value;
+    return Text;
+  };
+  std::vector<std::string> Whole, Paged;
+  for (const llvm::json::Value &Value : *References)
+    Whole.push_back(Serialized(Value));
+  std::string Text;
+  for (int64_t Offset = 0;;) {
+    auto Small =
+        takeView(neverd_ir_view_json(Session, Start, "llvm", Offset, 3));
+    ASSERT_TRUE(Small.getString("text"));
+    EXPECT_EQ(Small.getInteger("byte_offset"),
+              static_cast<int64_t>(Text.size()));
+    Text += Small.getString("text")->str();
+    ASSERT_TRUE(Small.getObject("prelude") && Small.getObject("epilogue"));
+    EXPECT_EQ(Small.getObject("prelude")->getInteger("end_byte"), End);
+    EXPECT_EQ(Small.getObject("epilogue")->getInteger("begin_byte"), Begin);
+    for (const llvm::json::Value &Value : *Small.getArray("references")) {
+      const auto Line = Value.getAsObject()->getInteger("line");
+      EXPECT_TRUE(Line && *Line >= Offset && *Line < Offset + 3);
+      Paged.push_back(Serialized(Value));
+    }
+    if (Small.getBoolean("complete").value_or(false))
+      break;
+    ASSERT_EQ(Small.getInteger("next_offset"), Offset + 3);
+    Offset += 3;
+  }
+  EXPECT_EQ(Text, IR);
+  EXPECT_EQ(Paged, Whole);
+  // A name the user gives the slot reaches the comment.
+  ASSERT_EQ(neverd_rename_addr(Session, *Slot, "start_slot"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_NE(takeString(neverd_ir_llvm(Session, Start))
+                .find("; " + Hex(*Slot) + " start_slot\n"),
+            std::string::npos);
+
+  // main's strings, as the comments beside their references read them.
+  ASSERT_EQ(neverd_prepare_function_view(Session, Main, "llvm"), 1);
+  const std::string MainIR = takeString(neverd_ir_llvm(Session, Main));
+  EXPECT_NE(MainIR.find("; Address: " + Hex(Main) + "\n"), std::string::npos)
+      << MainIR;
+  EXPECT_NE(MainIR.find(" \"%d\\n\""), std::string::npos) << MainIR;
+  EXPECT_NE(MainIR.find(" \"after printf\""), std::string::npos) << MainIR;
+#endif
+}
+
+TEST_F(SessionCAPITest, LLVMViewMapsEachSpellingOfAMirrorToItsOwnOffset) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "reads the engine's internal view of an LLVM function";
+#else
+  // One mirror at two offsets on one line, and on a call, whose callee the
+  // printer spells before its arguments.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  const auto Module = llvm::parseAssemblyString(
+      R"(target triple = "x86_64-unknown-linux-gnu"
+@__nd_data_4000 = internal global [64 x i8] zeroinitializer
+@__nd_codeptr_3000 = external global [32 x i8]
+declare i64 @callee(ptr, ptr, ptr)
+define i64 @pick(i1 %c) !neverd.rewrite.source-identity !0 {
+  %p = select i1 %c, ptr getelementptr (i8, ptr @__nd_data_4000, i64 8), ptr getelementptr (i8, ptr @__nd_data_4000, i64 16)
+  %q = load i64, ptr getelementptr (i8, ptr @__nd_codeptr_3000, i64 24)
+  %r = call i64 @callee(ptr %p, ptr @__nd_data_4000, ptr getelementptr (i8, ptr @__nd_data_4000, i64 32))
+  ret i64 %q
+}
+!0 = !{i32 1, i64 4096}
+)",
+      Diagnostic, Context);
+  ASSERT_NE(Module, nullptr) << Diagnostic.getMessage().str();
+  const neverd::BinaryImage Image;
+  const auto View = neverd::sdk::renderLLVMFunctionView(
+      *Module->getFunction("pick"), Image,
+      [](neverd::va_t) { return std::string(); },
+      [](neverd::va_t) { return std::string(); });
+  ASSERT_EQ(View.Text.find("; NeverD shows"), std::string::npos) << View.Text;
+  std::vector<std::string> Lines;
+  for (llvm::StringRef Rest = View.Text; !Rest.empty();) {
+    auto [Line, Next] = Rest.split('\n');
+    Lines.push_back(Line.str());
+    Rest = Next;
+  }
+  const auto On = [&](llvm::StringRef Start) {
+    std::vector<std::pair<std::string, uint64_t>> Found;
+    for (const auto &Reference : View.References)
+      if (llvm::StringRef(Lines[Reference.Line]).trim().starts_with(Start))
+        Found.emplace_back(Reference.Name, Reference.Address);
+    return Found;
+  };
+  using Named = std::vector<std::pair<std::string, uint64_t>>;
+  EXPECT_EQ(On("%p = select"),
+            (Named{{"@__nd_data_4000", 0x4008}, {"@__nd_data_4000", 0x4010}}))
+      << View.Text;
+  EXPECT_EQ(On("%q = load"), (Named{{"@__nd_codeptr_3000", 0x3018}}));
+  EXPECT_EQ(On("%r = call"),
+            (Named{{"@__nd_data_4000", 0x4000}, {"@__nd_data_4000", 0x4020}}));
+  EXPECT_EQ(On("define"), (Named{{"@pick", 0x1000}}));
+  EXPECT_EQ(On("@__nd_data_4000 ="), (Named{{"@__nd_data_4000", 0x4000}}));
+  EXPECT_NE(View.Text.find("@__nd_codeptr_3000, i64 24), align 4 ; 0x3018\n"),
+            std::string::npos)
+      << View.Text;
+  EXPECT_NE(View.Text.find(" ; 0x4008, 0x4010\n"), std::string::npos);
+#endif
 }
 
 TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
