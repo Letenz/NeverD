@@ -2,6 +2,8 @@ LIBRARY ntoskrnl.exe
 EXPORTS
   RtlCopyMemory
   KeQueryActiveProcessors
+  KeGetCurrentProcessorNumberEx
+  KeRaiseIrqlToDpcLevel
   KeSetSystemAffinityThread
   KeRevertToUserAffinityThread
   ZwOpenKey

@@ -147,6 +147,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
       Kind != KernelAPIKind::ExGetPreviousMode &&
       Kind != KernelAPIKind::KeGetCurrentIrql &&
+      Kind != KernelAPIKind::KeGetCurrentProcessorNumberEx &&
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
