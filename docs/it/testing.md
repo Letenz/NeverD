@@ -1890,6 +1890,8 @@ Le 204 osservazioni del vecchio profilo di traduzione sono storiche e non provan
 
 `FrameOffsets.*Normalization*` copre identità esatte, ingressi aggiuntivi, identità della radice, predicati impossibili senza testimoni memorizzati, comportamento predefinito, costi strutturali e di misura e rifiuto al superamento dei nodi. `FrameNormalizationPreservesStoresAndNativeReturns` e `RawCodeFrameNormalization*` verificano effetti di memoria originali e ritorni fisici con oracoli indipendenti a byte, entrambi gli ordini di byte applicabili, budget esatti o insufficienti e ricevute alterate. `FrameNormalizationStrategyBindsIndependentProof` verifica entrambe le identità di prova binaria.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` verifica che la cronologia in cache non venga addebitata di nuovo, che le costanti larghe aggiunte mantengano il costo di ammissione, che budget insufficienti di lavoro e nodi rifiutino e che le copie della cache di leggibilità restino indipendenti.
 
 ## Qualificazione nativa di Lift

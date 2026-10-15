@@ -1909,6 +1909,8 @@ Les 204 observations de l’ancien profil de traduction sont historiques et ne p
 
 `FrameOffsets.*Normalization*` couvre identités exactes, entrées supplémentaires, identité de racine, prédicats infaisables sans témoin mis en cache, comportement par défaut, coûts de structure et de mesure et refus après dépassement des nœuds. `FrameNormalizationPreservesStoresAndNativeReturns` et `RawCodeFrameNormalization*` vérifient les effets mémoire originaux et retours physiques avec des oracles d’octets indépendants, les deux ordres d’octets applicables, budgets exacts ou insuffisants et reçus modifiés. `FrameNormalizationStrategyBindsIndependentProof` vérifie les deux identités de preuve binaire.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` vérifie que l’historique en cache n’est pas facturé à nouveau, que les constantes larges ajoutées restent facturées, que les budgets insuffisants de travail et de nœuds refusent et que les copies du cache de lisibilité restent indépendantes.
 
 ## Qualification native de Lift
