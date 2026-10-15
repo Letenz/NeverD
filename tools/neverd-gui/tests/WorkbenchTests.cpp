@@ -18,6 +18,7 @@
 #include "QuickStartDialog.h"
 #include "Session.h"
 #include "SettingsKeys.h"
+#include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -3146,6 +3147,130 @@ private slots:
              QStringLiteral("none"));
     QVERIFY(metadata.value("debug_info").toObject().value("kind").toString() !=
             QLatin1String("dwarf"));
+  }
+
+  void symbolQuestionAtStartupGreetsAlone_data() {
+    QTest::addColumn<bool>("accept");
+    QTest::newRow("yes") << true;
+    QTest::newRow("no") << false;
+  }
+
+  void symbolQuestionAtStartupGreetsAlone() {
+    // Anyone can write names into a symbol table: an image with one asks
+    // before it loads, in a window of its own that shows the first names it
+    // holds, and No reads the image as if stripped, its functions unnamed.
+    QFETCH(bool, accept);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("symtab.bin"));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false;
+    QString shown;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<SymbolTablePromptDialog *>(
+          QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (auto *names = dialog->findChild<QLabel *>(QStringLiteral("names")))
+        shown = names->toolTip();
+      if (auto *button = dialog->findChild<QPushButton *>(
+              accept ? QStringLiteral("yes") : QStringLiteral("no")))
+        button->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QCOMPARE(shown, QStringLiteral("function_0\nfunction_1\nfunction_2"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    QCOMPARE(bench.session.metadata()
+                 .value("symbols")
+                 .toObject()
+                 .value("mode")
+                 .toString(),
+             accept ? QString() : QStringLiteral("none"));
+    // The function after the entry, which the analysis names "start" when
+    // nothing else does, has only the table's name.
+    auto &model = bench.functions()->model();
+    QTRY_VERIFY(!model.rowObject(1).isEmpty());
+    const QString second = model.rowObject(1).value("name").toString();
+    QVERIFY2(accept ? second == QLatin1String("function_1")
+                    : second.startsWith(QLatin1String("sub_")),
+             qPrintable(second));
+  }
+
+  void unattendedRunsAskNoSymbolQuestion() {
+    // A capture or benchmark reads the image's symbol table.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("symtab.bin"));
+    Workbench bench;
+    bench.window->setAsksForDebugInfo(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<SymbolTablePromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    QVERIFY(bench.session.metadata().value("symbols").isNull());
+  }
+
+  void declinedSymbolTableStaysDeclinedInTheProject() {
+    // The project keeps the answer, as it keeps the DWARF one: reopening it
+    // asks nothing and still reads the image as if stripped.
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("symtab.bin"));
+    const auto database = ProjectDatabase::pathFor(path);
+    {
+      Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+      QTimer answer;
+      connect(&answer, &QTimer::timeout, this, [&] {
+        if (auto *dialog = qobject_cast<SymbolTablePromptDialog *>(
+                QApplication::activeModalWidget()))
+          if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+            no->click();
+      });
+      answer.start(5);
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      answer.stop();
+      bench.session.setComment(Base + 0x140, QStringLiteral("declined"));
+      QTRY_VERIFY(bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    Workbench bench;
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (auto *dialog = qobject_cast<SymbolTablePromptDialog *>(
+              QApplication::activeModalWidget())) {
+        asked = true;
+        dialog->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!asked);
+    QCOMPARE(bench.session.metadata()
+                 .value("symbols")
+                 .toObject()
+                 .value("mode")
+                 .toString(),
+             QStringLiteral("none"));
   }
 
   void quickStartShowsRecentFilesAndStartsAsChosen() {
