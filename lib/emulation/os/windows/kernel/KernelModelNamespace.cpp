@@ -96,6 +96,8 @@ KernelModel::findObjectHandle(uint64_t Handle) const {
 
 std::optional<uint32_t> KernelModel::objectAccessMask(ObjectKind Kind) {
   switch (Kind) {
+  case ObjectKind::Key:
+    return KeyAllAccess;
   case ObjectKind::Thread:
     return ThreadAllAccess;
   case ObjectKind::Process:
@@ -114,12 +116,14 @@ llvm::Expected<uint32_t> KernelModel::mapObjectAccess(ObjectKind Kind,
   const auto Valid = objectAccessMask(Kind);
   if (!Valid)
     return namespaceError("unsupported object handle class");
-  if (Kind == ObjectKind::Directory || Kind == ObjectKind::SymbolicLink) {
-    // WDK rights and the target kernel's generic mappings. Neither type is
+  if (Kind == ObjectKind::Directory || Kind == ObjectKind::SymbolicLink ||
+      Kind == ObjectKind::Key) {
+    // WDK rights and the target kernel's generic mappings. These types are not
     // waitable; SYNCHRONIZE and MAXIMUM_ALLOWED are not guessed grants.
     const bool Directory = Kind == ObjectKind::Directory;
-    const uint32_t ReadExecute = 0x20000 | (Directory ? 3 : 1);
-    const uint32_t Write = 0x20000 | (Directory ? 12 : 0);
+    const bool Key = Kind == ObjectKind::Key;
+    const uint32_t ReadExecute = 0x20000 | (Key ? 0x19 : Directory ? 3 : 1);
+    const uint32_t Write = 0x20000 | (Key ? 6 : Directory ? 12 : 0);
     const uint32_t Generic = Access & 0xf0000000;
     Access &= ~0xf0000000;
     if (Generic & 0x80000000)
@@ -160,6 +164,9 @@ KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
     return ObjectLookup{StatusObjectPathSyntaxBad};
   }
   Path = canonicalName(Path, Fold);
+  if (llvm::StringRef(Path).equals_insensitive("\\Registry") ||
+      llvm::StringRef(Path).starts_with_insensitive("\\Registry\\"))
+    return namespaceError("registry name parsing requires a registry open API");
   if (Path.size() > profile::MaxDeviceNameSize)
     return namespaceError("object path exceeds the bounded namespace size");
   if (Path.size() > 1 &&
@@ -293,6 +300,10 @@ KernelModel::queryObjectName(uint64_t Object, uint64_t Buffer, uint32_t Length,
                              uint64_t ReturnLength, bool RequiredLength) {
   if (!ReferencedObjects.contains(Object))
     return namespaceError("name query requires a known live object");
+  const auto &References = ReferencedObjects.at(Object);
+  if (References.RegistryOwner)
+    return References.RegistryOwner->queryObjectName(
+        *this, Object, Buffer, Length, ReturnLength, RequiredLength);
   const auto Name = objectName(Object);
   const uint32_t Required = 16 + (Name.empty() ? 0 : (Name.size() + 1) * 2);
   if (RequiredLength || ReturnLength)
@@ -301,32 +312,33 @@ KernelModel::queryObjectName(uint64_t Object, uint64_t Buffer, uint32_t Length,
   if (Length >= Required)
     if (auto E = validateObjectOutput(Buffer, Required))
       return E;
-  if (ReturnLength)
+  if (RequiredLength && ReturnLength)
+    if (auto E = Memory.writeInteger(ReturnLength, Required, 4))
+      return E;
+  if (Length >= Required) {
+    std::vector<uint8_t> Bytes(Required);
+    if (!Name.empty()) {
+      llvm::support::endian::write16le(Bytes.data(), Name.size() * 2);
+      llvm::support::endian::write16le(Bytes.data() + 2, (Name.size() + 1) * 2);
+      llvm::support::endian::write64le(Bytes.data() + 8, Buffer + 16);
+      auto Text = nameBytes(Name, true);
+      std::copy(Text.begin(), Text.end(), Bytes.begin() + 16);
+    }
+    if (auto E = Memory.write(Buffer, Bytes))
+      return E;
+  }
+  if (!RequiredLength && ReturnLength)
     if (auto E = Memory.writeInteger(ReturnLength, Required, 4))
       return E;
   if (Length < Required)
     return StatusInfoLengthMismatch;
-  std::vector<uint8_t> Bytes(Required);
-  if (!Name.empty()) {
-    llvm::support::endian::write16le(Bytes.data(), Name.size() * 2);
-    llvm::support::endian::write16le(Bytes.data() + 2, (Name.size() + 1) * 2);
-    llvm::support::endian::write64le(Bytes.data() + 8, Buffer + 16);
-    auto Text = nameBytes(Name, true);
-    std::copy(Text.begin(), Text.end(), Bytes.begin() + 16);
-  }
-  if (auto E = Memory.write(Buffer, Bytes))
-    return E;
   return StatusSuccess;
 }
 
 llvm::Expected<uint64_t> KernelModel::queryObject(llvm::ArrayRef<uint64_t> A) {
   const auto Handle = findObjectHandle(A[0]);
-  if (!Handle) {
-    if (Registry.ownsHandle(A[0]))
-      return namespaceError(
-          "registry object queries require shared object integration");
+  if (!Handle)
     return StatusInvalidHandle;
-  }
   if (uint32_t(A[1]) != ObjectNameInformation)
     return namespaceError("unsupported object information class");
   return queryObjectName(Handle->Object, A[2], uint32_t(A[3]), A[4], false);

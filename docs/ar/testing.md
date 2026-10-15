@@ -1819,6 +1819,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 تغطي `FrameOffsets.*Normalization*` المتطابقات الدقيقة والمدخلات الإضافية وهوية الجذر والشروط المستحيلة دون شهود مخبأة والسلوك الافتراضي وتكاليف البنية والقياس والرفض عند تجاوز عدد العقد. تختبر `FrameNormalizationPreservesStoresAndNativeReturns` و`RawCodeFrameNormalization*` آثار الذاكرة الأصلية وعناوين العودة الفعلية بمراجع بايتات مستقلة، وترتيبي البايتات حيث ينطبقان، وميزانيات العمليات الكافية تمامًا أو الناقصة وتعديل الإيصالات. تتحقق `FrameNormalizationStrategyBindsIndependentProof` من هويتي الإثبات الثنائي.
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` يتحقق من عدم احتساب السجل المخزن مؤقتًا مرة أخرى، واستمرار احتساب الثوابت العريضة المضافة، ورفض ميزانيات العمل والعقد غير الكافية، واستقلال نسخ مخبأ قابلية القراءة.
+
 ## التحقق الأصلي من Lift
 
 يغطي سير العمل `Lift native qualification` الحالات الـ108 التي لم يكتمل التحقق منها سابقًا (62 فشلًا و46 تخطيًا). يثبت Clang 23 أو أحدث وGNU GCC ومكتبات تطوير i386 على مشغّل Linux x86-64 أصلي، ويهيئ مجموعة الملفات الثنائية عند مراجعتها المثبتة. يحتفظ `unittests/Inputs/lift-qualification.json` بجميع معرفات الاختبارات الأصلية. يرفض `scripts/run_lift_qualification.py` الحالات المفقودة أو المكررة أو المعطلة أو المتخطاة أو الفاشلة، وكذلك رمز خروج العملية غير الصفري. يسجل `qualification.json` كل نجاح ومراجعات المصدر ومجموعة الملفات وإصدارات المترجمات وبصمات الملفات الثنائية.
@@ -1993,3 +1995,5 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 يتحقق `KernelDataExportTests.cpp` من الهوية والتوفر وسعة thunk والقراءة فقط/NX وغياب تصريح المصحح والاستعادة. ينفذ `DriverDataExportTests.cpp` الأصل `driver_data.c` باستيرادات DATA حقيقية على الخلفيات المتاحة والعقدين وقاعدتي التحميل، مع إلغاء التحميل ورفض الكتابة والتنفيذ. تختبر السيناريوهات وC ABI وCLI وPython الحقول المنطقية والتقارير. يتطلب `NativeDriverTests.def` نتائج أصلية؛ تبقى الخلفيات غير المتاحة فجوات.
 
 يتحقق `KernelNamespaceTests.cpp` من الأنواع والأسماء النسبية وحالة الأحرف والأحجام وترتيب النسخ والبايتات الختامية والحقوق ونطاق العملية وIRQL والمخرجات الفاشلة والحذف مع المراجع. ينفذ `DriverNamespaceTests.cpp` العينة الأصلية `driver_namespace.c` على Unicorn/KVM/WHP/HVF المتاحة بعقدين وعنوانين وجدولة تعاونية/17 تعليمة. يفرض `NativeDriverTests.def` نتائج أصلية؛ تظل الخلفيات وفئات المعلومات/الأمان غير المتاحة فجوات تغطية.
+
+يغطي `KernelRegistryTests.cpp` هويات الفتح والمراجع ذات النوع والمقابض المنسوخة ونطاق العملية والحقوق العامة والحذف ومخازن الأسماء القصيرة والفردية وترتيب المخرجات وحدود الفشل والسعة. يشغل `DriverRegistryObjectTests.cpp` الاختبار الأصلي `fixtures/driver_registry_objects.c` على المحركات المتاحة والعقدين وعنواني التحميل، بجدولة تعاونية وكمية 17 تعليمة. يثبت تسريب مؤشر متعمد رفض التفريغ؛ يتطلب القبول الأصلي نتائج العقد/العنوان الأربع.

@@ -26,11 +26,12 @@ struct FrameOffset {
   uint64_t Offset = 0;
 };
 
-/// Optional per-call strategy accounting, reset on entry. Charges input-prefix
-/// admission (nodes, operand edges and constant limbs) plus existing MBA
-/// measurement units; not every internal traversal, sample or CPU operation.
-/// A changed exact expression may retry the ordinary proof once, retaining
-/// cumulative solver limits. Neither fallback enters the finite-domain cache.
+/// Optional per-call strategy accounting, reset on entry. Charges uncached
+/// readability-prefix admission (nodes, operand edges and constant limbs) plus
+/// MBA measurement units; not every internal traversal, sample or CPU
+/// operation. A changed exact expression may retry the ordinary proof once,
+/// retaining cumulative solver limits. Neither fallback enters the
+/// finite-domain cache.
 struct FrameOffsetNormalization {
   uint64_t MaxWork = 0;
   uint64_t WorkUsed = 0;
