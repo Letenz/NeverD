@@ -1,6 +1,10 @@
 name: Temporary Windows session C API qualification
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/session-capi-qualification.yml
   workflow_dispatch:
 
 permissions:
@@ -17,6 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Shared integration candidate for CI admission and Darwin libSystem.
+          ref: ba641d0893f65125b5dcc3b90371788fe7679370
           fetch-depth: 32
           submodules: recursive
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
