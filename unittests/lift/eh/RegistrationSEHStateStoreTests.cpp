@@ -156,6 +156,57 @@ TEST(RegistrationSEHStateStore, AcceptsWidenedEffectiveAddresses) {
   }
 }
 
+TEST(RegistrationSEHStateStore, NarrowStoresPreserveTheCompleteSourceLevel) {
+  for (uint8_t Width : {1, 2}) {
+    SCOPED_TRACE(Width);
+    auto Function = sourceStateStore();
+    auto &Native = Function.ExceptionMetadata->Registration->TryLevelStores[0];
+    auto &Receipt = Function.RegistrationStates->SEHStateStores[0];
+    auto &Value = Function.Blocks[1].Ops[0].Inputs[1];
+    Native.Width = Receipt.Width = Value.Size = Width;
+    Receipt.Transitions = {{2, 1}};
+    auto Bound = getX86RegistrationSEHStateStores(Function);
+    ASSERT_TRUE(Bound);
+    EXPECT_EQ(Bound->front().TargetLevel, 1);
+    // The same low bytes cannot clear the untouched high bytes of -1.
+    Receipt.Transitions = {{-1, 1}};
+    EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
+    const uint32_t Mask = Width == 1 ? UINT8_MAX : UINT16_MAX;
+    Native.Level = Receipt.Value = Mask;
+    Value.ConstVal = UINT64_MAX;
+    Receipt.Transitions = {{-1, -1}};
+    Bound = getX86RegistrationSEHStateStores(Function);
+    ASSERT_TRUE(Bound);
+    EXPECT_EQ(Bound->front().TargetLevel, -1);
+    Receipt.Value ^= uint32_t(1) << (Width * 8);
+    Native.Level = Receipt.Value;
+    EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
+  }
+}
+
+TEST(RegistrationSEHStateStore, ByteLiteralDoesNotNameTheCompleteScope) {
+  auto Function = sourceStateStore();
+  auto &Chain = *Function.ExceptionMetadata->Registration;
+  Chain.Scopes.clear();
+  for (int32_t Level = 0; Level != 259; ++Level)
+    Chain.Scopes.push_back({Level - 1, 0, 0x2020, true});
+  Function.RegistrationStates->Blocks[0].Levels = {257};
+  auto &Native = Chain.TryLevelStores[0];
+  auto &Receipt = Function.RegistrationStates->SEHStateStores[0];
+  auto &Value = Function.Blocks[1].Ops[0].Inputs[1];
+  Native.Width = Receipt.Width = Value.Size = 1;
+  Native.Level = Receipt.Value = Value.ConstVal = 2;
+  Receipt.Transitions = {{257, 258}};
+  auto Bound = getX86RegistrationSEHStateStores(Function);
+  ASSERT_TRUE(Bound);
+  EXPECT_EQ(Bound->front().TargetLevel, 258);
+  EXPECT_EQ(getX86RegistrationSEHRetainedScopes(Function),
+            (std::optional<std::vector<uint32_t>>{{258}}));
+  Receipt.Transitions.push_back({1, 2});
+  // Distinct full outputs need a runtime selection plan, not a guessed token.
+  EXPECT_FALSE(getX86RegistrationSEHStateStores(Function));
+}
+
 TEST(RegistrationSEHStateStore,
      DoesNotInventReachabilityFromCallbackEntryState) {
   auto Function = sourceStateStore();

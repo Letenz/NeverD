@@ -32,7 +32,7 @@ _registration_entry:
   test eax,eax
   jnz .Lresumed
   mov ebx,9
-#if REGISTRATION_CASE == 30
+#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
   // State 1 has a source parent boundary; state 2 has only the callback write.
   mov dword ptr [ebp-4],1
   mov dword ptr [ebp-4],0
@@ -81,8 +81,14 @@ _registration_entry:
   imul eax,eax,10
   add eax,2
   mov [ebp-100],eax
-#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31
+#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31 || REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
+#if REGISTRATION_CASE == 34
+  mov byte ptr [ebp-4],2
+#elif REGISTRATION_CASE == 35
+  mov word ptr [ebp-4],2
+#else
   mov dword ptr [ebp-4],2
+#endif
   push 42
   lea eax,[ebp-96]
   push eax
@@ -98,7 +104,7 @@ _registration_entry:
 .Linner_finally:
   mov eax,[ebp-100]
   imul eax,eax,10
-#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31
+#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31 || REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
   add eax,4
 #else
   add eax,9
@@ -119,7 +125,7 @@ _registration_entry:
 .p2align 2
 .Lscope_table:
   .long -1,.Lfilter,.Lhandler
-#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31
+#if REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31 || REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
   .long 0,0,.Lfinally
   .long 0,0,.Linner_finally
 #else

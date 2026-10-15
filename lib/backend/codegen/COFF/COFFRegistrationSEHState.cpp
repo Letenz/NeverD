@@ -73,15 +73,10 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
             MD->getNumOperands() != 5 ||
             metadataInteger(*MD, 0, 64) != Source.Entry ||
             metadataInteger(*MD, 3, 32) != uint32_t(Receipt.BlockId) ||
-            metadataInteger(*MD, 4, 8) != 1 || Receipt.Width != 4 ||
-            Store->isAtomic() || !Store->isVolatile() ||
-            Store->getAlign() != llvm::Align(1) ||
-            integer(Store->getValueOperand(), 32) != Receipt.Value ||
-            Receipt.Transitions.empty() ||
-            llvm::any_of(Receipt.Transitions,
-                         [&](const auto &Transition) {
-                           return uint32_t(Transition.second) != Receipt.Value;
-                         }) ||
+            metadataInteger(*MD, 4, 8) != 1 || Store->isAtomic() ||
+            !Store->isVolatile() || Store->getAlign() != llvm::Align(1) ||
+            integer(Store->getValueOperand(), 8 * Receipt.Width) !=
+                Receipt.Value ||
             !Write ||
             Write->getIntrinsicID() != llvm::Intrinsic::x86_seh_setstate ||
             Write->arg_size() != 8 || Write->getNumOperandBundles() ||
@@ -90,19 +85,20 @@ bindSEHCallbackStateWrites(const MedFunc &Source, const llvm::Function &Parent,
             !Write->getAttributes().isEmpty() ||
             Write->getArgOperand(0) != &Parent || !Frame ||
             Write->getArgOperand(1) != Frame ||
-            integer(Write->getArgOperand(2), 32) != Receipt.Value ||
+            integer(Write->getArgOperand(2), 32) !=
+                uint32_t(Bound.TargetLevel) ||
             integer(Write->getArgOperand(7), 64) != Found->second + 1 ||
             !Result.insert(Write).second)
           return rejectIR(
               "callback state write changed its source or frame ABI");
         std::array<uint64_t, 4> Digest{};
-        if (int32_t(Receipt.Value) >= 0) {
+        if (Bound.TargetLevel >= 0) {
           const auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
-              *Source.ExceptionMetadata, Arch::X86, Receipt.Value);
+              *Source.ExceptionMetadata, Arch::X86, Bound.TargetLevel);
           if (!Token)
             return rejectIR("callback state write has no source scope token");
           Digest = Token->Digest;
-        } else if (int32_t(Receipt.Value) !=
+        } else if (Bound.TargetLevel !=
                    *Source.ExceptionMetadata->Registration->SeededTryLevel)
           return rejectIR("callback state write changed its inactive sentinel");
         for (unsigned J = 0; J != Digest.size(); ++J)

@@ -136,7 +136,9 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 
 callback 内 TryLevel 写入的原生重建还要求
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`，r4 编译器不提供这一能力。
-当前路径只接受经过检查的常量 32 位写入；字节、字宽度的 callback 写入仍仅支持分析。
+当前路径接受经过检查的常量 8、16、32 位写入，但要求所有到达迁移产生同一个完整
+目标 level。窄写入保留未覆盖的高位；若存在多个不同的完整输出，仍需要单独的运行时
+选择方案。
 每次生成写入将精确源操作、所属 callback、恢复的父帧和 scope 语义 token 绑定到 LLVM
 生成的状态索引，或经过检查的 EH3/EH4 域外 sentinel。安装器重放逻辑源写入，并将物理
 MOV32 的字节、栈帧偏移、基址寄存器、立即数和唯一代码范围与编译器凭据逐项核对；

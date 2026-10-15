@@ -300,8 +300,10 @@ lowering consume this one binding, so callback-private pushes cannot become
 cdecl arguments. Outlining exposes exact instruction clone identities for
 removing preflighted unused return transports without reopening the proof.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
-MedIR callback stores. Native writes currently require a literal full word
-whose bits agree with every checked transition. The same helper computes
+MedIR callback stores. Native writes require a checked byte, word or full-word
+constant store whose transitions agree on one complete resulting state. Narrow
+writes preserve the untouched high bytes; the physical state token names that
+complete result, not the literal. The same helper computes
 retained scopes from all parent reaching levels and callback write results,
 including their enclosing scopes; an unexplained scope refuses emission.
 LLVM retains callback-only rows through an indexed entry chain of

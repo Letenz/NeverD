@@ -13,7 +13,7 @@ namespace neverd::coff_registration {
 struct RegistrationSEHScopeState {
   bool Enabled = false;
   int64_t Offset = 0;
-  std::set<const llvm::StoreInst *> Writes;
+  std::map<const llvm::StoreInst *, uint16_t> Writes;
   std::set<const llvm::StoreInst *> CallbackWrites;
   std::set<const llvm::CallBase *> PhysicalWrites;
 };

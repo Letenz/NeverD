@@ -29,7 +29,8 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
       }))
     return Result;
   Result.Enabled = true;
-  Result.Writes = RuntimeWrites;
+  for (const auto *Write : RuntimeWrites)
+    Result.Writes.emplace(Write, 4);
   using Key = std::tuple<MedVar::VarKind, int, int>;
   auto KeyOf = [](const MedVar &V) { return Key{V.Kind, V.Id, V.SSAVer}; };
   using Identity = std::pair<va_t, int>;
@@ -91,7 +92,8 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
   };
   struct Write {
     int Block;
-    int32_t Value;
+    uint32_t Value;
+    uint16_t Width;
   };
   std::map<Identity, Write> Expected;
   for (const auto &Block : Source.Blocks)
@@ -99,16 +101,20 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
       if (++Work > limits::kMaxRegistrationEHStateWork)
         return rejectIR("dynamic scope source exceeds its work budget");
       if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
-          Op.Inputs[1].Size != 4 ||
+          (Op.Inputs[1].Size != 1 && Op.Inputs[1].Size != 2 &&
+           Op.Inputs[1].Size != 4) ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
           Op.MemoryOrdering != NdMemoryOrdering::None ||
           Resolve(Op.Inputs[0], true, 0) != -4)
         continue;
       const auto Value = Resolve(Op.Inputs[1], false, 0);
+      const uint16_t Width = Op.Inputs[1].Size;
+      const uint32_t Mask =
+          Width == 4 ? UINT32_MAX : (uint32_t(1) << (8 * Width)) - 1;
       if (!Value || Op.OriginSeq < 0 ||
           !Expected
                .emplace(Identity{Op.Addr, Op.OriginSeq},
-                        Write{Block.Id, int32_t(*Value)})
+                        Write{Block.Id, uint32_t(*Value) & Mask, Width})
                .second)
         return rejectIR("dynamic scope has an unproved source state write");
     }
@@ -136,10 +142,10 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
             metadataInteger(*MD, 3, 32) != uint32_t(Found->second.Block) ||
             metadataInteger(*MD, 4, 8) != 1 || Store->isAtomic() ||
             !Store->isVolatile() || Store->getAlign() != llvm::Align(1) ||
-            integer(Store->getValueOperand(), 32) !=
-                uint32_t(Found->second.Value))
+            integer(Store->getValueOperand(), 8 * Found->second.Width) !=
+                Found->second.Value)
           return rejectIR("dynamic scope changed its source state write");
-        Result.Writes.insert(Store);
+        Result.Writes.emplace(Store, Found->second.Width);
       }
   if (Seen.size() != Expected.size())
     return rejectIR("dynamic scope state writes are incomplete");

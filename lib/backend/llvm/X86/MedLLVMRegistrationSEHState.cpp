@@ -95,12 +95,9 @@ std::optional<std::vector<SEHCallbackStateWrite>> prepareSEHCallbackStateWrites(
         Store ? llvm::dyn_cast<llvm::ConstantInt>(Store->getValueOperand())
               : nullptr;
     if (!Store || Store->getFunction() != &Parent || Store->isAtomic() ||
-        !Value || Value->getBitWidth() != 32 || Receipt.Width != 4 ||
+        !Value || Value->getBitWidth() != 8 * Receipt.Width ||
         Value->getZExtValue() != Receipt.Value || !Seen.insert(Store).second ||
-        !Store->getNextNode() || Receipt.Transitions.empty() ||
-        llvm::any_of(Receipt.Transitions, [&](const auto &Transition) {
-          return uint32_t(Transition.second) != Receipt.Value;
-        }))
+        !Store->getNextNode())
       return std::nullopt;
     std::optional<size_t> Owner;
     for (size_t I = 0; I != Requests.size(); ++I)
@@ -112,7 +109,7 @@ std::optional<std::vector<SEHCallbackStateWrite>> prepareSEHCallbackStateWrites(
     if (!Owner)
       return std::nullopt;
     SEHCallbackStateWrite Write{
-        Store, *Owner, int32_t(Receipt.Value), {}, Result.size() + 1};
+        Store, *Owner, Bound.TargetLevel, {}, Result.size() + 1};
     if (Write.Level >= 0) {
       const auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
           *Source.ExceptionMetadata, Arch::X86, Write.Level);

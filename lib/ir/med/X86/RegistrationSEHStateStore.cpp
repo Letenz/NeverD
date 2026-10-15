@@ -116,26 +116,34 @@ getX86RegistrationSEHStateStores(const MedFunc &Function) {
     if (Operation == Operations.end())
       return std::nullopt;
     const auto &Op = *Operation->second;
-    if (Store.Width != 4 || Store.Transitions.empty() ||
-        Op.Opcode != NdOp::STORE || Op.Dead || Op.NumInputs != 2 ||
-        Op.Inputs.size() < 2 ||
+    if ((Store.Width != 1 && Store.Width != 2 && Store.Width != 4) ||
+        Store.Transitions.empty() || Op.Opcode != NdOp::STORE || Op.Dead ||
+        Op.NumInputs != 2 || Op.Inputs.size() < 2 ||
         (Op.Inputs[0].Size != 4 && Op.Inputs[0].Size != 8) ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         Op.MemoryOrdering != NdMemoryOrdering::None ||
-        !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 4 ||
-        uint32_t(Op.Inputs[1].ConstVal) != Store.Value ||
-        !Bound
-             .emplace(Store.Address,
-                      X86RegistrationSEHStateStoreBinding{&Op, &Store})
-             .second)
+        !Op.Inputs[1].isConst() || Op.Inputs[1].Size != Store.Width)
       return std::nullopt;
+    const uint32_t Mask =
+        Store.Width == 4 ? UINT32_MAX : (uint32_t(1) << (8 * Store.Width)) - 1;
+    if (Store.Value > Mask || (Op.Inputs[1].ConstVal & Mask) != Store.Value)
+      return std::nullopt;
+    const int32_t TargetLevel = Store.Transitions.front().second;
     std::set<std::pair<int32_t, int32_t>> Transitions;
     for (const auto &Transition : Store.Transitions)
       if (++Work > limits::kMaxRegistrationEHStateWork ||
           !ValidLevel(Transition.first) || !ValidLevel(Transition.second) ||
-          uint32_t(Transition.second) != Store.Value ||
+          Transition.second != TargetLevel ||
+          uint32_t(Transition.second) !=
+              ((uint32_t(Transition.first) & ~Mask) | Store.Value) ||
           !Transitions.insert(Transition).second)
         return std::nullopt;
+    if (!Bound
+             .emplace(
+                 Store.Address,
+                 X86RegistrationSEHStateStoreBinding{&Op, &Store, TargetLevel})
+             .second)
+      return std::nullopt;
   }
   // Loader observations inside a callback must each retain one checked store.
   // Parent stores remain the ordinary block-state protocol's responsibility.
@@ -192,9 +200,8 @@ getX86RegistrationSEHRetainedScopes(const MedFunc &Function) {
           return std::nullopt;
   }
   for (const auto &Binding : *Stores)
-    for (const auto &Transition : Binding.Source->Transitions)
-      if (!Include(Callback, Transition.second))
-        return std::nullopt;
+    if (!Include(Callback, Binding.TargetLevel))
+      return std::nullopt;
   std::vector<uint32_t> Result;
   for (uint32_t I = 0; I != Chain.Scopes.size(); ++I) {
     if (Parent.count(I))

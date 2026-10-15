@@ -66,7 +66,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-state-activate-call": (30, 243),
               "longjmp-state-activate-unwind": (31, 243),
               "longjmp-state-retire": (32, 23),
-              "longjmp-state-sentinel": (33, 23)})
+              "longjmp-state-sentinel": (33, 23),
+              "longjmp-state-byte": (34, 243),
+              "longjmp-state-word": (35, 243)})
 
 
 class PE32:

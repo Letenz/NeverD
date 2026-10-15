@@ -3835,7 +3835,8 @@ folded tail-jump controls, including effects hidden after a CALL.
 
 Callback TryLevel coverage is split across `RegistrationSEHTryLevel.*`
 (state/frame correlation, retirement, narrow writes and source receipts),
-`RegistrationSEHStateStore.*` (exact MedIR fullword binding and retained scopes),
+`RegistrationSEHStateStore.*` (exact MedIR store binding, preserved high bytes
+and retained scopes),
 and `RegistrationSEHStateNative.*` (EH3/EH4 lowering, source replay, callback ABI
 retention and physical write mutations). `CompiledSEHStateWrites.*` checks
 receipt transport through layout changes and final ownership/range closure;
@@ -3845,7 +3846,7 @@ The native receipt tests require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`; r4 builds retain analysis and
 refusal coverage but cannot run the new compiler-protocol tests.
 
-`registration_state.s` adds four EH3 runtime cases:
+`registration_state.s` adds six EH3 runtime cases:
 
 | Case | Checked callback state effect |
 |------|-------------------------------|
@@ -3853,9 +3854,11 @@ refusal coverage but cannot run the new compiler-protocol tests.
 | `longjmp-state-activate-unwind` (31) | A CRT-dispatched finally activates that scope before nested resumption |
 | `longjmp-state-retire` (32) | A returning unwind callback retires a pending inner cleanup |
 | `longjmp-state-sentinel` (33) | A callback leaves no active scope; the resumed parent later activates one |
+| `longjmp-state-byte` (34) | A callback activates a scope with a byte store before nonlocal resumption |
+| `longjmp-state-word` (35) | The same transition preserves the high half of a word store |
 
-The four cases have passed local Wine execution against the captured Microsoft
-x86 CRT: 80 original and rewritten image executions cover both patch modes,
+The six cases have passed local Wine execution against the captured Microsoft
+x86 CRT: 120 original and rewritten image executions cover both patch modes,
 IR and EXE input, optimization on/off and forced rebasing. Each execution checks
 four invocations, the cleanup trace, resumed registers/state and FS:[0]
 restoration. To run the complete script, use NeverD built against a compiler
@@ -3863,7 +3866,7 @@ with the capability above and the captured Microsoft x86 CRT. `--compiler` and
 `--linker` select fixture tools, not the LLVM library linked into NeverD:
 
 ```bash
-for registration_case in longjmp-state-activate-call longjmp-state-activate-unwind longjmp-state-retire longjmp-state-sentinel; do
+for registration_case in longjmp-state-activate-call longjmp-state-activate-unwind longjmp-state-retire longjmp-state-sentinel longjmp-state-byte longjmp-state-word; do
   python scripts/check_windows_registration_rewrite.py \
     --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
     --patch-binary build/bin/neverd \

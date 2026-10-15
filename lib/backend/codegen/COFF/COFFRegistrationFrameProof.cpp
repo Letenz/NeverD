@@ -551,7 +551,9 @@ llvm::Error validateFramePrivacy(
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
             if (Scopes && Scopes->CallbackWrites.count(Store) &&
                 (!Where || Where->Root != LogicalFrame ||
-                 Where->Offset != Scopes->Offset || Bytes != 4))
+                 Where->Offset != Scopes->Offset ||
+                 !Scopes->Writes.count(Store) ||
+                 Bytes != Scopes->Writes.at(Store)))
               return Reject(
                   "callback state write changed its source frame cell");
             if (Scopes && Scopes->Enabled) {
@@ -562,7 +564,8 @@ llvm::Error validateFramePrivacy(
                   (Where->Offset >= Scopes->Offset ||
                    Bytes > uint64_t(Scopes->Offset - Where->Offset));
               if ((State && (!Where || Where->Root != LogicalFrame ||
-                             Where->Offset != Scopes->Offset || Bytes != 4)) ||
+                             Where->Offset != Scopes->Offset ||
+                             Bytes != Scopes->Writes.at(Store))) ||
                   (Overlap && !State))
                 return Reject("dynamic scope state storage changed");
             }

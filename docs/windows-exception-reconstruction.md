@@ -193,8 +193,10 @@ unproved cleanup conventions remain rejected.
 
 Native callback TryLevel writes additionally require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, which the r4 compiler does not
-provide. The current path accepts only checked constant 32-bit stores; byte and
-word callback stores remain analysis-only. Each generated write binds the exact
+provide. The current path accepts checked constant 8-, 16- and 32-bit stores
+when every reaching transition produces one complete resulting level. Narrow
+writes preserve untouched high bytes; different possible full results still
+require a separate runtime selection plan. Each generated write binds the exact
 source occurrence, owning callback, recovered parent frame and scope semantic
 token to LLVM's generated state index, or the checked EH3/EH4 outside sentinel.
 The installer replays the logical source store and checks the physical MOV32

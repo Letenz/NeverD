@@ -496,6 +496,88 @@ TEST(RegistrationSEHStateNative, InstallerBindsFinalStateWriteBytesAndOwners) {
   }
 }
 
+TEST(RegistrationSEHStateNative, NarrowLogicalStoresUseFullPhysicalStates) {
+  for (bool EH4 : {false, true})
+    for (uint8_t Width : {1, 2}) {
+      SCOPED_TRACE(EH4);
+      SCOPED_TRACE(Width);
+      StateFixture F(EH4);
+      auto &Chain = *F.Source.ExceptionMetadata->Registration;
+      auto &States = *F.Source.RegistrationStates;
+      Chain.Scopes[1].EnclosingLevel = 0;
+      States.Blocks[2].Levels = {0};
+      Chain.TryLevelStores[2].Width = Width;
+      States.SEHStateStores[0].Width = Width;
+      States.SEHStateStores[0].Transitions = {{0, 0}};
+      F.Source.Blocks[2].Ops[1].Inputs[1].Size = Width;
+      F.Stores[0]->setOperand(
+          0, llvm::ConstantInt::get(
+                 llvm::IntegerType::get(F.Context, Width * 8), 0));
+      ASSERT_TRUE(F.lower()) << F.print();
+      ASSERT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+      auto Callbacks =
+          coff_registration::callbacks(*F.Parent, *F.Source.ExceptionMetadata);
+      ASSERT_TRUE(bool(Callbacks)) << llvm::toString(Callbacks.takeError());
+      std::vector<const llvm::Function *> Functions{F.Parent};
+      for (const auto &[Key, Function] : *Callbacks)
+        Functions.push_back(Function);
+      auto Segments = coff_registration::validateSourceSegments(
+          *F.Parent, F.Source, *Callbacks, Functions);
+      ASSERT_TRUE(bool(Segments)) << llvm::toString(Segments.takeError());
+      auto Writes = coff_registration::bindSEHCallbackStateWrites(
+          F.Source, *F.Parent, *Segments, Functions);
+      ASSERT_TRUE(bool(Writes)) << llvm::toString(Writes.takeError());
+      ASSERT_EQ(Writes->size(), 2u);
+      const auto Compiled = compileStateFixture(F);
+      ASSERT_TRUE(Compiled.Success);
+      ASSERT_EQ(Compiled.WinX86SEHStateWrites.size(), 2u);
+      auto Valid = validateCOFFRegistrationSEHStateWrites(
+          *F.Parent, *F.Source.ExceptionMetadata, Compiled);
+      EXPECT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    }
+}
+
+TEST(RegistrationSEHStateNative, NarrowSentinelDoesNotUseItsByteLiteral) {
+  for (uint8_t Width : {1, 2}) {
+    SCOPED_TRACE(Width);
+    StateFixture F;
+    auto &Chain = *F.Source.ExceptionMetadata->Registration;
+    auto &States = *F.Source.RegistrationStates;
+    Chain.Scopes[1].EnclosingLevel = 0;
+    States.Blocks[2].Levels = {0};
+    States.Blocks[4].Levels = {-1};
+    Chain.TryLevelStores[2].Level = -1;
+    States.SEHStateStores[0].Value = UINT32_MAX;
+    States.SEHStateStores[0].Transitions = {{0, -1}};
+    F.Source.Blocks[2].Ops[1].Inputs[1] = MedVar::makeConst(UINT32_MAX, 4);
+    F.Stores[0]->setOperand(
+        0,
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(F.Context), UINT32_MAX));
+    const uint32_t Mask = Width == 1 ? UINT8_MAX : UINT16_MAX;
+    Chain.TryLevelStores[3].Level = Mask;
+    Chain.TryLevelStores[3].Width = Width;
+    States.SEHStateStores[1].Value = Mask;
+    States.SEHStateStores[1].Width = Width;
+    States.SEHStateStores[1].Transitions = {{-1, -1}};
+    F.Source.Blocks[4].Ops[1].Inputs[1] = MedVar::makeConst(Mask, Width);
+    F.Stores[1]->setOperand(
+        0, llvm::ConstantInt::get(llvm::IntegerType::get(F.Context, Width * 8),
+                                  Mask));
+    ASSERT_TRUE(F.lower()) << F.print();
+    ASSERT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+    const auto Compiled = compileStateFixture(F);
+    ASSERT_TRUE(Compiled.Success);
+    ASSERT_EQ(Compiled.WinX86SEHStateWrites.size(), 2u);
+    for (const auto &Write : Compiled.WinX86SEHStateWrites) {
+      EXPECT_EQ(Write.GeneratedState, -1);
+      EXPECT_FALSE(Write.Semantic);
+    }
+    auto Valid = validateCOFFRegistrationSEHStateWrites(
+        *F.Parent, *F.Source.ExceptionMetadata, Compiled);
+    EXPECT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  }
+}
+
 TEST(RegistrationSEHStateNative,
      InstallerBindsEachPhysicalWriteToItsSourceOwner) {
   for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
