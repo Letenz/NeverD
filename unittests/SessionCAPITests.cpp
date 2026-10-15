@@ -4048,6 +4048,15 @@ TEST_F(SessionCAPITest, TargetOptionChangesInvalidatePreviouslyCachedLLVM) {
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
 }
 
+/// \p Text with each comment line's continuation joined to the line before,
+/// so a sentence reads whole wherever the comment wraps it.
+std::string unwrappedComments(std::string Text) {
+  for (size_t At = Text.find("\n; "); At != std::string::npos;
+       At = Text.find("\n; ", At))
+    Text.replace(At, 3, " ");
+  return Text;
+}
+
 llvm::json::Object takeView(const char *Text) {
   EXPECT_NE(Text, nullptr);
   const auto Owned = takeString(Text);
@@ -5046,9 +5055,19 @@ TEST_F(SessionCAPITest, LLVMViewShowsTheFunctionInAModuleOfItsOwn) {
   EXPECT_LT(IR.find("@main("), Defined) << IR;
   EXPECT_LT(IR.find("@__nd_"), Defined) << IR;
   EXPECT_NE(IR.find("attributes #", Defined), std::string::npos) << IR;
-  // The slot __libc_start_main is read from, named as the listing names it.
+  // The slot __libc_start_main is read from, named as the listing names it,
+  // beside the load and in the comment over the GOT's mirror, which says
+  // what the mirror stands for.
   EXPECT_NE(IR.find("; " + Hex(*Slot) + " __libc_start_main_ptr\n"),
             std::string::npos)
+      << IR;
+  const std::string Declared = unwrappedComments(IR.substr(0, Defined));
+  EXPECT_NE(Declared.find("NeverD's mirror of the "), std::string::npos) << IR;
+  EXPECT_NE(Declared.find(", which hold pointers the loader relocates. An "
+                          "offset into it is an image address, 0x"),
+            std::string::npos)
+      << IR;
+  EXPECT_LT(IR.find(" = " + Hex(*Slot) + " __libc_start_main_ptr\n"), Defined)
       << IR;
 
   const auto Page =
@@ -5210,6 +5229,30 @@ define i64 @pick(i1 %c) !neverd.rewrite.source-identity !0 {
             std::string::npos)
       << View.Text;
   EXPECT_NE(View.Text.find(" ; 0x4008, 0x4010\n"), std::string::npos);
+  // Each mirror's declaration goes under a comment that says what it stands
+  // for and the offsets this function uses, the bare name as +0.
+  const size_t Data = View.Text.find("@__nd_data_4000 = ");
+  const size_t Pointers = View.Text.find("@__nd_codeptr_3000 = ");
+  ASSERT_TRUE(Data != std::string::npos && Pointers != std::string::npos);
+  const std::string Comments = unwrappedComments(View.Text);
+  EXPECT_NE(Comments.find("NeverD's mirror of the 64 image bytes at 0x4000. "
+                          "An offset into it is an image address, 0x4000 + "
+                          "offset. This function uses:"),
+            std::string::npos)
+      << View.Text;
+  EXPECT_NE(View.Text.find(";   +0 = 0x4000\n;   +8 = 0x4008\n;   +16 = "
+                           "0x4010\n;   +32 = 0x4020\n@__nd_data_4000 = "),
+            std::string::npos)
+      << View.Text;
+  EXPECT_NE(View.Text.find(";   +24 = 0x3018\n@__nd_codeptr_3000 = "),
+            std::string::npos)
+      << View.Text;
+  // Only the code-pointer mirror holds pointers the loader relocates.
+  const size_t Relocates =
+      Comments.find("which hold pointers the loader relocates");
+  EXPECT_TRUE(Relocates > Comments.find("@__nd_data_4000 = ") &&
+              Relocates < Comments.find("@__nd_codeptr_3000 = "))
+      << View.Text;
 #endif
 }
 
