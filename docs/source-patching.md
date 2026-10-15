@@ -63,9 +63,9 @@ The Clang LLVM-IR route also admits Windows ARM64 C++ FH3, checking compiler-own
 
 | Producer | Artifact | Verified OS runtime profile |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | Native object | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | Native object | ELF x64/ARM64 C/C++ with a compatible Itanium runtime; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | Native object | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | Native object | ELF x64/ARM64 C/C++ with a compatible Itanium runtime; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 | NeverC 3389.1.5 ordinary C | LLVM IR / native object | ELF / PE / Mach-O x64/ARM64: C source |
@@ -192,3 +192,7 @@ Windows x64 and ARM64 each also execute 36 Clang C++ FH3 observations.
 Mach-O writable-pointer cases initialize the pointer during execution; static address initializers still require unsupported load-time relocation registration and are covered by an explicit refusal test. ELF zero-sized COMDAT functions are accepted only when the signature is the sole function at the start of its executable section and CFI matches the complete section exactly. Interior, shared, padded, ungrouped and missing-CFI cases remain rejected.
 
 ELF ARM and Thumb have separate profiles. Source producers receive explicit `-marm` or `-mthumb`, and native function bindings preserve the original instruction-state bit. The 32-bit ELF processes use PIE images with real dynamic relocations. ARM32 QEMU execution records an explicit glibc `--loader` and sysroot: QEMU’s AUXV calculation does not follow relocated program headers as the Linux kernel does. This route verifies glibc loading and execution under QEMU; it is not physical ARM32 or native kernel-loader evidence.
+
+For these patched ELF images, the Linux x86 and ARM32 `qemu-user` routes both require an explicit glibc `--loader` from the matching target sysroot. Linux x86 `compatibility` uses the Linux x64 host kernel's 32-bit support and is recorded separately from QEMU execution; it does not establish execution on a native 32-bit x86 host.
+
+The [process qualification](https://github.com/NeverSight/NeverD/actions/runs/38694434082) at `fcee81c9a5e2f20a71090ade23ae833175f64c59` passed all 750 observations: 576 on matching native hosts, 78 in x86 compatibility mode and 96 ARM/Thumb observations through QEMU user mode. Independent artifact audits verified all 126 image hashes, execution identities and complete scenario inventories. The [Windows rebuild](https://github.com/NeverSight/NeverD/actions/runs/38694628242) passed 194 focused checks and 474 Windows/Linux process observations. The [Linux rebuild](https://github.com/NeverSight/NeverD/actions/runs/38694638358) passed 444 checks, including every one of the original 62 failures and 46 skips, with zero failures or skips. These results retain the hardware and loader limits above; NeverC remains pure C and its repository was not changed.

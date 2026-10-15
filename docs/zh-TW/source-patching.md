@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: ea95e492ed89405a4adc058cbf8d89873c3c2df48b902d55a21a390158b23f6e -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR 路徑接入 Windows ARM64 C++ FH3，驗證 xdata、父框架 ABI 
 
 | 編譯器 | 製品 | 已驗證的作業系統執行設定 |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | 原生物件 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | 原生物件 | ELF x64/ARM64 C/C++，需要相容的 Itanium 執行階段; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.6 | 原生物件 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| GCC/G++ 13.3.0 | 原生物件 | ELF x64/ARM64 C/C++，需要相容的 Itanium 執行階段; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生物件 | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / 原生物件 | ELF / PE / Mach-O x64/ARM64: 純 C 原始碼 |
@@ -194,3 +194,7 @@ Windows x64 與 ARM64 也會各自執行 36 次 Clang C++ FH3 觀測。
 Mach-O 的可寫入指標用例在執行時建立指標；靜態位址初始化仍需要尚未支援的執行期重定位註冊，並有明確拒絕的回歸測試。ELF 零大小 COMDAT 函式僅在簽名是其可執行節起點處的唯一函式，且 CFI 精確涵蓋整個節時才接受。節內偏移、共用、填補、無群組及缺少 CFI 的情況仍拒絕。
 
 ELF ARM 與 Thumb 使用獨立設定。原始碼編譯器明確接收 `-marm` 或 `-mthumb`，原生函式繫結保留原函式的指令狀態位元。32 位元 ELF 程序使用具備實際動態重定位的 PIE 映像。ARM32 QEMU 執行會記錄明確的 glibc `--loader` 與 sysroot：QEMU 的 AUXV 計算不像 Linux 核心一樣處理遷移後的程式標頭。此路徑驗證 QEMU 下的 glibc 載入與執行，不代表 ARM32 實機或原生核心載入器驗證。
+
+對於這些套用補丁後的 ELF 映像，Linux x86 與 ARM32 的 `qemu-user` 路徑都需要明確使用符合目標架構的 sysroot 中的 glibc `--loader`。Linux x86 的 `compatibility` 路徑使用 Linux x64 宿主核心的 32 位元相容支援，並與 QEMU 執行分別記錄；它不能證明在原生 32 位元 x86 主機上執行。
+
+[`fcee81c9a5e2f20a71090ade23ae833175f64c59` 的程序驗證](https://github.com/NeverSight/NeverD/actions/runs/38694434082)通過全部 750 次觀測：相符主機上的 576 次原生執行、78 次 x86 相容模式執行，以及 QEMU 使用者模式下的 96 次 ARM／Thumb 執行。獨立產物稽核核對了全部 126 個映像的雜湊、執行身分與完整情境清單。[Windows 重建驗收](https://github.com/NeverSight/NeverD/actions/runs/38694628242)通過 194 項專項檢查和 474 次 Windows／Linux 程序觀測。[Linux 重建驗收](https://github.com/NeverSight/NeverD/actions/runs/38694638358)通過 444 項檢查，包含原來全部 62 項失敗和 46 項略過，零失敗、零略過。這些結果保留上述硬體與載入器驗證界線；NeverC 仍為純 C，未修改其儲存庫。
