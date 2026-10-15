@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 9e07e4e434e843aba6743a562a3e0102fd2b4c599caa8fc1cc5a4d275ce90cae -->
+<!-- i18n-source: 063226dd86688a1fb9f6d9741898c67d850f4398e9c652507a75f3b01d47ab90 -->
 
 <div align="center">
 
@@ -216,7 +216,7 @@ NeverD 常規的 push 與 pull request CI 刻意從原始碼編譯 LLVM submodul
 
 每個封存檔解壓縮至 `~/.cache/neverd-llvm/<tag>/<arch>/`（或 `NEVERD_LLVM_PREBUILT_CACHE_DIR` 指定的目錄）前，都會核對 `cmake/NeverDLLVMPrebuilt.cmake` 中固定的摘要；未被這些固定值描述的 tag 則核對隨包發布的 `.sha256`。預設固定版本的 `BUILDINFO.txt` 也必須記錄完全一致的 LLVM 子模組提交。發布建置在 macOS 與 Linux 使用 ccache，Windows clang-cl 使用 sccache 與 GitHub Actions 快取後端；編譯器快取只加速重建，不作為發布產物上傳。
 
-預設套件修訂版為 `neverd-llvm-v23.0.0-r6`。其 Git tag、發布目標、原始碼提交與三個封存檔摘要共同構成不可變的版本化原始碼固定值。若現有建置目錄快取舊基礎 tag、`neverd-llvm-v23.0.0-r1`、`neverd-llvm-v23.0.0-r2`、`neverd-llvm-v23.0.0-r3`, `neverd-llvm-v23.0.0-r4` 或 `neverd-llvm-v23.0.0-r5`，會自動遷移至 `r6`，除非明確設定 `NEVERD_LLVM_PREBUILT_SHA256`。`Prebuilt LLVM Audit` 工作流程於 push、pull request 及每六小時執行，呼叫 `scripts/audit_prebuilt_llvm_release.py`，核對 GitHub 目前發布及各校驗和附屬檔案。
+預設套件修訂版為 `neverd-llvm-v23.0.0-r6`。其 Git tag、發布目標、原始碼提交與三個封存檔摘要共同構成不可變的版本化原始碼固定值。若現有建置目錄快取舊基礎 tag、`neverd-llvm-v23.0.0-r1`、`neverd-llvm-v23.0.0-r2`、`neverd-llvm-v23.0.0-r3`、`neverd-llvm-v23.0.0-r4` 或 `neverd-llvm-v23.0.0-r5`，會自動遷移至 `r6`，除非明確設定 `NEVERD_LLVM_PREBUILT_SHA256`。`Prebuilt LLVM Audit` 工作流程於 push、pull request 及每六小時執行，呼叫 `scripts/audit_prebuilt_llvm_release.py`，核對 GitHub 目前發布及各校驗和附屬檔案。
 
 若 LLVM fork 原始碼改變而 LLVM 仍回報 `23.0.0`，應發布下一個套件修訂版——`neverd-llvm-v23.0.0-r7`，之後為 `-r8`——不要覆寫既有發布，也不要虛構 LLVM 版本 `23.0.1`：
 

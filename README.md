@@ -229,9 +229,8 @@ legacy mutable base tag, its Git tag, release target, source commit, and three
 archive digests form one revisioned source pin that NeverD treats as
 immutable. Existing build directories still caching the legacy base tag,
 `neverd-llvm-v23.0.0-r1`, `neverd-llvm-v23.0.0-r2`, `neverd-llvm-v23.0.0-r3`,
-`neverd-llvm-v23.0.0-r4`, or
-`neverd-llvm-v23.0.0-r5` move to `r6` automatically unless they also provide an
-explicit `NEVERD_LLVM_PREBUILT_SHA256` override. The `Prebuilt LLVM Audit` workflow runs
+`neverd-llvm-v23.0.0-r4`, or `neverd-llvm-v23.0.0-r5` move to `r6`
+automatically unless they also provide an explicit `NEVERD_LLVM_PREBUILT_SHA256` override. The `Prebuilt LLVM Audit` workflow runs
 on pushes, pull requests, and every six hours. It invokes
 `scripts/audit_prebuilt_llvm_release.py` to compare that source pin with the
 live GitHub release and each published checksum sidecar.
