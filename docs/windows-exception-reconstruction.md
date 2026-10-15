@@ -193,7 +193,8 @@ This applies to checked EH3, EH4 and EH4+GS frames. Other exception/context
 fields and nonlocal continuations still require separate native contracts.
 
 Checked EH3 parents can capture a private 64-byte jump buffer with `_setjmp3`
-and resume it with `_longjmpex` in the same parent. The source proof binds the
+and resume it with `_longjmpex` in the same parent or its checked finally
+callbacks. The source proof binds the
 capture, buffer lifetime, unwind import, continuation, argument slot and scope
 state. LLVM supplies the generated continuation and registration state. Native
 lowering separately restores logical register spills and the captured source
@@ -202,8 +203,13 @@ A checked unwind adapter copies the native buffer and substitutes the runtime
 registration's virtual EBP only for cleanup dispatch; the original physical EBP
 remains available for resumption. The installer independently verifies that
 adapter, the complete register snapshots and every capture/resume call. Reads
-of the original physical buffer representation remain refused. Callback or
-cross-callee resumptions and EH4 jump buffers require additional native contracts.
+of the original physical buffer representation remain refused. Outlined finally
+callbacks recover the exact native buffer from their owning parent and load
+the jump value from their checked private argument stack. This covers ordinary
+finally calls and runtime unwind dispatch, including a zero jump value becoming
+one. Source CFG identities and enclosing scope rows survive callbacks which
+leave only through a nonlocal jump. Filter and cross-callee resumptions and EH4
+jump buffers require additional native contracts.
 
 Incoming cdecl stack slots are projected onto the real caller frame at their
 original memory-operation occurrences, including reads and writes in outlined

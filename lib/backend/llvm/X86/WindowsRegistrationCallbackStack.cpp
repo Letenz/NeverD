@@ -43,7 +43,8 @@ llvm::Error checkPrivateStack(
     X86RegistrationCallbackFrame &Frame,
     std::set<llvm::AllocaInst *> &PrivateSlots, size_t &WorkUsed,
     const std::set<llvm::StoreInst *> *SourceStores,
-    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes) {
+    llvm::ArrayRef<X86RegistrationCatchStackResume> Resumes,
+    std::set<const llvm::StoreInst *> *PrivateStores) {
   std::map<llvm::Value *, int64_t> Offsets;
   std::vector<llvm::Value *> Work;
   struct ScratchAccess {
@@ -379,6 +380,10 @@ llvm::Error checkPrivateStack(
               "private callback scratch read is not definitely initialized");
     }
   }
+  if (PrivateStores)
+    for (const auto &[Instruction, Access] : Accesses)
+      if (Access.Write)
+        PrivateStores->insert(llvm::cast<llvm::StoreInst>(Instruction));
   return llvm::Error::success();
 }
 

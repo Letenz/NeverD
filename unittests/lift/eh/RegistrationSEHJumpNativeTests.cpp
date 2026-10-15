@@ -38,29 +38,30 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
     llvm::CallBase *Capture = nullptr, *Resume = nullptr;
     llvm::AllocaInst *Snapshot = nullptr, *CallerFrame = nullptr;
     llvm::StoreInst *State = nullptr;
-    for (auto &Block : *Function)
-      for (auto &I : Block) {
-        if (I.getMetadata(windows_eh_md::RegistrationCallerFrameAttachment))
-          CallerFrame = llvm::dyn_cast<llvm::AllocaInst>(&I);
-        if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
-          if (const auto *Callee = Call->getCalledFunction()) {
-            if (Callee->getName() == "_setjmp3")
-              Capture = Call;
-            if (Callee->getName() == "_longjmpex")
-              Resume = Call;
+    for (auto &Native : *Module)
+      for (auto &Block : Native)
+        for (auto &I : Block) {
+          if (I.getMetadata(windows_eh_md::RegistrationCallerFrameAttachment))
+            CallerFrame = llvm::dyn_cast<llvm::AllocaInst>(&I);
+          if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+            if (const auto *Callee = Call->getCalledFunction()) {
+              if (Callee->getName() == "_setjmp3")
+                Capture = Call;
+              if (Callee->getName() == "_longjmpex")
+                Resume = Call;
+            }
+          if (auto *MD =
+                  I.getMetadata(windows_eh_md::RegistrationJumpAttachment)) {
+            ASSERT_EQ(MD->getNumOperands(), 3u);
+            const auto *Kind = llvm::mdconst::dyn_extract<llvm::ConstantInt>(
+                MD->getOperand(2));
+            ASSERT_TRUE(Kind);
+            if (Kind->getZExtValue() == unsigned(SEHJumpRole::RegisterSnapshot))
+              Snapshot = llvm::dyn_cast<llvm::AllocaInst>(&I);
+            if (Kind->getZExtValue() == unsigned(SEHJumpRole::StateRestore))
+              State = llvm::dyn_cast<llvm::StoreInst>(&I);
           }
-        if (auto *MD =
-                I.getMetadata(windows_eh_md::RegistrationJumpAttachment)) {
-          ASSERT_EQ(MD->getNumOperands(), 3u);
-          const auto *Kind =
-              llvm::mdconst::dyn_extract<llvm::ConstantInt>(MD->getOperand(2));
-          ASSERT_TRUE(Kind);
-          if (Kind->getZExtValue() == unsigned(SEHJumpRole::RegisterSnapshot))
-            Snapshot = llvm::dyn_cast<llvm::AllocaInst>(&I);
-          if (Kind->getZExtValue() == unsigned(SEHJumpRole::StateRestore))
-            State = llvm::dyn_cast<llvm::StoreInst>(&I);
         }
-      }
     ASSERT_TRUE(Capture && Resume && Snapshot && State);
     auto *Buffer = llvm::cast<llvm::AllocaInst>(Capture->getArgOperand(0));
     llvm::StoreInst *Save = nullptr, *Restore = nullptr;
@@ -179,6 +180,50 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
     ASSERT_TRUE(bool(Error));
     llvm::consumeError(std::move(Error));
   }
+  bool HasCallbackResume = false;
+  for (const auto &Function : *Parent.getParent())
+    if (&Function != &Parent)
+      for (const auto &Block : Function)
+        for (const auto &I : Block)
+          if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+            if (const auto *Callee = Call->getCalledFunction())
+              HasCallbackResume |= Callee->getName() == "_longjmpex";
+  if (HasCallbackResume)
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Module = llvm::CloneModule(*Parent.getParent());
+      auto *Function = Module->getFunction(Parent.getName());
+      llvm::CallInst *Resume = nullptr;
+      for (auto &Callback : *Module)
+        if (&Callback != Function)
+          for (auto &Block : Callback)
+            for (auto &I : Block)
+              if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I))
+                if (const auto *Callee = Call->getCalledFunction();
+                    Callee && Callee->getName() == "_longjmpex")
+                  Resume = Call;
+      ASSERT_TRUE(Resume);
+      auto *Buffer = llvm::cast<llvm::IntrinsicInst>(Resume->getArgOperand(0));
+      llvm::IRBuilder<> B(Resume);
+      if (Mutation == 0)
+        Buffer->setArgOperand(1, llvm::ConstantPointerNull::get(B.getPtrTy()));
+      if (Mutation == 1)
+        Buffer->setArgOperand(2, B.getInt32(0));
+      if (Mutation == 2)
+        B.Insert(Buffer->clone());
+      if (Mutation == 3)
+        B.CreateStore(B.getInt32(0), Buffer);
+      if (Mutation == 4) {
+        auto *Value = llvm::cast<llvm::LoadInst>(Resume->getArgOperand(1));
+        auto *Address =
+            llvm::cast<llvm::GetElementPtrInst>(Value->getPointerOperand());
+        Address->setOperand(0, Buffer);
+      }
+      ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+      auto Error = validateCOFFRegistrationIR(*Function, Source, Image);
+      ASSERT_TRUE(bool(Error));
+      llvm::consumeError(std::move(Error));
+    }
 #endif
 }
 

@@ -38,10 +38,19 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
   // Native registration reconstruction replays exact source intervals and
   // their ordinary edges. Retain every reached interval until that replay;
   // jump threading cannot silently discard its source occurrence receipt.
+  // SEH replay includes the original normal edge after an ordinary finally
+  // call, even when that invocation always leaves through longjmp. Threading
+  // its dead continuation would also renumber the remaining source identities.
+  const bool HasSEHSource = Func.ExceptionMetadata &&
+                            Func.ExceptionMetadata->Registration &&
+                            (Func.ExceptionMetadata->Personality ==
+                                 ExceptionPersonality::ExceptHandler3 ||
+                             Func.ExceptionMetadata->Personality ==
+                                 ExceptionPersonality::ExceptHandler4);
   std::set<std::pair<va_t, va_t>> RegistrationIntervals;
   if (Func.RegistrationStates)
     for (const auto &State : Func.RegistrationStates->Blocks)
-      if (State.Reached)
+      if (State.Reached || HasSEHSource)
         RegistrationIntervals.emplace(State.Range.Begin, State.Range.End);
 
   bool Changed = true;

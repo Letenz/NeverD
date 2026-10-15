@@ -43,7 +43,10 @@ CASES.update({"eh4-gs-" + name: CASES[name] for name in
                "normal-finally", "cdecl-parameter", "cdecl-parameter-write",
                "exception-code", "exception-flags")})
 CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
-              "longjmp-filter": (11, 3), "longjmp-parameter": (12, 23)})
+              "longjmp-filter": (11, 3), "longjmp-parameter": (12, 23),
+              "longjmp-callback": (13, 23),
+              "longjmp-unwind-callback": (14, 23),
+              "longjmp-callback-zero": (15, 23)})
 
 
 class PE32:

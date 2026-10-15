@@ -223,8 +223,9 @@ struct RegistrationSEHJumpResume {
   /// runtime resume occurrence. These do not grant a callable native ABI.
   va_t CalleeVA = 0;
   va_t ResumeVA = 0;
-  /// Direct parent invocations read the resume value from this established
-  /// EBP-relative argument slot. Callback/callee stacks need their own owner.
+  /// Exact resume-value argument slot: established EBP-relative for parent
+  /// calls, or relative to EntryVA's private callback entry ESP. Cross-function
+  /// callees require a separate stack owner and do not publish this projection.
   std::optional<int32_t> ValueOffset;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };

@@ -8,6 +8,8 @@
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <set>
 
 namespace neverd {
@@ -25,6 +27,7 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     return Result;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !Function.ExceptionMetadata ||
+      !Function.ExceptionMetadata->Registration ||
       Function.ExceptionMetadata->Personality !=
           ExceptionPersonality::ExceptHandler3)
     return std::nullopt;
@@ -93,14 +96,52 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     auto *Call = Bind(Resume.Address, Resume.OpSeq);
     const auto Capture = Captures.find(Resume.CaptureCall);
     if (++Work > limits::kMaxRegistrationEHStateWork || !Call ||
-        Capture == Captures.end() || Call->Capture || Call->Resume ||
-        Resume.EntryVA || Resume.OrdinaryCall || Resume.CalleeVA ||
-        Resume.ResumeVA || !Resume.ValueOffset ||
+        Capture == Captures.end() || (Call->Capture && !Call->Resume) ||
+        Resume.CalleeVA || Resume.ResumeVA || !Resume.ValueOffset ||
         Resume.TargetVA != Capture->second->EndAddress ||
         Resume.BufferOffset != Capture->second->BufferOffset ||
         Resume.StackOffset != Capture->second->StackOffset ||
         !Call->Operation->DoesNotReturn)
       return std::nullopt;
+    if (Resume.EntryVA) {
+      const auto &Scopes = Function.ExceptionMetadata->Registration->Scopes;
+      Work += Scopes.size() + States.SEHControls.size();
+      const auto State = BlockStates.find(Call->Block);
+      if (Work > limits::kMaxRegistrationEHStateWork ||
+          *Resume.ValueOffset > -4 || State == BlockStates.end() ||
+          State->second->Unknown || !State->second->CallbackOnly ||
+          !Blocks.count(Resume.EntryVA) ||
+          !llvm::any_of(Scopes, [&](const auto &Scope) {
+            return Scope.IsFinally && Scope.HandlerVA == Resume.EntryVA;
+          }))
+        return std::nullopt;
+      if (Resume.OrdinaryCall) {
+        const auto Found = Result.find(Resume.OrdinaryCall);
+        auto *Caller =
+            Found == Result.end()
+                ? nullptr
+                : Bind(Resume.OrdinaryCall, Found->second.Operation->OriginSeq);
+        if (!Caller ||
+            Caller->Operation->Inputs[0].ConstVal != Resume.EntryVA ||
+            !llvm::any_of(States.SEHControls, [&](const auto &Control) {
+              return Control.Control ==
+                         RegistrationSEHControlContract::Kind::NearCall &&
+                     Control.Address == Resume.OrdinaryCall &&
+                     Control.Target == Resume.EntryVA;
+            }))
+          return std::nullopt;
+      }
+    } else if (Resume.OrdinaryCall)
+      return std::nullopt;
+    // One instruction can run through ordinary and runtime finally entries.
+    // Every invocation must agree on the native buffer and argument projection.
+    if (Call->Resume) {
+      auto Previous = *Call->Resume;
+      Previous.OrdinaryCall = Resume.OrdinaryCall;
+      if (Previous != Resume)
+        return std::nullopt;
+      continue;
+    }
     Call->Capture = Capture->second;
     Call->Resume = &Resume;
   }

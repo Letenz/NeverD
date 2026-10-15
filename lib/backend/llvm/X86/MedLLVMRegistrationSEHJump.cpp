@@ -119,7 +119,7 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
       continue;
     const auto &SourceCall = Found->second;
     const bool Resume = SourceCall.Resume != nullptr;
-    if (Resume) {
+    if (Resume && !SourceCall.Resume->EntryVA) {
       const auto Bytes =
           Frame.getAllocationSize(Parent.getParent()->getDataLayout());
       const int64_t Offset =
@@ -165,7 +165,8 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
 
 std::map<llvm::CallInst *, llvm::CallInst *>
 emitSEHJumps(const SEHJumpPlan &Plan, llvm::Function &Parent,
-             llvm::AllocaInst &Frame, uint64_t EntrySP, va_t Owner) {
+             llvm::AllocaInst &Frame, uint64_t EntrySP, va_t Owner,
+             const std::map<va_t, llvm::Function *> &Callbacks) {
   std::map<llvm::CallInst *, llvm::CallInst *> Result;
   llvm::IRBuilder<> Entry(&*Parent.getEntryBlock().getFirstInsertionPt());
   std::map<va_t, llvm::AllocaInst *> Buffers;
@@ -188,16 +189,30 @@ emitSEHJumps(const SEHJumpPlan &Plan, llvm::Function &Parent,
                         Marker(Source.Capture->Address, SEHJumpRole::Buffer));
     Buffers.emplace(Source.Capture->Address, Buffer);
   }
-  for (const auto &[Call, Source] : Plan.Calls) {
+  const auto CallbackCalls =
+      emitSEHJumpCallbackBindings(Plan, Parent, Buffers, Callbacks);
+  for (const auto &[Original, Source] : Plan.Calls) {
+    const auto Callback = CallbackCalls.find(Original);
+    auto *Call =
+        Callback == CallbackCalls.end() ? Original : Callback->second.Call;
     llvm::IRBuilder<> Before(Call);
     llvm::IRBuilder<> After(Call->getNextNode());
     const auto &Capture = *Source.Capture;
-    auto *Buffer = Buffers.at(Capture.Address);
+    llvm::Value *Buffer = Callback == CallbackCalls.end()
+                              ? Buffers.at(Capture.Address)
+                              : Callback->second.Buffer;
     llvm::CallInst *Replacement = nullptr;
     if (Source.Resume) {
+      auto *Storage =
+          Callback == CallbackCalls.end()
+              ? &Frame
+              : const_cast<llvm::AllocaInst *>(Callback->second.Stack.Slot);
+      const auto Base = Callback == CallbackCalls.end()
+                            ? EntrySP - 4
+                            : Callback->second.Stack.EntrySP;
       auto *Slot = Before.CreateInBoundsGEP(
-          Before.getInt8Ty(), &Frame,
-          Before.getInt32(EntrySP - 4 + *Source.Resume->ValueOffset));
+          Before.getInt8Ty(), Storage,
+          Before.getInt32(Base + *Source.Resume->ValueOffset));
       auto *Value = Before.CreateLoad(Before.getInt32Ty(), Slot);
       Value->setAlignment(llvm::Align(1));
       Value->setVolatile(true);

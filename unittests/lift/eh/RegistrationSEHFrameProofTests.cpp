@@ -8,6 +8,11 @@
 #include "../../../lib/backend/llvm/X86/MedLLVMRegistrationSEHProof.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/llvm/WindowsRegistrationFrame.h"
+
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+
 using namespace neverd;
 
 namespace {
@@ -51,7 +56,7 @@ MedFunc cookieCall() {
 bool provesFramePrivacy(const MedFunc &Function) {
   return x86_registration::getPrivateSEHFrameValues(
              Function, *Function.RegistrationStates,
-             [](const MedVar &, uint16_t) { return false; })
+             [](const MedOp &) { return false; })
       .has_value();
 }
 
@@ -93,6 +98,52 @@ TEST(RegistrationSEHFrameProof, CookieExemptionRequiresItsExactSourceCall) {
       break;
     }
     EXPECT_FALSE(provesFramePrivacy(Function));
+  }
+}
+
+TEST(RegistrationSEHFrameProof, CallbackStoresRequireBoundedPrivateScratch) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    llvm::LLVMContext Context;
+    llvm::Module Module("callback-scratch", Context);
+    Module.setDataLayout("e-m:x-p:32:32-i64:64-n8:16:32-S32");
+    auto *Parent = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+        llvm::GlobalValue::ExternalLinkage, "parent", Module);
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Parent);
+    llvm::IRBuilder<> B(Entry);
+    auto *Slot = B.CreateAlloca(B.getInt32Ty());
+    B.CreateRetVoid();
+    auto *Callback = llvm::BasicBlock::Create(Context, "callback", Parent);
+    B.SetInsertPoint(Callback);
+    auto *Seed = B.CreateStore(B.getInt32(0), Slot);
+    auto *SP = B.CreateLoad(B.getInt32Ty(), Slot);
+    auto *Address = B.CreateIntToPtr(
+        B.CreateAdd(SP, B.getInt32(Mutation == 1 ? 0 : -4)), B.getPtrTy());
+    auto *Scratch = B.CreateStore(B.getInt32(23), Address);
+    llvm::Value *Value =
+        Mutation == 2 ? static_cast<llvm::Value *>(SP) : B.getInt32(42);
+    auto *Outside = B.CreateStore(
+        Value,
+        llvm::ConstantExpr::getIntToPtr(B.getInt32(0x1234000), B.getPtrTy()));
+    B.CreateRetVoid();
+    const X86RegistrationRootSeed Root{Seed,
+                                       X86RegistrationRootKind::StackPointer};
+    X86RegistrationCallbackRequest Request;
+    Request.Entry = Callback;
+    Request.Blocks = {Callback};
+    Request.Frame.RootSeeds = {&Root, 1};
+    Request.Frame.InferStackBounds = true;
+    const auto Stores =
+        x86_registration::getCheckedSEHCallbackStores({Request});
+    if (Mutation) {
+      EXPECT_FALSE(Stores);
+    } else {
+      ASSERT_TRUE(Stores);
+      EXPECT_EQ(Stores->size(), 1u);
+      EXPECT_TRUE(Stores->count(Scratch));
+      EXPECT_FALSE(Stores->count(Outside));
+    }
   }
 }
 

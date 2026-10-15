@@ -26,7 +26,8 @@ bool RegistrationSEHJumpContract::readsSourceBuffer(int64_t Offset,
 llvm::Expected<RegistrationSEHJumpContract>
 bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
              const RegistrationFrame &Frame,
-             const std::set<const llvm::Instruction *> &IncomingSetup) {
+             const std::set<const llvm::Instruction *> &IncomingSetup,
+             const std::map<CallbackKey, const llvm::Function *> &Callbacks) {
   using x86_registration::SEHJumpRole;
   const auto Expected = getX86RegistrationSEHJumpCalls(Source);
   if (!Expected)
@@ -45,75 +46,85 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
   std::set<const llvm::AllocaInst *> Registers;
   RegistrationSEHJumpContract Result;
   size_t Work = 0;
-  for (const auto &Block : Parent)
-    for (const auto &I : Block) {
-      if (++Work > limits::kMaxRegistrationEHStateWork)
-        return rejectIR("native nonlocal jump proof exceeds its work budget");
-      const auto *Marker =
-          I.getMetadata(windows_eh_md::RegistrationJumpAttachment);
-      if (Marker) {
-        const auto Address = metadataInteger(*Marker, 1, 64);
-        const auto Kind = metadataInteger(*Marker, 2, 8);
-        if (Marker->getNumOperands() != 3 ||
-            metadataInteger(*Marker, 0, 64) != Source.Entry || !Address ||
-            !Kind)
-          return rejectIR("native jump state lost its source capture identity");
-        if (*Kind == unsigned(SEHJumpRole::ResumeValue)) {
-          const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I);
-          if (!Load || !Expected->count(*Address) ||
-              !Expected->at(*Address).Resume ||
-              !Values.emplace(*Address, Load).second)
+  std::vector<const llvm::Function *> Functions{&Parent};
+  for (const auto &[Key, Callback] : Callbacks)
+    Functions.push_back(Callback);
+  for (const auto *Function : Functions)
+    for (const auto &Block : *Function)
+      for (const auto &I : Block) {
+        if (++Work > limits::kMaxRegistrationEHStateWork)
+          return rejectIR("native nonlocal jump proof exceeds its work budget");
+        const auto *Marker =
+            I.getMetadata(windows_eh_md::RegistrationJumpAttachment);
+        if (Marker) {
+          const auto Address = metadataInteger(*Marker, 1, 64);
+          const auto Kind = metadataInteger(*Marker, 2, 8);
+          if (Marker->getNumOperands() != 3 ||
+              metadataInteger(*Marker, 0, 64) != Source.Entry || !Address ||
+              !Kind)
             return rejectIR(
-                "native jump value lost its source argument identity");
+                "native jump state lost its source capture identity");
+          if (*Kind == unsigned(SEHJumpRole::ResumeValue)) {
+            const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I);
+            if (!Load || !Expected->count(*Address) ||
+                !Expected->at(*Address).Resume ||
+                !Values.emplace(*Address, Load).second)
+              return rejectIR(
+                  "native jump value lost its source argument identity");
+            continue;
+          }
+          if (Function != &Parent || !Captures.count(*Address))
+            return rejectIR(
+                "native jump state lost its source capture identity");
+          auto &Capture = Captures.at(*Address);
+          if (*Kind == unsigned(SEHJumpRole::StateRestore)) {
+            const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+            if (!Store || Capture.State)
+              return rejectIR(
+                  "native jump state restore is absent or duplicated");
+            Capture.State = Store;
+          } else {
+            const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
+            if (!Slot || !Slot->isStaticAlloca() || Slot->getAddressSpace() ||
+                Slot->isArrayAllocation())
+              return rejectIR(
+                  "native jump storage is not a private static slot");
+            if (*Kind == unsigned(SEHJumpRole::Buffer)) {
+              const auto *Type =
+                  llvm::dyn_cast<llvm::ArrayType>(Slot->getAllocatedType());
+              if (Capture.Buffer || !Type ||
+                  !Type->getElementType()->isIntegerTy(8) ||
+                  Type->getNumElements() !=
+                      RegistrationSEHJumpCapture::BufferBytes ||
+                  Slot->getAlign() < llvm::Align(4))
+                return rejectIR(
+                    "native jump buffer changed its runtime extent");
+              Capture.Buffer = Slot;
+            } else if (*Kind != unsigned(SEHJumpRole::RegisterSnapshot) ||
+                       !Capture.Saved.insert(Slot).second)
+              return rejectIR("native register snapshot has an unknown role");
+          }
+        } else if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
+                   Slot && Function == &Parent && Slot != Frame.Slot &&
+                   !IncomingSetup.count(Slot))
+          Registers.insert(Slot);
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+        const auto *Operation =
+            I.getMetadata(windows_eh_md::RegistrationOperationAttachment);
+        if (!Call || !Operation)
           continue;
-        }
-        if (!Captures.count(*Address))
-          return rejectIR("native jump state lost its source capture identity");
-        auto &Capture = Captures.at(*Address);
-        if (*Kind == unsigned(SEHJumpRole::StateRestore)) {
-          const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-          if (!Store || Capture.State)
-            return rejectIR(
-                "native jump state restore is absent or duplicated");
-          Capture.State = Store;
-        } else {
-          const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
-          if (!Slot || !Slot->isStaticAlloca() || Slot->getAddressSpace() ||
-              Slot->isArrayAllocation())
-            return rejectIR("native jump storage is not a private static slot");
-          if (*Kind == unsigned(SEHJumpRole::Buffer)) {
-            const auto *Type =
-                llvm::dyn_cast<llvm::ArrayType>(Slot->getAllocatedType());
-            if (Capture.Buffer || !Type ||
-                !Type->getElementType()->isIntegerTy(8) ||
-                Type->getNumElements() !=
-                    RegistrationSEHJumpCapture::BufferBytes ||
-                Slot->getAlign() < llvm::Align(4))
-              return rejectIR("native jump buffer changed its runtime extent");
-            Capture.Buffer = Slot;
-          } else if (*Kind != unsigned(SEHJumpRole::RegisterSnapshot) ||
-                     !Capture.Saved.insert(Slot).second)
-            return rejectIR("native register snapshot has an unknown role");
-        }
-      } else if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
-                 Slot && Slot != Frame.Slot && !IncomingSetup.count(Slot))
-        Registers.insert(Slot);
-      const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-      const auto *Operation =
-          I.getMetadata(windows_eh_md::RegistrationOperationAttachment);
-      if (!Call || !Operation)
-        continue;
-      const auto Address = metadataInteger(*Operation, 1, 64);
-      if (!Address || !Expected->count(*Address))
-        continue;
-      const auto &ExpectedCall = Expected->at(*Address);
-      if (!matchesSourceOperation(I, Source.Entry, *Address, 2) ||
-          metadataInteger(*Operation, 2, 32) !=
-              uint32_t(ExpectedCall.Operation->OriginSeq) ||
-          metadataInteger(*Operation, 3, 32) != uint32_t(ExpectedCall.Block) ||
-          !Calls.emplace(*Address, Call).second)
-        return rejectIR("native jump call occurrence changed");
-    }
+        const auto Address = metadataInteger(*Operation, 1, 64);
+        if (!Address || !Expected->count(*Address))
+          continue;
+        const auto &ExpectedCall = Expected->at(*Address);
+        if (!matchesSourceOperation(I, Source.Entry, *Address, 2) ||
+            metadataInteger(*Operation, 2, 32) !=
+                uint32_t(ExpectedCall.Operation->OriginSeq) ||
+            metadataInteger(*Operation, 3, 32) !=
+                uint32_t(ExpectedCall.Block) ||
+            !Calls.emplace(*Address, Call).second)
+          return rejectIR("native jump call occurrence changed");
+      }
   if (Calls.size() != Expected->size())
     return rejectIR("native jump call set is incomplete");
   for (const auto &[Address, Call] : Calls) {
@@ -127,7 +138,6 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
         Call->getCallingConv() != llvm::CallingConv::C ||
         Callee->arg_size() != 2 || Callee->isVarArg() == Resume ||
         Call->arg_size() != 2 || !Capture.Buffer ||
-        Call->getArgOperand(0) != Capture.Buffer ||
         !Call->getArgOperand(1)->getType()->isIntegerTy(32) ||
         !Callee->getFunctionType()->getParamType(0)->isPointerTy() ||
         !Callee->getFunctionType()->getParamType(1)->isIntegerTy(32) ||
@@ -146,29 +156,11 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
       return Identity.takeError();
     if (!*Identity || **Identity != ExpectedCall.Operation->Inputs[0].ConstVal)
       return rejectIR("native jump runtime changed its source import identity");
-    if (Resume) {
-      const auto Found = Values.find(Address);
-      const auto *Load = Found != Values.end() ? Found->second : nullptr;
-      const auto *GEP = Load ? llvm::dyn_cast<llvm::GetElementPtrInst>(
-                                   Load->getPointerOperand())
-                             : nullptr;
-      llvm::APInt Offset(32, 0);
-      const int64_t ExpectedOffset =
-          int64_t(Frame.EntrySP) - 4 + *ExpectedCall.Resume->ValueOffset;
-      const auto Bytes =
-          Frame.Slot->getAllocationSize(Parent.getParent()->getDataLayout());
-      if (!Load || Call->getArgOperand(1) != Load || !Load->hasOneUse() ||
-          !Load->isVolatile() || Load->isAtomic() ||
-          Load->getAlign() != llvm::Align(1) || !GEP ||
-          GEP->getPointerOperand() != Frame.Slot ||
-          !GEP->accumulateConstantOffset(Parent.getParent()->getDataLayout(),
-                                         Offset) ||
-          ExpectedOffset < 0 || !Bytes || Bytes->isScalable() ||
-          uint64_t(ExpectedOffset) + 4 > Bytes->getFixedValue() ||
-          Offset.getZExtValue() != uint64_t(ExpectedOffset) ||
-          Load->getParent() != Call->getParent() || !Load->comesBefore(Call))
-        return rejectIR("native jump value changed its original argument slot");
-    }
+    const auto Found = Values.find(Address);
+    if (auto Error = validateSEHJumpArguments(
+            *Call, Found != Values.end() ? Found->second : nullptr,
+            ExpectedCall.Resume, Parent, Frame, *Capture.Buffer, Callbacks))
+      return Error;
     Result.Calls.insert(Call);
   }
   for (const auto &[Address, Capture] : Captures) {
@@ -179,12 +171,9 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
     if (!Capture.Buffer || !Capture.State)
       return rejectIR(
           "native capture omits its buffer or logical state restore");
-    for (const auto *User : Capture.Buffer->users()) {
-      const auto *Use = llvm::dyn_cast<llvm::CallBase>(User);
-      if (!Use || !Result.Calls.count(Use) ||
-          Use->getArgOperand(0) != Capture.Buffer)
-        return rejectIR("native jump buffer escapes its checked invocations");
-    }
+    if (auto Error = validateSEHJumpBufferUses(Parent, *Capture.Buffer,
+                                               Result.Calls, Callbacks))
+      return Error;
     std::set<const llvm::Instruction *> Saves, Restores;
     std::set<const llvm::AllocaInst *> SeenRegisters;
     for (const auto *Slot : Capture.Saved) {

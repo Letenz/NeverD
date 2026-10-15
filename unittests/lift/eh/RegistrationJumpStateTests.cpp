@@ -284,6 +284,7 @@ TEST(RegistrationJumpState, RuntimeFinallyResumesOnlyFromPrivateArguments) {
       ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
       EXPECT_EQ(Result.SEHJumpResumptions.front().EntryVA, 0x110fu);
       EXPECT_EQ(Result.SEHJumpResumptions.front().TargetVA, 0x1105u);
+      EXPECT_EQ(Result.SEHJumpResumptions.front().ValueOffset, -4);
     } else {
       EXPECT_FALSE(Result.Complete);
       EXPECT_FALSE(Result.SEHJumpResumptionsComplete);

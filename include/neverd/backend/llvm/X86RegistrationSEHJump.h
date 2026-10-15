@@ -14,6 +14,11 @@
 #include <map>
 #include <optional>
 
+namespace llvm {
+class AllocaInst;
+class Function;
+} // namespace llvm
+
 namespace neverd {
 struct MedFunc;
 struct MedOp;
@@ -42,6 +47,16 @@ struct X86RegistrationSEHJumpCall {
 /// A native buffer and the generated capture state must be checked separately.
 std::optional<std::map<va_t, X86RegistrationSEHJumpCall>>
 getX86RegistrationSEHJumpCalls(const MedFunc &Function);
+
+struct X86RegistrationSEHJumpStack {
+  const llvm::AllocaInst *Slot = nullptr;
+  uint64_t EntrySP = 0;
+};
+
+/// Read the actual bounded stack recipe of a previously authenticated callback.
+/// Source ownership and the root's scalar use closure are checked separately.
+std::optional<X86RegistrationSEHJumpStack>
+getX86RegistrationSEHJumpStack(const llvm::Function &Callback);
 
 } // namespace neverd
 
