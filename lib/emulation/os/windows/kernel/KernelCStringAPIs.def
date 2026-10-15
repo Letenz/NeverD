@@ -7,15 +7,16 @@
 /// \file
 /// Argument counts, caller-IRQL ceilings and typed operations for the C runtime
 /// string helpers the kernel exports and drivers call directly. Every operation
-/// only reads caller-provided guest memory one unit at a time; residency is
-/// enforced per unit and a run without a terminator stops at the 1 MiB model
+/// reads caller-provided guest memory one unit at a time; residency is
+/// enforced per access and a run without a terminator stops at the 1 MiB model
 /// limit. Behavior is modeled 1:1 against the Windows 10.0.19041.6456 kernel
 /// exports cited per entry: counts and search results follow the standard C
 /// semantics, comparisons fold only ASCII A-Z, and the result width matches the
 /// routine (int results are zero-extended to 32 bits, size_t and pointer
 /// results are full width). The IRQL ceiling is Any, matching the exported
 /// leaf routines and the bounded memory helpers; validateGuestAccess still
-/// rejects paged reads above APC_LEVEL.
+/// rejects paged reads and writes above APC_LEVEL. Writers preflight the
+/// complete output, reject overlap, and return the original destination.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -33,6 +34,34 @@ NEVERD_KERNEL_CSTRING_API(strnlen, 2, Any,
                           runtime::cStringLength(*this, Memory, A, 1))
 NEVERD_KERNEL_CSTRING_API(wcsnlen, 2, Any,
                           runtime::cStringLength(*this, Memory, A, 2))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strcpy-wcscpy-mbscpy
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strncpy-strncpy-l-wcsncpy-wcsncpy-l-mbsncpy-mbsncpy-l
+// strcpy RVA 0x3d2f30, wcscpy 0x3d37e0; strncpy 0x3d3360, wcsncpy 0x3d3980.
+// Copy includes the terminator; counted copy writes exactly Count units,
+// padding with zeros when the source ends and adding no extra terminator.
+NEVERD_KERNEL_CSTRING_API(strcpy, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, false))
+NEVERD_KERNEL_CSTRING_API(wcscpy, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, false))
+NEVERD_KERNEL_CSTRING_API(strncpy, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, false))
+NEVERD_KERNEL_CSTRING_API(wcsncpy, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, false))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strcat-wcscat-mbscat
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strncat-strncat-l-wcsncat-wcsncat-l-mbsncat-mbsncat-l
+// strcat RVA 0x3d2e90, wcscat 0x3d37a0; strncat 0x3d31b0, wcsncat 0x3d38f0.
+// Append replaces the old terminator and always writes a new one. A zero
+// count makes strncat return untouched, but wcsncat still scans/writes Dest.
+NEVERD_KERNEL_CSTRING_API(strcat, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, true))
+NEVERD_KERNEL_CSTRING_API(wcscat, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, true))
+NEVERD_KERNEL_CSTRING_API(strncat, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, true))
+NEVERD_KERNEL_CSTRING_API(wcsncat, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, true))
 
 // https://learn.microsoft.com/cpp/c-runtime-library/reference/strcmp-wcscmp-mbscmp
 // strcmp RVA 0x3d3030, wcscmp RVA 0x3d3840: unsigned unit order, normalized to

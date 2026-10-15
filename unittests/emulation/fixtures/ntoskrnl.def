@@ -162,3 +162,12 @@ EXPORTS
   ExRundownCompleted
   ExAcquireRundownProtectionEx
   ExReleaseRundownProtectionEx
+
+strcpy
+wcscpy
+strncpy
+wcsncpy
+strcat
+wcscat
+strncat
+wcsncat
