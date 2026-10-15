@@ -248,7 +248,7 @@ void KernelModel::configureFrameworkRequestHost() {
     if (!Request || Request->Completed ||
         Request->DeviceRoute.size() != DirectPnpRouteSize ||
         !FrameworkDevices.count(Request->DeviceRoute.front()) ||
-        !isProviderDevice(Request->DeviceRoute.back()) ||
+        !isPnpProviderDevice(Request->DeviceRoute.back()) ||
         Request->PnpDevice != Request->DeviceRoute.back())
       return frameworkRequestError(
           "framework file forwarding requires a direct live PDO target");

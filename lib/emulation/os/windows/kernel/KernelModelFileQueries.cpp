@@ -115,6 +115,8 @@ KernelModel::queryFileInformation(llvm::ArrayRef<uint64_t> A,
   auto Route = deviceStack(*Top);
   if (!Route)
     return Route.takeError();
+  if (auto E = validateFileSystemRoute(*Route))
+    return E;
   auto Count = Memory.readInteger(*Top + DeviceStackCountOffset, 1);
   if (!Count)
     return Count.takeError();

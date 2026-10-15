@@ -1732,3 +1732,6 @@ raw 特殊化は、書込み可能な16バイトスカラーへの厳密な8+8�
 `KernelModelNamespace.cpp` は共有参照/ハンドル所有者を通して名前を解決します。デバイス名はデバイス記録、ドライバー/ディレクトリ/リンクの不変名は物体記録が所有します。リンクの取得済みバイト、永続性、名前登録を区別します。最後のハンドル終了で一時名を削除し、参照が物体の寿命を決めます。I/O 保持による一覧削除と記憶域の寿命は独立です。
 
 KernelModelObjects が共通オブジェクト表でハンドルとポインターを数えます。KernelModelFileObjects はプロセス単位の解錠と全体のクリーンアップを選び、ハンドルを消費する前に要求を準備し、遅延 CLOSE と待機を所有します。KernelModelIO はシナリオ引数を保持し、完了と dispatch・継続の復帰後に本体を破棄します。KernelFramework は内部のファイル寿命コールバックだけに実効プロセスを指定できます。DriverSession はスレッドと作成プロセスを維持し、継承したアドレス空間を有効にして最終解放前に元のコンテキストへ戻します。独立した予約コールバックは自身のコンテキストを保ちます。デバイスと PnP は本体を調べます。
+
+
+`KernelFileSystem` / `KernelModel` / `DriverFileSystemJSON` / `DeviceOwnerKind` / `isPnpProviderDevice`: `configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。

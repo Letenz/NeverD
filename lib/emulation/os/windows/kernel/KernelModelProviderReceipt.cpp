@@ -64,7 +64,7 @@ KernelModel::planUsbIdleReceipt(uint64_t PDO, uint64_t IRP) const {
     const auto Key = Submission->Key;
     const auto *Provider = pnpDeviceForPDO(Member);
     const auto *IdleRequest = requestForIRP(Key.IRP);
-    if (!Provider || !isProviderDevice(Member) ||
+    if (!Provider || !isPnpProviderDevice(Member) ||
         Provider->StartEpoch != Key.StartEpoch || !IdleRequest ||
         IdleRequest->Completed || IdleRequest->PnpDevice != Member ||
         !Result.Requests[IdleRequest->ResultIndex].UsbIdle)
