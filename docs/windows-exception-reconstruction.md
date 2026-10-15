@@ -191,6 +191,12 @@ nested handler entry into its outer scope. Original functions and preserved
 direct callees must have checked caller-cleanup stack behavior. Indirect or
 unproved cleanup conventions remain rejected.
 
+A runtime-only finally may return immediately after `RaiseException` without
+initializing EAX. Its incidental scalar result can be discarded only after the
+complete body, entry kinds and physical near returns are checked. Ordinary
+callers, shared filter/handler entries and other uses of that result still
+require an observation proof; a `void` import declaration alone is insufficient.
+
 Native callback TryLevel writes additionally require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
 compiler and absent from r4. The current path accepts checked constant 8-, 16-

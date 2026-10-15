@@ -1584,6 +1584,7 @@ target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
 
 add_neverd_unittest(NeverDRegistrationCallResultTests
   eh/RegistrationCallResultTests.cpp
+  eh/RegistrationSEHRuntimeReturnTests.cpp
   eh/RegistrationLLVMCallResultTests.cpp
   LINK_COMPONENTS IRMed BackendLLVM
 )

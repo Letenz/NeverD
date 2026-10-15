@@ -134,6 +134,11 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 保护区的入口。原函数和保留的直接被调函数必须证明 caller-cleanup 栈行为；间接调用
 或无法证明的栈清理约定仍被拒绝。
 
+仅由运行时调用的 finally 可以在 `RaiseException` 后直接返回，而不初始化 EAX。
+只有完整 callback 区域、入口类型和物理 near return 都经过检查，才能丢弃这个
+残留的标量结果。普通调用者、共享的 filter/handler 入口以及其他结果使用仍需
+独立的观察证明；仅凭 import 的 `void` 声明不能放行。
+
 callback 内 TryLevel 写入的原生重建还要求
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`；固定的 r5 编译器已提供这一能力，
 r4 编译器仍不具备。

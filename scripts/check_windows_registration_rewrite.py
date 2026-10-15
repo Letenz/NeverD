@@ -76,7 +76,8 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-filter-skipped-scope": (40, 2345),
               "longjmp-filter-two-resume-mappings": (41, 2345),
               "longjmp-filter-callback-activation": (42, 2345),
-              "longjmp-state-byte-high-bits": (43, 2)})
+              "longjmp-state-byte-high-bits": (43, 2),
+              "longjmp-finally-incidental-result": (44, 2)})
 
 
 class PE32:
@@ -275,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_state_dispatch.s" if case == 43 else
+                   else ["registration_state_dispatch.s" if case in (43, 44) else
                          "registration_filter_state.s" if case >= 36 else
                          "registration_state.s" if case >= 30 else
                          "registration_jump.s" if jump else "registration_seh3.s"])

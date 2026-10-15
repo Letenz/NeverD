@@ -366,6 +366,12 @@ complete domain, exact frame read, update identities and predecessor closure.
 Source-segment validation follows only these authenticated edges when a callback
 block is split, preserving source event order independently of physical block
 layout. Case and continuation addresses cannot escape.
+`X86/RegistrationSEHRuntimeReturn.cpp` proves when a callback's scalar return
+has no observer: the whole body is exclusively a runtime finally, with checked
+physical near returns and no ordinary callers or other entry kinds. The MedIR
+call-result binder uses that proof only for incidental `RaiseException` results;
+all other source observations retain the strict SSA-use checks. LLVM emission
+and independent COFF source replay consume the same decision.
 MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF

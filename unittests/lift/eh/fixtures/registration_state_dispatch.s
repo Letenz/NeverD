@@ -93,7 +93,9 @@ _registration_entry:
   push 0
   push 0xe0420042
   call dword ptr [__imp__RaiseException@16]
+#if REGISTRATION_CASE != 44
   mov eax,0
+#endif
   ret
 .Louter_handler:
   mov dword ptr [ebp-4],-1

@@ -9,6 +9,8 @@
 #ifndef NEVERD_IR_MED_X86REGISTRATIONCALLRESULT_H
 #define NEVERD_IR_MED_X86REGISTRATIONCALLRESULT_H
 
+#include "neverd/Common.h"
+
 #include <cstddef>
 
 namespace neverd {
@@ -21,9 +23,12 @@ struct RegistrationCallFrameEffect;
 /// This proves absence of a source observation, never a language return type.
 /// Indirect selects an exact constant IAT-call occurrence; its runtime identity
 /// and argument ABI still require the caller's separate source proof.
+/// RuntimeFinally permits an incidental result at a checked near return only
+/// when that entire finally body has no ordinary caller or other entry kind.
 bool hasUnusedX86RegistrationCallResult(const MedFunc &Function,
                                         const RegistrationCallFrameEffect &Call,
-                                        size_t &Work, bool Indirect = false);
+                                        size_t &Work, bool Indirect = false,
+                                        va_t RuntimeFinally = 0);
 } // namespace neverd
 
 #endif
