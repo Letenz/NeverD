@@ -82,6 +82,8 @@ NEVERD_WDK_FIXTURE("KMDF_PNP", "driver_kmdf_pnp.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("WDM_DMA", "driver_wdm_dma.c", "WDM", "0", "")
 NEVERD_WDK_FIXTURE("WDM_FILE_QUERIES", "driver_file_queries.c", "WDM", "0",
                    "public_api")
+NEVERD_WDK_FIXTURE("WDM_INT64_STRINGS", "driver_int64_strings.c", "WDM", "0",
+                   "public_api")
 NEVERD_WDK_FIXTURE("WDM_PROCESSORS", "driver_processors.c", "WDM", "0",
                    "public_api")
 NEVERD_WDK_FIXTURE("WDM_DMA_CHANNEL", "driver_wdm_dma_channel.c", "WDM", "0",

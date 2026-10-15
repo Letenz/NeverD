@@ -692,3 +692,5 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 ## 프로세서 식별과 DPC 수준 상승
 
 단일 프로세서 설정의 `KeGetCurrentProcessorNumberEx`는 모든 모델 IRQL에서 인덱스 0을 반환하고 선택적 출력에 그룹 0, 프로세서 0, 예약 바이트 0인 네 바이트만 씁니다. 잘못된 출력을 거부하고 주변 메모리를 보존합니다. `KeRaiseIrqlToDpcLevel`은 IRQL 0, 1, 2를 허용하고 이전 수준을 반환하며 `KfRaiseIrql`, `KeLowerIrql`과 실행별 중첩 상태를 공유합니다. 가져오기와 동적 조회는 같은 계약을 사용합니다. 실제 x64 WDK 인라인 함수는 `KfRaiseIrql(2)`를 호출하고 별도 내보내기도 동적으로 조회할 수 있습니다.
+
+`RtlInt64ToUnicodeString`은 PASSIVE_LEVEL에서 부호 없는 64비트 값 전체를 문자열로 변환합니다. 진수 2, 8, 10, 16을 지원하며 0은 10진수입니다. 기존 `RtlIntegerToUnicodeString`은 ULONG 절단을 유지합니다. 두 함수는 `STATUS_BUFFER_OVERFLOW`를 반환하기 전에 `Length`를 기록하고, 종료 문자 공간을 요구하며, 사용하지 않은 바이트를 보존합니다. 숫자를 기록한 뒤 `Buffer`를 다시 읽어 종료 문자를 기록하므로 출력과 레코드가 겹치는 경우에도 같은 순서를 따릅니다. 종료 문자 기록에 실패해도 이미 기록된 숫자는 유지됩니다.

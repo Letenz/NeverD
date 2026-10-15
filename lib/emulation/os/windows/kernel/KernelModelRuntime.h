@@ -70,7 +70,8 @@ llvm::Expected<uint64_t> prefixUnicodeString(const KernelModel &Model,
                                              llvm::ArrayRef<uint64_t> A);
 llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
                                                 GuestMemory &Memory,
-                                                llvm::ArrayRef<uint64_t> A);
+                                                llvm::ArrayRef<uint64_t> A,
+                                                bool WideValue);
 llvm::Expected<uint64_t> unicodeStringToInteger(const KernelModel &Model,
                                                 GuestMemory &Memory,
                                                 llvm::ArrayRef<uint64_t> A);

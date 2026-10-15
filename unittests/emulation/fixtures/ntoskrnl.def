@@ -112,6 +112,7 @@ EXPORTS
   RtlAppendUnicodeToString
   RtlAppendUnicodeStringToString
   RtlPrefixUnicodeString
+  RtlInt64ToUnicodeString
   RtlIntegerToUnicodeString
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId

@@ -324,13 +324,31 @@ class WDKDriverFixtureTests(unittest.TestCase):
                             sorted(expected - backend_required))
             if backend == "whp":
                 environment_required = expected
+        api_required = set()
+        for filename in (
+            "DriverObjectTests.cpp", "DriverDataExportTests.cpp",
+            "DriverNamespaceTests.cpp", "DriverRegistryObjectTests.cpp",
+            "DriverDeviceQueryTests.cpp", "DriverFileObjectTests.cpp",
+            "DriverProcessorTests.cpp", "DriverIntegerFormattingTests.cpp",
+        ):
+            cases = re.findall(r"TEST_P\((\w+),\s*(\w+)\)",
+                               (source.parent / filename).read_text())
+            self.assertTrue(cases, filename)
+            api_required.update(
+                f"Backends/{suite}.{name}/whp{contract}{base}"
+                for suite, name in cases
+                for contract in ("Legacy", "Checked")
+                for base in ("Preferred", "Rebased")
+            )
+        self.assertTrue(api_required <= required,
+                        sorted(api_required - required))
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required) + len(scheduling_required)
                          + len(wait_required) + len(unpack_required)
                          + len(timestamp_required) + len(image_required)
                          + len(cpuid_required) + len(snapshot_required)
                          + len(pool_required) + len(caller_required)
-                         + len(environment_required))
+                         + len(environment_required) + len(api_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
                    f"+ {len(wait_required)} wait sets "
@@ -341,7 +359,8 @@ class WDKDriverFixtureTests(unittest.TestCase):
                    f"+ {len(snapshot_required)} kernel snapshots "
                    f"+ {len(pool_required)} pool captures "
                    f"+ {len(caller_required)} DriverEntry caller checks "
-                   f"+ {len(environment_required)} driver environment checks = {len(required)}")
+                   f"+ {len(environment_required)} driver environment checks "
+                   f"+ {len(api_required)} driver API checks = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         tokens = i18n.emulation_document_tokens(definitions.read_text(encoding="utf-8"))
         self.assertIn(formula, tokens["NativeDriverCI"])
@@ -366,6 +385,14 @@ class WDKDriverFixtureTests(unittest.TestCase):
         sources = fixtures.ROOT / "unittests/emulation/fixtures"
         original = {path.name for pattern in ("driver_wdm_*.c", "driver_kmdf_*.c")
                     for path in sources.glob(pattern)}
+        # Declared public_api fixtures must support genuine headers. This
+        # checks declared bindings, not discovery of every dual-mode source.
+        portable = {source for _, source, _, _, profile in inventory
+                    if profile == "public_api"}
+        for source in portable:
+            self.assertIn("#ifdef NEVERD_WDK_FIXTURE",
+                          (sources / source).read_text(), source)
+        original.update(portable)
         self.assertEqual({source for _, source, *_ in inventory}, original)
         configured = re.findall(
             r'^set\((NEVERD_(?:KMDF|WDM)\w*_FIXTURE) "" CACHE FILEPATH',

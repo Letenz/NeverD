@@ -697,3 +697,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 ## 處理器身分與 DPC 層級提升
 
 單處理器設定在所有已建模 IRQL 上實作 `KeGetCurrentProcessorNumberEx`，傳回處理器索引零，並可選地精確寫入四位元組：群組零、處理器零及保留位元組零。輸出檢查保留相鄰記憶體並拒絕無效儲存。`KeRaiseIrqlToDpcLevel` 接受 IRQL 0、1、2，傳回原層級，並與 `KfRaiseIrql`、`KeLowerIrql` 共用執行內容的巢狀堆疊。匯入及動態查找共用這些契約。真正的 x64 WDK 內聯包裝呼叫 `KfRaiseIrql(2)`；獨立匯出入口也能動態查找。
+
+`RtlInt64ToUnicodeString` 在 PASSIVE_LEVEL 格式化完整的無號 64 位元值，支援 2、8、10、16 進位，0 代表十進位。既有 `RtlIntegerToUnicodeString` 保留 ULONG 截斷。兩者先寫入 `Length`，再回報 `STATUS_BUFFER_OVERFLOW`，必須預留終止字元空間，並保留未使用的位元組。寫入數字後會重新讀取 `Buffer` 再寫入終止字元，包含輸出與記錄重疊的情況；終止字元寫入失敗時，已寫入的數字仍保留。
