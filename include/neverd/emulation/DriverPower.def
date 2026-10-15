@@ -34,6 +34,7 @@ NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkWaitWake, "framework_wait_wake")
 NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkUsbIdle, "framework_usb_idle")
 NEVERD_DRIVER_REQUEST_ORIGIN(DriverAllocatedIRP, "driver_allocated_irp")
 NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleClose, "file_handle_close")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileInformationQuery, "IoQueryFileInformation")
 #endif
 
 #ifdef NEVERD_DRIVER_POWER_DEVICE_STATE

@@ -276,6 +276,8 @@ struct DriverRequestResult {
   std::optional<uint32_t> ResponseIndex;
   std::vector<DriverUserBufferResult> UserBuffers;
   std::optional<DriverUsbIdleRequestResult> UsbIdle;
+  /// Original FILE_INFORMATION_CLASS supplied to an internal query producer.
+  std::optional<uint32_t> FileInformationClass;
 };
 
 struct DriverFault {

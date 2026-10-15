@@ -213,6 +213,13 @@ llvm::Error KernelModel::releaseWaitReferences(const Wait &Pending) {
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::FileInformationQuery) {
+    auto Ready = fileInformationQueryReady(Pending.Object);
+    if (!Ready)
+      return Ready.takeError();
+    return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
+                  : std::optional<uint32_t>{};
+  }
   if (Pending.Type == Wait::Kind::FileHandleClose) {
     const auto Operation = FileHandleCloses.find(Pending.Object);
     if (Operation == FileHandleCloses.end())
