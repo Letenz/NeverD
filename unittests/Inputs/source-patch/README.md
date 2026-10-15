@@ -51,3 +51,7 @@ built or executed on the CI host. The optional NeverC source matrix covers
 `native-processes` retains 30 authenticated current-engine images as sparse
 deltas. Its engine source digest, original/image hashes and publication
 receipts bind native replay to the producing engine and the C-only contract.
+Its C images are installed from the pinned producer artifacts above; actual
+compiler selection and hosted DynCode source compilation are checked by the
+separate NeverC source matrix. The snapshot manifest records the input-manifest
+hashes as well as the engine identity.
