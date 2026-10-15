@@ -244,16 +244,16 @@ protected:
       const auto Source = Directory / "original.c",
                  Object = Directory / "original.o";
       std::ofstream(Source) << originalSource();
-      std::vector<std::string> Command{
-          NEVERD_TEST_CLANG,
-          std::string("--target=") + P.ReceiptTriple,
-          "-O0",
-          "-funwind-tables",
-          "-fno-pie",
-          "-c",
-          Source.string(),
-          "-o",
-          Object.string()};
+      std::vector<std::string> Command{NEVERD_TEST_CLANG,
+                                       std::string("--target=") +
+                                           P.ReceiptTriple,
+                                       "-O0",
+                                       "-funwind-tables",
+                                       "-fno-pie",
+                                       "-c",
+                                       Source.string(),
+                                       "-o",
+                                       Object.string()};
       if (P.Architecture == Arch::ARM)
         Command.push_back(llvm::StringRef(P.ReceiptTriple).starts_with("thumb")
                               ? "-mthumb"
