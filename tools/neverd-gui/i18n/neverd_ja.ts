@@ -165,7 +165,7 @@
     </message>
     <message>
         <source>Go back in the navigation history</source>
-        <translation>ナビゲーション履歴を戻ります</translation>
+        <translation>ナビゲーション履歴で前の位置に戻ります</translation>
     </message>
     <message>
         <source>Jump to &amp;next position</source>
@@ -173,7 +173,7 @@
     </message>
     <message>
         <source>Go forward in the navigation history</source>
-        <translation>ナビゲーション履歴を進みます</translation>
+        <translation>ナビゲーション履歴で次の位置に進みます</translation>
     </message>
     <message>
         <source>Next f&amp;unction</source>
@@ -401,11 +401,11 @@
     </message>
     <message>
         <source>&amp;Hex dump</source>
-        <translation>16進ダンプ(&amp;H)</translation>
+        <translation>16 進ダンプ(&amp;H)</translation>
     </message>
     <message>
         <source>Show the hex view</source>
-        <translation>16進ビューを表示します</translation>
+        <translation>16 進ビューを表示します</translation>
     </message>
     <message>
         <source>E&amp;xports</source>
@@ -701,7 +701,7 @@
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
-        <translation>リストに表示する文字列のエンコーディングと最小長を選択します</translation>
+        <translation>リスティングに表示する文字列のエンコーディングと最小長を選択します</translation>
     </message>
     <message>
         <source>String &amp;references</source>
@@ -717,7 +717,7 @@
     </message>
     <message>
         <source>Start a function at the current address</source>
-        <translation>現在のアドレスから関数を開始します</translation>
+        <translation>現在のアドレスを先頭とする関数を作成します</translation>
     </message>
     <message>
         <source>&amp;Delete function</source>
@@ -748,8 +748,8 @@
         <translation>定義解除(&amp;I)</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>現在の項目をバイトとして表示します</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>現在の項目を未定義のバイトに戻します</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +757,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>オペランドの数値をリストの既定の形式で表示します</translation>
+        <translation>オペランドの数値をリスティングの既定の形式で表示します</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -797,7 +797,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>
-        <translation>オペランドの数値を指すアドレスの名前で表示します</translation>
+        <translation>オペランドの数値を、それが指すアドレスとして表示します</translation>
     </message>
     <message>
         <source>Change &amp;sign</source>
@@ -805,7 +805,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number with its sign changed</source>
-        <translation>オペランドの数値を符号を反転して表示します</translation>
+        <translation>オペランドの数値の符号を反転して表示します</translation>
     </message>
     <message>
         <source>Bitwise ne&amp;gate</source>
@@ -825,11 +825,11 @@
     </message>
     <message>
         <source>Offline package &amp;review...</source>
-        <translation>オフラインのパッケージレビュー(&amp;R)...</translation>
+        <translation>パッケージのオフラインレビュー(&amp;R)...</translation>
     </message>
     <message>
         <source>Inspect local package evidence and analyst reviews</source>
-        <translation>ローカルのパッケージの証拠とアナリストのレビューを調べます</translation>
+        <translation>ローカルにあるパッケージの証拠とアナリストのレビューを確認します</translation>
     </message>
     <message>
         <source>&amp;PDB file...</source>
@@ -837,7 +837,7 @@
     </message>
     <message>
         <source>Load symbols from a selected PDB file</source>
-        <translation>選択した PDB ファイルからシンボルを読み込む</translation>
+        <translation>選択した PDB ファイルからシンボルを読み込みます</translation>
     </message>
     <message>
         <source>&amp;Edit function...</source>
@@ -1038,7 +1038,7 @@
     </message>
     <message>
         <source>Choose an absolute MCP executable path</source>
-        <translation>MCP 実行ファイルの絶対パスを選択してください</translation>
+        <translation>MCP 実行ファイルの絶対パスを指定してください</translation>
     </message>
     <message>
         <source>Connecting</source>
@@ -1046,7 +1046,7 @@
     </message>
     <message>
         <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-        <translation>MCP HTTP は HTTPS、または localhost の HTTP が必要です</translation>
+        <translation>MCP HTTP には HTTPS、または localhost の HTTP が必要です</translation>
     </message>
     <message>
         <source>Invalid authentication token</source>
@@ -1062,7 +1062,7 @@
     </message>
     <message>
         <source>MCP outgoing message budget exceeded</source>
-        <translation>MCP 送信メッセージがサイズ制限を超えています</translation>
+        <translation>MCP の送信データ量が上限を超えました</translation>
     </message>
     <message>
         <source>MCP server is disconnected</source>
@@ -1070,7 +1070,7 @@
     </message>
     <message>
         <source>MCP session expired; reconnecting</source>
-        <translation>MCP セッションが期限切れです。再接続中</translation>
+        <translation>MCP セッションの有効期限が切れたため、再接続しています</translation>
     </message>
     <message>
         <source>MCP HTTP error %1: %2</source>
@@ -1078,7 +1078,7 @@
     </message>
     <message>
         <source>MCP event stream ended before its response</source>
-        <translation>応答前に MCP イベントストリームが終了しました</translation>
+        <translation>応答を受信する前に MCP イベントストリームが終了しました</translation>
     </message>
     <message>
         <source>Invalid MCP HTTP response</source>
@@ -1118,11 +1118,11 @@
     </message>
     <message>
         <source>Connected; tool list is partial</source>
-        <translation>接続済み。ツール一覧は一部のみ表示されています</translation>
+        <translation>接続済み（ツール一覧は一部のみ）</translation>
     </message>
     <message>
         <source>Connected; resource list is partial</source>
-        <translation>接続済み。リソース一覧は一部のみ表示されています</translation>
+        <translation>接続済み（リソース一覧は一部のみ）</translation>
     </message>
     <message>
         <source>MCP tool reported an error</source>
@@ -1138,7 +1138,7 @@
     </message>
     <message>
         <source>Tool arguments must be a JSON object</source>
-        <translation>ツール引数は JSON オブジェクトにしてください</translation>
+        <translation>ツール引数は JSON オブジェクトで指定してください</translation>
     </message>
 </context>
 <context>
@@ -1217,7 +1217,7 @@
     </message>
     <message>
         <source>Operand &amp;type</source>
-        <translation>オペランドの型(&amp;T)</translation>
+        <translation>オペランドの表示形式(&amp;T)</translation>
     </message>
 </context>
 <context>
@@ -1255,7 +1255,7 @@
     </message>
     <message>
         <source>Cannot read %1: %2</source>
-        <translation>%1 を読み込めません: %2</translation>
+        <translation>%1 を読み込めません：%2</translation>
     </message>
     <message>
         <source>Cannot read %1</source>
@@ -1287,7 +1287,7 @@
     </message>
     <message>
         <source>Cannot write %1: %2</source>
-        <translation>%1 に書き込めません: %2</translation>
+        <translation>%1 に書き込めません：%2</translation>
     </message>
     <message>
         <source>The input stored in %1 is damaged.</source>
@@ -1459,7 +1459,7 @@ Recognized library operation; click to show its code.</source>
     </message>
     <message>
         <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
-        <translation>この関数が参照するターゲット、型、グローバル、関数です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
+        <translation>この関数が参照するターゲット情報、型、グローバル変数、関数です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
     </message>
     <message>
         <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
@@ -1507,7 +1507,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Transformation failed: %1</source>
-        <translation>変換に失敗しました: %1</translation>
+        <translation>変換に失敗しました：%1</translation>
     </message>
 </context>
 <context>
@@ -1550,7 +1550,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>O2 (default)</source>
-        <translation>O2 (既定)</translation>
+        <translation>O2（既定）</translation>
     </message>
     <message>
         <source>Choose passes…</source>
@@ -1562,7 +1562,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
-        <translation>スカラーのクリーンアップパスを選択します。シンボリック簡約は別に制御します。</translation>
+        <translation>スカラーのクリーンアップパスを選択します。シンボリック簡約は別途設定します。</translation>
     </message>
     <message>
         <source>Restore default source</source>
@@ -1600,15 +1600,15 @@ Double-click to go to the declaration.</source>
         <translation>切断済み</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>MCP 接続</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>現在の GUI セッション</translation>
+        <source>This NeverD session</source>
+        <translation>この NeverD セッション</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
+        <source>Copy credential path</source>
         <translation>認証情報のパスをコピー</translation>
     </message>
     <message>
@@ -1656,11 +1656,11 @@ Double-click to go to the declaration.</source>
         <translation>スキーマ</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>ツールを呼び出す</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>呼び出しをキャンセル</translation>
     </message>
     <message>
@@ -1668,11 +1668,11 @@ Double-click to go to the declaration.</source>
         <translation>リソースを選択するかツールを呼び出すと、応答を確認できます。</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>共有を無効化</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>共有を有効化</translation>
     </message>
     <message>
@@ -1709,10 +1709,10 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Arguments must be a JSON array of strings.</source>
-        <translation>引数は文字列の JSON 配列にしてください。</translation>
+        <translation>引数は文字列の JSON 配列で指定してください。</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
+        <source>Tool input schema</source>
         <translation>ツール入力スキーマ</translation>
     </message>
 </context>
@@ -1724,7 +1724,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source> (Synchronized with %1)</source>
-        <translation> (%1 と同期)</translation>
+        <translation>（%1 と同期）</translation>
     </message>
 </context>
 <context>
@@ -1755,13 +1755,13 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Division by zero</source>
-        <translation>0 で除算しました</translation>
+        <translation>0 で割ることはできません</translation>
     </message>
 </context>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
+        <source>Import manifest…</source>
         <translation>マニフェストをインポート…</translation>
     </message>
     <message>
@@ -1804,7 +1804,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Copy takes at most %1 bytes; select fewer.</source>
-        <translation>コピーできるのは最大 %1 バイトです。選択を減らしてください。</translation>
+        <translation>コピーできるのは最大 %1 バイトです。選択範囲を狭めてください。</translation>
     </message>
     <message>
         <source>The selection holds bytes no segment maps; nothing was copied.</source>
@@ -1819,7 +1819,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
-        <translation>アドレス、名前、または式 (0x401000, main, sub_401000+10)</translation>
+        <translation>アドレス、名前、または式（0x401000, main, sub_401000+10）</translation>
     </message>
     <message>
         <source>Enter jumps to the expression; arrows choose a match.</source>
@@ -1848,7 +1848,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Hex View-1</source>
-        <translation>16進ビュー-1</translation>
+        <translation>16 進ビュー-1</translation>
     </message>
     <message>
         <source>NeverD View-A</source>
@@ -1939,8 +1939,8 @@ Double-click to go to the declaration.</source>
         <translation>上方向</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
-        <translation>ディスク：%1GB</translation>
+        <source>Disk: %1 GB</source>
+        <translation>ディスク：%1 GB</translation>
     </message>
     <message>
         <source> · read-only</source>
@@ -1980,7 +1980,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Binary search</source>
-        <translation>バイナリ検索</translation>
+        <translation>バイト列検索</translation>
     </message>
     <message>
         <source>String:</source>
@@ -1988,7 +1988,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Hex bytes (e.g. 48 8B 05):</source>
-        <translation>16進バイト列（例：48 8B 05）：</translation>
+        <translation>16 進バイト列（例：48 8B 05）：</translation>
     </message>
     <message>
         <source>Search failed: %1 not found</source>
@@ -2007,9 +2007,9 @@ Double-click to go to the declaration.</source>
 Decimal: %2
 Octal: %3
 Signed: %4</source>
-        <translation>16進：%1h
-10進：%2
-8進：%3
+        <translation>16 進：%1h
+10 進：%2
+8 進：%3
 符号付き：%4</translation>
     </message>
     <message>
@@ -2026,11 +2026,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>Dark (Visual Studio Code Dark+)</source>
-        <translation>ダーク (Visual Studio Code Dark+)</translation>
+        <translation>ダーク（Visual Studio Code Dark+）</translation>
     </message>
     <message>
         <source>Light (Visual Studio Code Light+)</source>
-        <translation>ライト (Visual Studio Code Light+)</translation>
+        <translation>ライト（Visual Studio Code Light+）</translation>
     </message>
     <message>
         <source>Colors</source>
@@ -2133,11 +2133,11 @@ Signed: %4</source>
         <translation>一般的なコードページを検出</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>UTF-8 でない C 文字列を %1 でも読み取ります（いずれかがテキストとして読み取り、別の文字体系のコードページが読み取らない場合）</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>UTF-8 でない C 文字列を %1 でも読み取ります（1 つの文字体系のコードページだけがテキストとして読める場合）</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
         <translation>UTF-8 でない C 文字列をまずこのコードページで読み取り、他のコードページも読み取れる場合はこちらを優先します</translation>
     </message>
     <message>
@@ -2173,8 +2173,8 @@ Signed: %4</source>
         <translation>ライブラリ操作を折りたたむ</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
-        <translation>%1 の読み込み方法が不明です: %2</translation>
+        <source>Cannot determine how to load %1: %2</source>
+        <translation>%1 の読み込み方法を判別できません：%2</translation>
     </message>
     <message>
         <source>Comment this source line:</source>
@@ -2206,7 +2206,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>This source line has no instruction address mapping; showing the function entry</source>
-        <translation>このソース行には命令アドレスへの対応がありません。関数の入口を表示します</translation>
+        <translation>このソース行には命令アドレスへの対応がありません。関数の先頭を表示します</translation>
     </message>
     <message>
         <source>Load PDB file</source>
@@ -2221,10 +2221,10 @@ Signed: %4</source>
         <translation>未検証の PDB を解析に使用</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>この PE には PDB の照合識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
+        <translation>この PE には PDB を照合するための識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
 
 この PDB を解析に使用しますか？シンボル、型、関数シグネチャ、アドレス範囲を解析の入力として使用します。誤った PDB を選ぶと解析結果が不正確になる可能性があります。</translation>
     </message>
@@ -2258,7 +2258,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Could not tell whether %1 has a symbol table: %2</source>
-        <translation>%1 にシンボル テーブルがあるかどうか判別できませんでした：%2</translation>
+        <translation>%1 にシンボルテーブルがあるかどうか判別できませんでした：%2</translation>
     </message>
 </context>
 <context>
@@ -2313,7 +2313,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>  graph, hex        show the graph or hex view</source>
-        <translation>  graph, hex        グラフビューまたは16進ビューを表示</translation>
+        <translation>  graph, hex        グラフビューまたは 16 進ビューを表示</translation>
     </message>
     <message>
         <source>  analyze, save     whole-program analysis, save comments</source>
@@ -2412,7 +2412,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Last opened: %1</source>
-        <translation>最終オープン：%1</translation>
+        <translation>最後に開いた日時：%1</translation>
     </message>
 </context>
 <context>
@@ -2443,7 +2443,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1: %2 %3, %4 functions</source>
-        <translation>%1: %2 %3、関数 %4 個</translation>
+        <translation>%1：%2 %3、関数 %4 個</translation>
     </message>
     <message>
         <source>Reloaded the input file</source>
@@ -2459,7 +2459,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Edits are paused while the pending save, open or close completes.</source>
-        <translation>保留中の保存・オープン・クローズが完了するまで、編集は一時停止されます。</translation>
+        <translation>保留中の保存、読み込み、または閉じる処理が完了するまで、編集は一時停止されます。</translation>
     </message>
     <message>
         <source>Renamed %1 to %2</source>
@@ -2491,15 +2491,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Database saved: %1</source>
-        <translation>データベースを保存しました: %1</translation>
+        <translation>データベースを保存しました：%1</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>
-        <translation>データベースを保存できませんでした: %1</translation>
+        <translation>データベースを保存できませんでした：%1</translation>
     </message>
     <message>
         <source>Could not update the database: %1</source>
-        <translation>データベースを更新できませんでした: %1</translation>
+        <translation>データベースを更新できませんでした：%1</translation>
     </message>
     <message>
         <source>Strings: %1, at least %2 columns</source>
@@ -2531,11 +2531,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Platform: %1, as chosen</source>
-        <translation>プラットフォーム: %1（指定どおり）</translation>
+        <translation>プラットフォーム：%1（指定どおり）</translation>
     </message>
     <message>
         <source>Platform: %1, read from the code: %2</source>
-        <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+        <translation>プラットフォーム：%1（コードから判定：%2）</translation>
     </message>
     <message>
         <source>An instruction is already defined at %1</source>
@@ -2543,15 +2543,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
-        <translation>PDB を読み込みました: %1（%2 個の名前、識別情報を検証済み）</translation>
+        <translation>PDB を読み込みました：%1（%2 個の名前、識別情報を検証済み）</translation>
     </message>
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
-        <translation>PDB の表示名をインポートしました: %1（%2 個の名前、未検証）</translation>
+        <translation>PDB の表示名をインポートしました：%1（%2 個の名前、未検証）</translation>
     </message>
     <message>
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
-        <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
+        <translation>解析用 PDB を読み込みました：%1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
@@ -2567,7 +2567,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Opened without its symbol table, as chosen</source>
-        <translation>選択どおり、シンボル テーブルを読み込まずに開きました</translation>
+        <translation>選択どおり、シンボルテーブルを読み込まずに開きました</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -2630,19 +2630,19 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>NeverD cannot load this file: %1</source>
-        <translation>NeverD はこのファイルを読み込めません: %1</translation>
+        <translation>NeverD はこのファイルを読み込めません：%1</translation>
     </message>
     <message>
         <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
-        <translation>ファイル名だけで一覧に挙がっています。内容はこの形式を示していません</translation>
+        <translation>ファイル名のみに基づいて表示されています。内容はこの形式を示していません</translation>
     </message>
     <message>
         <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
-        <translation>形式を示しているのはファイル名だけです。その方法で読み込むには行を選んでください</translation>
+        <translation>形式を示しているのはファイル名だけです。その形式で読み込むには、行を選択してください</translation>
     </message>
     <message>
         <source>Processor: %1</source>
-        <translation>プロセッサ: %1</translation>
+        <translation>プロセッサ：%1</translation>
     </message>
     <message>
         <source>%1 is not a hexadecimal number</source>
@@ -2702,11 +2702,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
-        <translation>コードのビルド対象プラットフォーム。その規約に従います：呼び出しの引数の渡し方、保持されるレジスタ、C の型のサイズ</translation>
+        <translation>コードのビルド対象のプラットフォームです。コードはその規約（呼び出し時の引数の渡し方、呼び出しで保持されるレジスタ、C の型のサイズ）に従います</translation>
     </message>
     <message>
         <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
-        <translation>ファイルのどの部分も NeverD が知っている命令セットのコードに見えません。コードが動作するプロセッサを選択してください</translation>
+        <translation>ファイルのどの部分も、NeverD が対応している命令セットのコードには見えません。コードが動作するプロセッサを選択してください</translation>
     </message>
     <message>
         <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
@@ -2714,11 +2714,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Read from the bytes: %1</source>
-        <translation>バイトから判定: %1</translation>
+        <translation>バイトから判定：%1</translation>
     </message>
     <message>
         <source>Read from the bytes: %1, entry %2, base %3</source>
-        <translation>バイトから判定: %1、エントリ %2、ベース %3</translation>
+        <translation>バイトから判定：%1、エントリ %2、ベース %3</translation>
     </message>
     <message>
         <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
@@ -2803,7 +2803,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Restore</source>
-        <translation>元に戻す</translation>
+        <translation>元のサイズに戻す</translation>
     </message>
     <message>
         <source>Close</source>
@@ -2818,7 +2818,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Only analysis reads are allowed.</source>
-        <translation>解析の読み取りのみが許可されています。</translation>
+        <translation>解析結果の読み取りのみが許可されています。</translation>
     </message>
     <message>
         <source>The worker cannot restore analysis state.</source>
@@ -2833,7 +2833,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The input file was linked with debug information stored here:</source>
-        <translation>入力ファイルにリンクされたデバッグ情報の保存先：</translation>
+        <translation>入力ファイルは、次の場所に保存されたデバッグ情報とリンクされています：</translation>
     </message>
     <message>
         <source>&amp;Browse…</source>
@@ -2841,7 +2841,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The download was cancelled.</source>
-        <translation>ダウンロードを取り消しました。</translation>
+        <translation>ダウンロードはキャンセルされました。</translation>
     </message>
     <message>
         <source>A matching copy is at that path.</source>
@@ -2940,7 +2940,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
-        <translation>%1 に一時シンボルファイルを開けません: %2</translation>
+        <translation>%1 に一時シンボルファイルを開けません：%2</translation>
     </message>
     <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
@@ -2948,7 +2948,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot write the symbol file %1: %2</source>
-        <translation>シンボルファイル %1 に書き込めません: %2</translation>
+        <translation>シンボルファイル %1 に書き込めません：%2</translation>
     </message>
     <message>
         <source>%1 has no matching symbols for this build.</source>
@@ -2968,7 +2968,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot create a temporary symbol directory in %1: %2</source>
-        <translation>%1 に一時シンボルディレクトリを作成できません: %2</translation>
+        <translation>%1 に一時シンボルディレクトリを作成できません：%2</translation>
     </message>
     <message>
         <source>Could not expand the compressed symbol file.</source>
@@ -2998,8 +2998,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>関数名(&amp;N)</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
-        <translation>関数の終わりは解析が決定します</translation>
+        <source>Analysis decides where the function ends</source>
+        <translation>関数の終了位置は解析によって決まります</translation>
     </message>
     <message>
         <source>&amp;Start address</source>
@@ -3027,7 +3027,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Enter size of (in bytes)</source>
-        <translation>サイズ (バイト単位)</translation>
+        <translation>サイズ（バイト単位）</translation>
     </message>
     <message>
         <source>Local &amp;variables area</source>
@@ -3058,8 +3058,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>戻らない(&amp;O)</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>解析はこの関数への呼び出しをすべて終端として扱います</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>解析では、この関数への各呼び出しで制御フローが終了します</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
@@ -3083,7 +3083,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>BP e&amp;quals to SP</source>
-        <translation>BP は SP と等しい(&amp;Q)</translation>
+        <translation>BP と SP が等しい(&amp;Q)</translation>
     </message>
     <message>
         <source>Fuzzy SP</source>
@@ -3125,11 +3125,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::SymbolTablePromptDialog</name>
     <message>
         <source>Symbol table found</source>
-        <translation>シンボル テーブルが見つかりました</translation>
+        <translation>シンボルテーブルが見つかりました</translation>
     </message>
     <message>
         <source>Load the symbol table?</source>
-        <translation>シンボル テーブルを読み込みますか？</translation>
+        <translation>シンボルテーブルを読み込みますか？</translation>
     </message>
     <message>
         <source>(%1: %2)</source>
@@ -3138,6 +3138,228 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>証拠</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>バインディング</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>信頼度</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>アナリストの判定</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>判定元</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>検出結果 ID</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>未選択</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>パッケージのオフラインレビュー</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>証拠の網羅範囲は部分的です。アナリストの判定は呼び出し元による主張であり、パッケージの安全性、発行元の認証、実行時の動作は検証されていません。</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>ファイルをプレビュー…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>ディレクトリをプレビュー…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>プレビュー内容をキャプチャ</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>ローカルの証拠を選択</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>ローカルの証拠ディレクトリを選択</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>単体のマニフェスト／ロックファイル</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>アーカイブを検査</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>キャプチャしたアーティファクト</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>コンテナー</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>アーカイブ内のマニフェスト</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>マニフェストの形式</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>キャプチャしたレジストリ宣言を含める</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>元のバイト列</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>レジストリのメタデータ</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>キャプチャ記述子</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>選択した証拠を評価</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>証拠、信頼度、判定、または ID で絞り込み</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>検出結果の絞り込み</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>選択した検出結果の証拠アンカー</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>未レビュー</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>要レビュー</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>リスク受容（アナリストの主張）</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>誤検知（アナリストの主張）</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>判定を記録</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>レビューを保存…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>レビューを読み込む…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>読み込んだレビューを復元</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>解析プロセスを停止</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>NeverD の解析プロセスを起動中…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>オフラインで証拠を解析中</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>操作が拒否されました：%1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>オフラインの証拠を上限付きで読み取り中…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>プレビュー：アーティファクト %1 個、%2 バイト。キャプチャではローカルのバイトを読み取ります。ソースと名前は非公開のままです。</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>検出結果 %1 件 · アナリストの判断 %2 件 · 網羅範囲は部分的 · ヘッド %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>プレビューまたは評価するローカルの証拠を選択してください。</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>レビューをローカルに保存</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>NeverD レビュー (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>レビューの保存が拒否されました：%1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>不透明な証拠 ID とアナリストの主張をローカルに保存しました。</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>ローカルのレビューを読み込む</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>レビューの読み込みが拒否されました：%1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>%1 件の主張を読み込みました。復元時には、チェーン全体を現在の評価と照合して検証します。まだ何も適用されていません。</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>未保存のレビュー</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>未保存のアナリストの主張を破棄して続行しますか？</translation>
     </message>
 </context>
 </TS>

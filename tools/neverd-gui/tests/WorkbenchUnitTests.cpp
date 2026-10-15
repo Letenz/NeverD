@@ -10,6 +10,7 @@
 #include "LoadFileDialog.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
+#include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFrame.h"
@@ -1192,6 +1193,25 @@ private slots:
     QTRY_VERIFY(!button("closeButton")->isVisible());
     window.showNormal();
     QTRY_VERIFY(button("closeButton")->isVisible());
+  }
+
+  void loadQuestionFitsTheFontsItShowsWith() {
+    // The style sheet gives the detail line its font only as the dialog
+    // polishes; the question measured before then was a pixel short in
+    // Chinese and Japanese.  A larger detail font shows the same gap.
+    SymbolTablePromptDialog dialog(QJsonObject{
+        {"table", QStringLiteral(".symtab")},
+        {"names", QJsonArray{QStringLiteral("main"), QStringLiteral("die")}}});
+    dialog.setStyleSheet(
+        QStringLiteral("QLabel[statusLine=\"true\"] { font-size: 40px; }"));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY2(
+        dialog.height() >= dialog.layout()->totalHeightForWidth(dialog.width()),
+        qPrintable(
+            QStringLiteral("%1 < %2")
+                .arg(dialog.height())
+                .arg(dialog.layout()->totalHeightForWidth(dialog.width()))));
   }
 
   void titleFitLeavesAMessageBoxItsWrapping() {

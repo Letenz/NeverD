@@ -133,7 +133,7 @@
     </message>
     <message>
         <source>Enter re&amp;peatable comment...</source>
-        <translation>إدخال تعليق متكرر(&amp;P)...</translation>
+        <translation>إدخال تعليق قابل للتكرار(&amp;P)...</translation>
     </message>
     <message>
         <source>Mar&amp;k position...</source>
@@ -209,7 +209,7 @@
     </message>
     <message>
         <source>Jump by na&amp;me...</source>
-        <translation>الانتقال حسب الاسم(&amp;M)...</translation>
+        <translation>الانتقال بالاسم(&amp;M)...</translation>
     </message>
     <message>
         <source>Choose a name to jump to</source>
@@ -241,7 +241,7 @@
     </message>
     <message>
         <source>List cross references &amp;to...</source>
-        <translation>سرد المراجع المتقاطعة إلى(&amp;T)...</translation>
+        <translation>سرد المراجع المتقاطعة إلى العنصر(&amp;T)...</translation>
     </message>
     <message>
         <source>List references to the current item</source>
@@ -249,7 +249,7 @@
     </message>
     <message>
         <source>List cross references f&amp;rom...</source>
-        <translation>سرد المراجع المتقاطعة من(&amp;R)...</translation>
+        <translation>سرد المراجع المتقاطعة من العنصر(&amp;R)...</translation>
     </message>
     <message>
         <source>List references made by the current instruction</source>
@@ -309,7 +309,7 @@
     </message>
     <message>
         <source>Move to the previous occurrence of the highlighted identifier</source>
-        <translation>الانتقال إلى الظهور السابق للمعرّف المميَّز</translation>
+        <translation>الانتقال إلى التكرار السابق للمعرّف المميَّز</translation>
     </message>
     <message>
         <source>Search highlight &amp;down</source>
@@ -317,7 +317,7 @@
     </message>
     <message>
         <source>Move to the next occurrence of the highlighted identifier</source>
-        <translation>الانتقال إلى الظهور التالي للمعرّف المميَّز</translation>
+        <translation>الانتقال إلى التكرار التالي للمعرّف المميَّز</translation>
     </message>
     <message>
         <source>&amp;Find in view...</source>
@@ -605,7 +605,7 @@
     </message>
     <message>
         <source>Analyze every function together in the background</source>
-        <translation>تحليل جميع الدوال معاً في الخلفية</translation>
+        <translation>تحليل جميع الدوال معًا في الخلفية</translation>
     </message>
     <message>
         <source>Ca&amp;ncel pending requests</source>
@@ -697,11 +697,11 @@
     </message>
     <message>
         <source>S&amp;tring literals...</source>
-        <translation>القيم النصية الحرفية(&amp;T)...</translation>
+        <translation>السلاسل النصية الحرفية(&amp;T)...</translation>
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
-        <translation>اختيار الترميزات والحد الأدنى لطول السلاسل النصية التي تعرضها القائمة</translation>
+        <translation>اختيار الترميزات والحد الأدنى لطول السلاسل النصية التي تعرضها قائمة التفكيك</translation>
     </message>
     <message>
         <source>String &amp;references</source>
@@ -717,7 +717,7 @@
     </message>
     <message>
         <source>Start a function at the current address</source>
-        <translation>ابدأ دالة عند العنوان الحالي</translation>
+        <translation>بدء دالة عند العنوان الحالي</translation>
     </message>
     <message>
         <source>&amp;Delete function</source>
@@ -725,7 +725,7 @@
     </message>
     <message>
         <source>Stop treating the current function as one</source>
-        <translation>التوقف عن معاملة الدالة الحالية كدالة</translation>
+        <translation>التوقف عن اعتبار الدالة الحالية دالة</translation>
     </message>
     <message>
         <source>&amp;Data</source>
@@ -733,7 +733,7 @@
     </message>
     <message>
         <source>Define a value at the current address; again for the next size</source>
-        <translation>تعريف قيمة عند العنوان الحالي؛ مرة أخرى للحجم التالي</translation>
+        <translation>تعريف قيمة عند العنوان الحالي؛ وتكراره ينتقل إلى الحجم التالي</translation>
     </message>
     <message>
         <source>&amp;String</source>
@@ -748,8 +748,8 @@
         <translation>إلغاء التعريف(&amp;I)</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>عرض بايتات العنصر الحالي كبايتات</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>إعادة العنصر الحالي إلى بايتات غير معرّفة</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +757,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>عرض رقم المعامل كما تختاره القائمة</translation>
+        <translation>عرض رقم المعامل كما تختاره قائمة التفكيك</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -817,7 +817,7 @@
     </message>
     <message>
         <source>C&amp;ode</source>
-        <translation>كود(&amp;O)</translation>
+        <translation>شيفرة(&amp;O)</translation>
     </message>
     <message>
         <source>Define instructions from the current address</source>
@@ -833,7 +833,7 @@
     </message>
     <message>
         <source>&amp;PDB file...</source>
-        <translation>ملف &amp;PDB...</translation>
+        <translation>ملف PDB(&amp;P)...</translation>
     </message>
     <message>
         <source>Load symbols from a selected PDB file</source>
@@ -845,7 +845,7 @@
     </message>
     <message>
         <source>Change the name of the current function and what it is</source>
-        <translation>تغيير اسم الدالة الحالية وما هي عليه</translation>
+        <translation>تغيير اسم الدالة الحالية وخصائصها</translation>
     </message>
 </context>
 <context>
@@ -980,7 +980,7 @@
     </message>
     <message>
         <source>Disassembly</source>
-        <translation>الشيفرة المفككة</translation>
+        <translation>التفكيك</translation>
     </message>
 </context>
 <context>
@@ -991,15 +991,15 @@
     </message>
     <message>
         <source>Cannot create private session directory</source>
-        <translation>تعذر إنشاء مجلد خاص للجلسة</translation>
+        <translation>تعذّر إنشاء مجلد خاص للجلسة</translation>
     </message>
     <message>
         <source>Cannot open local session broker: %1</source>
-        <translation>تعذر فتح وسيط الجلسة المحلي: %1</translation>
+        <translation>تعذّر فتح وسيط الجلسة المحلي: %1</translation>
     </message>
     <message>
         <source>Cannot write private session credentials</source>
-        <translation>تعذرت كتابة بيانات اعتماد الجلسة الخاصة</translation>
+        <translation>تعذّرت كتابة بيانات اعتماد الجلسة الخاصة</translation>
     </message>
     <message>
         <source>Session sharing enabled</source>
@@ -1038,7 +1038,7 @@
     </message>
     <message>
         <source>Choose an absolute MCP executable path</source>
-        <translation>اختر المسار المطلق لملف MCP التنفيذي</translation>
+        <translation>اختر مسارًا مطلقًا لملف MCP التنفيذي</translation>
     </message>
     <message>
         <source>Connecting</source>
@@ -1054,7 +1054,7 @@
     </message>
     <message>
         <source>Cannot load CA certificate</source>
-        <translation>تعذر تحميل شهادة CA</translation>
+        <translation>تعذّر تحميل شهادة CA</translation>
     </message>
     <message>
         <source>MCP request queue is full</source>
@@ -1062,7 +1062,7 @@
     </message>
     <message>
         <source>MCP outgoing message budget exceeded</source>
-        <translation>تجاوزت رسالة MCP الصادرة الحد المسموح</translation>
+        <translation>تجاوزت رسائل MCP الصادرة الحد المسموح به</translation>
     </message>
     <message>
         <source>MCP server is disconnected</source>
@@ -1078,7 +1078,7 @@
     </message>
     <message>
         <source>MCP event stream ended before its response</source>
-        <translation>انتهى تدفق أحداث MCP قبل الاستجابة</translation>
+        <translation>انتهى تدفق أحداث MCP قبل وصول استجابته</translation>
     </message>
     <message>
         <source>Invalid MCP HTTP response</source>
@@ -1090,7 +1090,7 @@
     </message>
     <message>
         <source>MCP session identifier is too large</source>
-        <translation>معرّف جلسة MCP طويل جداً</translation>
+        <translation>معرّف جلسة MCP طويل جدًا</translation>
     </message>
     <message>
         <source>Invalid MCP event data</source>
@@ -1130,7 +1130,7 @@
     </message>
     <message>
         <source>Connect an MCP server first</source>
-        <translation>اتصل بخادم MCP أولاً</translation>
+        <translation>اتصل بخادم MCP أولًا</translation>
     </message>
     <message>
         <source>Tool arguments exceed the size limit</source>
@@ -1138,7 +1138,7 @@
     </message>
     <message>
         <source>Tool arguments must be a JSON object</source>
-        <translation>يجب أن تكون وسائط الأداة كائن JSON</translation>
+        <translation>يجب أن تكون وسائط الأداة كائنًا من نوع JSON</translation>
     </message>
 </context>
 <context>
@@ -1271,11 +1271,11 @@
     </message>
     <message>
         <source>%1 is not a NeverD database.</source>
-        <translation>ليس %1 قاعدة بيانات NeverD.</translation>
+        <translation>الملف %1 ليس قاعدة بيانات NeverD.</translation>
     </message>
     <message>
         <source>%1 does not exist.</source>
-        <translation>%1 غير موجود.</translation>
+        <translation>الملف %1 غير موجود.</translation>
     </message>
     <message>
         <source>%1 uses database format %2, which this NeverD cannot read.</source>
@@ -1376,7 +1376,7 @@
     </message>
     <message>
         <source>Invalid analysis protocol JSON.</source>
-        <translation>JSON بروتوكول التحليل غير صالح.</translation>
+        <translation>بيانات JSON في بروتوكول التحليل غير صالحة.</translation>
     </message>
 </context>
 <context>
@@ -1432,7 +1432,7 @@
     </message>
     <message>
         <source>rows linked to instructions</source>
-        <translation>الصفوف مرتبطة بالتعليمات</translation>
+        <translation>صفوف مرتبطة بالتعليمات</translation>
     </message>
     <message>
         <source>%1
@@ -1453,7 +1453,7 @@ Recognized library operation; click to show its code.</source>
     </message>
     <message>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
-        <translation>التضمينات وأنواع الدعم والتصريحات التي يُترجَم بها هذا الكود؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
+        <translation>التضمينات والأنواع المساعدة والتصريحات التي تُترجَم بها هذه الشيفرة؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
     </message>
     <message numerus="yes">
         <source>%n lines of declarations</source>
@@ -1520,11 +1520,11 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Expand block (Ctrl+Shift+])</source>
-        <translation>توسيع الكتلة (Ctrl+Shift+])</translation>
+        <translation>توسيع الكتلة (Ctrl+Shift+]‎)</translation>
     </message>
     <message>
         <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>طي الكتلة (Ctrl+Shift+[)</translation>
+        <translation>طيّ الكتلة (Ctrl+Shift+[‎)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -1543,11 +1543,11 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
-        <translation>اعرض كل عملية مكتبة معروفة كملخص من سطر واحد؛ يحتفظ النسخ والتصدير بالشيفرة كاملة.</translation>
+        <translation>عرض كل عملية مكتبة معروفة كملخص من سطر واحد؛ يحتفظ النسخ والتصدير بالشيفرة كاملة.</translation>
     </message>
     <message>
         <source>Keep this function while the disassembly moves on</source>
-        <translation>الإبقاء على هذه الدالة أثناء تنقّل التفكيك</translation>
+        <translation>إبقاء هذه الدالة معروضة بينما ينتقل عرض التفكيك</translation>
     </message>
     <message>
         <source>Optimization</source>
@@ -1606,7 +1606,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Completed</source>
-        <translation>مكتمل</translation>
+        <translation>اكتمل</translation>
     </message>
     <message>
         <source>Failed</source>
@@ -1614,7 +1614,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Cancelled</source>
-        <translation>ملغى</translation>
+        <translation>أُلغي</translation>
     </message>
     <message>
         <source>Timed out</source>
@@ -1625,24 +1625,24 @@ Double-click to go to the declaration.</source>
         <translation>غير متصل</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>اتصالات MCP</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>جلسة الواجهة الحالية</translation>
+        <source>This NeverD session</source>
+        <translation>جلسة NeverD هذه</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
+        <source>Copy credential path</source>
         <translation>نسخ مسار بيانات الاعتماد</translation>
     </message>
     <message>
         <source>Transport</source>
-        <translation>وسيلة النقل</translation>
+        <translation>طريقة النقل</translation>
     </message>
     <message>
         <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
-        <translation>الوسائط بصيغة JSON، مثل [&quot;--help&quot;]</translation>
+        <translation>الوسائط بصيغة JSON، مثل ‎[&quot;--help&quot;]</translation>
     </message>
     <message>
         <source>Bearer token (optional)</source>
@@ -1681,28 +1681,28 @@ Double-click to go to the declaration.</source>
         <translation>المخطط</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>استدعاء الأداة</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>إلغاء الاستدعاء</translation>
     </message>
     <message>
         <source>Select a resource or call a tool to inspect its response.</source>
-        <translation>اختر مورداً أو استدعِ أداة لعرض الاستجابة.</translation>
+        <translation>اختر موردًا أو استدعِ أداة لفحص الاستجابة.</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>تعطيل المشاركة</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>تفعيل المشاركة</translation>
     </message>
     <message>
         <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-        <translation>المشاركة معطلة. تفعيلها يتيح للوكلاء المحليين الوصول إلى هذه الجلسة باستخدام ملف بيانات اعتمادها الخاص.</translation>
+        <translation>المشاركة معطلة. يمنح تفعيلها الوكلاء المحليين حق الوصول إلى هذه الجلسة باستخدام ملف بيانات الاعتماد الخاص بها.</translation>
     </message>
     <message>
         <source>Absolute path to server executable</source>
@@ -1737,7 +1737,7 @@ Double-click to go to the declaration.</source>
         <translation>يجب أن تكون الوسائط مصفوفة JSON من السلاسل النصية.</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
+        <source>Tool input schema</source>
         <translation>مخطط مدخلات الأداة</translation>
     </message>
 </context>
@@ -1745,7 +1745,7 @@ Double-click to go to the declaration.</source>
     <name>neverd::gui::DisassemblyView</name>
     <message>
         <source>Graph view requires a location inside a function.</source>
-        <translation>يتطلب عرض الرسم البياني موقعاً داخل دالة.</translation>
+        <translation>يتطلب عرض الرسم البياني موقعًا داخل دالة.</translation>
     </message>
     <message>
         <source> (Synchronized with %1)</source>
@@ -1756,7 +1756,7 @@ Double-click to go to the declaration.</source>
     <name>neverd::gui::Expression</name>
     <message>
         <source>Unexpected character &apos;%1&apos;</source>
-        <translation>حرف غير متوقع &apos;%1&apos;</translation>
+        <translation>حرف غير متوقع «%1»</translation>
     </message>
     <message>
         <source>Empty expression</source>
@@ -1768,11 +1768,11 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Unknown name &apos;%1&apos;</source>
-        <translation>اسم غير معروف &apos;%1&apos;</translation>
+        <translation>اسم غير معروف «%1»</translation>
     </message>
     <message>
         <source>Missing &apos;)&apos;</source>
-        <translation>القوس &apos;)&apos; مفقود</translation>
+        <translation>القوس «‎)‎» مفقود</translation>
     </message>
     <message>
         <source>Expected a value</source>
@@ -1786,7 +1786,7 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
+        <source>Import manifest…</source>
         <translation>استيراد ملف بيان…</translation>
     </message>
     <message>
@@ -1799,7 +1799,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>استورد ملف بيان تصريحياً لإضافة أوامر التحليل وعروضه.</translation>
+        <translation>استورد ملف بيان تصريحيًا لإضافة أوامر تحليل وعروض.</translation>
     </message>
     <message>
         <source>Select an extension command to inspect its result.</source>
@@ -1829,11 +1829,11 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Copy takes at most %1 bytes; select fewer.</source>
-        <translation>يأخذ النسخ %1 بايت على الأكثر؛ حدّد عددًا أقل.</translation>
+        <translation>يمكن نسخ %1 بايت على الأكثر؛ حدّد عددًا أقل.</translation>
     </message>
     <message>
         <source>The selection holds bytes no segment maps; nothing was copied.</source>
-        <translation>يضم التحديد بايتات لا يعيّنها أي مقطع؛ لم يُنسخ شيء.</translation>
+        <translation>يتضمن التحديد بايتات لا يغطيها أي مقطع؛ لم يُنسخ شيء.</translation>
     </message>
 </context>
 <context>
@@ -1848,7 +1848,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Enter jumps to the expression; arrows choose a match.</source>
-        <translation>يؤدي Enter إلى الانتقال إلى التعبير؛ وتختار الأسهم تطابقاً.</translation>
+        <translation>يؤدي Enter إلى الانتقال إلى التعبير؛ وتختار مفاتيح الأسهم أحد التطابقات.</translation>
     </message>
     <message numerus="yes">
         <source>%n matches</source>
@@ -1910,7 +1910,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Cannot jump to %1: %2</source>
-        <translation>تعذر الانتقال إلى %1: %2</translation>
+        <translation>تعذّر الانتقال إلى %1: %2</translation>
     </message>
     <message>
         <source>Load signature pack</source>
@@ -1942,7 +1942,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>لم يتم العثور على &apos;%1&apos; بين الأسطر المحمّلة</translation>
+        <translation>لم يتم العثور على «%1» بين الأسطر المحمّلة</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -1969,7 +1969,7 @@ Double-click to go to the declaration.</source>
         <translation>لأعلى</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
+        <source>Disk: %1 GB</source>
         <translation>القرص: %1 جيجابايت</translation>
     </message>
     <message>
@@ -2100,11 +2100,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>Type a command</source>
-        <translation>اكتب أمراً</translation>
+        <translation>اكتب أمرًا</translation>
     </message>
     <message>
         <source>Create source file</source>
-        <translation>إنشاء ملف مصدري</translation>
+        <translation>إنشاء ملف مصدر</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -2112,7 +2112,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Cannot write %1</source>
-        <translation>تعذرت كتابة %1</translation>
+        <translation>تعذّرت كتابة %1</translation>
     </message>
     <message>
         <source>Wrote %1</source>
@@ -2132,7 +2132,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>All files (*);;NeverD databases (*.nddb)</source>
-        <translation>كل الملفات (*);;قواعد بيانات NeverD (*.nddb)</translation>
+        <translation>جميع الملفات (*);;قواعد بيانات NeverD (*.nddb)</translation>
     </message>
     <message>
         <source>The saved desktop of this database could not be restored.</source>
@@ -2144,7 +2144,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>String literals</source>
-        <translation>القيم النصية الحرفية</translation>
+        <translation>السلاسل النصية الحرفية</translation>
     </message>
     <message>
         <source>Encodings:</source>
@@ -2163,12 +2163,12 @@ Signed: %4</source>
         <translation>اكتشاف صفحات الترميز الشائعة</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>قراءة سلاسل C غير المرمّزة بـ UTF-8 أيضًا في %1، عندما تقرؤها إحداها نصًا ولا تقرؤها صفحة ترميز لنظام كتابة آخر</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>قراءة سلاسل C غير المرمّزة بـ UTF-8 أيضًا بصفحات الترميز %1، حين لا تقرؤها نصًا إلا صفحات ترميز نظام كتابة واحد</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
-        <translation>قراءة سلاسل C غير المرمّزة بـ UTF-8 بصفحة الترميز هذه أولًا، لتكون لها الأولوية حيث تقرؤها صفحات ترميز أخرى أيضًا</translation>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
+        <translation>تجربة صفحة الترميز هذه أولًا مع سلاسل C غير المرمّزة بـ UTF-8؛ وتكون لها الأولوية حين تقرؤها صفحات ترميز أخرى أيضًا</translation>
     </message>
     <message>
         <source>Code pages:</source>
@@ -2180,7 +2180,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
-        <translation>أعمدة العرض: يُحسب الحرف شرق الآسيوي العريض عمودين</translation>
+        <translation>أعمدة العرض: يُحتسب الحرف العريض من شرق آسيا بعمودين</translation>
     </message>
     <message>
         <source>Expand declarations</source>
@@ -2188,7 +2188,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Collapse declarations</source>
-        <translation>طي التصريحات</translation>
+        <translation>طيّ التصريحات</translation>
     </message>
     <message>
         <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
@@ -2200,11 +2200,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>Collapse library operations</source>
-        <translation>طي عمليات المكتبات</translation>
+        <translation>طيّ عمليات المكتبات</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
-        <translation>طريقة تحميل %1 غير معروفة: %2</translation>
+        <source>Cannot determine how to load %1: %2</source>
+        <translation>تعذّر تحديد طريقة تحميل %1: %2</translation>
     </message>
     <message>
         <source>Comment this source line:</source>
@@ -2220,11 +2220,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>Select a declared variable or an image name to rename</source>
-        <translation>حدد متغيرًا مُعلَنًا أو اسمًا من الصورة لإعادة تسميته</translation>
+        <translation>حدد متغيرًا مُصرَّحًا به أو اسمًا في الصورة لإعادة تسميته</translation>
     </message>
     <message>
         <source>Select a source line; expand folded code before commenting it</source>
-        <translation>حدد سطرًا من المصدر؛ وسّع الكود المطوي قبل التعليق عليه</translation>
+        <translation>حدد سطرًا من المصدر؛ وسّع الشيفرة المطوية قبل التعليق عليها</translation>
     </message>
     <message>
         <source>The selected name has no image address</source>
@@ -2232,11 +2232,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>This instruction has no source-line address mapping.</source>
-        <translation>هذه التعليمة ليس لها ربط عنوان بسطر من المصدر.</translation>
+        <translation>لا يرتبط عنوان هذه التعليمة بأي سطر في المصدر.</translation>
     </message>
     <message>
         <source>This source line has no instruction address mapping; showing the function entry</source>
-        <translation>سطر المصدر هذا ليس له ربط بعنوان تعليمة؛ يُعرض مدخل الدالة</translation>
+        <translation>لا يرتبط سطر المصدر هذا بعنوان أي تعليمة؛ تُعرض نقطة دخول الدالة</translation>
     </message>
     <message>
         <source>Load PDB file</source>
@@ -2248,19 +2248,19 @@ Signed: %4</source>
     </message>
     <message>
         <source>Use unverified PDB for analysis</source>
-        <translation>استخدام PDB غير موثق للتحليل</translation>
+        <translation>استخدام PDB غير مُتحقَّق منه للتحليل</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>لا يحتوي ملف PE هذا على هوية مطابقة PDB ‏(GUID/age). تتطابق المعمارية وتخطيط المقاطع في ملف PDB المحدد، لكن لا يمكن التحقق من بنائه.
+        <translation>لا يحمل ملف PE هذا هوية (GUID/age) لمطابقة ملف PDB. تتطابق المعمارية وتخطيط الأقسام في ملف PDB المحدد، لكن لا يمكن التحقق من بنائه.
 
-هل تريد استخدام ملف PDB هذا للتحليل؟ ستُستخدم رموزه وأنواعه وتواقيع دواله ونطاقات عناوينه كمدخلات للتحليل. قد يؤدي اختيار PDB خاطئ إلى نتائج غير صحيحة.</translation>
+هل تريد استخدام ملف PDB هذا للتحليل؟ ستُستخدم رموزه وأنواعه وتوقيعات دواله ونطاقات عناوينه كمدخلات للتحليل. قد يؤدي اختيار PDB خاطئ إلى نتائج غير صحيحة.</translation>
     </message>
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
-        <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
+        <translation>لا يستطيع هذا المحرك استخدام PDB غير مُتحقَّق منه للتحليل</translation>
     </message>
     <message>
         <source>Line</source>
@@ -2362,11 +2362,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::QuickStartDialog</name>
     <message>
         <source>Quick start</source>
-        <translation>بدء سريع</translation>
+        <translation>البدء السريع</translation>
     </message>
     <message>
         <source>Interactive disassembler and decompiler</source>
-        <translation>أداة تفاعلية لفك التجميع وفك الترجمة</translation>
+        <translation>أداة تفاعلية للتفكيك وفك الترجمة</translation>
     </message>
     <message>
         <source>Version %1</source>
@@ -2378,7 +2378,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;New</source>
-        <translation>&amp;جديد</translation>
+        <translation>جديد(&amp;N)</translation>
     </message>
     <message>
         <source>Disassemble a new file</source>
@@ -2386,7 +2386,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Go</source>
-        <translation>اب&amp;دأ</translation>
+        <translation>ابدأ(&amp;G)</translation>
     </message>
     <message>
         <source>Work on your own</source>
@@ -2394,7 +2394,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Previous</source>
-        <translation>ال&amp;سابق</translation>
+        <translation>السابق(&amp;P)</translation>
     </message>
     <message>
         <source>Load the selected recent file</source>
@@ -2402,7 +2402,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Display at startup</source>
-        <translation>&amp;عرض عند بدء التشغيل</translation>
+        <translation>العرض عند بدء التشغيل(&amp;D)</translation>
     </message>
     <message>
         <source>Drop a file here to open it</source>
@@ -2414,15 +2414,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Load</source>
-        <translation>&amp;تحميل</translation>
+        <translation>تحميل(&amp;L)</translation>
     </message>
     <message>
         <source>&amp;Copy path</source>
-        <translation>&amp;نسخ المسار</translation>
+        <translation>نسخ المسار(&amp;C)</translation>
     </message>
     <message>
         <source>&amp;Remove from list</source>
-        <translation>إ&amp;زالة من القائمة</translation>
+        <translation>إزالة من القائمة(&amp;R)</translation>
     </message>
     <message>
         <source>Today, %1</source>
@@ -2434,7 +2434,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>No recent files</source>
-        <translation>لا توجد ملفات حديثة</translation>
+        <translation>لا توجد ملفات أخيرة</translation>
     </message>
     <message>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
@@ -2465,7 +2465,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Select an existing binary file.</source>
-        <translation>اختر ملفاً ثنائياً موجوداً.</translation>
+        <translation>اختر ملفًا ثنائيًا موجودًا.</translation>
     </message>
     <message>
         <source>Loading %1…</source>
@@ -2473,7 +2473,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1: %2 %3, %4 functions</source>
-        <translation>%1: %2 %3، عدد الدوال: %4</translation>
+        <translation>الملف %1: %2 %3، عدد الدوال: %4</translation>
     </message>
     <message>
         <source>Reloaded the input file</source>
@@ -2489,7 +2489,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Edits are paused while the pending save, open or close completes.</source>
-        <translation>التعديلات متوقفة مؤقتاً حتى يكتمل الحفظ أو الفتح أو الإغلاق الجاري.</translation>
+        <translation>التعديلات متوقفة مؤقتًا حتى يكتمل الحفظ أو الفتح أو الإغلاق الجاري.</translation>
     </message>
     <message>
         <source>Renamed %1 to %2</source>
@@ -2533,11 +2533,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Strings: %1, at least %2 columns</source>
-        <translation>السلاسل النصية: %1، على الأقل %2 عمودًا</translation>
+        <translation>السلاسل النصية: %1، الحد الأدنى للأعمدة: %2</translation>
     </message>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
-        <translation>السلاسل النصية: %1، %2 أولًا، على الأقل %3 عمودًا</translation>
+        <translation>السلاسل النصية: %1، الأولوية لـ %2، الحد الأدنى للأعمدة: %3</translation>
     </message>
     <message>
         <source>Created a function at %1</source>
@@ -2561,7 +2561,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Platform: %1, as chosen</source>
-        <translation>المنصة: %1، كما اختيرت</translation>
+        <translation>المنصة: %1، كما اخترت</translation>
     </message>
     <message>
         <source>Platform: %1, read from the code: %2</source>
@@ -2573,19 +2573,19 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
-        <translation>تم تحميل PDB: %1 (%2 اسم، تم التحقق من الهوية)</translation>
+        <translation>تم تحميل PDB: %1 (عدد الأسماء: %2، تم التحقق من الهوية)</translation>
     </message>
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
-        <translation>تم استيراد أسماء عرض PDB: %1 (%2 اسم، غير موثقة)</translation>
+        <translation>تم استيراد أسماء العرض من PDB: %1 (عدد الأسماء: %2، دون تحقق)</translation>
     </message>
     <message>
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
-        <translation>تم تحميل PDB للتحليل: %1 (%2 اسم، أكده المستخدم، الهوية غير موثقة)</translation>
+        <translation>تم تحميل PDB للتحليل: %1 (عدد الأسماء: %2، بتأكيد من المستخدم، لم يُتحقَّق من الهوية)</translation>
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
-        <translation>فُتح دون ملف PDB الذي يشير إليه ملف الإدخال، كما اخترت</translation>
+        <translation>تم الفتح دون ملف PDB الذي يشير إليه ملف الإدخال، كما اخترت</translation>
     </message>
     <message>
         <source>Edited the function at %1</source>
@@ -2593,11 +2593,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Opened without its DWARF debug information, as chosen</source>
-        <translation>تم الفتح دون معلومات تصحيح الأخطاء DWARF، كما تم الاختيار</translation>
+        <translation>تم الفتح دون معلومات تصحيح DWARF، كما اخترت</translation>
     </message>
     <message>
         <source>Opened without its symbol table, as chosen</source>
-        <translation>تم الفتح دون جدول الرموز، كما تم الاختيار</translation>
+        <translation>تم الفتح دون جدول الرموز، كما اخترت</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -2612,11 +2612,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Load file %1 &amp;as</source>
-        <translation>تحميل الملف %1 بصيغة(&amp;A)</translation>
+        <translation>تحميل الملف %1 بتنسيق(&amp;A)</translation>
     </message>
     <message>
         <source>The input file possibly has the listed formats</source>
-        <translation>قد يكون للملف المُدخل أحد التنسيقات المدرجة</translation>
+        <translation>قد يكون ملف الإدخال بأحد التنسيقات المدرجة</translation>
     </message>
     <message>
         <source>Processor t&amp;ype</source>
@@ -2640,7 +2640,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>In&amp;dicator enabled</source>
-        <translation>تفعيل المؤشر(&amp;D)</translation>
+        <translation>المؤشر مُفعّل(&amp;D)</translation>
     </message>
     <message>
         <source>Display the analysis progress in the status line</source>
@@ -2656,7 +2656,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Read the PDB, DWARF or linker map that belongs to the input</source>
-        <translation>قراءة ملف PDB أو DWARF أو خريطة الرابط الخاصة بالمُدخل</translation>
+        <translation>قراءة ملف PDB أو معلومات DWARF أو خريطة الرابط الخاصة بملف الإدخال</translation>
     </message>
     <message>
         <source>NeverD cannot load this file: %1</source>
@@ -2676,7 +2676,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 is not a hexadecimal number</source>
-        <translation>%1 ليس رقمًا ست عشريًا</translation>
+        <translation>القيمة %1 ليست رقمًا ست عشريًا</translation>
     </message>
     <message>
         <source>Base address for loading the file</source>
@@ -2720,7 +2720,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Where execution starts</source>
-        <translation>حيث يبدأ التنفيذ</translation>
+        <translation>الموضع الذي يبدأ منه التنفيذ</translation>
     </message>
     <message>
         <source>Where in the file the loaded bytes start</source>
@@ -2748,11 +2748,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Read from the bytes: %1, entry %2, base %3</source>
-        <translation>مكتشف من البايتات: %1، الدخول %2، الأساس %3</translation>
+        <translation>مكتشف من البايتات: %1، نقطة الدخول %2، الأساس %3</translation>
     </message>
     <message>
         <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
-        <translation>تبدو الشيفرة مثل %1، الذي لا يستطيع NeverD فكّه؛ اختر معالجًا لقراءتها كذلك على أي حال</translation>
+        <translation>تبدو الشيفرة مثل %1، الذي لا يستطيع NeverD فك ترميزه؛ اختر معالجًا لقراءتها على أساسه رغم ذلك</translation>
     </message>
     <message>
         <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
@@ -2771,7 +2771,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Virtual machines</source>
-        <translation>الأجهزة الافتراضية</translation>
+        <translation>الآلات الافتراضية</translation>
     </message>
     <message>
         <source>Intel 80386 and later (32-bit)</source>
@@ -2783,7 +2783,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>ARM Little-endian, starting in ARM state</source>
-        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة ARM</translation>
+        <translation>ARM بترتيب البايت الأصغر أولًا، يبدأ في حالة ARM</translation>
     </message>
     <message>
         <source>ARM64 (AArch64)</source>
@@ -2799,7 +2799,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>ARM Little-endian, starting in Thumb state</source>
-        <translation>ARM بترتيب البايتات الصغير، يبدأ في حالة Thumb</translation>
+        <translation>ARM بترتيب البايت الأصغر أولًا، يبدأ في حالة Thumb</translation>
     </message>
 </context>
 <context>
@@ -2810,7 +2810,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Detect from the code</source>
-        <translation>الكشف من الشيفرة</translation>
+        <translation>اكتشاف من الشيفرة</translation>
     </message>
     <message>
         <source>System V (Linux, BSD, Android)</source>
@@ -2867,7 +2867,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Browse…</source>
-        <translation>&amp;استعراض…</translation>
+        <translation>استعراض(&amp;B)…</translation>
     </message>
     <message>
         <source>The download was cancelled.</source>
@@ -2883,7 +2883,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>A matching copy is in a symbol directory:</source>
-        <translation>توجد نسخة مطابقة في دليل رموز:</translation>
+        <translation>توجد نسخة مطابقة في مجلد رموز:</translation>
     </message>
     <message>
         <source>A matching copy is in the symbol store:</source>
@@ -2895,11 +2895,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 belongs to another build.</source>
-        <translation>ينتمي %1 إلى إصدار آخر.</translation>
+        <translation>ينتمي %1 إلى بناء آخر.</translation>
     </message>
     <message>
         <source>%1 cannot be read.</source>
-        <translation>تتعذّر قراءة %1.</translation>
+        <translation>تعذّرت قراءة %1.</translation>
     </message>
     <message>
         <source>No matching copy is on this computer, and no symbol server is configured.</source>
@@ -2907,11 +2907,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Do you want to browse for the PDB file on disk?</source>
-        <translation>هل تريد استعراض ملف PDB على القرص؟</translation>
+        <translation>هل تريد استعراض القرص بحثًا عن ملف PDB؟</translation>
     </message>
     <message>
         <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
-        <translation>لا توجد نسخة مطابقة على هذا الكمبيوتر. لا يُرسَل للبحث عنها سوى اسم ملف PDB ومعرّف إصداره.</translation>
+        <translation>لا توجد نسخة مطابقة على هذا الكمبيوتر. لا يُرسَل للبحث عنها سوى اسم ملف PDB وهوية بنائه.</translation>
     </message>
     <message>
         <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
@@ -2935,7 +2935,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The downloaded file is not the PDB of this build.</source>
-        <translation>الملف الذي تم تنزيله ليس ملف PDB لهذا الإصدار.</translation>
+        <translation>الملف الذي تم تنزيله ليس ملف PDB الخاص بهذا البناء.</translation>
     </message>
     <message>
         <source>Could not find PDB file &apos;%1&apos;.</source>
@@ -2943,7 +2943,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Do you want to try again, or to browse for the PDB file on disk?</source>
-        <translation>هل تريد إعادة المحاولة، أم استعراض ملف PDB على القرص؟</translation>
+        <translation>هل تريد إعادة المحاولة، أم استعراض القرص بحثًا عن ملف PDB؟</translation>
     </message>
     <message>
         <source>PDB files (*.pdb);;All files (*)</source>
@@ -2962,15 +2962,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 is not an HTTP symbol server.</source>
-        <translation>%1 ليس خادم رموز HTTP.</translation>
+        <translation>الخادم %1 ليس خادم رموز HTTP.</translation>
     </message>
     <message>
         <source>Cannot create the symbol store directory %1.</source>
-        <translation>يتعذّر إنشاء دليل مخزن الرموز %1.</translation>
+        <translation>تعذّر إنشاء مجلد مخزن الرموز %1.</translation>
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
-        <translation>تعذر فتح ملف رموز مؤقت في %1: %2</translation>
+        <translation>تعذّر فتح ملف رموز مؤقت في %1: %2</translation>
     </message>
     <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
@@ -2978,11 +2978,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot write the symbol file %1: %2</source>
-        <translation>تعذرت الكتابة إلى ملف الرموز %1: %2</translation>
+        <translation>تعذّرت الكتابة إلى ملف الرموز %1: %2</translation>
     </message>
     <message>
         <source>%1 has no matching symbols for this build.</source>
-        <translation>لا توجد لدى %1 رموز مطابقة لهذا الإصدار.</translation>
+        <translation>لا توجد لدى %1 رموز مطابقة لهذا البناء.</translation>
     </message>
     <message>
         <source>The symbol download from %1 failed: %2</source>
@@ -2998,19 +2998,19 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot create a temporary symbol directory in %1: %2</source>
-        <translation>تعذر إنشاء مجلد رموز مؤقت في %1: %2</translation>
+        <translation>تعذّر إنشاء مجلد رموز مؤقت في %1: %2</translation>
     </message>
     <message>
         <source>Could not expand the compressed symbol file.</source>
-        <translation>تعذر فك ضغط ملف الرموز.</translation>
+        <translation>تعذّر فك ضغط ملف الرموز.</translation>
     </message>
     <message>
         <source>Compressed symbols require Windows.</source>
-        <translation>تتطلب الرموز المضغوطة Windows.</translation>
+        <translation>تتطلب الرموز المضغوطة نظام Windows.</translation>
     </message>
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
-        <translation>يتعذّر حفظ ملف الرموز في %1: %2</translation>
+        <translation>تعذّر حفظ ملف الرموز في %1: %2</translation>
     </message>
 </context>
 <context>
@@ -3028,7 +3028,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>اسم الدالة(&amp;N)</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
+        <source>Analysis decides where the function ends</source>
         <translation>يحدد التحليل أين تنتهي الدالة</translation>
     </message>
     <message>
@@ -3057,7 +3057,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Enter size of (in bytes)</source>
-        <translation>أدخل حجم (بالبايت)</translation>
+        <translation>أدخل الأحجام (بالبايت)</translation>
     </message>
     <message>
         <source>Local &amp;variables area</source>
@@ -3065,7 +3065,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Saved &amp;registers</source>
-        <translation>السجلات المحفوظة(&amp;R)</translation>
+        <translation>المسجلات المحفوظة(&amp;R)</translation>
     </message>
     <message>
         <source>Only x86 functions pop their arguments</source>
@@ -3077,7 +3077,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Frame pointer &amp;delta</source>
-        <translation>إزاحة مؤشر الإطار(&amp;D)</translation>
+        <translation>فارق مؤشر الإطار(&amp;D)</translation>
     </message>
     <message>
         <source>NeverD does not keep this flag</source>
@@ -3088,8 +3088,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>لا تعود(&amp;O)</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>ينهي التحليل كل استدعاء لهذه الدالة</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>يوقف التحليل تدفق التحكم عند كل استدعاء لهذه الدالة</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
@@ -3113,15 +3113,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>BP e&amp;quals to SP</source>
-        <translation>BP يساوي SP(&amp;Q)</translation>
+        <translation>قيمة BP تساوي SP(&amp;Q)</translation>
     </message>
     <message>
         <source>Fuzzy SP</source>
-        <translation>SP تقريبي</translation>
+        <translation>قيمة SP تقريبية</translation>
     </message>
     <message>
         <source>Outlined code</source>
-        <translation>شيفرة مُخرَجة</translation>
+        <translation>شيفرة مُستخرَجة</translation>
     </message>
     <message>
         <source>O&amp;K</source>
@@ -3144,7 +3144,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Load DWARF debug information?</source>
-        <translation>هل تريد تحميل معلومات تصحيح الأخطاء DWARF؟</translation>
+        <translation>هل تريد تحميل معلومات تصحيح DWARF؟</translation>
     </message>
     <message>
         <source>(%1)</source>
@@ -3168,6 +3168,228 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>النوع</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>الأدلة</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>الارتباط</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>الثقة</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>قرار المحلل</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>مصدر القرار</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>معرّف النتيجة</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>غير محدد</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>مراجعة الحزم دون اتصال</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>تغطية الأدلة جزئية. قرارات المحلل إقرارات من الجهة المستدعية؛ ولا يُتحقَّق من أمان الحزمة أو مصادقة الناشر أو سلوك وقت التشغيل.</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>معاينة ملف…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>معاينة مجلد…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>التقاط المعاينة</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>اختيار أدلة محلية</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>اختيار مجلد أدلة محلية</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>ملف بيان أو ملف قفل مستقل</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>فحص الأرشيف</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>العنصر الملتقَط</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>الحاوية</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>ملف البيان داخل الأرشيف</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>تنسيق ملف البيان</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>تضمين تصريحات سجل الحزم الملتقَطة</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>البايتات الأصلية</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>البيانات الوصفية لسجل الحزم</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>واصف الالتقاط</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>تقييم الأدلة المحددة</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>تصفية حسب الأدلة أو الثقة أو القرار أو المعرّف</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>تصفية النتائج</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>مراسي أدلة النتيجة المحددة</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>غير مُراجَعة</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>تحتاج إلى مراجعة</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>خطر مقبول (إقرار المحلل)</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>إيجابية كاذبة (إقرار المحلل)</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>تسجيل القرار</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>حفظ المراجعة…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>تحميل مراجعة…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>استعادة المراجعة المحمّلة</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>إيقاف عملية التحليل</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>جارٍ بدء عملية تحليل NeverD…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>جارٍ تحليل الأدلة دون اتصال</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>رُفضت العملية: %1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>جارٍ قراءة الأدلة دون اتصال ضمن الحدود المسموح بها…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>المعاينة: عدد العناصر %1، وعدد البايتات %2. يقرأ الالتقاط البايتات المحلية؛ ولا يُكشف عن المصدر ولا الأسماء.</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>النتائج: %1 · قرارات المحلل: %2 · تغطية جزئية · رأس المراجعة: %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>اختر أدلة محلية لمعاينتها أو تقييمها.</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>حفظ المراجعة المحلية</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>مراجعة NeverD (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>رُفض حفظ المراجعة: %1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>حُفظت محليًا معرّفات الأدلة المبهمة وإقرارات المحلل.</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>تحميل مراجعة محلية</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>رُفض تحميل المراجعة: %1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>عدد الإقرارات المحمّلة: %1. تتحقق الاستعادة من صحة السلسلة كاملةً مقابل التقييم الحالي؛ ولم يُطبَّق أي شيء بعد.</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>مراجعة غير محفوظة</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>هل تريد تجاهل إقرارات المحلل غير المحفوظة والمتابعة؟</translation>
     </message>
 </context>
 </TS>

@@ -137,7 +137,7 @@
     </message>
     <message>
         <source>Mar&amp;k position...</source>
-        <translation>위치 표시(&amp;K)...</translation>
+        <translation>책갈피 추가(&amp;K)...</translation>
     </message>
     <message>
         <source>Bookmark the current address</source>
@@ -153,7 +153,7 @@
     </message>
     <message>
         <source>Jump in a new &amp;window</source>
-        <translation>새 창에서 이동(&amp;W)</translation>
+        <translation>새 창에서 열기(&amp;W)</translation>
     </message>
     <message>
         <source>Open the target in a new disassembly view</source>
@@ -201,7 +201,7 @@
     </message>
     <message>
         <source>Jump &amp;anywhere...</source>
-        <translation>임의 위치로 이동(&amp;A)...</translation>
+        <translation>원하는 위치로 이동(&amp;A)...</translation>
     </message>
     <message>
         <source>Jump to an address, name or expression</source>
@@ -265,7 +265,7 @@
     </message>
     <message>
         <source>Jump to mar&amp;ked position...</source>
-        <translation>표시한 위치로 이동(&amp;K)...</translation>
+        <translation>책갈피로 이동(&amp;K)...</translation>
     </message>
     <message>
         <source>Choose a bookmark to jump to</source>
@@ -309,7 +309,7 @@
     </message>
     <message>
         <source>Move to the previous occurrence of the highlighted identifier</source>
-        <translation>강조 표시된 식별자의 이전 위치로 이동합니다</translation>
+        <translation>강조 표시된 식별자가 나오는 이전 위치로 이동합니다</translation>
     </message>
     <message>
         <source>Search highlight &amp;down</source>
@@ -317,7 +317,7 @@
     </message>
     <message>
         <source>Move to the next occurrence of the highlighted identifier</source>
-        <translation>강조 표시된 식별자의 다음 위치로 이동합니다</translation>
+        <translation>강조 표시된 식별자가 나오는 다음 위치로 이동합니다</translation>
     </message>
     <message>
         <source>&amp;Find in view...</source>
@@ -325,7 +325,7 @@
     </message>
     <message>
         <source>Find text among the loaded lines of the current view</source>
-        <translation>현재 보기에서 불러온 줄 중 텍스트를 찾습니다</translation>
+        <translation>현재 보기에 불러온 줄에서 텍스트를 찾습니다</translation>
     </message>
     <message>
         <source>&amp;Quick view...</source>
@@ -333,7 +333,7 @@
     </message>
     <message>
         <source>Choose a view to open</source>
-        <translation>열 보기를 선택합니다</translation>
+        <translation>열려는 보기를 선택합니다</translation>
     </message>
     <message>
         <source>&amp;Disassembly</source>
@@ -701,7 +701,7 @@
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
-        <translation>목록에 표시할 문자열의 인코딩과 최소 길이를 선택합니다</translation>
+        <translation>리스팅에 표시할 문자열의 인코딩과 최소 길이를 선택합니다</translation>
     </message>
     <message>
         <source>String &amp;references</source>
@@ -748,8 +748,8 @@
         <translation>정의 해제(&amp;I)</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>현재 항목을 바이트로 표시합니다</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>현재 항목을 정의되지 않은 바이트로 되돌립니다</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +757,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>피연산자의 숫자를 목록의 기본 형식으로 표시합니다</translation>
+        <translation>피연산자의 숫자를 리스팅의 기본 형식으로 표시합니다</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -797,7 +797,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>
-        <translation>피연산자의 숫자를 가리키는 주소의 이름으로 표시합니다</translation>
+        <translation>피연산자의 숫자를 그 값이 가리키는 주소로 표시합니다</translation>
     </message>
     <message>
         <source>Change &amp;sign</source>
@@ -805,7 +805,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number with its sign changed</source>
-        <translation>피연산자의 숫자를 부호를 바꿔 표시합니다</translation>
+        <translation>피연산자 숫자의 부호를 바꿔 표시합니다</translation>
     </message>
     <message>
         <source>Bitwise ne&amp;gate</source>
@@ -813,7 +813,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number with its bits inverted</source>
-        <translation>피연산자의 숫자를 비트를 반전하여 표시합니다</translation>
+        <translation>피연산자 숫자의 비트를 반전하여 표시합니다</translation>
     </message>
     <message>
         <source>C&amp;ode</source>
@@ -837,7 +837,7 @@
     </message>
     <message>
         <source>Load symbols from a selected PDB file</source>
-        <translation>선택한 PDB 파일에서 심볼 불러오기</translation>
+        <translation>선택한 PDB 파일에서 심볼을 불러옵니다</translation>
     </message>
     <message>
         <source>&amp;Edit function...</source>
@@ -1118,11 +1118,11 @@
     </message>
     <message>
         <source>Connected; tool list is partial</source>
-        <translation>연결됨. 도구 목록이 일부만 표시됩니다</translation>
+        <translation>연결됨. 도구 목록을 일부만 받았습니다</translation>
     </message>
     <message>
         <source>Connected; resource list is partial</source>
-        <translation>연결됨. 리소스 목록이 일부만 표시됩니다</translation>
+        <translation>연결됨. 리소스 목록을 일부만 받았습니다</translation>
     </message>
     <message>
         <source>MCP tool reported an error</source>
@@ -1263,7 +1263,7 @@
     </message>
     <message>
         <source>%1 uses database format %2, which this NeverD cannot update.</source>
-        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하며, 이 NeverD에서는 업데이트할 수 없습니다.</translation>
+        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하므로 이 버전의 NeverD에서는 업데이트할 수 없습니다.</translation>
     </message>
     <message>
         <source>Cannot create %1</source>
@@ -1279,7 +1279,7 @@
     </message>
     <message>
         <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하며, 이 NeverD에서는 읽을 수 없습니다.</translation>
+        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하므로 이 버전의 NeverD에서는 읽을 수 없습니다.</translation>
     </message>
     <message>
         <source>%1 names an invalid input file.</source>
@@ -1291,7 +1291,7 @@
     </message>
     <message>
         <source>The input stored in %1 is damaged.</source>
-        <translation>%1에 저장된 입력이 손상되었습니다.</translation>
+        <translation>%1에 저장된 입력 파일이 손상되었습니다.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1491,7 +1491,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Saved variable names belong to a different source rendering</source>
-        <translation>저장된 변수 이름은 다른 소스 렌더링에 속합니다</translation>
+        <translation>저장된 변수 이름은 다른 소스 출력에 대한 것입니다</translation>
     </message>
     <message>
         <source>Expand block (Ctrl+Shift+])</source>
@@ -1522,7 +1522,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Keep this function while the disassembly moves on</source>
-        <translation>디스어셈블리가 이동해도 이 함수를 계속 표시</translation>
+        <translation>디스어셈블리 위치가 바뀌어도 이 함수를 계속 표시합니다</translation>
     </message>
     <message>
         <source>Optimization</source>
@@ -1530,7 +1530,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Transform the current function</source>
-        <translation>현재 함수 변환</translation>
+        <translation>현재 함수를 변환합니다</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -1600,15 +1600,15 @@ Double-click to go to the declaration.</source>
         <translation>연결 해제됨</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>MCP 연결</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>현재 GUI 세션</translation>
+        <source>This NeverD session</source>
+        <translation>이 NeverD 세션</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
+        <source>Copy credential path</source>
         <translation>자격 증명 경로 복사</translation>
     </message>
     <message>
@@ -1656,11 +1656,11 @@ Double-click to go to the declaration.</source>
         <translation>스키마</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>도구 호출</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>호출 취소</translation>
     </message>
     <message>
@@ -1668,11 +1668,11 @@ Double-click to go to the declaration.</source>
         <translation>리소스를 선택하거나 도구를 호출하여 응답을 확인하세요.</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>공유 끄기</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>공유 켜기</translation>
     </message>
     <message>
@@ -1712,7 +1712,7 @@ Double-click to go to the declaration.</source>
         <translation>인수는 문자열로 이루어진 JSON 배열이어야 합니다.</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
+        <source>Tool input schema</source>
         <translation>도구 입력 스키마</translation>
     </message>
 </context>
@@ -1761,7 +1761,7 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
+        <source>Import manifest…</source>
         <translation>매니페스트 가져오기…</translation>
     </message>
     <message>
@@ -1815,7 +1815,7 @@ Double-click to go to the declaration.</source>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
-        <translation>임의 위치로 이동</translation>
+        <translation>원하는 위치로 이동</translation>
     </message>
     <message>
         <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
@@ -1840,7 +1840,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Navigation band</source>
-        <translation>내비게이션 밴드</translation>
+        <translation>탐색 밴드</translation>
     </message>
     <message>
         <source>Extensions</source>
@@ -1896,7 +1896,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Mark position</source>
-        <translation>위치 표시</translation>
+        <translation>책갈피 추가</translation>
     </message>
     <message>
         <source>Description:</source>
@@ -1939,8 +1939,8 @@ Double-click to go to the declaration.</source>
         <translation>위쪽</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
-        <translation>디스크: %1GB</translation>
+        <source>Disk: %1 GB</source>
+        <translation>디스크: %1 GB</translation>
     </message>
     <message>
         <source> · read-only</source>
@@ -2130,15 +2130,15 @@ Signed: %4</source>
     </message>
     <message>
         <source>Detect common code pages</source>
-        <translation>일반 코드 페이지 감지</translation>
+        <translation>주요 코드 페이지 감지</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>UTF-8이 아닌 C 문자열을 %1에서도 읽습니다(그중 하나가 텍스트로 읽고 다른 문자 체계의 코드 페이지는 읽지 않을 때)</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>UTF-8이 아닌 C 문자열을 %1 코드 페이지로도 읽습니다. 한 문자 체계의 코드 페이지로만 텍스트로 읽힐 때 적용됩니다</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
-        <translation>UTF-8이 아닌 C 문자열을 이 코드 페이지에서 먼저 읽어, 다른 코드 페이지도 읽을 때 이 코드 페이지를 우선합니다</translation>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
+        <translation>UTF-8이 아닌 C 문자열을 이 코드 페이지로 먼저 읽어, 다른 코드 페이지로도 읽히는 경우 이 코드 페이지를 우선합니다</translation>
     </message>
     <message>
         <source>Code pages:</source>
@@ -2173,7 +2173,7 @@ Signed: %4</source>
         <translation>라이브러리 연산 접기</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
+        <source>Cannot determine how to load %1: %2</source>
         <translation>%1을(를) 불러오는 방법을 알 수 없습니다: %2</translation>
     </message>
     <message>
@@ -2190,7 +2190,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Select a declared variable or an image name to rename</source>
-        <translation>이름을 바꿀 선언된 변수나 이미지의 이름을 선택하세요</translation>
+        <translation>이름을 바꿀 선언된 변수나 이미지 내 이름을 선택하세요</translation>
     </message>
     <message>
         <source>Select a source line; expand folded code before commenting it</source>
@@ -2218,15 +2218,15 @@ Signed: %4</source>
     </message>
     <message>
         <source>Use unverified PDB for analysis</source>
-        <translation>검증되지 않은 PDB로 분석</translation>
+        <translation>검증되지 않은 PDB를 분석에 사용</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>이 PE에는 PDB 일치 식별 정보(GUID/age)가 없습니다. 선택한 PDB의 아키텍처와 섹션 배치는 일치하지만 같은 빌드인지 확인할 수 없습니다.
+        <translation>이 PE에는 PDB와 대조할 식별 정보(GUID/age)가 없습니다. 선택한 PDB의 아키텍처와 섹션 배치는 일치하지만 같은 빌드인지 확인할 수 없습니다.
 
-이 PDB를 분석에 사용하시겠습니까? 심볼, 형식, 함수 시그니처와 주소 범위를 분석 입력으로 사용합니다. 잘못된 PDB를 선택하면 분석 결과가 부정확할 수 있습니다.</translation>
+이 PDB를 분석에 사용하시겠습니까? 심볼, 타입, 함수 시그니처와 주소 범위를 분석 입력으로 사용합니다. 잘못된 PDB를 선택하면 분석 결과가 부정확할 수 있습니다.</translation>
     </message>
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
@@ -2234,7 +2234,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Line</source>
-        <translation>행</translation>
+        <translation>줄</translation>
     </message>
     <message>
         <source>Column</source>
@@ -2258,7 +2258,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Could not tell whether %1 has a symbol table: %2</source>
-        <translation>%1에 기호 테이블이 있는지 확인할 수 없습니다: %2</translation>
+        <translation>%1에 심볼 테이블이 있는지 확인할 수 없습니다: %2</translation>
     </message>
 </context>
 <context>
@@ -2380,7 +2380,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Missing</source>
-        <translation>없음</translation>
+        <translation>찾을 수 없음</translation>
     </message>
     <message>
         <source>&amp;Load</source>
@@ -2483,7 +2483,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
-        <translation>%1은(는) 이 파일의 다른 버전을 설명하므로 사용되지 않았습니다. 저장하면 대체됩니다.</translation>
+        <translation>%1은(는) 이 파일의 다른 버전에 대한 것이므로 사용하지 않았습니다. 저장하면 덮어씁니다.</translation>
     </message>
     <message>
         <source>Could not restore %1 from the database.</source>
@@ -2531,7 +2531,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Platform: %1, as chosen</source>
-        <translation>플랫폼: %1(지정한 대로)</translation>
+        <translation>플랫폼: %1, 선택한 대로</translation>
     </message>
     <message>
         <source>Platform: %1, read from the code: %2</source>
@@ -2543,19 +2543,19 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
-        <translation>PDB를 불러왔습니다: %1 (%2개 이름, 식별 정보 검증됨)</translation>
+        <translation>PDB를 불러왔습니다: %1 (이름 %2개, 식별 정보 검증됨)</translation>
     </message>
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
-        <translation>PDB 표시 이름을 가져왔습니다: %1 (%2개 이름, 검증되지 않음)</translation>
+        <translation>PDB 표시 이름을 가져왔습니다: %1 (이름 %2개, 검증되지 않음)</translation>
     </message>
     <message>
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
-        <translation>분석용 PDB를 불러왔습니다: %1 (%2개 이름, 사용자 확인됨, 식별 정보 미검증)</translation>
+        <translation>분석용 PDB를 불러왔습니다: %1 (이름 %2개, 사용자 확인됨, 식별 정보 미검증)</translation>
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
-        <translation>선택에 따라 입력 파일이 지정한 PDB 없이 열었습니다</translation>
+        <translation>선택한 대로 입력 파일이 지정한 PDB 없이 열었습니다</translation>
     </message>
     <message>
         <source>Edited the function at %1</source>
@@ -2567,7 +2567,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Opened without its symbol table, as chosen</source>
-        <translation>선택한 대로 기호 테이블 없이 열었습니다</translation>
+        <translation>선택한 대로 심볼 테이블 없이 열었습니다</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -2582,7 +2582,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Load file %1 &amp;as</source>
-        <translation>파일 %1 불러오기 형식(&amp;A)</translation>
+        <translation>%1 파일을 다음 형식으로 불러오기(&amp;A)</translation>
     </message>
     <message>
         <source>The input file possibly has the listed formats</source>
@@ -2590,11 +2590,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Processor t&amp;ype</source>
-        <translation>프로세서 종류(&amp;Y)</translation>
+        <translation>프로세서 유형(&amp;Y)</translation>
     </message>
     <message>
         <source>The file&apos;s header states the processor</source>
-        <translation>프로세서는 파일 헤더로 정해집니다</translation>
+        <translation>파일 헤더에 프로세서가 명시되어 있습니다</translation>
     </message>
     <message>
         <source>Analysis</source>
@@ -2614,7 +2614,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Display the analysis progress in the status line</source>
-        <translation>상태 줄에 분석 진행 상황을 표시합니다</translation>
+        <translation>상태 표시줄에 분석 진행 상황을 표시합니다</translation>
     </message>
     <message>
         <source>Options</source>
@@ -2626,7 +2626,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Read the PDB, DWARF or linker map that belongs to the input</source>
-        <translation>입력에 속한 PDB, DWARF 또는 링커 맵을 읽습니다</translation>
+        <translation>입력 파일에 속한 PDB, DWARF 또는 링커 맵을 읽습니다</translation>
     </message>
     <message>
         <source>NeverD cannot load this file: %1</source>
@@ -2634,11 +2634,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
-        <translation>파일 이름만으로 나열되었습니다. 내용은 이 형식이 아닙니다</translation>
+        <translation>파일 이름만 보고 나열했습니다. 내용으로는 이 형식임을 확인할 수 없습니다</translation>
     </message>
     <message>
         <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
-        <translation>파일 이름만 형식을 암시합니다. 그 방식으로 불러오려면 행을 선택하세요</translation>
+        <translation>파일 이름으로만 형식을 짐작할 수 있습니다. 해당 형식으로 불러오려면 행을 선택하세요</translation>
     </message>
     <message>
         <source>Processor: %1</source>
@@ -2678,7 +2678,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Processor t&amp;ype (double-click to set)</source>
-        <translation>프로세서 종류(두 번 클릭하여 설정)(&amp;Y)</translation>
+        <translation>프로세서 유형(두 번 클릭하여 설정)(&amp;Y)</translation>
     </message>
     <message>
         <source>The image base</source>
@@ -2702,7 +2702,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
-        <translation>코드가 빌드된 플랫폼으로, 그 규약을 따릅니다: 호출이 인수를 전달하는 방식, 보존되는 레지스터, C 타입의 크기</translation>
+        <translation>코드가 빌드된 대상 플랫폼입니다. 코드는 이 플랫폼의 규약(호출 시 인수 전달 방식, 호출 후에도 유지되는 레지스터, C 타입의 크기)을 따릅니다</translation>
     </message>
     <message>
         <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
@@ -2818,7 +2818,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Only analysis reads are allowed.</source>
-        <translation>분석 읽기만 허용됩니다.</translation>
+        <translation>분석 데이터 읽기 요청만 허용됩니다.</translation>
     </message>
     <message>
         <source>The worker cannot restore analysis state.</source>
@@ -2833,7 +2833,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The input file was linked with debug information stored here:</source>
-        <translation>입력 파일에 링크된 디버그 정보의 저장 위치:</translation>
+        <translation>입력 파일은 다음 위치에 저장된 디버그 정보와 함께 링크되었습니다:</translation>
     </message>
     <message>
         <source>&amp;Browse…</source>
@@ -2881,7 +2881,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
-        <translation>이 컴퓨터에 일치하는 사본이 없습니다. 검색할 때는 PDB 이름과 빌드 식별자만 전송됩니다.</translation>
+        <translation>이 컴퓨터에 일치하는 사본이 없습니다. 검색할 때는 PDB 이름과 빌드 식별 정보만 전송됩니다.</translation>
     </message>
     <message>
         <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
@@ -2956,7 +2956,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The symbol download from %1 failed: %2</source>
-        <translation>%1에서 심볼 다운로드 실패: %2</translation>
+        <translation>%1에서 심볼을 다운로드하지 못했습니다: %2</translation>
     </message>
     <message>
         <source>%1 sent an empty symbol file.</source>
@@ -2976,7 +2976,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Compressed symbols require Windows.</source>
-        <translation>압축된 심볼은 Windows가 필요합니다.</translation>
+        <translation>압축된 심볼을 사용하려면 Windows가 필요합니다.</translation>
     </message>
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
@@ -2991,14 +2991,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>NeverD does not keep this frame size</source>
-        <translation>NeverD는 이 프레임 크기를 보관하지 않습니다</translation>
+        <translation>NeverD는 이 프레임 크기를 관리하지 않습니다</translation>
     </message>
     <message>
         <source>&amp;Name of function</source>
         <translation>함수 이름(&amp;N)</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
+        <source>Analysis decides where the function ends</source>
         <translation>함수의 끝은 분석이 결정합니다</translation>
     </message>
     <message>
@@ -3015,7 +3015,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Function color</source>
-        <translation>함수 색</translation>
+        <translation>함수 색상</translation>
     </message>
     <message>
         <source>&amp;Default</source>
@@ -3023,7 +3023,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Color</source>
-        <translation>색(&amp;C)</translation>
+        <translation>색상(&amp;C)</translation>
     </message>
     <message>
         <source>Enter size of (in bytes)</source>
@@ -3051,15 +3051,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>NeverD does not keep this flag</source>
-        <translation>NeverD는 이 플래그를 보관하지 않습니다</translation>
+        <translation>NeverD는 이 플래그를 관리하지 않습니다</translation>
     </message>
     <message>
         <source>D&amp;oes not return</source>
         <translation>반환하지 않음(&amp;O)</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>분석은 이 함수에 대한 모든 호출을 끝으로 처리합니다</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>분석은 이 함수에 대한 모든 호출 지점에서 제어 흐름을 끝냅니다</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
@@ -3125,11 +3125,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::SymbolTablePromptDialog</name>
     <message>
         <source>Symbol table found</source>
-        <translation>기호 테이블을 찾았습니다</translation>
+        <translation>심볼 테이블을 찾았습니다</translation>
     </message>
     <message>
         <source>Load the symbol table?</source>
-        <translation>기호 테이블을 불러오시겠습니까?</translation>
+        <translation>심볼 테이블을 불러오시겠습니까?</translation>
     </message>
     <message>
         <source>(%1: %2)</source>
@@ -3138,6 +3138,228 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>종류</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>증거</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>바인딩</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>신뢰도</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>분석가 판정</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>판정 출처</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>발견 사항 ID</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>선택 안 함</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>오프라인 패키지 검토</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>증거 커버리지는 일부에 그칩니다. 분석가 판정은 호출자의 주장이며, 패키지 안전성, 게시자 인증, 런타임 동작은 검증되지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>파일 미리 보기…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>디렉터리 미리 보기…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>미리 본 증거 수집</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>로컬 증거 선택</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>로컬 증거 디렉터리 선택</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>개별 매니페스트 / 잠금 파일</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>아카이브 검사</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>수집된 아티팩트</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>컨테이너</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>매니페스트 멤버</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>매니페스트 형식</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>수집된 레지스트리 선언 포함</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>원본 바이트</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>레지스트리 메타데이터</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>수집 설명자</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>선택한 증거 평가</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>증거, 신뢰도, 판정 또는 ID로 필터링</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>발견 사항 필터</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>선택한 발견 사항의 증거 앵커</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>검토 안 됨</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>검토 필요</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>위험 수용(분석가 주장)</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>오탐(분석가 주장)</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>판정 기록</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>검토 저장…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>검토 불러오기…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>불러온 검토 복원</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>분석 프로세스 중지</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>NeverD 분석 프로세스 시작 중…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>오프라인 증거 분석 진행 중</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>작업이 거부되었습니다: %1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>제한 범위 내에서 오프라인 증거를 읽는 중…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>미리 보기: 아티팩트 %1개, %2바이트. 수집 시 로컬 바이트를 읽으며, 소스와 이름은 비공개로 유지됩니다.</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>발견 사항 %1개 · 분석가 결정 %2개 · 부분 커버리지 · 헤드 %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>미리 보거나 평가할 로컬 증거를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>로컬 검토 저장</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>NeverD 검토 (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>검토 저장이 거부되었습니다: %1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>불투명 증거 ID와 분석가 주장을 로컬에 저장했습니다.</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>로컬 검토 불러오기</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>검토 불러오기가 거부되었습니다: %1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>주장 %1개를 불러왔습니다. 복원하면 현재 평가를 기준으로 전체 체인을 검증합니다. 아직 아무것도 적용되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>저장되지 않은 검토</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>저장되지 않은 분석가 주장을 버리고 계속하시겠습니까?</translation>
     </message>
 </context>
 </TS>

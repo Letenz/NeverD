@@ -21,7 +21,7 @@
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
-        <translation>&amp;Файл сигнатур FLIRT...</translation>
+        <translation>Файл &amp;сигнатур FLIRT...</translation>
     </message>
     <message>
         <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
@@ -129,7 +129,7 @@
     </message>
     <message>
         <source>Comment the current address</source>
-        <translation>Прокомментировать текущий адрес</translation>
+        <translation>Добавить комментарий к текущему адресу</translation>
     </message>
     <message>
         <source>Enter re&amp;peatable comment...</source>
@@ -157,7 +157,7 @@
     </message>
     <message>
         <source>Open the target in a new disassembly view</source>
-        <translation>Открыть цель в новом представлении дизассемблирования</translation>
+        <translation>Открыть цель перехода в новом представлении дизассемблированного кода</translation>
     </message>
     <message>
         <source>Jump to &amp;previous position</source>
@@ -197,7 +197,7 @@
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
-        <translation>Переключиться между дизассемблированием и псевдокодом</translation>
+        <translation>Переключиться между дизассемблированным кодом и псевдокодом</translation>
     </message>
     <message>
         <source>Jump &amp;anywhere...</source>
@@ -241,7 +241,7 @@
     </message>
     <message>
         <source>List cross references &amp;to...</source>
-        <translation>Список перекрёстных ссылок &amp;на...</translation>
+        <translation>Показать перекрёстные ссылки &amp;на...</translation>
     </message>
     <message>
         <source>List references to the current item</source>
@@ -249,7 +249,7 @@
     </message>
     <message>
         <source>List cross references f&amp;rom...</source>
-        <translation>Список перекрёстных ссылок &amp;из...</translation>
+        <translation>Показать перекрёстные ссылки &amp;из...</translation>
     </message>
     <message>
         <source>List references made by the current instruction</source>
@@ -305,19 +305,19 @@
     </message>
     <message>
         <source>Search highlight &amp;up</source>
-        <translation>Поиск выделенного &amp;вверх</translation>
+        <translation>Искать подсвеченное &amp;вверх</translation>
     </message>
     <message>
         <source>Move to the previous occurrence of the highlighted identifier</source>
-        <translation>Перейти к предыдущему вхождению выделенного идентификатора</translation>
+        <translation>Перейти к предыдущему вхождению подсвеченного идентификатора</translation>
     </message>
     <message>
         <source>Search highlight &amp;down</source>
-        <translation>Поиск выделенного вн&amp;из</translation>
+        <translation>Искать подсвеченное вн&amp;из</translation>
     </message>
     <message>
         <source>Move to the next occurrence of the highlighted identifier</source>
-        <translation>Перейти к следующему вхождению выделенного идентификатора</translation>
+        <translation>Перейти к следующему вхождению подсвеченного идентификатора</translation>
     </message>
     <message>
         <source>&amp;Find in view...</source>
@@ -337,11 +337,11 @@
     </message>
     <message>
         <source>&amp;Disassembly</source>
-        <translation>&amp;Дизассемблирование</translation>
+        <translation>&amp;Дизассемблированный код</translation>
     </message>
     <message>
         <source>Open a new disassembly view</source>
-        <translation>Открыть новое представление дизассемблирования</translation>
+        <translation>Открыть новое представление дизассемблированного кода</translation>
     </message>
     <message>
         <source>Toggle &amp;graph view</source>
@@ -397,7 +397,7 @@
     </message>
     <message>
         <source>Decompile the current function through LLVM</source>
-        <translation>Декомпилировать текущую функцию через LLVM</translation>
+        <translation>Декомпилировать текущую функцию с помощью LLVM</translation>
     </message>
     <message>
         <source>&amp;Hex dump</source>
@@ -493,7 +493,7 @@
     </message>
     <message>
         <source>Manage MCP connections and session sharing</source>
-        <translation>Управление подключениями MCP и общим доступом к сеансу</translation>
+        <translation>Управлять подключениями MCP и общим доступом к сеансу</translation>
     </message>
     <message>
         <source>Ex&amp;tensions</source>
@@ -501,11 +501,11 @@
     </message>
     <message>
         <source>Manage declarative extensions</source>
-        <translation>Управление декларативными расширениями</translation>
+        <translation>Управлять декларативными расширениями</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
-        <translation>История &amp;отмены</translation>
+        <translation>Ист&amp;ория изменений</translation>
     </message>
     <message>
         <source>Show the comment and rename history</source>
@@ -521,7 +521,7 @@
     </message>
     <message>
         <source>F&amp;ull screen</source>
-        <translation>Полный &amp;экран</translation>
+        <translation>Полноэкранный &amp;режим</translation>
     </message>
     <message>
         <source>Toggle full screen</source>
@@ -677,7 +677,7 @@
     </message>
     <message>
         <source>Move the keyboard focus to the command line</source>
-        <translation>Переместить фокус клавиатуры в командную строку</translation>
+        <translation>Переместить фокус ввода в командную строку</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -717,7 +717,7 @@
     </message>
     <message>
         <source>Start a function at the current address</source>
-        <translation>Начать функцию с текущего адреса</translation>
+        <translation>Создать функцию, начинающуюся по текущему адресу</translation>
     </message>
     <message>
         <source>&amp;Delete function</source>
@@ -725,7 +725,7 @@
     </message>
     <message>
         <source>Stop treating the current function as one</source>
-        <translation>Перестать считать текущую функцию функцией</translation>
+        <translation>Отменить определение текущей функции, не затрагивая её код</translation>
     </message>
     <message>
         <source>&amp;Data</source>
@@ -748,8 +748,8 @@
         <translation>Отменить опр&amp;еделение</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>Показать байты текущего элемента как байты</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>Превратить текущий элемент обратно в неопределённые байты</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +757,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>Показать число операнда так, как выбирает листинг</translation>
+        <translation>Показать число операнда в формате листинга по умолчанию</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -805,11 +805,11 @@
     </message>
     <message>
         <source>Show the operand&apos;s number with its sign changed</source>
-        <translation>Показать число операнда со сменённым знаком</translation>
+        <translation>Показать число операнда с противоположным знаком</translation>
     </message>
     <message>
         <source>Bitwise ne&amp;gate</source>
-        <translation>Побитовое отрицани&amp;е</translation>
+        <translation>&amp;Побитовое отрицание</translation>
     </message>
     <message>
         <source>Show the operand&apos;s number with its bits inverted</source>
@@ -829,11 +829,11 @@
     </message>
     <message>
         <source>Inspect local package evidence and analyst reviews</source>
-        <translation>Просмотреть локальные свидетельства о пакетах и отзывы аналитиков</translation>
+        <translation>Просмотреть локальные свидетельства о пакетах и заключения аналитиков</translation>
     </message>
     <message>
         <source>&amp;PDB file...</source>
-        <translation>Файл &amp;PDB...</translation>
+        <translation>&amp;Файл PDB...</translation>
     </message>
     <message>
         <source>Load symbols from a selected PDB file</source>
@@ -995,7 +995,7 @@
     </message>
     <message>
         <source>Cannot open local session broker: %1</source>
-        <translation>Не удалось открыть локальный посредник сеанса: %1</translation>
+        <translation>Не удалось запустить локальный брокер сеанса: %1</translation>
     </message>
     <message>
         <source>Cannot write private session credentials</source>
@@ -1026,7 +1026,7 @@
     </message>
     <message>
         <source>MCP process exited (%1): %2</source>
-        <translation>Процесс MCP завершён (%1): %2</translation>
+        <translation>Процесс MCP завершился (%1): %2</translation>
     </message>
     <message>
         <source>MCP request timed out: %1</source>
@@ -1038,7 +1038,7 @@
     </message>
     <message>
         <source>Choose an absolute MCP executable path</source>
-        <translation>Выберите абсолютный путь к исполняемому файлу MCP</translation>
+        <translation>Укажите абсолютный путь к исполняемому файлу MCP</translation>
     </message>
     <message>
         <source>Connecting</source>
@@ -1062,7 +1062,7 @@
     </message>
     <message>
         <source>MCP outgoing message budget exceeded</source>
-        <translation>Исходящее сообщение MCP превышает допустимый размер</translation>
+        <translation>Превышен лимит объёма исходящих сообщений MCP</translation>
     </message>
     <message>
         <source>MCP server is disconnected</source>
@@ -1070,11 +1070,11 @@
     </message>
     <message>
         <source>MCP session expired; reconnecting</source>
-        <translation>Сеанс MCP истёк; выполняется повторное подключение</translation>
+        <translation>Срок действия сеанса MCP истёк; выполняется повторное подключение</translation>
     </message>
     <message>
         <source>MCP HTTP error %1: %2</source>
-        <translation>Ошибка HTTP MCP %1: %2</translation>
+        <translation>Ошибка HTTP %1 в MCP: %2</translation>
     </message>
     <message>
         <source>MCP event stream ended before its response</source>
@@ -1082,7 +1082,7 @@
     </message>
     <message>
         <source>Invalid MCP HTTP response</source>
-        <translation>Некорректный ответ HTTP MCP</translation>
+        <translation>Некорректный HTTP-ответ MCP</translation>
     </message>
     <message>
         <source>Invalid MCP session identifier</source>
@@ -1090,7 +1090,7 @@
     </message>
     <message>
         <source>MCP session identifier is too large</source>
-        <translation>Идентификатор сеанса MCP слишком велик</translation>
+        <translation>Идентификатор сеанса MCP слишком длинный</translation>
     </message>
     <message>
         <source>Invalid MCP event data</source>
@@ -1240,7 +1240,7 @@
     </message>
     <message>
         <source>Unexplored</source>
-        <translation>Неисследованные</translation>
+        <translation>Неисследованная область</translation>
     </message>
     <message>
         <source>External symbol</source>
@@ -1251,15 +1251,15 @@
     <name>ProjectDatabase</name>
     <message>
         <source>Cannot copy %1 to %2</source>
-        <translation>Не удаётся скопировать %1 в %2</translation>
+        <translation>Не удалось скопировать %1 в %2</translation>
     </message>
     <message>
         <source>Cannot read %1: %2</source>
-        <translation>Не удаётся прочитать %1: %2</translation>
+        <translation>Не удалось прочитать %1: %2</translation>
     </message>
     <message>
         <source>Cannot read %1</source>
-        <translation>Не удаётся прочитать %1</translation>
+        <translation>Не удалось прочитать %1</translation>
     </message>
     <message>
         <source>%1 uses database format %2, which this NeverD cannot update.</source>
@@ -1267,7 +1267,7 @@
     </message>
     <message>
         <source>Cannot create %1</source>
-        <translation>Не удаётся создать %1</translation>
+        <translation>Не удалось создать %1</translation>
     </message>
     <message>
         <source>%1 is not a NeverD database.</source>
@@ -1283,19 +1283,19 @@
     </message>
     <message>
         <source>%1 names an invalid input file.</source>
-        <translation>%1 указывает недопустимый входной файл.</translation>
+        <translation>В %1 указано недопустимое имя входного файла.</translation>
     </message>
     <message>
         <source>Cannot write %1: %2</source>
-        <translation>Не удаётся записать %1: %2</translation>
+        <translation>Не удалось записать %1: %2</translation>
     </message>
     <message>
         <source>The input stored in %1 is damaged.</source>
-        <translation>Входные данные, сохранённые в %1, повреждены.</translation>
+        <translation>Входной файл, сохранённый в %1, повреждён.</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
-        <translation>Не удаётся записать %1</translation>
+        <translation>Не удалось записать %1</translation>
     </message>
 </context>
 <context>
@@ -1360,7 +1360,7 @@
     <name>WorkerTransport</name>
     <message>
         <source>Analysis worker exited (%1). Restart to continue.</source>
-        <translation>Процесс анализа завершён (%1). Перезапустите его, чтобы продолжить.</translation>
+        <translation>Процесс анализа завершился (%1). Перезапустите его, чтобы продолжить.</translation>
     </message>
     <message>
         <source>Analysis worker is not running.</source>
@@ -1429,7 +1429,7 @@
     </message>
     <message>
         <source>rows linked to instructions</source>
-        <translation>строки связаны с инструкциями</translation>
+        <translation>строки привязаны к инструкциям</translation>
     </message>
     <message>
         <source>%1
@@ -1447,7 +1447,7 @@ Recognized library operation; click to show its code.</source>
     </message>
     <message>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
-        <translation>Включения, вспомогательные типы и объявления, с которыми компилируется этот код; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
+        <translation>Включения, вспомогательные типы и объявления, с которыми компилируется этот код; щёлкните, чтобы показать их; клавиша «-» на цифровой клавиатуре снова их свернёт.</translation>
     </message>
     <message numerus="yes">
         <source>%n lines of declarations</source>
@@ -1467,11 +1467,11 @@ Recognized library operation; click to show its code.</source>
     </message>
     <message>
         <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
-        <translation>Цель, типы, глобальные переменные и функции, на которые ссылается эта функция; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
+        <translation>Целевая платформа, типы, глобальные переменные и функции, на которые ссылается эта функция; щёлкните, чтобы показать их; клавиша «-» на цифровой клавиатуре снова их свернёт.</translation>
     </message>
     <message>
         <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
-        <translation>Группы атрибутов и метаданные, которые использует эта функция; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
+        <translation>Группы атрибутов и метаданные, которые использует эта функция; щёлкните, чтобы показать их; клавиша «-» на цифровой клавиатуре снова их свернёт.</translation>
     </message>
     <message>
         <source>Double-click to go to %1.</source>
@@ -1501,7 +1501,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Saved variable names belong to a different source rendering</source>
-        <translation>Сохранённые имена переменных относятся к другому представлению исходного кода</translation>
+        <translation>Сохранённые имена переменных относятся к другому варианту исходного кода</translation>
     </message>
     <message>
         <source>Expand block (Ctrl+Shift+])</source>
@@ -1524,7 +1524,7 @@ Double-click to go to the declaration.</source>
     <name>neverd::gui::CodeView</name>
     <message>
         <source>Fold library code</source>
-        <translation>Свернуть библиотечный код</translation>
+        <translation>Сворачивать библиотечный код</translation>
     </message>
     <message>
         <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
@@ -1532,7 +1532,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Keep this function while the disassembly moves on</source>
-        <translation>Оставлять эту функцию при перемещении по дизассемблированию</translation>
+        <translation>Оставлять эту функцию при переходах в дизассемблированном коде</translation>
     </message>
     <message>
         <source>Optimization</source>
@@ -1576,7 +1576,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Restore default source</source>
-        <translation>Восстановить исходный текст по умолчанию</translation>
+        <translation>Восстановить исходный код по умолчанию</translation>
     </message>
     <message>
         <source>Cancel transformation</source>
@@ -1610,16 +1610,16 @@ Double-click to go to the declaration.</source>
         <translation>Соединение разорвано</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>Подключения MCP</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>Текущий сеанс интерфейса</translation>
+        <source>This NeverD session</source>
+        <translation>Этот сеанс NeverD</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
-        <translation>Копировать путь к учётным данным</translation>
+        <source>Copy credential path</source>
+        <translation>Копировать путь к файлу учётных данных</translation>
     </message>
     <message>
         <source>Transport</source>
@@ -1627,7 +1627,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
-        <translation>Аргументы в JSON, например [&quot;--help&quot;]</translation>
+        <translation>Аргументы в формате JSON, например [&quot;--help&quot;]</translation>
     </message>
     <message>
         <source>Bearer token (optional)</source>
@@ -1666,11 +1666,11 @@ Double-click to go to the declaration.</source>
         <translation>Схема</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>Вызвать инструмент</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>Отменить вызов</translation>
     </message>
     <message>
@@ -1678,11 +1678,11 @@ Double-click to go to the declaration.</source>
         <translation>Выберите ресурс или вызовите инструмент, чтобы просмотреть ответ.</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>Отключить общий доступ</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>Включить общий доступ</translation>
     </message>
     <message>
@@ -1719,10 +1719,10 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Arguments must be a JSON array of strings.</source>
-        <translation>Аргументы должны быть массивом строк JSON.</translation>
+        <translation>Аргументы должны быть JSON-массивом строк.</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
+        <source>Tool input schema</source>
         <translation>Схема входных данных инструмента</translation>
     </message>
 </context>
@@ -1730,11 +1730,11 @@ Double-click to go to the declaration.</source>
     <name>neverd::gui::DisassemblyView</name>
     <message>
         <source>Graph view requires a location inside a function.</source>
-        <translation>Для графического представления нужен адрес внутри функции.</translation>
+        <translation>Для графического представления требуется адрес внутри функции.</translation>
     </message>
     <message>
         <source> (Synchronized with %1)</source>
-        <translation> (синхронизировано с %1)</translation>
+        <translation> (синхронизация: %1)</translation>
     </message>
 </context>
 <context>
@@ -1771,7 +1771,7 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
+        <source>Import manifest…</source>
         <translation>Импортировать манифест…</translation>
     </message>
     <message>
@@ -1818,7 +1818,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>The selection holds bytes no segment maps; nothing was copied.</source>
-        <translation>Выделение содержит байты, не отображённые ни одним сегментом; ничего не скопировано.</translation>
+        <translation>Выделение содержит байты, не принадлежащие ни одному сегменту; ничего не скопировано.</translation>
     </message>
 </context>
 <context>
@@ -1888,7 +1888,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Comments were changed. Save them before continuing?</source>
-        <translation>Комментарии изменены. Сохранить их перед продолжением?</translation>
+        <translation>Комментарии изменены. Сохранить их, прежде чем продолжить?</translation>
     </message>
     <message>
         <source>Cannot jump to %1: %2</source>
@@ -1924,7 +1924,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>«%1» не найдено среди загруженных строк</translation>
+        <translation>Текст «%1» не найден среди загруженных строк</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -1951,7 +1951,7 @@ Double-click to go to the declaration.</source>
         <translation>Вверх</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
+        <source>Disk: %1 GB</source>
         <translation>Диск: %1 ГБ</translation>
     </message>
     <message>
@@ -2004,7 +2004,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Search failed: %1 not found</source>
-        <translation>Поиск не удался: %1 не найдено</translation>
+        <translation>Поиск не дал результатов: не найдено «%1»</translation>
     </message>
     <message>
         <source>Evaluate expression</source>
@@ -2145,12 +2145,12 @@ Signed: %4</source>
         <translation>Распознавать распространённые кодовые страницы</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>Читать C-строки не в UTF-8 также в %1, если одна из них читает их как текст, а кодовая страница для другой письменности — нет</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>Также читать C-строки не в UTF-8 в кодовых страницах %1, если как текст их читают кодовые страницы только одной письменности</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
-        <translation>Читать C-строки не в UTF-8 сначала в этой кодовой странице, чтобы она побеждала там, где их читают и другие кодовые страницы</translation>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
+        <translation>Сначала пробовать эту кодовую страницу для C-строк не в UTF-8; она имеет приоритет, если их читают и другие кодовые страницы</translation>
     </message>
     <message>
         <source>Code pages:</source>
@@ -2162,7 +2162,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
-        <translation>Колонки на экране: широкий восточноазиатский символ считается за две</translation>
+        <translation>Длина в знакоместах: широкий восточноазиатский символ занимает два</translation>
     </message>
     <message>
         <source>Expand declarations</source>
@@ -2185,8 +2185,8 @@ Signed: %4</source>
         <translation>Свернуть библиотечные операции</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
-        <translation>Неизвестно, как загрузить %1: %2</translation>
+        <source>Cannot determine how to load %1: %2</source>
+        <translation>Не удалось определить, как загрузить %1: %2</translation>
     </message>
     <message>
         <source>Comment this source line:</source>
@@ -2202,7 +2202,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Select a declared variable or an image name to rename</source>
-        <translation>Выберите объявленную переменную или имя в образе, чтобы переименовать</translation>
+        <translation>Выберите для переименования объявленную переменную или имя из образа</translation>
     </message>
     <message>
         <source>Select a source line; expand folded code before commenting it</source>
@@ -2233,10 +2233,10 @@ Signed: %4</source>
         <translation>Использовать непроверенный PDB для анализа</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>В этом PE отсутствует идентификатор PDB (GUID/age). Архитектура и расположение секций выбранного PDB совпадают, но его сборку нельзя проверить.
+        <translation>В этом PE нет идентификатора PDB (GUID/age) для сопоставления. Архитектура и расположение секций выбранного PDB совпадают, но его сборку нельзя проверить.
 
 Использовать этот PDB для анализа? Его символы, типы, сигнатуры функций и диапазоны адресов будут входными данными анализа. Неверный PDB может привести к ошибочным результатам.</translation>
     </message>
@@ -2313,7 +2313,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>  c &lt;text&gt;          comment the current address</source>
-        <translation>  c &lt;text&gt;          прокомментировать текущий адрес</translation>
+        <translation>  c &lt;text&gt;          добавить комментарий к текущему адресу</translation>
     </message>
     <message>
         <source>  d [expr]          decompile the current or given function</source>
@@ -2384,7 +2384,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>&amp;Display at startup</source>
-        <translation>&amp;Показывать при запуске</translation>
+        <translation>Показывать при &amp;запуске</translation>
     </message>
     <message>
         <source>Drop a file here to open it</source>
@@ -2431,7 +2431,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::Session</name>
     <message>
         <source>%1 is in a folder you cannot write to; its database is kept in %2</source>
-        <translation>%1 находится в папке, недоступной для записи; его база данных хранится в %2</translation>
+        <translation>Файл %1 находится в папке, недоступной для записи; его база данных хранится в %2</translation>
     </message>
     <message>
         <source>Starting analysis worker…</source>
@@ -2443,7 +2443,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Analysis engine %1 ready</source>
-        <translation>Механизм анализа %1 готов</translation>
+        <translation>Движок анализа %1 готов</translation>
     </message>
     <message>
         <source>Select an existing binary file.</source>
@@ -2475,7 +2475,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Renamed %1 to %2</source>
-        <translation>%1 переименовано в %2</translation>
+        <translation>Имя по адресу %1 изменено на %2</translation>
     </message>
     <message>
         <source>Signature pack applied: %1 byte matches</source>
@@ -2491,11 +2491,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
-        <translation>Запросы в очереди отменены; выполняющийся вызов механизма анализа завершится, если не перезапустить процесс анализа.</translation>
+        <translation>Запросы в очереди отменены; выполняющийся вызов движка завершится, если не перезапустить процесс анализа.</translation>
     </message>
     <message>
         <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
-        <translation>%1 описывает другую версию этого файла и не использовалась; при сохранении она будет заменена.</translation>
+        <translation>База данных %1 описывает другую версию этого файла и не была использована; при сохранении она будет заменена.</translation>
     </message>
     <message>
         <source>Could not restore %1 from the database.</source>
@@ -2515,11 +2515,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Strings: %1, at least %2 columns</source>
-        <translation>Строки: %1, не менее %2 колонок</translation>
+        <translation>Строки: %1, минимальная длина в знакоместах: %2</translation>
     </message>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
-        <translation>Строки: %1, сначала %2, не менее %3 колонок</translation>
+        <translation>Строки: %1, сначала %2, минимальная длина в знакоместах: %3</translation>
     </message>
     <message>
         <source>Created a function at %1</source>
@@ -2539,11 +2539,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Defined %1 at %2</source>
-        <translation>%1 определено по адресу %2</translation>
+        <translation>По адресу %2 определено: %1</translation>
     </message>
     <message>
         <source>Platform: %1, as chosen</source>
-        <translation>Платформа: %1, выбрана вручную</translation>
+        <translation>Платформа: %1, по вашему выбору</translation>
     </message>
     <message>
         <source>Platform: %1, read from the code: %2</source>
@@ -2555,19 +2555,19 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
-        <translation>PDB загружен: %1 (%2 имён, идентификатор проверен)</translation>
+        <translation>PDB загружен: %1 (имён: %2, идентификатор проверен)</translation>
     </message>
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
-        <translation>Имена PDB для отображения импортированы: %1 (%2 имён, не проверены)</translation>
+        <translation>Имена PDB для отображения импортированы: %1 (имён: %2, не проверены)</translation>
     </message>
     <message>
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
-        <translation>PDB загружен для анализа: %1 (%2 имён, подтверждён пользователем, идентификатор не проверен)</translation>
+        <translation>PDB загружен для анализа: %1 (имён: %2, подтверждён пользователем, идентификатор не проверен)</translation>
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
-        <translation>Открыто без PDB, указанного во входном файле, как выбрано</translation>
+        <translation>Файл открыт без PDB, указанного во входном файле, по вашему выбору</translation>
     </message>
     <message>
         <source>Edited the function at %1</source>
@@ -2575,11 +2575,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Opened without its DWARF debug information, as chosen</source>
-        <translation>Открыто без отладочной информации DWARF, как выбрано</translation>
+        <translation>Файл открыт без отладочной информации DWARF, по вашему выбору</translation>
     </message>
     <message>
         <source>Opened without its symbol table, as chosen</source>
-        <translation>Открыто без таблицы символов, как выбрано</translation>
+        <translation>Файл открыт без таблицы символов, по вашему выбору</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
@@ -2618,7 +2618,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>If turned off, NeverD will not analyze the program in idle time</source>
-        <translation>Если выключено, NeverD не анализирует программу в простое</translation>
+        <translation>Если выключено, NeverD не будет анализировать программу во время простоя</translation>
     </message>
     <message>
         <source>In&amp;dicator enabled</source>
@@ -2646,11 +2646,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
-        <translation>Указан только из-за имени файла; содержимое не соответствует этому формату</translation>
+        <translation>Указан только из-за имени файла; содержимое не указывает на этот формат</translation>
     </message>
     <message>
         <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
-        <translation>Формат подсказывает только имя файла; выберите строку, чтобы загрузить файл так</translation>
+        <translation>Формат подсказывает только имя файла; выберите строку, чтобы загрузить файл в этом формате</translation>
     </message>
     <message>
         <source>Processor: %1</source>
@@ -2690,7 +2690,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Processor t&amp;ype (double-click to set)</source>
-        <translation>&amp;Тип процессора (двойной щелчок, чтобы задать)</translation>
+        <translation>&amp;Тип процессора (задаётся двойным щелчком)</translation>
     </message>
     <message>
         <source>The image base</source>
@@ -2702,11 +2702,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Where execution starts</source>
-        <translation>Где начинается выполнение</translation>
+        <translation>Адрес, с которого начинается выполнение</translation>
     </message>
     <message>
         <source>Where in the file the loaded bytes start</source>
-        <translation>С какого места файла начинаются загружаемые байты</translation>
+        <translation>Позиция в файле, с которой начинаются загружаемые байты</translation>
     </message>
     <message>
         <source>&amp;Platform</source>
@@ -2718,11 +2718,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
-        <translation>Ни одна часть файла не похожа на код известного NeverD набора команд; выберите процессор, на котором выполняется его код</translation>
+        <translation>Ни одна часть файла не похожа на код для набора инструкций, известного NeverD; выберите процессор, на котором выполняется его код</translation>
     </message>
     <message>
         <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
-        <translation>Код похож на %1 или %2, и по его командам не понять, на какой; выберите процессор, на котором выполняется его код</translation>
+        <translation>Код похож на %1 или %2, и по его инструкциям нельзя определить, на какой именно; выберите процессор, на котором выполняется его код</translation>
     </message>
     <message>
         <source>Read from the bytes: %1</source>
@@ -2730,15 +2730,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Read from the bytes: %1, entry %2, base %3</source>
-        <translation>Определено по байтам: %1, точка входа %2, база %3</translation>
+        <translation>Определено по байтам: %1, точка входа %2, базовый адрес %3</translation>
     </message>
     <message>
         <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
-        <translation>Код похож на %1, который NeverD не умеет декодировать; выберите процессор, чтобы всё равно прочитать его так</translation>
+        <translation>Код похож на %1, но NeverD не умеет декодировать этот набор инструкций; чтобы всё же прочитать код, выберите процессор</translation>
     </message>
     <message>
         <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
-        <translation>Код больше всего похож на %1, но неотчётливо; выберите процессор, на котором выполняется его код</translation>
+        <translation>Код больше всего похож на %1, но не однозначно; выберите процессор, на котором выполняется его код</translation>
     </message>
 </context>
 <context>
@@ -2757,11 +2757,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Intel 80386 and later (32-bit)</source>
-        <translation>Intel 80386 и новее (32 бита)</translation>
+        <translation>Intel 80386 и новее (32-разрядные)</translation>
     </message>
     <message>
         <source>AMD64 and Intel 64 (64-bit)</source>
-        <translation>AMD64 и Intel 64 (64 бита)</translation>
+        <translation>AMD64 и Intel 64 (64-разрядные)</translation>
     </message>
     <message>
         <source>ARM Little-endian, starting in ARM state</source>
@@ -2881,7 +2881,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 cannot be read.</source>
-        <translation>Не удаётся прочитать %1.</translation>
+        <translation>Не удалось прочитать %1.</translation>
     </message>
     <message>
         <source>No matching copy is on this computer, and no symbol server is configured.</source>
@@ -2936,7 +2936,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::SymbolDownload</name>
     <message>
         <source>The symbol download timed out.</source>
-        <translation>Время загрузки символов истекло.</translation>
+        <translation>Истекло время ожидания загрузки символов.</translation>
     </message>
     <message>
         <source>No symbol server is configured.</source>
@@ -2948,7 +2948,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot create the symbol store directory %1.</source>
-        <translation>Не удаётся создать каталог хранилища символов %1.</translation>
+        <translation>Не удалось создать каталог хранилища символов %1.</translation>
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
@@ -2956,7 +2956,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
-        <translation>Файл символов превышает ограничение загрузки в 2 GiB.</translation>
+        <translation>Файл символов превышает ограничение на загрузку в 2 ГиБ.</translation>
     </message>
     <message>
         <source>Cannot write the symbol file %1: %2</source>
@@ -2964,7 +2964,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 has no matching symbols for this build.</source>
-        <translation>На %1 нет подходящих символов для этой сборки.</translation>
+        <translation>На сервере %1 нет подходящих символов для этой сборки.</translation>
     </message>
     <message>
         <source>The symbol download from %1 failed: %2</source>
@@ -2972,11 +2972,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1 sent an empty symbol file.</source>
-        <translation>%1 отправил пустой файл символов.</translation>
+        <translation>Сервер %1 прислал пустой файл символов.</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
-        <translation>Сжатый файл символов недействителен.</translation>
+        <translation>Сжатый файл символов некорректен.</translation>
     </message>
     <message>
         <source>Cannot create a temporary symbol directory in %1: %2</source>
@@ -2984,7 +2984,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Could not expand the compressed symbol file.</source>
-        <translation>Не удалось распаковать файл символов.</translation>
+        <translation>Не удалось распаковать сжатый файл символов.</translation>
     </message>
     <message>
         <source>Compressed symbols require Windows.</source>
@@ -2992,7 +2992,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
-        <translation>Не удаётся сохранить файл символов в %1: %2</translation>
+        <translation>Не удалось сохранить файл символов в %1: %2</translation>
     </message>
 </context>
 <context>
@@ -3010,7 +3010,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>&amp;Имя функции</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
+        <source>Analysis decides where the function ends</source>
         <translation>Конец функции определяет анализ</translation>
     </message>
     <message>
@@ -3070,8 +3070,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>Не &amp;возвращает управление</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>Анализ завершает каждый вызов этой функции</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>Анализ обрывает поток управления на каждом вызове этой функции</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
@@ -3079,7 +3079,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Only 16-bit x86 code has far functions</source>
-        <translation>Дальние функции есть только в 16-битном коде x86</translation>
+        <translation>Дальние функции есть только в 16-разрядном коде x86</translation>
     </message>
     <message>
         <source>&amp;Library func</source>
@@ -3150,6 +3150,228 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>(%1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Свидетельства</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>Привязка</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>Достоверность</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>Заключение аналитика</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>Источник заключения</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>ID результата</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>Не выбрано</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>Проверка пакетов офлайн</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>Охват свидетельств неполный. Заключения аналитика — лишь его собственные утверждения; безопасность пакета, подлинность издателя и поведение во время выполнения не проверяются.</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>Просмотреть файл…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>Просмотреть каталог…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>Захватить просмотренное</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>Выбрать локальные свидетельства</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>Выбрать каталог локальных свидетельств</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>Отдельный манифест / lock-файл</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>Изучить архив</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>Захваченный артефакт</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>Контейнер</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>Файл манифеста в архиве</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>Формат манифеста</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>Учитывать захваченные объявления реестра</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>Исходные байты</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>Метаданные реестра</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>Дескриптор захвата</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>Оценить выбранные свидетельства</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>Фильтр по свидетельствам, достоверности, заключению или ID</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>Фильтр результатов</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>Якоря свидетельств выбранного результата</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>Не проверено</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>Требует проверки</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>Принятый риск (утверждение аналитика)</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>Ложное срабатывание (утверждение аналитика)</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>Записать заключение</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>Сохранить проверку…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>Загрузить проверку…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>Восстановить загруженную проверку</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>Остановить процесс анализа</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>Запуск процесса анализа NeverD…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>Выполняется офлайн-анализ свидетельств</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>Операция отклонена: %1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>Чтение офлайн-свидетельств в установленных пределах…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>Предпросмотр: артефактов — %1, байтов — %2. При захвате читаются локальные байты; исходный код и имена не раскрываются.</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>Результатов: %1 · решений аналитика: %2 · охват неполный · вершина %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>Выберите локальные свидетельства для предпросмотра или оценки.</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>Сохранить локальную проверку</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>Проверка NeverD (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>Сохранение проверки отклонено: %1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>Непрозрачные идентификаторы свидетельств и утверждения аналитика сохранены локально.</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>Загрузить локальную проверку</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>Загрузка проверки отклонена: %1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>Загружено утверждений: %1. При восстановлении вся цепочка проверяется на соответствие текущей оценке; пока ничего не применено.</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>Несохранённая проверка</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>Отбросить несохранённые утверждения аналитика и продолжить?</translation>
     </message>
 </context>
 </TS>
