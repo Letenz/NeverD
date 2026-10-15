@@ -170,7 +170,11 @@ getX86RegistrationSEHBoundCalls(const MedFunc &Function) {
     if (!hasUnusedX86RegistrationCallResult(
             Function, Effect, Work,
             Call.Source->CalleeKind !=
-                RegistrationSEHBoundCall::Kind::PreservedHelper))
+                RegistrationSEHBoundCall::Kind::PreservedHelper,
+            Call.Source->CalleeKind ==
+                    RegistrationSEHBoundCall::Kind::RaiseException
+                ? Call.Source->EntryVA
+                : 0))
       return std::nullopt;
   }
   return Result;

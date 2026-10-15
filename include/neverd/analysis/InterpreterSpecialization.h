@@ -338,13 +338,13 @@ struct SpecializationOptions {
   uint32_t MaxChainedVisitsPerDestination = 0;
 
   /// Optional exact MBA fallback for incomplete frame-offset proofs. Zero
-  /// disables it. Each attempt charges input-prefix nodes, operand edges and
-  /// constant limbs plus MBA measurement units to MaxOperations as well as
-  /// this ceiling. Internal traversals, rebuilding and sample defect guards
-  /// are not separately metered; this is not a wall-time or peak-memory bound.
-  /// MaxSymbolicNodes is checked again before publishing any offset theorem.
-  /// A changed exact expression may retry the ordinary frame proof once under
-  /// the original predicate and cumulative solver-query limit.
+  /// disables it. Each attempt charges uncached readability-prefix nodes,
+  /// operand edges and constant limbs plus MBA measurement units to both
+  /// MaxOperations and this ceiling. Internal traversals, rebuilding and sample
+  /// defect guards are not separately metered; this is not a wall-time or
+  /// peak-memory bound. MaxSymbolicNodes is checked again before publishing any
+  /// offset theorem. A changed exact expression may retry the ordinary frame
+  /// proof once under the original predicate and cumulative solver-query limit.
   uint64_t MaxFrameOffsetNormalizationWorkPerProof = 0;
 
   bool hasRawEnvironment() const {

@@ -33,6 +33,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -45,6 +46,10 @@ namespace {
 
 /// Sections a mirror's comment names before it stops at `...`.
 constexpr size_t MaxSectionsNoted = 6;
+/// Addresses a mirror's comment lists before it counts the rest.
+constexpr size_t MaxReachesNoted = 16;
+/// The width a comment wraps its sentences at, after its `; `.
+constexpr size_t CommentWidth = 78;
 
 /// \p Text as a comment can hold it: valid UTF-8 on the comment's own line.
 std::string commentText(llvm::StringRef Text) {
@@ -444,10 +449,10 @@ struct InstructionText {
 /// shown function and each instruction fall in the text.
 class ImageNotes final : public llvm::AssemblyAnnotationWriter {
 public:
-  ImageNotes(const llvm::Function &Shown, const BinaryImage &Image,
-             LLVMViewAddressNote DataNote, LLVMViewAddressNote FunctionNote)
-      : Shown(Shown), Image(Image), DataNote(DataNote),
-        FunctionNote(FunctionNote), Layout(Shown.getDataLayout()) {}
+  ImageNotes(const llvm::Function &Shown, LLVMViewAddressNote DataNote,
+             LLVMViewAddressNote FunctionNote)
+      : Shown(Shown), DataNote(DataNote), FunctionNote(FunctionNote),
+        Layout(Shown.getDataLayout()) {}
 
   /// `; Address: 0x117F check`: the function's entry, and the name the
   /// listing gives it where the IR names it otherwise.
@@ -476,14 +481,19 @@ public:
       InstructionText &Text = Instructions.back();
       Text.End = OS.tell();
       noteReachedData(Text.Named, OS);
-    } else if (const auto *Variable =
-                   llvm::dyn_cast<llvm::GlobalVariable>(&V)) {
-      noteMirror(*Variable, OS);
+    } else if (const auto *Variable = llvm::dyn_cast<llvm::GlobalVariable>(&V);
+               Variable && mirroredAddress(*Variable)) {
+      Mirrors.emplace_back(Variable, OS.tell());
     }
   }
 
   size_t definitionBegin() const { return DefinitionBegin; }
   llvm::ArrayRef<InstructionText> instructions() const { return Instructions; }
+  /// Each image mirror declared, with where its declaration's line ends.
+  llvm::ArrayRef<std::pair<const llvm::GlobalVariable *, size_t>>
+  mirrors() const {
+    return Mirrors;
+  }
 
 private:
   /// ` ; 0x3FD8 __libc_start_main_ptr`: each image address the instruction
@@ -502,42 +512,117 @@ private:
     }
   }
 
-  /// ` ; 0x3DB0, 592 bytes: .init_array, .got`: the image bytes a mirror
-  /// holds and the sections they lie in.
-  void noteMirror(const llvm::GlobalVariable &Variable,
-                  llvm::formatted_raw_ostream &OS) {
-    const auto First = mirroredAddress(Variable);
-    if (!First)
-      return;
-    OS << " ; 0x" << llvm::utohexstr(*First);
-    llvm::Type *Type = Variable.getValueType();
-    const uint64_t Size =
-        Type->isSized() ? Layout.getTypeAllocSize(Type).getFixedValue() : 0;
-    if (!Size)
-      return;
-    OS << ", " << Size << (Size == 1 ? " byte" : " bytes");
-    std::vector<const Section *> Spanned;
-    for (const Section &Sec : Image.Sections)
-      if (Sec.isReadable() && !Sec.isDebugInfo() && Sec.Size &&
-          Sec.VA < *First + Size && *First < Sec.VA + Sec.Size)
-        Spanned.push_back(&Sec);
-    llvm::sort(Spanned, [](const Section *Left, const Section *Right) {
-      return Left->VA < Right->VA;
-    });
-    for (size_t I = 0; I < Spanned.size() && I < MaxSectionsNoted; ++I)
-      OS << (I ? ", " : ": ") << commentText(Spanned[I]->Name);
-    if (Spanned.size() > MaxSectionsNoted)
-      OS << ", ...";
-  }
-
   const llvm::Function &Shown;
-  const BinaryImage &Image;
   LLVMViewAddressNote DataNote;
   LLVMViewAddressNote FunctionNote;
   const llvm::DataLayout &Layout;
   size_t DefinitionBegin = 0;
   std::vector<InstructionText> Instructions;
+  std::vector<std::pair<const llvm::GlobalVariable *, size_t>> Mirrors;
 };
+
+/// The image addresses \p F reaches through each image mirror, in order.
+std::map<const llvm::GlobalVariable *, std::vector<va_t>>
+mirrorReaches(const llvm::Function &F) {
+  std::map<const llvm::GlobalVariable *, std::set<va_t>> Found;
+  for (const llvm::Instruction &I : llvm::instructions(F))
+    for (const Occurrence &Named : namedGlobals(I, F.getDataLayout()))
+      if (Named.Mirror && Named.Address)
+        Found[llvm::cast<llvm::GlobalVariable>(Named.Global)].insert(
+            *Named.Address);
+  std::map<const llvm::GlobalVariable *, std::vector<va_t>> Reaches;
+  for (const auto &[Mirror, Addresses] : Found)
+    Reaches[Mirror].assign(Addresses.begin(), Addresses.end());
+  return Reaches;
+}
+
+/// \p Text broken at its spaces into lines of at most \p Width characters;
+/// a longer word takes a line of its own.
+std::vector<std::string> wrapWords(llvm::StringRef Text, size_t Width) {
+  std::vector<std::string> Lines;
+  std::string Line;
+  for (llvm::StringRef Rest = Text; !Rest.empty();) {
+    auto [Word, Next] = Rest.split(' ');
+    Rest = Next;
+    if (Word.empty())
+      continue;
+    if (!Line.empty() && Line.size() + 1 + Word.size() > Width)
+      Lines.push_back(std::exchange(Line, std::string()));
+    if (!Line.empty())
+      Line += ' ';
+    Line += Word;
+  }
+  if (!Line.empty())
+    Lines.push_back(std::move(Line));
+  return Lines;
+}
+
+/// The comment over an image mirror's declaration: the image bytes it stands
+/// for and the sections they lie in, how an offset into it reads, and each
+/// address in \p Reached with what \p DataNote says is there:
+///
+///   ; NeverD's mirror of the 624 image bytes at 0x3DB0 (.init_array, ...),
+///   ; which hold pointers the loader relocates. An offset into it is an
+///   ; image address, 0x3DB0 + offset. This function uses:
+///   ;   +552 = 0x3FD8 __libc_start_main_ptr
+///
+/// It does not spell the mirror's name, which a reader finds below it.
+std::string mirrorComment(const llvm::GlobalVariable &Mirror,
+                          const BinaryImage &Image,
+                          llvm::ArrayRef<va_t> Reached,
+                          LLVMViewAddressNote DataNote) {
+  const va_t First = *mirroredAddress(Mirror);
+  llvm::Type *Type = Mirror.getValueType();
+  const uint64_t Size =
+      Type->isSized()
+          ? Mirror.getDataLayout().getTypeAllocSize(Type).getFixedValue()
+          : 0;
+  std::string Sentence;
+  llvm::raw_string_ostream OS(Sentence);
+  OS << "NeverD's mirror of the ";
+  if (Size)
+    OS << Size << (Size == 1 ? " image byte" : " image bytes");
+  else
+    OS << "image bytes";
+  OS << " at 0x" << llvm::utohexstr(First);
+  std::vector<const Section *> Spanned;
+  for (const Section &Sec : Image.Sections)
+    if (Size && Sec.isReadable() && !Sec.isDebugInfo() && Sec.Size &&
+        Sec.VA < First + Size && First < Sec.VA + Sec.Size)
+      Spanned.push_back(&Sec);
+  llvm::sort(Spanned, [](const Section *Left, const Section *Right) {
+    return Left->VA < Right->VA;
+  });
+  for (size_t I = 0; I < Spanned.size() && I < MaxSectionsNoted; ++I)
+    OS << (I ? ", " : " (") << commentText(Spanned[I]->Name);
+  if (Spanned.size() > MaxSectionsNoted)
+    OS << ", ...";
+  if (!Spanned.empty())
+    OS << ")";
+  if (parseNdCodePtrSymbol(Mirror.getName()))
+    OS << ", which hold pointers the loader relocates";
+  OS << ". An offset into it is an image address, 0x" << llvm::utohexstr(First)
+     << " + offset.";
+  if (!Reached.empty())
+    OS << " This function uses:";
+  std::string Block;
+  for (const std::string &Line : wrapWords(Sentence, CommentWidth))
+    Block += "; " + Line + "\n";
+  for (size_t I = 0; I < Reached.size() && I < MaxReachesNoted; ++I) {
+    const auto Offset = static_cast<int64_t>(Reached[I] - First);
+    Block += ";   " + std::string(Offset < 0 ? "-" : "+") +
+             std::to_string(Offset < 0 ? -static_cast<uint64_t>(Offset)
+                                       : static_cast<uint64_t>(Offset)) +
+             " = 0x" + llvm::utohexstr(Reached[I]);
+    if (const std::string Note = DataNote(Reached[I]); !Note.empty())
+      Block += " " + Note;
+    Block += "\n";
+  }
+  if (Reached.size() > MaxReachesNoted)
+    Block += ";   ... and " + std::to_string(Reached.size() - MaxReachesNoted) +
+             " more\n";
+  return Block;
+}
 
 /// The image address each global name on each line of \p Text stands for.
 /// An instruction's name of a mirror stands for the byte its constant offset
@@ -673,14 +758,41 @@ LLVMFunctionView neverd::sdk::renderLLVMFunctionView(
   llvm::raw_string_ostream Verifier(Problem);
   const llvm::Function *Shown = Slice->getFunction(F.getName());
   if (Shown && !llvm::verifyModule(*Slice, &Verifier)) {
-    ImageNotes Notes(*Shown, Image, DataNote, FunctionNote);
+    const auto Reaches = mirrorReaches(*Shown);
+    ImageNotes Notes(*Shown, DataNote, FunctionNote);
     Slice->print(OS, &Notes);
     OS.flush();
     View.DefinitionBegin = Notes.definitionBegin();
+    std::vector<InstructionText> Instructions(Notes.instructions().begin(),
+                                              Notes.instructions().end());
+    // Each mirror's declaration goes under a comment that says what it stands
+    // for.  The printer offers no annotation before a global, so the comments
+    // go in now, the last first, moving what follows them.
+    for (const auto &[Mirror, LineEnd] : llvm::reverse(Notes.mirrors())) {
+      const size_t Newline =
+          LineEnd ? View.Text.rfind('\n', LineEnd - 1) : std::string::npos;
+      const size_t At = Newline == std::string::npos ? 0 : Newline + 1;
+      const auto Found = Reaches.find(Mirror);
+      const std::string Comment = mirrorComment(
+          *Mirror, Image,
+          Found == Reaches.end() ? llvm::ArrayRef<va_t>()
+                                 : llvm::ArrayRef<va_t>(Found->second),
+          DataNote);
+      View.Text.insert(At, Comment);
+      const auto Move = [&](size_t &Offset) {
+        if (Offset >= At)
+          Offset += Comment.size();
+      };
+      Move(View.DefinitionBegin);
+      for (InstructionText &Text : Instructions) {
+        Move(Text.Begin);
+        Move(Text.End);
+      }
+    }
     const size_t Closed = View.Text.find("\n}\n", View.DefinitionBegin);
     View.DefinitionEnd =
         Closed == std::string::npos ? View.Text.size() : Closed + 3;
-    View.References = referencesIn(View.Text, Notes.instructions(), *Slice);
+    View.References = referencesIn(View.Text, Instructions, *Slice);
     return View;
   }
   // Show the function alone, and say why.
@@ -689,7 +801,7 @@ LLVMFunctionView neverd::sdk::renderLLVMFunctionView(
   OS << "; NeverD shows this function without its module: "
      << (Reason.empty() ? llvm::StringRef("the function did not move") : Reason)
      << '\n';
-  ImageNotes Notes(F, Image, DataNote, FunctionNote);
+  ImageNotes Notes(F, DataNote, FunctionNote);
   F.print(OS, &Notes);
   OS.flush();
   View.DefinitionEnd = View.Text.size();

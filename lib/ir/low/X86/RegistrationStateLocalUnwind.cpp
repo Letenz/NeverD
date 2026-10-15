@@ -51,35 +51,18 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
   // unwinds that the runtime accepts. Dynamic bounds remain unproved.
   if (!Bound || After.Levels.empty())
     return Refuse();
+  SEHFrameOutcomes Outcomes;
+  std::vector<RegistrationObjectExtent> Writes;
+  for (int32_t From : After.Levels)
+    if (!runSEHUnwind(After.Frame, From, *Bound, Outcomes, Writes))
+      return Refuse();
+  for (const auto &Write : Writes)
+    invalidateJumpCaptures(After, FrameValue::frame(Write.Begin),
+                           uint16_t(Write.End - Write.Begin));
   std::optional<FrameState> Joined;
   std::set<int32_t> StoppedLevels;
-  for (int32_t From : After.Levels) {
-    if (!charge(After.Frame.cellCount() + 1))
-      return Refuse();
-    FrameState Frame = After.Frame;
-    int32_t Walk = From;
-    size_t Steps = 0;
-    // EH3's runtime stops at -1, or at any unsigned level not above the
-    // requested bound. An enclosing link can skip that bound entirely, and
-    // an already retired registration must not execute another finally.
-    while (Walk != -1 && (*Bound == UINT32_MAX || uint32_t(Walk) > *Bound)) {
-      if (!charge(1) || Walk < 0 || size_t(Walk) >= Chain.Scopes.size() ||
-          ++Steps > Chain.Scopes.size())
-        return Refuse();
-      const auto &Scope = Chain.Scopes[Walk];
-      Walk = Scope.EnclosingLevel;
-      Frame.store(*Chain.TryLevelOffset, 4,
-                  FrameValue::constant(uint32_t(Walk)));
-      if (Scope.IsFinally) {
-        std::vector<RegistrationObjectExtent> Writes;
-        if (!runLocalFinally(Scope.HandlerVA, Frame, false, &Writes))
-          return Refuse();
-        for (const auto &Write : Writes)
-          invalidateJumpCaptures(After, FrameValue::frame(Write.Begin),
-                                 uint16_t(Write.End - Write.Begin));
-      }
-    }
-    StoppedLevels.insert(Walk);
+  for (auto &[Level, Frame] : Outcomes) {
+    StoppedLevels.insert(Level);
     if (!Joined)
       Joined = std::move(Frame);
     else if (!charge(Joined->cellCount() + Frame.cellCount() + 10))

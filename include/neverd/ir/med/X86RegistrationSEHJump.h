@@ -23,7 +23,10 @@ struct X86RegistrationSEHJumpCall {
   const RegistrationSEHJumpResume *Resume = nullptr;
   const MedOp *Operation = nullptr;
   int Block = -1;
-  int32_t ResumeLevel = -1;
+  /// A missing constant requires a checked projection of the source cell.
+  std::optional<int32_t> ResumeLevel = -1;
+  /// Nonidentity entries of the proved logical-to-runtime state projection.
+  std::map<int32_t, int32_t> ResumeStateMap;
 
   /// The checked EH3 capture has two fixed words and two unwind arguments.
   /// A direct resume consumes only its buffer and scalar value. Neither takes

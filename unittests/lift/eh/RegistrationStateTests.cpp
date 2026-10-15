@@ -327,6 +327,10 @@ TEST(RegistrationState, RetainsBothStatesAtJoin) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
+  // This analysis fixture has decoded extents but no operation indices.
+  // Missing native provenance must not discard its checked state semantics.
+  EXPECT_FALSE(Result.SEHStateStoresComplete);
+  EXPECT_TRUE(Result.SEHStateStores.empty());
   ASSERT_EQ(Result.Blocks.size(), 4u);
   EXPECT_EQ(Result.Blocks[3].Levels, (std::vector<int32_t>{-1, 0}));
   EXPECT_FALSE(registrationRangesWhere(

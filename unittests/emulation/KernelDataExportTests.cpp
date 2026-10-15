@@ -94,7 +94,7 @@ TEST_F(KernelDataExports, TypesAndSystemProcessShareTheObjectOwner) {
                             {Model->driverObject(), 0x200, 0, 0,
                              read("IoDriverObjectType"), 0, Scratch});
   ASSERT_FALSE(bool(Handle));
-  EXPECT_NE(llvm::toString(Handle.takeError()).find("process or thread"),
+  EXPECT_NE(llvm::toString(Handle.takeError()).find("object handle class"),
             std::string::npos);
   ok(Model->setUserRequestContext(true, 0x2000));
   EXPECT_NE(call("PsGetCurrentProcess"), Process);

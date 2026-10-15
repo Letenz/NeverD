@@ -26,6 +26,7 @@ void addFinallyTailJump(LowBlock &Call, LowBlock &Resume,
 /// Preserve the physical CALL boundary while adding an unproved later effect.
 void addFinallyCallTrailingEffect(LowBlock &Call);
 LowFunc makeBranchingFrame();
+LowFunc makeJumpFrame(unsigned Mutation = 0);
 LowFunc makeCxxCatchContinuation(bool IncludeResume = true);
 
 } // namespace neverd::registration_test

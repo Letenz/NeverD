@@ -207,6 +207,14 @@ struct RegistrationSEHJumpCapture {
   bool operator==(const RegistrationSEHJumpCapture &) const = default;
 };
 
+/// The logical state left by the last callback (or at unwind entry) and the
+/// final runtime state after any remaining filter-only unwind steps.
+struct RegistrationSEHJumpState {
+  int32_t FrameLevel = -1;
+  int32_t ResumeLevel = -1;
+  auto operator<=>(const RegistrationSEHJumpState &) const = default;
+};
+
 /// A live EH3 buffer supplies one physical capture PC and restored ESP. The
 /// source invocation is retired by the authenticated nonlocal runtime call;
 /// this is distinct from an ordinary CALL return or a target-wide noreturn.
@@ -230,6 +238,9 @@ struct RegistrationSEHJumpResume {
   /// Actual source states after local unwind. A capture inside a retired
   /// scope does not reactivate that scope when the continuation resumes.
   std::vector<int32_t> ResumedLevels;
+  /// Sorted unique pairs from every completed unwind path. Native resumption
+  /// requires a single final state for each observable logical frame state.
+  std::vector<RegistrationSEHJumpState> StateRestores;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 
@@ -261,6 +272,20 @@ struct RegistrationSEHBoundCall {
   bool operator==(const RegistrationSEHBoundCall &) const = default;
 };
 
+/// One installed SEH TryLevel store, bound to its decoded source operation.
+/// Transitions preserve the whole state before and after a byte, word or dword
+/// write; consumers do not infer untouched bytes from the encoded payload.
+struct RegistrationSEHStateStore {
+  int BlockId = -1;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  uint8_t Width = 0;
+  uint32_t Value = 0;
+  std::vector<std::pair<int32_t, int32_t>> Transitions;
+  bool operator==(const RegistrationSEHStateStore &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -271,6 +296,8 @@ struct RegistrationStateAnalysis {
   bool SEHInvocationExitsComplete = true;
   std::vector<RegistrationSEHControlContract> SEHControls;
   std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
+  bool SEHStateStoresComplete = true;
+  std::vector<RegistrationSEHStateStore> SEHStateStores;
   bool SEHExceptionAccessesComplete = true;
   std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
   /// Invocation-specialized original helpers require a separate native plan.

@@ -86,15 +86,30 @@ def workflow_bash():
 
     # PATH can resolve bash to the WSL launcher, not the native CI shell.
     git = shutil.which("git")
-    if git:
-        root = Path(git).resolve().parent.parent
+
+    def git_candidates():
+        if git:
+            yield Path(git)
+        # MSVC can prepend a Git installation without Bash. Continue through
+        # PATH to find the full Git installation used by the Actions shell.
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            if directory:
+                candidate = Path(directory.strip('"')) / "git.exe"
+                if candidate.is_file():
+                    yield candidate
+
+    for candidate in git_candidates():
+        root = candidate.resolve().parent.parent
         if root.name.lower() in ("mingw32", "mingw64", "ucrt64", "usr"):
             root = root.parent
         for relative in ("bin/bash.exe", "usr/bin/bash.exe"):
             bash = root / relative
             if bash.is_file():
                 return str(bash)
-    raise RuntimeError("Git Bash is required to exercise the Windows CI script")
+    raise RuntimeError(
+        "Git Bash is required to exercise the Windows CI script; "
+        f"first Git on PATH: {git!r}"
+    )
 
 
 class WorkflowShellTests(unittest.TestCase):
@@ -159,12 +174,32 @@ class WorkflowShellTests(unittest.TestCase):
             ):
                 self.assertEqual(workflow_bash(), str(bash.resolve()))
 
+    def test_windows_finds_full_git_after_installation_without_bash(self):
+        with tempfile.TemporaryDirectory(prefix="neverd git shell ") as directory:
+            root = Path(directory)
+            minimal_git = root / "minimal" / "cmd" / "git.exe"
+            full_git = root / "full" / "cmd" / "git.exe"
+            bash = root / "full" / "bin" / "bash.exe"
+            wsl = root / "windows" / "bash.exe"
+            for executable in (minimal_git, full_git, bash, wsl):
+                executable.parent.mkdir(parents=True, exist_ok=True)
+                executable.touch()
+            search_path = os.pathsep.join(
+                str(path) for path in (wsl.parent, minimal_git.parent, full_git.parent)
+            )
+            with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
+                shutil, "which", return_value=str(minimal_git)
+            ), mock.patch.dict(os.environ, PATH=search_path):
+                self.assertEqual(workflow_bash(), str(bash.resolve()))
+
     def test_windows_missing_git_bash_fails_instead_of_using_wsl_or_skipping(self):
         with tempfile.TemporaryDirectory() as directory:
             for git in (None, str(Path(directory) / "cmd" / "git.exe")):
                 with self.subTest(git=git), mock.patch.object(
                     sys, "platform", "win32"
-                ), mock.patch.object(shutil, "which", return_value=git):
+                ), mock.patch.object(shutil, "which", return_value=git), mock.patch.dict(
+                    os.environ, PATH=directory
+                ):
                     with self.assertRaisesRegex(RuntimeError, "Git Bash"):
                         workflow_bash()
 

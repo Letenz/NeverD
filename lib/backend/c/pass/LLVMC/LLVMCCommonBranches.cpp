@@ -69,6 +69,12 @@ bool distributeReturnEdges(llvm::Function &Function) {
     for (auto *Pred : Predecessors) {
       auto *Incoming = Phi ? Phi->getIncomingValueForBlock(Pred) : Value;
       auto *Branch = Pred->getTerminator();
+      // A return without a PHI gives the statement writer one common
+      // exit for short-circuit conditions. Splitting those conditional edges
+      // destroys that identity and can insert a return block before the
+      // ordinary fallthrough. Only PHI substitution needs a private edge.
+      if (!Phi && isa<CondBrInst>(Branch))
+        continue;
       ReturnInst *NewReturn;
       if (isa<UncondBrInst>(Branch)) {
         NewReturn = ReturnInst::Create(Function.getContext(), Incoming,
@@ -84,10 +90,12 @@ bool distributeReturnEdges(llvm::Function &Function) {
       }
       NewReturn->copyMetadata(*Return);
       NewReturn->setDebugLoc(Return->getDebugLoc());
+      Changed = true;
     }
-    Block->dropAllReferences();
-    Block->eraseFromParent();
-    Changed = true;
+    if (pred_empty(Block)) {
+      Block->dropAllReferences();
+      Block->eraseFromParent();
+    }
   }
   return Changed;
 }

@@ -63,11 +63,14 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Out.ThreadLimit = *N;
       else
         Out.TraceLimit = *N;
-    } else if (Name == field::Initialize || Name == field::DrainThreads) {
+    } else if (Name == field::Initialize || Name == field::DrainThreads ||
+               Name == field::JNI) {
       auto B = V.getAsBoolean();
       if (!B)
         return invalid(Name);
-      (Name == field::Initialize ? Out.Initialize : Out.DrainThreads) = *B;
+      (Name == field::Initialize ? Out.Initialize
+       : Name == field::JNI      ? Out.JNI
+                                 : Out.DrainThreads) = *B;
     } else if (Name == field::Arguments) {
       const auto *A = V.getAsArray();
       if (!A)

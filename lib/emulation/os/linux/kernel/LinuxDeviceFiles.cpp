@@ -23,6 +23,9 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
   Transactions += Options.Ioctls.size();
   if (Options.ReadOnlyMappings.size() > DeviceMappingLimit)
     return failure(DeviceOptions);
+  if (Options.Binder && (Options.KGSL || !Options.Ioctls.empty() ||
+                         !Options.ReadOnlyMappings.empty()))
+    return failure(DeviceOptions);
   if (Options.KGSL) {
     const auto *Mapping = kgsl::memstore(Options);
     if (!Mapping || !Options.KGSL->ContextLimit ||
@@ -110,6 +113,8 @@ LinuxFiles::deviceIoctl(uint32_t FD, uint32_t Request, uint64_t Argument,
   if (!Description)
     return unsupported(Result, DeviceIoctlMissing);
   auto *Device = Description->get();
+  if (Device->Options->Binder)
+    return binderIoctl(*Device, Request, Argument, Result);
   if (Device->Options->KGSL && kgsl::isContextRequest(Request))
     return contextIoctl(*Device, Request, Argument, Result);
   const auto &Calls = Device->Options->Ioctls;

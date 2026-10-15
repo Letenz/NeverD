@@ -1794,6 +1794,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` は正確な恒等式、追加入力、ルートの同一性、証人をキャッシュしない到達不能述語、既定動作、構造准入と測定の課金、呼び出し後のノード超過拒否を検査します。`FrameNormalizationPreservesStoresAndNativeReturns` と `RawCodeFrameNormalization*` は独立したバイト評価器で元のメモリ効果と実際の戻り先を検査し、適用可能な両バイト順序、過不足のない予算と不足予算、レシート改変を扱います。`FrameNormalizationStrategyBindsIndependentProof` は両方のバイナリ証明の識別を検査します。
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` は、キャッシュ済み履歴への再課金を防ぎ、追加した幅広定数の課金、作業量・ノード上限不足での拒否、可読性キャッシュのコピー独立性を検証します。
+
 ## ネイティブ Lift 検証
 
 `Lift native qualification` ワークフローは、以前検証できなかった 108 件（失敗 62 件、スキップ 46 件）を担当します。ネイティブ Linux x86-64 ランナーに Clang 23 以降、GNU GCC、i386 開発ライブラリを導入し、固定リビジョンのバイナリコーパスを初期化します。`unittests/Inputs/lift-qualification.json` は元の全テスト識別子を保持します。`scripts/run_lift_qualification.py` は欠落、重複、無効化、スキップ、失敗、非ゼロ終了を拒否します。`qualification.json` は個別の成功、ソースとコーパスのリビジョン、コンパイラのバージョン、バイナリハッシュを記録します。
@@ -1968,3 +1970,5 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 `KernelDataExportTests.cpp` は識別子、可用性、thunk 容量、読み取り専用/NX、未宣言デバッガー、復元を検証します。`DriverDataExportTests.cpp` は独自の `driver_data.c` の実際の DATA インポートを利用し、利用可能なバックエンド・両契約・両基点で実行、アンロード、書き込み/実行拒否を確認します。シナリオ、C ABI、CLI、Python はブール値とレポート転送を検証します。`NativeDriverTests.def` はネイティブ結果を要求し、利用不可のバックエンドは未検証のままです。
 
 `KernelNamespaceTests.cpp` は型、相対名、大文字小文字、サイズ/コピー順序、末尾バイト、権限、プロセス範囲、IRQL、出力失敗、保持中の削除を検証します。`DriverNamespaceTests.cpp` は独自 `driver_namespace.c` を利用可能な Unicorn/KVM/WHP/HVF、両契約、両ロード位置、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` はネイティブ結果を要求します。利用不可バックエンドと未対応情報/セキュリティクラスは未検証範囲です。
+
+`KernelRegistryTests.cpp` は独立オープン、型付き参照、複製ハンドル、プロセス範囲、汎用権限、削除済み識別子、短い/奇数長バッファ、出力エイリアス、失敗・容量境界を検証します。`DriverRegistryObjectTests.cpp` は独自の `fixtures/driver_registry_objects.c` を利用可能なバックエンド、両契約、両基底で、協調実行および17命令スケジューリングで実行します。意図的な参照リークでアンロード拒否を検証し、ネイティブ受入れには4組合せすべてが必要です。

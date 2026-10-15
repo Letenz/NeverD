@@ -2631,7 +2631,7 @@ private slots:
     QVERIFY(code->hasEpilogue() && code->epilogueFolded());
     QCOMPARE(code->lineCount(), 14);
     const QStringList source = code->allText().split(QLatin1Char('\n'));
-    QCOMPARE(source.size(), 23);
+    QCOMPARE(source.size(), 29);
     QSignalSpy messages(&bench.session, &Session::message);
     QSignalSpy names(code, &CodeText::nameActivated);
     const QFontMetricsF metrics(Theme::instance().codeFont());
@@ -2658,44 +2658,64 @@ private slots:
                          point);
     };
     // Metadata the definition names opens the epilogue at its node.
-    doubleClick(2, 8, QStringLiteral("!0"));
+    doubleClick(2, 14, QStringLiteral("!0"));
     QVERIFY(!code->epilogueFolded());
-    QCOMPARE(code->cursorLine(), 22 - 6);
+    QCOMPARE(code->cursorLine(), 28 - 12);
     // A global the binary does not name shows at its declaration.
-    doubleClick(7, 13, QStringLiteral("@llvm.example"));
+    doubleClick(7, 19, QStringLiteral("@llvm.example"));
     QCOMPARE(names.size(), 1);
     QCOMPARE(names.last().first().toString(), QStringLiteral("llvm.example"));
     QTRY_VERIFY(!code->preludeFolded());
-    QTRY_COMPARE(code->cursorLine(), 5);
+    QTRY_COMPARE(code->cursorLine(), 11);
     // Locals, blocks, parameters and attribute groups open where defined.
-    doubleClick(12, 12, QStringLiteral("%slot"));
-    QCOMPARE(code->cursorLine(), 10);
-    doubleClick(14, 14, QStringLiteral("%done"));
+    doubleClick(18, 18, QStringLiteral("%slot"));
     QCOMPARE(code->cursorLine(), 16);
-    doubleClick(12, 12, QStringLiteral("%arg0"));
-    QCOMPARE(code->cursorLine(), 8);
-    doubleClick(8, 8, QStringLiteral("#0"));
-    QCOMPARE(code->cursorLine(), 20);
+    doubleClick(20, 20, QStringLiteral("%done"));
+    QCOMPARE(code->cursorLine(), 22);
+    doubleClick(18, 18, QStringLiteral("%arg0"));
+    QCOMPARE(code->cursorLine(), 14);
+    doubleClick(14, 14, QStringLiteral("#0"));
+    QCOMPARE(code->cursorLine(), 26);
     QCOMPARE(names.size(), 1);
     // A comment's address resolves as it reads.
-    doubleClick(10, 10, QStringLiteral("0xFFFF800012343008"));
+    doubleClick(16, 16, QStringLiteral("0xFFFF800012343008"));
     QCOMPARE(names.size(), 2);
     QCOMPARE(names.last().first().toString(),
              QStringLiteral("0xFFFF800012343008"));
+    // Hovering a mirror tells what it is: the comment over its declaration,
+    // the declaration, and where this line's spelling goes.
+    const int load = int(source[16].indexOf(QStringLiteral("@__nd_codeptr_")));
+    const QString hover = code->globalHoverText(16, load + 2);
+    QVERIFY2(
+        hover.startsWith(QStringLiteral(
+            "NeverD's mirror of the 64 image bytes at 0xFFFF800012343000")),
+        qPrintable(hover));
+    QVERIFY2(hover.contains(
+                 QStringLiteral("\n  +8 = 0xFFFF800012343008 data_slot\n")),
+             qPrintable(hover));
+    QVERIFY2(hover.contains(QStringLiteral(
+                 "\n@__nd_codeptr_FFFF800012343000 = external global")),
+             qPrintable(hover));
+    QVERIFY2(hover.endsWith(
+                 QStringLiteral("Double-click to go to 0xFFFF800012343008.")),
+             qPrintable(hover));
+    QVERIFY(code->globalHoverText(
+                    18, int(source[18].indexOf(QStringLiteral("%slot"))))
+                .isEmpty());
     // An image mirror stands for its first byte where declared, and for the
     // byte the load's constant offset reaches on the load.
-    doubleClick(3, 3, QStringLiteral("@__nd_codeptr_"));
+    doubleClick(9, 9, QStringLiteral("@__nd_codeptr_"));
     QCOMPARE(names.size(), 3);
     QCOMPARE(names.last().first().toString(), hexAddress(Base + 0x3000));
     QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
                  std::optional<Address>(Base + 0x3000));
     // A mirror a line reaches at two offsets: each spelling, its own.
-    doubleClick(11, 11, QStringLiteral("@__nd_codeptr_"), 1);
+    doubleClick(17, 17, QStringLiteral("@__nd_codeptr_"), 1);
     QCOMPARE(names.size(), 4);
     QCOMPARE(names.last().first().toString(), hexAddress(Base + 0x3018));
     QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
                  std::optional<Address>(Base + 0x3018));
-    doubleClick(10, 10, QStringLiteral("@__nd_codeptr_"));
+    doubleClick(16, 16, QStringLiteral("@__nd_codeptr_"));
     QCOMPARE(names.size(), 5);
     QCOMPARE(names.last().first().toString(), hexAddress(Base + 0x3008));
     QTRY_COMPARE(bench.window->disassembly()->currentAddress(),

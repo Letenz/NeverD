@@ -153,6 +153,9 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
       Symbols.emplace(Name, PC);
     }
   }
+  if (Native.JNI)
+    if (auto E = initializeJNI(Space, Out))
+      return std::move(E);
   for (const auto &Region : Plan->Regions)
     if (auto E = Space.protect(Region.Address, Region.Bytes.size(),
                                Region.Permissions))
