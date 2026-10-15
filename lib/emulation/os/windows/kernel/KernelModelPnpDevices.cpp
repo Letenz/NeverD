@@ -96,6 +96,7 @@ llvm::Error KernelModel::preparePnpDevices() {
   if (auto E = Memory.writeInteger(*Provider + 2, DriverObjectSize, 2))
     return E;
   PnpProviderDriver = *Provider;
+  ReferencedObjects.emplace(*Provider, ObjectReferences{ObjectKind::Driver});
   for (const auto &Configured : ConfiguredPnpDevices) {
     // The shared scenario validator owns both explicit bus contracts.
     if (!Configured.InitialDevicePower || !Configured.InitialSystemPower)

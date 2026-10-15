@@ -190,6 +190,7 @@ llvm::Expected<uint64_t> KernelModel::call(
 #define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
   case KernelAPIKind::Name:                                                    \
     return Operation;
+#include "KernelNamespaceAPIs.def"
 #include "KernelObjectAPIs.def"
 #undef NEVERD_KERNEL_OBJECT_API
   case KernelAPIKind::IoGetRequestorProcessId: {

@@ -1956,3 +1956,5 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 `KernelObjectTests.cpp`는 알려진 ID, 형식/권한/모드 실패, 핸들 정보, 출력 실패 시 참조 누수 방지, 언로드와 스택 재사용을 검사합니다. `DriverObjectTests.cpp`는 원본 `driver_objects.c`를 사용 가능한 Unicorn/KVM/WHP/HVF, Legacy/CheckedX64, 기본/재배치 주소 및 협력/17 명령 스케줄링에서 실행합니다. `NativeDriverTests.def`는 KVM/WHP 결과를 요구하며 누락과 건너뜀은 검증 공백입니다. ACL, 일반 프로세스 종료 또는 미구현 객체 형식은 입증하지 않습니다.
 
 `KernelDataExportTests.cpp`는 ID, 가용성, thunk 용량, 읽기 전용/NX, 미선언 디버거 및 복구를 검사합니다. `DriverDataExportTests.cpp`는 원본 `driver_data.c`의 실제 DATA 가져오기를 사용하여 가용 백엔드, 두 계약과 기준 주소에서 실행, 언로드 및 쓰기/실행 거부를 검사합니다. 시나리오, C ABI, CLI와 Python은 불리언과 보고서 전달을 검증합니다. `NativeDriverTests.def`가 네이티브 결과를 요구하며 사용할 수 없는 백엔드는 검증 공백으로 남습니다.
+
+`KernelNamespaceTests.cpp`는 형식, 상대 이름, 대소문자, 크기/복사 순서, 꼬리 바이트, 권한, 프로세스 범위, IRQL, 실패 출력 및 보유 중 삭제를 검증합니다. `DriverNamespaceTests.cpp`는 독립 `driver_namespace.c`를 가용 Unicorn/KVM/WHP/HVF, 두 계약과 로드 주소, 협력/17 명령 스케줄링으로 실행합니다. `NativeDriverTests.def`는 네이티브 결과를 요구합니다. 미가용 백엔드와 미지원 정보/보안 클래스는 여전히 검증 공백입니다.

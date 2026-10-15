@@ -56,7 +56,7 @@ KernelModel::driverDeviceInventory(ObjectRead Mode) const {
     while (Current) {
       const auto Found = Devices.find(Current);
       if (Found == Devices.end() || Found->second.OwnerDriver != Owner ||
-          !Seen.insert(Current).second)
+          Found->second.UnlinkedFromDriver || !Seen.insert(Current).second)
         return deviceError(
             "unknown device or cycle in DRIVER_OBJECT device list");
       Inventory.push_back(Current);
@@ -66,7 +66,10 @@ KernelModel::driverDeviceInventory(ObjectRead Mode) const {
       Current = *Next;
     }
   }
-  if (Seen.size() != Devices.size())
+  if (Seen.size() != size_t(std::count_if(
+                         Devices.begin(), Devices.end(), [](const auto &Entry) {
+                           return !Entry.second.UnlinkedFromDriver;
+                         })))
     return deviceError("live device detached from DRIVER_OBJECT device list");
   return Inventory;
 }

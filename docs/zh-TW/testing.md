@@ -1912,3 +1912,5 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 `KernelObjectTests.cpp` 驗證已知 ID、型別/權限/模式失敗、控制代碼資訊、輸出失敗無參照洩漏、卸載及堆疊重用。`DriverObjectTests.cpp` 在可用 Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、偏好/重定位位址及協作/17 指令排程執行原創 `driver_objects.c`。`NativeDriverTests.def` 要求 KVM/WHP 結果；缺失或跳過仍為缺口。這些測試不證明 ACL、一般行程退出或未實作物件類別。
 
 `KernelDataExportTests.cpp` 驗證身分、可用性、thunk 容量、唯讀/NX、未宣告偵錯器位元組及還原相依性。`DriverDataExportTests.cpp` 使用原創 `driver_data.c` 的真實 DATA 匯入，在可用後端、兩種契約和載入基址執行，涵蓋卸載與拒絕寫入/執行。情境、C ABI、CLI 和 Python 測試驗證布林宣告及報告傳輸。`NativeDriverTests.def` 要求原生結果；不可用後端仍屬覆蓋缺口。
+
+`KernelNamespaceTests.cpp` 驗證型別、相對路徑、大小寫、緩衝區大小與複製順序、尾部位元組、權限、行程範圍、IRQL、失敗輸出及延遲刪除。`DriverNamespaceTests.cpp` 於可用 Unicorn/KVM/WHP/HVF、兩種契約、兩種位址及協作/17 指令排程執行原創 `driver_namespace.c`。`NativeDriverTests.def` 要求原生結果；不可用後端及未支援資訊/安全類別仍為缺口。

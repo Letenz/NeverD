@@ -1966,3 +1966,5 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 `KernelObjectTests.cpp` は既知 ID、型/権限/モード失敗、ハンドル情報、出力失敗時の参照漏れ防止、アンロード、スタック再利用を検証します。`DriverObjectTests.cpp` は独自の `driver_objects.c` を利用可能な Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、標準/再配置アドレス、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` は KVM/WHP 結果を必須とし、欠落やスキップは未検証です。ACL、一般的なプロセス終了、未実装の型の証明にはなりません。
 
 `KernelDataExportTests.cpp` は識別子、可用性、thunk 容量、読み取り専用/NX、未宣言デバッガー、復元を検証します。`DriverDataExportTests.cpp` は独自の `driver_data.c` の実際の DATA インポートを利用し、利用可能なバックエンド・両契約・両基点で実行、アンロード、書き込み/実行拒否を確認します。シナリオ、C ABI、CLI、Python はブール値とレポート転送を検証します。`NativeDriverTests.def` はネイティブ結果を要求し、利用不可のバックエンドは未検証のままです。
+
+`KernelNamespaceTests.cpp` は型、相対名、大文字小文字、サイズ/コピー順序、末尾バイト、権限、プロセス範囲、IRQL、出力失敗、保持中の削除を検証します。`DriverNamespaceTests.cpp` は独自 `driver_namespace.c` を利用可能な Unicorn/KVM/WHP/HVF、両契約、両ロード位置、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` はネイティブ結果を要求します。利用不可バックエンドと未対応情報/セキュリティクラスは未検証範囲です。

@@ -105,6 +105,7 @@ NEVERD_KERNEL_API(PsCreateSystemThread, 7, Export)
 NEVERD_KERNEL_API(PsTerminateSystemThread, 1, Export)
 #define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
   NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelNamespaceAPIs.def"
 #include "KernelObjectAPIs.def"
 #undef NEVERD_KERNEL_OBJECT_API
 NEVERD_KERNEL_API(KeStackAttachProcess, 2, Export)
