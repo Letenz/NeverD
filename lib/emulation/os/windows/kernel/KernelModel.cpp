@@ -781,6 +781,10 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     for (const auto &[Lock, State] : ExecutiveSpinLocks)
       if (Address < Lock + 8 && Lock < End)
         return modelError("guest write to a held executive spin lock");
+  if (IsWrite)
+    for (const auto &[Lock, State] : QueuedSpinLocks)
+      if (Address < Lock + 8 && Lock < End)
+        return modelError("guest write to a held executive spin lock");
   if (auto E = validateIOAccess(Address, Size, IsWrite))
     return E;
   if (auto E = validateMDLAccess(Address, Size, IsWrite))

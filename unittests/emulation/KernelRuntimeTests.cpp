@@ -1519,6 +1519,24 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesCRuntimeStringHelpers) {
   EXPECT_EQ(Calls["wcscspn"], 1u);
 }
 
+TEST(KernelRuntimeExecution, CompiledDriverGuardsWithAnInStackQueuedSpinLock) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_qspinlock.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // PASSIVE before, DISPATCH while held, PASSIVE after; the counter updates.
+  EXPECT_EQ(Result->Messages[0], "qspin before 0 held 2 after 0 value 7");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["KeAcquireInStackQueuedSpinLock"], 1u);
+  EXPECT_EQ(Calls["KeReleaseInStackQueuedSpinLock"], 1u);
+  EXPECT_EQ(Calls["KeInitializeSpinLock"], 1u);
+}
+
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
                               "driver_identity.sys");

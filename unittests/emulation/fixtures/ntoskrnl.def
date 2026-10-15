@@ -147,3 +147,7 @@ EXPORTS
   strspn
   wcsspn
   wcscspn
+  KeAcquireInStackQueuedSpinLock
+  KeReleaseInStackQueuedSpinLock
+  KeAcquireInStackQueuedSpinLockAtDpcLevel
+  KeReleaseInStackQueuedSpinLockFromDpcLevel
