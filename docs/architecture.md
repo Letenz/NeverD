@@ -685,11 +685,18 @@ logical bound in a private volatile slot before the one physical capture; COFF
 replays its exact source-cell address, two uses, ordering and contiguous save and
 restore placement. The saved bound supplies no buffer initialization or callee
 privacy authority. All partitions and projections share the existing work budget.
-For preserved EH3 helpers, the conditional callee proof returns object effects in
+For preserved EH3/EH4 helpers, the conditional callee proof returns object effects in
 the caller's coordinates. The parent state owner checks allocation and excludes
 its registration and cookie cells from all effects and object-address arguments.
 EH4 callers additionally prove live cookie initialization before invoking this
 path; the MedIR call binder requires the complete cookie receipt before lowering.
+EH4 helpers use the same authenticated image cookie inputs and state owner as
+their callers. Conditional memory admits only the exact four-byte cookie read;
+the transfer owner checks each live GS call's ECX value. A borrowed resumption
+requires the helper's own outside-state sentinel and intact cookies. For an
+unchanged preserved helper, cookie-call coverage follows the proved invocation's
+reachable blocks. Unreachable calls grant no effects; a reconstructed parent
+still requires coverage of every source cookie-call occurrence.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
@@ -6314,8 +6321,8 @@ near-return encodings. The interpreter follows actual arguments, every ordinary 
 private stack allocation and parent-frame writes, including changes to nominally
 preserved registers. This establishes state flow without granting a callable
 native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
-resumption still require a separate invocation-exit contract; the PE32 xcpt4
-case remains incomplete.
+resumption use the separate invocation-exit and capture contracts described
+below. The PE32 xcpt4 state regression checks their combined source proof.
 
 `RegistrationSEHControl` authenticates the actual PE32 near CALL and RET bytes.
 When LowIR has folded the return continuation, it retains the complete immutable
@@ -6339,8 +6346,9 @@ to their exact callback, CALL and continuation block. Outlining replaces these
 with the callback's C return ABI; source-segment validation requires an actual
 return at that generated exit. Nonlocal parent jumps and jump-buffer resumptions
 still require their own CFG/SSA projection and native replacement receipts.
-The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
-effects.
+The PE32 xcpt4 source regression covers jump-buffer and incoming-object effects
+under the default work budget; this alone does not establish native rebuilding
+for every protocol in that executable.
 
 `RegistrationFrameEffects` owns the integer-frame effect of the exact void
 `X87Wait` intrinsic. WAIT retains its x87 side effect and possible exception
@@ -6365,7 +6373,7 @@ prove the replacement runtime objects. This supplies the exception-field part
 of the PE32 helper analysis; incoming object arguments and their caller bounds
 still require separate proof.
 
-`RegistrationConditionalCallee` specializes an original EH3 helper from the
+`RegistrationConditionalCallee` specializes an original EH3/EH4 helper from the
 caller's actual stack cells. It authenticates the physical CALL, complete
 immutable callee instructions and ordinary near returns. Incoming scalar words
 and four-byte caller objects occupy separate coordinates; object bounds exclude
