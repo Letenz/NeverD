@@ -393,6 +393,25 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/web-analysis-implementation.md",
+        rule="private-path",
+        commits=frozenset({
+            "2a5d6f60dc231c1e2c90516e762a1a407ae78ce9",
+            "3274140f8d21928e1c7c930203472762c5cab9ce",
+        }),
+        line="",
+        reason=(
+            "Reviewed replacement of a developer artifact directory with a "
+            "local-recovery placeholder. The directory basename, qualification "
+            "claims, links and hashes remain unchanged. Only the exact original "
+            "and deletion commits and line digest are covered; current and "
+            "future private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "90101851e50b6c41cdb14014f7669182fa5deef52e4d6214bba21b6be517581e",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/web-claude-code-qualification.md",
         rule="private-path",
         commits=frozenset({

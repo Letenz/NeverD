@@ -4176,6 +4176,6 @@ The user requested closure of completed issues. All five are now closed with
 [#717](https://github.com/NeverSight/NeverD/issues/717#issuecomment-6186802702), and
 [#718](https://github.com/NeverSight/NeverD/issues/718#issuecomment-6187013598).
 The verified Windows artifact and independent receipts are also retained in
-`/Users/gmh/code/neverd-web-issue-closure-2026-10-15`, separate from the earlier
+`<local-recovery>/neverd-web-issue-closure-2026-10-15`, separate from the earlier
 formal Release downloads. Issue completion retains all documented profile
 limits; future adapters and unknown runtime semantics are not newly claimed.
