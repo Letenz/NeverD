@@ -978,6 +978,89 @@ TEST_F(KernelRuntime, StringConversionAndReleaseFollowTheirIRQLContracts) {
   invoke("KeLowerIrql", {Dispatch});
 }
 
+TEST_F(KernelRuntime, TimeFieldsMatchRecordedKernelConversions) {
+  // Recorded from the 19041.6456 kernel's RtlTimeToTimeFields and
+  // RtlTimeFieldsToTime executed in isolation, without leap seconds.
+  struct Forward {
+    uint64_t Time;
+    int16_t Fields[8];
+  };
+  static constexpr Forward Times[] = {
+      {0x0ULL, {1601, 1, 1, 0, 0, 0, 0, 1}},
+      {0x270fULL, {1601, 1, 1, 0, 0, 0, 0, 1}},
+      {0x2710ULL, {1601, 1, 1, 0, 0, 0, 1, 1}},
+      {0xc92a69bfffULL, {1601, 1, 1, 23, 59, 59, 999, 1}},
+      {0xc92a69c000ULL, {1601, 1, 2, 0, 0, 0, 0, 2}},
+      {0x743551217a5eef5eULL, {28136, 2, 29, 20, 23, 59, 411, 3}},
+      {0x7fffffffffffffffULL, {30828, 9, 14, 2, 48, 5, 477, 4}},
+  };
+  for (const auto &Case : Times) {
+    SCOPED_TRACE(Case.Time);
+    check(Memory->writeInteger(Scratch, Case.Time, 8));
+    check(Memory->write(Scratch + 0x20, std::vector<uint8_t>(16, 0xee)));
+    invoke("RtlTimeToTimeFields", {Scratch, Scratch + 0x20});
+    for (unsigned I = 0; I < 8; ++I)
+      EXPECT_EQ(static_cast<int16_t>(integer(Scratch + 0x20 + I * 2, 2)),
+                Case.Fields[I])
+          << I;
+  }
+  struct Backward {
+    int16_t Fields[8];
+    bool Valid;
+    uint64_t Time;
+  };
+  static constexpr Backward Inputs[] = {
+      {{1601, 1, 1, 0, 0, 0, 0, 5}, true, 0x0ULL},
+      {{30827, 12, 31, 23, 59, 59, 999, 0}, true, 0x7fff35f4f06c58f0ULL},
+      {{2024, 2, 29, 0, 0, 0, 0, 0}, true, 0x1da6aa23ce90000ULL},
+      {{2000, 2, 29, 0, 0, 0, 0, 0}, true, 0x1bf8247ebcc8000ULL},
+      // Weekday is ignored on input.
+      {{2026, 10, 15, 12, 34, 56, 789, 9}, true, 0x1dd5ca1960cbc50ULL},
+      {{2023, 2, 29, 0, 0, 0, 0, 0}, false, 0},
+      {{1900, 2, 29, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 4, 31, 0, 0, 0, 0, 0}, false, 0},
+      {{1600, 12, 31, 0, 0, 0, 0, 0}, false, 0},
+      {{30828, 1, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{-1, 1, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 0, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 13, 1, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 0, 0, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, 24, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, -1, 0, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, 0, 60, 0, 0, 0}, false, 0},
+      {{2026, 1, 1, 0, 0, 60, 0, 0}, false, 0},
+      {{2026, 1, 1, 0, 0, 0, 1000, 0}, false, 0},
+      {{2026, 1, 1, 0, 0, 0, -1, 0}, false, 0},
+  };
+  for (const auto &Input : Inputs) {
+    SCOPED_TRACE(Input.Fields[0]);
+    for (unsigned I = 0; I < 8; ++I)
+      check(
+          Memory->writeInteger(Scratch + I * 2, uint16_t(Input.Fields[I]), 2));
+    check(Memory->writeInteger(Scratch + 0x40, 0xeeeeeeeeeeeeeeeeULL, 8));
+    EXPECT_EQ(invoke("RtlTimeFieldsToTime", {Scratch, Scratch + 0x40}),
+              Input.Valid ? 1u : 0u);
+    // A rejected conversion leaves the output untouched.
+    EXPECT_EQ(integer(Scratch + 0x40),
+              Input.Valid ? Input.Time : 0xeeeeeeeeeeeeeeeeULL);
+  }
+}
+
+TEST_F(KernelRuntime, TimeFieldsRefuseNegativeTimesAndAllowAnyIRQL) {
+  check(Memory->writeInteger(Scratch, UINT64_MAX, 8));
+  EXPECT_NE(failure("RtlTimeToTimeFields", {Scratch, Scratch + 0x20})
+                .find("non-negative"),
+            std::string::npos);
+  check(Memory->writeInteger(Scratch, 0, 8));
+  Model->enterExecution(0x100);
+  const auto Previous = invoke("KfRaiseIrql", {15});
+  invoke("RtlTimeToTimeFields", {Scratch, Scratch + 0x20});
+  EXPECT_EQ(invoke("RtlTimeFieldsToTime", {Scratch + 0x20, Scratch + 0x40}),
+            1u);
+  EXPECT_EQ(integer(Scratch + 0x40), 0u);
+  invoke("KeLowerIrql", {Previous});
+}
+
 TEST_F(KernelRuntime, BoundedUnicodeInitializationRejectsLongSources) {
   // RtlInitUnicodeStringEx (RVA 0x32eb60) clears the record before measuring.
   wide(Scratch + 0x100, u"abc");
@@ -1267,6 +1350,23 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   EXPECT_EQ(Calls["RtlCopyString"], 1u);
   EXPECT_EQ(Calls["RtlEqualString"], 1u);
   EXPECT_EQ(Calls["RtlCompareString"], 2u);
+}
+
+TEST(KernelRuntimeExecution, CompiledDriverRoundTripsCalendarTimes) {
+  auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                              "driver_time_fields.sys");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  ASSERT_TRUE(Result->NTStatus.has_value());
+  EXPECT_EQ(*Result->NTStatus, 0u);
+  ASSERT_EQ(Result->Messages.size(), 1u);
+  // 2024-02-29 was a Thursday; the impossible date is rejected untouched.
+  EXPECT_EQ(Result->Messages[0], "time 2024-02-29 23:59:58.999 weekday 4 0 1");
+  std::map<std::string, unsigned> Calls;
+  for (const auto &Call : Result->Calls)
+    ++Calls[Call.Name];
+  EXPECT_EQ(Calls["RtlTimeFieldsToTime"], 3u);
+  EXPECT_EQ(Calls["RtlTimeToTimeFields"], 1u);
 }
 
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {

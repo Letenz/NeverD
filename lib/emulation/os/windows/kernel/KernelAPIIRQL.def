@@ -81,6 +81,10 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelRuntimeStringAPIs.def"
 #undef NEVERD_KERNEL_RUNTIME_STRING_API
+#define NEVERD_KERNEL_RUNTIME_TIME_API(Name, Arity, IRQL, Operation)           \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelRuntimeTimeAPIs.def"
+#undef NEVERD_KERNEL_RUNTIME_TIME_API
 #define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL, Operation)               \
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelSpinLockAPIs.def"
