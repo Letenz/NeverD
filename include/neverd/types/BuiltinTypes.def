@@ -1,0 +1,73 @@
+//===- BuiltinTypes.def - The builtin types of local types ------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The builtin types a local type is built from, by what they are rather
+/// than how one language spells them.
+///
+/// NEVERD_BUILTIN_TYPE(Name, Class, Signed, LLP64, LP64, ILP32, Keywords,
+///                     Windows, IDA)
+///   Class     Void, Bool, Character, Integer or Float.
+///   Signed    Whether an integer or character type is signed.
+///   LLP64     Its size in bytes on 64-bit Windows,
+///   LP64      on 64-bit Unix,
+///   ILP32     and on 32-bit targets.
+///   Keywords  Its C spelling in keywords, as DWARF and MSVC record it.
+///   Windows   Its spelling in the Windows headers.
+///   IDA       Its spelling in IDA's local types.
+///
+/// The portable C spelling (uint32_t) and the Rust and Go spellings follow
+/// from the class, the signedness and the size.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_BUILTIN_TYPE
+#define NEVERD_BUILTIN_TYPE(Name, Class, Signed, LLP64, LP64, ILP32, Keywords, \
+                            Windows, IDA)
+#endif
+
+NEVERD_BUILTIN_TYPE(Void, Void, false, 0, 0, 0, "void", "VOID", "void")
+NEVERD_BUILTIN_TYPE(Bool, Bool, false, 1, 1, 1, "bool", "bool", "bool")
+NEVERD_BUILTIN_TYPE(Char, Character, true, 1, 1, 1, "char", "CHAR", "char")
+NEVERD_BUILTIN_TYPE(SChar, Integer, true, 1, 1, 1, "signed char", "CHAR",
+                    "__int8")
+NEVERD_BUILTIN_TYPE(UChar, Integer, false, 1, 1, 1, "unsigned char", "UCHAR",
+                    "unsigned __int8")
+NEVERD_BUILTIN_TYPE(WChar, Character, false, 2, 4, 2, "wchar_t", "WCHAR",
+                    "wchar_t")
+NEVERD_BUILTIN_TYPE(Char8, Character, false, 1, 1, 1, "char8_t", "char8_t",
+                    "char8_t")
+NEVERD_BUILTIN_TYPE(Char16, Character, false, 2, 2, 2, "char16_t", "char16_t",
+                    "char16_t")
+NEVERD_BUILTIN_TYPE(Char32, Character, false, 4, 4, 4, "char32_t", "char32_t",
+                    "char32_t")
+NEVERD_BUILTIN_TYPE(Short, Integer, true, 2, 2, 2, "short", "SHORT", "__int16")
+NEVERD_BUILTIN_TYPE(UShort, Integer, false, 2, 2, 2, "unsigned short", "USHORT",
+                    "unsigned __int16")
+NEVERD_BUILTIN_TYPE(Int, Integer, true, 4, 4, 4, "int", "INT", "int")
+NEVERD_BUILTIN_TYPE(UInt, Integer, false, 4, 4, 4, "unsigned int", "UINT",
+                    "unsigned int")
+NEVERD_BUILTIN_TYPE(Long, Integer, true, 4, 8, 4, "long", "LONG", "int")
+NEVERD_BUILTIN_TYPE(ULong, Integer, false, 4, 8, 4, "unsigned long", "ULONG",
+                    "unsigned int")
+NEVERD_BUILTIN_TYPE(LongLong, Integer, true, 8, 8, 8, "long long", "LONGLONG",
+                    "__int64")
+NEVERD_BUILTIN_TYPE(ULongLong, Integer, false, 8, 8, 8, "unsigned long long",
+                    "ULONGLONG", "unsigned __int64")
+NEVERD_BUILTIN_TYPE(Int128, Integer, true, 16, 16, 16, "__int128", "__int128",
+                    "__int128")
+NEVERD_BUILTIN_TYPE(UInt128, Integer, false, 16, 16, 16, "unsigned __int128",
+                    "unsigned __int128", "unsigned __int128")
+NEVERD_BUILTIN_TYPE(Half, Float, true, 2, 2, 2, "_Float16", "_Float16",
+                    "_Float16")
+NEVERD_BUILTIN_TYPE(Float, Float, true, 4, 4, 4, "float", "FLOAT", "float")
+NEVERD_BUILTIN_TYPE(Double, Float, true, 8, 8, 8, "double", "DOUBLE", "double")
+NEVERD_BUILTIN_TYPE(LongDouble, Float, true, 8, 16, 12, "long double",
+                    "long double", "long double")
+NEVERD_BUILTIN_TYPE(HResult, Integer, true, 4, 4, 4, "HRESULT", "HRESULT",
+                    "HRESULT")
+
+#undef NEVERD_BUILTIN_TYPE

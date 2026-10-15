@@ -13,6 +13,7 @@ add_subdirectory(backend)
 add_subdirectory(pipeline)
 add_subdirectory(pass)
 add_subdirectory(debug)
+add_subdirectory(types)
 add_subdirectory(libc)
 
 # Target register metadata delegates architecture-specific names to the
