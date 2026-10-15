@@ -1,6 +1,11 @@
 name: Temporary Windows outcome shell qualification
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - scripts/tests/test_audit_ci_test_results.py
+      - .github/workflows/windows-outcome-shell-qualification.yml
   workflow_dispatch:
 
 permissions:
@@ -70,11 +75,20 @@ jobs:
                        'test_explicit_workflow_shell_must_exist_and_be_absolute',
                        'test_workflow_run_script_preserves_failure_status_and_removes_stale_evidence']:
               assert any(line.startswith(name + ' ') and line.endswith(' ... ok') for line in report.splitlines())
+          from scripts.tests.test_audit_ci_test_results import workflow_bash
+          assert 'NEVERD_TEST_BASH' not in os.environ
+          fallback_shell = workflow_bash()
+          fallback = subprocess.run([fallback_shell, '--version'], capture_output=True, timeout=10)
+          (root / 'fallback.stdout').write_bytes(fallback.stdout)
+          (root / 'fallback.stderr').write_bytes(fallback.stderr)
+          assert fallback.returncode == 0 and b'GNU bash' in fallback.stdout
           (root / 'receipt.json').write_text(json.dumps({
+              'fallback_shell': fallback_shell, 'fallback_status': fallback.returncode,
               'accepted': True, 'tests': 34, 'skipped': 0, 'baseline_discovery': baseline,
               'active_shell_sha256': hashlib.sha256(shell.read_bytes()).hexdigest(),
               'inputs': {name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
-                         for name in ['.github/workflows/ci.yml', 'scripts/tests/test_audit_ci_test_results.py']},
+                         for name in ['.github/workflows/ci.yml', 'scripts/tests/test_audit_ci_test_results.py',
+                                      'scripts/audit_ci_test_results.py', 'scripts/audit_ci_test_inventory.py']},
               'test_deadline_seconds': 120
           }, indent=2))
           PYCODE
