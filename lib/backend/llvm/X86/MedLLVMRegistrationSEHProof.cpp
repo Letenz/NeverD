@@ -309,7 +309,7 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
         Instruction = It->second;
         Kind = Op.Opcode == NdOp::STORE;
         ++MemoryOperations;
-      } else if (Op.Opcode == NdOp::CALL) {
+      } else if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         for (const auto &[Call, Address] : CallSiteAddrs)
           if (Address == Op.Addr) {
             if (Instruction)

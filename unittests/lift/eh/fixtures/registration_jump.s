@@ -24,6 +24,19 @@ _registration_entry:
   mov [ebp-104],ebx
   mov ebx,6
   mov dword ptr [ebp-100],0
+#if REGISTRATION_CASE == 24
+  mov dword ptr [ebp-112],0xdeadbeef
+  push 0
+  push 0
+  lea eax,[ebp-112]
+  push eax
+  call dword ptr [__imp___controlfp_s]
+  add esp,12
+  test eax,eax
+  jne .Lbad
+  cmp dword ptr [ebp-112],0xdeadbeef
+  je .Lbad
+#endif
 #if RETIRED_JUMP
   mov dword ptr [ebp-108],0
 #endif
@@ -146,7 +159,25 @@ _registration_entry:
 #if REGISTRATION_CASE == 19
   mov dword ptr [ebp-4],0
 #endif
+#if REGISTRATION_CASE == 23 || REGISTRATION_CASE == 25
+  call _registration_no_raise
+  push 0
+  push 0
+#if REGISTRATION_CASE == 25
+  push 0
+#else
+  push 1
+#endif
+  push 0xe0420042
+  call dword ptr [__imp__RaiseException@16]
+#if REGISTRATION_CASE == 25
+  mov dword ptr [ebp-4],-1
+  mov eax,7
+  jmp .Lfinish
+#endif
+#else
   call _registration_raise
+#endif
 #endif
 .Lbad:
   mov dword ptr [ebp-4],-1
@@ -174,7 +205,11 @@ _registration_entry:
   add eax,3
 #endif
   mov [_registration_trace],eax
+#if REGISTRATION_CASE == 25
+  mov eax,-1
+#else
   mov eax,1
+#endif
   ret
 #endif
 .Lfinally:

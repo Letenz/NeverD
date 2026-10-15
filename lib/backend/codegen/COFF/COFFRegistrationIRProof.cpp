@@ -77,7 +77,7 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
         Expected[Id].push_back(
             {{Op.Addr, Op.OriginSeq}, uint8_t(Op.Opcode == NdOp::STORE)});
-      else if (Op.Opcode == NdOp::CALL)
+      else if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
         Expected[Id].push_back(
             {{Op.Addr, Op.OriginSeq},
              uint8_t(Source.RegistrationStates &&

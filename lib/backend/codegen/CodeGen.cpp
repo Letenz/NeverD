@@ -639,7 +639,7 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
     GV.setLinkage(llvm::GlobalValue::ExternalLinkage);
   }
 
-  // Pre-pass: mark every function — declarations AND defined-in-module callees
+  // Pre-pass: mark non-imported functions — declarations AND defined callees
   // — as dso_local. Without dso_local, x86/x86-64 PIC codegen assumes the
   // symbol may be interposed and routes calls through the GOT/PLT (callq
   // *fn@GOTPCREL(%rip) for declarations, callq fn@PLT for a preemptible defined
@@ -652,8 +652,14 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
   // would otherwise emit a PLT call the address model cannot resolve. The
   // lifter already marks its own defined functions dso_local (MedLLVMEmitter::
   // declareFunc), so this only changes external IR sources; AArch64/ARM32
-  // already use direct BL, where dso_local is harmless.
+  // already use direct BL, where dso_local is harmless. A COFF dllimport names
+  // an IAT slot, not executable code: preserve the compiler's import load so
+  // the resolved storage address never becomes a direct branch destination.
   for (auto &F : Mod) {
+    if (ObjectFormat == BinaryFormat::COFF && F.hasDLLImportStorageClass()) {
+      F.setDSOLocal(false);
+      continue;
+    }
     if (!F.isDSOLocal())
       F.setDSOLocal(true);
   }

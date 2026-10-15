@@ -460,10 +460,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         JumpRuntime->Raise(Op, After.Frame, WorkUsed)) {
       const auto SP =
           After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
-      if (SP.Offset && *SP.Offset <= int64_t(*Chain.RegistrationOffset) - 24)
+      if (SP.Offset && *SP.Offset <= int64_t(*Chain.RegistrationOffset) - 24) {
+        recordSEHRuntimeCall(After, Op,
+                             RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::frame(*SP.Offset + 16);
-      else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
-                                         *SP.CallbackAddress, 16, true))
+      } else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
+                                           *SP.CallbackAddress, 16, true))
         CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
                                            SP.CallbackAddress->Offset + 16);
     }

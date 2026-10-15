@@ -39,6 +39,8 @@ std::optional<FrameValue> RegistrationStateSolver::transferControlFP(
     return std::nullopt;
   if (!CallException)
     CallException = Before;
+  recordSEHRuntimeCall(After, Op, RegistrationSEHBoundCall::Kind::ControlFP,
+                       Output.Offset);
   invalidateJumpCaptures(After, Output, 4);
   invalidateJumpCaptures(*CallException, Output, 4);
   After.Frame.store(*Output.Offset, 4, {});
