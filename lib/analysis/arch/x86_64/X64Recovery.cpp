@@ -40,8 +40,9 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
   const uint64_t RecordLimit = Options.MaxImagePreparationRecords / Passes;
   for (size_t Count :
        {Options.X64CodeRegions.size(), Options.X64ImportBindings.size(),
-        Options.X64TerminalImports.size(), Options.ControlRegisters.size(),
-        Options.ControlFrameSlots.size(), Options.EntryConstants.size()}) {
+        Options.X64TerminalImports.size(), Options.X64MachineExits.size(),
+        Options.ControlRegisters.size(), Options.ControlFrameSlots.size(),
+        Options.EntryConstants.size()}) {
     if (Records > RecordLimit || Count > RecordLimit - Records)
       return Exhausted();
     Records += Count;
@@ -89,9 +90,27 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
       !Options.FrameBaseRegister ||
       Options.FrameBaseRegister->Offset != StackPointer ||
       Options.FrameBaseRegister->Bytes != 8 ||
-      !Options.RequireRestoredFrameAtReturn)
+      (Options.X64MachineExits.empty() &&
+       !Options.RequireRestoredFrameAtReturn))
     return Invalid("raw environment requires explicit nonfaulting CET-disabled "
-                   "x64 state and a restored entry RSP root");
+                   "x64 state and an explicit entry RSP contract");
+  if (!Options.X64MachineExits.empty() &&
+      (Options.RequireRestoredFrameAtReturn ||
+       Options.ExternalStoresPreserveEntryReturnSlot ||
+       !Options.X64TerminalImports.empty()))
+    return Invalid("machine regions exclude ordinary return-slot and terminal "
+                   "import contracts");
+  for (size_t I = 0; I < Options.X64MachineExits.size(); ++I) {
+    const auto &E = Options.X64MachineExits[I];
+    if (E.Version != 1 || E.Address == InvalidVA ||
+        (E.Kind != SpecializationX64MachineExitKind::Call &&
+         E.Kind != SpecializationX64MachineExitKind::Jump &&
+         E.Kind != SpecializationX64MachineExitKind::Return))
+      return Invalid("invalid machine-exit declaration");
+    for (size_t J = 0; J < I; ++J)
+      if (Options.X64MachineExits[J].Address == E.Address)
+        return Invalid("duplicate machine-exit declaration");
+  }
   if (auto Error = validateX64TerminalImportDomain(Options))
     return std::move(Error);
   const auto Text = [](llvm::StringRef S, bool AllowSpace = false) {
