@@ -1,0 +1,146 @@
+//===- TypeLayout.cpp - Where a compiler puts a record's members ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "neverd/types/TypeLayout.h"
+
+#include "llvm/Support/Error.h"
+
+#include <algorithm>
+
+namespace neverd::types {
+namespace {
+
+uint64_t alignBits(uint64_t Bits, uint32_t Alignment) {
+  const uint64_t Unit = uint64_t(std::max<uint32_t>(Alignment, 1)) * 8;
+  return (Bits + Unit - 1) / Unit * Unit;
+}
+
+llvm::Error problem(const llvm::Twine &Message) {
+  return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
+}
+
+} // namespace
+
+LayoutRules defaultRules(DataModel Model) {
+  return Model == DataModel::LP64 ? LayoutRules::Itanium : LayoutRules::MSVC;
+}
+
+llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
+                                       const DraftRecord &Draft,
+                                       LayoutRules Rules) {
+  RecordDef Record;
+  Record.Union = Draft.Union;
+  Record.Pack = Draft.Pack;
+  // A member aligns as its type, no further than the pack.
+  const auto packed = [&](uint32_t Alignment) {
+    return Draft.Pack ? std::min(Alignment, Draft.Pack) : Alignment;
+  };
+  uint64_t End = 0;    // In bits: where the next member may begin.
+  uint64_t Widest = 0; // In bits: a union's widest alternative.
+  uint32_t Alignment = 1;
+  // Microsoft's run of bitfields in one storage unit.
+  struct Run {
+    bool Active = false;
+    uint64_t UnitBits = 0;
+    uint64_t Start = 0;
+    uint64_t Used = 0;
+  } Bits;
+
+  for (const DraftMember &Field : Draft.Members) {
+    if (!Field.Type)
+      continue;
+    const std::string Name =
+        Field.Name.empty() ? "an unnamed member" : Field.Name;
+    std::optional<uint64_t> Size = Library.sizeOf(*Field.Type);
+    // A flexible array holds no bytes of its own.
+    if (!Size && Field.Type->Kind == TypeExprKind::Array && !Field.Type->Count)
+      Size = 0;
+    if (!Size)
+      return problem("the size of " + Name + " is unknown");
+    const uint32_t Natural = Library.alignOf(*Field.Type);
+    const uint32_t Aligned = packed(Natural);
+
+    if (Field.Bitfield) {
+      const uint64_t Unit = *Size * 8;
+      if (!Unit || Field.Width > Unit)
+        return problem("bitfield " + Name + " is wider than its type");
+      uint64_t Bit = 0, Storage = 0;
+      if (Draft.Union) {
+        if (!Field.Width)
+          continue;
+        Widest = std::max(Widest, Unit);
+        Alignment = std::max(Alignment, Aligned);
+      } else if (Rules == LayoutRules::MSVC) {
+        if (!Field.Width) {
+          Bits.Active = false;
+          continue;
+        }
+        if (Bits.Active && Bits.UnitBits == Unit &&
+            Bits.Used + Field.Width <= Unit) {
+          Bit = Bits.Start + Bits.Used;
+          Bits.Used += Field.Width;
+        } else {
+          Bits.Active = true;
+          Bits.UnitBits = Unit;
+          Bits.Start = alignBits(End, Aligned);
+          Bits.Used = Field.Width;
+          Bit = Bits.Start;
+          End = Bits.Start + Unit;
+        }
+        Storage = Bits.Start;
+        Alignment = std::max(Alignment, Aligned);
+      } else {
+        if (!Field.Width) {
+          End = alignBits(End, Aligned);
+          continue;
+        }
+        Bit = End;
+        // A field does not cross a unit of its type unless packed.
+        if (!Draft.Pack && Bit / Unit != (Bit + Field.Width - 1) / Unit)
+          Bit = alignBits(Bit, Natural);
+        Storage = Bit / Unit * Unit;
+        End = Bit + Field.Width;
+        if (!Field.Name.empty())
+          Alignment = std::max(Alignment, Aligned);
+      }
+      if (Field.Name.empty())
+        continue;
+      Member Laid;
+      Laid.Name = Field.Name;
+      Laid.Type = Field.Type;
+      Laid.BitOffset = Bit;
+      Laid.BitWidth = Field.Width;
+      Laid.StorageBitOffset = Storage;
+      Laid.Comment = Field.Comment;
+      Record.Members.push_back(std::move(Laid));
+      continue;
+    }
+
+    Bits.Active = false;
+    Member Laid;
+    Laid.Name = Field.Name;
+    Laid.Type = Field.Type;
+    Laid.Comment = Field.Comment;
+    if (Draft.Union) {
+      Widest = std::max(Widest, *Size * 8);
+    } else {
+      Laid.BitOffset = alignBits(End, Aligned);
+      End = Laid.BitOffset + *Size * 8;
+    }
+    Alignment = std::max(Alignment, Aligned);
+    Record.Members.push_back(std::move(Laid));
+  }
+
+  // A declared alignment may only raise the record's.
+  if (Draft.Alignment > Alignment) {
+    Alignment = Draft.Alignment;
+    Record.Alignment = Draft.Alignment;
+  }
+  Record.Size = alignBits(Draft.Union ? Widest : End, Alignment) / 8;
+  return Record;
+}
+
+} // namespace neverd::types
