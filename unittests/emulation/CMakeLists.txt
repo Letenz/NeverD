@@ -193,6 +193,7 @@ add_neverd_unittest(NeverDLinuxProcessTests
   LinuxPIDFDTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
+  LinuxFileNamespaceTests.cpp
   LinuxClockTests.cpp
   LinuxOutputNativeTests.cpp
   ProcessReportTests.cpp

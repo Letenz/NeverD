@@ -19,6 +19,10 @@ LinuxFiles::statusDescriptor(uint32_t FD, uint64_t Address,
   const auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File || !File->Metadata)
     return unsupported(Result, FileStatusMissing);
+  auto M = MutableFiles.find(File->Path);
+  if (M != MutableFiles.end() && M->second.Changed)
+    return unsupported(Result,
+                       "file mutation invalidated captured stat metadata");
   return status(*File->Metadata, Address, Result);
 }
 
@@ -70,6 +74,10 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   auto Metadata = Options->Metadata.find(Path->Name);
   if (Metadata == Options->Metadata.end())
     return unsupported(Result, FileStatusMissing);
+  auto M = MutableFiles.find(Path->Name);
+  if (M != MutableFiles.end() && M->second.Changed)
+    return unsupported(Result,
+                       "file mutation invalidated captured stat metadata");
   return status(Metadata->second, Address, Result);
 }
 

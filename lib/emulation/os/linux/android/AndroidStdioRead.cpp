@@ -14,6 +14,13 @@
 namespace neverd::emulation::android_model {
 llvm::Expected<std::optional<uint64_t>>
 Bionic::streamRead(InputStream &Stream, uint64_t Output, uint64_t Size) {
+  auto Ready = prepareStreamRead(Stream);
+  if (!Ready)
+    return Ready.takeError();
+  if (!*Ready)
+    return std::optional<uint64_t>();
+  if (!**Ready)
+    return std::optional<uint64_t>(0);
   auto Read =
       streamService(linux_model::ServiceKind::Read, Stream.FD, Output, Size);
   if (!Read)
@@ -30,6 +37,15 @@ Bionic::streamRead(InputStream &Stream, uint64_t Output, uint64_t Size) {
 }
 
 llvm::Expected<bool> Bionic::refillStream(InputStream &Stream) {
+  auto Readable = prepareStreamRead(Stream);
+  if (!Readable)
+    return Readable.takeError();
+  if (!*Readable)
+    return false;
+  if (!**Readable) {
+    Stream.Begin = Stream.End = 0;
+    return true;
+  }
   auto Ready = prepareStreamBuffer(Stream);
   if (!Ready)
     return Ready.takeError();

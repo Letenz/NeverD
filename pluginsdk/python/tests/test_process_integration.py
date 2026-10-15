@@ -67,6 +67,57 @@ class ProcessIntegrationTests(unittest.TestCase):
                     self.assertEqual(struct.unpack("<3Q", memory), (97, 1, 0))
                 self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_android_mutable_files_and_live_proc_namespace(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        options = {"backend": "unicorn", "android": {
+            "entry_symbol": "filesystem_shared", "initialize": False,
+            "arguments": [0x20000000],
+            "memory": [{"address": 0x20000000, "size": 4096}],
+            "read_memory": [{"address": 0x20000000, "size": 1024}],
+        }, "linux_files": {"files": [{"path": "/fixture/input",
+            "bytes_hex": b"alpha\nbeta\nlast".hex(), "write_limit": 64}],
+            "directories": ["/fixture/sub"], "dynamic_proc_fds": True}}
+        for entry in ("filesystem_shared", "filesystem_proc"):
+            for replay in range(2):
+                with self.subTest(entry=entry, replay=replay):
+                    options["android"]["entry_symbol"] = entry
+                    result = session.emulate_process(str(Path(fixtures) / "stdio-O2-relr.so"),
+                                                     "android-aarch64-api28-v1", json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+                    self.assertEqual(result["return_value"], "0")
+                    memory = bytes.fromhex(result["android"]["memory"][0]["bytes_hex"])
+                    if entry == "filesystem_shared":
+                        expected = bytearray(1024)
+                        struct.pack_into("<11Q", expected, 0, 2,2,4,18,1,12,7,0,19,0,0)
+                        expected[512:516] = b"XYph"
+                        expected[528:535] = b"ast\0\0\0Z"
+                        self.assertEqual(memory, expected)
+                    else:
+                        self.assertEqual(struct.unpack_from("<8Q",memory),
+                                         (14,2**64-1,2,4,12,7,0,0))
+                        self.assertEqual(memory[512:526],b"/fixture/input")
+                        self.assertEqual(memory[544:556],b"/fixture/sub")
+                        self.assertEqual([memory[n:n+16].rstrip(b"\0") for n in range(576,688,16)],
+                                         [b".",b"..",b"0",b"1",b"2",b"3",b"4"])
+                    self.assertTrue(all(c["result"] is not None for c in result["android"]["native_calls"]))
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle),0)
+
     def test_android_property_callbacks_share_identity_and_provider_lifetime(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")

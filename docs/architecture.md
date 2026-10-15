@@ -3501,6 +3501,15 @@ with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
 
+`LinuxFiles` owns directory cursors, workload-local inode identities and the
+optional live proc FD namespace alongside regular and device descriptions.
+Mutable bytes are one object per granted catalogue path; independent opens
+have independent offsets, while dup shares its open description. Mutation
+invalidates captured stat observations, retaining only unchanged block-size
+facts for libc buffer selection. Directory and stdio buffers belong to Bionic,
+which delegates refill, write, seek and close to this same kernel owner. Neither
+the JSON adapter nor a private workload supplies a second descriptor table.
+
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
 all guest pointer resolution and byte expectations precede output writes and

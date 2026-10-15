@@ -8,11 +8,13 @@
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
+#include <cstring>
 #include <tuple>
 
 namespace neverd::emulation {
@@ -87,6 +89,28 @@ protected:
     Bytes[2048 + Text.size()] = 0;
   }
 };
+
+TEST(AndroidFileNamespaceOptions, StrictAdmissionBoundsMutableAndDynamicState) {
+  for (
+      const char *Text :
+      {R"({"linux_files":{"files":[],"dynamic_proc_fds":1}})",
+       R"({"linux_files":{"files":[],"directories":["/a","/a"]}})",
+       R"({"linux_files":{"files":[],"directories":["relative"]}})",
+       R"({"linux_files":{"files":[{"path":"/a","bytes_hex":"01","write_limit":0}]}})",
+       R"({"linux_files":{"files":[{"path":"/a","bytes_hex":"","write_limit":16777217}]}})",
+       R"({"linux_files":{"files":[{"path":"/a","bytes_hex":""}],"directories":["/a/b"]}})",
+       R"({"linux_files":{"files":[{"path":"/proc/self/fd/4","bytes_hex":""}],"dynamic_proc_fds":true}})"}) {
+    auto O = processOptionsFromJSON(Text);
+    EXPECT_FALSE(bool(O)) << Text;
+    llvm::consumeError(O.takeError());
+  }
+  auto O = processOptionsFromJSON(
+      R"({"linux_files":{"files":[{"path":"/a/file","bytes_hex":"6162","write_limit":32}],"directories":["/empty"],"dynamic_proc_fds":true}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  EXPECT_EQ(O->LinuxFiles->WriteLimits.at("/a/file"), 32);
+  EXPECT_TRUE(O->LinuxFiles->DynamicProcFDs);
+  EXPECT_EQ(O->LinuxFiles->Directories, (std::vector<std::string>{"/empty"}));
+}
 
 TEST_P(AndroidStdio, BufferedLinesAndBlocksShareRawDescriptorOffsets) {
   auto R = run("stdio_sequence", {Buffer});
@@ -330,6 +354,136 @@ TEST_P(AndroidStdio, SeekPreservesReadErrorWhereRewindClearsBothIndicators) {
   auto R = run("stdio_error_indicators", {Buffer});
   returned(R);
   memory(R, {0, 1, 0, UINT64_MAX, 1, 1, 0, 1, 0, 97, 1, 0, 0});
+}
+
+TEST_P(AndroidStdio, WriteBuffersAndUpdateModesPreserveKernelCursorAndBytes) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_write_sequence", {Buffer});
+  returned(R);
+  memory(R, {0, 3, 0, 0, 3, 5, 8, 0, 2, 4, 1, 0, 0, 8, 0, 8, 0},
+         {{512, "ab"}, {528, "abcDXFGH"}, {544, "abcDXFGH"}, {768, "XbcD"}});
+}
+TEST_P(AndroidStdio,
+       LineBufferAndBufferReplacementFlushAtTheDeclaredBoundaries) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_line_write", {Buffer});
+  returned(R);
+  memory(R, {0, 0, 3, 0, 5, 0, 0, 7, 0}, {{512, "ab\ncdEF"}, {768, "cd\n"}});
+}
+TEST_P(AndroidStdio, AppendWritesUseCurrentObjectEndDespiteSeekAndOtherOpens) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_append_write", {Buffer});
+  returned(R);
+  memory(R, {15, 0, 0, 1, 0, 1, 0, 16, 0, 0}, {{512, "Qlpha\nbeta\nlastZ"}});
+}
+TEST_P(AndroidStdio, FlushFailureRetiresPendingBytesAndCloseStillReleasesFD) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  for (unsigned Kind : {0, 1, 2}) {
+    auto R = run("stdio_flush_failure", {Buffer, Kind});
+    returned(R);
+    if (Kind == 1)
+      memory(R, {0, 3, 0, UINT64_MAX, 9}, {{768, "abc"}});
+    else
+      memory(R, {0, 3, 0, Kind == 2 ? 0 : UINT64_MAX, 9, 1, 0, UINT64_MAX},
+             {{768, Kind == 2 ? "abc12345" : "abc"}});
+  }
+}
+TEST_P(AndroidStdio, MutableObjectBytesAreSharedButOnlyDupSharesTheCursor) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("filesystem_shared", {Buffer});
+  returned(R);
+  memory(R, {2, 2, 4, 18, 1, 12, 7, 0, 19, 0, 0},
+         {{512, "XYph"}, {528, llvm::StringRef("ast\0\0\0Z", 7)}});
+}
+TEST_P(AndroidStdio,
+       DirectoryBuffersPreserveCookiesAndUseTheLiveDescriptorOwner) {
+  Options.LinuxFiles->Directories = {"/fixture/sub"};
+  auto R = run("filesystem_directory", {Buffer});
+  returned(R);
+  memory(R, {4, 717, 4, 0, 2, 5, 0, 0, 4, 4, 8, 4},
+         {{512, "."},
+          {528, ".."},
+          {544, "input"},
+          {560, "sub"},
+          {576, ".."},
+          {592, "."},
+          {608, "alpha"}});
+}
+TEST_P(AndroidStdio, DirectoryErrorsDoNotConsumeRecordsOrAdoptRegularFiles) {
+  auto R = run("filesystem_dir_errors", {Buffer});
+  returned(R);
+  memory(R, {UINT64_MAX, 22, 0, UINT64_MAX, 14, 0, UINT64_MAX, 20, UINT64_MAX,
+             21, 1, 20, 1, 0, UINT64_MAX, 9, 0, UINT64_MAX, 22});
+}
+TEST_P(AndroidStdio, DynamicProcLinksTrackCloseDupAndDescriptorReuse) {
+  Options.LinuxFiles->Directories = {"/fixture/sub"};
+  Options.LinuxFiles->DynamicProcFDs = true;
+  auto R = run("filesystem_proc", {Buffer});
+  returned(R);
+  ASSERT_FALSE(R.MemorySnapshots.empty());
+  const auto &Bytes = R.MemorySnapshots[0].Bytes;
+  for (auto [Index, Value] : {std::pair{0, 14ULL},
+                              {1, UINT64_MAX},
+                              {2, 2ULL},
+                              {3, 4ULL},
+                              {4, 12ULL},
+                              {5, 7ULL},
+                              {6, 0ULL},
+                              {7, 0ULL}})
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + Index * 8), Value);
+  for (auto [Offset, Name] : {std::pair{512, "/fixture/input"},
+                              {544, "/fixture/sub"},
+                              {576, "."},
+                              {592, ".."},
+                              {608, "0"},
+                              {624, "1"},
+                              {640, "2"},
+                              {656, "3"},
+                              {672, "4"}})
+    EXPECT_EQ(std::string(Bytes.begin() + Offset,
+                          Bytes.begin() + Offset + std::strlen(Name)),
+              Name);
+}
+TEST_P(AndroidStdio, WriteZeroOverflowAndReadonlyPreserveTheirErrorContracts) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_write_transfer", {Buffer, UINT64_MAX, 0, 9, 2});
+  returned(R);
+  memory(R, {0, 0, 717, 0, 0});
+  R = run("stdio_write_transfer", {Buffer, UINT64_MAX, UINT64_MAX, 2, 2});
+  returned(R);
+  memory(R, {0, 0, 75, 1, 0});
+  R = run("stdio_write_transfer", {Buffer, UINT64_MAX, 1, 1, 3});
+  returned(R);
+  memory(R, {0, 0, 9, 0, 0});
+}
+TEST_P(AndroidStdio, DirectWriteFaultsDifferFromBufferedCopies) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_write_transfer", {Buffer, UINT64_MAX, 1, 8, 2});
+  returned(R);
+  memory(R, {0, 0, 14, 1, 0});
+  R = run("stdio_write_transfer", {Buffer, UINT64_MAX, 1, 1, 0});
+  EXPECT_NE(R.Stop, ProcessStopReason::Returned);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+
+TEST_P(AndroidStdio, AdoptedOutputFDUsesCaptureAndClosesTheOriginalDescriptor) {
+  auto R = run("stdio_output_fd", {Buffer});
+  returned(R);
+  EXPECT_EQ(R.StandardOutput, "stream\n");
+  memory(R, {1, 0, 0, 0, UINT64_MAX, 9});
+}
+TEST_P(AndroidStdio, FlushAllCompletesBufferedWritersAndAppendAtTheCurrentEnd) {
+  Options.LinuxFiles->WriteLimits["/fixture/input"] = 64;
+  auto R = run("stdio_flush_all", {Buffer});
+  returned(R);
+  memory(R, {0, 0, 3, 3, 0, 0, 6, 0, 0},
+         {{512, "onetwo"}, {768, "onetwo"}, {800, "two"}});
+}
+TEST_P(AndroidStdio, DirectoryCacheSurvivesFDClosureUntilTheNextRefill) {
+  auto R = run("filesystem_closed_dir", {Buffer});
+  returned(R);
+  memory(R, {0, 1, 9, UINT64_MAX, 9},
+         {{512, "."}, {528, ".."}, {544, "input"}});
 }
 
 INSTANTIATE_TEST_SUITE_P(

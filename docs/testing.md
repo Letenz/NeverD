@@ -5491,6 +5491,17 @@ contents and metadata are synthetic explicit inputs; no device or host stdio
 is an oracle for the Android ABI. Run `ctest -R AndroidStdio` after building
 `NeverDAndroidNativeTests`; unsupported backends remain skips, not passes.
 
+The same `AndroidStdio` fixture covers full/line/unbuffered writes, read/write
+transitions, append with competing opens, flush failures, raw-versus-buffered
+pointer faults, dynamic proc FD reuse and directory buffering/cookies.
+`LinuxFileNamespace` in `NeverDLinuxProcessTests` independently checks both
+LP64 architectures, complete defined dirent bytes and untouched padding,
+partial source-page writes, closed FD slots, EOF cookies and budget refusal.
+C/CLI and Python exercise fresh mutable-file and proc workloads through the
+public JSON contract. None of these fixtures needs a phone or a host filesystem
+oracle. These bounded contracts do not establish dynamic maps/task procfs,
+creation, timestamp maintenance or complete Android filesystem equivalence.
+
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only
