@@ -72,6 +72,39 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Local types boundary
+
+`lib/types` (NeverDTypes) owns a program's named types as a reader sees and
+edits them. `TypeLibrary` holds structures, unions, enumerations, typedefs and
+function types under ordinals that survive replacement. Anonymous unions and
+structures stay in place, member offsets are bits from the record that holds
+them, and builtin sizes follow the data model (`BuiltinTypes.def`).
+Importers fill the library; renderers and frontends only read it.
+
+`importPDBTypes` reads every named record and enumeration of a PDB's TPI
+stream. MSVC flattens anonymous members into their parent, so
+`nestFlatMembers` rebuilds the nesting from offsets, bitfield storage units
+and alignment:
+- members that begin together are a union's alternatives;
+- a member in a union's tail padding belongs to the union;
+- a member that reaches back over earlier ones takes them into its union.
+
+The import infers `#pragma pack` from member offsets and the record size
+before nesting. It reports a record whose nesting does not flatten back to the
+stream's member list, or whose members cannot sit where they say
+(`layoutProblem`).
+
+`renderType` and `renderTypes` spell types as C, C++, Rust or Go
+(`TypeLanguages.def`), each member marked with its offset. Every language
+reproduces the library's layout exactly. An explicit filler moves a member
+that the language's own rules would place earlier. Rust and Go read what they
+cannot express through accessors whose arithmetic follows C, signed bitfields
+included: unions in Go, bitfields, members Go cannot align, and flexible
+arrays. Names a language cannot spell, such as `std::pair<int,int>` or an
+enumerator two enumerations share, take one identifier per language
+(`renamedNames`). With asserts, the output checks every size and offset when
+it compiles.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -5189,6 +5222,7 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust and Go | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
 | `lib/libc` | Known libc names and call-model support | Standalone component |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
@@ -6545,8 +6579,9 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
-`AndroidJNIMethods` owns the finite intrinsic method catalogue, descriptor binding
-and execution; all JNI call forms reuse it and Bionic's GP argument reader.
+`AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
+all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
+The finite intrinsic catalogue remains in that owner.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 `LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
@@ -6557,3 +6592,27 @@ adapters declare these contracts and never infer methods, services or commands.
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
 
 KernelModelObjects owns file handle and pointer counts in the common object table. KernelModelFileObjects selects per-process unlock versus global cleanup, prepares the request before consuming a handle, and owns deferred CLOSE and caller waits. KernelModelIO retains scenario payloads and retires bodies only after packet completion and dispatch/continuation return. KernelFramework carries an optional effective-process override only for internal file lifecycle callbacks. DriverSession preserves the invoking thread and creating-process identity, activates the inherited address space, and restores the source context before final release. Independent scheduled callbacks retain their own context. Device and PnP holds inspect bodies rather than scenario identifiers.
+
+## Shared Dalvik decode and bounded execution
+
+`NeverDDalvik` owns the decoded declarations, DEX reader, signatures and input
+budget formerly confined to the mobile CLI. Mobile source recovery includes
+compatibility headers and consumes that same core; it owns Smali parsing and
+Java source emission. The shared module depends on LLVM Support and zlib, not
+CLI/session state or CPU transports. The existing pinned zlib fallback has one
+CMake owner. This does not add a second instruction decoder.
+
+`dalvik::Program` owns immutable explicit class declarations and integral static
+method execution over decoded instructions. Frames own typed 32-bit register
+words and overlapping-wide invalidation; arithmetic has one unsigned-bit
+implementation of Java integer semantics. Calls share one owner-provided
+instruction/deadline callback and bounded frame storage. Missing semantics
+produce a typed stop, with method identity and code-unit PC.
+
+`AndroidDex` admits API-28 DEX bytes before native execution and binds Program's
+budget and exceptions to the existing Bionic workload VM. `AndroidJNIMethods`
+keeps opaque method IDs, call-form/type checks and argument transport; it never
+interprets instructions or stores caller-provided successful results. JSON only
+accepts strict explicit hex images. There is no host JVM, implicit classpath,
+network or phone dependency. The initial supported class contract excludes
+stateful initialization, fields, hierarchy dispatch, objects and handlers.

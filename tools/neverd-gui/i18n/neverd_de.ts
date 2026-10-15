@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>Namen und Eigenschaften der aktuellen Funktion ändern</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>Lokale T&amp;ypen</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>Typen des Programms mit Layout und Quelltext anzeigen</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2266,6 +2274,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>Ob %1 eine Symboltabelle enthält, ließ sich nicht ermitteln: %2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>Lokale Typen</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3366,6 +3378,237 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>Ungespeicherte Analystenangaben verwerfen und fortfahren?</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>C-Header (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>C++-Header (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Windows-Namen (ULONG)</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>IDA-Namen (unsigned int)</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>C-Schlüsselwörter (unsigned long)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>Exakte Breiten (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>Typen nach Namen filtern</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Art</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Größe</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Felder</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>Zurück zum vorher angezeigten Typ (Esc)</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Layout</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>Layout oder Quelltext kopieren</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>Typen als Quelltext exportieren</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>Diesen Typ exportieren…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>Ausgewählte Typen exportieren…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>Alle Typen exportieren…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>Wie C und C++ eingebaute Typen benennen</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>Hexadezimale Offsets</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>Mit Abhängigkeiten</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>Auch jeden Typ deklarieren, den dieser braucht, damit der Quelltext kompiliert</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>Layoutprüfungen</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>Jedem Typ Prüfungen seiner Größe und Offsets folgen lassen, die der Compiler verifiziert</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Feld</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Offset</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Typ</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>Diese Analyse-Engine hat keine lokalen Typen.</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>Typen des Programms werden gelesen…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>Die Typen können nicht gelesen werden: %1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>Die PDB definiert keine Typen.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>Keine lokalen Typen: Dieses Programm hat keine PDB mit Typen.</translation>
+    </message>
+    <message>
+        <source>Types: %1 · PDB · %2</source>
+        <translation>Typen: %1 · PDB · %2</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>Typen, deren Layout nicht der PDB entspricht: %1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>Der Typ kann nicht angeordnet werden: %1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// Der Typ kann nicht als Quelltext ausgegeben werden: %1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>Struktur</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>Union</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>Aufzählung</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>Typalias</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>Funktionstyp</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>%1 (%2) Bytes</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>auf %1 ausgerichtet</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>auf %1 gepackt</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>nur deklariert</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>Enumerator</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>Wert</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>(Auffüllung)</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>Doppelklicken, um %1 zu öffnen</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>Lokale Typen exportieren</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1 kann nicht geschrieben werden</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>Nach %1 exportiert</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>Die Typen können nicht exportiert werden: %1</translation>
     </message>
 </context>
 </TS>

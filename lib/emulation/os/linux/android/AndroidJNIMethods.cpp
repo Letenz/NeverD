@@ -9,6 +9,8 @@
 //===----------------------------------------------------------------------===//
 #include "AndroidArguments.h"
 
+#include "neverd/dalvik/Runtime.h"
+
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -77,10 +79,11 @@ constexpr Method Methods[] = {
     {"java/lang/String", "valueOf", "([C)Ljava/lang/String;", ValueOf, true},
 };
 constexpr uint64_t MethodBase = jni_abi::Base + 0x1000000;
+constexpr uint64_t DexMethodBase = MethodBase + 0x100000;
 std::string objectClass(const JNIObject &Object) {
   return Object.Type == JNIObject::Class ? "java/lang/Class" : Object.ClassName;
 }
-// Decode only the authoritative table's descriptors, not an input program.
+// Descriptors have been validated by the intrinsic table or shared DEX reader.
 std::vector<char> parameters(llvm::StringRef Signature) {
   std::vector<char> Types;
   for (size_t I = 1; Signature[I] != ')';) {
@@ -128,6 +131,30 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       JNI.ResolvedMethods.insert(I);
       return value(MethodBase + I * 8);
     }
+    if (Slot == 113 && JNI.Dex) {
+      try {
+        auto [Params, Return] = mobile::dalvik::prototype(*Signature);
+        mobile::dalvik::MethodRef Ref{"L" + (*Receiver)->ClassName + ";", *Name,
+                                      std::move(Params), std::move(Return)};
+        if (const auto *Body = JNI.Dex->findStatic(Ref)) {
+          if (auto Reason = JNI.Dex->unsupported(*Body)) {
+            auto Stopped = unsupportedImport(Call);
+            Result.Diagnostic += " (" + *Reason + ")";
+            return Stopped;
+          }
+          for (auto [ID, Existing] : JNI.DexMethods)
+            if (Existing == Body)
+              return value(ID);
+          if (JNI.DexMethods.size() >= jni_abi::ReferenceLimit)
+            return failure("JNI DEX method identity budget exhausted");
+          uint64_t ID = DexMethodBase + JNI.DexMethods.size() * 8;
+          JNI.DexMethods.emplace(ID, Body);
+          return value(ID);
+        }
+      } catch (const mobile::Error &E) {
+        return failure(E.what());
+      }
+    }
     auto Unsupported = unsupportedImport(Call);
     Result.Diagnostic += " (unmodeled Java method " + (*Receiver)->ClassName +
                          "." + *Name + *Signature + ")";
@@ -138,11 +165,23 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
   const bool Static = Slot >= 114;
   const unsigned First = Nonvirtual ? 4 : 3;
   const uint64_t ID = A[First - 1];
-  if (ID < MethodBase || (ID - MethodBase) % 8 ||
-      (ID - MethodBase) / 8 >= std::size(Methods) ||
-      !JNI.ResolvedMethods.contains(unsigned((ID - MethodBase) / 8)))
-    return failure("JNI method ID was not resolved by this VM");
-  const auto &M = Methods[(ID - MethodBase) / 8];
+  const mobile::dalvik::Method *DexMethod = nullptr;
+  std::string DexClass, DexSignature;
+  Method M{};
+  if (auto It = JNI.DexMethods.find(ID); It != JNI.DexMethods.end()) {
+    DexMethod = It->second;
+    DexClass = DexMethod->reference.owner.substr(
+        1, DexMethod->reference.owner.size() - 2);
+    DexSignature = DexMethod->reference.signature();
+    M = {DexClass.c_str(), DexMethod->reference.name.c_str(),
+         DexSignature.c_str(), GetClass, true};
+  } else {
+    if (ID < MethodBase || (ID - MethodBase) % 8 ||
+        (ID - MethodBase) / 8 >= std::size(Methods) ||
+        !JNI.ResolvedMethods.contains(unsigned((ID - MethodBase) / 8)))
+      return failure("JNI method ID was not resolved by this VM");
+    M = Methods[(ID - MethodBase) / 8];
+  }
   llvm::StringRef Signature = M.Signature;
   const char Return = Signature[Signature.find(')') + 1];
   const unsigned Base = New ? 28 : Static ? 114 : Nonvirtual ? 64 : 34;
@@ -201,6 +240,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       V = uint16_t(V);
     Values.push_back(V);
   }
+  if (DexMethod)
+    return executeDex(*DexMethod, Values);
   auto Ref = [&](std::shared_ptr<JNIObject> Object) -> BionicResult {
     auto R = jniReference(std::move(Object));
     if (!R)

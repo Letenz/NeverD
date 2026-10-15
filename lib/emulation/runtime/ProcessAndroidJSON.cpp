@@ -71,6 +71,21 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       (Name == field::Initialize ? Out.Initialize
        : Name == field::JNI      ? Out.JNI
                                  : Out.DrainThreads) = *B;
+    } else if (Name == field::DexImages) {
+      const auto *Images = V.getAsArray();
+      if (!Images || Images->size() > 16)
+        return invalid(Name);
+      uint64_t Remaining = 1024 * 1024;
+      for (const auto &Image : *Images) {
+        auto Hex = Image.getAsString();
+        if (!Hex || Hex->empty() || Hex->size() % 2 ||
+            Hex->size() / 2 > Remaining ||
+            !llvm::all_of(*Hex, llvm::isHexDigit))
+          return invalid(Name);
+        Remaining -= Hex->size() / 2;
+        std::string Bytes = llvm::fromHex(*Hex);
+        Out.DexImages.emplace_back(Bytes.begin(), Bytes.end());
+      }
     } else if (Name == field::Arguments) {
       const auto *A = V.getAsArray();
       if (!A)

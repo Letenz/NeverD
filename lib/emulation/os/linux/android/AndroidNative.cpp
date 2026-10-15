@@ -180,6 +180,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   Kernel.setTaskProvider([&] { return Threads.procTasks(); });
   Bionic LibC(CPU, Kernel, Layout, Options, Result, *Resources, *Linked,
               &Threads);
+  if (auto E = LibC.initializeDex())
+    return std::move(E);
   size_t NextConstructor = 0;
   bool MainCall = false;
   auto Prepare = [&]() -> llvm::Error {

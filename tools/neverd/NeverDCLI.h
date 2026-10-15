@@ -192,6 +192,7 @@ extern llvm::cl::SubCommand RelocsCmd;
 extern llvm::cl::SubCommand HeadersCmd;
 extern llvm::cl::SubCommand EntryPointsCmd;
 extern llvm::cl::SubCommand SwitchesCmd;
+extern llvm::cl::SubCommand TypesCmd;
 extern llvm::cl::SubCommand DashboardCmd;
 extern llvm::cl::SubCommand SigsCmd;
 extern llvm::cl::SubCommand SimplifyCmd;
@@ -333,6 +334,18 @@ extern llvm::cl::list<std::string> StringEncodings;
 extern llvm::cl::opt<std::string> StringCodePage;
 extern llvm::cl::opt<bool> StringRefs;
 extern llvm::cl::opt<std::string> StringFilter;
+
+// Types
+extern llvm::cl::list<std::string> TypeNames;
+extern llvm::cl::opt<bool> TypesAll;
+extern llvm::cl::opt<bool> TypesAlone;
+extern llvm::cl::opt<bool> TypesLayout;
+extern llvm::cl::opt<std::string> TypesFilter;
+extern llvm::cl::opt<std::string> TypesLanguage;
+extern llvm::cl::opt<std::string> TypesSpelling;
+extern llvm::cl::opt<bool> TypesAsserts;
+extern llvm::cl::opt<bool> TypesDecimalOffsets;
+extern llvm::cl::opt<bool> TypesNoOffsets;
 
 // Xrefs.
 extern llvm::cl::opt<std::string> XrefAddr;
@@ -585,6 +598,7 @@ int runSymbols(neverd_session_t Sess);
 int runRelocs(neverd_session_t Sess);
 int runEntryPoints(neverd_session_t Sess);
 int runSwitches(neverd_session_t Sess);
+int runTypes(neverd_session_t Sess);
 int runStrings(neverd_session_t Sess);
 
 // NeverDCmdDisasm.cpp — code views.

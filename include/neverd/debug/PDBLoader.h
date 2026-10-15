@@ -17,6 +17,7 @@
 #include "neverd/loader/BinaryImageDynamic.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/Support/Error.h"
@@ -29,6 +30,10 @@
 #include <set>
 #include <string>
 #include <vector>
+
+namespace llvm::pdb {
+class PDBFile;
+} // namespace llvm::pdb
 
 namespace neverd {
 
@@ -213,6 +218,12 @@ public:
 
   std::optional<AuthenticatedRecordParameter>
   resolveAuthenticatedRecordReturn(va_t Addr) const override;
+
+  /// Runs \p Use on the open PDB with its type streams to itself, for a
+  /// reader that walks them whole, such as the local type import.  An error
+  /// when the context keeps no file open, as for a PDB 2.00 file.
+  llvm::Error
+  withPDBFile(llvm::function_ref<llvm::Error(llvm::pdb::PDBFile &)> Use) const;
 
   bool hasAuthenticatedImageIdentity() const;
   bool hasAnalysisAuthority() const;

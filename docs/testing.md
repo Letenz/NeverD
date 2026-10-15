@@ -258,6 +258,37 @@ with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
 separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
+## Local types
+
+`NeverDTypesTests` covers the local type library: builtin sizes per data
+model, how anonymous unions and structures are rebuilt from MSVC's flat member
+lists (each nesting must flatten back exactly), the PDB import against
+`unittests/types/fixtures/local_types.pdb`, layout JSON, and the C, C++, Rust
+and Go renderers. The fixture's source says how to rebuild the
+`local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
+`NeverDSessionCAPITests` reads the same fixture through the C API.
+
+To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
+`ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
+and every nesting must hold.
+
+Rendered source must also compile with each record's size and offsets checked.
+`scripts/check_type_renders.py` runs `neverd types --all --asserts` and
+compiles the result:
+- C and C++ in all four builtin spellings with clang for the MSVC target, and
+  the portable spelling for the GNU target too;
+- Rust with rustc (64-bit layouts only);
+- Go with `go vet` for Windows.
+
+A missing toolchain is reported and skipped. Without `--binary` it checks the
+fixture:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
+```
+
 ## Scalar x86 floating-point state
 
 `NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
@@ -6939,3 +6970,31 @@ execution. These authored workloads do not establish arbitrary application,
 Android service or shader coverage.
 
 `KernelFileQueryTests.cpp` checks query packet fields, borrowed memory, immediate versus pending status publication, invalid outputs, worker notification, retained files and final CLOSE. `DriverFileObjectTests.cpp` executes the original `driver_file_queries.c` across contracts, backends, load bases and cooperative/instruction-clock scheduling. Optional `NEVERD_WDM_FILE_QUERIES_FIXTURE` and `NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE` add genuine WDK headers/import libraries and active CFG. Missing backends or external fixtures remain explicit skips; these tests do not implement a filesystem provider or general APC delivery.
+
+## Supplied DEX method execution
+
+`NeverDDalvikTests` checks the decoded executor's uninitialized/torn registers,
+overlapping wide moves, division exceptions/overflow, budget/stack stops,
+result-use rules and refusal of class initialization/handlers/unknown opcodes.
+`NeverDMobileTests` must also run when changing the shared DEX reader or models;
+mobile recovery and JNI execution share those owners.
+
+For an independent Java compiler/runtime oracle, prepare the JNI fixtures and
+`neverd-process-probe`, then run:
+
+```sh
+python3 scripts/test_android_dex_runtime.py --build build-release \
+  --jdk /path/to/jdk --d8 /path/to/build-tools/lib/d8.jar \
+  --backend unicorn --output /path/to/new-dex-run
+```
+
+Repeat with `--backend hvf` on supported macOS hosts. The original Java is
+compiled to class files for the JVM oracle and to DEX for NeverD. Cases cover
+overflow, negative/oversized shifts, signed division/remainder, narrow returns,
+wide arguments, branches, packed/sparse switches, loops, recursion and
+cross-class calls, through ordinary/V/A JNI forms. Negative workloads cover
+division exceptions, loops exhausting the shared native budget, recursion,
+objects/handlers, corrupt/duplicate DEX and JNI-disabled admission. Logs and
+request/report files stay in the explicit output directory. Missing JDK/D8 or
+CPU transports are unavailable evidence, not a passing substitute. The runtime
+itself does not launch these preparation tools or use a device.

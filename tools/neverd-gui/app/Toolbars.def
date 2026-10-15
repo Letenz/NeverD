@@ -54,6 +54,7 @@ NEVERD_TOOLBAR_ITEM(ViewTools, ViewStrings)
 NEVERD_TOOLBAR_ITEM(ViewTools, ViewImports)
 NEVERD_TOOLBAR_ITEM(ViewTools, ViewExports)
 NEVERD_TOOLBAR_ITEM(ViewTools, ViewSegments)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewLocalTypes)
 NEVERD_TOOLBAR_ITEM(ViewTools, JumpXrefsTo)
 
 NEVERD_TOOLBAR(AnalysisTools, QT_TRANSLATE_NOOP("Toolbars", "Analysis"))

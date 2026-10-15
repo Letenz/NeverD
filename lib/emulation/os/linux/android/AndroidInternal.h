@@ -124,6 +124,7 @@ public:
   BionicResult finishCallback(const GuestCallback &Callback);
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
   llvm::Error jniThreadExit();
+  llvm::Error initializeDex();
 
 private:
   ExecutionBackend &CPU;
@@ -159,6 +160,8 @@ private:
   BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult executeDex(const mobile::dalvik::Method &Method,
+                          llvm::ArrayRef<uint64_t> Arguments);
   llvm::Error jniIdentity(uint64_t Address, uint64_t Expected);
   llvm::Expected<JNIState::Thread *> jniThread(uint64_t Environment);
   llvm::Expected<std::shared_ptr<JNIObject>> jniObject(uint64_t Reference);

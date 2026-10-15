@@ -2838,6 +2838,18 @@ PDBDebugContext::resolveAuthenticatedRecordReturn(va_t Addr) const {
                                           : std::optional(At->second);
 }
 
+llvm::Error PDBDebugContext::withPDBFile(
+    llvm::function_ref<llvm::Error(llvm::pdb::PDBFile &)> Use) const {
+  if (!PImpl || !PImpl->Native)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "the PDB is not kept open");
+  // The prefetch opens the type streams unlocked; type resolution shares
+  // their lazy record cache under TypeMutex.
+  PImpl->joinTypePrefetch();
+  std::lock_guard<std::mutex> Guard(PImpl->TypeMutex);
+  return Use(PImpl->Native->getPDBFile());
+}
+
 bool PDBDebugContext::hasInfo() const { return PImpl && PImpl->Loaded; }
 
 bool PDBDebugContext::hasAuthenticatedImageIdentity() const {

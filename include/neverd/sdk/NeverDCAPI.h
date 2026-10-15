@@ -43,6 +43,7 @@
 #include "neverd/sdk/NeverDCAPIDevirtualize.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
+#include "neverd/sdk/NeverDCAPILocalTypes.h"
 #include "neverd/sdk/NeverDCAPIOptimize.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"

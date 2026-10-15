@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>현재 함수의 이름과 속성을 변경합니다</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>로컬 형식(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>프로그램의 형식을 레이아웃 및 소스와 함께 표시합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2260,6 +2268,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>%1에 심볼 테이블이 있는지 확인할 수 없습니다: %2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>로컬 형식</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3360,6 +3372,237 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>저장되지 않은 분석가 주장을 버리고 계속하시겠습니까?</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>C 헤더 (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>C++ 헤더 (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Windows 이름(ULONG)</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>IDA 이름(unsigned int)</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>C 키워드(unsigned long)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>정확한 너비(uint32_t)</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>이름으로 형식 필터링</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>이름</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>종류</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>크기</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>멤버</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>이전에 표시한 형식으로 돌아갑니다(Esc)</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>레이아웃</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>레이아웃 또는 소스를 복사합니다</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>형식을 소스로 내보냅니다</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>이 형식 내보내기…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>선택한 형식 내보내기…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>모든 형식 내보내기…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>C 및 C++에서 기본 제공 형식의 이름</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>16진수 오프셋</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>종속 형식 포함</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>이 형식에 필요한 모든 형식도 선언하여 소스가 컴파일되도록 합니다</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>레이아웃 검사</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>각 형식 뒤에 컴파일러가 검증하는 크기 및 오프셋 검사를 붙입니다</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>멤버</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>오프셋</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>바이트</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>형식</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>이 분석 엔진에는 로컬 형식이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>프로그램의 형식을 읽는 중…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>형식을 읽을 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>이 PDB에는 정의된 형식이 없습니다.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>로컬 형식이 없습니다. 이 프로그램에는 형식이 있는 PDB가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Types: %1 · PDB · %2</source>
+        <translation>형식: %1 · PDB · %2</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>PDB에 나열된 대로 배치되지 않는 형식: %1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>형식을 배치할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// 형식의 소스를 만들 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>구조체</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>공용체</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>열거형</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>형식 별칭</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>함수 형식</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>%1(%2)바이트</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>%1바이트 정렬</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>%1바이트 압축</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>선언만 있음</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>열거자</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>값</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>(패딩)</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>두 번 클릭하여 %1 열기</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>로컬 형식 내보내기</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1에 쓸 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>%1(으)로 내보냈습니다</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>형식을 내보낼 수 없습니다: %1</translation>
     </message>
 </context>
 </TS>

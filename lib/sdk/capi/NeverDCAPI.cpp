@@ -279,6 +279,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Dbg = std::move(Found.Context);
   S.DbgKind = Found.Kind;
   S.DbgPath = std::move(Found.Path);
+  S.dropLocalTypes();
   S.Loaded = true;
   S.LastPatch = {};
   S.LastSourcePatchReport.clear();
@@ -770,6 +771,7 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
   S->DbgKind = Found.Kind;
   S->DbgPath = std::move(Found.Path);
   S->DbgRequest = std::move(Request);
+  S->dropLocalTypes();
   S->DiscoveredFunctions.reset();
   S->ImageStrings.reset();
   S->resetFunctionsFromImage();

@@ -1255,25 +1255,34 @@ private slots:
     // gave every child of the dialog's parent a native window as well: the
     // workbench's title bar, toolbars, docks and status bar became Wayland
     // subsurfaces that GNOME stopped updating once Load file > FLIRT
-    // signature file was cancelled.
+    // signature file was cancelled.  Over a view inside the workbench, as
+    // Extensions' Import manifest opens one, this climbed through every
+    // widget around the view.
     QMainWindow workbench;
     workbench.setMenuBar(new QMenuBar);
     workbench.menuBar()->addMenu(QStringLiteral("&File"));
     workbench.addToolBar(QStringLiteral("File"))
         ->addAction(QStringLiteral("Open"));
-    workbench.setCentralWidget(new QPlainTextEdit);
+    auto *central = new QWidget;
+    auto *layout = new QVBoxLayout(central);
+    layout->addWidget(new QLabel(QStringLiteral("Status")));
+    auto *view = new QPlainTextEdit;
+    layout->addWidget(view);
+    workbench.setCentralWidget(central);
     workbench.show();
     QVERIFY(QTest::qWaitForWindowExposed(&workbench));
-    QDialog dialog(&workbench);
-    QVERIFY(!dialog.windowHandle());
-    dialog.winId();
-    QVERIFY(dialog.windowHandle());
-    const auto children =
-        workbench.findChildren<QWidget *>(Qt::FindDirectChildrenOnly);
-    QVERIFY(children.size() >= 3);
-    for (const QWidget *child : children)
-      if (!child->isWindow())
-        QVERIFY2(!child->internalWinId(), child->metaObject()->className());
+    for (QWidget *parent :
+         {static_cast<QWidget *>(&workbench), static_cast<QWidget *>(view)}) {
+      QDialog dialog(parent);
+      QVERIFY(!dialog.windowHandle());
+      dialog.winId();
+      QVERIFY(dialog.windowHandle());
+      const auto widgets = workbench.findChildren<QWidget *>();
+      QVERIFY(widgets.size() >= 5);
+      for (const QWidget *widget : widgets)
+        if (!widget->isWindow())
+          QVERIFY2(!widget->internalWinId(), widget->metaObject()->className());
+    }
   }
 
   void nativeFrameKeepsTheTitleBarOnScreen() {
