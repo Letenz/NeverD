@@ -388,7 +388,13 @@ ordinary warm and cold builds both reject the newly unknown tag state.
 floating-return callees, restore binary80 call/return definitions on builder
 reuse, and preserve the full path for local x87 operations, resets and FXAM.
 Returning, terminating and unresolved exception handlers retain their original
-no-return verdicts on x86 and x64.
+no-return verdicts on x86 and x64. A function the user states never returns
+reaches its callers' callers to the proof depth, even through callees that
+hold an unreachable `ret`, but not around a path that still returns; the
+screen sends a callee to the proof only when each of its returns follows such
+a call, so one that calls the function on an error path costs no proof. A
+tail jump into a function that is stated, named or proved never to return
+ends its path, and a statement that the target returns decides over both.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching

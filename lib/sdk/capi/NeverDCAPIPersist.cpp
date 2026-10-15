@@ -774,12 +774,12 @@ const char *neverd_func_attributes_json(neverd_session_t Sess,
   const bool Native =
       A == Arch::X86 || A == Arch::X64 || A == Arch::ARM || A == Arch::AArch64;
   const LowFunc *Low = S->PipeRan ? S->findLowFunc(Entry) : nullptr;
+  std::set<va_t> Entries;
+  for (const FuncInfo &F : S->Functions)
+    Entries.insert(F.Entry);
+  InternalNoReturnIndex Prover(S->Img, &Entries, nullptr, nullptr, nullptr);
   LowFunc Built;
   if (!Low && Native) {
-    std::set<va_t> Entries;
-    for (const FuncInfo &F : S->Functions)
-      Entries.insert(F.Entry);
-    InternalNoReturnIndex Prover(S->Img, &Entries, nullptr, nullptr, nullptr);
     CFGBuilder Builder;
     Builder.setKnownFuncEntries(&Entries);
     Builder.setNoReturnCalleeProver(&Prover, 0);
@@ -796,8 +796,12 @@ const char *neverd_func_attributes_json(neverd_session_t Sess,
   if (Stated.NoReturn)
     Row["noreturn"] = *Stated.NoReturn;
   else if (Low)
-    Row["noreturn"] = libc::isNoReturnTarget(S->Img, Entry) ||
-                      lowFunctionNeverReturns(*Low, A);
+    // Its tail calls are judged as its calls are.
+    Row["noreturn"] =
+        libc::isNoReturnTarget(S->Img, Entry) ||
+        lowFunctionNeverReturns(*Low, A, [&](va_t Target) {
+          return calleeNeverReturns(S->Img, Target, nullptr, &Prover, 0);
+        });
   else
     Row["noreturn"] = nullptr;
   // A whole-function recognition is analysis' library function, as a FLIRT

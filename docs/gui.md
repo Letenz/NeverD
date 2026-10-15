@@ -783,7 +783,11 @@ Functions window, as in IDA) opens IDA's Edit function dialog on the current
 function: its name, its start and end, its color, the frame sizes IDA lists
 and its flags. A new name is a rename. **Does not return** states that the
 function never returns, which ends every call to it, over its name and what
-analysis proves of its body, in either direction. **Library func**, **Static
+analysis proves of its body, in either direction. As IDA passes the flag on,
+a caller whose every path ends in such a call, or in a jump to the function,
+never returns either: analysis of a single function proves it of the
+functions it calls, as the whole program's analysis does, and the dialog
+shows it checked for that caller. **Library func**, **Static
 func** and the color are notes the dialog and the command line keep;
 analysis does not read them, and the listing does not paint the color yet.
 The bounds come from analysis and cannot be changed here. Of the frame sizes

@@ -5950,6 +5950,76 @@ TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
   EXPECT_EQ(Whole.find("return 7;"), std::string::npos) << Whole;
 }
 
+TEST_F(SessionCAPITest, AStatedNoReturnReachesTheCallersOfItsCallers) {
+  // As IDA passes an edited flag on: once die is stated never to return,
+  // fail, which calls it and keeps a return after the call, and leap, which
+  // ends in its call or jumps to it, never return either.  One function's C
+  // of main ends at fail as the whole program's does, and analysis answers
+  // for both what the dialog shows.
+  const std::string Binary = buildProgram(
+      "stated-noreturn-callers",
+      "#include <stdio.h>\n"
+      "#include <stdlib.h>\n"
+      "static void (*volatile sink)(int) = exit;\n"
+      "__attribute__((noinline)) void die(int c) { sink(c); }\n"
+      "__attribute__((noinline)) int fail(int c) { die(c); return 42; }\n"
+      "__attribute__((noinline)) void leap(int c) { die(c + 1); }\n"
+      "int main(int argc, char **argv) {\n"
+      "  (void)argv;\n"
+      "  if (argc > 5)\n"
+      "    leap(argc);\n"
+      "  printf(\"%d\\n\", fail(argc));\n"
+      "  puts(\"after\");\n"
+      "  return 7;\n"
+      "}\n");
+  if (Binary.empty())
+    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
+#if defined(__APPLE__)
+  const std::string Prefix = "_";
+#else
+  const std::string Prefix;
+#endif
+  const auto entryOf = [&](const char *Name) {
+    const int Index =
+        neverd_func_find_by_name(Session, (Prefix + Name).c_str());
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? neverd_va_t(0) : neverd_func_entry(Session, Index);
+  };
+  const auto Die = entryOf("die"), Fail = entryOf("fail"),
+             Leap = entryOf("leap"), Main = entryOf("main");
+  ASSERT_NE(Main, 0u);
+  const auto analysisSays = [&](neverd_va_t Entry) {
+    auto Row = llvm::json::parse(
+        takeString(neverd_func_attributes_json(Session, Entry)));
+    if (!Row) {
+      ADD_FAILURE() << llvm::toString(Row.takeError());
+      return false;
+    }
+    const auto *Object = Row->getAsObject();
+    EXPECT_EQ(Object->getObject("stated")->size(), 0u);
+    return Object->getBoolean("noreturn").value_or(false);
+  };
+  EXPECT_FALSE(analysisSays(Fail));
+  EXPECT_FALSE(analysisSays(Leap));
+  const std::string Before = takeString(neverd_decompile(Session, Main));
+  EXPECT_NE(Before.find("return 7;"), std::string::npos) << Before;
+
+  ASSERT_EQ(neverd_func_edit(Session, Die, "{\"noreturn\":true}"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_TRUE(analysisSays(Fail));
+  EXPECT_TRUE(analysisSays(Leap));
+  const std::string One = takeString(neverd_decompile(Session, Main));
+  EXPECT_NE(One.find("fail("), std::string::npos) << One;
+  EXPECT_EQ(One.find("\"after\""), std::string::npos) << One;
+  EXPECT_EQ(One.find("return 7;"), std::string::npos) << One;
+  neverd_session_restrict_function(Session, 0);
+  ASSERT_EQ(neverd_session_analyze(Session), 1);
+  const std::string Whole = takeString(neverd_decompile(Session, Main));
+  EXPECT_EQ(Whole.find("\"after\""), std::string::npos) << Whole;
+  EXPECT_EQ(Whole.find("return 7;"), std::string::npos) << Whole;
+}
+
 TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
   // After the entry routine: "hello", then a word, in the image's one
   // segment.
