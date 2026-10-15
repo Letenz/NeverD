@@ -27,6 +27,7 @@ public:
 
 private:
   friend class PhysicalMemory;
+  friend class MemoryProjection;
   struct Part {
     uint64_t Physical, Size, Offset;
   };

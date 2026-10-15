@@ -30,19 +30,21 @@ bool watched(llvm::ArrayRef<Range> Ranges, uint64_t Page) {
 uint64_t x64WatchEntry(uint64_t Base, uint64_t Address, uint64_t Physical,
                        llvm::ArrayRef<ExecutionWatch> Execution,
                        llvm::ArrayRef<MemoryWriteWatch> Writes,
-                       bool ProtectWrites, std::optional<uint64_t> Guard) {
+                       bool ProtectWrites, std::optional<uint64_t> Guard,
+                       llvm::ArrayRef<MemoryWriteWatch> Initialization) {
   if (watched(Execution, Address))
     Base |= x64::NoExecute;
-  if ((ProtectWrites && watched(Writes, Physical)) || Guard == Physical)
+  if ((ProtectWrites && watched(Writes, Physical)) || Guard == Physical ||
+      watched(Initialization, Physical))
     Base &= ~x64::Writable;
   return Base;
 }
 
-bool X64PageTableCache::update(MemoryProjection &Memory, bool UserMode,
-                               uint64_t NextRoot, uint64_t NextVariant,
-                               llvm::ArrayRef<ExecutionWatch> Watches,
-                               bool ProtectWrites,
-                               std::optional<uint64_t> Guard) {
+bool X64PageTableCache::update(
+    MemoryProjection &Memory, bool UserMode, uint64_t NextRoot,
+    uint64_t NextVariant, llvm::ArrayRef<ExecutionWatch> Watches,
+    bool ProtectWrites, std::optional<uint64_t> Guard,
+    llvm::ArrayRef<MemoryWriteWatch> NextInitialization) {
   if (!Root || Root != Memory.projectionRoot(GuestArchitecture::X64) ||
       Memory.needsProjection(GuestArchitecture::X64, UserMode, Variant) ||
       ((NextVariant ^ Variant) & x64::gateway::ProjectionVariant))
@@ -53,7 +55,7 @@ bool X64PageTableCache::update(MemoryProjection &Memory, bool UserMode,
   auto Update = [&](const Leaf &L) {
     const uint64_t Entry =
         x64WatchEntry(L.BaseEntry, L.Address, L.Physical, Watches,
-                      PhysicalWrites, ProtectWrites, Guard);
+                      PhysicalWrites, ProtectWrites, Guard, NextInitialization);
     llvm::support::endian::write64le(Memory.data() + L.Offset, Entry);
   };
   if (!llvm::equal(Execution, Watches, [](const auto &A, const auto &B) {
@@ -91,7 +93,8 @@ bool X64PageTableCache::update(MemoryProjection &Memory, bool UserMode,
     }
   }
   if (WatchWrites != ProtectWrites ||
-      (ProtectWrites && llvm::ArrayRef(Writes) != PhysicalWrites)) {
+      (ProtectWrites && llvm::ArrayRef(Writes) != PhysicalWrites) ||
+      llvm::ArrayRef(Initialization) != NextInitialization) {
     for (const auto &L : Leaves)
       Update(L);
   } else if (WriteGuard != Guard) {
@@ -105,15 +108,16 @@ bool X64PageTableCache::update(MemoryProjection &Memory, bool UserMode,
   }
   Memory.commitProjection(GuestArchitecture::X64, UserMode, NextVariant,
                           NextRoot);
-  remember(Memory, NextRoot, NextVariant, Watches, ProtectWrites, Guard);
+  remember(Memory, NextRoot, NextVariant, Watches, ProtectWrites, Guard,
+           NextInitialization);
   return true;
 }
 
-void X64PageTableCache::remember(MemoryProjection &Memory, uint64_t NextRoot,
-                                 uint64_t NextVariant,
-                                 llvm::ArrayRef<ExecutionWatch> Watches,
-                                 bool ProtectWrites,
-                                 std::optional<uint64_t> Guard) {
+void X64PageTableCache::remember(
+    MemoryProjection &Memory, uint64_t NextRoot, uint64_t NextVariant,
+    llvm::ArrayRef<ExecutionWatch> Watches, bool ProtectWrites,
+    std::optional<uint64_t> Guard,
+    llvm::ArrayRef<MemoryWriteWatch> NextInitialization) {
   Root = NextRoot;
   Variant = NextVariant;
   Execution.assign(Watches.begin(), Watches.end());
@@ -121,5 +125,6 @@ void X64PageTableCache::remember(MemoryProjection &Memory, uint64_t NextRoot,
   WriteGuard = Guard;
   const auto PhysicalWrites = Memory.physicalWriteWatches();
   Writes.assign(PhysicalWrites.begin(), PhysicalWrites.end());
+  Initialization.assign(NextInitialization.begin(), NextInitialization.end());
 }
 } // namespace neverd::emulation

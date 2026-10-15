@@ -142,6 +142,9 @@ executionCapabilities(ExecutionContract Contract,
   auto Capabilities = executionCapabilities(Contract, Architecture);
   if (!Capabilities)
     return Capabilities.takeError();
+  if (Contract == ExecutionContract::DirectDriverX64 &&
+      Backend != ExecutionBackendKind::KVM)
+    return diagnostic::error(diagnostic::DirectDriverBackend);
   if (Backend != ExecutionBackendKind::Unicorn) {
     if (Backend != ExecutionBackendKind::KVM &&
         Backend != ExecutionBackendKind::WHP &&

@@ -17,7 +17,8 @@ class MemoryProjection;
 uint64_t x64WatchEntry(uint64_t Base, uint64_t Address, uint64_t Physical,
                        llvm::ArrayRef<ExecutionWatch> Execution,
                        llvm::ArrayRef<MemoryWriteWatch> Writes,
-                       bool ProtectWrites, std::optional<uint64_t> Guard);
+                       bool ProtectWrites, std::optional<uint64_t> Guard,
+                       llvm::ArrayRef<MemoryWriteWatch> Initialization = {});
 /// ISA-owned locations in a validated projection. Mapping, privilege,
 /// transport-window and monitor changes invalidate this cache. Watch-only
 /// changes update affected leaves and alternate CR3 without rebuilding RAM.
@@ -32,13 +33,16 @@ struct X64PageTableCache {
   std::optional<uint64_t> WriteGuard;
   std::vector<ExecutionWatch> Execution;
   std::vector<MemoryWriteWatch> Writes;
+  std::vector<MemoryWriteWatch> Initialization;
 
   bool update(MemoryProjection &Memory, bool UserMode, uint64_t NextRoot,
               uint64_t NextVariant, llvm::ArrayRef<ExecutionWatch> Watches,
-              bool ProtectWrites, std::optional<uint64_t> Guard);
+              bool ProtectWrites, std::optional<uint64_t> Guard,
+              llvm::ArrayRef<MemoryWriteWatch> Initialization = {});
   void remember(MemoryProjection &Memory, uint64_t NextRoot,
                 uint64_t NextVariant, llvm::ArrayRef<ExecutionWatch> Watches,
-                bool ProtectWrites, std::optional<uint64_t> Guard);
+                bool ProtectWrites, std::optional<uint64_t> Guard,
+                llvm::ArrayRef<MemoryWriteWatch> Initialization = {});
 };
 } // namespace neverd::emulation
 #endif

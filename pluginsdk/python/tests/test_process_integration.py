@@ -911,6 +911,12 @@ class ProcessIntegrationTests(unittest.TestCase):
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
     def test_darwin_symbolic_ownership_keeps_vnode_and_target_authority(self) -> None:
+        self._check_darwin_symbolic_ownership(False)
+
+    def test_darwin_lchown_keeps_vnode_and_target_authority(self) -> None:
+        self._check_darwin_symbolic_ownership(True)
+
+    def _check_darwin_symbolic_ownership(self, lchown: bool) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
         if not library or not fixtures:
@@ -994,7 +1000,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                            41, 42, 41, 42, 101, 102, 41, 42, 7, 1, 512, 9, 0, 0, 0xa5a5a5a5a5a5a5a5]
             return result + pack(replacement) + pack(link) + b"W"
 
-        def trace(kind):
+        def trace(kind, direct=False):
             result = []
             uid, gid = 501, 20 if kind else 31
             high, none, bad = 0x13579bdf00000000, 0xffffffff, 0xffffffffffffffff
@@ -1004,26 +1010,41 @@ class ProcessIntegrationTests(unittest.TestCase):
                 add(5, fd, a1=flags, a2=0)
             def stat(fd):
                 add(339, a0=fd)
-            def own(fd, u=uid, g=gid):
-                add(123, a0=fd, a1=u, a2=g)
+            def own(fd, u=uid, g=gid, path=False):
+                if direct and path:
+                    add(364, a1=u, a2=g, a3=0, a4=0, a5=0)
+                else:
+                    add(123, a0=fd, a1=u, a2=g)
+            def nofollow(value=0, error=False, u=uid, g=gid):
+                if direct:
+                    add(364, value, error, a1=u, a2=g, a3=0, a4=0, a5=0)
+                else:
+                    add(468, value, error, a0=bad, a2=u, a3=g, a4=0x20)
             def emit():
                 if kind & 1:
                     add(4, 160, a0=1, a2=160)
             if kind >= 2:
                 add(57)
             opened(3); add(41, 4, a0=3); opened(5); opened(6, 0)
-            stat(3); stat(6); own(3, none, none); stat(3); own(4); stat(5); stat(6); emit(); emit()
-            add(high | 468, a0=high | 0xfffffffe, a2=high | uid, a3=high | gid, a4=high | 0x20)
+            stat(3); stat(6); own(3, none, none, path=True); stat(3); own(4); stat(5); stat(6); emit(); emit()
+            if direct:
+                add(high | 364, a1=high | uid, a2=high | gid, a3=0, a4=0, a5=0)
+            else:
+                add(high | 468, a0=high | 0xfffffffe, a2=high | uid, a3=high | gid, a4=high | 0x20)
             stat(3); add(16, a1=none, a2=gid); stat(6); emit()
             add(471, a0=0xfffffffe, a2=0xfffffffe, a4=0); opened(7)
-            add(high | 123, a0=high | 7, a1=high | uid, a2=high | gid); stat(3); emit(); add(128)
-            add(468, 2, True, a0=bad, a2=uid, a3=gid, a4=0x20)
-            add(468, a0=bad, a2=uid, a3=gid, a4=0x20); stat(7); emit()
+            if direct:
+                add(high | 364, a1=high | uid, a2=high | gid, a3=0, a4=0, a5=0)
+            else:
+                add(high | 123, a0=high | 7, a1=high | uid, a2=high | gid)
+            stat(3); emit(); add(128)
+            nofollow(2, True)
+            nofollow(); stat(7); emit()
             add(10); add(10); own(3); stat(4); emit()
-            add(57); opened(8); stat(8); own(8); stat(8); emit(); own(5); stat(8); stat(3); emit()
+            add(57); opened(8); stat(8); own(8, path=True); stat(8); emit(); own(5); stat(8); stat(3); emit()
             add(57); opened(9); own(9); add(16, 2, True, a1=uid, a2=gid)
-            add(468, a0=bad, a2=none, a3=none, a4=0x20); add(57)
-            add(16, 62, True, a1=uid, a2=gid); opened(10); own(10, none, none)
+            nofollow(u=none, g=none); add(57)
+            add(16, 62, True, a1=uid, a2=gid); opened(10); own(10, none, none, path=True)
             add(123, 9, True, a0=bad, a1=uid, a2=gid)
             add(468, 22, True, a0=bad, a1=1, a2=uid, a3=gid, a4=8)
             add(6, a0=3); add(123, 9, True, a0=3, a1=uid, a2=gid)
@@ -1032,17 +1053,18 @@ class ProcessIntegrationTests(unittest.TestCase):
             add(10); add(10); add(10); add(4, 1, a0=1, a2=1)
             return result
 
-        modes = ("symbolic-ownership-mutations", "virtual-symbolic-ownership", "created-symbolic-ownership", "virtual-created-symbolic-ownership")
+        modes = (("lchown-ownership-mutations", "virtual-lchown-ownership") if lchown else
+                 ("symbolic-ownership-mutations", "virtual-symbolic-ownership", "created-symbolic-ownership", "virtual-created-symbolic-ownership"))
         profiles = (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"),
                     ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"),
                     ("ios-simulator-x86_64", "ios-simulator-macho64-v1"))
         for file, profile in profiles:
             cls = 0x2000000 if file.endswith("x86_64") else 0
-            for variant in range(7):
-                kind = variant if variant < 4 else 2 if variant == 5 else 1
-                missing, late = variant >= 4, variant == 6
+            for variant in range(4 if lchown else 7):
+                kind = min(variant, 1) if lchown else (variant if variant < 4 else 2 if variant == 5 else 1)
+                missing, late = (variant >= 2, variant == 3) if lchown else (variant >= 4, variant == 6)
                 f = files()
-                if variant == 4:
+                if variant == (2 if lchown else 4):
                     f["ownership_mutations"]["objects"] = f["ownership_mutations"]["objects"][:1]
                 elif missing:
                     f["ownership_mutations"]["created_symbolic_link_objects"] = False
@@ -1051,8 +1073,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                            "darwin_files": f, "darwin_system": {"credentials": {"real_uid": 700, "effective_uid": 501,
                                                                              "real_gid": 31, "effective_gid": 20,
                                                                              "groups": [20, 31], "group_membership_uid": 4294967195}}}
-                wanted, expected = trace(kind), output(kind)
-                last = next((i for i, c in enumerate(wanted) if c[0] == 123 and c[3].get(0) == (8 if late else 3)), None) if missing else len(wanted)
+                wanted, expected = trace(kind, lchown), output(kind)
+                last = next((i for i, c in enumerate(trace(kind)) if c[0] == 123 and c[3].get(0) == (8 if late else 3)), None) if missing else len(wanted)
                 self.assertIsNotNone(last)
                 if missing:
                     expected = expected[:960] if late else b""

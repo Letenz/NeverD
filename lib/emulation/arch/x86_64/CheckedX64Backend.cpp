@@ -313,7 +313,8 @@ CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
-  if (auto E = B->Memory->validateMappings(x64::canonicalRange, !UserMode))
+  if (auto E = B->Memory->validateMappings(x64::canonicalRange,
+                                           B->supportsDeviceMappings()))
     return E;
   if (auto E = B->initializeDecoder(
           CS_ARCH_X86, x64::decoderMode(B->Machine->branchModel())))
@@ -472,7 +473,9 @@ watchesExceptPage(llvm::ArrayRef<ExecutionWatch> Watches, uint64_t Page) {
 }
 } // namespace
 
-llvm::Error CheckedX64Backend::stepWatchedInstruction(bool WatchWrites) {
+llvm::Error
+CheckedX64Backend::stepWatchedInstruction(bool WatchWrites,
+                                          bool WatchInitialization) {
   const uint64_t PC = CPU.reg(X64Register::PC);
   const uint64_t Page = PC & ~(x64::PageSize - 1);
   auto Open = watchesExceptPage(FetchWatchPages, Page);
@@ -489,21 +492,100 @@ llvm::Error CheckedX64Backend::stepWatchedInstruction(bool WatchWrites) {
   ++WatchEpoch;
   auto Root = buildX64PageTables(
       *Memory, UserMode, Machine->requiresExceptionMonitor(), Open, WatchEpoch,
-      WatchWrites, WatchWrites ? RegionPhysical : std::nullopt, &WatchTables);
+      WatchWrites, WatchWrites ? RegionPhysical : std::nullopt, &WatchTables,
+      WatchInitialization);
   ++WatchEpoch;
   if (!Root)
     return Root.takeError();
   return stepDirectInstruction(*Root);
 }
 
+llvm::Error CheckedX64Backend::stepInitializationStore(uint64_t FaultAddress) {
+  const auto Reject = []() {
+    return llvm::make_error<diagnostic::InstructionRejectionError>(
+        diagnostic::DirectInitializationStore);
+  };
+  const uint64_t PC = CPU.reg(X64Register::PC);
+  auto Decoding = decodeInstruction(PC);
+  if (!Decoding)
+    return Decoding.takeError();
+  if (!*Decoding)
+    return Reject();
+  const auto &I = decodedInstruction();
+  const auto &X = I.detail->x86;
+  if (X.op_count != 2 || X.operands[0].type != X86_OP_MEM ||
+      I.size > UINT64_MAX - PC)
+    return Reject();
+  const auto &Destination = X.operands[0];
+  const auto &Source = X.operands[1];
+  const bool Scalar =
+      (I.id == X86_INS_MOV || I.id == X86_INS_MOVABS || I.id == X86_INS_XOR) &&
+      (Destination.size == 1 || Destination.size == 2 ||
+       Destination.size == 4 || Destination.size == 8) &&
+      (Source.type == X86_OP_REG || Source.type == X86_OP_IMM);
+  const auto Vector = vectorOperation(I.id);
+  const bool VectorStore = Vector && Vector->Move &&
+                           admitsVectorOperands(X, *Vector) &&
+                           Source.type == X86_OP_REG && isXmm(Source.reg);
+  if (!Scalar && !VectorStore)
+    return Reject();
+  auto Address = operandAddress(I, Destination);
+  if (!Address)
+    return Address.takeError();
+  const uint64_t Size = Destination.size, NextPC = PC + I.size;
+  if (!Size || Size - 1 > UINT64_MAX - *Address || FaultAddress < *Address ||
+      FaultAddress - *Address >= Size)
+    return Reject();
+  // Decode only the write footprint; the processor executes the original
+  // instruction and determines every value, flag, fault and committed byte.
+  // No checked admission, speculative RAM transaction or rollback is used.
+  std::vector<MemoryWriteWatch> Slices;
+  bool CompleteRange = true;
+  for (uint64_t Offset = 0; Offset < Size;) {
+    const uint64_t At = *Address + Offset;
+    const uint64_t InPage = At % x64::PageSize;
+    const uint64_t Count = std::min(Size - Offset, x64::PageSize - InPage);
+    const auto P = Memory->mappings().find(At - InPage);
+    if (P == Memory->mappings().end() || P->second.IO ||
+        !(P->second.Permissions & Write)) {
+      CompleteRange = false;
+    } else {
+      Slices.push_back({P->second.Physical + InPage, Count});
+      RegionDirty |= RegionPhysical == P->second.Physical;
+    }
+    Offset += Count;
+  }
+  auto E = stepWatchedInstruction(false, false);
+  // These scalar stores and vector moves have one complete store and a linear
+  // successor. XOR's memory operand is both read and written; the processor
+  // retains ownership of its value, flags and atomicity.
+  // A simultaneous deadline or guest debug trap can follow its retirement;
+  // retain that real outcome while publishing the committed initialization.
+  if (CPU.reg(X64Register::PC) == NextPC) {
+    if (!CompleteRange) {
+      llvm::consumeError(std::move(E));
+      return Reject();
+    }
+    for (const auto &S : Slices) {
+      Memory->recordRAMWrite(S.Address, S.Size);
+      Memory->recordRAMInitialization(S.Address, S.Size);
+    }
+  } else if (!E) {
+    return Reject();
+  }
+  return E;
+}
+
 llvm::Error CheckedX64Backend::publishDirectException(
     const X64Exception &Raised, bool AllowSplit, bool &Resume,
-    bool WritesProtected, std::optional<uint64_t> OpenPage) {
+    bool WritesProtected, std::optional<uint64_t> OpenPage,
+    bool InitializationProtected) {
   Resume = false;
   const uint64_t PC = CPU.reg(X64Register::PC);
   // The system call extension is disabled, so each service instruction
   // is undefined exactly where the guest requests the service.
-  if (Raised.Vector == unsigned(x64::ExceptionVector::InvalidOpcode)) {
+  if (UserMode &&
+      Raised.Vector == unsigned(x64::ExceptionVector::InvalidOpcode)) {
 #define NEVERD_X64_SERVICE(Kind, Name, ...)                                    \
   {                                                                            \
     constexpr uint8_t Expected[] = {__VA_ARGS__};                              \
@@ -564,7 +646,8 @@ llvm::Error CheckedX64Backend::publishDirectException(
   // naming the watched physical page. Retire it once with the overlay open,
   // then notify the owner before any subsequent guest instruction.
   bool WriteWatch = false, PublicWriteWatch = false, CodeWrite = false;
-  if (WritesProtected &&
+  bool InitializationWatch = false;
+  if ((WritesProtected || InitializationProtected) &&
       Raised.Vector == unsigned(x64::ExceptionVector::PageFault) &&
       Raised.FaultAddress &&
       (Raised.ErrorCode ? bool(*Raised.ErrorCode & x64::gateway::PageFaultWrite)
@@ -574,9 +657,13 @@ llvm::Error CheckedX64Backend::publishDirectException(
     const auto P = Memory->mappings().find(Page);
     if (P != Memory->mappings().end() && !P->second.IO) {
       PublicWriteWatch =
+          WritesProtected &&
           Memory->writeWatched(P->second.Physical, x64::PageSize);
-      CodeWrite = RegionPhysical == P->second.Physical;
-      WriteWatch = PublicWriteWatch || CodeWrite;
+      CodeWrite = WritesProtected && RegionPhysical == P->second.Physical;
+      InitializationWatch =
+          InitializationProtected &&
+          Memory->initializationWatched(P->second.Physical, x64::PageSize);
+      WriteWatch = PublicWriteWatch || CodeWrite || InitializationWatch;
     }
   }
   // A private region opens the instruction's first page. Some transports
@@ -595,13 +682,16 @@ llvm::Error CheckedX64Backend::publishDirectException(
   if (WriteWatch || SplitFetch) {
     RegionDirty |= CodeWrite;
     std::optional<uint64_t> NextOpen;
-    auto Stepped = !WriteWatch && !OpenPage && !executionWatched(PC) &&
+    auto Stepped = InitializationWatch
+                       ? stepInitializationStore(*Raised.FaultAddress)
+                   : !WriteWatch && !OpenPage && !executionWatched(PC) &&
                            Machine->supportsExecutionStops()
                        ? runWatchedRegion(NextOpen)
                        : stepWatchedInstruction(!WriteWatch);
     if (!Stepped) {
       // A processor step may retire a self-branch or one REP iteration while
       // leaving RIP unchanged. Successful retirement is the evidence.
+      PublicWriteWatch |= Memory->takeWatchedWrite();
       if (PublicWriteWatch && Hooks.MemoryWritten)
         Hooks.MemoryWritten();
       Resume = !StopRequested;
@@ -620,7 +710,8 @@ llvm::Error CheckedX64Backend::publishDirectException(
       return Other;
     if (!Again)
       return error(diagnostic::DirectExecutionUnsupported);
-    return publishDirectException(*Again, false, Resume, !WriteWatch, NextOpen);
+    return publishDirectException(*Again, false, Resume, !WriteWatch, NextOpen,
+                                  !InitializationWatch);
   }
   BackendFault Fault{BackendFaultKind::Interrupt, PC};
   Fault.Interrupt = Raised.Vector;
@@ -637,7 +728,7 @@ llvm::Error CheckedX64Backend::executeDirect() {
     }
     auto Root = buildX64PageTables(
         *Memory, UserMode, Machine->requiresExceptionMonitor(), FetchWatchPages,
-        WatchEpoch, true, RegionPhysical, &WatchTables);
+        WatchEpoch, true, RegionPhysical, &WatchTables, true);
     if (!Root)
       return Root.takeError();
     auto Next = CPU;
@@ -645,7 +736,7 @@ llvm::Error CheckedX64Backend::executeDirect() {
     // Only an event ends a free run.
     if (!E)
       return error(diagnostic::DirectExecutionUnsupported);
-    if (E.isA<MachineInterruptedError>()) {
+    if (E.isA<MachineInterruptedError>() || E.isA<X64UnsupportedStateError>()) {
       CPU = Next;
       return E;
     }

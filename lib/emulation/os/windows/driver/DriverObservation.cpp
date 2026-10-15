@@ -83,6 +83,12 @@ DriverObservation::replaceWatches(std::vector<ExecutionWatch> Next) {
   for (const auto &W : Next)
     if (!W.Size || W.Size - 1 > UINT64_MAX - W.Address)
       return llvm::createStringError("invalid driver execution watch");
+  ExecutionWatchesDirty |=
+      Next.size() != Watches.size() ||
+      !std::equal(Next.begin(), Next.end(), Watches.begin(),
+                  [](const auto &A, const auto &B) {
+                    return A.Address == B.Address && A.Size == B.Size;
+                  });
   Watches = std::move(Next);
   return llvm::Error::success();
 }
@@ -121,19 +127,55 @@ llvm::Error DriverObservation::entered(bool Entry, ProcessStackView NewStack) {
 }
 
 llvm::Error DriverObservation::resuming() {
-  if (!Observer)
-    return llvm::Error::success();
-  auto Next = Observer->resuming(*this);
-  if (!Next)
-    return Next.takeError();
-  if (*Next)
-    if (auto E = replaceWatches(std::move(**Next)))
+  if (Observer) {
+    auto Next = Observer->resuming(*this);
+    if (!Next)
+      return Next.takeError();
+    if (*Next)
+      if (auto E = replaceWatches(std::move(**Next)))
+        return E;
+    if (auto E = CPU.setMemoryWriteWatches(Observer->writeWatches()))
       return E;
-  return CPU.setMemoryWriteWatches(Observer->writeWatches());
+  }
+  return installExecutionWatches();
 }
 
-bool DriverObservation::matches(uint64_t PC) {
-  if (ResumePC == PC)
+void DriverObservation::setExecutionGates(std::vector<ExecutionWatch> Gates) {
+  ExecutionGates = std::move(Gates);
+  ExecutionWatchesDirty = true;
+}
+
+llvm::Error DriverObservation::installExecutionWatches() {
+  if (ExecutionGates.empty() || !ExecutionWatchesDirty)
+    return llvm::Error::success();
+  auto Combined = ExecutionGates;
+  Combined.insert(Combined.end(), Watches.begin(), Watches.end());
+  std::sort(Combined.begin(), Combined.end(),
+            [](const auto &A, const auto &B) { return A.Address < B.Address; });
+  size_t Count = 0;
+  for (const auto W : Combined) {
+    if (Count &&
+        W.Address - Combined[Count - 1].Address <= Combined[Count - 1].Size) {
+      auto &Previous = Combined[Count - 1];
+      const uint64_t Last = std::max(Previous.Address + Previous.Size - 1,
+                                     W.Address + W.Size - 1);
+      Previous.Size = Last - Previous.Address + 1;
+      if (!Previous.Size)
+        return llvm::createStringError("invalid driver execution watch union");
+    } else
+      Combined[Count++] = W;
+  }
+  Combined.resize(Count);
+  CPU.setExecutionWatches(Combined);
+  ExecutionWatchesDirty = false;
+  return llvm::Error::success();
+}
+
+bool DriverObservation::matches(uint64_t PC, bool Direct) {
+  const bool Resumed = ResumePC == PC;
+  if (Direct)
+    ResumePC.reset();
+  if (Resumed)
     return false;
   ResumePC.reset();
   return std::any_of(Watches.begin(), Watches.end(), [&](const auto &W) {
@@ -141,7 +183,18 @@ bool DriverObservation::matches(uint64_t PC) {
   });
 }
 
-void DriverObservation::instructionAdmitted() { ResumePC.reset(); }
+void DriverObservation::instructionAdmitted() {
+  ResumePC.reset();
+  ExecutedPrefix = true;
+}
+
+void DriverObservation::opaqueExecutionResuming() {
+  // A direct run can modify incoming state even when the stopped bytes and
+  // registers compare equal. It can also observe processor identity/time
+  // without an instruction callback. Neither fact follows from a zero count.
+  ExecutedPrefix = true;
+  Kernel.recordUnpackEnvironmentRead();
+}
 
 llvm::Expected<bool> DriverObservation::watched(uint64_t PC) {
   auto Next = Observer->watched(*this, PC);
@@ -290,7 +343,7 @@ DriverObservation::runtimeState(bool IncludeBacking) {
     return Relocations.takeError();
   if (!entryContextUnchanged(*Entry))
     State->Reasons.emplace_back("changed DriverEntry invocation context");
-  else if (Result.Instructions)
+  else if (ExecutedPrefix)
     // Admission is not a proof that the prefix preserves arbitrary incoming
     // values or that the continuation establishes its live outputs. Even a
     // same-value write can discard a fresh caller's register or return status.

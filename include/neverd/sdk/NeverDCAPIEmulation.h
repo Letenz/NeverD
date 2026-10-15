@@ -149,7 +149,9 @@ neverd_emulate_driver_scenario_json(neverd_session_t Sess, const char *Path,
 /// Execute with an explicit backend and execution contract. Existing v1 entry
 /// points retain their original options layout and complete observation
 /// contract. Backend: auto, unicorn, kvm, whp, hvf. Contract: driver-strict,
-/// checked-x64-v1. The checked hardware profile currently admits a bounded
+/// checked-x64-v1, or direct-driver-x64-v1 (KVM only). Direct execution retains
+/// the modeled kernel API boundary but does not count individual instructions.
+/// The checked hardware profile currently admits a bounded
 /// integer ISA with single-page RAM accesses. Unsupported instructions and MMIO
 /// fail explicitly. ScenarioJSON may be NULL for initialization only. Backend
 /// and Contract are required. Selection occurs before execution; no runtime

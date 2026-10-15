@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 
 namespace neverd::emulation {
 namespace {
@@ -211,6 +212,41 @@ TEST(DriverGuardExecution, UndeclaredTargetsFailAtCheckAndDispatch) {
     EXPECT_NE(Result->Diagnostic.find("CFG"), std::string::npos);
     EXPECT_NE(Result->Diagnostic.find("declared entry point"),
               std::string::npos);
+  }
+}
+
+TEST(DriverGuardExecution, DirectPreservesCheckDispatchAndTargetValidation) {
+  auto Probe = createExecutionBackend(ExecutionBackendKind::KVM,
+                                      ExecutionContract::DirectDriverX64,
+                                      profile::DefaultMemoryLimit);
+  if (!Probe) {
+    auto Error = Probe.takeError();
+    const bool Unavailable = Error.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(Error));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  for (const char *Name :
+       {"driver_guard", "driver_guard_inactive", "driver_guard_invalid_check",
+        "driver_guard_invalid_dispatch"}) {
+    SCOPED_TRACE(Name);
+    DriverOptions Options;
+    Options.Backend = ExecutionBackendKind::KVM;
+    Options.Contract = ExecutionContract::DirectDriverX64;
+    Options.TraceMemoryWrites = false;
+    auto Result = emulateDriver(guardFixture(Name), Options);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    if (std::string_view(Name).find("invalid") == std::string_view::npos) {
+      EXPECT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+      EXPECT_EQ(Result->NTStatus, 0u);
+    } else {
+      EXPECT_EQ(Result->Stop, DriverStopReason::ModelError)
+          << Result->Diagnostic;
+      EXPECT_NE(Result->Diagnostic.find("declared entry point"),
+                std::string::npos);
+    }
   }
 }
 

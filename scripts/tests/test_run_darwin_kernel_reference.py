@@ -180,7 +180,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
             self.assertEqual({entry.name for entry in catalogue.iterdir()},
                              {"data", "dir"})
             self.assertEqual((catalogue / "data").read_bytes(), b"ab\0\xffef")
-            if mode == "symbolic-ownership-mutations":
+            if mode != "created-symbolic-ownership":
                 self.assertEqual(path.readlink(), Path("../data"))
                 self.assertEqual(path.read_bytes(), b"ab\0\xffef")
             else:
@@ -191,9 +191,10 @@ class DarwinKernelReferenceTests(unittest.TestCase):
             results = reference.execute_cases(Path("native"), [
                 ("symbolic-ownership-mutations", 58, b"W"),
                 ("created-symbolic-ownership", 58, b"W"),
+                ("lchown-ownership-mutations", 58, b"W"),
             ])
         self.assertTrue(all(result["passed"] for result in results))
-        self.assertEqual(len(set(roots)), 2)
+        self.assertEqual(len(set(roots)), 3)
         self.assertTrue(all(not root.exists() for root in roots))
 
     def test_native_file_cases_receive_real_isolated_input_bytes(self):
