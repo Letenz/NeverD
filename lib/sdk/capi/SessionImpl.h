@@ -442,6 +442,9 @@ struct Session {
   /// neverd_session_set_load_options chose it.  Unset, the load reads the
   /// load options sidecar, else the file's own format.
   std::optional<LoaderChoice> RequestedLoad;
+  /// Whether the next load reads the image's static symbol table, as
+  /// neverd_session_set_symbol_table chose (BinaryImage::ReadsStaticSymbols).
+  bool ReadsStaticSymbols = true;
   /// The loader the loaded image was read with.
   LoaderChoice LoadedChoice;
 
