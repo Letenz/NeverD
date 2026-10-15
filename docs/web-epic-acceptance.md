@@ -158,9 +158,12 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   package checks at `5e126750ae75`, all without failures or skips. The same
   [qualification run](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
   passes eleven full producer and fifteen CEF/resource cases on macOS arm64,
-  also without failures or skips. Formal product
-  publication requires Windows and complete producer/resource qualification
-  at the same source commit and publishes the exact verified archive.
+  also without failures or skips. Both final gates and publication succeeded;
+  the [formal Windows Web product Release](https://github.com/NeverSight/NeverD/releases/tag/web-product-windows-x64-2026-10-15)
+  contains the exact qualified archive. Independent public downloads verified
+  its receipt, all asset checksums, all 139 ZIP members and the tagged source
+  tree. [Product details and SHA-256](web-windows-product.md) record this
+  Windows Server 2025 x64 delivery boundary.
 
 Erased TypeScript information, general JSC/V8 bytecode decompilation, universal
 framework support and fabricated live traffic are not missing acceptance work.

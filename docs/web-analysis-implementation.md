@@ -47,7 +47,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA, nexe 4.0.0-rc.7 EOF and pkg 5.8.1 VFS readers; measured Wails 2.11.0 / Go 1.25.7 Linux ELF and Windows PE x64 assets, raw/readable local export and native handoff; shared consumers | Tauri/custom CEF assets, Wails bridges, larger interactive analysis and broader host/producer qualification remain; other Node-family layouts stay unsupported |
-| P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
+| P8 C++ MCP, optional presentation, distribution | Native C++ MCP stdio profile qualified; Windows Server 2025 x64 CLI/SDK/worker/MCP product published with same-source gates and verified public downloads, recorded below | Broader host/distribution and optional presentation remain |
 | P9 full acceptance audit | [Issue-by-issue and fixed-sample audit](web-epic-acceptance.md) records qualified operations and explicit gaps | Required Tauri assets, broader source/config flow and remaining consumer boundaries prevent completion |
 
 Original bytes now use `posix-unlinked-spool-v1`: a private, immediately unlinked
@@ -4062,6 +4062,17 @@ resource cases at the same source commit; it reaudits and publishes the
 qualified ZIP without rebuilding or overwriting an existing Release. This same
 run passes all eleven producer and fifteen CEF/resource cases on macOS arm64,
 with zero failures or skips.
+
+The [formal Windows Web product Release](https://github.com/NeverSight/NeverD/releases/tag/web-product-windows-x64-2026-10-15)
+was published after both final gates succeeded at the same `5e126750ae75`
+source. Independent public downloads verified all eight asset checksums and
+matched the original qualified receipt exactly. The ZIP has 139 files and
+60,769,171 bytes, with SHA-256
+`4b0f0d2b082fce4762ec0b346fb408eec09c53e098dac03d69562d45435d4982`.
+Every ZIP member's size/hash matched the receipt; the tag points to the
+qualified commit, all 8,134 source archive files match that Git tree, and
+`REBUILD.md` matches its product documentation. Later development commits do
+not change this fixed release's qualification.
 
 The local owning rebuild at `b2523a9f0` passes 807 of 852 Web cases with 45
 explicit optional/omission skips and no failures. After the subsequent native

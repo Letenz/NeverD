@@ -57,6 +57,15 @@ preview. The product receipt binds every archive member and its exact bytes.
 The same run also passes all eleven full producer and fifteen CEF/resource
 cases on the named macOS arm64 reader, with zero failures or skips.
 
+The [2026-10-15 Windows Web product Release](https://github.com/NeverSight/NeverD/releases/tag/web-product-windows-x64-2026-10-15)
+publishes this exact qualified source and archive. Both final gates and the
+publication job succeeded. Independent public downloads matched all eight
+entries in `SHA256SUMS`; the ZIP's 139 files matched the qualified receipt,
+and all 8,134 source files and `REBUILD.md` matched the tagged Git tree.
+The archive is `neverd-web-windows-x64-5e126750ae75.zip`, 60,769,171 bytes,
+with SHA-256
+`4b0f0d2b082fce4762ec0b346fb408eec09c53e098dac03d69562d45435d4982`.
+
 The Windows x64 host qualification does not establish ARM64 host support,
 universal framework coverage or general bytecode semantics. Existing named
 input/profile limitations remain in the [support matrix](web-support-matrix.md).
