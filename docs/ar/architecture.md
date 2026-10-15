@@ -1702,3 +1702,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### استعلام صريح عن حالة kernel VA shadow
 
 يمتلك `KernelSystemInformation.cpp` اختيار الفئة وprevious-mode، ويمتلك `KernelModelVaShadow.cpp` نتيجة الأربعة بايتات. يشترك `KernelQueryBuffer.cpp` مع استعلام الإصدار في فحوص الكائنات والأذونات والأسماء الفيزيائية البديلة. تبقى الفئة 11 كما هي، ولا يمنح التصريح صلاحيات ذاكرة أو حماية.
+
+### التقاط محدود لسياق مستدعي النواة
+
+يمتلك `WindowsX64Context.def` التخطيط المشترك و`WindowsX64Context.cpp` جمع السجلات الصحيحة والمحددات المنطقية. تبقى سياسة FP الكاملة للمستخدم والمحدودة للنواة منفصلة. يستعير `DriverContextCapture.cpp` المعالج باستدعاءات متزامنة دون إعادة دخول؛ يمتلك `KernelModelContextCapture.cpp` الفحوص والرجوع الفعلي والآثار. تسبق كل الفحوص تحديث FLAGS الذري ثم كتابة RAM المتحقق منها. لا يوجد ضمان تراجع عن أخطاء كتابة عشوائية أو تغييرات تعيين متزامنة.

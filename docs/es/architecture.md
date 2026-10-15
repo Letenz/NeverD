@@ -1831,3 +1831,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Consulta explícita del aislamiento de direcciones del núcleo
 
 `KernelSystemInformation.cpp` gestiona clase y previous-mode; `KernelModelVaShadow.cpp` el resultado de cuatro bytes. `KernelQueryBuffer.cpp` comparte controles de objetos, permisos y alias físicos con las consultas de versión. La clase 11 no cambia; las declaraciones no conceden autoridad sobre memoria ni mitigaciones.
+
+### Captura acotada del contexto llamante del kernel
+
+`WindowsX64Context.def` centraliza el formato y `WindowsX64Context.cpp` la captura entera y selectores lógicos. FP completo de usuario y limitado del kernel siguen separados. `DriverContextCapture.cpp` presta la CPU con callbacks síncronos no reentrantes; `KernelModelContextCapture.cpp` posee validación, retorno real y efectos. Tras toda validación actualiza FLAGS atómicamente y escribe RAM prevalidada. No garantiza rollback de errores arbitrarios ni cambios concurrentes de mapeo.

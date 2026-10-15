@@ -12,6 +12,7 @@ EXPORTS
   ZwDeleteKey
   ZwClose
   RtlGetVersion
+  RtlCaptureContext
   RtlInitUnicodeString
   ExAllocatePool
   NtQuerySystemInformation

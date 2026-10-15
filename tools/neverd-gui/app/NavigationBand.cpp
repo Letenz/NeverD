@@ -12,6 +12,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QToolTip>
+#include <cmath>
 
 namespace neverd::gui {
 namespace {
@@ -140,7 +141,9 @@ void NavigationBand::paintEvent(QPaintEvent *) {
     const long double fraction =
         static_cast<long double>(space_.linearOf(*current_)) /
         std::max<Address>(1, space_.total());
-    const qreal x = band.left() + double(fraction) * band.width();
+    // On a whole pixel, so the two-pixel line keeps its full color instead
+    // of smearing across three pixels.
+    const qreal x = std::round(band.left() + double(fraction) * band.width());
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(QPen(theme.color(ColorRole::NavCursorOutline), 1));
     painter.setBrush(theme.color(ColorRole::NavCursor));

@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationSEHException.cpp
   COFF/COFFRegistrationSEHNullAccess.cpp
   COFF/COFFRegistrationSEHJump.cpp
+  COFF/COFFRegistrationSEHBoundCall.cpp
   COFF/COFFRegistrationSEHJumpArguments.cpp
   COFF/COFFRegistrationSEHJumpRuntime.cpp
   COFF/COFFRegistrationFrameStores.cpp

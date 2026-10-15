@@ -1708,3 +1708,7 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 ### 显式内核虚拟地址隔离状态查询
 
 `KernelSystemInformation.cpp` 统一负责信息类和 previous-mode 分派，`KernelModelVaShadow.cpp` 负责四字节结果。`KernelQueryBuffer.cpp` 与版本查询共用对象、权限和物理别名检查；类 11 保持原行为。声明解析不授予内存或缓解措施权限。
+
+### 有界内核调用者上下文捕获
+
+`WindowsX64Context.def` 统一 x64 布局和字段表，`WindowsX64Context.cpp` 共用整数采集和逻辑选择子；用户态完整 FP 与内核有限 FP 写入策略保持分离。`DriverContextCapture.cpp` 通过同步、不可重入回调借用当前 CPU，`KernelModelContextCapture.cpp` 负责缓冲区检查、实际返回地址和副作用。全部检查后先原子更新 FLAGS，再写入已验证的普通 RAM；不承诺任意写入失败或并发映射变化的回滚。三个后端共用此实现。

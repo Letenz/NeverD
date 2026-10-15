@@ -778,6 +778,29 @@ foreach(_driver_name driver_guard driver_guard_inactive
     VERBATIM)
   list(APPEND _driver_outputs "${_driver_image}")
 endforeach()
+set(_driver_context_image "${_driver_fixture_dir}/driver_context_capture.sys")
+set(_driver_context_object "${_driver_fixture_dir}/driver_context_capture.obj")
+set(_driver_context_assembly "${_driver_fixture_dir}/driver_context_capture_asm.obj")
+add_custom_command(OUTPUT "${_driver_context_image}" "${_driver_context_object}"
+    "${_driver_context_assembly}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -std=c11 -ffreestanding
+    -fno-stack-protector -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_context_capture.c"
+    -o "${_driver_context_object}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_context_capture.S"
+    -o "${_driver_context_assembly}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 /entry:DriverEntry
+    /subsystem:native /driver /dll /nodefaultlib /dynamicbase /timestamp:0
+    /base:0x180000000 "/out:${_driver_context_image}"
+    "${_driver_context_object}" "${_driver_context_assembly}"
+    "${_driver_import_lib}"
+  DEPENDS fixtures/driver_context_capture.c fixtures/driver_context_capture.S
+    "${_driver_import_lib}"
+  VERBATIM)
+list(APPEND _driver_outputs "${_driver_context_image}")
 add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 
 # Microsoft kit files are optional external validation inputs. Never assume a
@@ -1341,6 +1364,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverVersionQueryTests.cpp
   DriverPhysicalInventoryTests.cpp
   DriverVaShadowQueryTests.cpp
+  DriverContextCaptureTests.cpp
   DriverShadowStackTests.cpp
   DriverImageMemoryTests.cpp
   DriverSchedulingTests.cpp
@@ -1368,6 +1392,7 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   KernelVersionQueryTests.cpp
   KernelPhysicalInventoryTests.cpp
   KernelVaShadowQueryTests.cpp
+  KernelContextCaptureTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)
 target_include_directories(NeverDKernelSnapshotTests PRIVATE

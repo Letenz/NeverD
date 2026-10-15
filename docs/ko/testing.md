@@ -1264,7 +1264,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 86 driver environment checks = 5598`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1936,3 +1936,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ## 통합 후 소스 패치 검증
 
 Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스터와 메모리 변환, legacy/VEX 헬퍼 공유, 원래 SSE와의 비교, 마스크되지 않은 예외를 확인합니다. 수정된 LLVM 소스를 빌드해야 합니다. r4는 i386 PIC의 GOT 기준 주소를 잘못 인코딩할 수 있으며, 이제 잘못된 변위가 있으면 패치 출력을 거부합니다. Linux/ELF 전용 `SessionCAPITest` 10개는 macOS와 Windows에서 명시적으로 건너뜁니다. 감사는 정확한 이름, 소유자 라벨, 원래 이유를 확인하며 Linux 네이티브 실행을 계속 요구하고 건너뛴 항목을 통과로 집계하지 않습니다. 호스트에서 컴파일한 no-return 테스트는 Mach-O 심볼 표기와 복원된 인자 폭을 고려합니다.
+
+### 제한된 커널 호출자 문맥 캡처
+
+`KernelContextCaptureTests`는 전체 바이트, 가드, 스택, 플래그, 별칭, 겹침, 객체, 권한, IRQL과 주입 실패를 검사합니다. `DriverContextCaptureTests`는 실시간 GPR/FPCW/MXCSR/XMM, 재배치 진입/요청/해제, 가져오기/동적 호출과 의존성을 검사합니다. 12개 레코드 바이트 비교에는 명시적 400000 명령 테스트 예산을 쓰며 초기 FPCW 외에 독립 collector가 값을 바꿉니다. 각 네이티브 backend의 17개가 필수이고 Linux의 WHP 불가 상태는 명시적으로 건너뜁니다. 기존 x64/ARM64 사용자 테스트도 유지합니다.

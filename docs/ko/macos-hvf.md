@@ -18,7 +18,7 @@ macOS 11 이상과 하드웨어 가상화가 필요합니다. 다른 의존성�
 
 프레임워크 연결과 hypervisor 서명은 macOS 빌드 대상(`CMAKE_SYSTEM_NAME=Darwin`)으로 제한합니다. iOS 등 Apple 모바일 대상에는 이 프레임워크 의존성이나 권한을 추가하지 않습니다. NeverD 자체가 ISA가 일치하는 Mac에서 실행되면 iOS 게스트 프로필도 HVF를 사용할 수 있습니다.
 
-**프로세스 실행 파일**에 [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor)가 필요합니다. `libneverd.dylib`만 서명해서는 충분하지 않습니다. CMake는 `resources/macos/neverd-hypervisor.entitlements`로 CLI, worker, 프로세스 프로브, 테스트를 서명합니다. `NEVERD_HVF_SIGN_IDENTITY`의 기본값은 임시 서명용 `-`이며 기존 서명 ID도 지정할 수 있습니다. 패키징은 Mach-O 의존성 수정 후 권한을 다시 적용하고 검증합니다.
+**프로세스 실행 파일**에 [`com.apple.security.hypervisor`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.hypervisor)가 필요합니다. `libneverd.dylib`만 서명해서는 충분하지 않습니다. CMake는 링크 후 `resources/macos/neverd-hypervisor.entitlements`로 CLI, worker, 프로세스 프로브, 에뮬레이션 테스트를 서명합니다. `NEVERD_HVF_SIGN_IDENTITY`의 기본값은 임시 서명용 `-`이며 기존 서명 ID도 지정할 수 있습니다. 패키징은 Mach-O 의존성 수정 후 권한을 다시 적용하고 검증합니다.
 
 라이브러리를 포함하는 애플리케이션은 자체 실행 파일을 서명해야 합니다. NeverD는 설치된 Python을 다시 서명하지 않습니다. `cpu-capabilities --configuration=JSON --probe-host`는 실제 프로세스를 검사합니다. 독립 worker도 기본적으로 서명하며, HVF가 필요하지 않을 때만 `NEVERD_WORKER_SIGN_HVF=OFF`를 사용합니다.
 

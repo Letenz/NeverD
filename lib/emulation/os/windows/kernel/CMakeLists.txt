@@ -53,6 +53,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelVaShadowQuery.cpp
   KernelModelVaShadow.cpp
   KernelQueryBuffer.cpp
+  KernelModelContextCapture.cpp
   KernelModelVersion.cpp
   KernelUnpackState.cpp
   KernelCalls.cpp

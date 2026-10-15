@@ -97,6 +97,23 @@ bool hasRegistrationCallFrameABI(
       if (States && States->Complete && States->CallbackStatesComplete &&
           States->SEHJumpCapturesComplete &&
           States->SEHJumpResumptionsComplete) {
+        if (States->SEHBoundCallsComplete &&
+            States->RegistrationLifetimeComplete) {
+          if (!chargeCalleeWork(Work, States->SEHBoundCalls.size()))
+            return false;
+          const auto Bound =
+              llvm::find_if(States->SEHBoundCalls, [&](const auto &Call) {
+                return Call.Address == Op.Addr && Call.OpSeq == Op.Seq;
+              });
+          if (Bound != States->SEHBoundCalls.end()) {
+            if (Bound->TargetVA != Op.Inputs[0].Offset)
+              return false;
+            // The source solver checked the preserved helper's complete
+            // frame-observation closure for this exact borrowed argument set.
+            // Native lowering and installation replay the argument projection.
+            continue;
+          }
+        }
         if (!chargeCalleeWork(Work, States->SEHJumpCaptures.size() +
                                         States->SEHJumpResumptions.size()))
           return false;

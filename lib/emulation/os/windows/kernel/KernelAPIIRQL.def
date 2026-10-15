@@ -194,6 +194,8 @@ NEVERD_KERNEL_IRQL_API(MmUnmapLockedPages, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmProtectMdlSystemAddress, Dispatch)
 NEVERD_KERNEL_IRQL_API(RtlInitUnicodeString, Dispatch)
 NEVERD_KERNEL_IRQL_API(RtlGetVersion, Passive)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtlcapturecontext
+NEVERD_KERNEL_IRQL_API(RtlCaptureContext, Dispatch)
 
 // IoCompleteRequest is the public macro for the IofCompleteRequest export.
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iocompleterequest

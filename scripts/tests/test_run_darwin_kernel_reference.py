@@ -163,6 +163,39 @@ class DarwinKernelReferenceTests(unittest.TestCase):
         self.assertEqual(result[0]["error"], "native attribute setup failed")
         self.assertIn("private seed refused", result[0]["setup_error"])
 
+    def test_symbolic_ownership_cases_receive_distinct_owned_namespaces(self):
+        roots = []
+
+        def execute(command, **kwargs):
+            path = Path(command[2])
+            mode = command[1]
+            catalogue = path.parent.parent
+            roots.append(catalogue)
+            self.assertEqual(kwargs, {"capture_output": True, "timeout": 5})
+            self.assertEqual(path.name, "link")
+            self.assertEqual(path.parent.name, "dir")
+            self.assertEqual(catalogue.name, mode)
+            self.assertEqual(catalogue.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual({entry.name for entry in catalogue.iterdir()},
+                             {"data", "dir"})
+            self.assertEqual((catalogue / "data").read_bytes(), b"ab\0\xffef")
+            if mode == "symbolic-ownership-mutations":
+                self.assertEqual(path.readlink(), Path("../data"))
+                self.assertEqual(path.read_bytes(), b"ab\0\xffef")
+            else:
+                self.assertEqual(list(path.parent.iterdir()), [])
+            return subprocess.CompletedProcess(command, 58, b"W", b"")
+
+        with mock.patch.object(reference.subprocess, "run", side_effect=execute):
+            results = reference.execute_cases(Path("native"), [
+                ("symbolic-ownership-mutations", 58, b"W"),
+                ("created-symbolic-ownership", 58, b"W"),
+            ])
+        self.assertTrue(all(result["passed"] for result in results))
+        self.assertEqual(len(set(roots)), 2)
+        self.assertTrue(all(not root.exists() for root in roots))
+
     def test_native_file_cases_receive_real_isolated_input_bytes(self):
         paths = []
         def execute(command, **kwargs):

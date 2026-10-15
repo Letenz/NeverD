@@ -1677,3 +1677,7 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### 명시적 커널 VA 섀도 상태 조회
 
 `KernelSystemInformation.cpp`는 클래스와 previous-mode, `KernelModelVaShadow.cpp`는 4바이트 결과를 관리합니다. `KernelQueryBuffer.cpp`는 버전 조회와 객체, 권한, 물리 별칭 검사를 공유합니다. 클래스 11의 동작은 유지되며 선언은 메모리 또는 완화 권한을 부여하지 않습니다.
+
+### 제한된 커널 호출자 문맥 캡처
+
+`WindowsX64Context.def`는 공통 배치, `WindowsX64Context.cpp`는 정수 수집과 논리 선택자를 관리합니다. 사용자 전체 FP와 커널 제한 FP 정책은 분리됩니다. `DriverContextCapture.cpp`는 동기 비재진입 콜백으로 CPU를 빌리고 `KernelModelContextCapture.cpp`가 메모리 검사, 실제 반환 슬롯과 효과를 맡습니다. 모든 검사 후 FLAGS를 원자적으로 설정하고 검증된 RAM을 씁니다. 임의 쓰기 실패나 동시 매핑 변경의 롤백은 보장하지 않습니다.

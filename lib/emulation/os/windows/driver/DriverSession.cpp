@@ -21,6 +21,7 @@
 #include "../kernel/KernelModel.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverContextCapture.h"
 #include "DriverEntryABI.h"
 #include "DriverImage.h"
 #include "DriverObservation.h"
@@ -1300,7 +1301,13 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         Arguments.push_back(*Value);
         return *Value;
       };
-      auto Value = Kernel.call(*Pending, FixedArguments, ReadVariableArgument);
+      auto ReadContext = [&] { return collectDriverContext(CPU); };
+      auto SetContextFlags = [&](uint64_t Flags) {
+        return CPU.setReg(X64Register::FLAGS, Flags);
+      };
+      const KernelContextCapture Context{ReadContext, SetContextFlags};
+      auto Value =
+          Kernel.call(*Pending, FixedArguments, ReadVariableArgument, &Context);
       if (!Value) {
         std::optional<uint32_t> RaisedCode;
         auto OtherError = llvm::handleErrors(

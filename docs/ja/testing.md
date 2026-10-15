@@ -1274,7 +1274,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 86 driver environment checks = 5598`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1946,3 +1946,7 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 ## 統合後のソースパッチ検証
 
 Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジスタとメモリの変換、legacy/VEX 間のヘルパー共有、元の SSE との比較、マスクされていない例外を確認します。修正済み LLVM をソースからビルドしてください。r4 は i386 PIC の GOT アンカーを誤って符号化する場合があり、現在は変位が不正ならパッチの出力を拒否します。Linux/ELF 専用の `SessionCAPITest` 10 件は macOS と Windows で明示的なプラットフォームスキップを維持します。監査は正確な名前、所有者ラベル、元の理由を照合し、Linux ネイティブ実行を引き続き必須とし、スキップを成功に数えません。ホストでコンパイルする no-return テストは Mach-O のシンボル表記と復元された引数幅を考慮します。
+
+### 制限付きカーネル呼び出し元コンテキスト取得
+
+`KernelContextCaptureTests` は全バイト、ガード、スタック、フラグ、別名、重複、寿命、権限、IRQL、注入失敗を検証します。`DriverContextCaptureTests` はライブ GPR/FPCW/MXCSR/XMM と再配置された入口/要求/アンロード、静的/動的呼び出しと依存を確認します。12 記録のバイト比較には明示的な 400000 命令のテスト予算を使い、初期 FPCW に加え独立 collector で値を変更します。各ネイティブ backend で 17 件必須、Linux の WHP 不可用は明示的スキップ。既存 x64/ARM64 ユーザーテストも維持します。

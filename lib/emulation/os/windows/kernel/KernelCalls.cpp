@@ -44,7 +44,8 @@ std::optional<unsigned> KernelModel::argumentCount(const std::string &Name) {
 
 llvm::Expected<uint64_t> KernelModel::call(
     const std::string &Name, llvm::ArrayRef<uint64_t> A,
-    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument) {
+    llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+    const KernelContextCapture *Context) {
   const auto *API = lookupKernelAPI(Name);
   if (!API || A.size() != API->Arity)
     return modelError("unknown API or incorrect argument count: " + Name);
@@ -166,6 +167,8 @@ llvm::Expected<uint64_t> KernelModel::call(
         A, Kind == KernelAPIKind::ZwQuerySystemInformation);
   case KernelAPIKind::RtlGetVersion:
     return queryVersion(A[0]);
+  case KernelAPIKind::RtlCaptureContext:
+    return captureCallerContext(A[0], Context);
   case KernelAPIKind::PsGetCurrentProcessId:
     if (auto Context = executionProcessContext())
       return uint64_t(Context->CreatingProcessID);

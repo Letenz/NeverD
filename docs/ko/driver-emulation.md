@@ -321,6 +321,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 |-----|----------------------|
 | `RtlInitUnicodeString` | 길이가 제한된 NUL 종료 소스로 게스트 `UNICODE_STRING`을 구성함 |
 | `RtlGetVersion` | 명시적인 checked-x64 기본 버전 조회. 호스트 버전을 기본값으로 사용하지 않는다. `version_query`가 필요하며 크기 276은 전체 CSD를 0으로 초기화해야 한다. 0 크기 호환 동작은 별도로 활성화하며 실제 20바이트 버퍼가 필요하다. 확장 크기와 미선언 조회는 중단하며 환경 의존성을 유지한다. |
+| `RtlCaptureContext` | 제한된 커널 호출자 문맥 캡처; checked-x64, IRQL <= DISPATCH_LEVEL. |
 | `RtlCopyUnicodeString`, `RtlCompareUnicodeString`, `RtlEqualUnicodeString` | 길이가 지정된 UTF-16 복사와 대소문자를 구분하는 비교. 대소문자 무시 비교에는 Windows 대소문자 테이블이 필요하므로 중단함 |
 | `RtlInitAnsiString`, `RtlInitString` | NUL 종료 바이트 소스로 게스트 `STRING`을 구성함. 길이는 `0xFFFE`로 제한되고 `MaximumLength`는 종료 문자를 포함하며 레코드 패딩은 지워짐 |
 | `RtlAppendUnicodeToString`, `RtlAppendUnicodeStringToString` | 길이가 지정된 UTF-16 대상에 덧붙임. `STATUS_BUFFER_TOO_SMALL`이면 대상은 바뀌지 않고, 종료 문자는 여유 바이트가 2개 이상일 때만 쓰며, `0x7FFE` 단위를 넘는 NUL 종료 소스도 `STATUS_BUFFER_TOO_SMALL`을 반환함 |
@@ -642,3 +643,7 @@ PASSIVE_LEVEL에서 `MmGetPhysicalMemoryRanges`는 새 32바이트 비페이징 
 선택적 `kernel_va_shadow_query`는 클래스 `196`(`SystemKernelVaShadowInformation`)의 결과를 선언합니다: `{"version":1,"flags":0,"evidence":"fixture declaration"}`. 모든 필드가 필수이며 명시적 0은 유효합니다. 버전 1은 정의된 하위 14비트(`0x3fff`)만 허용합니다. 예약 비트, 잘못되거나 알 수 없는 필드, `checked-x64` 이외의 실행은 거부합니다. evidence는 출력 가능한 ASCII 1–256바이트입니다. 호스트 상태를 추론하거나 하드웨어 완화 기능을 구현하지 않습니다.
 
 PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STATUS_INFO_LENGTH_MISMATCH`를 반환하며, 4 이상이면 처음 4바이트만 갱신합니다. NULL이 아닌 `ReturnLength`에는 항상 4를 씁니다. ULONG 인수는 하위 32비트를 사용합니다. 결과는 읽기/쓰기 가능한 커널 RAM, 길이는 쓰기 가능한 RAM이어야 합니다. 두 범위 모두 고유한 물리 매핑과 유효한 객체 수명이 필요합니다. 성공 출력은 겹칠 수 없으며 모든 검사가 쓰기보다 먼저입니다. Nt는 알려진 KernelMode previous-mode를 요구하고 Zw는 호출자 문맥을 유지합니다. 보고서는 선언을 보존하며 미사용 선언도 미복원 환경 의존성을 유지합니다.
+
+## 제한된 커널 호출자 문맥 캡처
+
+`RtlCaptureContext`는 checked-x64 Unicorn/KVM/WHP의 가져오기/동적 호출에 같은 구현을 사용하며 IRQL <= DISPATCH_LEVEL을 요구합니다. 16바이트 정렬된 읽기/쓰기 가능한 1232바이트 커널 레코드의 `[48,72)`, `[120,262)`, `[280,284)`, `[416,672)`만 씁니다. 나머지와 x87 데이터/포인터, MXCSR mask는 보존합니다. ContextFlags=`0x10000f`, 호출자 RSP=진입 RSP+8, RIP는 실제 반환 슬롯입니다. 진입 RSP-8에 8바이트 플래그를 쓰고 RAX는 0 확장 EFLAGS, 산술 플래그는 ADD(진입 RSP-8,8) 결과입니다. DS/ES/FS/GS는 checked 논리 SS이며 호스트나 원시 전송 값이 아닙니다. 전체 레코드와 반환/임시 슬롯은 일반 커널 RAM, 객체 수명, 권한, 유일한 물리 매핑을 검사하며 겹침을 거부합니다. 진입 RSP의 16 나머지는 8입니다. 수집/검사 실패는 CPU/RAM을 바꾸지 않고 legacy는 거부합니다. 모든 Windows 구현을 뜻하지 않으며 덮어쓴 뒤에도 환경 의존성을 유지하여 UNPACK 복원이나 기호 전제를 허가하지 않습니다.
