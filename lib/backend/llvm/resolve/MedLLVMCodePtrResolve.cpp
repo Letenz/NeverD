@@ -14,6 +14,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/DataSymbolMetadata.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/loader/BinaryImage.h"
@@ -366,6 +367,22 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
     if (slotInRun(S))
       SlotsByVA[S] =
           PtrSlot{S, PtrSlotKind::Import, Binding.Name, Binding.Addend};
+  // A pointer variable the loader starts at an external function starts at
+  // that function here too: the file's bytes there hold no address.
+  for (const auto &[S, Name] : ExternalFunctionPointerSlots) {
+    if (!slotInRun(S))
+      continue;
+    if (!SlotsByVA.try_emplace(S, PtrSlot{S, PtrSlotKind::Import, Name, 0})
+             .second) {
+      if (!FatalCodePointerResolution && !FatalDataPointerResolution)
+        llvm::WithColor::error()
+            << "med_llvm_emitter: pointer storage at 0x" << llvm::utohexstr(S)
+            << " starts at external function " << Name
+            << " and has another relocation role; refusing pointer mirror\n";
+      FatalCodePointerResolution = true;
+      return nullptr;
+    }
+  }
   for (const RuntimeCallablePointerSlot &RuntimeSlot :
        Img->RuntimeCallablePointerSlots) {
     const uint64_t S = RuntimeSlot.SlotVA;
@@ -374,7 +391,8 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
     HasRuntimeCallableStorage = true;
     const bool IsCode = Img->CodePtrRelocSlots.count(S) != 0;
     const bool IsData = Img->DataPtrRelocSlots.count(S) != 0;
-    const bool IsImport = EffectiveImportStorageSlots.count(S) != 0;
+    const bool IsImport = EffectiveImportStorageSlots.count(S) != 0 ||
+                          ExternalFunctionPointerSlots.count(S) != 0;
     const unsigned StaticKinds = static_cast<unsigned>(IsCode) +
                                  static_cast<unsigned>(IsData) +
                                  static_cast<unsigned>(IsImport);
@@ -648,9 +666,12 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
         return nullptr;
       }
       if (!Symbol) {
+        // Only the symbol's address is known here; C reaches it through an
+        // opaque alias until a call proves its type.
         auto *Placeholder = new llvm::GlobalVariable(
             *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
             llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
+        data_symbol::mark(*Placeholder);
         ImportedSymbolPlaceholders[Name] = Placeholder;
         Symbol = Placeholder;
       }
@@ -708,6 +729,11 @@ MedLLVMEmitter::ptrTableUniqueSegment(const MedVar &V,
     for (uint64_t S : ConflictingImportStorageSlots)
       if (S >= Lo && S < Hi)
         return true;
+    for (const auto &[S, Name] : ExternalFunctionPointerSlots) {
+      (void)Name;
+      if (S >= Lo && S < Hi)
+        return true;
+    }
     for (const RuntimeCallablePointerSlot &Slot :
          Img->RuntimeCallablePointerSlots)
       if (Slot.SlotVA >= Lo && Slot.SlotVA < Hi)
@@ -1377,7 +1403,8 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
     const Segment *ZeroSeg = Img->getSegmentFor(0);
     const bool PointerSlotAtZero = Img->CodePtrRelocSlots.count(0) ||
                                    Img->DataPtrRelocSlots.count(0) ||
-                                   EffectiveImportStorageSlots.count(0);
+                                   EffectiveImportStorageSlots.count(0) ||
+                                   ExternalFunctionPointerSlots.count(0);
     if (ZeroSeg && !ZeroSeg->isExecutable() && PointerSlotAtZero) {
       Base = 0;
       HaveBase = true;
@@ -2787,8 +2814,9 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
   // INDIR_CALL whose constant input is the exact IAT storage address.  The
   // callable value is the slot's contents, never the address of the rebuilt
   // slot itself.  Admit only an exact callable storage identity: a loader-bound
-  // import, a static code-pointer relocation, or a load-configuration/runtime
-  // contract.  Perform the missing pointer-width load here; stub/range and
+  // import, a pointer variable the loader starts at an external function, a
+  // static code-pointer relocation, or a load-configuration/runtime contract.
+  // Perform the missing pointer-width load here; stub/range and
   // neighbouring-slot evidence cannot enter this lane.
   if (V.isConst()) {
     const va_t SlotVA = V.ConstVal;
@@ -2801,7 +2829,9 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
       FatalCodePointerResolution = true;
       return nullptr;
     }
-    const bool IsImportStorage = EffectiveImportStorageSlots.count(SlotVA) != 0;
+    const bool IsImportStorage =
+        EffectiveImportStorageSlots.count(SlotVA) != 0 ||
+        ExternalFunctionPointerSlots.count(SlotVA) != 0;
     const bool IsStaticCodeStorage = Img->CodePtrRelocSlots.count(SlotVA) != 0;
     const bool IsRuntimeCallableStorage =
         Img->hasRuntimeCallablePointerSlotAt(SlotVA) ||

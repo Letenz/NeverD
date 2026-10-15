@@ -34,6 +34,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
+#include "neverd/backend/DataSymbolMetadata.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -344,8 +345,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
             CallableGlobals.insert(Global);
   for (const auto &Global : Mod.globals())
     if (Global.isDeclaration() && !Global.getName().empty() &&
-        Global.getMetadata("neverd.data-symbol") &&
-        !CallableGlobals.count(&Global) &&
+        data_symbol::isMarked(Global) && !CallableGlobals.count(&Global) &&
         !parseNdDataSymbol(Global.getName()) &&
         !parseNdCodePtrSymbol(Global.getName()) &&
         !Global.getName().starts_with("__imp_") &&
