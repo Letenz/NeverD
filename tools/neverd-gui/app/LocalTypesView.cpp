@@ -118,6 +118,20 @@ constexpr char SpellingSetting[] = "localTypes/spelling";
 constexpr char HexSetting[] = "localTypes/hexOffsets";
 constexpr char DependenciesSetting[] = "localTypes/dependencies";
 constexpr char AssertsSetting[] = "localTypes/asserts";
+constexpr char OriginSetting[] = "localTypes/origin";
+
+/// Where the types the list shows come from: every origin, or one the
+/// worker names.
+struct OriginChoice {
+  const char *id;
+  const char *title;
+};
+constexpr OriginChoice Origins[] = {
+    {"", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "All types")},
+    {"pdb", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "From the PDB")},
+    {"header",
+     QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "From system headers")},
+    {"user", QT_TRANSLATE_NOOP("neverd::gui::LocalTypesView", "Declared")}};
 /// The narrowest each pane may get, as the extensions window keeps.
 constexpr int MinimumPaneWidth = 48;
 
@@ -204,6 +218,12 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   filter_->setClearButtonEnabled(true);
   filter_->installEventFilter(this);
   filterLayout->addWidget(filter_, 1);
+  origin_ = new QComboBox(filterRow);
+  origin_->setObjectName(QStringLiteral("localTypesOrigin"));
+  origin_->setToolTip(tr("Show the types of one origin"));
+  for (const auto &entry : Origins)
+    origin_->addItem(tr(entry.title), QString::fromLatin1(entry.id));
+  filterLayout->addWidget(origin_);
   const auto commandButton = [&](TypesCommand command, const char *iconName,
                                  const QString &text) {
     auto *button = new QToolButton(filterRow);
@@ -369,6 +389,14 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   asserts_->setChecked(settings.value(AssertsSetting, false).toBool());
   highlighter_->setLanguage(language());
 
+  origin_->setCurrentIndex(std::max(
+      origin_->findData(settings.value(OriginSetting, QString()).toString()),
+      0));
+  connect(origin_, &QComboBox::currentIndexChanged, this, [this] {
+    QSettings().setValue(OriginSetting, origin_->currentData().toString());
+    if (!lastList_.isEmpty())
+      listed(lastList_);
+  });
   connect(filter_, &QLineEdit::textChanged, this, [this](const QString &text) {
     proxy_->setFilterFixedString(text);
     updateActions();
@@ -490,6 +518,7 @@ QStringList LocalTypesView::selectedNames() const {
 void LocalTypesView::reload() {
   const quint64 serial = ++listSerial_;
   if (!session_.loaded() || !session_.listsLocalTypes()) {
+    lastList_ = {};
     model_->removeRows(0, model_->rowCount());
     names_.clear();
     highlighter_->setTypeNames(names_);
@@ -518,14 +547,24 @@ void LocalTypesView::reload() {
 }
 
 void LocalTypesView::listed(const QJsonObject &payload) {
+  lastList_ = payload;
   const QString keep = current_;
   model_->removeRows(0, model_->rowCount());
   names_.clear();
+  const QString origin = origin_->currentData().toString();
   const QJsonArray types = payload.value("types").toArray();
+  qint64 fromPdb = 0, fromHeaders = 0, declared = 0;
   for (const QJsonValue &value : types) {
     const QJsonObject type = value.toObject();
     const QString name = type.value("name").toString();
+    // Every name stays known: a member's type opens whatever its origin.
     names_.insert(name);
+    const QString from = type.value("origin").toString();
+    fromPdb += from == QLatin1String("pdb");
+    fromHeaders += from == QLatin1String("header");
+    declared += from == QLatin1String("user");
+    if (!origin.isEmpty() && from != origin)
+      continue;
     QList<QStandardItem *> row;
     const auto cell = [&](const QString &text, const QVariant &sort) {
       auto *item = new QStandardItem(text);
@@ -564,10 +603,20 @@ void LocalTypesView::listed(const QJsonObject &payload) {
                           ? tr("The PDB defines no types.")
                           : tr("No local types: this program has no PDB "
                                "with types."));
-  else
-    summary_->setText(tr("Types: %1 · PDB · %2")
-                          .arg(QLocale().toString(qlonglong(types.size())),
-                               payload.value("dataModel").toString()));
+  else {
+    // How many, from where: the program's PDB, the system's headers, the
+    // user's declarations.
+    QStringList parts{
+        tr("Types: %1").arg(QLocale().toString(qlonglong(types.size())))};
+    if (fromPdb)
+      parts << tr("%n from the PDB", "", int(fromPdb));
+    if (fromHeaders)
+      parts << tr("%n from system headers", "", int(fromHeaders));
+    if (declared)
+      parts << tr("%n declared", "", int(declared));
+    parts << payload.value("dataModel").toString();
+    summary_->setText(parts.join(QStringLiteral(" · ")));
+  }
   const QJsonArray mismatches =
       payload.value("stats").toObject().value("nestingMismatches").toArray();
   if (!mismatches.isEmpty())
@@ -590,9 +639,15 @@ void LocalTypesView::listed(const QJsonObject &payload) {
   // anew; else the first.
   current_.clear();
   const QString next = std::exchange(showNext_, QString());
+  // The type shown before stays only where the origin shown holds it.
+  const bool listsKeep =
+      !keep.isEmpty() && !model_
+                              ->match(model_->index(0, NameColumn), NameRole,
+                                      keep, 1, Qt::MatchExactly)
+                              .isEmpty();
   if (!next.isEmpty() && names_.contains(next))
     open(next, !keep.isEmpty());
-  else if (!keep.isEmpty() && names_.contains(keep))
+  else if (listsKeep)
     open(keep, false);
   else if (proxy_->rowCount() > 0)
     list_->setCurrentIndex(proxy_->index(0, NameColumn));
@@ -621,8 +676,14 @@ void LocalTypesView::selectionChanged() {
 void LocalTypesView::showType(const QString &name) { open(name, true); }
 
 void LocalTypesView::open(const QString &name, bool remember) {
-  const auto rows = model_->match(model_->index(0, NameColumn), NameRole, name,
-                                  1, Qt::MatchExactly);
+  auto rows = model_->match(model_->index(0, NameColumn), NameRole, name, 1,
+                            Qt::MatchExactly);
+  // A type of another origin than the one shown shows every origin.
+  if (rows.isEmpty() && names_.contains(name) && origin_->currentIndex()) {
+    origin_->setCurrentIndex(0);
+    rows = model_->match(model_->index(0, NameColumn), NameRole, name, 1,
+                         Qt::MatchExactly);
+  }
   if (rows.isEmpty())
     return;
   // Show the type even where the filter hides it.

@@ -89,6 +89,10 @@ renamedNames(const TypeLibrary &Library, Language Lang);
 /// parameters' types, through pointers, arrays and records in place.
 std::vector<std::string> mentionedTypeNames(const LocalType &Type);
 
+/// The names of the types \p Type holds by value, whose layouts its own
+/// depends on: through arrays and records in place, not pointers.
+std::vector<std::string> valueDependencyNames(const LocalType &Type);
+
 } // namespace neverd::types
 
 #endif // NEVERD_TYPES_TYPERENDER_H

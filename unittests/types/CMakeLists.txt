@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDTypesTests
+  HeaderLibraryTests.cpp
   LocalTypesTests.cpp
   PDBTypeImportTests.cpp
   TypeJSONTests.cpp

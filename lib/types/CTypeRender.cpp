@@ -153,11 +153,16 @@ std::string CWriter::declare(const TypeExpr &Type,
   case TypeExprKind::Named: {
     std::string Base = Qualifiers;
     if (!Cpp) {
-      if (Type.NamedKind == TypeKind::Struct)
+      // The tag the library's type takes now: a type of another kind may
+      // have replaced the one the reference was read with, as a program's
+      // own union does a header's structure of the name.
+      const LocalType *Named = Library.find(Type.Name);
+      const TypeKind Kind = Named ? Named->Kind : Type.NamedKind;
+      if (Kind == TypeKind::Struct)
         Base += "struct ";
-      else if (Type.NamedKind == TypeKind::Union)
+      else if (Kind == TypeKind::Union)
         Base += "union ";
-      else if (Type.NamedKind == TypeKind::Enum)
+      else if (Kind == TypeKind::Enum)
         Base += "enum ";
     }
     return spaced(Base + Names.type(Type.Name));

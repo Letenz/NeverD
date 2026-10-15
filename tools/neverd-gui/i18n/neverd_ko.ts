@@ -3521,10 +3521,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>로컬 형식이 없습니다. 이 프로그램에는 형식이 있는 PDB가 없습니다.</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>형식: %1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>PDB에 나열된 대로 배치되지 않는 형식: %1</translation>
     </message>
@@ -3701,6 +3697,48 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>창이 닫혔습니다</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>모든 형식</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>PDB에서</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>시스템 헤더에서</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>직접 선언한 형식</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>한 출처의 형식만 표시</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>형식: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>PDB에서 %n개</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>시스템 헤더에서 %n개</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>직접 선언 %n개</numerusform>
+        </translation>
     </message>
 </context>
 <context>

@@ -122,6 +122,23 @@ is left out and reported (`declarationProblems`), never silently dropped.
 The worker writes the declarations to `<input>.neverd-types.json` at once;
 they do not join undo history.
 
+Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
+the system's types and prototypes that its debug information lacks: the
+Windows kernel's PDB names records, but no typedefs and no prototypes.
+`scripts/generate_windows_kernel_types.py` renders what `<ntifs.h>` declares,
+from mingw-w64's DDK headers, into `lib/types/headers/WindowsKernelX64.h`.
+The build embeds the file, and `headerLibrary` reads it once. The C API joins
+a library to an image the table names (an x64 PE of the native subsystem)
+after the program's PDB and before the user's declarations:
+- a header type joins only where the program has no type of its name;
+- a typedef names the program's type, as C binds it;
+- a header record laid out with a type the program sizes otherwise is left
+  out and reported (`conflicts`).
+
+`neverd_types_convert` and `neverd types --data-model` read and render
+declarations without a program, which is how the generator builds the
+library.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and

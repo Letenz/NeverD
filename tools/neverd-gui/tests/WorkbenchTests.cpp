@@ -4004,6 +4004,20 @@ private slots:
     QTRY_COMPARE(list->model()->rowCount(), 4);
     QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
 
+    // The list shows one origin when asked.
+    auto *origin =
+        types->findChild<QComboBox *>(QStringLiteral("localTypesOrigin"));
+    QVERIFY(origin);
+    origin->setCurrentIndex(origin->findData(QStringLiteral("user")));
+    QTRY_COMPARE(list->model()->rowCount(), 1);
+    origin->setCurrentIndex(origin->findData(QStringLiteral("pdb")));
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+    // A type of another origin opens all of them again.
+    types->showType(QStringLiteral("OWNER"));
+    QTRY_COMPARE(types->currentType(), QStringLiteral("OWNER"));
+    QCOMPARE(origin->currentIndex(), 0);
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+
     // Ctrl+E edits it, though the main window jumps to an entry point by
     // the same key.
     list->setFocus();

@@ -39,6 +39,52 @@ types::DataModel dataModelOf(const BinaryImage &Img) {
                                           : types::DataModel::LP64;
 }
 
+/// The PE subsystem of the session's image, read from its file's optional
+/// header; none for an image that is no PE file on disk.
+std::optional<uint16_t> peSubsystem(const Session &S) {
+  if (S.Img.Format != BinaryFormat::COFF || S.FilePath.empty())
+    return std::nullopt;
+  auto Head = llvm::MemoryBuffer::getFileSlice(pathToUTF8(S.FilePath), 4096, 0);
+  if (!Head)
+    return std::nullopt;
+  const llvm::StringRef Bytes = (*Head)->getBuffer();
+  const auto read = [&](size_t At, size_t Size) -> std::optional<uint32_t> {
+    if (At + Size > Bytes.size())
+      return std::nullopt;
+    uint32_t Value = 0;
+    for (size_t I = 0; I < Size; ++I)
+      Value |= uint32_t(uint8_t(Bytes[At + I])) << (8 * I);
+    return Value;
+  };
+  // MZ, then at e_lfanew PE\0\0, the file header and the optional header,
+  // whose Subsystem both PE32 and PE32+ keep 68 bytes in.
+  const std::optional<uint32_t> Lfanew = read(0x3C, 4);
+  if (!Bytes.starts_with("MZ") || !Lfanew || read(*Lfanew, 4) != 0x4550)
+    return std::nullopt;
+  const std::optional<uint32_t> Subsystem = read(*Lfanew + 4 + 20 + 68, 2);
+  return Subsystem ? std::optional<uint16_t>(uint16_t(*Subsystem))
+                   : std::nullopt;
+}
+
+/// Joins the header libraries that describe the session's image
+/// (HeaderLibraries.def) to its types, after the program's own.
+void joinHeaders(Session &S) {
+  const std::optional<uint16_t> Subsystem = peSubsystem(S);
+  const auto join = [&](types::HeaderLibrary Library) {
+    Session::JoinedHeaders Joined{Library, {}, {}};
+    if (const types::TypeLibrary *Headers =
+            types::headerLibrary(Library, &Joined.Error))
+      Joined.Merge = types::mergeHeaderTypes(*S.LocalTypes, *Headers);
+    S.LocalTypeHeaders.push_back(std::move(Joined));
+  };
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, Form, Machine, Sub)       \
+  if (S.Img.Format == BinaryFormat::Form && S.Img.Arch == Arch::Machine &&     \
+      Subsystem == Sub &&                                                      \
+      S.LocalTypes->dataModel() == types::DataModel::Model)                    \
+    join(types::HeaderLibrary::Id);
+#include "neverd/types/HeaderLibraries.def"
+}
+
 /// Applies \p Declaration to \p Library: the types its source declares, or
 /// the removal of those it names.
 types::ParseResult apply(const Session::TypeDeclaration &Declaration,
@@ -146,6 +192,7 @@ types::TypeLibrary *localTypes(Session &S) {
   if (S.DbgKind != DebugInfoKind::PDB || !S.Dbg) {
     S.LocalTypes = std::make_unique<types::TypeLibrary>(dataModelOf(S.Img));
     S.LocalTypesSource = "none";
+    joinHeaders(S);
     redeclare(S);
     return S.LocalTypes.get();
   }
@@ -178,6 +225,7 @@ types::TypeLibrary *localTypes(Session &S) {
   S.LocalTypes = std::move(Library);
   S.LocalTypeStats = std::move(Stats);
   S.LocalTypesSource = "pdb";
+  joinHeaders(S);
   redeclare(S);
   return S.LocalTypes.get();
 }
@@ -369,6 +417,25 @@ const char *neverd_local_types_json(neverd_session_t Sess,
                           {"declaredOnly", S->LocalTypeStats.DeclaredOnly},
                           {"nestingMismatches", std::move(Mismatches)}}},
       {"types", std::move(Types)}};
+  if (!S->LocalTypeHeaders.empty()) {
+    llvm::json::Array Headers;
+    for (const Session::JoinedHeaders &Joined : S->LocalTypeHeaders) {
+      llvm::json::Object Entry{
+          {"name", types::headerLibraryName(Joined.Library)}};
+      if (!Joined.Error.empty()) {
+        Entry["error"] = jsonSafeText(Joined.Error);
+      } else {
+        llvm::json::Array Conflicts;
+        for (const std::string &Name : Joined.Merge.Conflicts)
+          Conflicts.push_back(jsonSafeText(Name));
+        Entry["types"] = static_cast<int64_t>(Joined.Merge.Types);
+        Entry["prototypes"] = static_cast<int64_t>(Joined.Merge.Prototypes);
+        Entry["conflicts"] = std::move(Conflicts);
+      }
+      Headers.push_back(std::move(Entry));
+    }
+    Result["headers"] = std::move(Headers);
+  }
   if (!S->DeclarationProblems.empty()) {
     llvm::json::Array Problems;
     for (const auto &[Index, Problem] : S->DeclarationProblems)
