@@ -1546,8 +1546,9 @@ TEST(KernelRuntimeExecution, CompiledDriverDrainsWithRundownProtection) {
   EXPECT_EQ(*Result->NTStatus, 0u);
   ASSERT_EQ(Result->Messages.size(), 1u);
   // Two protected accesses succeed, the acquire after the wait fails because
-  // the object ran down, and a reinitialized object protects again.
-  EXPECT_EQ(Result->Messages[0], "rundown 1 1 0 1");
+  // the object ran down, a reinitialized object protects again, and a counted
+  // acquisition of three holds six in the word until its matching release.
+  EXPECT_EQ(Result->Messages[0], "rundown 1 1 0 1 1 held 6 left 0");
   std::map<std::string, unsigned> Calls;
   for (const auto &Call : Result->Calls)
     ++Calls[Call.Name];
@@ -1555,6 +1556,8 @@ TEST(KernelRuntimeExecution, CompiledDriverDrainsWithRundownProtection) {
   EXPECT_EQ(Calls["ExReleaseRundownProtection"], 3u);
   EXPECT_EQ(Calls["ExWaitForRundownProtectionRelease"], 1u);
   EXPECT_EQ(Calls["ExReInitializeRundownProtection"], 1u);
+  EXPECT_EQ(Calls["ExAcquireRundownProtectionEx"], 1u);
+  EXPECT_EQ(Calls["ExReleaseRundownProtectionEx"], 1u);
 }
 
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {

@@ -55,8 +55,17 @@ KernelModel::initializeRundownProtection(uint64_t RunRef) {
   return 0;
 }
 
-llvm::Expected<uint64_t>
-KernelModel::acquireRundownProtection(uint64_t RunRef) {
+namespace {
+// Each acquisition counts twice in the word. The counted forms double their
+// ULONG in 32 bits (add edx, edx / lea r11d, [rdx+rdx]) before the 64-bit
+// update, so the step wraps at 2^32 exactly as the kernel's does.
+uint64_t rundownStep(uint32_t Units) {
+  return static_cast<uint32_t>(Units * 2u);
+}
+} // namespace
+
+llvm::Expected<uint64_t> KernelModel::acquireRundownProtection(uint64_t RunRef,
+                                                               uint32_t Units) {
   auto Count = readRundownCount(RunRef);
   if (!Count)
     return Count.takeError();
@@ -64,13 +73,13 @@ KernelModel::acquireRundownProtection(uint64_t RunRef) {
   // nothing.
   if (*Count & 1)
     return 0;
-  if (auto E = Memory.writeInteger(RunRef, *Count + 2, 8))
+  if (auto E = Memory.writeInteger(RunRef, *Count + rundownStep(Units), 8))
     return E;
   return 1;
 }
 
-llvm::Expected<uint64_t>
-KernelModel::releaseRundownProtection(uint64_t RunRef) {
+llvm::Expected<uint64_t> KernelModel::releaseRundownProtection(uint64_t RunRef,
+                                                               uint32_t Units) {
   auto Count = readRundownCount(RunRef);
   if (!Count)
     return Count.takeError();
@@ -80,10 +89,11 @@ KernelModel::releaseRundownProtection(uint64_t RunRef) {
   if (*Count & 1)
     return rundownError("cannot release run-down protection once run-down has "
                         "started on this cooperative processor");
-  if (*Count < 2)
+  const uint64_t Step = rundownStep(Units);
+  if (*Count < Step)
     return rundownError("run-down protection release without a matching "
                         "acquisition");
-  if (auto E = Memory.writeInteger(RunRef, *Count - 2, 8))
+  if (auto E = Memory.writeInteger(RunRef, *Count - Step, 8))
     return E;
   return 0;
 }

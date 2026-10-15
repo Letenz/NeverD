@@ -157,3 +157,5 @@ EXPORTS
   ExReleaseRundownProtection
   ExWaitForRundownProtectionRelease
   ExRundownCompleted
+  ExAcquireRundownProtectionEx
+  ExReleaseRundownProtectionEx
