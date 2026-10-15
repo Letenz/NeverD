@@ -163,6 +163,13 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
       return Error;
     Result.Calls.insert(Call);
   }
+  std::map<va_t, const llvm::AllocaInst *> Buffers;
+  for (const auto &[Address, Capture] : Captures)
+    Buffers.emplace(Address, Capture.Buffer);
+  auto Bound = bindSEHBoundCalls(Source, Parent, Frame, Buffers);
+  if (!Bound)
+    return Bound.takeError();
+  Result.Calls.insert(Bound->begin(), Bound->end());
   for (const auto &[Address, Capture] : Captures) {
     const auto *Call = Calls.at(Address);
     const auto &Receipt = *Expected->at(Address).Capture;

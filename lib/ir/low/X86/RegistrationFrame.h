@@ -75,6 +75,17 @@ struct FrameValue {
   /// authenticated resume consumes it; source memory/arithmetic gets no
   /// establisher coordinate from this identity.
   std::optional<va_t> JumpCapture;
+  /// ExceptionCode/ExceptionFlags may contain arbitrary address bits, so they
+  /// retain alias taint. Their scalar value is independent of regenerated
+  /// frame placement. Mixing with any other frame provenance drops this fact.
+  bool FrameOnlyFromSEHScalar = false;
+
+  static FrameValue taint(bool MayBeFrame, bool SEHScalar = false) {
+    FrameValue Result;
+    Result.MayBeFrame = MayBeFrame;
+    Result.FrameOnlyFromSEHScalar = MayBeFrame && SEHScalar;
+    return Result;
+  }
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
   static FrameValue entryFrame(int32_t Offset) {

@@ -114,6 +114,7 @@ TEST(RegistrationConditionalFrame, XCPT4HelperChecksItsBoundIncomingCounter) {
       EXPECT_TRUE(States.CallbackStatesComplete);
       EXPECT_TRUE(States.RegistrationLifetimeComplete);
       EXPECT_TRUE(Inputs.Complete);
+      EXPECT_TRUE(Inputs.NativeFramePrivate);
       EXPECT_EQ(Inputs.Reads,
                 (std::set<std::pair<int32_t, int32_t>>{{256, 260}}));
       EXPECT_EQ(Inputs.Writes,
@@ -176,6 +177,8 @@ TEST(RegistrationConditionalFrame,
     const auto Effect = proveBoundSEHCallee(*Image, Call, Parent, Work);
     if (Mutation == 0) {
       ASSERT_TRUE(Effect);
+      ASSERT_TRUE(Effect->NativeCall);
+      EXPECT_EQ(Effect->NativeCall->Arguments.size(), 2u);
       EXPECT_EQ(Effect->StackPopBytes, 0u);
       ASSERT_EQ(Effect->Reads.size(), 1u);
       EXPECT_EQ(Effect->Reads[0].Begin, -28);
@@ -245,6 +248,14 @@ TEST(RegistrationConditionalFrame, OriginalHelperResumesItsBorrowedCapture) {
     if (!Mutation) {
       ASSERT_TRUE(Effect);
       EXPECT_FALSE(Effect->HasOrdinaryReturn);
+      ASSERT_TRUE(Effect->NativeCall);
+      EXPECT_EQ(Effect->NativeCall->TargetVA, 0x4011a0u);
+      EXPECT_FALSE(Effect->NativeCall->HasOrdinaryReturn);
+      using Kind = RegistrationSEHBoundArgument::Kind;
+      EXPECT_EQ(
+          Effect->NativeCall->Arguments,
+          (std::vector<RegistrationSEHBoundArgument>{
+              {Kind::JumpBuffer, 0, Capture.Call}, {Kind::Object, -28, 0}}));
       ASSERT_EQ(Effect->JumpResumes.size(), 1u);
       EXPECT_EQ(Effect->JumpResumes.front().Address, 0x40122cu);
       EXPECT_EQ(Effect->JumpResumes.front().CaptureCall, Capture.Call);

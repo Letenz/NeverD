@@ -7,6 +7,7 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_MEDLLVMREGISTRATIONSEHJUMP_H
 #define NEVERD_BACKEND_LLVM_X86_MEDLLVMREGISTRATIONSEHJUMP_H
 
+#include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
 #include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 
 #include <vector>
@@ -15,14 +16,26 @@ namespace llvm {
 class AllocaInst;
 class CallInst;
 class Function;
+class Instruction;
 class Value;
 } // namespace llvm
 
 namespace neverd::x86_registration {
 struct SEHJumpPlan {
   std::map<llvm::CallInst *, X86RegistrationSEHJumpCall> Calls;
+  std::map<llvm::CallInst *, X86RegistrationSEHBoundCall> BoundCalls;
   std::vector<llvm::AllocaInst *> Registers;
+  std::vector<llvm::Instruction *> DiscardedResults;
 };
+
+bool prepareSEHBoundCall(const llvm::CallInst &Call,
+                         const RegistrationSEHBoundCall &Source,
+                         const llvm::AllocaInst &Frame, uint64_t EntrySP);
+
+std::map<llvm::CallInst *, llvm::CallInst *>
+emitSEHBoundCalls(const SEHJumpPlan &Plan, llvm::AllocaInst &Frame,
+                  uint64_t EntrySP,
+                  const std::map<va_t, llvm::AllocaInst *> &Buffers);
 
 struct SEHJumpCallbackCall {
   llvm::CallInst *Call = nullptr;

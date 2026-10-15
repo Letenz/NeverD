@@ -7,11 +7,13 @@
 #include "MedLLVMRegistrationSEHJump.h"
 
 #include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationSEHProof.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
@@ -57,7 +59,8 @@ void createSEHJumpUnwindBridge(llvm::Module &Module, llvm::Function &Runtime) {
 
 void MedLLVMEmitter::declareX86RegistrationJumpRuntimes(const MedFunc &Func) {
   const auto Calls = getX86RegistrationSEHJumpCalls(Func);
-  if (!Calls || Calls->empty())
+  const auto Bound = getX86RegistrationSEHBoundCalls(Func);
+  if (!Calls || !Bound || (Calls->empty() && Bound->empty()))
     return;
   auto *I32 = llvm::Type::getInt32Ty(*Ctx);
   auto *Void = llvm::Type::getVoidTy(*Ctx);
@@ -85,6 +88,10 @@ void MedLLVMEmitter::declareX86RegistrationJumpRuntimes(const MedFunc &Func) {
     FuncNames[Address] = Name.str();
     return Runtime;
   };
+  for (const auto &[Address, Call] : *Bound)
+    Declare(Call.Source->TargetVA,
+            "__nd_seh_bound_" + llvm::utohexstr(Call.Source->TargetVA),
+            getX86RegistrationSEHBoundType(*Call.Source, *Ctx));
   for (const auto &[Address, Call] : *Calls) {
     if (Call.Resume)
       Declare(Call.Operation->Inputs[0].ConstVal, "_longjmpex",
@@ -108,12 +115,19 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
                 llvm::AllocaInst &Frame, uint64_t EntrySP,
                 const std::map<const llvm::CallInst *, va_t> &Calls) {
   const auto Expected = getX86RegistrationSEHJumpCalls(Source);
-  if (!Expected)
+  const auto Bound = getX86RegistrationSEHBoundCalls(Source);
+  if (!Expected || !Bound)
     return std::nullopt;
   SEHJumpPlan Result;
-  if (Expected->empty())
-    return Result;
   for (const auto &[Call, Address] : Calls) {
+    if (const auto Found = Bound->find(Address); Found != Bound->end()) {
+      if (!prepareSEHBoundCall(*Call, *Found->second.Source, Frame, EntrySP) ||
+          !collectDiscardedRegistrationResult(
+              *const_cast<llvm::CallInst *>(Call), Result.DiscardedResults))
+        return std::nullopt;
+      Result.BoundCalls.emplace(const_cast<llvm::CallInst *>(Call),
+                                Found->second);
+    }
     const auto Found = Expected->find(Address);
     if (Found == Expected->end())
       continue;
@@ -141,8 +155,11 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
       return std::nullopt;
     Result.Calls.emplace(const_cast<llvm::CallInst *>(Call), SourceCall);
   }
-  if (Result.Calls.size() != Expected->size())
+  if (Result.Calls.size() != Expected->size() ||
+      Result.BoundCalls.size() != Bound->size())
     return std::nullopt;
+  if (Expected->empty())
+    return Result;
   size_t Work = 0;
   for (auto &Block : Parent)
     for (auto &I : Block) {
@@ -267,6 +284,8 @@ emitSEHJumps(const SEHJumpPlan &Plan, llvm::Function &Parent,
     Replacement->copyMetadata(*Call);
     Result.emplace(Call, Replacement);
   }
+  auto Bound = emitSEHBoundCalls(Plan, Frame, EntrySP, Buffers);
+  Result.insert(Bound.begin(), Bound.end());
   return Result;
 }
 

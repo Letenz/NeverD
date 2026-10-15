@@ -1,0 +1,46 @@
+//===- RegistrationConditionalNative.cpp - Preserved SEH helper ABI ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+/// \file
+/// Check physical frame observations in preserved x86 SEH helpers.
+
+#include "RegistrationConditionalFrame.h"
+#include "RegistrationFrameEffects.h"
+
+#include "neverd/ir/low/LowIR.h"
+#include "neverd/lift/X86Regs.h"
+
+namespace neverd::registration_state {
+
+void checkConditionalNativeFrame(const FrameState &State, const LowOp &Op,
+                                 const FrameTransfer &Transfer,
+                                 ConditionalFrame &Inputs) {
+  if (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op))
+    Inputs.NativeFramePrivate = false;
+  // The source proof already bounds every dereference, write and nested call.
+  // A relocated caller additionally needs scalar observations independent of
+  // physical stack placement and incoming nonvolatile register values.
+  if (Op.Opcode != NdOp::COND_BR && Op.Opcode != NdOp::INDIR_BR &&
+      Op.Opcode != NdOp::RETURN && Op.Opcode != NdOp::INTRINSIC)
+    return;
+  // The native caller must independently prove this invocation's EAX result
+  // unobserved. Internal finally returns retain provenance in the state solver;
+  // only a search filter exposes its result directly to the runtime.
+  if (Op.Opcode == NdOp::RETURN && !State.SEHFilterEntry)
+    return;
+  for (unsigned I = 0; I != Op.NumInputs; ++I) {
+    const auto Value = Transfer.read(Op.Inputs[I]);
+    if (Value.MayBeFrame && !Value.FrameOnlyFromSEHScalar)
+      Inputs.NativeFramePrivate = false;
+  }
+  if (Op.Opcode == NdOp::RETURN) {
+    const auto &Value = State.Registers[x86reg::RAX / x86reg::GeneralRegStride];
+    if (Value.MayBeFrame && !Value.FrameOnlyFromSEHScalar)
+      Inputs.NativeFramePrivate = false;
+  }
+}
+
+} // namespace neverd::registration_state
