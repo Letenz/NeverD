@@ -10,6 +10,22 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelDataExecution."
     "OriginalDataImportsShareIdentityAcrossLookupAndUnload/"
     "{backend}LegacyPreferred")

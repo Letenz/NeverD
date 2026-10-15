@@ -6713,3 +6713,5 @@ real cooperative thread creation/join and libc DIR/FILE reads. Run
 Android and process-public test targets, then the four OS/session suites for
 shared-owner changes. `test_android_live_proc_and_maintained_stat` checks Python
 against the built SDK; unavailable backends are skips, not successful coverage.
+
+`KernelNamespaceTests.cpp` checks typed names, root-relative and case-sensitive lookup, buffer sizing/copy order, captured link tails, permissions, process scope, IRQL, failed-output reference safety and held deletion. `DriverNamespaceTests.cpp` runs original `driver_namespace.c` on available Unicorn/KVM/WHP/HVF, both contracts, both load addresses and cooperative/17-instruction scheduling. `NativeDriverTests.def` requires native outcomes. Unavailable backends and unsupported information/security classes remain coverage gaps.

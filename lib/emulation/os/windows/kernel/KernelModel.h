@@ -904,12 +904,16 @@ private:
     Event,
     Semaphore,
     Job,
-    Token
+    Token,
+    Device,
+    Directory,
+    SymbolicLink
   };
   struct ObjectReferences {
     ObjectKind Kind;
     size_t Pointers = 0;
     size_t Handles = 0;
+    std::string Name;
   };
   struct ObjectHandle {
     uint64_t Object;
@@ -954,6 +958,30 @@ private:
   llvm::Expected<uint64_t> objectType(uint64_t Object);
   llvm::Expected<uint64_t> objectType(ObjectKind Kind);
   llvm::Error initializeDataExports(const DriverOptions &Options);
+  llvm::Error initializeObjectNamespace();
+  struct ObjectLookup {
+    uint64_t Status;
+    uint64_t Object = 0;
+  };
+  llvm::Expected<ObjectLookup> lookupNamedObject(llvm::StringRef Name,
+                                                 uint64_t Root,
+                                                 uint32_t Attributes,
+                                                 bool OpenLink);
+  std::string objectName(uint64_t Object) const;
+  uint64_t findSymbolicLink(llvm::StringRef Key) const;
+  const ObjectHandle *findObjectHandle(uint64_t Handle) const;
+  static std::optional<uint32_t> objectAccessMask(ObjectKind Kind);
+  static llvm::Expected<uint32_t> mapObjectAccess(ObjectKind Kind,
+                                                  uint32_t Access);
+  llvm::Expected<uint64_t> referenceObjectByName(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> openNamedObject(llvm::ArrayRef<uint64_t> A,
+                                           ObjectKind Kind);
+  llvm::Expected<uint64_t> queryObjectName(uint64_t Object, uint64_t Buffer,
+                                           uint32_t Length,
+                                           uint64_t ReturnLength,
+                                           bool RequiredLength);
+  llvm::Expected<uint64_t> queryObject(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> querySymbolicLink(llvm::ArrayRef<uint64_t> A);
   llvm::Error validateDataExportAccess(uint64_t Address, uint32_t Size,
                                        bool IsWrite) const;
   bool DebuggerStateDeclared = false;
@@ -1115,6 +1143,7 @@ private:
     // DEVICE_OBJECT.ReferenceCount field. Attachment links also prevent retire.
     uint64_t InternalReferences = 0;
     bool DeletePending = false;
+    bool UnlinkedFromDriver = false;
     std::optional<DevicePowerState> ReportedDevicePower;
   };
   std::map<uint64_t, DeviceRecord> Devices;
@@ -1158,7 +1187,13 @@ private:
   std::map<uint64_t, uint64_t> FreedRanges;
   std::array<bool, 28 * 8> DispatchBytesWritten{};
   std::shared_ptr<RAMInitializationWatch> DispatchInitialization;
-  std::map<std::string, std::string> SymbolicLinks;
+  struct SymbolicLinkObject {
+    std::string Target;
+    std::vector<uint8_t> TargetBytes;
+    bool Permanent = true;
+    bool Named = true;
+  };
+  std::map<uint64_t, SymbolicLinkObject> SymbolicLinks;
   enum class FileState { Closed, Opening, Open, Cleaned };
   struct OpenFile {
     uint64_t Address = 0;

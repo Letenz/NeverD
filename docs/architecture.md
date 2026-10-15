@@ -6387,3 +6387,5 @@ fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
 AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
 labels on unmap. JSON supplies explicit identity/provider declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
+
+`KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
