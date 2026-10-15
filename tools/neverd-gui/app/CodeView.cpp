@@ -1738,6 +1738,8 @@ CodeView::CodeView(Session &session, const QString &representation,
   bar->addWidget(lock_);
   optimize_->setObjectName(QStringLiteral("sourceOptimization"));
   optimize_->setAutoRaise(true);
+  optimize_->setIcon(icon(QStringLiteral("source_optimize")));
+  optimize_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   optimize_->setText(tr("Optimization"));
   optimize_->setToolTip(tr("Transform the current function"));
   optimize_->setPopupMode(QToolButton::InstantPopup);
@@ -1779,7 +1781,8 @@ CodeView::CodeView(Session &session, const QString &representation,
 void CodeView::addSourceActions(QMenu &menu) {
   if (!isSource(representation()) || !text_->function())
     return;
-  auto *symbolic = menu.addAction(tr("Symbolically simplify this function"));
+  auto *symbolic = menu.addAction(icon(QStringLiteral("source_symbolic")),
+                                  tr("Symbolic simplification"));
   symbolic->setObjectName(QStringLiteral("sourceSymbolic"));
   symbolic->setCheckable(true);
   symbolic->setChecked(text_->sourceOptions().value("symbolic").toBool());
@@ -1792,7 +1795,8 @@ void CodeView::addSourceActions(QMenu &menu) {
     text_->setSourceOptions(options);
   });
   if (representation() == QLatin1String("llvmc")) {
-    auto *recovery = menu.addAction(tr("Recover LLVM control flow"));
+    auto *recovery = menu.addAction(icon(QStringLiteral("source_control_flow")),
+                                    tr("Recover LLVM control flow"));
     recovery->setObjectName(QStringLiteral("sourceLLVMControlFlow"));
     recovery->setCheckable(true);
     recovery->setChecked(
@@ -1805,7 +1809,8 @@ void CodeView::addSourceActions(QMenu &menu) {
         options["llvm_control_flow"] = false;
       text_->setSourceOptions(options);
     });
-    auto *levels = menu.addMenu(tr("LLVM optimization"));
+    auto *levels = menu.addMenu(icon(QStringLiteral("source_optimize")),
+                                tr("LLVM optimization"));
     auto *group = new QActionGroup(levels);
     const auto selected = text_->sourceOptions()
                               .value("llvm_optimization")
@@ -1874,12 +1879,14 @@ void CodeView::addSourceActions(QMenu &menu) {
       });
     }
   }
-  auto *reset = menu.addAction(tr("Restore default source"));
+  auto *reset = menu.addAction(icon(QStringLiteral("undo")),
+                               tr("Restore default source"));
   reset->setObjectName(QStringLiteral("sourceDefault"));
   reset->setEnabled(!text_->sourceOptions().isEmpty());
   connect(reset, &QAction::triggered, this,
           [this] { text_->setSourceOptions({}); });
-  auto *cancel = menu.addAction(tr("Cancel transformation"));
+  auto *cancel = menu.addAction(icon(QStringLiteral("cancel")),
+                                tr("Cancel transformation"));
   cancel->setObjectName(QStringLiteral("sourceCancel"));
   cancel->setEnabled(text_->loading());
   connect(cancel, &QAction::triggered, text_, &CodeText::cancel);

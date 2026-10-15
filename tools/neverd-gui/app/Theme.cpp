@@ -223,7 +223,14 @@ void Theme::apply() {
                         .arg(codeFont_.family());
       else if (const auto color = chrome_.constFind(name);
                color != chrome_.cend())
-        resolved += color->name();
+        // A translucent color keeps its alpha.
+        resolved += color->alpha() == 255
+                        ? color->name()
+                        : QStringLiteral("rgba(%1, %2, %3, %4)")
+                              .arg(color->red())
+                              .arg(color->green())
+                              .arg(color->blue())
+                              .arg(color->alpha());
       else
         qWarning("Theme style sheet names unknown color ${%s}",
                  qPrintable(name));

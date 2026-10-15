@@ -183,7 +183,7 @@ hiding a pane stops its requests; showing it again resumes its own function.
 
 Native HighC keeps ordinary cleanup but skips optional symbolic expression
 simplification by default. Use the source window's **Optimization** menu or
-right-click **Symbolically simplify this function** to enable it. C through LLVM
+right-click **Symbolic simplification** to enable it. C through LLVM
 defaults to control-flow recovery and O2, with basic scalar cleanup, O0, O1, O3,
 and a custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE available
 in the same menu. Symbolic simplification is a separate choice for every LLVM

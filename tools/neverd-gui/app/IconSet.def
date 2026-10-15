@@ -95,6 +95,12 @@ NEVERD_ICON("hex", View, "a grid of cells")
 NEVERD_ICON("ir", View, "stacked layers")
 NEVERD_ICON("pseudocode", View, "a pair of braces")
 NEVERD_ICON("text_view", View, "lines of text on a page")
+NEVERD_ICON("expand", View, "a plus on a tile")
+NEVERD_ICON("collapse", View, "a minus on a tile")
+// How the pseudocode of a function is made.
+NEVERD_ICON("source_symbolic", View, "a wand with two sparks")
+NEVERD_ICON("source_control_flow", View, "a decision diamond on a flow line")
+NEVERD_ICON("source_optimize", View, "a lightning bolt on a tile")
 
 // Lists and windows.
 NEVERD_ICON("functions", List, "an f on a tile")

@@ -18,6 +18,9 @@ QMenu::separator { height: 1px; background: ${MenuSeparator}; margin: 4px 6px; }
 QMenu::icon { padding-left: 6px; }
 QMenu::indicator { width: 14px; height: 14px; left: 6px; }
 QMenu::indicator:checked { image: url(:/neverd/icons/menu_check-${Mode}.svg); }
+/* A toggle with an icon shows it boxed while on, as VS Code shows an active
+   input option. */
+QMenu::icon:checked { background: ${OptionActiveBackground}; border: 1px solid ${OptionActiveBorder}; border-radius: 3px; }
 QMenu::right-arrow { image: url(:/neverd/icons/chevron_right-${Mode}.svg); width: 10px; height: 10px; }
 QToolBar { background: ${ToolBar}; border: none; spacing: 1px; padding: 2px 4px; }
 QToolBar::separator { background: ${Separator}; width: 1px; margin: 3px 4px; }
