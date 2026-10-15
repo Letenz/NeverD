@@ -36,7 +36,21 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
   // A newly allocated kernel binder_thread needs one return to userspace. Every
   // ioctl clears that flag, even a version query or an ordinary error return.
   auto [Thread, Fresh] = Device.BinderLoopers.emplace(CurrentTask, 0);
+  if (Request == 0x40046207) { // BINDER_SET_CONTEXT_MGR ignores argument.
+    for (const auto &Weak : DeviceDescriptions)
+      if (auto Open = Weak.lock())
+        if (Open->Options == Device.Options && Open->BinderManager)
+          return Reply(uint64_t(0) - 16); // EBUSY
+    Device.BinderManager = true;
+    return Reply(0);
+  }
   if (Request == ThreadExit) {
+    if (Device.BinderIncoming.contains(CurrentTask) ||
+        Device.BinderOutgoing.contains(CurrentTask) ||
+        !Device.BinderThreadWork[CurrentTask].empty())
+      return unsupported(
+          Result, "Binder thread exit with pending transactions is unmodeled");
+    Device.BinderThreadWork.erase(CurrentTask);
     Device.BinderLoopers.erase(Thread);
     return Reply(0); // This request does not dereference its nominal argument.
   }
@@ -89,24 +103,61 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
     return unsupported(Result, "Binder partial record copy-out is unmodeled");
   if (WriteConsumed > UINT64_MAX - WriteBuffer)
     return unsupported(Result, "Binder write buffer wraps");
-  Readable =
-      Accessible(WriteBuffer + WriteConsumed, WriteSize - WriteConsumed, Read);
+  auto HasReturnError = [&] {
+    const auto &Queue = Device.BinderThreadWork[CurrentTask];
+    return std::any_of(Queue.begin(), Queue.end(), [](const BinderWork &Work) {
+      return Work.Command == 0x7205 || Work.Command == 0x7211;
+    });
+  };
+  // binder_thread_write stops at its pending return_error before touching any
+  // further command bytes. Reading that error permits a later write to resume.
+  const uint64_t CommandBytes =
+      HasReturnError() ? 0 : WriteSize - WriteConsumed;
+  Readable = Accessible(WriteBuffer + WriteConsumed, CommandBytes, Read);
   if (!Readable)
     return Readable.takeError();
   if (!*Readable)
     return unsupported(Result, "Binder partial command copy-in is unmodeled");
-  std::vector<uint8_t> Commands(WriteSize - WriteConsumed);
+  std::vector<uint8_t> Commands(CommandBytes);
   if (!Commands.empty())
     if (auto E = CPU.read(WriteBuffer + WriteConsumed, Commands))
       return std::move(E);
-  for (size_t I = 0; I < Commands.size(); I += 4) {
+  struct Decoded {
+    uint32_t Command;
+    size_t Offset, Size;
+  };
+  std::vector<Decoded> DecodedCommands;
+  unsigned Transactions = 0;
+  for (size_t I = 0; I < Commands.size();) {
     uint32_t Command = llvm::support::endian::read32le(Commands.data() + I);
-    if (Command != Register && Command != Enter && Command != Exit)
-      return unsupported(Result, "Binder command requires an unmodeled "
-                                 "transaction, object or service");
+    const size_t Size = Command == 0x40406300 || Command == 0x40406301 ? 64
+                        : Command == 0x40086303                        ? 8
+                                                                       : 0;
+    if (!Size && Command != Register && Command != Enter && Command != Exit)
+      return unsupported(
+          Result, "Binder command requires an unmodeled object or protocol");
+    if (Size > Commands.size() - I - 4)
+      return unsupported(Result, "Binder transaction record is incomplete");
+    Transactions += Size == 64;
+    if (Transactions > 1)
+      return unsupported(Result,
+                         "Binder batch requires nested transaction semantics");
+    DecodedCommands.push_back({Command, I + 4, Size});
+    I += 4 + Size;
   }
-  for (size_t I = 0; I < Commands.size(); I += 4) {
-    uint32_t Command = llvm::support::endian::read32le(Commands.data() + I);
+  uint64_t Consumed = WriteConsumed;
+  for (const auto &[Command, Offset, Size] : DecodedCommands) {
+    Consumed = WriteConsumed + Offset + Size;
+    if (Size) {
+      auto Outcome =
+          binderCommand(Device, Command,
+                        llvm::ArrayRef(Commands).slice(Offset, Size), Result);
+      if (!Outcome || !*Outcome)
+        return Outcome;
+      if (HasReturnError())
+        break;
+      continue;
+    }
     auto &Flags = Thread->second;
     if (Command == Register) {
       if ((Flags & Entered) || !Device.BinderRequestedThreads)
@@ -124,7 +175,7 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
       Flags |= Exited;
     }
   }
-  llvm::support::endian::write64le(Record + 8, WriteSize);
+  llvm::support::endian::write64le(Record + 8, Consumed);
   uint64_t Status = 0;
   if (ReadSize) {
     Writable = Accessible(ReadBuffer, 4, Write);
@@ -137,7 +188,12 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
       llvm::support::endian::write32le(Response, Noop);
       if (auto E = CPU.write(ReadBuffer, Response))
         return std::move(E);
-      if (!Fresh) {
+      auto Work = binderReadWork(Device, ReadBuffer, ReadSize, Result);
+      if (!Work || !*Work)
+        return Work;
+      if (**Work) {
+        llvm::support::endian::write64le(Record + 32, **Work);
+      } else if (!Fresh) {
         if (!(Device.OpenFlags & OpenNonBlock))
           return unsupported(
               Result, "Binder blocking read requires a peer or pending work");
@@ -145,14 +201,15 @@ LinuxFiles::binderIoctl(LinuxDeviceState &Device, uint32_t Request,
             uint64_t(0) - 11; // EAGAIN; the BR_NOOP write is still observable.
       } else {
         llvm::support::endian::write64le(Record + 32, 4);
-        if (!Device.BinderRequestedThreads && Device.BinderMaxThreads > 0 &&
-            Device.BinderStartedThreads < uint32_t(Device.BinderMaxThreads) &&
-            (Thread->second & (Registered | Entered))) {
-          ++Device.BinderRequestedThreads;
-          llvm::support::endian::write32le(Response, Spawn);
-          if (auto E = CPU.write(ReadBuffer, Response))
-            return std::move(E);
-        }
+      }
+      if (!Status && !Device.BinderRequestedThreads &&
+          Device.BinderMaxThreads > 0 &&
+          Device.BinderStartedThreads < uint32_t(Device.BinderMaxThreads) &&
+          (Thread->second & (Registered | Entered))) {
+        ++Device.BinderRequestedThreads;
+        llvm::support::endian::write32le(Response, Spawn);
+        if (auto E = CPU.write(ReadBuffer, Response))
+          return std::move(E);
       }
     }
   }

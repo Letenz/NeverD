@@ -1340,6 +1340,33 @@ FiniteValues Specializer::enumerate(SymContext &Ctx, SymRef Predicate,
          "specialization symbolic-node budget exhausted");
     return {FiniteValueStatus::Unknown, {}};
   }
+  // A fixed tuple has exactly the same feasible domain as the empty
+  // projection. Reuse that completed predicate proof across different
+  // constants, but never infer reachability from the constants themselves.
+  if (!Values.empty()) {
+    std::vector<uint64_t> Constants;
+    for (const auto Value : Values) {
+      if (!Value || Value.index() >= Ctx.numNodes() || !Ctx.width(Value) ||
+          Ctx.width(Value) > 64)
+        break;
+      const auto Number = Ctx.asConst(Value);
+      if (!Number)
+        break;
+      Constants.push_back(Number->getZExtValue());
+    }
+    if (Constants.size() == Values.size()) {
+      // Observers still receive the original tuple, including cache hits.
+      // Rejecting its address or extent cannot complete a provisional proof.
+      const auto ObserveConstants = [&](llvm::ArrayRef<uint64_t>) {
+        return !Observe || Observe(Constants);
+      };
+      auto Domain = enumerate(Ctx, Predicate, {}, Limit, ObserveConstants);
+      if (Domain.Status == FiniteValueStatus::Complete)
+        for (auto &Tuple : Domain.Tuples)
+          Tuple = Constants;
+      return Domain;
+    }
+  }
   auto Cached = Refinement.Proofs.lookup(Ctx, Predicate, Values, Limit);
   auto Domain = Cached ? std::move(*Cached)
                        : detail::enumerateFiniteValues(

@@ -55,6 +55,7 @@ LinuxFiles::contextIoctl(LinuxDeviceState &Device, uint32_t Request,
       return unsupported(Result, "GPU context retirement requires equal "
                                  "consumed and retired timestamps");
     Device.Contexts.erase(ID);
+    Device.QueuedTimestamps.erase(ID);
     return Reply(0);
   }
   // Preflight copy-out before allocating a context or changing shared bytes.
@@ -87,12 +88,13 @@ LinuxFiles::contextIoctl(LinuxDeviceState &Device, uint32_t Request,
     if (auto E = CPU.write(Argument, llvm::ArrayRef(Data, Size)))
       return std::move(E);
     Device.Contexts.insert(ID);
+    Device.QueuedTimestamps.emplace(ID, 0);
     return Reply(0);
   }
   const uint32_t Type = llvm::support::endian::read32le(Data + 4);
   // The queued value is context-owned, not either word in the shared memstore.
-  // A context created here has submitted no commands. That proves zero only
-  // when no declared external producer can affect this context's slot.
+  // Its initial zero or admitted command submissions prove the queued value
+  // only when no declared external producer can affect this context's slot.
   if (Type == 3)
     for (const auto &Update : Mapping->Updates)
       if (Update.Offset < uint64_t(ID + 1) * kgsl::SlotBytes &&
@@ -104,7 +106,8 @@ LinuxFiles::contextIoctl(LinuxDeviceState &Device, uint32_t Request,
   const uint32_t Timestamp =
       Type == 1 || Type == 2
           ? llvm::support::endian::read32le(Bytes.data() + Offset)
-          : 0;
+      : Type == 3 ? Device.QueuedTimestamps.at(ID)
+                  : 0;
   llvm::support::endian::write32le(Data + 8, Timestamp);
   if (auto E = CPU.write(Argument, llvm::ArrayRef(Data, Size)))
     return std::move(E);
@@ -129,6 +132,8 @@ bool LinuxFiles::canRelease(
   const auto *Device = std::get_if<OpenDevice>(Description.get());
   if (!Device || Device->use_count() != 1)
     return true;
+  if ((*Device)->hasPendingBinderWork())
+    return false;
   for (uint32_t ID : (*Device)->Contexts)
     if (!Memory || !Memory->contextIdle(**Device, ID))
       return false;

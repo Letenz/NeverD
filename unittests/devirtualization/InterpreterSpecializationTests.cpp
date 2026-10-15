@@ -1117,6 +1117,131 @@ TEST(InterpreterSpecialization,
   EXPECT_TRUE(Malformed.Reads.empty());
 }
 
+TEST(InterpreterSpecialization,
+     ConstantAddressesReuseOnlyCompletedPredicateProof) {
+  Provider P;
+  std::vector<LowOp> Ops{op(NdOp::COPY, reg(0), {constant(5)})};
+  uint64_t Expected = 5;
+  for (uint64_t I = 0; I != 24; ++I) {
+    const uint64_t Value = UINT64_C(0xA000000000000013) * I + 11;
+    imageWord(P, 0xA00 + 8 * I, Value);
+    Expected += Value;
+    Ops.push_back(op(NdOp::LOAD, reg(8), {constant(0xA00 + 8 * I)}));
+    Ops.push_back(op(NdOp::INT_ADD, reg(0), {reg(0), reg(8)}));
+  }
+  Ops.push_back(ret());
+  P.add(0x100, std::move(Ops));
+  SpecializationOptions O;
+  O.ExplicitMachineState = true;
+  O.FrameBaseRegister = SymRegisterRange{x86reg::RSP, 8};
+  O.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+  O.MaxSolverQueries = 2;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(R.SolverQueries, 2U);
+  EXPECT_EQ(count(R.Residual, NdOp::LOAD), 0U);
+  ASSERT_EQ(R.Reads.size(), 24U);
+  for (size_t I = 0; I != R.Reads.size(); ++I) {
+    const auto &Read = R.Reads[I];
+    EXPECT_EQ(Read.Address, 0xA00 + 8 * I);
+    ASSERT_EQ(Read.Bytes.size(), 8U);
+    for (size_t B = 0; B != 8; ++B)
+      EXPECT_EQ(Read.Bytes[B], P.Image.at(Read.Address + B));
+  }
+  for (uint64_t Stack : {UINT64_C(8), UINT64_C(0x2008), UINT64_MAX - 7})
+    EXPECT_EQ(execute(R.Residual, {{x86reg::RSP, Stack}}), Expected);
+
+  --O.MaxSolverQueries;
+  const auto Short = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_EQ(Short.SolverQueries, 1U);
+  EXPECT_TRUE(Short.Residual.Blocks.empty());
+  EXPECT_TRUE(Short.Origins.empty());
+  EXPECT_TRUE(Short.Reads.empty());
+}
+
+TEST(InterpreterSpecialization,
+     ConstantPredicateReuseStillRequiresEachReadCertificate) {
+  Provider P;
+  P.Image[0xA00] = 42;
+  imageWord(P, 0xA08, UINT64_C(0xFEDCBA9876543210));
+  const auto RuntimeImage = P.Image;
+  P.Image.erase(0xA0F);
+  P.add(0x100, {op(NdOp::LOAD, reg(8, 1), {constant(0xA00)}),
+                op(NdOp::INT_ZEXT, reg(8), {reg(8, 1)}),
+                op(NdOp::LOAD, reg(0), {constant(0xA08)}),
+                op(NdOp::INT_ADD, reg(0), {reg(0), reg(8)}), ret()});
+  SpecializationOptions O;
+  O.ExplicitMachineState = true;
+  O.FrameBaseRegister = SymRegisterRange{x86reg::RSP, 8};
+  O.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+  O.MaxSolverQueries = 2;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  EXPECT_EQ(R.SolverQueries, 2U);
+  EXPECT_EQ(count(R.Residual, NdOp::LOAD), 1U);
+  ASSERT_EQ(R.Reads.size(), 1U);
+  EXPECT_EQ(R.Reads.front().Address, 0xA00U);
+  EXPECT_EQ(R.Reads.front().Bytes, (std::vector<uint8_t>{42}));
+  EXPECT_EQ(execute(R.Residual, {{x86reg::RSP, 0x2008}}, RuntimeImage),
+            UINT64_C(0xFEDCBA987654323A));
+
+  P.Image = RuntimeImage;
+  P.MalformedReadSize = 8;
+  const auto Malformed = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Malformed.Status, SpecializationStatus::InvalidInput);
+  EXPECT_TRUE(Malformed.Residual.Blocks.empty());
+  EXPECT_TRUE(Malformed.Reads.empty());
+
+  // A rejected observation is not a completed predicate proof, even though
+  // its first SAT witness existed. The next read still needs both queries.
+  P.MalformedReadSize = 0;
+  P.Image.erase(0xA00);
+  const auto Incomplete = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Incomplete.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_EQ(Incomplete.SolverQueries, 2U);
+  EXPECT_TRUE(Incomplete.Residual.Blocks.empty());
+  EXPECT_TRUE(Incomplete.Reads.empty());
+}
+
+TEST(InterpreterSpecialization,
+     ConstantPredicateReusePreservesInfeasibleControlEdges) {
+  Provider P;
+  P.Image[0xA00] = 19;
+  P.Image[0xA10] = 71;
+  imageWord(P, 0xA08, 101);
+  P.MalformedReadSize = 8;
+  P.add(0x100,
+        {op(NdOp::LOAD, reg(0, 1), {constant(0xA00)}),
+         op(NdOp::INT_AND, reg(16), {reg(x86reg::RSP), constant(15)}),
+         op(NdOp::INT_EQUAL, reg(24, 1), {reg(16), constant(7)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(24, 1)})},
+        0x140);
+  P.add(0x120, {op(NdOp::LOAD, reg(0), {constant(0xA08)}), ret()});
+  P.add(0x140, {op(NdOp::LOAD, reg(0, 1), {constant(0xA10)}),
+                op(NdOp::INT_ZEXT, reg(0), {reg(0, 1)}), ret()});
+  for (uint32_t Chaining : {0U, 8U}) {
+    SpecializationOptions O;
+    O.ExplicitMachineState = true;
+    O.FrameBaseRegister = SymRegisterRange{x86reg::RSP, 8};
+    O.EntryFrameAlignment = InterpreterEntryAlignment{16, 8};
+    O.MaxChainedTransfers = Chaining;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::LOAD), 0U);
+    ASSERT_EQ(R.Reads.size(), 2U);
+    for (const auto &Read : R.Reads)
+      EXPECT_NE(Read.Address, 0xA08U);
+    EXPECT_EQ(execute(R.Residual, {{x86reg::RSP, 0x2008}}), 71U);
+
+    O.EntryFrameAlignment = InterpreterEntryAlignment{16, 7};
+    const auto Reachable = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(Reachable.Status, SpecializationStatus::InvalidInput);
+    EXPECT_TRUE(Reachable.Residual.Blocks.empty());
+    EXPECT_TRUE(Reachable.Reads.empty());
+  }
+}
+
 // Two independent predecessors each carry a pair of correlated pointer/key
 // values. All records share one handler. Cross-pairing a pointer and key would
 // produce an unsupported destination, so a Cartesian product cannot pass.

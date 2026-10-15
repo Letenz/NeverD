@@ -19,7 +19,9 @@
 
 #include <cstring>
 #include <iterator>
+#include <map>
 #include <stdexcept>
+#include <string>
 
 using namespace neverd;
 namespace {
@@ -78,6 +80,40 @@ protected:
       Output.write(Bytes.data(), Bytes.size());
     }
     return Library;
+  }
+
+  // Pointer variables a library starts at `pick`, which a second library
+  // defines, so the dynamic symbol is an undefined function.  The calls are
+  // not tail calls, and neither passes an argument: what they test is which
+  // function they reach.
+  fs::path hookLibrary(llvm::StringRef Target) {
+    auto Build = [&](llvm::StringRef Name, llvm::StringRef Code,
+                     std::vector<std::string> Inputs) {
+      auto Source = tmpFile(Target.str() + "-" + Name.str() + ".c");
+      auto Object = tmpFile(Target.str() + "-" + Name.str() + ".o");
+      auto Library = tmpFile(Target.str() + "-" + Name.str() + ".so");
+      std::ofstream(Source) << Code.str();
+      auto Compile = exec(NEVERD_TEST_CLANG,
+                          {"--target=" + Target.str(), "-fPIC", "-O1", "-c",
+                           Source.string(), "-o", Object.string()});
+      EXPECT_TRUE(Compile.ok()) << Compile.err;
+      Inputs.insert(Inputs.begin(), Object.string());
+      Inputs.insert(Inputs.begin(), "-shared");
+      Inputs.push_back("-o");
+      Inputs.push_back(Library.string());
+      auto Link = exec("ld.lld", Inputs);
+      EXPECT_TRUE(Link.ok()) << Link.err;
+      return Library;
+    };
+    const auto Pick = Build("pick", "int pick(void) { return 5; }\n", {});
+    return Build("hook",
+                 "int pick(void);\n"
+                 "static int (*hook)(void) = pick;\n"
+                 "static int (*volatile spare)(void) = pick;\n"
+                 "int call_hook(void) { return hook() + 1; }\n"
+                 "int call_spare(void) { return spare() + 1; }\n"
+                 "void set_hooks(int (*f)(void)) { hook = f; spare = f; }\n",
+                 {Pick.string()});
   }
 
   std::string source(const BinaryImage &Image, bool LLVM,
@@ -266,6 +302,60 @@ TEST_F(DataSymbolBindingTest, WritableSlotsRetainStorageAndSymbolInitializer) {
   }
 }
 
+TEST_F(DataSymbolBindingTest, PointerVariablesStartAtExternalFunctions) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  for (const char *Target : {"x86_64-linux-gnu", "i386-linux-gnu",
+                             "armv7-linux-gnueabi", "aarch64-linux-gnu"}) {
+    SCOPED_TRACE(Target);
+    auto Loaded = loadBinary(hookLibrary(Target));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    // The variables hold `pick` without being its import slots.
+    const auto Pointers = collectExternalFunctionPointers(*Loaded);
+    ASSERT_EQ(Pointers.size(), 2u);
+    const auto Imports = Loaded->collectImportStorageSlots();
+    for (const auto &[Slot, Name] : Pointers) {
+      EXPECT_EQ(Name, "pick");
+      EXPECT_EQ(Imports.Slots.count(Slot), 0u);
+    }
+    // Each call goes through what the variable holds then: `pick` at first,
+    // and the function stored there afterwards.
+    const auto C =
+        source(*Loaded, true, {"call_hook", "call_spare", "set_hooks"});
+    EXPECT_EQ(C.find("__builtin_trap"), std::string::npos) << C;
+    const auto Output = tmpFile(std::string(Target) + "-hooks.c");
+    std::ofstream(Output) << C;
+    const auto Program = tmpFile(std::string(Target) + "-hooks");
+    std::vector<std::string> Args = {"--target=" + std::string(Target), "-O2",
+                                     "-ffreestanding", "-fno-strict-aliasing",
+                                     Output.string()};
+    const bool RunNative = CanRunX64ELF && Loaded->Arch == Arch::X64;
+    if (RunNative) {
+      const auto Harness = tmpFile("hooks-main.c");
+      std::ofstream(Harness)
+          << "int call_hook(void); int call_spare(void);\n"
+             "void set_hooks(int (*)(void));\n"
+             "int pick(void) { return 5; }\n"
+             "static int other(void) { return 41; }\n"
+             "int main(void) {\n"
+             "  if (call_hook() != 6 || call_spare() != 6)\n"
+             "    return 1;\n"
+             "  set_hooks(other);\n"
+             "  return call_hook() != 42 || call_spare() != 42;\n"
+             "}\n";
+      Args.push_back(Harness.string());
+    } else {
+      Args.push_back("-c");
+    }
+    Args.push_back("-o");
+    Args.push_back(Program.string());
+    auto Compile = exec(NEVERD_TEST_CLANG, Args);
+    EXPECT_TRUE(Compile.ok()) << Compile.err << C;
+    if (RunNative && Compile.ok())
+      EXPECT_TRUE(exec(Program.string(), {}).ok()) << C;
+  }
+}
+
 TEST_F(DataSymbolBindingTest, OpaqueAliasesKeepByteLoadAndStoreSemantics) {
   if (!CanRunX64ELF)
     GTEST_SKIP() << "ELF alias linkage execution requires a Linux x64 host";
@@ -355,5 +445,96 @@ TEST(DataSymbolBindings, ExactSymbolKindAddendAndPermissionsOwnTheBinding) {
   Image.Relocations.push_back(Image.Relocations[0]);
   Image.Relocations.back().ELF->Symbol->Name = "conflicting_data";
   EXPECT_THROW(collectDataSymbolBindings(Image), std::invalid_argument);
+}
+
+TEST(DataSymbolBindings, ExternalFunctionPointersNeedAnExactAbsoluteSymbol) {
+  struct Target {
+    Arch TheArch;
+    Bitness Bits;
+    uint32_t Absolute;
+    uint32_t Binding;
+    bool Rela;
+  };
+  for (const Target &T :
+       {Target{Arch::X64, Bitness::Bits64, llvm::ELF::R_X86_64_64,
+               llvm::ELF::R_X86_64_GLOB_DAT, true},
+        Target{Arch::X86, Bitness::Bits32, llvm::ELF::R_386_32,
+               llvm::ELF::R_386_GLOB_DAT, false},
+        Target{Arch::ARM, Bitness::Bits32, llvm::ELF::R_ARM_ABS32,
+               llvm::ELF::R_ARM_GLOB_DAT, false},
+        Target{Arch::AArch64, Bitness::Bits64, llvm::ELF::R_AARCH64_ABS64,
+               llvm::ELF::R_AARCH64_GLOB_DAT, true}}) {
+    SCOPED_TRACE(static_cast<int>(T.TheArch));
+    BinaryImage Image;
+    Image.Format = BinaryFormat::ELF;
+    Image.Arch = T.TheArch;
+    Image.Bits = T.Bits;
+    Segment Data;
+    Data.VA = 0x4000;
+    Data.Size = 16;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Data.assign(Data.Size, 0);
+    Image.Segments.push_back(Data);
+    RelocationEntry Relocation;
+    Relocation.Address = Data.VA;
+    Relocation.Type = T.Absolute;
+    Relocation.HasExplicitAddend = T.Rela;
+    Relocation.ELF.emplace();
+    auto &Symbol = Relocation.ELF->Symbol.emplace();
+    Symbol.Name = "exit";
+    Symbol.Binding = llvm::ELF::STB_GLOBAL;
+    Symbol.Type = llvm::ELF::STT_FUNC;
+    Image.Relocations.push_back(Relocation);
+    auto &Record = Image.Relocations[0];
+    auto &Word = Image.Segments[0].Data;
+    const std::map<va_t, std::string> Exit{{Data.VA, "exit"}};
+    EXPECT_EQ(collectExternalFunctionPointers(Image), Exit);
+
+    // An addend points past the entry: RELA states it, REL keeps it in the
+    // word.
+    if (T.Rela)
+      Record.Addend = 8;
+    else
+      Word[0] = 8;
+    EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+    Record.Addend = 0;
+    Word[0] = 0;
+    if (T.Rela) {
+      Word[0] = 0xa5; // RELA ignores the file's bytes.
+      EXPECT_EQ(collectExternalFunctionPointers(Image), Exit);
+      Word[0] = 0;
+    }
+
+    // A GOT binding is import storage, not a pointer variable.
+    Record.Type = T.Binding;
+    EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+    Record.Type = T.Absolute;
+
+    // Data, untyped symbols, weak functions the loader may leave null, and
+    // functions the file defines are not external functions.
+    for (unsigned Type : {llvm::ELF::STT_OBJECT, llvm::ELF::STT_NOTYPE}) {
+      Record.ELF->Symbol->Type = Type;
+      EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+    }
+    Record.ELF->Symbol->Type = llvm::ELF::STT_FUNC;
+    Record.ELF->Symbol->Binding = llvm::ELF::STB_WEAK;
+    EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+    Record.ELF->Symbol->Binding = llvm::ELF::STB_GLOBAL;
+    Record.ELF->Symbol->SectionIndex = 1;
+    EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+    Record.ELF->Symbol->SectionIndex = llvm::ELF::SHN_UNDEF;
+    EXPECT_EQ(collectExternalFunctionPointers(Image), Exit);
+
+    // A word two relocations start at different functions is no one's.
+    RelocationEntry Abort = Record;
+    Abort.ELF->Symbol->Name = "abort";
+    Image.Relocations.push_back(std::move(Abort));
+    EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+    Image.Relocations.pop_back();
+
+    // A relocatable object's relocations are not the dynamic loader's.
+    Image.IsRelocatable = true;
+    EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
+  }
 }
 } // namespace

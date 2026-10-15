@@ -91,12 +91,16 @@ struct Domain {
     bool OtherCallback = false;
     std::optional<int32_t> OrdinaryCallStack;
     std::optional<ParentStackRestore> StackRestore;
+    bool operator==(const SEHCaller &) const = default;
   };
   std::vector<SEHCaller> SEHCallers;
   size_t sehCallerCellCount() const {
     size_t Count = 0;
     for (const auto &Caller : SEHCallers)
-      Count += Caller.Stack.cellCount() + Caller.Activation.Callers.size() + 8;
+      Count += Caller.Stack.cellCount() +
+               Caller.Stack.OtherRegisterBytes.size() +
+               Caller.Activation.JumpCaptureCalls.size() +
+               Caller.Activation.Callers.size() + 8;
     return Count;
   }
   bool JumpBindingsIntact = true;
@@ -107,7 +111,22 @@ struct Domain {
         Count += Context.cellCount();
     return Count;
   }
+  size_t snapshotWork() const {
+    return Levels.size() + Frame.cellCount() + Frame.OtherRegisterBytes.size() +
+           RuntimeObject.cellCount() + RuntimeObject.OtherRegisterBytes.size() +
+           InitializedFrameBytes.size() + JumpCaptures.size() * 14 +
+           Activation.JumpCaptureCalls.size() + Activation.Callers.size() +
+           sehCallerCellCount() + catchCellCount() + 10;
+  }
+  /// A lookup accelerator; complete equality remains the identity check.
+  size_t snapshotHash() const;
+  bool operator==(const Domain &) const = default;
 };
+
+/// Facts inherited by a runtime dispatch. Entry construction replaces the
+/// registers, invocation stack and activation; captures retain their own saved
+/// registers. Both root construction and pending-root identity use this owner.
+Domain dispatchSource(const Domain &Source);
 
 /// Frames with different native TryLevels must not lose their correlation.
 using SEHFrameOutcomes = std::map<int32_t, FrameState>;
@@ -290,6 +309,10 @@ private:
   bool conditionalReturn(const Domain &State, const LowOp &Op);
   bool conditionalCall(const FrameState &State, const LowOp &Op);
   void dispatchBlock(size_t I, const Domain &Before, const BlockFacts &Facts);
+  void queueSEHScopes(const Domain &Before, bool Invalid);
+  void flushSEHScopes();
+  void dispatchSEHScopes(const Domain &Before, bool Invalid,
+                         const std::set<int32_t> &Levels);
   std::vector<RegistrationCxxSearch> cxxSearches(const Domain &State,
                                                  bool Invalid);
   bool enterCxxCatch(Domain &Root, const Domain &Source, uint32_t TryIndex,
@@ -315,8 +338,8 @@ private:
                          RegistrationChainAccess::Kind Kind);
   void merge(size_t Target, const Domain &Source);
   void dispatch(
-      va_t Address, int32_t Level, const Domain &Source, bool Unknown = false,
-      bool Callback = false, bool SearchFilter = false,
+      va_t Address, std::set<int32_t> Levels, const Domain &Source,
+      bool Unknown = false, bool Callback = false, bool SearchFilter = false,
       std::optional<std::pair<uint32_t, uint32_t>> CxxCatch = std::nullopt);
 
   const LowFunc &Function;
@@ -348,6 +371,15 @@ private:
   std::set<va_t> FinallyTargets;
   std::set<va_t> SEHParentEntries;
   std::vector<std::map<SEHActivation, ActivationState>> States;
+  struct SEHDispatchMemo {
+    Domain Source;
+    bool Invalid;
+    std::set<int32_t> Levels;
+    std::set<int32_t> Pending;
+  };
+  std::vector<SEHDispatchMemo> DispatchedSEHFrames;
+  std::map<size_t, std::vector<size_t>> SEHFrameBuckets;
+  std::set<size_t> PendingSEHFrames;
   std::vector<size_t> Order;
   std::set<std::tuple<size_t, size_t, SEHActivation>> Work;
   size_t WorkUsed = 0;

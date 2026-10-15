@@ -17,7 +17,7 @@
     </message>
     <message>
         <source>Read the input file again, with its saved annotations</source>
-        <translation>重新讀取輸入檔案，保留已儲存的註解</translation>
+        <translation>重新讀取輸入檔案，並沿用已儲存的標註</translation>
     </message>
     <message>
         <source>&amp;FLIRT signature file...</source>
@@ -25,7 +25,7 @@
     </message>
     <message>
         <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
-        <translation>套用位元組簽章套件 (.pat) 或程式庫特徵套件 (.json)</translation>
+        <translation>套用位元組簽章套件（.pat）或程式庫特徵套件（.json）</translation>
     </message>
     <message>
         <source>Signature &amp;directory...</source>
@@ -49,7 +49,7 @@
     </message>
     <message>
         <source>Write the current function&apos;s pseudocode to a C file</source>
-        <translation>將目前函式的偽代碼寫入 C 檔案</translation>
+        <translation>將目前函式的虛擬碼寫入 C 檔案</translation>
     </message>
     <message>
         <source>&amp;Save</source>
@@ -193,11 +193,11 @@
     </message>
     <message>
         <source>Jump to pseudo&amp;code</source>
-        <translation>跳至偽代碼(&amp;C)</translation>
+        <translation>跳至虛擬碼(&amp;C)</translation>
     </message>
     <message>
         <source>Switch between disassembly and pseudocode</source>
-        <translation>在反組譯與偽代碼之間切換</translation>
+        <translation>在反組譯與虛擬碼之間切換</translation>
     </message>
     <message>
         <source>Jump &amp;anywhere...</source>
@@ -241,27 +241,27 @@
     </message>
     <message>
         <source>List cross references &amp;to...</source>
-        <translation>列出指向此處的交叉引用(&amp;T)...</translation>
+        <translation>列出指向此處的交互參照(&amp;T)...</translation>
     </message>
     <message>
         <source>List references to the current item</source>
-        <translation>列出對目前項目的引用</translation>
+        <translation>列出對目前項目的參照</translation>
     </message>
     <message>
         <source>List cross references f&amp;rom...</source>
-        <translation>列出來自此處的交叉引用(&amp;R)...</translation>
+        <translation>列出來自此處的交互參照(&amp;R)...</translation>
     </message>
     <message>
         <source>List references made by the current instruction</source>
-        <translation>列出目前指令發出的引用</translation>
+        <translation>列出目前指令發出的參照</translation>
     </message>
     <message>
         <source>Jump to &amp;xref to operand...</source>
-        <translation>跳至運算元的交叉引用(&amp;X)...</translation>
+        <translation>跳至運算元的交互參照(&amp;X)...</translation>
     </message>
     <message>
         <source>List references to the name under the cursor</source>
-        <translation>列出對游標處名稱的引用</translation>
+        <translation>列出對游標處名稱的參照</translation>
     </message>
     <message>
         <source>Jump to mar&amp;ked position...</source>
@@ -353,7 +353,7 @@
     </message>
     <message>
         <source>Generate &amp;pseudocode</source>
-        <translation>產生偽代碼(&amp;P)</translation>
+        <translation>產生虛擬碼(&amp;P)</translation>
     </message>
     <message>
         <source>Decompile the current function</source>
@@ -409,7 +409,7 @@
     </message>
     <message>
         <source>E&amp;xports</source>
-        <translation>匯出(&amp;X)</translation>
+        <translation>匯出表(&amp;X)</translation>
     </message>
     <message>
         <source>Show exported names and entry points</source>
@@ -417,7 +417,7 @@
     </message>
     <message>
         <source>&amp;Imports</source>
-        <translation>匯入(&amp;I)</translation>
+        <translation>匯入表(&amp;I)</translation>
     </message>
     <message>
         <source>Show imported names</source>
@@ -457,11 +457,11 @@
     </message>
     <message>
         <source>&amp;Cross references</source>
-        <translation>交叉引用(&amp;C)</translation>
+        <translation>交互參照(&amp;C)</translation>
     </message>
     <message>
         <source>Show references to the current item</source>
-        <translation>顯示對目前項目的引用</translation>
+        <translation>顯示對目前項目的參照</translation>
     </message>
     <message>
         <source>&amp;Bookmarks</source>
@@ -617,11 +617,11 @@
     </message>
     <message>
         <source>&amp;Restart analysis worker</source>
-        <translation>重新啟動分析程序(&amp;R)</translation>
+        <translation>重新啟動分析處理程序(&amp;R)</translation>
     </message>
     <message>
         <source>Restart the analysis process and reopen the binary</source>
-        <translation>重新啟動分析程序並重新開啟二進位檔案</translation>
+        <translation>重新啟動分析處理程序並重新開啟二進位檔案</translation>
     </message>
     <message>
         <source>&amp;Save desktop</source>
@@ -701,15 +701,15 @@
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
-        <translation>選擇清單中顯示之字串的編碼與最小長度</translation>
+        <translation>選擇反組譯清單中所顯示字串的編碼與最小長度</translation>
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>字串引用(&amp;R)</translation>
+        <translation>字串參照(&amp;R)</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
-        <translation>列出引用字串的指令</translation>
+        <translation>列出參照字串的指令</translation>
     </message>
     <message>
         <source>Create &amp;function</source>
@@ -717,7 +717,7 @@
     </message>
     <message>
         <source>Start a function at the current address</source>
-        <translation>在目前位址開始一個函式</translation>
+        <translation>以目前位址為起點建立函式</translation>
     </message>
     <message>
         <source>&amp;Delete function</source>
@@ -748,8 +748,8 @@
         <translation>取消定義(&amp;I)</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>將目前項目顯示為原始位元組</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>將目前項目還原為未定義的位元組</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +757,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>依清單的預設方式顯示運算元的數字</translation>
+        <translation>依反組譯清單的預設方式顯示運算元的數字</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -797,7 +797,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>
-        <translation>以其指向位址的名稱顯示運算元的數字</translation>
+        <translation>將運算元的數字顯示為其所代表的位址</translation>
     </message>
     <message>
         <source>Change &amp;sign</source>
@@ -924,7 +924,7 @@
     </message>
     <message>
         <source>Imports</source>
-        <translation>匯入</translation>
+        <translation>匯入表</translation>
     </message>
     <message>
         <source>Ordinal</source>
@@ -936,7 +936,7 @@
     </message>
     <message>
         <source>Exports</source>
-        <translation>匯出</translation>
+        <translation>匯出表</translation>
     </message>
     <message>
         <source>Kind</source>
@@ -944,7 +944,7 @@
     </message>
     <message>
         <source>Cross references</source>
-        <translation>交叉引用</translation>
+        <translation>交互參照</translation>
     </message>
     <message>
         <source>Direction</source>
@@ -972,7 +972,7 @@
     </message>
     <message>
         <source>String references</source>
-        <translation>字串引用</translation>
+        <translation>字串參照</translation>
     </message>
     <message>
         <source>Function</source>
@@ -999,7 +999,7 @@
     </message>
     <message>
         <source>Cannot write private session credentials</source>
-        <translation>無法寫入私有工作階段憑證</translation>
+        <translation>無法寫入私有工作階段認證資訊</translation>
     </message>
     <message>
         <source>Session sharing enabled</source>
@@ -1022,11 +1022,11 @@
     </message>
     <message>
         <source>MCP process error: %1</source>
-        <translation>MCP 程序錯誤：%1</translation>
+        <translation>MCP 處理程序錯誤：%1</translation>
     </message>
     <message>
         <source>MCP process exited (%1): %2</source>
-        <translation>MCP 程序已結束（%1）：%2</translation>
+        <translation>MCP 處理程序已結束（%1）：%2</translation>
     </message>
     <message>
         <source>MCP request timed out: %1</source>
@@ -1034,7 +1034,7 @@
     </message>
     <message>
         <source>Disconnect the running MCP process before reconnecting</source>
-        <translation>請先中斷執行中的 MCP 程序，再重新連線</translation>
+        <translation>請先中斷執行中的 MCP 處理程序，再重新連線</translation>
     </message>
     <message>
         <source>Choose an absolute MCP executable path</source>
@@ -1118,11 +1118,11 @@
     </message>
     <message>
         <source>Connected; tool list is partial</source>
-        <translation>已連線；工具清單尚未完整載入</translation>
+        <translation>已連線；工具清單不完整</translation>
     </message>
     <message>
         <source>Connected; resource list is partial</source>
-        <translation>已連線；資源清單尚未完整載入</translation>
+        <translation>已連線；資源清單不完整</translation>
     </message>
     <message>
         <source>MCP tool reported an error</source>
@@ -1291,7 +1291,7 @@
     </message>
     <message>
         <source>The input stored in %1 is damaged.</source>
-        <translation>%1 中儲存的輸入已損毀。</translation>
+        <translation>%1 中儲存的輸入檔案已損毀。</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -1302,7 +1302,7 @@
     <name>Representations</name>
     <message>
         <source>Pseudocode</source>
-        <translation>偽代碼</translation>
+        <translation>虛擬碼</translation>
     </message>
     <message>
         <source>LLVM C</source>
@@ -1360,11 +1360,11 @@
     <name>WorkerTransport</name>
     <message>
         <source>Analysis worker exited (%1). Restart to continue.</source>
-        <translation>分析程序已結束（%1）。請重新啟動以繼續。</translation>
+        <translation>分析處理程序已結束（%1）。請重新啟動以繼續。</translation>
     </message>
     <message>
         <source>Analysis worker is not running.</source>
-        <translation>分析程序未執行。</translation>
+        <translation>分析處理程序未執行。</translation>
     </message>
     <message>
         <source>Analysis request queue is full.</source>
@@ -1372,7 +1372,7 @@
     </message>
     <message>
         <source>Invalid analysis protocol frame.</source>
-        <translation>無效的分析通訊協定框架。</translation>
+        <translation>無效的分析通訊協定訊框。</translation>
     </message>
     <message>
         <source>Invalid analysis protocol JSON.</source>
@@ -1383,7 +1383,7 @@
     <name>neverd::gui::ChooserModel</name>
     <message>
         <source>References are still being indexed…</source>
-        <translation>仍在為引用建立索引…</translation>
+        <translation>仍在為參照建立索引…</translation>
     </message>
     <message>
         <source>Up</source>
@@ -1402,7 +1402,7 @@
     </message>
     <message>
         <source>Line %1 of %2</source>
-        <translation>第 %1 行，共 %2 行</translation>
+        <translation>第 %1 列，共 %2 列</translation>
     </message>
     <message>
         <source>1 item</source>
@@ -1459,7 +1459,7 @@ Recognized library operation; click to show its code.</source>
     </message>
     <message>
         <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
-        <translation>此函式參照的目標、型別、全域變數與函式；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
+        <translation>此函式參照的目標平台資訊、型別、全域變數與函式；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
     </message>
     <message>
         <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
@@ -1491,15 +1491,15 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Saved variable names belong to a different source rendering</source>
-        <translation>已儲存的變數名稱屬於另一份原始碼呈現</translation>
+        <translation>已儲存的變數名稱對應的是另一版原始碼</translation>
     </message>
     <message>
         <source>Expand block (Ctrl+Shift+])</source>
-        <translation>展開程式碼區塊 (Ctrl+Shift+])</translation>
+        <translation>展開程式碼區塊（Ctrl+Shift+]）</translation>
     </message>
     <message>
         <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>摺疊程式碼區塊 (Ctrl+Shift+[)</translation>
+        <translation>摺疊程式碼區塊（Ctrl+Shift+[）</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -1600,16 +1600,16 @@ Double-click to go to the declaration.</source>
         <translation>已中斷連線</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>MCP 連線</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>目前 GUI 工作階段</translation>
+        <source>This NeverD session</source>
+        <translation>目前的 NeverD 工作階段</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
-        <translation>複製憑證路徑</translation>
+        <source>Copy credential path</source>
+        <translation>複製認證資訊路徑</translation>
     </message>
     <message>
         <source>Transport</source>
@@ -1656,11 +1656,11 @@ Double-click to go to the declaration.</source>
         <translation>結構定義</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>呼叫工具</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>取消呼叫</translation>
     </message>
     <message>
@@ -1668,16 +1668,16 @@ Double-click to go to the declaration.</source>
         <translation>選取資源或呼叫工具以檢視回應。</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>停用共用</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>啟用共用</translation>
     </message>
     <message>
         <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-        <translation>共用已關閉。啟用後，本機代理程式可透過私有憑證檔案存取此工作階段。</translation>
+        <translation>共用已關閉。啟用後，本機代理程式可透過私有認證資訊檔案存取此工作階段。</translation>
     </message>
     <message>
         <source>Absolute path to server executable</source>
@@ -1693,7 +1693,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>No server connected</source>
-        <translation>未連線伺服器</translation>
+        <translation>未連線至任何伺服器</translation>
     </message>
     <message>
         <source>No calls yet.</source>
@@ -1712,8 +1712,8 @@ Double-click to go to the declaration.</source>
         <translation>引數必須是 JSON 字串陣列。</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
-        <translation>工具輸入結構</translation>
+        <source>Tool input schema</source>
+        <translation>工具輸入結構定義</translation>
     </message>
 </context>
 <context>
@@ -1724,7 +1724,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source> (Synchronized with %1)</source>
-        <translation> (與 %1 同步)</translation>
+        <translation>（與 %1 同步）</translation>
     </message>
 </context>
 <context>
@@ -1761,7 +1761,7 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
+        <source>Import manifest…</source>
         <translation>匯入資訊清單…</translation>
     </message>
     <message>
@@ -1804,7 +1804,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Copy takes at most %1 bytes; select fewer.</source>
-        <translation>複製最多 %1 位元組，請少選一些。</translation>
+        <translation>最多只能複製 %1 位元組，請縮小選取範圍。</translation>
     </message>
     <message>
         <source>The selection holds bytes no segment maps; nothing was copied.</source>
@@ -1819,7 +1819,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
-        <translation>位址、名稱或運算式 (0x401000, main, sub_401000+10)</translation>
+        <translation>位址、名稱或運算式（0x401000、main、sub_401000+10）</translation>
     </message>
     <message>
         <source>Enter jumps to the expression; arrows choose a match.</source>
@@ -1868,7 +1868,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Background analysis: references and labels are indexed while you browse</source>
-        <translation>背景分析：在您瀏覽時為引用與標籤建立索引</translation>
+        <translation>背景分析：瀏覽期間為參照與標籤建立索引</translation>
     </message>
     <message>
         <source>Unsaved changes</source>
@@ -1920,15 +1920,15 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>AU: idle</source>
-        <translation>AU: 閒置</translation>
+        <translation>AU：閒置</translation>
     </message>
     <message>
         <source>AU: busy %1%</source>
-        <translation>AU: 忙碌 %1%</translation>
+        <translation>AU：忙碌 %1%</translation>
     </message>
     <message>
         <source>AU: busy</source>
-        <translation>AU: 忙碌</translation>
+        <translation>AU：忙碌</translation>
     </message>
     <message>
         <source>Down</source>
@@ -1939,8 +1939,8 @@ Double-click to go to the declaration.</source>
         <translation>向上</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
-        <translation>磁碟：%1GB</translation>
+        <source>Disk: %1 GB</source>
+        <translation>磁碟：%1 GB</translation>
     </message>
     <message>
         <source> · read-only</source>
@@ -1964,11 +1964,11 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>xrefs to %1</source>
-        <translation>指向 %1 的交叉引用</translation>
+        <translation>指向 %1 的交互參照</translation>
     </message>
     <message>
         <source>xrefs from %1</source>
-        <translation>來自 %1 的交叉引用</translation>
+        <translation>來自 %1 的交互參照</translation>
     </message>
     <message>
         <source>Place the cursor inside a function to decompile it.</source>
@@ -2026,11 +2026,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>Dark (Visual Studio Code Dark+)</source>
-        <translation>深色 (Visual Studio Code Dark+)</translation>
+        <translation>深色（Visual Studio Code Dark+）</translation>
     </message>
     <message>
         <source>Light (Visual Studio Code Light+)</source>
-        <translation>淺色 (Visual Studio Code Light+)</translation>
+        <translation>淺色（Visual Studio Code Light+）</translation>
     </message>
     <message>
         <source>Colors</source>
@@ -2046,7 +2046,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>Number of opcode bytes:</source>
-        <translation>操作碼位元組數：</translation>
+        <translation>運算碼位元組數：</translation>
     </message>
     <message>
         <source>Show segment:address line prefixes</source>
@@ -2133,11 +2133,11 @@ Signed: %4</source>
         <translation>偵測常用字碼頁</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>同時以 %1 讀取非 UTF-8 的 C 字串：其中一個字碼頁能將其讀作文字，且沒有其他文字系統的字碼頁也能讀取時</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>同時以 %1 讀取非 UTF-8 的 C 字串，前提是只有一種書寫系統的字碼頁能將其讀作文字</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
         <translation>優先以此字碼頁讀取非 UTF-8 的 C 字串，其他字碼頁也能讀取時以它為準</translation>
     </message>
     <message>
@@ -2166,14 +2166,14 @@ Signed: %4</source>
     </message>
     <message>
         <source>Expand library operations</source>
-        <translation>展開函式庫操作</translation>
+        <translation>展開程式庫操作</translation>
     </message>
     <message>
         <source>Collapse library operations</source>
-        <translation>摺疊函式庫操作</translation>
+        <translation>摺疊程式庫操作</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
+        <source>Cannot determine how to load %1: %2</source>
         <translation>無法確定 %1 的載入方式：%2</translation>
     </message>
     <message>
@@ -2221,7 +2221,7 @@ Signed: %4</source>
         <translation>使用未驗證的 PDB 進行分析</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>此 PE 缺少 PDB 比對識別碼（GUID/age）。所選 PDB 的架構與區段配置相符，但無法確認它屬於同一次建置。
@@ -2269,7 +2269,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Expression or command (help)</source>
-        <translation>運算式或命令 (help)</translation>
+        <translation>運算式或命令（help）</translation>
     </message>
     <message>
         <source>&amp;Copy</source>
@@ -2293,7 +2293,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>  x [expr]          list references to the current item or expr</source>
-        <translation>  x [expr]          列出對目前項目或 expr 的引用</translation>
+        <translation>  x [expr]          列出對目前項目或 expr 的參照</translation>
     </message>
     <message>
         <source>  n &lt;name&gt;          rename the current function</source>
@@ -2321,11 +2321,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
-        <translation>  &lt;expr&gt;            求值：0x10, 10h, #16, 名稱, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+        <translation>  &lt;expr&gt;            求值：0x10、10h、#16、名稱、+ - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
     </message>
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
-        <translation>  strref [text]     列出引用字串的指令</translation>
+        <translation>  strref [text]     列出參照字串的指令</translation>
     </message>
 </context>
 <context>
@@ -2380,7 +2380,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Missing</source>
-        <translation>已遺失</translation>
+        <translation>檔案不存在</translation>
     </message>
     <message>
         <source>&amp;Load</source>
@@ -2408,7 +2408,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
-        <translation>你開啟過的檔案會顯示在這裡。選擇「新增」，或將檔案拖放到此視窗。</translation>
+        <translation>開啟過的檔案會顯示在這裡。選擇「新增」，或將檔案拖放到此視窗。</translation>
     </message>
     <message>
         <source>Last opened: %1</source>
@@ -2423,11 +2423,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Starting analysis worker…</source>
-        <translation>正在啟動分析程序…</translation>
+        <translation>正在啟動分析處理程序…</translation>
     </message>
     <message>
         <source>Incompatible analysis worker protocol.</source>
-        <translation>分析程序通訊協定不相容。</translation>
+        <translation>分析處理程序通訊協定不相容。</translation>
     </message>
     <message>
         <source>Analysis engine %1 ready</source>
@@ -2479,7 +2479,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
-        <translation>已取消佇列中的要求；執行中的引擎呼叫會繼續執行至完成，除非重新啟動分析程序。</translation>
+        <translation>已取消佇列中的要求；執行中的引擎呼叫會繼續執行至完成，除非重新啟動分析處理程序。</translation>
     </message>
     <message>
         <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
@@ -2543,7 +2543,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
-        <translation>已載入 PDB：%1（%2 個名稱，身分已驗證）</translation>
+        <translation>已載入 PDB：%1（%2 個名稱，識別碼已驗證）</translation>
     </message>
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
@@ -2551,7 +2551,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
-        <translation>已載入 PDB 用於分析：%1（%2 個名稱，使用者已確認，身分未驗證）</translation>
+        <translation>已載入 PDB 用於分析：%1（%2 個名稱，使用者已確認，識別碼未驗證）</translation>
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
@@ -2622,7 +2622,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Load debu&amp;g information</source>
-        <translation>載入除錯資訊(&amp;G)</translation>
+        <translation>載入偵錯資訊(&amp;G)</translation>
     </message>
     <message>
         <source>Read the PDB, DWARF or linker map that belongs to the input</source>
@@ -2706,7 +2706,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
-        <translation>檔案中沒有任何部分像 NeverD 認得的指令集的程式碼；請選擇其程式碼執行的處理器</translation>
+        <translation>檔案中沒有任何部分像是 NeverD 已知指令集的程式碼；請選擇其程式碼執行的處理器</translation>
     </message>
     <message>
         <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
@@ -2722,7 +2722,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
-        <translation>程式碼看起來像 %1，NeverD 無法解碼；如仍要按某個處理器讀取，請選擇處理器</translation>
+        <translation>程式碼看起來像 %1，NeverD 無法解碼；如仍要依某個處理器讀取，請選擇處理器</translation>
     </message>
     <message>
         <source>The code looks most like %1, but not clearly; choose the processor its code runs on</source>
@@ -2761,7 +2761,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Ethereum Virtual Machine</source>
-        <translation>以太坊虛擬機</translation>
+        <translation>以太坊虛擬機器</translation>
     </message>
     <message>
         <source>Solana BPF</source>
@@ -2814,7 +2814,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::AnalysisService</name>
     <message>
         <source>Analysis worker stopped.</source>
-        <translation>分析程序已停止。</translation>
+        <translation>分析處理程序已停止。</translation>
     </message>
     <message>
         <source>Only analysis reads are allowed.</source>
@@ -2822,7 +2822,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The worker cannot restore analysis state.</source>
-        <translation>分析程序無法還原分析狀態。</translation>
+        <translation>分析處理程序無法還原分析狀態。</translation>
     </message>
 </context>
 <context>
@@ -2991,14 +2991,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>NeverD does not keep this frame size</source>
-        <translation>NeverD 不保存此堆疊框大小</translation>
+        <translation>NeverD 不會保留此堆疊框架大小</translation>
     </message>
     <message>
         <source>&amp;Name of function</source>
         <translation>函式名稱(&amp;N)</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
+        <source>Analysis decides where the function ends</source>
         <translation>函式的結束位置由分析決定</translation>
     </message>
     <message>
@@ -3035,7 +3035,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Saved &amp;registers</source>
-        <translation>保存的暫存器(&amp;R)</translation>
+        <translation>已儲存的暫存器(&amp;R)</translation>
     </message>
     <message>
         <source>Only x86 functions pop their arguments</source>
@@ -3051,14 +3051,14 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>NeverD does not keep this flag</source>
-        <translation>NeverD 不保存此旗標</translation>
+        <translation>NeverD 不會保留此旗標</translation>
     </message>
     <message>
         <source>D&amp;oes not return</source>
         <translation>不返回(&amp;O)</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
+        <source>Analysis stops control flow at every call to the function</source>
         <translation>分析將對此函式的每次呼叫視為終止</translation>
     </message>
     <message>
@@ -3138,6 +3138,228 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>證據</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>繫結</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>信賴度</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>分析師處置狀態</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>處置狀態來源</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>發現項目 ID</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>未選擇</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>離線套件審查</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>證據涵蓋範圍不完整。分析師處置狀態僅代表呼叫端的判定；套件安全性、發行者驗證與執行階段行為皆未經驗證。</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>預覽檔案…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>預覽目錄…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>擷取預覽內容</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>選擇本機證據</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>選擇本機證據目錄</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>未封裝的資訊清單 / 鎖定檔</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>檢查封存檔</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>已擷取的成品</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>封裝格式</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>封存檔內的資訊清單檔</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>資訊清單格式</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>包含已擷取的套件庫聲明</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>原始位元組</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>套件庫中繼資料</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>擷取描述元</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>評估所選證據</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>依證據、信賴度、處置狀態或 ID 篩選</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>篩選發現項目</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>所選發現項目的證據錨點</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>未審查</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>待審查</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>已接受風險（分析師判定）</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>誤報（分析師判定）</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>記錄處置狀態</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>儲存審查記錄…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>載入審查記錄…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>還原已載入的審查記錄</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>停止分析處理程序</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>正在啟動 NeverD 分析處理程序…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>離線證據分析進行中</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>作業遭拒：%1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>正在依限額讀取離線證據…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>預覽：%1 個成品，%2 位元組。擷取僅讀取本機位元組；原始碼與名稱保持私密。</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>%1 個發現項目 · %2 筆分析師判定 · 涵蓋範圍不完整 · 審查鏈頭 %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>請選擇要預覽或評估的本機證據。</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>儲存本機審查記錄</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>NeverD 審查記錄 (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>審查記錄儲存遭拒：%1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>已在本機儲存不透明的證據 ID 與分析師判定。</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>載入本機審查記錄</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>審查記錄載入遭拒：%1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>已載入 %1 筆判定。還原時會依目前的評估驗證整條審查鏈；尚未套用任何內容。</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>未儲存的審查記錄</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>是否捨棄未儲存的分析師判定並繼續？</translation>
     </message>
 </context>
 </TS>

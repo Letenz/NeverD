@@ -3320,6 +3320,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
                 if (!Img->DataPtrRelocSlots.count(Slot) ||
                     Img->CodePtrRelocSlots.count(Slot) ||
                     EffectiveImportStorageSlots.count(Slot) ||
+                    ExternalFunctionPointerSlots.count(Slot) ||
                     Img->hasRuntimeCallablePointerSlotAt(Slot)) {
                   DataOnly = false;
                   break;
@@ -5201,10 +5202,13 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
     const bool IsCode = Img->CodePtrRelocSlots.count(Slot) != 0;
     const bool IsData = Img->DataPtrRelocSlots.count(Slot) != 0;
     const bool IsImport = EffectiveImportStorageSlots.count(Slot) != 0;
+    const bool IsExternalFunction =
+        ExternalFunctionPointerSlots.count(Slot) != 0;
     const bool IsRuntimeCallable = Img->hasRuntimeCallablePointerSlotAt(Slot);
     const unsigned StaticKinds = static_cast<unsigned>(IsCode) +
                                  static_cast<unsigned>(IsData) +
-                                 static_cast<unsigned>(IsImport);
+                                 static_cast<unsigned>(IsImport) +
+                                 static_cast<unsigned>(IsExternalFunction);
     // A runtime contract can deliberately overlay a static callable fallback
     // (for example a loader-replaceable helper pointer).  It remains callable.
     // Static role disagreement, or any runtime-callable/data overlap, is an
@@ -5213,7 +5217,7 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
                           ConflictingImportStorageSlots.count(Slot) != 0;
     Result.SawCode |= IsCode;
     Result.SawData |= IsData;
-    Result.SawImport |= IsImport;
+    Result.SawImport |= IsImport || IsExternalFunction;
     Result.SawRuntimeCallable |= IsRuntimeCallable;
     Result.SawUnknown |= StaticKinds == 0 && !IsRuntimeCallable;
   }

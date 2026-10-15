@@ -217,10 +217,20 @@ private:
                                                       uint32_t Request,
                                                       uint64_t Argument,
                                                       ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  binderCommand(LinuxDeviceState &Device, uint32_t Command,
+                llvm::ArrayRef<uint8_t> Data, ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  binderReadWork(LinuxDeviceState &Device, uint64_t Address, uint64_t Size,
+                 ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> contextIoctl(LinuxDeviceState &Device,
                                                        uint32_t Request,
                                                        uint64_t Argument,
                                                        ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>> gpuIoctl(LinuxDeviceState &Device,
+                                                   uint32_t Request,
+                                                   uint64_t Argument,
+                                                   ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> deviceIoctl(uint32_t FD,
                                                       uint32_t Request,
                                                       uint64_t Argument,

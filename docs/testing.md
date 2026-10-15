@@ -1736,6 +1736,12 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverPendingCycles.*` checks nested loops whose late definitions must reach
+every batched query, in both query orders and in isolated queries. Register and
+private-frame variants cover x86, x64, ARM and AArch64 across ELF, COFF and
+Mach-O. Reachable values cannot disappear from feasible masks or certify a false
+upper bound; real arithmetic updates cannot become transparent backedges. Warm
+and cold queries must agree at evidence-budget and resolver-depth boundaries.
 `ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
 budget boundary, including completion flags and masks. It covers owned temporary
 overrides, equal-sized edge changes, roots, different builders, nested leases,
@@ -3633,6 +3639,17 @@ checks all four architectures, including explicit function ownership and
 partial-range counterexamples. Session C API regressions cover TLS calls,
 variadic veneers and lazy-binding source pages.
 
+`ExternalFunctionPointersNeedAnExactAbsoluteSymbol` checks the four absolute
+relocation types with REL and RELA addends, and that GOT bindings, data,
+untyped, weak and defined symbols, conflicting names and relocatable objects
+yield no external function pointer. `PointerVariablesStartAtExternalFunctions`
+builds, for each architecture, a library whose two pointer variables start at a
+function another library defines. One is volatile, so x64 calls the other
+straight from memory (`call [rip+disp]`) and loads this one into a register
+first. Its LLVM C must not trap and must compile for all four targets. On an
+x64 host the program runs and must call the initial function, then the one
+stored over it.
+
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
@@ -4078,7 +4095,7 @@ The native receipt tests require
 packages. Older r4 builds retain analysis and refusal coverage but cannot run
 these compiler-protocol tests. The focused Wine job and native Windows source
 replay use the complete `all` profile with the published compiler; an LLVM
-workflow artifact override is no longer needed for these 63 source scenarios.
+workflow artifact override is no longer needed for these 64 source scenarios.
 
 `registration_state_dispatch.s` adds `longjmp-state-byte-high-bits`: the same
 filter byte store produces complete states 0 and 256. Four alternating invocations
@@ -4103,6 +4120,20 @@ kinds, ordinary call/branch edges and exact physical near returns must agree.
 An ordinary caller, shared filter/handler entry, parent return, memory write or
 other scalar use remains observable. This proof is shared by emission and COFF
 source replay through the MedIR call-result binder.
+
+`longjmp-deep-scope-chain` uses 259 nested scope rows and walks 254 search-only
+rows during nonlocal unwind. Its 20 runtime images check both cleanup counts,
+resumed EAX/EBX, final state and FS:[0]. Distinct call sites isolate scope depth
+from the separate parent-call state-selection contract.
+`RegistrationSEHTryLevel.DeepUnwindKeepsTheDefaultProofBudget` and
+`RegistrationDispatch.SharedFinallyRetainsEveryLevelWithinDefaultBudget` cover
+1,024 levels without changing the work cap, including reversed block order.
+`RegistrationDispatch.ManyDistinctFramesStayWithinDefaultBudget` checks 1,024
+different parent cells with otherwise equal registers, in both block orders.
+The corpus filter-thunk HighC test guards readable `xcpt4` output against
+snapshot-index budget regressions.
+Companion tests preserve distinct source snapshots, converging sibling paths,
+recurrent-path rejection and observable finally writes.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation
@@ -5469,6 +5500,17 @@ cmake -S . -B build-native -G Ninja \
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+`AArch64ReductionCases.def` records 34 independently assembled baseline forms of
+CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane
+oracles cover all admitted widths, unsigned high bits, narrowing truncation,
+upper clearing/preservation and source/destination aliases; the full vector,
+scalar and guard-memory state is checked at EL0 and EL1. Each malformed or SVE
+counterexample has a fresh CPU because a refused instruction terminates execution.
+Run the `NeverDAArch64FPTests` label after changing this admission boundary.
+The semantic reference is Arm's [instruction guide](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab),
+sections D6.15–16, D6.246 and D6.279–281.
+
+
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings. `AArch64StructureMemoryCases.def` adds independently assembled NEON lane, register-list, interleaved and replicate forms, plus reserved encodings. Tests cover B/H/S/D elements, 64/128-bit vectors, register wrap, SP, immediate/negative-register writeback, every crossing, exact ordered observers, stopping at every element, denied final bytes, adjacent inaccessible memory, shared physical aliases and restored contexts. All 39 scalar fields and 32 vectors are compared, including retained lanes and cleared upper halves. The same cases run on checked EL0/EL1 Unicorn and available KVM/WHP/HVF transports; unavailable platforms are explicit skips.
 
 `NeverDAArch64StateTests` checks all 71 complete-state read positions at both privileges, including width normalization, missing readers and retry. `NeverDAArch64FPTests` executes original `AArch64FPCases.def` instructions: all vector lanes, packed arithmetic, scalar/vector floating results, four rounding modes, FZ/DN, cumulative FPSR, context state and rejected extensions/control bits. `NeverDAArch64MemoryTests` tests every crossing offset, ordered observers, stops, denied pages, aliases and restored vector inputs. `NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) injects every scalar/vector read failure after real execution. Unavailable native transports skip explicitly; these tests and cross-compilation do not replace native ARM64 KVM/WHP evidence.
@@ -6667,6 +6709,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
 
 ## Native Lift qualification
@@ -6864,3 +6908,20 @@ native transports remain skips, not execution evidence.
 `KernelRegistryTests.cpp` covers independent opens, typed references, cloned handles, process scope, generic mapping, deleted identities, odd/short name buffers, aliased output ordering and failure/capacity boundaries. Original `fixtures/driver_registry_objects.c` runs through `DriverRegistryObjectTests.cpp` on each available backend, both execution contracts and image bases, with cooperative and 17-instruction scheduling. A deliberate pointer leak verifies unload rejection. Native acceptance requires all four contract/base outcomes.
 
 `KernelDeviceStackTests.cpp` checks current neighbors, borrowed versus retained results, deletion of either query input or neighbor, last-reference retirement, invalid/corrupted inputs and IRQL rejection before retention. Original `fixtures/driver_device_queries.c` runs through `DriverDeviceQueryTests.cpp` on available backends, both contracts and image bases, with cooperative and 17-instruction scheduling. It verifies held storage after detach/delete and rejects unload with a deliberately leaked reference; all four native contract/base outcomes are required.
+
+KernelFileObjectTests checks references during CREATE, type mismatch, reused identifiers, pending CLOSE, deletion, failed CREATE and rejection of elevated final release. Original driver_file_objects.c and DriverFileObjectTests execute synchronous/pending close, failed creation and deliberate leaks on available backends, both contracts and bases, with cooperative and 17-instruction scheduling. The nested close checks the actual thread, process and PreviousMode. Native acceptance requires all four contract/base outcomes. File handles and filesystem operations need separate coverage.
+
+### Android method, transaction and command execution
+
+Build the Android/Linux/process-public/execution-session targets in Release.
+`AndroidJNI` validates ordinary/V/A intrinsic calls, UTF-16 results, constructor
+copies, virtual/nonvirtual identity, cached names, exception ordering and invalid
+IDs/types. `AndroidBinder` executes guest service replies on cooperative threads;
+`LinuxBinder` separately checks full LP64 records and read-only buffer ownership
+on x64 and AArch64. `AndroidDevices` and `LinuxProcess` run original PM4 callers,
+including retained physical memory after CPU address reuse and refused programs
+with no earlier writes. Run focused `ctest -R 'AndroidJNI|Binder|GPUCommands|RejectedGPU|StatefulDescriptorsPages|StatefulDevicesValidate'`,
+then the four owning labels. Process-public C API/CLI and Python integration
+exercise the same paths; transport unavailability is a skip, never evidence of
+execution. These authored workloads do not establish arbitrary application,
+Android service or shader coverage.

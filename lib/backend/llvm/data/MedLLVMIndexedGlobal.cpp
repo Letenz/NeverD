@@ -264,6 +264,7 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   if (Img && (!Img->DataPtrRelocSlots.empty() ||
               !EffectiveImportStorageSlots.empty() ||
               !ConflictingImportStorageSlots.empty() ||
+              !ExternalFunctionPointerSlots.empty() ||
               !Img->RuntimeCallablePointerSlots.empty())) {
     auto loadsFromDataPtrTable = [&](const MedVar &Start) {
       MedVar Cur = Start;
@@ -303,6 +304,11 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
         for (va_t S : ConflictingImportStorageSlots)
           if (S >= LSeg->VA && S < LSeg->VA + LSeg->Data.size())
             return true;
+        for (const auto &[S, Name] : ExternalFunctionPointerSlots) {
+          (void)Name;
+          if (S >= LSeg->VA && S < LSeg->VA + LSeg->Data.size())
+            return true;
+        }
         for (const RuntimeCallablePointerSlot &Slot :
              Img->RuntimeCallablePointerSlots)
           if (Slot.SlotVA >= LSeg->VA &&

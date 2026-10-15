@@ -22,6 +22,10 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
   // outer exception dispatch when that finally itself faults.
   if (!Before.CanDispatch || !Before.Installed)
     return;
+  if (!KnownCxx) {
+    queueSEHScopes(Before, Facts.Invalid);
+    return;
+  }
   const std::set<int32_t> &DispatchLevels =
       Before.Unknown || Facts.Invalid ? AllLevels : Before.Levels;
   for (int32_t Level : DispatchLevels) {
@@ -33,8 +37,8 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
           static_cast<size_t>(Walk) >= Chain.Scopes.size())
         break;
       const RegistrationScopeRecord &Scope = Chain.Scopes[Walk];
-      dispatch(Scope.FilterVA, Level, Before, Facts.Invalid, true, true);
-      dispatch(Scope.HandlerVA, Scope.EnclosingLevel, Before, Facts.Invalid,
+      dispatch(Scope.FilterVA, {Level}, Before, Facts.Invalid, true, true);
+      dispatch(Scope.HandlerVA, {Scope.EnclosingLevel}, Before, Facts.Invalid,
                Scope.IsFinally);
       Walk = Scope.EnclosingLevel;
     }
@@ -92,7 +96,7 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
           CompleteImageReads = false;
         }
       }
-      dispatch(Action.ActionVA, Action.ToState, Before, true, true);
+      dispatch(Action.ActionVA, {Action.ToState}, Before, true, true);
       Walk = Action.ToState;
     }
   }
@@ -102,7 +106,7 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
          ++CatchIndex) {
       if (!charge(1))
         return;
-      dispatch(Try.Handlers[CatchIndex].HandlerVA, Try.TryHigh + 1, Before,
+      dispatch(Try.Handlers[CatchIndex].HandlerVA, {Try.TryHigh + 1}, Before,
                Facts.Invalid, true, false,
                std::make_pair(Search.TryIndex, CatchIndex));
     }

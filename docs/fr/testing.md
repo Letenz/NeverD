@@ -1911,6 +1911,8 @@ Les 204 observations de l’ancien profil de traduction sont historiques et ne p
 
 `NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
 
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` vérifie que l’historique en cache n’est pas facturé à nouveau, que les constantes larges ajoutées restent facturées, que les budgets insuffisants de travail et de nœuds refusent et que les copies du cache de lisibilité restent indépendantes.
 
 ## Qualification native de Lift
@@ -2091,3 +2093,5 @@ La qualification native Linux exécute aussi toute la suite `HighSwiftEmitter` :
 `KernelRegistryTests.cpp` couvre ouvertures distinctes, références typées, handles copiés, portée processus, droits génériques, identités supprimées, tampons courts/impairs, sorties aliasées et limites d’échec/capacité. `DriverRegistryObjectTests.cpp` exécute l’original `fixtures/driver_registry_objects.c` sur les moteurs disponibles, deux contrats et deux bases, avec ordonnanceur coopératif ou quantum de 17 instructions. Une fuite volontaire vérifie le refus de déchargement ; les quatre combinaisons sont obligatoires pour l’acceptation native.
 
 `KernelDeviceStackTests.cpp` vérifie les voisins actuels, les résultats empruntés ou retenus, la suppression de la cible ou du voisin, la dernière référence, les entrées invalides ou corrompues et le rejet IRQL avant acquisition. Le pilote original `fixtures/driver_device_queries.c` est exécuté par `DriverDeviceQueryTests.cpp` sur les backends disponibles, avec les deux contrats et adresses de chargement, en ordonnancement coopératif et préemptif de 17 instructions. Il vérifie le stockage conservé après detach/delete et le refus de déchargement en cas de fuite volontaire ; les quatre combinaisons natives contrat/adresse sont requises.
+
+KernelFileObjectTests couvre les références pendant CREATE, les types incompatibles, les numéros réutilisés, CLOSE en attente, la suppression, CREATE échoué et le refus de la dernière libération à IRQL élevé. Les tests originaux driver_file_objects.c et DriverFileObjectTests vérifient fermeture synchrone ou différée, échec et fuite volontaire sur les backends disponibles, les deux contrats et bases, en mode coopératif et par tranches de 17 instructions. CLOSE vérifie le thread, le processus et PreviousMode. Les quatre combinaisons natives sont obligatoires ; handles et système de fichiers restent à couvrir.

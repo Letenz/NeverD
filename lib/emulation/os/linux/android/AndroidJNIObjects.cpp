@@ -64,6 +64,7 @@ Bionic::jniClass(llvm::StringRef Name) {
                Name == "java/lang/String" || Name == "java/lang/Throwable" ||
                Name == "java/lang/Exception" || Name == "java/lang/Error" ||
                Name == "java/lang/RuntimeException" ||
+               Name == "java/lang/NullPointerException" ||
                Name == "java/lang/IllegalArgumentException" ||
                Name == "java/lang/IndexOutOfBoundsException" ||
                Name == "java/lang/ArrayIndexOutOfBoundsException" ||

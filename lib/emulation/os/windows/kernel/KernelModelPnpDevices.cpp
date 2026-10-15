@@ -238,9 +238,9 @@ llvm::Error KernelModel::finalizeAddDevice(llvm::StringRef ID) {
       std::any_of(
           WorkItems.begin(), WorkItems.end(),
           [&](const auto &Entry) { return Entry.second == Device.PDO; }) ||
-      std::any_of(Files.begin(), Files.end(), [&](const auto &Entry) {
-        return Entry.second.Device == Device.PDO;
-      });
+      std::any_of(
+          FileObjects.begin(), FileObjects.end(),
+          [&](const auto &Entry) { return Entry.second.Device == Device.PDO; });
   if (HasReferences)
     return pnpDeviceError("failed AddDevice left provider references");
   if (auto E = retirePnpProvider(Device.PDO))
@@ -284,7 +284,7 @@ llvm::Error KernelModel::retirePnpProvider(uint64_t PDO) {
       std::any_of(WorkItems.begin(), WorkItems.end(),
                   [PDO](const auto &Entry) { return Entry.second == PDO; }) ||
       std::any_of(
-          Files.begin(), Files.end(),
+          FileObjects.begin(), FileObjects.end(),
           [PDO](const auto &Entry) { return Entry.second.Device == PDO; }) ||
       std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
         const auto &Request = Entry.second;
@@ -356,7 +356,7 @@ llvm::Error KernelModel::validatePnpRemovalFinalization(
         Scheduler.hasOutstanding(Owner))
       return pnpDeviceError("remove finalization has a retained guest device "
                             "or attachment");
-    for (const auto &[ID, File] : Files) {
+    for (const auto &[ID, File] : FileObjects) {
       (void)ID;
       if (File.Device == Owner)
         return pnpDeviceError("remove finalization has a retained file");

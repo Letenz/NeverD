@@ -8,7 +8,10 @@
 
 #include "RegistrationStateSolver.h"
 
-#include <deque>
+#include <bit>
+#include <cassert>
+#include <map>
+#include <vector>
 
 namespace neverd::registration_state {
 
@@ -21,15 +24,33 @@ bool RegistrationStateSolver::runSEHUnwind(
     return false;
   struct Step {
     FrameState Frame;
-    std::vector<FrameState> Ancestors;
     int32_t VisibleLevel;
+    bool Leave = false;
   };
   Frame.store(*Chain.TryLevelOffset, 4, FrameValue::constant(uint32_t(Level)));
-  std::deque<Step> Pending;
-  Pending.push_back({std::move(Frame), {}, Level});
+  std::vector<Step> Pending;
+  Pending.push_back({std::move(Frame), Level});
+  // Keep only the active DFS path. Copying the entire path into every next
+  // step makes even a straight scope chain quadratic in frame storage/work.
+  // Equal frames must have equal proved TryLevel cells, so other levels need
+  // neither a frame comparison nor a separate copy of the ancestry.
+  std::map<int32_t, std::vector<FrameState>> Ancestors;
   while (!Pending.empty()) {
-    Step Current = std::move(Pending.front());
-    Pending.pop_front();
+    Step Current = std::move(Pending.back());
+    Pending.pop_back();
+    if (!charge(1 + 2 * std::bit_width(Ancestors.size() + 1)))
+      return false;
+    if (Current.Leave) {
+      auto It = Ancestors.find(Current.VisibleLevel);
+      assert(It != Ancestors.end() && !It->second.empty());
+      const auto &Last = It->second.back();
+      if (!charge(Last.cellCount() + Last.OtherRegisterBytes.size() + 1))
+        return false;
+      It->second.pop_back();
+      if (It->second.empty())
+        Ancestors.erase(It);
+      continue;
+    }
     const auto NativeLevel =
         Current.Frame.load(Chain.TryLevelOffset, 4).Constant;
     if (!NativeLevel || !validLevel(int32_t(*NativeLevel)) ||
@@ -52,7 +73,8 @@ bool RegistrationStateSolver::runSEHUnwind(
     }
     if (Walk < 0 || size_t(Walk) >= Chain.Scopes.size())
       return false;
-    for (const auto &Ancestor : Current.Ancestors) {
+    auto &AtLevel = Ancestors[Walk];
+    for (const auto &Ancestor : AtLevel) {
       if (!charge(Ancestor.cellCount() + Ancestor.OtherRegisterBytes.size() +
                   Current.Frame.cellCount() +
                   Current.Frame.OtherRegisterBytes.size() + 10) ||
@@ -62,7 +84,13 @@ bool RegistrationStateSolver::runSEHUnwind(
     // Re-entering a state with changed frame facts can be a finite protocol.
     // Exact recurrent configurations are refused; all other exploration,
     // including ancestor storage and branch fanout, shares the work budget.
-    Current.Ancestors.push_back(Current.Frame);
+    if (!charge(Current.Frame.cellCount() +
+                Current.Frame.OtherRegisterBytes.size() + 10))
+      return false;
+    AtLevel.push_back(Current.Frame);
+    // Leave after all children, so siblings may converge on the same frame
+    // without borrowing each other's ancestry or hiding a recurrent path.
+    Pending.push_back({{}, Walk, true});
     const auto &Scope = Chain.Scopes[Walk];
     Current.Frame.store(*Chain.TryLevelOffset, 4,
                         FrameValue::constant(uint32_t(Scope.EnclosingLevel)));
@@ -74,15 +102,14 @@ bool RegistrationStateSolver::runSEHUnwind(
     } else if (!mergeSEHFrameOutcome(Returned, std::move(Current.Frame))) {
       return false;
     }
-    for (auto &[NextLevel, NextFrame] : Returned) {
-      for (const auto &Ancestor : Current.Ancestors)
-        if (!charge(Ancestor.cellCount() + Ancestor.OtherRegisterBytes.size() +
-                    10))
-          return false;
+    if (!charge(Returned.size() + 1))
+      return false;
+    for (auto It = Returned.rbegin(); It != Returned.rend(); ++It) {
+      auto &[NextLevel, NextFrame] = *It;
       // A completed finally exposes its current state to the source frame.
       // Skipping a filter changes only the runtime cursor; native resumption
       // must project the old logical cell through those remaining steps.
-      Pending.push_back({std::move(NextFrame), Current.Ancestors,
+      Pending.push_back({std::move(NextFrame),
                          Scope.IsFinally ? NextLevel : Current.VisibleLevel});
     }
   }

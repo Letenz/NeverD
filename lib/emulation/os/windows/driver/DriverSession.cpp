@@ -1710,8 +1710,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
           }
           auto Call = std::move(*Current->ChildCall);
           Current->ChildCall.reset();
-          if (Call.Token.Owner == GuestCallOwner::PoFx)
-            Kernel.enterExecution(Current->Base, Current->ThreadKey);
+          Kernel.enterExecution(Current->Base, Current->ThreadKey,
+                                Current->ReturnToken.ID
+                                    ? Current->ReturnToken
+                                    : Kernel.scheduledGuestCall(Current->ID));
           if (auto E = Kernel.beginGuestCall(Call.Token)) {
             ModelFailure(std::move(E));
             return llvm::Error::success();
@@ -1721,6 +1723,11 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
                            Current->ID, true);
           if (!Child) {
             ModelFailure(Child.takeError());
+            return llvm::Error::success();
+          }
+          if (auto E = Kernel.inheritExecutionContext((*Child)->Base,
+                                                      Current->Base)) {
+            ModelFailure(std::move(E));
             return llvm::Error::success();
           }
           (*Child)->ReturnToken = Call.Token;
@@ -2209,6 +2216,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         ModelFailure(Invocation.takeError());
         break;
       }
+      // A scenario CLOSE releases its hold immediately. A driver pointer may
+      // retain the body; that pointer's eventual release owns actual dispatch.
+      if (!Invocation->IRP)
+        continue;
       if (Invocation->PC) {
         if (auto E = Kernel.setUserRequestContext(
                 Options.Requests[Index].Kind != DriverRequestKind::Pnp &&

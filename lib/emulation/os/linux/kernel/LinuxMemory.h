@@ -40,6 +40,8 @@ public:
   llvm::ArrayRef<uint8_t> deviceBytes(const LinuxDeviceMapping &Mapping) const;
   llvm::Error writeDeviceBytes(const LinuxDeviceMapping &Mapping,
                                uint64_t Offset, llvm::ArrayRef<uint8_t> Bytes);
+  std::optional<uint64_t> binderAddress(const LinuxDeviceState &Device,
+                                        uint64_t Offset, uint64_t Size) const;
 
 private:
   AddressSpace &Space;

@@ -1511,7 +1511,7 @@ void MainWindow::updateStatusBar() {
                            : QDir::homePath();
   const QStorageInfo storage(path);
   diskLabel_->setText(
-      tr("Disk: %1GB").arg(storage.bytesAvailable() / (1024LL * 1024 * 1024)));
+      tr("Disk: %1 GB").arg(storage.bytesAvailable() / (1024LL * 1024 * 1024)));
   fileLabel_->setText(
       session_.loaded()
           ? QStringLiteral("%1 · %2%3%4")
@@ -1721,7 +1721,7 @@ void MainWindow::chooseLoader(const QString &path) {
       },
       [this, path](const QString &, const QString &message) {
         output_->append(
-            tr("The ways to load %1 are unknown: %2").arg(path, message), 1);
+            tr("Cannot determine how to load %1: %2").arg(path, message), 1);
         openFile(path);
       });
 }
@@ -1784,7 +1784,7 @@ void MainWindow::loadPdb() {
             }
             const auto answer = QMessageBox::warning(
                 this, tr("Use unverified PDB for analysis"),
-                tr("This PE has no PDB matching identity (GUID/age). "
+                tr("This PE has no PDB identity (GUID/age) to match against. "
                    "The selected PDB's machine and section layout match, "
                    "but its build cannot be verified.\n\n"
                    "Use this PDB for analysis? Its symbols, types, function "
@@ -2449,13 +2449,12 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
       !common.isEmpty() &&
       std::all_of(common.begin(), common.end(),
                   [&](const QString &name) { return chosen.contains(name); }));
-  detect->setToolTip(tr("Also read C strings that are not UTF-8 in %1, where "
-                        "one of them reads them as text and no code page for "
-                        "another script does")
+  detect->setToolTip(tr("Also read C strings that are not UTF-8 in %1, when "
+                        "the code pages of only one script read them as text")
                          .arg(commonSpellings.join(QStringLiteral(", "))));
-  preferred->setToolTip(tr("Read C strings that are not UTF-8 in this code "
-                           "page first, so that it wins where other code "
-                           "pages read them too"));
+  preferred->setToolTip(tr("Try this code page first for C strings that are "
+                           "not UTF-8; it wins when other code pages read "
+                           "them too"));
   if (preferred->count() > 1) {
     if (!common.isEmpty())
       form->addRow(tr("Code pages:"), detect);

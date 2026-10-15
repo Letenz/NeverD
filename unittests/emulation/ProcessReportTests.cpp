@@ -3971,7 +3971,7 @@ TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
   EXPECT_EQ(D.KGSL->ContextLimit, 3u);
   ASSERT_EQ(D.ReadOnlyMappings[0].Updates.size(), 2u);
   EXPECT_EQ(D.ReadOnlyMappings[0].Updates[1].AfterNanoseconds, UINT64_MAX);
-  for (unsigned Mode = 0; Mode != 19; ++Mode) {
+  for (unsigned Mode = 0; Mode != 23; ++Mode) {
     SCOPED_TRACE(Mode);
     auto D = Input();
     auto &K = *D.getObject("kgsl_contexts");
@@ -4026,12 +4026,20 @@ TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
     }
     if (Mode == 18)
       K["context_limit"] = true;
+    if (Mode == 19)
+      K["synchronous_a3xx"] = 1;
+    if (Mode == 20)
+      K["synchronous_a3xx"] = "true";
+    if (Mode == 21)
+      K["synchronous_a3xx"] = nullptr;
+    if (Mode == 22)
+      K["synchronous_a3xx"] = true; // conflicts with producer
     auto R = Parse(std::move(D));
     EXPECT_FALSE(bool(R));
     llvm::consumeError(R.takeError());
   }
   // The C++ entry point uses the same validator as JSON.
-  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+  for (unsigned Mode = 0; Mode != 6; ++Mode) {
     SCOPED_TRACE(Mode);
     auto O = *Good;
     auto &D = O.LinuxFiles->Devices.at("/fixture/control");
@@ -4045,11 +4053,20 @@ TEST(ProcessReport, StatefulDevicesValidateProducerAndContextBoundaries) {
       D.ReadOnlyMappings[0].Updates.resize(1025);
     if (Mode == 4)
       D.Ioctls.push_back({0xc00c0916, 0, {}, {}});
+    if (Mode == 5)
+      D.KGSL->SynchronousA3xx = true;
     auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
     ASSERT_FALSE(bool(R));
     EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
               std::string::npos);
   }
+  auto Commands = Input();
+  (*Commands.getObject("kgsl_contexts"))["synchronous_a3xx"] = true;
+  (*Commands.getArray("read_only_mappings"))[0].getAsObject()->erase("updates");
+  auto ValidCommands = Parse(std::move(Commands));
+  ASSERT_TRUE(bool(ValidCommands)) << llvm::toString(ValidCommands.takeError());
+  EXPECT_TRUE(ValidCommands->LinuxFiles->Devices.at("/fixture/control")
+                  .KGSL->SynchronousA3xx);
 }
 
 llvm::json::Value fileMetadata() {

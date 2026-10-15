@@ -1059,6 +1059,7 @@ private:
     bool Complete = false;
     bool SawCode = false;
     bool SawData = false;
+    /// Import storage, or a word the loader starts at an external function.
     bool SawImport = false;
     bool SawRuntimeCallable = false;
     bool SawUnknown = false;
@@ -2011,6 +2012,12 @@ private:
   mutable std::map<va_t, DataSymbolBinding> DataSymbolBindings;
   llvm::Constant *resolveDataSymbolAddress(const DataSymbolBinding &Binding);
   mutable std::set<va_t> ConflictingImportStorageSlots;
+  /// Data words the loader starts at a function another module defines, by
+  /// its name (collectExternalFunctionPointers), outside import storage.  A
+  /// call through one calls the value the word holds then: it is callable
+  /// storage, and a mirror starts it at the function, but it never names the
+  /// call's routine, since the program may store another function there.
+  mutable std::map<va_t, std::string> ExternalFunctionPointerSlots;
   std::vector<JumpTableStorageRange> ModuleJumpTableStorageRanges;
   std::set<va_t> ModuleSuppressibleJumpTableRelocationSlots;
   Arch TargetArch = Arch::X64;

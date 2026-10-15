@@ -301,6 +301,9 @@ KernelModel::queryObjectName(uint64_t Object, uint64_t Buffer, uint32_t Length,
   if (!ReferencedObjects.contains(Object))
     return namespaceError("name query requires a known live object");
   const auto &References = ReferencedObjects.at(Object);
+  if (References.Kind == ObjectKind::File)
+    return namespaceError(
+        "file object name query requires a filesystem provider");
   if (References.RegistryOwner)
     return References.RegistryOwner->queryObjectName(
         *this, Object, Buffer, Length, ReturnLength, RequiredLength);

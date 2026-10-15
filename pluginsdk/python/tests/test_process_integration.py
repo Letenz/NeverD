@@ -38,7 +38,7 @@ class ProcessIntegrationTests(unittest.TestCase):
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
         for entry in ("jni_vm_lifecycle", "jni_string_values", "jni_arrays",
                       "jni_references", "jni_threads", "jni_primitive_bits",
-                      "jni_art_string_edges"):
+                      "jni_art_string_edges", "jni_method_values", "jni_method_exceptions"):
             with self.subTest(entry=entry):
                 options = {"backend": "unicorn", "android": {
                     "entry_symbol": entry, "initialize": False,
@@ -66,11 +66,12 @@ class ProcessIntegrationTests(unittest.TestCase):
         handle = ctypes.c_void_p(address)
         self.addCleanup(host.call, "neverd_session_destroy", handle)
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
-        for entry in ("binder_control", "binder_descriptions", "binder_threads"):
+        for entry in ("binder_control", "binder_descriptions", "binder_threads",
+                      "binder_service_transactions", "binder_missing_targets"):
             with self.subTest(entry=entry):
                 options = {"backend": "unicorn", "android": {
                     "entry_symbol": entry, "initialize": False,
-                    "thread_limit": 2}, "linux_files": {"files": [], "devices": [
+                    "thread_limit": 3}, "linux_files": {"files": [], "devices": [
                         {"path": "/dev/binder", "access_mode": 2, "open_errno": 0,
                          "ioctls": [], "binder": True}]}}
                 result = session.emulate_process(str(Path(fixtures) / "binder-O2-relr.so"),
@@ -359,6 +360,15 @@ class ProcessIntegrationTests(unittest.TestCase):
                                              "android-aarch64-api28-v1", json.dumps(options))
             self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
             self.assertEqual(result["return_value"], "0")
+
+        device["kgsl_contexts"]["synchronous_a3xx"] = True
+        device["read_only_mappings"][0]["updates"] = []
+        options["android"].update(entry_symbol="devices_gpu_commands", arguments=[0])
+        result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                         "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(result["return_value"], "0")
+        del device["kgsl_contexts"]["synchronous_a3xx"]
 
         device["read_only_mappings"][0]["updates"] = [
             {"after_nanoseconds": 1000000, "offset": 0, "bytes_hex": "9a"}]

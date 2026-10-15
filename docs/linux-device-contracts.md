@@ -155,9 +155,9 @@ Host time, sample PCs and inferred hardware events do not trigger writes.
 A device may opt into `"kgsl_contexts":{"memstore_offset":4096,"context_limit":3}`.
 The offset must select one declared mapping whose 40-byte slots fit IDs 0 through
 the inclusive limit (1–1,024). This is an LP64 Adreno protocol subset, not a GPU
-driver. Every context starts idle; command submission, externally submitted
-queued timestamps, fault recovery, secure contexts, hardware scheduling and
-original SDKs are absent.
+driver. Every context starts idle. Command execution requires the separate explicit
+profile below; externally submitted queued timestamps, fault recovery, secure
+contexts, hardware scheduling and original SDKs are absent.
 An external producer trace is a declared workload assumption, not command execution.
 
 The implemented requests are `0xc0080913` (create), `0x40040914` (destroy), and
@@ -198,7 +198,8 @@ supply a queued timestamp. Unknown timestamp types return EINVAL and copy out a
 zero timestamp. This follows the read/copy-out contracts in the pinned
 [KGSL ioctl owner](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/kgsl.c)
 and [Adreno timestamp owner](https://android.googlesource.com/kernel/msm/+/a65478df351382d255d293d745aee9bae3a3a741/drivers/gpu/msm/adreno.c).
-Blocking waits, command execution and busy-context retirement remain unmodeled.
+Blocking waits and busy-context retirement remain unmodeled. The explicit
+command profile below owns its own queued and retired timestamps.
 
 ## Binder control and looper protocol
 
@@ -219,12 +220,82 @@ returns EAGAIN while preserving the kernel's observable BR_NOOP buffer write.
 Complete write/read records, consumed counts, guards and overlapping output
 copy order are retained. A zero-length stream does not dereference its pointer.
 
-There are no inferred peers, service-manager entries, Parcel values, remote
-objects, transaction buffers, death notifications or system-service replies.
-Such commands and blocking reads that need work stop explicitly. Captured ioctl
+There are no inferred service-manager entries, Parcel values, remote objects,
+death notifications or Android system-service replies. Guest-owned synchronous
+transactions are described below. Other commands and blocking reads that need
+work stop explicitly. Captured ioctl
 replies, read-only mappings and KGSL cannot be combined with this model. Command
 streams are bounded to 4096 bytes and 4096 thread identities; partial command or
 record faults, short read buffers and resumed read buffers are not admitted.
 The state machine follows the pinned
 [Binder driver contract](https://android.googlesource.com/kernel/common/+/cf21a9ac5ee4f57c6f45fe2b09d197bdc038f39d/drivers/android/binder.c),
 without executing or copying its implementation or contacting a host driver.
+
+
+### Guest-owned Binder services
+
+SET_CONTEXT_MGR registers one context-manager open per declared device. A second
+registration returns EBUSY. Separate opens have distinct Binder process owners,
+even within this one emulated process. A read-only MAP_PRIVATE (optionally
+MAP_NORESERVE), offset-zero arena of at most 64 KiB supplies receiver buffers;
+only one mapping per open is admitted. The memory owner retains each buffer's
+mapping identity, permissions and lifetime.
+
+BC_TRANSACTION to handle zero copies an object-free payload into the registered
+peer's arena. An entered/registered guest looper receives BR_TRANSACTION, runs
+its native service code, and sends BC_REPLY. The original caller receives
+BR_TRANSACTION_COMPLETE and BR_REPLY; no service result is supplied by the model.
+Complete LP64 records retain code, sender identity, data size, aligned offsets,
+consumed counts and untouched guards. BC_FREE_BUFFER releases only a delivered,
+live buffer belonging to that open. Descriptors created with dup share ownership.
+A missing context manager yields queued BR_DEAD_REPLY; unowned nonzero handles
+and a reply without an incoming call yield BR_FAILED_REPLY. Target failure does
+not dereference the payload. The kernel's full-record read reservation is retained,
+even for four-byte completion/error work.
+An unread return error stops command consumption; reading it allows the caller
+to resume from write_consumed. A delivered transaction can request a new looper
+through the leading BR_SPAWN_LOOPER word, under the same thread-pool rules as
+control reads. Private thread work and process work retain kernel read eligibility.
+
+This subset admits synchronous flags-zero, offsets-free messages, at most one
+transaction per write batch, 64 live buffers/work items per queue, and 64 KiB per
+payload. Object/FD translation, one-way or nested calls, security policies,
+peer-death processing and blocking scheduling remain explicit gaps. Partial
+copies, exhausted model budgets and missing peer arenas stop rather than
+fabricating data. Pending work prevents final owner retirement. Existing ioctl
+observations cannot replace these stateful operations.
+
+### Explicit A3xx memory commands
+
+Add `"synchronous_a3xx":true` inside `kgsl_contexts` to opt into a deterministic
+PM4 subset. It defaults to false and rejects non-Booleans. A memstore with
+external producer updates cannot enable it: there must be one timestamp owner.
+This setting selects a command format and a synchronous, coherent-RAM execution
+contract; it does not identify a physical GPU or claim its timing/cache behavior.
+
+MAP_USER_MEM admits page-aligned ordinary user-address memory, zero offset,
+1–8 pages, and zero/GPUREADONLY flags. Up to 64 retained allocations share a
+process GPU address space across independent opens; returned flags include
+USERMEM_ADDR. Physical pins survive CPU unmapping and virtual-address reuse.
+SHAREDMEM_FREE releases a registered base address.
+
+Legacy RINGBUFFER_ISSUEIBCMDS admits one flags-zero IB of at most 4096 words.
+The type-3 CP_NOP payload is skipped according to its packet extent;
+one-word CP_MEM_WRITE writes its actual operand into a registered writable GPU
+allocation. Admission checks every packet, range, alignment and permission
+before any write. Predicate/reserved bits, unknown opcodes, truncated packets
+and command-buffer self-modification fail explicitly. There is no shader,
+register, draw, indirect-list or type-7 implementation.
+
+An admitted command buffer drains at the stopped CPU boundary. Its owned queued,
+consumed and retired timestamps advance together; mapped memstore aliases observe
+the same bytes. A wait already satisfied by that queue returns immediately;
+other waits stop. Static ioctl observations cannot shadow owned command requests.
+Public raw x64/AArch64 and Bionic fixtures validate the pinned-memory effects,
+CPU-address reuse, guarded outputs, timestamp queries and refusal before effects.
+
+These ABI/packet facts were independently implemented from the pinned
+[KGSL UAPI](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/include/uapi/linux/msm_kgsl.h),
+[submission and memory owner](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/kgsl.c),
+[ringbuffer packet producer](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/adreno_ringbuffer.c)
+and [PM4 encoding](https://android.googlesource.com/kernel/msm/+/a65478df351382d255d293d745aee9bae3a3a741/drivers/gpu/msm/adreno_pm4types.h).

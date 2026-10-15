@@ -54,6 +54,9 @@ llvm::Expected<uint64_t> KernelModel::referenceObject(uint64_t Object) {
   auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end())
     return objectError("object reference requires a known live object");
+  if (const auto File = FileObjects.find(Object);
+      File != FileObjects.end() && File->second.State == FileState::Closing)
+    return objectError("cannot reference a file object during final CLOSE");
   ++Found->second.Pointers;
   // ObReferenceObject is a void macro; its underlying export's result is
   // reserved. Do not expose synthetic object-manager header counts.
@@ -83,9 +86,24 @@ llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
   auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end() || !Found->second.Pointers)
     return objectError("ObfDereferenceObject requires a referenced object");
+  if (const auto File = FileObjects.find(Object); File != FileObjects.end() &&
+                                                  File->second.DeferredClose &&
+                                                  Found->second.Pointers == 1) {
+    if (CurrentIRQL != scheduler::PassiveLevel)
+      return objectError("final file reference release requires PASSIVE_LEVEL");
+    if (!executionProcessContext())
+      return objectError(
+          "final file reference release requires a known process context");
+    if (PendingWdmCall || PendingWait || NextIRPCall == UINT64_MAX)
+      return objectError(
+          "final file reference release cannot start its continuation");
+  }
   --Found->second.Pointers;
   if (Found->second.Kind == ObjectKind::Device) {
     if (auto E = retireDeviceIfUnreferenced(Object))
+      return E;
+  } else if (Found->second.Kind == ObjectKind::File) {
+    if (auto E = retireFileIfUnreferenced(Object))
       return E;
   } else
     retireObjectIfUnreferenced(Object);

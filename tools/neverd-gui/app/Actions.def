@@ -154,10 +154,10 @@ NEVERD_VIEW_ACTION(EditOperandInvert,
                    "operand_invert",
                    QT_TRANSLATE_NOOP("Actions", "Show the operand's number "
                                                 "with its bits inverted"))
-NEVERD_VIEW_ACTION(EditUndefine, QT_TRANSLATE_NOOP("Actions", "Undef&ine"), "U",
-                   "undefine",
-                   QT_TRANSLATE_NOOP("Actions",
-                                     "Show the current item's bytes as bytes"))
+NEVERD_VIEW_ACTION(
+    EditUndefine, QT_TRANSLATE_NOOP("Actions", "Undef&ine"), "U", "undefine",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Turn the current item back into undefined bytes"))
 NEVERD_VIEW_ACTION(EditComment,
                    QT_TRANSLATE_NOOP("Actions", "Enter &comment..."), ":",
                    "comment",

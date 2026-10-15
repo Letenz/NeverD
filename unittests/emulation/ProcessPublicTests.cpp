@@ -2735,7 +2735,8 @@ TEST_F(ProcessPublic, AndroidJNIObjectsAndThreadsMatchSDKAndCLI) {
     "initialize":false,"thread_limit":2,"jni":true}})"));
   for (const char *Entry :
        {"jni_vm_lifecycle", "jni_string_values", "jni_arrays", "jni_references",
-        "jni_threads", "jni_art_string_edges"}) {
+        "jni_threads", "jni_art_string_edges", "jni_method_values",
+        "jni_method_exceptions"}) {
     (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
     const auto Options = jsonText(*Request.getAsObject());
     const auto Text = takeString(neverd_emulate_process_json(
@@ -2770,11 +2771,12 @@ TEST_F(ProcessPublic, AndroidBinderProtocolMatchesSDKAndCLI) {
   const auto Output = (Root / OutputFile).string();
   auto Request = llvm::cantFail(llvm::json::parse(R"({
     "backend":"unicorn", "android":{"entry_symbol":"binder_control",
-    "initialize":false,"thread_limit":2},
+    "initialize":false,"thread_limit":3},
     "linux_files":{"files":[],"devices":[{"path":"/dev/binder",
       "access_mode":2,"open_errno":0,"ioctls":[],"binder":true}]}})"));
   for (const char *Entry :
-       {"binder_control", "binder_descriptions", "binder_threads"}) {
+       {"binder_control", "binder_descriptions", "binder_threads",
+        "binder_service_transactions", "binder_missing_targets"}) {
     (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
     const auto Options = jsonText(*Request.getAsObject());
     const auto Text = takeString(neverd_emulate_process_json(
@@ -2796,6 +2798,50 @@ TEST_F(ProcessPublic, AndroidBinderProtocolMatchesSDKAndCLI) {
                              Session, Path.c_str(), AndroidNativeAArch64,
                              jsonText(*Request.getAsObject()).c_str()))
                   .empty());
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidGPUCommandsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "devices-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto Request = llvm::cantFail(llvm::json::parse(R"({
+    "backend":"unicorn","android":{"entry_symbol":"devices_gpu_commands",
+      "initialize":false,"arguments":[0],"libraries":{"libdevice.so":["ioctl","mmap","dup","dup3"]}},
+    "linux_files":{"files":[],"devices":[{"path":"/fixture/control",
+      "access_mode":2,"open_errno":0,"ioctls":[],
+      "kgsl_contexts":{"memstore_offset":4096,"context_limit":3,"synchronous_a3xx":true},
+      "read_only_mappings":[{"offset":4096,"bytes_hex":""}]}]}})"));
+  auto *Device = Request.getAsObject()
+                     ->getObject("linux_files")
+                     ->getArray("devices")
+                     ->front()
+                     .getAsObject();
+  (*Device->getArray("read_only_mappings"))[0].getAsObject()->operator[](
+      "bytes_hex") = std::string(8192, '0');
+  for (unsigned Route = 0; Route != 4; ++Route) {
+    SCOPED_TRACE(Route);
+    (*Request.getAsObject()->getObject("android"))["arguments"] =
+        llvm::json::Array{Route};
+    const auto Options = jsonText(*Request.getAsObject());
+    const auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned") << Text;
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
 #endif
 }
 
