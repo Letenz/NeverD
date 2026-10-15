@@ -1274,7 +1274,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 26 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 56 driver environment checks = 5566`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 27 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 68 driver environment checks = 5579`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1704,6 +1704,8 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `scripts/check_windows_native_seh_resume.py` は実験的な Windows x64 LLVM/CRT プロトコルを O0/O2 で別途検証します。`_local_unwind` の物理 SP と親の復帰先はソースフレームと分離します。MASM は8個の保存 GPR、XMM6–XMM15、SP、ガード、通常経路の呼び出し後処理、非局所経路での処理スキップと2回目の例外を確認します。ツール情報とハッシュを保存します。成功は NeverD 再構築の許可ではなく、PE32、エスケープしたメモリ、任意の入れ子、両 C 経路は未解決です。ネイティブ x64 MSVC で `--output` を指定します。 ワークフロー入力 `windows_eh_protocol_only` は NeverD を再ビルドせずにこれらのネイティブ実験を実行します。エンジンの回帰検証とは別です。
 
+`scripts/check_windows_native_seh_bridge.py` 独立した固定 x64 フレームのアセンブリが再開ラベルと unwind を所有し、通常 ABI で最適化 LLVM を呼びます。O0/O2 ごとに八経路、256 呼び出し、生の異常値、実コード、回数、消去不能エラーを検査し、六つの破損負例を実行します。ソースハッシュ、最終 unwind/load-config、実 CRT を保存します。メモリ権限、任意の入れ子、並行実行、EHCONT/CET、製品再構築は未証明です。
+
 `RegistrationTryLevel.EH4Publication*` と `EH4CookieStoresMustOwnDistinctPrivateBytes` は、ADD/SUB による確保、レジスタ保存、cookie の PUSH、disp8/disp32 の cookie 格納を含む PE32 EH4 の直接フレームを検証します。変更された参照元やオフセット、cookie の重複、保存レジスタやランタイム管理領域への上書きは拒否し、共有 LowIR が値と寿命を独立して検証します。
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` は、x86、x64、AArch64 の PE32、ELF、Mach-O で最適化あり・なしのソース投影を検証します。単一関数と分割 LLVM 出力は同じ不完全なネイティブ EH 契約を明示的に保持し、バイナリ書き換えは引き続き拒否します。
@@ -1915,6 +1917,15 @@ Initial private/strict JSON checks passed166 identities before route addition. F
 Owned nonroot ARM64 O0/O1/O2 native probes passed114 observations, full2168 payloads/guards, raw primary/secondary/carry, high carriers, readonly/dup, target errors, parent moves, held deletion/name reuse and unchanged stat/flags/cursor. The common initial32 and created33 authored services pass main57/Y natively; virtual35 emits6600 independent literal bytes plus Y, separating link owner17 from target/replacement owner4294967294. Native comparisons mask only five dynamic uint64 counters and capture no native service trace. Five software process/C API/CLI/Python profiles and three matching ARM64 HVF profiles pass fresh executions; C API successes reuse sessions and CLI reports compare completely.
 
 Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailable, zero remaining failures; all279 required matching ARM64 identities actually pass in four disjoint serial bounded shards plus1 fresh isolated replay of the original resource-usage HVF guest-time-limit failure. The initial full round and all failures remain retained. Identical source/products and unchanged limits qualify the composite only; no clean full-round or unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1866 C++ cases. All20 products rebuilt; common native79/mandatory93 per matching platform independently asserted. Earlier compile enum typo, mutable-parent fixture omissions and failed repair matching/controller syntax attempts remain immutable; no production semantics were weakened to pass them. Native5s/compiler120s/component1200s parallel2/guest5000000us quantum1024/public30s and original method bounds are unchanged. Intel native, physical iOS and complete Apple runtimes/frameworks remain unqualified.
+
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` は、モジュール全体と選択関数の出力で、ブロックアドレスの返却、整数変換、アドレス演算、入れ子の表初期値を拒否します。32/64 ビット、両エンディアン、ELF/COFF/Mach-O を検証します。未対応のシンボル定数も null に置き換えず明示的に拒否します。これは出力拒否の契約であり、移植可能なネイティブ再開の実装ではありません。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 両最適化で全体・選択関数の CLI 拒否と既存出力の保持を検証します。他のアトミック関数は C 出力を要求します。アドレス下位ビットの観測は未対応であり、LLVM 検証はその意味を証明しません。
+
+
+### 明示的な物理メモリ一覧
+
+`KernelPhysicalInventoryTests` は単位、終端、独立した割り当て、副作用のない拒否、宣言のコピー、取得依存、固定、物理識別、不足を検証します。`DriverPhysicalInventoryTests` は厳密な転送と Unicorn/KVM/WHP の通常・再配置ライフサイクル、動的検索、解放後読み取りを検証します。未使用宣言の UNPACK 対照も拒否を維持します。各ネイティブバックエンドの 13 件は必須で、利用できないプラットフォーム実行はローカルではスキップです。
 
 ## Symbolic ownership regression
 

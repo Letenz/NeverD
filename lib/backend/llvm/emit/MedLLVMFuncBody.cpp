@@ -27,6 +27,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/X86RegistrationFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedMutableSource.h"
@@ -128,9 +129,15 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   CurMedFunc = &Func;
+  const bool RegistrationSEH =
+      Func.ExceptionMetadata &&
+      classifyWindowsEHNativeSource(*Func.ExceptionMetadata, TargetArch,
+                                    TargetFormat,
+                                    WindowsEHNativeCapability::IRLowering)
+              .Model == WindowsEHNativeSourceModel::X86RegistrationSEH;
   ensureFeasibleEdgeCache();
   auto IsDeadBlock = [&](int Id) {
-    return !Func.SkippedSSA &&
+    return !Func.SkippedSSA && !RegistrationSEH &&
            FeasibleEdgeState == FeasibleEdgeCacheState::Ready &&
            !FeasibleBlocks.count(Id);
   };
@@ -840,8 +847,11 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
             }
           }
           if (TakenBB && FallthroughBB) {
+            // Native registration SEH replays every source block edge. Keep
+            // even a known scalar branch until that graph has been checked;
+            // removing it here would need a separate control-flow receipt.
             if (auto Known = traceControlConst(Op.Inputs[1]);
-                Known && !Func.SkippedSSA)
+                Known && !Func.SkippedSSA && !RegistrationSEH)
               Builder.CreateBr(*Known ? TakenBB : FallthroughBB);
             else
               Builder.CreateCondBr(Cond, TakenBB, FallthroughBB);

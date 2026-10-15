@@ -695,8 +695,12 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       const auto RestoredCxxSP =
           Root == 0 ? std::nullopt
                     : RegistrationRoots.restoredStack(Func.Blocks[Root]);
+      const auto SEHEntry = Root == 0
+                                ? std::nullopt
+                                : RegistrationRoots.sehEntry(Func.Blocks[Root]);
       const bool IsWindowsRuntimeRoot =
-          CxxContinuationRoots.count(Root) || LocalUnwindRoots.count(Root) ||
+          SEHEntry.has_value() || CxxContinuationRoots.count(Root) ||
+          LocalUnwindRoots.count(Root) ||
           (Root != 0 &&
            (IsCxxHandlerRoot || RestoredCxxSP ||
             std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
@@ -722,7 +726,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         Init.Output = VIt->second;
         MedVar Input = VIt->second;
         const bool Callback =
-            IsCxxHandlerRoot ||
+            SEHEntry.value_or(false) || IsCxxHandlerRoot ||
             std::any_of(Func.Blocks[Root].ExceptionalPreds.begin(),
                         Func.Blocks[Root].ExceptionalPreds.end(),
                         [](const ExceptionalEdge &Edge) {

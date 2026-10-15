@@ -6,6 +6,7 @@
 #include "COFFRegistrationIRProof.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/X86RegistrationSEHControl.h"
 
 #include "llvm/IR/CFG.h"
 namespace neverd::coff_registration {
@@ -32,6 +33,13 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
   std::map<int, const MedBlock *> Blocks;
   std::map<int, std::vector<Event>> Expected;
   std::map<int, const llvm::Function *> Owners;
+  std::map<int, va_t> FinallyReturns;
+  if (!ReachedCxxSource) {
+    auto Returns = getX86RegistrationSEHReturnBlocks(Source);
+    if (!Returns)
+      return rejectIR("source finally return has no checked CALL continuation");
+    FinallyReturns = std::move(*Returns);
+  }
   size_t Work = 0;
   auto Charge = [&](size_t Amount = 1) {
     if (Amount > limits::kMaxRegistrationEHStateWork - Work)
@@ -113,6 +121,12 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
     }
   }
   std::map<int, SourceSegment> Segments;
+  for (const auto &[Id, Entry] : FinallyReturns) {
+    const auto Callback = Callbacks.find({Entry, true});
+    if (!Owners.count(Id) || Callback == Callbacks.end() ||
+        Owners.at(Id) != Callback->second)
+      return rejectIR("source finally return belongs to another callback");
+  }
   std::set<const llvm::Instruction *> Events;
   for (const auto *Function : Functions)
     for (const auto &Block : *Function)
@@ -245,6 +259,11 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
         ExpectedSuccessors.insert(It->second.Enter->getParent());
       }
       const auto *Term = Segment.Exit->getParent()->getTerminator();
+      const auto &Operations = Blocks.at(Id)->Ops;
+      const bool SourceReturn =
+          !Operations.empty() && Operations.back().Opcode == NdOp::RETURN;
+      if (SourceReturn != llvm::isa<llvm::ReturnInst>(Term))
+        return rejectIR("callback return changed its source execution exit");
       for (unsigned Index = 0; Index < Term->getNumSuccessors(); ++Index)
         ActualSuccessors.insert(Term->getSuccessor(Index));
       if (ExpectedSuccessors != ActualSuccessors)

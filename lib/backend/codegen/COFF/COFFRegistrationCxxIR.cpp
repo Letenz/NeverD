@@ -17,6 +17,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86RegistrationCallResult.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -317,6 +318,8 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     }
   }
   std::map<std::pair<va_t, uint32_t>, const llvm::CallBase *> CallsAt;
+  std::map<const llvm::CallBase *, const RegistrationCallFrameEffect *>
+      SourceCallEffects;
   for (const auto *Call : ActualCalls)
     if (const auto *MD =
             Call->getMetadata(windows_eh_md::RegistrationOperationAttachment)) {
@@ -369,34 +372,66 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
                       ? Result.Catches[Result.SourceCatchOwners.at(BlockId)].Pad
                       : nullptr) ||
         !Result.Calls
-             .emplace(Call, CxxIRCall{Contract, Effect.ECXFrameOffset, false,
-                                      Effect.RuntimeThrow})
+             .emplace(Call,
+                      CxxIRCall{Contract, Effect.ECXFrameOffset, false,
+                                Effect.RuntimeThrow, Effect.ECXRuntimeObject})
              .second)
       return rejectIR("C++ call changed its runtime funclet context");
+    SourceCallEffects.emplace(Call, &Effect);
   }
   if (ActualCalls.size() != Result.Calls.size())
     return rejectIR("C++ IR gained an unproved external call");
+  size_t CallResultWork = 0;
   for (const auto &[Call, Receipt] : Result.Calls) {
     const auto *Callee = Call->getCalledFunction();
     const bool Throw = Receipt.Contract.isThrow();
-    const bool Borrow = Receipt.ObjectFrameOffset.has_value();
+    if (Receipt.ObjectFrameOffset && Receipt.RuntimeObject)
+      return rejectIR("C++ member call has conflicting object coordinates");
+    const bool Borrow = Receipt.ObjectFrameOffset.has_value() ||
+                        Receipt.RuntimeObject.has_value();
     const bool RuntimeThrow = Receipt.Contract.isRuntimeThrow();
+    const bool Initializer = Receipt.Contract.isInitializer();
+    bool DiscardResult = false;
+    if (!Throw && !Receipt.Cleanup && !Initializer) {
+      const auto Fresh = getCheckedX86RegistrationMemberCalleeABI(
+          Image, Receipt.Contract.Target, &CallResultWork,
+          RegistrationLeafResult::Discarded);
+      if (!Fresh || Fresh->StackPopBytes != Receipt.Contract.StackPopBytes ||
+          Fresh->HasIndependentScalarReturn !=
+              Receipt.Contract.HasIndependentScalarReturn)
+        return rejectIR("C++ returning call lost its current object contract");
+      DiscardResult = !Fresh->HasIndependentScalarReturn;
+      const auto SourceCall = SourceCallEffects.find(Call);
+      if (DiscardResult && (SourceCall == SourceCallEffects.end() ||
+                            !hasUnusedX86RegistrationCallResult(
+                                Med, *SourceCall->second, CallResultWork)))
+        return rejectIR("C++ void call discarded an observed source result");
+    }
+    const unsigned ScalarWords =
+        Throw || Receipt.Cleanup ? 0 : Receipt.Contract.StackPopBytes / 4;
     if (RuntimeThrow != Receipt.RuntimeThrow.has_value() || !Callee ||
         !Callee->isDeclaration() || !Callee->hasExternalLinkage() ||
         Callee->isVarArg() || Call->isInlineAsm() || Call->isTailCall() ||
-        Call->arg_size() != (RuntimeThrow ? 2u : unsigned(Borrow)) ||
+        Call->arg_size() !=
+            (RuntimeThrow ? 2u : unsigned(Borrow) + ScalarWords) ||
+        (Initializer && !Borrow) ||
         Call->getCallingConv() != (RuntimeThrow ? llvm::CallingConv::X86_StdCall
                                    : Borrow ? llvm::CallingConv::X86_ThisCall
                                             : llvm::CallingConv::C) ||
         Call->getCallingConv() != Callee->getCallingConv() ||
         Call->getFunctionType() != Callee->getFunctionType() ||
         (Borrow && !Call->getArgOperand(0)->getType()->isPointerTy()) ||
-        (Throw || Receipt.Cleanup ? !Call->getType()->isVoidTy()
-                                  : !Call->getType()->isIntegerTy(32)) ||
+        (Throw || Receipt.Cleanup || Initializer || DiscardResult
+             ? !Call->getType()->isVoidTy()
+             : !Call->getType()->isIntegerTy(32)) ||
         Call->doesNotReturn() != Throw || Callee->doesNotReturn() != Throw ||
         (Receipt.Cleanup && !Call->doesNotThrow()) ||
         (!Receipt.Cleanup && Call->doesNotThrow()))
       return rejectIR("C++ preserved callee changed its physical call ABI");
+    if (Borrow)
+      for (unsigned I = 1; I < Call->arg_size(); ++I)
+        if (!Call->getArgOperand(I)->getType()->isIntegerTy(32))
+          return rejectIR("C++ member changed a scalar stack argument");
     if (!hasExactCxxCallAttributes(*Call, Receipt))
       return rejectIR("C++ preserved callee changed its proved effects");
     if (RuntimeThrow) {

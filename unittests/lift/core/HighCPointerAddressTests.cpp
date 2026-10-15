@@ -41084,8 +41084,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
 
 TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   // MSVC x86 `_except_handler3` plants the outlined except body in-function.
-  // HighC must recover `Result = 41` on the same slot as `Result = -100`,
-  // not `goto` the handler VA.
+  // Its filter calls another function. Retain that native entry and recover
+  // `Result = 41` on the same slot as `Result = -100`, without assigning the
+  // frame-dependent filter thunk an ordinary C ABI.
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
   const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
@@ -41113,10 +41114,15 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const std::string Source =
       highcOnlyFunction(std::move(*Img), Entry, /*Portable=*/true);
   ASSERT_FALSE(Source.empty()) << Source << "\n" << Blocks << HighDump;
-  EXPECT_NE(Source.find("__except"), std::string::npos) << Source << "\n"
-                                                        << Blocks << HighDump;
-  EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source << "\n"
-                                                       << Blocks << HighDump;
+  EXPECT_EQ(Source.find("__except ("), std::string::npos) << Source << "\n"
+                                                          << Blocks << HighDump;
+  EXPECT_NE(Source.find("filter @ 0x40109D, handler @ 0x4010AA"),
+            std::string::npos)
+      << Source;
+  const size_t FilterAt = Source.find("L_40109D:");
+  ASSERT_NE(FilterAt, std::string::npos) << Source;
+  const size_t NativeFilterCall = Source.find("sub_401000(", FilterAt);
+  EXPECT_NE(NativeFilterCall, std::string::npos) << Source;
   const auto Stores = portableStoreCalls(Source);
   const auto Normal = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint32_t" && S.Value == "0xFFFFFF9C";
@@ -41131,8 +41137,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const std::string JoinedAddress = "(frame_base - 32)";
   EXPECT_EQ(Normal->Address, "(uintptr_t)(" + JoinedAddress + ")") << Source;
   EXPECT_EQ(Handler->Address, Normal->Address) << Source;
-  const size_t ExceptAt = Source.find("} __except (");
+  const size_t ExceptAt = Source.find("L_4010AA:");
   ASSERT_NE(ExceptAt, std::string::npos) << Source;
+  EXPECT_LT(NativeFilterCall, ExceptAt) << Source;
   const std::string HandlerText = Source.substr(ExceptAt);
   EXPECT_LT(Source.find("= 0xFFFFFF9C;"), ExceptAt) << Source;
   EXPECT_GT(Source.find("= 41;"), ExceptAt) << Source;
@@ -43815,6 +43822,8 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   ASSERT_NE(ToInteger, std::string::npos) << HighC;
   EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64(", ToInteger),
             std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("neverd_x86_write_mxcsr(", ToInteger), std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))

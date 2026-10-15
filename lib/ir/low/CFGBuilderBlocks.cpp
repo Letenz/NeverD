@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86/RegistrationJumpRuntime.h"
+#include "X86/RegistrationSEHControl.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -88,13 +89,16 @@ void CFGBuilder::splitBlocks() {
         }))
       BlockStarts.insert(Addr + Rec.Size);
     if (Registration && !EH->Cxx &&
-        EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 && Rec.IsCall &&
-        !Rec.IsCond && !Rec.IsRet && !Rec.IsIndirect && !Rec.IsNoReturnCall &&
-        !Rec.IsInstructionGuard && Rec.Mode == InstructionMode::Default &&
+        (EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
+         EH->Encoding == ExceptionEncoding::X86ScopeTableEH4) &&
+        Rec.IsCall && !Rec.IsCond && !Rec.IsRet && !Rec.IsIndirect &&
+        !Rec.IsNoReturnCall && !Rec.IsInstructionGuard &&
+        Rec.Mode == InstructionMode::Default &&
         Rec.TargetMode == LowInstructionTargetMode::Preserve &&
-        (registration_state::isEH3JumpRuntimeInstruction(*CurrentImg, Addr,
-                                                         Rec.Size, Rec.Ops) ||
-         registration_state::isEH3FinallyCallInstruction(
+        ((EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 &&
+          registration_state::isEH3JumpRuntimeInstruction(*CurrentImg, Addr,
+                                                          Rec.Size, Rec.Ops)) ||
+         registration_state::isSEHFinallyCallInstruction(
              *CurrentImg, *EH->Registration, Addr, Rec.Size, Rec.Ops)))
       BlockStarts.insert(Addr + Rec.Size);
   }

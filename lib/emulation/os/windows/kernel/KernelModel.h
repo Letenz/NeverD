@@ -299,8 +299,13 @@ private:
   llvm::Expected<uint64_t>
   currentDriverRequestStack(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
-  llvm::Expected<uint64_t> allocatePool(llvm::ArrayRef<uint64_t> A,
-                                        bool Modern);
+  llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
+  enum class PoolSource { GuestAllocation, KernelResult };
+  llvm::Expected<uint64_t>
+  allocatePool(llvm::ArrayRef<uint64_t> A, bool Modern,
+               PoolSource Source = PoolSource::GuestAllocation);
   llvm::Expected<uint64_t> freePool(llvm::ArrayRef<uint64_t> A, bool Tagged);
   llvm::Expected<uint64_t>
   deleteSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
@@ -742,6 +747,13 @@ private:
   std::map<uint64_t, uint64_t> ThreadHandles;
   uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
+  /// Client IDs of live thread objects, assigned on first observation. Issued
+  /// IDs are never reused, and requestor process IDs may not collide with them.
+  std::map<uint64_t, uint32_t> ThreadClientIDs;
+  std::set<uint32_t> IssuedThreadClientIDs;
+  std::set<uint32_t> RequestorProcessIDs;
+  uint64_t NextThreadClientID = profile::ThreadIDBase;
+  llvm::Expected<uint64_t> threadClientID(uint64_t Object);
   llvm::Expected<uint64_t>
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> terminateSystemThread(uint32_t Status);
@@ -853,6 +865,8 @@ private:
   bool UnpackOpaqueEffects = false;
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
+  std::optional<DriverPhysicalMemoryInventory> PhysicalMemoryInventory;
+  llvm::Expected<uint64_t> queryPhysicalMemoryRanges();
   // Admission conservatively records reads that can expose model PFNs,
   // including reads performed by modeled copy/compare services.
   mutable bool UnpackMDLIdentityRead = false;
@@ -862,7 +876,9 @@ private:
     uint64_t Size;
     uint32_t Tag;
     bool NonPaged;
-    WindowsDriverState::PoolAPI API;
+    // Kernel-returned buffers need pool lifetime checks but may have no
+    // supported external allocation recipe for native reconstruction.
+    std::optional<WindowsDriverState::PoolAPI> API;
     uint64_t TypeOrFlags;
   };
   std::map<uint64_t, PoolAllocation> Allocations;

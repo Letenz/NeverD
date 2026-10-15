@@ -219,11 +219,15 @@ TEST(WindowsEHModesCorpus,
     ASSERT_FALSE(GuardedBlocks.empty());
     for (const std::vector<StringRef> &RequiredTokens :
          TestCase.RequiredGuardedTokenGroups) {
+      // A region without a provable lexical range keeps its native dispatch
+      // as an annotated block instead of a try the runtime would not run.
       const bool Found = llvm::any_of(GuardedBlocks, [&](StringRef Block) {
         return Block.contains("neverd.exception") &&
                Block.contains("highir.structured_regions=") &&
                Block.contains("fallback_regions=") &&
-               (Block.contains("__try") || Block.contains("try {")) &&
+               (Block.contains("__try") || Block.contains("try {") ||
+                Block.contains("unstructured SEH region [") ||
+                Block.contains("C++ unwind-table region [")) &&
                containsEveryToken(Block, RequiredTokens);
       });
       std::string TokenList;

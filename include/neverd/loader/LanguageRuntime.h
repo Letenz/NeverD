@@ -50,6 +50,12 @@ SourceLanguageRuntime getPersonalityRuntime(ExceptionPersonality P);
 std::string resolveRoutineName(const BinaryImage &Img, va_t Address,
                                va_t SlotVA = 0);
 
+/// Compare two declared dispatch providers. A slot binding or relocation is
+/// authoritative even when its file value equals another provider's initial
+/// value. Distinct such slots cannot be equated by address or spelling.
+bool sameRoutineProvider(const BinaryImage &Img, va_t AddressA, va_t SlotA,
+                         va_t AddressB, va_t SlotB);
+
 /// Determine which runtime produced \p Img.
 LanguageRuntimeInfo detectLanguageRuntime(const BinaryImage &Img);
 

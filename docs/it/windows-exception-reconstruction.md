@@ -86,12 +86,26 @@ forzate. La durata generale degli oggetti e le conversioni di tipo restano da su
 
 Gli oggetti PE32 copiati banalmente supportano catch per valore o riferimento, throw diretto e rilancio.
 Il ThrowInfo immutabile deve contenere un solo tipo senza correzioni dell’indirizzo, costruttore di
-copia, distruttore o callback di inoltro. Ogni byte deve essere inizializzato e i puntatori al frame
+copia o callback di inoltro. Ogni byte deve essere inizializzato e i puntatori al frame
 privato non possono uscire. I casi O0/O1 verificano strutture di 8 e 12 byte, modifiche dei campi,
 rami catch, entrambe le modalità CLI e rilocazione con Microsoft CRT. Le copie PHI mantengono arco
 CFG e callback; la verifica indipendente rifiuta chiamate aggiunte, alias e destinazioni alterate.
 RTTI non rivela il layout dei membri: i controlli sintattici C++ usano le dichiarazioni reali del test,
 mentre l’output conserva offset nativi e chiamate throw per aggregati sconosciuti.
+
+Un distruttore facoltativo richiede una prova LowIR indipendente: una funzione foglia
+che ritorna, con stack privato e accessi ECX limitati all’oggetto. Codice ed effetti
+in memoria fanno parte del contratto preservato. I casi O0/O1 verificano numero, ordine
+e contenuto degli oggetti distrutti, anche nei rilanci e in due ricostruzioni.
+
+Un costruttore di copia non banale richiede una prova LowIR che separi la destinazione ECX
+dal puntatore sorgente sullo stack. La sorgente è di sola lettura; gli accessi sono limitati,
+ogni percorso di ritorno inizializza tutta la destinazione e usa `RET 4`. Sono rifiutati
+fughe di puntatori, osservazione del chiamante CRT e chiamate non provate. I casi O0/O1
+verificano quattro copie e dodici distruzioni per esecuzione in due generazioni. Gli aggregati
+sconosciuti conservano chiamata throw e inizializzazione originali; RTTI non giustifica
+`throw Type()`. Restano esclusi grafi generali dei costruttori, conversioni, copie di basi
+virtuali e grafi generali dei distruttori.
 
 ## Contratto IR
 

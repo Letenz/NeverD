@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationCallResult.h"
 #include "MedLLVMRegistrationCxxBlocks.h"
 #include "MedLLVMRegistrationCxxCall.h"
 #include "MedLLVMRegistrationCxxCatch.h"
@@ -23,6 +24,7 @@
 #include "neverd/backend/llvm/X86RegistrationEntry.h"
 #include "neverd/backend/llvm/X86RegistrationLayout.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/med/X86RegistrationCallResult.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -163,6 +165,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     med_llvm_eh::RegistrationCxxCallABI ABI;
     X86RegistrationCatchIdentity CatchIdentity;
     std::string Name;
+    llvm::SmallVector<llvm::Instruction *, 8> DiscardedResult;
   };
   struct CleanupPlan {
     const RegistrationCleanupFrameContract *Contract;
@@ -259,21 +262,51 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       if (!Effect || Effect->CalleeIndex >= States.CalleeContracts.size() ||
           !Call || Call->getParent() != IR || Call->isMustTailCall() ||
           Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
-          Op.Inputs[0].ConstVal != Effect->Target || Effect->StackPopBytes)
+          Op.Inputs[0].ConstVal != Effect->Target)
         return false;
       const auto &Contract = States.CalleeContracts[Effect->CalleeIndex];
+      if (!med_llvm_eh::hasLiveRegistrationCxxRuntimeReceiver(
+              States, *State, Contract, *Effect, Work))
+        return false;
+      // Generic call emission can pad a later call to an earlier declaration's
+      // arity. An object call must bind its receiver and every scalar argument
+      // before that coercion; invented zeros cannot replace source words.
+      if (Contract.isInitializer() || Effect->ECXFrameOffset ||
+          Effect->ECXRuntimeObject) {
+        const auto *SourceCall =
+            Func.findCall(Block.Id, &Op - Block.Ops.data());
+        if (!SourceCall ||
+            SourceCall->Args.size() != 1 + Contract.StackPopBytes / 4)
+          return false;
+      }
       const bool Throw = Contract.isThrow();
+      const bool ResultUnused =
+          !Throw && !Contract.isInitializer() &&
+          hasUnusedX86RegistrationCallResult(Func, *Effect, Work);
       const auto ABI = med_llvm_eh::getCheckedRegistrationCxxCallABI(
-          *Img, Contract, *Effect, *Call, Work);
+          *Img, Contract, *Effect, *Call, Work, ResultUnused);
       if (!ABI || (ABI->ThrowInfoVA &&
                    !med_llvm_eh::canMaterializeExternalDataDeclaration(
                        *Mod, makeNdDataSymbol(ABI->ThrowInfoVA), I8, true)))
         return false;
-      const auto Name =
-          CalleeName(Effect->Target, ABI->RuntimeThrow ? "runtime_throw"
-                                     : Throw           ? "throw"
-                                     : ABI->BorrowsECX ? "ecx"
-                                                       : "leaf");
+      llvm::SmallVector<llvm::Instruction *, 8> DiscardedResult;
+      if (ABI->DiscardResult) {
+        llvm::SmallVector<llvm::AllocaInst *, 32> PrivateSlots;
+        for (const auto &[Key, Slot] : VarAllocs)
+          PrivateSlots.push_back(Slot);
+        auto Plan = med_llvm_eh::unusedRegistrationCallResultPlan(
+            *Call, PrivateSlots, Work);
+        if (!Plan)
+          return false;
+        DiscardedResult = std::move(*Plan);
+      }
+      const auto Name = CalleeName(
+          Effect->Target, ABI->RuntimeThrow ? "runtime_throw"
+                          : Throw           ? "throw"
+                          : ABI->DiscardResult
+                              ? (ABI->BorrowsECX ? "ecx_void" : "leaf_void")
+                          : ABI->BorrowsECX ? "ecx"
+                                            : "leaf");
       if (!med_llvm_eh::canMaterializeExternalFunctionDeclaration(*Mod, Name,
                                                                   ABI->Type))
         return false;
@@ -282,7 +315,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
            State->CallbackOnly
                ? CatchOwners->at(Block.Id)
                : X86RegistrationCatchIdentity{UINT32_MAX, UINT32_MAX},
-           Name});
+           Name, std::move(DiscardedResult)});
       Operations.push_back({Call, &Op, State->BlockId, 2});
       // The shared receipt and fresh callee proof agree that this call never
       // returns. Its lifted post-call stack/register operations cannot execute
@@ -584,6 +617,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   };
   for (const auto &Plan : Calls) {
     auto *Old = Plan.Call;
+    for (auto *Unused : Plan.DiscardedResult) {
+      assert(Unused->use_empty() && "prevalidated private result transport");
+      Unused->eraseFromParent();
+    }
     llvm::IRBuilder<> B(Old);
     auto *Callee = llvm::cast<llvm::Function>(
         Mod->getOrInsertFunction(Plan.Name, Plan.ABI.Type).getCallee());
@@ -608,10 +645,18 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       } else
         Args.assign(2, llvm::ConstantPointerNull::get(Ptr));
     }
-    if (Plan.ABI.BorrowsECX)
+    if (Plan.ABI.Initializer || Plan.Effect->ECXRuntimeObject) {
+      auto *Object = Old->getArgOperand(0);
+      Args.push_back(Object->getType()->isPointerTy()
+                         ? Object
+                         : B.CreateIntToPtr(Object, Ptr));
+    } else if (Plan.ABI.BorrowsECX)
       Args.push_back(B.CreateInBoundsGEP(
           I8, FrameAlloca,
           B.getInt32(Layout->Establisher + *Plan.Effect->ECXFrameOffset)));
+    if (Plan.ABI.Initializer || Plan.Effect->StackPopBytes)
+      for (unsigned I = 1; I < Old->arg_size(); ++I)
+        Args.push_back(Old->getArgOperand(I));
     const int32_t Level =
         Plan.State->Levels.empty() ? -1 : Plan.State->Levels.front();
     auto *Unwind = ProtectedCall(*Plan.State) ? UnwindAt(Level) : nullptr;
@@ -650,14 +695,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     for (auto &Operation : Operations)
       if (Operation.IR == Old)
         Operation.IR = Call;
-    if (!Plan.Throw) {
+    if (!Plan.Throw && !Plan.ABI.DiscardResult) {
       llvm::Value *Result = Call;
-      if (Old->getType() != Call->getType()) {
+      if (Plan.ABI.Initializer || Old->getType() != Call->getType()) {
         if (auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Call))
           B.SetInsertPoint(&*Invoke->getNormalDest()->getFirstInsertionPt());
         else
           B.SetInsertPoint(Old);
-        Result = B.CreateZExt(Call, Old->getType());
+        // The callee proof returns exactly its incoming ECX. Preserve that
+        // frame identity instead of introducing an opaque pointer result.
+        Result =
+            Plan.ABI.Initializer ? B.CreatePtrToInt(Args.front(), I32) : Call;
+        if (Result->getType() != Old->getType())
+          Result = B.CreateZExt(Result, Old->getType());
       }
       Old->replaceAllUsesWith(Result);
     }

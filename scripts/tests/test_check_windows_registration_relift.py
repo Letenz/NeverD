@@ -14,6 +14,10 @@ from scripts import replay_windows_registration_relift as replay
 from scripts.tests import test_check_windows_registration_entry as first_fixture
 from scripts.tests import test_check_windows_registration_nested_try as nested_fixture
 from scripts.tests import test_windows_registration_objects as object_fixture
+from scripts.tests import test_windows_registration_destructors as destructor_fixture
+from scripts.tests import test_windows_registration_copies as copy_fixture
+from scripts.tests import test_windows_registration_initializers as initializer_fixture
+from scripts.tests import test_windows_registration_delegating as delegating_fixture
 from scripts import check_windows_registration_multiple_catch as catches
 
 
@@ -24,6 +28,10 @@ class ReliftEvidenceTests(unittest.TestCase):
         first_root.mkdir()
         first = (first_fixture.EntryEvidenceTests().capture(first_root) if profile_name == "entry"
                  else object_fixture.ObjectEvidenceTests().capture(first_root) if profile_name == "objects"
+                 else destructor_fixture.DestructorEvidenceTests().capture(first_root) if profile_name == "destructors"
+                 else copy_fixture.CopyEvidenceTests().capture(first_root) if profile_name == "copies"
+                 else initializer_fixture.InitializerEvidenceTests().capture(first_root) if profile_name == "initializers"
+                 else delegating_fixture.DelegatingEvidenceTests().capture(first_root) if profile_name == "delegating"
                  else nested_fixture.NestedTryEvidenceTests().capture(first_root))
         first_path = first_root / profile.first_capture
         first_path.write_text(json.dumps(first))
@@ -54,7 +62,7 @@ class ReliftEvidenceTests(unittest.TestCase):
             if profile_name == "catch-cleanup":
                 receipt.update(entry_registers=0, entry_pop=0, incoming_reads=0, incoming_writes=0,
                                cleanup_actions=2 if "-o0-" in name else 1, cleanup_calls=2)
-            elif profile_name == "objects":
+            elif profile_name in ("objects", "destructors", "copies", "initializers", "delegating"):
                 receipt.update(entry_registers=0, entry_pop=0, incoming_reads=0, incoming_writes=0,
                                cleanup_actions=0, cleanup_calls=0)
             (parent / "contract.json").write_text(json.dumps(receipt))
@@ -73,6 +81,94 @@ class ReliftEvidenceTests(unittest.TestCase):
                                              "sha256": runner.file_digest(path)})
             result["cases"].append(record)
         return result
+
+    def test_destructor_relift_cannot_reuse_a_trivial_object_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root, "destructors")
+            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            for wrong in ("objects", "entry", "catch-cleanup", "unknown"):
+                with self.subTest(profile=wrong), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture | {"profile": wrong})
+            first_path = root / "first" / "nested-try-rewrite.json"
+            first = json.loads(first_path.read_text())
+            first["source_dependencies_sha256"] = {}
+            first_path.write_text(json.dumps(first))
+            capture["first_capture_sha256"] = runner.file_digest(first_path)
+            with self.assertRaises(ValueError):
+                replay.validate_capture(root, capture)
+
+    def test_copy_relift_requires_both_construction_proofs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root, "copies")
+            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            for wrong in ("objects", "destructors", "entry", "catch-cleanup", "unknown"):
+                with self.subTest(profile=wrong), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture | {"profile": wrong})
+            first_path = root / "first" / "nested-try-rewrite.json"
+            first = json.loads(first_path.read_text())
+            for field in ("object_proof_sha256", "object_types_sha256", "source_sha256"):
+                first_path.write_text(json.dumps(first | {field: "stale"}))
+                capture["first_capture_sha256"] = runner.file_digest(first_path)
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture)
+
+    def test_relift_preserves_disjoint_callback_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.capture(root, "initializers")
+            profile = runner.get_profile("initializers")
+            name = profile.cases[0]
+            parent = root / name
+            original = runner.PE32((parent / "original.exe").read_bytes())
+            product = runner.PE32((parent / "product.exe").read_bytes())
+            receipt = json.loads((parent / "contract.json").read_text())
+            first = json.loads((root / "first" / name / "contract.json").read_text())
+            first["generated_fragments"] = [[0x2100, 0x2120]]
+            receipt.update(source_fragments=[[0x2100, 0x2120]],
+                           generated_fragments=[[0x3100, 0x3120]])
+            profile.validate_installation(original, product, receipt, first, name)
+            for mutation in ({"source_fragments": []},
+                             {"source_fragments": [[0x2100, 0x2110]]},
+                             {"generated_fragments": [[0x2100, 0x2120]]},
+                             {"generated_fragments": [[0x3100, 0x3120], [0x3100, 0x3120]]},
+                             {"generated_fragments": [[0x3000, 0x3040]]},
+                             {"generated_fragments": [[0x3100, 0x5000]]}):
+                with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                    profile.validate_installation(original, product, receipt | mutation, first, name)
+
+    def test_initializer_relift_requires_ordinary_constructor_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root, "initializers")
+            self.assertEqual(len(replay.validate_capture(root, capture)), 160)
+            for wrong in ("copies", "objects", "destructors", "entry", "catch-cleanup"):
+                with self.subTest(profile=wrong), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture | {"profile": wrong})
+            first_path = root / "first" / "nested-try-rewrite.json"
+            first = json.loads(first_path.read_text())
+            for field in ("object_proof_sha256", "object_types_sha256", "source_sha256"):
+                first_path.write_text(json.dumps(first | {field: "stale"}))
+                capture["first_capture_sha256"] = runner.file_digest(first_path)
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture)
+
+    def test_delegating_relift_requires_the_original_constructor_graph(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root, "delegating")
+            self.assertEqual(len(replay.validate_capture(root, capture)), 160)
+            for wrong in ("initializers", "copies", "objects", "entry", "catch-cleanup"):
+                with self.subTest(profile=wrong), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture | {"profile": wrong})
+            first_path = root / "first" / "nested-try-rewrite.json"
+            first = json.loads(first_path.read_text())
+            first["profile"] = "initializers"
+            first_path.write_text(json.dumps(first))
+            capture["first_capture_sha256"] = runner.file_digest(first_path)
+            with self.assertRaises(ValueError):
+                replay.validate_capture(root, capture)
 
     def test_object_relift_requires_original_byte_proofs_and_both_generations(self):
         with tempfile.TemporaryDirectory() as directory:

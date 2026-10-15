@@ -919,6 +919,22 @@ GoogleTest 发现使用 `DISCOVERY_MODE PRE_TEST`，因此 CTest 枚举前必须
 
 ## 与 CI 的关系
 
+`ModuleJumpTableBudget.*` 使用真实 ELF 表清单，分别检查 400000 操作的输入边界、扫描、来源保留、队列及累计传递额度。测试覆盖两种函数顺序、无关代码 occurrence、没有内存消费者的同字段独立上下文、缺失的 PC-relative 来源、重复长块、最终记录及跨函数耗尽。耗尽时必须保留非空请求集的全部重定位槽；已有跨目标跳转表与返回代码测试继续检查共享收集器的语义。
+
+`ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` 在 x86/x64/ARM/AArch64 与 ELF/COFF/Mach-O 配置下检查缺失 ADD/SELECT 输入、输入数组溢出、零宽度及内存空间标量输入。每个用例先建立有效缓存，再修改等大小记录，要求冷/热查询均返回不完整；合法输入仍能证明其值，畸形输入不得成为已完成的负证明。
+
+`ResolverValueQueryCache.EntryMemoryCannotBorrowAStoreFromALaterIteration` 在同一架构/格式矩阵下检查第一轮帧内存值与认证写入。回边 STORE 不能初始化入口 LOAD；先于读取的完整 STORE 为正例，未知 LOAD 的掩码仍提供独立数值上界。两种查询顺序、冷/热缓存及恰好/少一预算均覆盖。
+
+`ResolverValueQueryCache.FiniteJointReuseRequiresCurrentSourceAndRoles` 直接提供数值缓存结果，检查生产复用入口：等大小来源修改、改变索引／LOAD／目标使用点及地址角色均须拒绝，恰好／少一预算保持确定。此 fixture 检查结果绑定，不验证数值定理的构造；现有 i386 GOTOFF 联合循环和四／六消费者相邻表用例分别覆盖构造、受限索引／地址／目标重放及整组发布。
+
+`ResolverLoadRoles.RestrictedReplayDoesNotBorrowTheGroupHypothesis` 在 H 中额外加入可破坏地址及目标生产者的路径。两种角色查询均拒绝 H、接受独立指定的受限边；普通组模式仍使用 H。冷／热图复用必须保持这一差异。
+
+`ResolverFiniteControl.*` 用非成员的暂定目标子集隐藏写入越界索引的 STORE。子集产生表面有限域，但不得提供联合证明的控制完整性；补回 STORE 后两个索引的数值域也必须拒绝。直接分支、普通间接 RET 及已建模的额外入口为正例；未知／指令内部／guard 根、缺失块边界及块内畸形提前分支须拒绝。恰好／少一步预算要求耗尽后无残留完整性输出。这些用例检查共享图入口，不增加表准入路线。
+
+非空条件代码根也须拒绝这条窄准入，包括因缺失模型而被普通图静默跳过的目标。
+
+`ModuleAdjacentTable.*` 使用真实 ELF32/ELF64 相邻绝对表及两种函数顺序，覆盖最终 x87 返回、独立根、未拆块且绕过 mask 的块内跳转、物理续接间隙、TOP 克隆、畸形地址操作数、改变的 LOAD 地址/宽度和 FS/GS 地址域。地址逃逸、来源别名、重复来源及无 LOAD 的独立上下文均保留前表；后者仅删除 occurrence、保持 LowOps 不变作为对照。三表大预算正例和累计耗尽反例验证早先授权被撤销。扩大物理包络的测试验证最终保留（含后续 LOAD/别名否决），并未单独隔离包络比较。真实 CLI HighC 及优化/不优化 LLVMC 结果在宿主 O0/O2 执行全部 mask 输入类别。这些 fixture 尚未证明新查询对异常图或其他架构的支持。
+
 CI 在 Linux、macOS 和 Windows 上以 Release 开启测试构建，先审核发现的测试清单，
 再应用平台特定的标签排除。配置定义于 `.github/workflows/ci.yml` 和
 `scripts/audit_ci_test_inventory.py`。每个矩阵主机都必须包含 `NeverDSafetyTests`
@@ -1182,7 +1198,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 26 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 56 driver environment checks = 5566`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 27 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 68 driver environment checks = 5579`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1612,6 +1628,8 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 
 `scripts/check_windows_native_seh_resume.py` 单独测试 Windows x64 LLVM/CRT 的实验性续接协议，覆盖 O0/O2。`_local_unwind` 接收捕获的物理 SP 和取址的父函数续接点，与逃逸的源帧单元分开。MASM 调用方检查八个保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路径执行调用后的操作，非局部路径跳过这些操作，所有路径随后再次抛异常。报告保留工具链和哈希。原生成功不授予 NeverD 重建凭据，也未解决 PE32 出口、逃逸内存的访问权限、任意嵌套或两条 C 路线。请在原生 x64 MSVC 环境中指定 `--output`。 工作流参数 `windows_eh_protocol_only` 直接运行这些原生实验，不重新构建 NeverD；它与引擎回归覆盖分开。
 
+`scripts/check_windows_native_seh_bridge.py` 独立 x64 固定帧桥由汇编拥有续接标签和展开元数据，正常 ABI 入口调用优化 LLVM。O0/O2 各测八路径、256 次调用；逐次记录原始异常标志、异常码、事件数和永久错误标记，并运行六个损坏反例。保存实际源码哈希、最终 unwind/load-config 与 CRT 提供者。源内存权限、任意嵌套、并发、EHCONT/CET 和生产重建仍未证明。
+
 `RegistrationTryLevel.EH4Publication*` 和 `EH4CookieStoresMustOwnDistinctPrivateBytes` 检查 PE32 EH4 直接栈帧，覆盖 ADD/SUB 分配、保存寄存器、压入 cookie 及 disp8/disp32 cookie 存储。改变来源或偏移、cookie 重叠，以及覆盖保存寄存器或运行时管理字段的写入必须被拒绝；共享 LowIR 独立验证值和生命周期。
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 检查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的优化与未优化源码投影。单函数和分片 LLVM 发射保留相同的不完整原生 EH 显式契约；二进制重写仍拒绝该契约。
@@ -1823,6 +1841,21 @@ Initial private/strict JSON checks passed166 identities before route addition. F
 Owned nonroot ARM64 O0/O1/O2 native probes passed114 observations, full2168 payloads/guards, raw primary/secondary/carry, high carriers, readonly/dup, target errors, parent moves, held deletion/name reuse and unchanged stat/flags/cursor. The common initial32 and created33 authored services pass main57/Y natively; virtual35 emits6600 independent literal bytes plus Y, separating link owner17 from target/replacement owner4294967294. Native comparisons mask only five dynamic uint64 counters and capture no native service trace. Five software process/C API/CLI/Python profiles and three matching ARM64 HVF profiles pass fresh executions; C API successes reuse sessions and CLI reports compare completely.
 
 Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailable, zero remaining failures; all279 required matching ARM64 identities actually pass in four disjoint serial bounded shards plus1 fresh isolated replay of the original resource-usage HVF guest-time-limit failure. The initial full round and all failures remain retained. Identical source/products and unchanged limits qualify the composite only; no clean full-round or unsharded timing-stability claim. Shared public/Linux/services/budget/safety owners pass1866 C++ cases. All20 products rebuilt; common native79/mandatory93 per matching platform independently asserted. Earlier compile enum typo, mutable-parent fixture omissions and failed repair matching/controller syntax attempts remain immutable; no production semantics were weakened to pass them. Native5s/compiler120s/component1200s parallel2/guest5000000us quantum1024/public30s and original method bounds are unchanged. Intel native, physical iOS and complete Apple runtimes/frameworks remain unqualified.
+
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` 检查完整模块及单函数输出中的基本块地址返回、整数转换、地址运算和嵌套表初始化。矩阵覆盖 32/64 位、两种字节序及 ELF/COFF/Mach-O 配置。不支持的符号常量也明确拒绝，不能变成空指针。这验证输出拒绝规则，并未实现可移植的原生续接。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模块和单函数的 CLI 检查覆盖两种优化设置，拒绝内部代码地址并保留已有输出；其他原子指令函数仍必须成功输出 C。地址低位观察尚未支持，LLVM 验证通过不能证明其语义。
+
+真实 PE32 CFI 用例需要 `i686-w64-mingw32-ld`，先断言 FDE、非空跳转表和精确字段来源，再检查普通展开放行及未知 augmentation/未解析间接 LSDA 的拒绝。来源查询覆盖外层记录、fragment、显式入口、可识别的畸形 FDE、顺序交换和清除最终注解；单槽清单的缺口、重复、额外范围和错误步长均拒绝。`ItaniumEHDriver`/`DarwinUnwindSymbols` 覆盖 x86/x64/AArch64 的混合正常/不完整记录、语言刷新、两种 compact/FDE 绑定、缺失 personality 数组、未知 provider、相同初值/名字但不同动态槽、LSDA 冲突和外来/超范围 FDE。完整 section 不新增 language-refresh provenance。以上检查不代表原生异常执行验证。
+
+`member-arguments` 样本为引用 catch 中的普通成员传入非零 32 位栈参数，分别认证源码、类型和参数证明。`RegistrationMemberCallee.*` 验证普通成员与 CRT 回调的策略边界；`RegistrationMemberArgumentState.*` 覆盖父函数、值 catch 和引用 catch 中一至三个参数字，以及缺失、部分、指针来源、不平衡和已弹栈存储。LLVM 帧检查与真实源码变异用例拒绝指针、undef 和 poison 参数。O0/O1、负向控制、两种 patch 模式、重定位及两代重建使用同一析构次数、顺序和对象内容校验。
+
+`RegistrationStackCopy.*` 验证两个回调前驱的相同位移副本，拒绝不同位移、未知或未定义来源、缺失路径、外部定义、先读后写、volatile 写入和未初始化的自复制。
+
+
+### 显式物理内存清单
+
+`KernelPhysicalInventoryTests` 检查字节单位、终止项、独立分配、拒绝时无副作用、声明复制、捕获依赖、固定页面、物理身份和资源不足。`DriverPhysicalInventoryTests` 检查严格传输，以及 Unicorn/KVM/WHP 上首选和重定位地址的完整生命周期、动态查询和释放后读取。未使用声明的 UNPACK 对照仍拒绝还原。每个原生后端的 13 项均为必跑；本地不可用的平台执行仍记为跳过。
 
 ## Symbolic ownership regression
 

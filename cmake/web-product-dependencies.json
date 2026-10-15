@@ -1,5 +1,11 @@
 {
   "schema_version": 1,
+  "toolchain": {
+    "windows_runner": "windows-2025-vs2026",
+    "msvc_toolset_minimum": "14.51.36231",
+    "llvm_prebuilt_compiler": "clang version 20.1.8",
+    "llvm_prebuilt_build_url": "https://github.com/NeverSight/llvm-project/actions/runs/37920949705"
+  },
   "icu": {
     "version": "77.1",
     "archive": "icu77.zip",

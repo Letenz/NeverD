@@ -9,7 +9,10 @@ extern "C" void *_ReturnAddress();
 #pragma intrinsic(__readfsdword)
 #pragma intrinsic(_ReturnAddress)
 
-#include "registration_object_types.h"
+#ifndef NEVERD_REGISTRATION_OBJECT_TYPES
+#define NEVERD_REGISTRATION_OBJECT_TYPES "registration_object_types.h"
+#endif
+#include NEVERD_REGISTRATION_OBJECT_TYPES
 
 extern "C" {
 __declspec(dllexport) volatile unsigned callback_caller = 0;
@@ -65,9 +68,23 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
         return -1;
       Object.Head += 11;
       Object.Tail += 3;
-#ifdef RETHROW_SEARCH
+#ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER
+#ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER_ARGUMENTS
+      const unsigned Bias = unsigned(callback_choice) * 13u;
+      const unsigned Event = Object.destructionEvent(Bias);
+#else
+      const unsigned Bias = 0;
+      const unsigned Event = Object.destructionEvent();
+#endif
+      if (Event != 665u + Bias)
+        return -4;
+#endif
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
       if (Object.Head == 18) {
-#ifdef DIRECT_TYPED_THROW
+#ifdef SECONDARY_SEARCH
+        callback_mark();
+        throw ReferenceObject{Object.Head, Object.Tail, Object.Tag};
+#elif defined(DIRECT_TYPED_THROW)
         throw;
 #else
         callback_rethrow();
@@ -75,9 +92,15 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
       }
 #endif
       callback_caught = Object.Head;
+#ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER
+      return Object.Head + Object.Tail - 4 +
+             int(Event -
+                 (0x200u + Object.Head * 7u + Object.Tail + Object.Tag + Bias));
+#else
       return Object.Head + Object.Tail - 4;
+#endif
     }
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
   } catch (ReferenceObject Object) {
     if (Object.Tail != 14 || Object.Tag != 13)
       return -2;
@@ -113,7 +136,7 @@ template <unsigned Padding> __declspec(noinline) int call_with_padding() {
 }
 
 #ifndef EXPECTED_FIRST
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
 #define EXPECTED_FIRST 39
 #else
 #define EXPECTED_FIRST 17
@@ -123,7 +146,7 @@ extern "C" __declspec(noreturn) void mainCRTStartup() {
   bool Passed = true;
   unsigned Values[3] = {}, Caught[3] = {}, Callers[3] = {}, Iterations = 0;
   const unsigned Expected[] = {EXPECTED_FIRST, 28, 39};
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
   const unsigned ExpectedCaught[] = {39, 18, 39};
 #else
   const unsigned ExpectedCaught[] = {7, 18, 39};
@@ -166,5 +189,10 @@ extern "C" __declspec(noreturn) void mainCRTStartup() {
   unsigned Written = 0;
   WriteFile(GetStdHandle(unsigned(-11)), Message, sizeof(Message) - 1, &Written,
             nullptr);
+#ifdef NEVERD_REGISTRATION_OBJECT_FINISH
+  NEVERD_REGISTRATION_OBJECT_FINISH(Passed && Restored &&
+                                    Written == sizeof(Message) - 1);
+#else
   ExitProcess(Passed && Restored && Written == sizeof(Message) - 1 ? 0 : 1);
+#endif
 }

@@ -585,6 +585,10 @@ KernelModel::beginRequest(const DriverRequest &Input,
     return ioError("user unmapping requires a nonempty neither-I/O transfer");
   if (Input.RequestorProcessID <= 4)
     return ioError("requestor process identity must be above the system PID");
+  // Process and thread IDs share one namespace; issued IDs keep their owner.
+  if (IssuedThreadClientIDs.contains(Input.RequestorProcessID))
+    return ioError("requestor process identity collides with an issued thread "
+                   "client ID");
   if (ExitedUserProcesses.contains(Input.RequestorProcessID) &&
       Input.Kind != DriverRequestKind::Cleanup &&
       Input.Kind != DriverRequestKind::Close)
@@ -688,6 +692,7 @@ KernelModel::beginRequest(const DriverRequest &Input,
   Record.FileId = Input.File;
   Record.AsynchronousFile = FileIt->second.Asynchronous;
   Record.ProcessID = Input.RequestorProcessID;
+  RequestorProcessIDs.insert(Input.RequestorProcessID);
   if (Input.CancelAfter100ns) {
     llvm::Expected<uint64_t> Deadline = Scheduler.now100ns();
     if (*Input.CancelAfter100ns)

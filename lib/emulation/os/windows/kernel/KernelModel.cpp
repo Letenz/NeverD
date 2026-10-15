@@ -16,6 +16,7 @@
 #include "KernelException.h"
 #include "KernelLoaderView.h"
 #include "KernelModelRuntime.h"
+#include "KernelPhysicalInventory.h"
 #include "KernelVersionQuery.h"
 #include "KernelWaits.h"
 #include "WindowsKernelLayout.h"
@@ -160,6 +161,14 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
     if (Options.Contract != ExecutionContract::CheckedX64)
       return modelError("driver version_query requires checked-x64 execution");
   }
+  if (Options.PhysicalMemoryInventory) {
+    if (auto E = kernel_physical_inventory::validate(
+            *Options.PhysicalMemoryInventory))
+      return E;
+    if (Options.Contract != ExecutionContract::CheckedX64)
+      return modelError(
+          "driver physical_memory_inventory requires checked-x64 execution");
+  }
   std::map<uint64_t, uint64_t> ImageRanges;
   for (const auto &Region : Image.Regions) {
     const uint64_t Size = Region.Bytes.size();
@@ -182,7 +191,8 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   ImageRAM = std::move(ImageRanges);
   Contract = Options.Contract;
   VersionQuery = Options.VersionQuery;
-  if (VersionQuery)
+  PhysicalMemoryInventory = Options.PhysicalMemoryInventory;
+  if (VersionQuery || PhysicalMemoryInventory)
     UnpackOpaqueEffects = true;
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},

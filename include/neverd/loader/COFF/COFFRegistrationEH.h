@@ -105,18 +105,27 @@ getCheckedX86SafeSEHTablePointer(const BinaryImage &Img);
 bool isCheckedX86SafeSEHHandlerReference(const BinaryImage &Img,
                                          va_t HandlerVA);
 
-/// Checked PE32 throw metadata with one scalar or trivially copied object,
-/// no copy/destructor/forwarding callback and no pointer adjustment. The three
+/// Checked PE32 throw metadata with one directly catchable type,
+/// no forwarding callback and no pointer adjustment. The three
 /// metadata records must be immutable mapped data. TypeDescriptor is retained
-/// by identity; it does not supply a guessed C++ type or object layout.
-struct X86SimpleCxxThrowInfo {
+/// by identity; it does not supply a guessed C++ type or object layout. A
+/// runtime callback address is decoded separately from its ABI and effects.
+struct X86IdentityCxxThrowInfo {
   va_t Address = InvalidVA;
   va_t TypeDescriptorVA = InvalidVA;
+  va_t DestructorVA = 0;
+  va_t CopyConstructorVA = 0;
   uint32_t Attributes = 0;
   uint32_t ObjectSize = 0;
   std::vector<ExceptionAddressRange> ReadOnlyRanges;
   ExceptionAddressRange TypeDescriptorRange;
 };
+std::optional<X86IdentityCxxThrowInfo>
+getCheckedX86IdentityCxxThrowInfo(const BinaryImage &Img, va_t Address);
+
+/// The callback-free projection used by scalar source rendering. Dropping a
+/// destructor from a native throw call would change its observable effects.
+using X86SimpleCxxThrowInfo = X86IdentityCxxThrowInfo;
 std::optional<X86SimpleCxxThrowInfo>
 getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address);
 

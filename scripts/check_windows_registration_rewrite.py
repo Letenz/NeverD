@@ -35,11 +35,20 @@ OBSERVATION = re.compile(
 CASES = {"filter": (0, 0), "nested-finally": (1, 123),
          "continue-search": (2, 123), "continue-execution": (3, 1),
          "normal-finally": (4, 2), "cdecl-parameter": (5, 7),
-         "cdecl-parameter-write": (6, 177)}
+         "cdecl-parameter-write": (6, 177), "exception-code": (7, 7),
+         "exception-flags": (8, 7)}
 CASES.update({"eh4-" + name: value for name, value in tuple(CASES.items())})
 CASES.update({"eh4-gs-" + name: CASES[name] for name in
               ("filter", "nested-finally", "continue-search", "continue-execution",
-               "normal-finally", "cdecl-parameter", "cdecl-parameter-write")})
+               "normal-finally", "cdecl-parameter", "cdecl-parameter-write",
+               "exception-code", "exception-flags")})
+CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
+              "longjmp-filter": (11, 3), "longjmp-parameter": (12, 23),
+              "longjmp-callback": (13, 23),
+              "longjmp-unwind-callback": (14, 23),
+              "longjmp-callback-zero": (15, 23),
+              "longjmp-search-filter": (16, 23),
+              "longjmp-search-filter-zero": (17, 23)})
 
 
 class PE32:
@@ -177,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-binary", required=True, type=Path)
     parser.add_argument("--patch-binary", type=Path,
-                        help="also execute the CLI section and inplace patch paths")
+                        help="execute CLI section/inplace paths from IR and EXE, with and without optimization")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--compiler", default="clang")
     parser.add_argument("--linker", default="lld-link")
@@ -193,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
     gs = args.case.startswith("eh4-gs-")
+    jump = args.case.startswith("longjmp-")
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
@@ -212,13 +222,14 @@ def main(argv: list[str] | None = None) -> int:
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
         definitions = (("kernel32", KERNEL32),
-                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "")))
+                       ("msvcrt", MSVCRT + ("_except_handler4_common\n" if eh4 else "") +
+                        ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else "")))
         for name, definition in definitions:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_seh3.s"])
+                   else ["registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
@@ -262,18 +273,21 @@ def main(argv: list[str] | None = None) -> int:
                   (output / "collision-patched.exe", True)]
         if args.patch_binary:
             for mode in ("section", "inplace"):
-                destination = output / f"cli-{mode}.exe"
-                destination.unlink(missing_ok=True)
-                command = [str(args.patch_binary.resolve()), "patch", str(original),
-                           f"--from-ir={output / 'registration.ll'}", f"--mode={mode}",
-                           "--no-opt", "-o", str(destination)]
-                result = subprocess.run(command, env=environment, capture_output=True,
-                                        text=True, errors="replace", timeout=args.timeout)
-                report["steps"].append({"command": command, "exit_code": result.returncode,
-                                        "stdout": result.stdout, "stderr": result.stderr})
-                if result.returncode or not destination.is_file():
-                    raise ValueError(f"CLI {mode} reconstruction failed")
-                images.append((destination, True))
+                inputs = (("ir", [f"--from-ir={output / 'registration.ll'}", "--no-opt"]),
+                          ("exe-no-opt", ["--max-func=1", "--no-debug", "--no-opt"]),
+                          ("exe-opt", ["--max-func=1", "--no-debug"]))
+                for source, options in inputs:
+                    destination = output / f"cli-{mode}-{source}.exe"
+                    destination.unlink(missing_ok=True)
+                    command = [str(args.patch_binary.resolve()), "patch", str(original),
+                               *options, f"--mode={mode}", "-o", str(destination)]
+                    result = subprocess.run(command, env=environment, capture_output=True,
+                                            text=True, errors="replace", timeout=args.timeout)
+                    report["steps"].append({"command": command, "exit_code": result.returncode,
+                                            "stdout": result.stdout, "stderr": result.stderr})
+                    if result.returncode or not destination.is_file():
+                        raise ValueError(f"CLI {mode} {source} reconstruction failed")
+                    images.append((destination, True))
         for image, generated in images:
             report["observations"].append(observe(image, generated, launcher,
                                                  environment, args.timeout, expected_trace))

@@ -6,16 +6,22 @@
 
 #include "MedLLVMRegistrationSEHProof.h"
 
+#include "WindowsRegistrationFramePrivate.h"
+
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/X86RegistrationSEHControl.h"
+#include "neverd/backend/llvm/X86RegistrationSEHException.h"
+#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 
 namespace neverd::x86_registration {
 
 std::optional<SEHFrameValues> getPrivateSEHFrameValues(
     const MedFunc &Func, const RegistrationStateAnalysis &States,
-    llvm::function_ref<bool(const MedVar &, uint16_t)> IsPrivateStore) {
+    llvm::function_ref<bool(const MedOp &)> IsPrivateStore) {
   // A synthetic source frame must stay private. Otherwise an unknown callee
   // can modify a source registration field without changing LLVM's live node.
   // Consume the shared LowIR frame domain, including spill/reload provenance,
@@ -60,9 +66,87 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
       }
     }
   }
-  for (const MedCallInfo &Call : Func.CallInfos)
-    if (llvm::any_of(Call.Args, IsFrame))
-      return std::nullopt;
+  // LowIR conservatively retains possible address bits in exception DWORDs.
+  // Their values come from the current runtime record, not from a relocated
+  // source frame. Discharge that taint only for a pure scalar use closure;
+  // combining it with any actual frame address keeps the existing restriction.
+  const auto ExceptionAccesses = getX86RegistrationSEHExceptionAccesses(Func);
+  if (!ExceptionAccesses)
+    return std::nullopt;
+  std::set<ValueKey> RuntimeScalars;
+  for (const MedBlock &Block : Func.Blocks)
+    for (const MedOp &Op : Block.Ops) {
+      const auto Access = ExceptionAccesses->find({Op.Addr, Op.OriginSeq});
+      if (Access != ExceptionAccesses->end() &&
+          (Access->second.Field ==
+               RegistrationSEHExceptionAccess::Kind::ExceptionCode ||
+           Access->second.Field ==
+               RegistrationSEHExceptionAccess::Kind::ExceptionFlags))
+        RuntimeScalars.insert(Key(Op.Output));
+    }
+  auto IsScalar = [&](const MedVar &V) {
+    return !V.isConst() && RuntimeScalars.count(Key(V));
+  };
+  auto IsUnrelocated = [&](const MedVar &V) {
+    return !IsFrame(V) || IsScalar(V);
+  };
+  Changed = !RuntimeScalars.empty();
+  while (Changed) {
+    Changed = false;
+    for (const MedBlock &Block : Func.Blocks) {
+      for (const PhiNode &Phi : Block.Phis) {
+        if (++Work > limits::kMaxRegistrationEHStateWork)
+          return std::nullopt;
+        if (llvm::all_of(
+                Phi.Args,
+                [&](const auto &Arg) { return IsUnrelocated(Arg.second); }) &&
+            llvm::any_of(Phi.Args,
+                         [&](const auto &Arg) { return IsScalar(Arg.second); }))
+          Changed |= RuntimeScalars.insert(Key(Phi.Output)).second;
+      }
+      for (const MedOp &Op : Block.Ops) {
+        if (++Work > limits::kMaxRegistrationEHStateWork)
+          return std::nullopt;
+        if (!Op.Output.Size || Op.Output.isConst() || Op.Opcode == NdOp::LOAD ||
+            Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.RegistrationRoot != MedOp::RegistrationRootKind::None)
+          continue;
+        const auto Inputs = llvm::ArrayRef(Op.Inputs).take_front(Op.NumInputs);
+        if (llvm::all_of(Inputs, IsUnrelocated) &&
+            llvm::any_of(Inputs, IsScalar))
+          Changed |= RuntimeScalars.insert(Key(Op.Output)).second;
+      }
+    }
+  }
+  for (const auto &Value : RuntimeScalars)
+    FrameValues.erase(Value);
+  const auto Jumps = getX86RegistrationSEHJumpCalls(Func);
+  if (!Jumps)
+    return std::nullopt;
+  for (const MedCallInfo &Call : Func.CallInfos) {
+    const auto Block = llvm::find_if(
+        Func.Blocks, [&](const auto &B) { return B.Id == Call.BlockId; });
+    const auto *Operation = Block != Func.Blocks.end() && Call.OpIdx >= 0 &&
+                                    size_t(Call.OpIdx) < Block->Ops.size()
+                                ? &Block->Ops[Call.OpIdx]
+                                : nullptr;
+    const auto Jump = Operation ? Jumps->find(Operation->Addr) : Jumps->end();
+    // The cookie is decoded by XOR with EBP, so conservative address taint
+    // reaches its recovered ECX argument. The exact source occurrence proves
+    // that value is the image cookie; native lowering replaces this check with
+    // the compiler's physical-frame check instead of passing a frame address.
+    const bool CookieCheck =
+        Operation && Operation->Opcode == NdOp::CALL &&
+        Operation->NumInputs == 1 && Operation->Inputs[0].isConst() &&
+        Operation->Inputs[0].ConstVal == States.CookieCheckVA &&
+        States.SecurityCookiesComplete &&
+        States.cookieCheck(Operation->Addr, Operation->OriginSeq) &&
+        Call.Args.size() == 1 && Call.Args.front().Size == 4;
+    for (size_t I = 0; I < Call.Args.size(); ++I)
+      if (IsFrame(Call.Args[I]) &&
+          (I != 0 || (Jump == Jumps->end() && !CookieCheck)))
+        return std::nullopt;
+  }
   for (const MedBlock &Block : Func.Blocks)
     for (const MedOp &Op : Block.Ops) {
       // Indexed source-memory receipts currently describe ordinary loads and
@@ -84,12 +168,38 @@ std::optional<SEHFrameValues> getPrivateSEHFrameValues(
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           IsFrame(Op.Inputs[1]) &&
           Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS) {
-        if (!IsPrivateStore(Op.Inputs[0], Op.Inputs[1].Size))
+        if (!IsPrivateStore(Op))
           return std::nullopt;
       }
     }
 
   return Result;
+}
+
+std::optional<std::set<const llvm::StoreInst *>> getCheckedSEHCallbackStores(
+    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests) {
+  std::set<const llvm::StoreInst *> Stores;
+  size_t Work = 0;
+  for (const auto &Request : Requests) {
+    if (!Request.Frame.InferStackBounds)
+      continue;
+    auto Frame = Request.Frame;
+    Frame.StackBytes = limits::kMaxRegistrationEHStateWork;
+    Frame.StackPointerOffset = Frame.StackBytes;
+    std::set<llvm::BasicBlock *> Body(Request.Blocks.begin(),
+                                      Request.Blocks.end());
+    std::map<llvm::StoreInst *, X86RegistrationRootKind> Seeds;
+    for (const auto &Seed : Frame.RootSeeds)
+      Seeds.emplace(Seed.Definition, Seed.Kind);
+    std::set<llvm::AllocaInst *> Slots;
+    if (auto Error = checkPrivateStack(
+            Request.Entry->getModule()->getDataLayout(), *Request.Entry, Body,
+            Seeds, Frame, Slots, Work, nullptr, {}, &Stores)) {
+      llvm::consumeError(std::move(Error));
+      return std::nullopt;
+    }
+  }
+  return Stores;
 }
 
 std::optional<std::set<llvm::Instruction *>> getCheckedSEHChainInstructions(
@@ -155,17 +265,30 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
         &RegistrationMemoryIR,
     const std::map<const llvm::CallInst *, va_t> &CallSiteAddrs) {
   const auto &States = *Func.RegistrationStates;
-  // Physical finally invocation exits carry source state-flow evidence. The
-  // current native SEH plan has no replacement return-PC/resumption receipt
-  // or physical object receipt for runtime exception-field accesses.
-  if (States.HasBoundSEHCallees || States.HasEH3JumpCaptures ||
-      !States.SEHJumpResumptionsComplete ||
-      !States.SEHJumpResumptions.empty() ||
-      !States.SEHInvocationExitsComplete ||
-      !States.SEHInvocationExits.empty() ||
-      !States.SEHExceptionAccessesComplete ||
-      !States.SEHExceptionAccesses.empty())
+  // Ordinary near returns use the outlined callback's C return ABI. Other
+  // nonlocal exits still require their own replacement continuation contract.
+  if (States.HasBoundSEHCallees || !getX86RegistrationSEHJumpCalls(Func))
     return std::nullopt;
+  const auto ExceptionAccesses = getX86RegistrationSEHExceptionAccesses(Func);
+  if (!ExceptionAccesses)
+    return std::nullopt;
+  for (const auto &[Identity, Access] : *ExceptionAccesses) {
+    const auto Found = RegistrationMemoryIR.find(Identity);
+    const auto *Load = Found == RegistrationMemoryIR.end()
+                           ? nullptr
+                           : llvm::dyn_cast<llvm::LoadInst>(Found->second);
+    if (!Load || !Load->getType()->isIntegerTy(32) || Load->isAtomic())
+      return std::nullopt;
+  }
+  const auto Returns = getX86RegistrationSEHReturnBlocks(Func);
+  if (!Returns)
+    return std::nullopt;
+  for (const auto &[Id, Entry] : *Returns) {
+    const auto Block = OriginalBlockMap.find(Id);
+    if (Block == OriginalBlockMap.end() || !Block->second ||
+        !llvm::isa<llvm::ReturnInst>(Block->second->getTerminator()))
+      return std::nullopt;
+  }
 
   std::vector<SourceOperation> SourceOperations;
   std::set<llvm::CallInst *> CookieCheckCalls;

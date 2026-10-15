@@ -329,7 +329,9 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `RtlAppendUnicodeToString`、`RtlAppendUnicodeStringToString` | 附加到計數式 UTF-16 目標；回傳 `STATUS_BUFFER_TOO_SMALL` 時目標保持不變，至少剩餘兩個空閒位元組時才寫入結尾字元，超過 `0x7FFE` 個單元的 NUL 結尾來源同樣回傳 `STATUS_BUFFER_TOO_SMALL` |
 | `RtlPrefixUnicodeString` | 計數式 UTF-16 前綴判斷；不區分大小寫的請求只有在不相等的單元需要 Windows 大小寫對照表時才會停止 |
 | `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 為基數的無號轉換，前導空白、正負號、`0x`/`0o`/`0b` 前綴與 32 位元回繞皆遵循核心規則；格式化需要為結尾字元預留空間，並在寫入長度後回傳 `STATUS_BUFFER_OVERFLOW` |
+| `RtlAnsiStringToUnicodeString`、`RtlUnicodeStringToAnsiString`、`RtlFreeUnicodeString`、`RtlFreeAnsiString` | 在計數式 8 位元記錄與 UTF-16 記錄之間轉換 ASCII 文字；其他文字取決於未建模的系統 ANSI 字碼頁，因此會停止。先寫入長度；配置來自帶 `Strg` 標記的分頁集區，兩個釋放常式都會釋放它並清除記錄（忽略集區標記）。不配置時，ANSI 轉 Unicode 不做轉換直接回傳 `STATUS_BUFFER_OVERFLOW`，而 Unicode 轉 ANSI 會轉換放得下的前置部分、寫入結尾字元並回傳 `STATUS_BUFFER_OVERFLOW` |
 | `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 與內嵌 `GS:[0x188]` 讀取的匯出別名，任意 IRQL 皆可呼叫：目前 APC 狀態中的行程隨行程附加而改變，目前邏輯執行緒的借用不透明身分則維持不變 |
+| `PsGetCurrentThreadId`、`PsGetThreadId` | 存活執行緒物件的用戶端 ID：首次觀察時自 `0x2000` 起以 4 為步長配置，略過已建模的行程 ID 且永不重複使用；請求者 ID 與已配置執行緒 ID 相同的請求會被拒絕。`PsCreateSystemThread` 也透過 `ClientId` 回傳系統行程 ID 與執行緒 ID。前景分派在同一個邏輯執行緒上執行，因此來自不同請求者行程的請求看到相同的執行緒 ID，而 `PsGetCurrentProcessId` 會跟隨請求者。`PsGetThreadId` 需要 IRQL ≤ `DISPATCH_LEVEL` |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
 | `MmGetSystemRoutineAddress` | 透過共用匯出清單解析客體計數式名稱 |
@@ -420,7 +422,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 選用根欄位 `"load_address": "0x190000000"` 請求變更載入基底位址；省略此欄位或指定 `"0x0"` 時使用慣用位址。映像必須滿足重新定位需求。原有的初始化命令或 C API 不會隱含執行任何請求情境。
 
-根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
+根物件僅接受 `service_name`、`scheduling`、`trace_memory_writes`、`cpuid`、`loader_view`、`version_query`、`physical_memory_inventory`、`load_address`、`requests`、`unload`、`kernel_exports`、`registry` 和 `pnp_devices`。一般檔案要求接受 `kind`、選用且互斥的 `device` 或 `device_id`，以及選用的 `file`。IOCTL 必須提供 `code`，並接受 `input`、`output_size` 和 `direct_input`。`read` 接受 `output_size` 和 `byte_offset`；`write` 接受 `input` 和 `byte_offset`。位移預設為零，可使用整數或十六進位字串，且必須落在非負有號 64 位元值的範圍內。生命週期請求會拒絕傳輸欄位。未知或重複欄位會遭拒絕。`code` 接受無號 32 位元 JSON 整數或 `0x` 十六進位字串。`input` 是長度為偶數且不帶前綴或空格的十六進位位元組字串；省略表示空輸入。`output_size` 為無號 JSON 整數，省略表示零。不接受小數及浮點數寫法。
 
 僅 READ／WRITE／IOCTL 請求接受選用欄位 `cancel_after_100ns`，它必須是 0 到 `INT64_MAX`（9223372036854775807）之間的 JSON 整數。此值相對於請求提交時刻，以虛擬 100 ns 為單位，並非實際時間。對 KMDF，零表示框架路由後、客體 I/O 回呼前觸發取消；若路由已直接完成請求，則完成優先。對 WDM，零在派送傳回後生效。正數延遲僅在沒有就緒回呼或執行框架時，隨時間推進至計時器、等待或取消期限而觸發。掛起的 WDM IRP 會在持有取消自旋鎖的 `DISPATCH_LEVEL` 呼叫已註冊的取消常式；常式必須使用 `Irp->CancelIrql` 釋放鎖後再完成請求。一般佇列與 PnP 取消仍不支援。每個請求報告都包含 `cancel_requested_at_100ns`，值為取消實際發生時的絕對虛擬時間；若未發生取消，包括完成先發生的情況，則為 null。請求取消本身不會完成 IRP，也不規定最終狀態。
 `IoSetCancelRoutine`、`IoAcquireCancelSpinLock`、`IoReleaseCancelSpinLock` 與 `IoCancelIrp` 共用相同的 IRP 狀態及取消自旋鎖；`IoCancelIrp` 同步呼叫已註冊常式，並傳回是否實際呼叫。
@@ -626,3 +628,10 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 借用的 160 位元組記錄僅開放 `DllBase`（位移 48，8 位元組）、`EntryPoint`（56，8）、`SizeOfImage`（64，4）及 `Flags`（104，4）。前三項來自實際載入映像，包含重定位後的值；不推斷旗標位元意義。允許這些範圍內的部分讀取；未知位元組、跨越未知範圍的存取與所有寫入皆遭拒絕，複製服務或 MDL 別名也無法繞過。`DriverObject.Flags` 仍不透明。檢視貫穿模擬生命週期，即使未讀取也保留未重建的環境相依性，不授予符號常數或原生執行階段還原權限。
 
 執行要求透過 `DriverOptions.Contract` 或支援選擇合約的入口啟用 `checked-x64`。原 C v1 場景入口使用 Legacy，不能啟用此檢視；UNPACK 預設採用受檢查執行。Legacy 會在映像載入或觀察器啟動前遭拒絕，因為軟體寫入掛鉤可能在提交儲存後才停止。
+
+
+## 明確宣告物理記憶體清單
+
+選用的 `physical_memory_inventory` 明確選擇模擬 RAM：`{"version":1,"source":"model-identity-window","evidence":"fixture declaration"}`。三個欄位皆必填，evidence 為 1–256 位元組可列印 ASCII。未知欄位、不支援的版本或來源、非 `checked-x64` 宣告會在載入前拒絕。此來源選擇統一物理識別視窗，即從 64 GiB 開始的一段 64 MiB 範圍；不推斷主機安裝記憶體，也不為尚無後備儲存的頁面賦予內容或存取權限。
+
+在 PASSIVE_LEVEL，`MmGetPhysicalMemoryRanges` 回傳新配置的 32 位元組非分頁集區緩衝區：兩個 64 位元欄位（基址和位元組長度），接著是零/零終止項。並存結果彼此獨立，呼叫者透過 `ExFreePool` 或 `ExFreePoolWithTag(...,0)` 分別釋放；資源不足回傳 NULL。缺少宣告、IRQL 過高或生命週期無效均明確停止，固定頁面阻止提前釋放。Ex/Ex2、任意清單和記憶體熱增刪尚不支援。報告保留 `configuration.physical_memory_inventory`。即使宣告未使用，也保留環境依賴。API 擁有的結果緩衝區仍屬借用狀態和存活集區依賴，不會虛構可重建的集區配置 API；釋放也不構成符號證明或原生還原證明。
