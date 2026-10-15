@@ -118,6 +118,11 @@ NEVERD_WDM_VALUE(UnicodeMaximumOffset, 0x02)
 // CLIENT_ID{HANDLE UniqueProcess; HANDLE UniqueThread;}
 NEVERD_WDM_VALUE(ClientIDSize, 0x10)
 NEVERD_WDM_VALUE(ClientIDThreadOffset, 0x08)
+// x64 ntdef.h LIST_ENTRY {Flink, Blink} and SINGLE_LIST_ENTRY {Next}.
+NEVERD_WDM_VALUE(ListEntrySize, 0x10)
+NEVERD_WDM_VALUE(ListEntryFlinkOffset, 0x00)
+NEVERD_WDM_VALUE(ListEntryBlinkOffset, 0x08)
+NEVERD_WDM_VALUE(SingleListEntrySize, 0x08)
 NEVERD_WDM_VALUE(ObjectAttributesSize, 48)
 NEVERD_WDM_VALUE(ObjectRootOffset, 8)
 NEVERD_WDM_VALUE(ObjectNameOffset, 16)
