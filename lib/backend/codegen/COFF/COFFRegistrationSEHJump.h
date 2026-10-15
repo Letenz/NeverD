@@ -9,6 +9,10 @@
 
 #include "COFFRegistrationIRProof.h"
 
+namespace neverd {
+struct X86RegistrationSEHJumpCall;
+}
+
 namespace neverd::coff_registration {
 
 struct RegistrationSEHJumpContract {
@@ -17,6 +21,14 @@ struct RegistrationSEHJumpContract {
   std::vector<std::pair<int64_t, int64_t>> SourceBuffers;
   bool readsSourceBuffer(int64_t Offset, uint64_t Bytes) const;
 };
+
+/// Match the exact state projection and return every required restore
+/// instruction to the caller's contiguous post-capture ordering proof.
+llvm::Error validateSEHJumpState(const X86RegistrationSEHJumpCall &Expected,
+                                 const llvm::CallBase &Call,
+                                 const llvm::StoreInst &State,
+                                 const RegistrationFrame &Frame,
+                                 std::set<const llvm::Instruction *> &Restores);
 
 /// Rebind source calls, private buffers, register snapshots and state restores
 /// from actual post-edit IR. The returned calls alone may borrow these buffers.

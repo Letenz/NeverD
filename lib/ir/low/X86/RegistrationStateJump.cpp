@@ -171,10 +171,10 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
   };
   SEHFrameOutcomes Outcomes;
   std::vector<RegistrationObjectExtent> Writes;
-  bool StateInFrame = true;
+  std::set<RegistrationSEHJumpState> StateRestores;
   for (int32_t Level : After.Levels)
     if (!runSEHUnwind(After.Frame, Level, uint32_t(Saved.Level), Outcomes,
-                      Writes, &Saved, &Value, &StateInFrame))
+                      Writes, &Saved, &Value, &StateRestores))
       return Refuse();
   for (const auto &Write : Writes)
     if (Write.Begin <
@@ -238,20 +238,26 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
       SP.CallbackAddress->Offset <= -8)
     Receipt.ValueOffset = SP.CallbackAddress->Offset + 4;
   Receipt.ResumedLevels.assign(Resume.Levels.begin(), Resume.Levels.end());
-  Receipt.StateInFrame = StateInFrame;
+  Receipt.StateRestores.assign(StateRestores.begin(), StateRestores.end());
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
   const auto [It, New] = JumpResumptions.emplace(Identity, Receipt);
   if (!New) {
     auto Previous = It->second;
     Previous.ResumedLevels = Receipt.ResumedLevels;
-    Previous.StateInFrame = Receipt.StateInFrame;
+    Previous.StateRestores = Receipt.StateRestores;
     if (Previous != Receipt)
       return Refuse();
-    It->second.StateInFrame &= Receipt.StateInFrame;
+    auto &Restores = It->second.StateRestores;
     auto &Levels = It->second.ResumedLevels;
-    if (!charge(Levels.size() + Receipt.ResumedLevels.size()))
+    if (!charge(Levels.size() + Receipt.ResumedLevels.size() + Restores.size() +
+                Receipt.StateRestores.size()))
       return Refuse();
+    Restores.insert(Restores.end(), Receipt.StateRestores.begin(),
+                    Receipt.StateRestores.end());
+    llvm::sort(Restores);
+    Restores.erase(std::unique(Restores.begin(), Restores.end()),
+                   Restores.end());
     Levels.insert(Levels.end(), Receipt.ResumedLevels.begin(),
                   Receipt.ResumedLevels.end());
     llvm::sort(Levels);

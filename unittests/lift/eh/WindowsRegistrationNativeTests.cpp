@@ -3846,6 +3846,52 @@ TEST(WindowsRegistrationNative, BindsGeneratedParentsToTheSourceScopeGraph) {
             std::string::npos);
 }
 
+TEST(WindowsRegistrationNative, NonlocalUnwindPreservesSiblingStateOrder) {
+  RegistrationNativeFixture F;
+  auto &EH = *F.Source.ExceptionMetadata;
+  EH.CodeRange.End = 0x1050;
+  // Siblings can share their filter and handler. Their enclosing graph does
+  // not constrain their relative order, but the CRT's saved numeric bound does.
+  EH.Registration->Scopes.push_back(EH.Registration->Scopes.front());
+  MedBlock Active;
+  Active.Id = 4;
+  Active.StartAddr = 0x1040;
+  Active.EndAddr = 0x1050;
+  F.Source.Blocks.push_back(Active);
+  F.Source.RegistrationStates->Blocks.push_back(
+      {4, {0x1040, 0x1050}, {1}, false, false, true});
+  auto *Sibling = llvm::BasicBlock::Create(F.Context, "sibling", F.Parent);
+  llvm::IRBuilder<>(Sibling).CreateBr(F.Try);
+  F.Entry->getTerminator()->setSuccessor(0, Sibling);
+  F.Blocks.emplace(4, Sibling);
+  ASSERT_TRUE(F.lower());
+  auto Compiled = compileFixture(F);
+  ASSERT_TRUE(Compiled.Success);
+  ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 2u);
+  // Simulate a producer which permutes these otherwise equivalent rows. Every
+  // physical field and fixup stays valid, and the whole source graph is intact.
+  for (auto &Row : Compiled.WinEHSemanticRecords) {
+    auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
+        EH, Arch::X86, 1 - Row.GeneratedState);
+    ASSERT_TRUE(Token);
+    Row.Token = *Token;
+  }
+  auto Valid = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  llvm::IRBuilder<> B(F.Parent->getEntryBlock().getTerminator());
+  auto Capture = F.Module.getOrInsertFunction(
+      "_setjmp3", llvm::FunctionType::get(
+                      B.getInt32Ty(), {B.getPtrTy(), B.getInt32Ty()}, true));
+  B.CreateCall(Capture,
+               {llvm::ConstantPointerNull::get(B.getPtrTy()), B.getInt32(0)});
+  ASSERT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+  auto Error = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_TRUE(bool(Error));
+  EXPECT_NE(
+      llvm::toString(std::move(Error)).find("nonlocal unwind state order"),
+      std::string::npos);
+}
+
 TEST(WindowsRegistrationNative, CompilerOwnsTheFinallyTableTarget) {
   RegistrationNativeFixture F;
   auto &Scope = F.Source.ExceptionMetadata->Registration->Scopes.front();

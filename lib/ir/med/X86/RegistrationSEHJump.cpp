@@ -103,9 +103,16 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
   }
   struct Resumption {
     std::set<int32_t> Levels;
-    bool StateInFrame = true;
+    std::map<int32_t, int32_t> Projection;
+    bool Complete = true;
   };
   std::map<va_t, Resumption> ResumeLevels;
+  const auto &Chain = *Function.ExceptionMetadata->Registration;
+  const auto ValidState = [&](int32_t State) {
+    return Chain.SeededTryLevel &&
+           (State == *Chain.SeededTryLevel ||
+            (State >= 0 && size_t(State) < Chain.Scopes.size()));
+  };
   for (const auto &Resume : States.SEHJumpResumptions) {
     auto *Call = Bind(Resume.Address, Resume.OpSeq);
     const auto Capture = Captures.find(Resume.CaptureCall);
@@ -129,17 +136,34 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
         return std::nullopt;
     } else if (!Resume.ValueOffset || !Call->Operation->DoesNotReturn)
       return std::nullopt;
-    Work += Resume.ResumedLevels.size();
+    Work += Resume.ResumedLevels.size() + Resume.StateRestores.size();
     if (Work > limits::kMaxRegistrationEHStateWork ||
         !llvm::is_sorted(Resume.ResumedLevels) ||
         std::adjacent_find(Resume.ResumedLevels.begin(),
                            Resume.ResumedLevels.end()) !=
-            Resume.ResumedLevels.end())
+            Resume.ResumedLevels.end() ||
+        !llvm::is_sorted(Resume.StateRestores) ||
+        std::adjacent_find(Resume.StateRestores.begin(),
+                           Resume.StateRestores.end()) !=
+            Resume.StateRestores.end())
       return std::nullopt;
-    auto &Resumption = ResumeLevels[Resume.CaptureCall];
-    Resumption.Levels.insert(Resume.ResumedLevels.begin(),
-                             Resume.ResumedLevels.end());
-    Resumption.StateInFrame &= Resume.StateInFrame;
+    auto &Plan = ResumeLevels[Resume.CaptureCall];
+    Plan.Levels.insert(Resume.ResumedLevels.begin(),
+                       Resume.ResumedLevels.end());
+    Plan.Complete &= !Resume.StateRestores.empty();
+    std::set<int32_t> Restored;
+    for (const auto &State : Resume.StateRestores) {
+      if (!ValidState(State.FrameLevel) || !ValidState(State.ResumeLevel))
+        return std::nullopt;
+      const auto [It, New] =
+          Plan.Projection.emplace(State.FrameLevel, State.ResumeLevel);
+      if (!New && It->second != State.ResumeLevel)
+        return std::nullopt;
+      Restored.insert(State.ResumeLevel);
+    }
+    if (!Resume.StateRestores.empty() &&
+        !llvm::equal(Restored, Resume.ResumedLevels))
+      return std::nullopt;
     if (Resume.CalleeVA)
       continue;
     if (Resume.EntryVA) {
@@ -179,11 +203,11 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
       auto Previous = *Call->Resume;
       if (Previous.OrdinaryCall == Resume.OrdinaryCall &&
           (Previous.ResumedLevels != Resume.ResumedLevels ||
-           Previous.StateInFrame != Resume.StateInFrame))
+           Previous.StateRestores != Resume.StateRestores))
         return std::nullopt;
       Previous.OrdinaryCall = Resume.OrdinaryCall;
       Previous.ResumedLevels = Resume.ResumedLevels;
-      Previous.StateInFrame = Resume.StateInFrame;
+      Previous.StateRestores = Resume.StateRestores;
       if (Previous != Resume)
         return std::nullopt;
       continue;
@@ -199,14 +223,12 @@ getX86RegistrationSEHJumpCalls(const MedFunc &Function) {
     } else if (Level->second.Levels.size() == 1) {
       Call.ResumeLevel = *Level->second.Levels.begin();
     } else {
-      const auto &Chain = *Function.ExceptionMetadata->Registration;
-      if (!Level->second.StateInFrame || !Chain.SeededTryLevel ||
-          llvm::any_of(Level->second.Levels, [&](int32_t State) {
-            return State != *Chain.SeededTryLevel &&
-                   (State < 0 || size_t(State) >= Chain.Scopes.size());
-          }))
+      if (!Level->second.Complete)
         return std::nullopt;
       Call.ResumeLevel.reset();
+      for (const auto &[Frame, Resumed] : Level->second.Projection)
+        if (Frame != Resumed)
+          Call.ResumeStateMap.emplace(Frame, Resumed);
     }
   }
   return Result;

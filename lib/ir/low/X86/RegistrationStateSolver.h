@@ -213,12 +213,13 @@ private:
                              const std::set<int32_t> &Levels, bool Unknown,
                              std::set<int32_t> &WrittenLevels);
   bool mergeSEHFrameOutcome(SEHFrameOutcomes &Outcomes, FrameState State);
-  bool runSEHUnwind(FrameState Frame, int32_t Level, uint32_t Bound,
-                    SEHFrameOutcomes &Outcomes,
-                    std::vector<RegistrationObjectExtent> &Writes,
-                    const EH3JumpCapture *Jump = nullptr,
-                    const FrameValue *JumpValue = nullptr,
-                    bool *StateInFrame = nullptr);
+  bool
+  runSEHUnwind(FrameState Frame, int32_t Level, uint32_t Bound,
+               SEHFrameOutcomes &Outcomes,
+               std::vector<RegistrationObjectExtent> &Writes,
+               const EH3JumpCapture *Jump = nullptr,
+               const FrameValue *JumpValue = nullptr,
+               std::set<RegistrationSEHJumpState> *StateRestores = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,

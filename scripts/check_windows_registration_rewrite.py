@@ -72,7 +72,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-filter-correlated-state": (36, 2345),
               "longjmp-filter-shared-state": (37, 2345),
               "longjmp-filter-captured-cursor": (38, 2345),
-              "longjmp-filter-negative-disposition": (39, 2345)})
+              "longjmp-filter-negative-disposition": (39, 2345),
+              "longjmp-filter-skipped-scope": (40, 2345),
+              "longjmp-filter-two-resume-mappings": (41, 2345)})
 
 
 class PE32:

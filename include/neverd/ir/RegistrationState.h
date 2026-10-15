@@ -207,6 +207,14 @@ struct RegistrationSEHJumpCapture {
   bool operator==(const RegistrationSEHJumpCapture &) const = default;
 };
 
+/// The logical state left by the last callback (or at unwind entry) and the
+/// final runtime state after any remaining filter-only unwind steps.
+struct RegistrationSEHJumpState {
+  int32_t FrameLevel = -1;
+  int32_t ResumeLevel = -1;
+  auto operator<=>(const RegistrationSEHJumpState &) const = default;
+};
+
 /// A live EH3 buffer supplies one physical capture PC and restored ESP. The
 /// source invocation is retired by the authenticated nonlocal runtime call;
 /// this is distinct from an ordinary CALL return or a target-wide noreturn.
@@ -230,10 +238,9 @@ struct RegistrationSEHJumpResume {
   /// Actual source states after local unwind. A capture inside a retired
   /// scope does not reactivate that scope when the continuation resumes.
   std::vector<int32_t> ResumedLevels;
-  /// The final state equals the source state at unwind entry or after the
-  /// last completed callback. No later search-only unwind step changes it.
-  /// Native resumption can therefore reload that logical frame cell.
-  bool StateInFrame = false;
+  /// Sorted unique pairs from every completed unwind path. Native resumption
+  /// requires a single final state for each observable logical frame state.
+  std::vector<RegistrationSEHJumpState> StateRestores;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 

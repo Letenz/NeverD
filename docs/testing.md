@@ -4039,15 +4039,26 @@ refusal coverage but cannot run the new compiler-protocol tests.
 returns, captured search cursors, arbitrary negative dispositions, continuation
 inside a finally block and reordered edges. Selected handlers, unknown results,
 escaping searches, bad stacks, cycles and incomplete instruction boundaries
-refuse. A skipped filter scope independently withdraws permission to reload the
-last callback state. `RegistrationSEHJumpABI.MultipleStates*` checks that binding
-and rejects missing, invalid or contradictory state sets. Native installation
-mutations change the reload address, volatility, atomicity, selector, uses and
-placement before the capture.
+refuse. Skipping one or several filter scopes records the last callback state
+and its final runtime state separately. `RegistrationSEHJumpABI` checks complete
+state projections and rejects missing, invalid, unordered or contradictory
+pairs. Native installation mutations change the reload address, volatility,
+atomicity, alignment, selector, projection keys/results, uses and placement
+before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies four runtime cases:
+`registration_filter_state.s` supplies six runtime cases:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
-`longjmp-filter-captured-cursor` and `longjmp-filter-negative-disposition`.
+`longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
+`longjmp-filter-skipped-scope` and `longjmp-filter-two-resume-mappings`.
+The skipped-scope case writes state 1 in a filter; after
+the suspended finally returns, the CRT skips that filter scope and resumes at
+state 0. Its other branch retires to -1, requiring a variable projection.
+`longjmp-filter-two-resume-mappings` activates its scope rows before capture and
+checks both 2-to-1 and 3-to-0 resumption. It also exposes a numeric-bound bug:
+LLVM's old depth-first order 0,3,4,1,2 skipped the finally when unwinding from
+source state 4 to captured state 1. The compiler must preserve source order,
+and `NonlocalUnwindPreservesSiblingStateOrder` independently rejects a sibling
+permutation whose bytes, fixups and enclosing graph are otherwise valid.
 Each execution alternates both filter paths across four invocations, checks the
 resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
 and restored registration chain. The source reconstruction and independent

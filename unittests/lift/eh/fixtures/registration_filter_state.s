@@ -19,8 +19,16 @@ _registration_entry:
   mov [ebp-104],ebx
   mov ebx,6
   mov dword ptr [ebp-100],0
+#if REGISTRATION_CASE == 41
+  // Install every scope before capture so this case isolates the two distinct
+  // unwind projections from reconstruction of unreachable table entries.
+  mov dword ptr [ebp-4],2
+  mov dword ptr [ebp-4],1
+  push 1
+#else
   mov dword ptr [ebp-4],0
   push 0
+#endif
   .byte 0x68
   .long __seh_longjmp_unwind
   push 2
@@ -31,7 +39,11 @@ _registration_entry:
   test eax,eax
   jnz .Lresumed
   mov ebx,9
+#if REGISTRATION_CASE == 41
+  mov dword ptr [ebp-4],4
+#else
   mov dword ptr [ebp-4],2
+#endif
   push 42
   lea eax,[ebp-96]
   push eax
@@ -46,6 +58,11 @@ _registration_entry:
   cmp dword ptr [ebp-4],0
 #elif REGISTRATION_CASE == 38
   cmp dword ptr [ebp-4],-1
+#elif REGISTRATION_CASE == 41
+  mov ecx,[_registration_iteration]
+  and ecx,1
+  xor ecx,1
+  cmp [ebp-4],ecx
 #else
   mov ecx,[_registration_iteration]
   and ecx,1
@@ -73,6 +90,10 @@ _registration_entry:
   jz .Ldirect_continue
 #if REGISTRATION_CASE == 38
   mov dword ptr [ebp-4],-1
+#elif REGISTRATION_CASE == 40
+  mov dword ptr [ebp-4],1
+#elif REGISTRATION_CASE == 41
+  mov dword ptr [ebp-4],3
 #else
   mov dword ptr [ebp-4],0
 #endif
@@ -85,6 +106,8 @@ _registration_entry:
   mov [ebp-100],eax
 #if REGISTRATION_CASE == 37
   mov dword ptr [ebp-4],0
+#elif REGISTRATION_CASE == 41
+  mov dword ptr [ebp-4],2
 #else
   mov dword ptr [ebp-4],-1
 #endif
@@ -125,6 +148,22 @@ _registration_entry:
   mov dword ptr [ebp-4],-1
   mov eax,96
   jmp .Lfinish
+#if REGISTRATION_CASE == 41
+.Lmiddle_filter:
+  mov eax,-1
+  ret
+.Lskipped_filter:
+  mov eax,-1
+  ret
+.Lmiddle_handler:
+  mov dword ptr [ebp-4],-1
+  mov eax,94
+  jmp .Lfinish
+.Lskipped_handler:
+  mov dword ptr [ebp-4],-1
+  mov eax,95
+  jmp .Lfinish
+#endif
 .Lhandler:
   mov dword ptr [ebp-4],-1
   mov eax,97
@@ -140,8 +179,15 @@ _registration_entry:
 .p2align 2
 .Lscope_table:
   .long -1,.Louter_filter,.Louter_handler
+#if REGISTRATION_CASE == 41
+  .long 0,.Lmiddle_filter,.Lmiddle_handler
+  .long 1,.Lskipped_filter,.Lskipped_handler
+  .long 0,.Lfilter,.Lhandler
+  .long 3,0,.Lfinally
+#else
   .long 0,.Lfilter,.Lhandler
   .long 1,0,.Lfinally
+#endif
   .long 0,0,0
 .globl __load_config_used
 __load_config_used:

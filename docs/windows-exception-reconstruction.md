@@ -274,11 +274,19 @@ dispositions stay paired with their frame effects and written TryLevels through
 shared return blocks. Zero continues along the runtime's captured search
 cursor; any negative 32-bit result continues execution. Every explored path
 must resume the suspended invocation before it can supply returning effects.
-When a nonlocal resumption has several possible states, the capture reloads
-the logical state cell only if every unwind path leaves the entry or last
-completed callback state current. A later search-only unwind step withdraws
-that permission; a single proven result still uses the constant-state path.
-The installer checks the exact volatile read, conditional restore and ordering.
+When a nonlocal resumption has several possible states, the proof pairs each
+logical state left at entry or by the last completed callback with its final
+runtime state. This includes subsequent filter-only unwind steps. A complete,
+unambiguous projection permits one volatile read and checked state remapping
+after the capture returns; a single result uses the constant-state path.
+The installer checks the read, mapping keys/results, conditional restore and
+ordering. Missing or contradictory projections remain refused.
+Native scope numbering must also preserve source index order: the CRT compares
+current and saved states numerically, including unrelated sibling scopes. LLVM
+orders authenticated source rows before assigning invoke/asynchronous states;
+installation rejects any reordered table for a function with a jump capture.
+Scope entries without a proven activation still require a separate callback and
+handler reconstruction proof.
 Mapped PE data,
 including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.

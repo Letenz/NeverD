@@ -15,7 +15,8 @@ namespace neverd::registration_state {
 bool RegistrationStateSolver::runSEHUnwind(
     FrameState Frame, int32_t Level, uint32_t Bound, SEHFrameOutcomes &Outcomes,
     std::vector<RegistrationObjectExtent> &Writes, const EH3JumpCapture *Jump,
-    const FrameValue *JumpValue, bool *StateInFrame) {
+    const FrameValue *JumpValue,
+    std::set<RegistrationSEHJumpState> *StateRestores) {
   if (KnownCxx || EH4 || !Chain.TryLevelOffset || !validLevel(Level))
     return false;
   struct Step {
@@ -40,8 +41,11 @@ bool RegistrationStateSolver::runSEHUnwind(
     // retire or redirect the state, so its enclosing link is not the next
     // iteration's state unless the callback actually preserved that value.
     if (Walk == -1 || (Bound != UINT32_MAX && uint32_t(Walk) <= Bound)) {
-      if (StateInFrame)
-        *StateInFrame &= Walk == Current.VisibleLevel;
+      if (StateRestores) {
+        if (!charge(1))
+          return false;
+        StateRestores->insert({Current.VisibleLevel, Walk});
+      }
       if (!mergeSEHFrameOutcome(Outcomes, std::move(Current.Frame)))
         return false;
       continue;
@@ -77,7 +81,7 @@ bool RegistrationStateSolver::runSEHUnwind(
           return false;
       // A completed finally exposes its current state to the source frame.
       // Skipping a filter changes only the runtime cursor; native resumption
-      // must not reload the old logical cell after that step.
+      // must project the old logical cell through those remaining steps.
       Pending.push_back({std::move(NextFrame), Current.Ancestors,
                          Scope.IsFinally ? NextLevel : Current.VisibleLevel});
     }

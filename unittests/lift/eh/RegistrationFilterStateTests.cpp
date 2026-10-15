@@ -25,6 +25,9 @@ enum class Variant {
   StoresAroundRaise,
   ReversedEdges,
   NegativeDisposition,
+  SkipFilterBeforeResume,
+  SkipTwoFiltersBeforeResume,
+  TwoResumeMappings,
   SkipFilterAfterCallback,
   SelectedHandler,
   UnknownDisposition,
@@ -64,13 +67,21 @@ LowFunc filterFrame(Variant V) {
   Chain.Scopes = {{-1, 0x1880, 0x1120, false},
                   {0, 0x1800, 0x1120, false},
                   {1, 0, 0x1840, true}};
+  if (V == Variant::SkipTwoFiltersBeforeResume)
+    Chain.Scopes.push_back({1, 0x1800, 0x1120, false});
+  if (V == Variant::TwoResumeMappings)
+    Chain.Scopes = {{-1, 0x1880, 0x1120, false},
+                    {0, 0x1880, 0x1120, false},
+                    {1, 0x1880, 0x1120, false},
+                    {0, 0x1800, 0x1120, false},
+                    {3, 0, 0x1840, true}};
   F.Blocks[3].Succs = {8, 5};
   auto &Active = F.Blocks[8];
   Active.Id = 8;
   Active.StartAddr = 0x1140;
   Active.EndAddr = 0x1147;
   Active.Succs = {4};
-  addStateStore(Active, 0x1140, 2, Chain);
+  addStateStore(Active, 0x1140, V == Variant::TwoResumeMappings ? 4 : 2, Chain);
   for (auto &Op : F.Blocks[4].Ops)
     Op.Addr += 0x41;
   for (auto &Boundary : F.Blocks[4].InstructionBoundaries)
@@ -97,9 +108,12 @@ LowFunc filterFrame(Variant V) {
     Arm.StartAddr = I ? 0x1940 : 0x1900;
     Arm.EndAddr = Arm.StartAddr + 7;
     Arm.Succs = {int(14 + I)};
-    const int32_t Level = V == Variant::SameState              ? 0
-                          : V == Variant::CapturedCursor || !I ? -1
-                                                               : 0;
+    const int32_t Level = V == Variant::TwoResumeMappings        ? (I ? 3 : 2)
+                          : V == Variant::SameState              ? 0
+                          : V == Variant::CapturedCursor || !I   ? -1
+                          : V == Variant::SkipFilterBeforeResume ? 1
+                          : V == Variant::SkipTwoFiltersBeforeResume ? 3
+                                                                     : 0;
     addStateStore(Arm, Arm.StartAddr, Level, Chain);
     const uint32_t Disposition = !I && V == Variant::NegativeDisposition
                                      ? 0x80000000u
@@ -198,7 +212,8 @@ LowFunc filterFrame(Variant V) {
     InitialState.EndAddr = 0x108f;
     InitialState.Succs = {2};
     F.Blocks[1].Succs = {InitialState.Id};
-    addStateStore(InitialState, 0x1088, 0, Chain);
+    addStateStore(InitialState, 0x1088, V == Variant::TwoResumeMappings ? 1 : 0,
+                  Chain);
     F.Blocks.push_back(std::move(InitialState));
   }
   for (auto &Block : F.Blocks)
@@ -221,7 +236,9 @@ RegistrationStateAnalysis analyze(Variant V) {
     Capture.BufferOffset = -144;
     Capture.StackOffset = -192;
     Capture.UnwindTarget = 0x3300;
-    Capture.Level = V == Variant::SkipFilterAfterCallback ? -1 : 0;
+    Capture.Level = V == Variant::SkipFilterAfterCallback ? -1
+                    : V == Variant::TwoResumeMappings     ? 1
+                                                          : 0;
     constexpr uint64_t Registers[] = {x86reg::RBP, x86reg::RBX, x86reg::RDI,
                                       x86reg::RSI};
     for (unsigned I = 0; I != 4; ++I)
@@ -241,9 +258,12 @@ RegistrationStateAnalysis analyze(Variant V) {
 
 TEST(RegistrationFilterState,
      PreservesDispositionAndWrittenStateAtSharedReturn) {
-  for (auto V : {Variant::Correlated, Variant::SameState, Variant::BothContinue,
-                 Variant::CapturedCursor, Variant::StoresAroundRaise,
-                 Variant::ReversedEdges, Variant::NegativeDisposition}) {
+  for (auto V :
+       {Variant::Correlated, Variant::SameState, Variant::BothContinue,
+        Variant::CapturedCursor, Variant::StoresAroundRaise,
+        Variant::ReversedEdges, Variant::NegativeDisposition,
+        Variant::SkipFilterBeforeResume, Variant::SkipTwoFiltersBeforeResume,
+        Variant::TwoResumeMappings}) {
     SCOPED_TRACE(unsigned(V));
     const auto Result = analyze(V);
     for (const auto &Diagnostic : Result.Diagnostics)
@@ -254,13 +274,24 @@ TEST(RegistrationFilterState,
     EXPECT_EQ(Result.SEHJumpResumptions.size(), 1u);
     if (!Result.SEHJumpResumptions.empty()) {
       const auto &Resume = Result.SEHJumpResumptions.front();
-      EXPECT_TRUE(Resume.StateInFrame);
       const std::vector<int32_t> Expected =
           V == Variant::SameState || V == Variant::StoresAroundRaise
               ? std::vector<int32_t>{0}
-          : V == Variant::CapturedCursor ? std::vector<int32_t>{-1}
-                                         : std::vector<int32_t>{-1, 0};
+          : V == Variant::TwoResumeMappings ? std::vector<int32_t>{0, 1}
+          : V == Variant::CapturedCursor    ? std::vector<int32_t>{-1}
+                                            : std::vector<int32_t>{-1, 0};
       EXPECT_EQ(Resume.ResumedLevels, Expected);
+      std::vector<RegistrationSEHJumpState> Restores;
+      for (int32_t Level : Expected) {
+        const int32_t Frame =
+            Level == 0 && V == Variant::SkipFilterBeforeResume       ? 1
+            : Level == 0 && V == Variant::SkipTwoFiltersBeforeResume ? 3
+                                                                     : Level;
+        Restores.push_back({Frame, Level});
+      }
+      if (V == Variant::TwoResumeMappings)
+        Restores = {{2, 1}, {3, 0}};
+      EXPECT_EQ(Resume.StateRestores, Restores);
     }
   }
 }
@@ -271,7 +302,8 @@ TEST(RegistrationFilterState, SkippingAnotherScopeCannotReuseTheCallbackState) {
   ASSERT_EQ(Result.SEHJumpResumptions.size(), 1u);
   const auto &Resume = Result.SEHJumpResumptions.front();
   EXPECT_EQ(Resume.ResumedLevels, (std::vector<int32_t>{-1}));
-  EXPECT_FALSE(Resume.StateInFrame);
+  EXPECT_EQ(Resume.StateRestores,
+            (std::vector<RegistrationSEHJumpState>{{-1, -1}, {0, -1}}));
 }
 
 TEST(RegistrationFilterState,

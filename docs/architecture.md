@@ -524,11 +524,14 @@ The suspended-finally interpreter partitions filter returns by disposition and
 written TryLevel, including joins at a shared return block. Search keeps the
 cursor captured before each filter call. Continued exceptions resume every
 resulting frame at the next instruction; instruction-local temporaries cannot
-cross an internal split. Unwind records whether its final state still equals
-the entry or last completed callback state. MedIR may bind a variable resumed
-state only when every contributing path has that property. LLVM then reloads
-the logical cell after a returning capture, and the independent COFF consumer
-checks that exact volatile read, zero-return selector and contiguous restoration.
+cross an internal split. Unwind records the logical state left at entry or by
+the last completed callback together with the final runtime state. Remaining
+filter-only unwind steps may make those values differ. MedIR binds a variable
+resumption only when these pairs give a complete, unambiguous projection for
+every contributing path. LLVM reads the logical cell once after a returning
+capture and maps that original value to the final state. The independent COFF
+consumer checks the exact volatile read, projection keys/results, zero-return
+selector and contiguous restoration.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
