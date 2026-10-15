@@ -155,7 +155,10 @@ or #718 profiles in this review. Useful follow-up qualification remains:
   the qualified macOS host. The [Windows product lane](web-windows-product.md)
   now qualifies the Windows Server 2025 x64 NTFS reader, private spool and
   export owners, with 110 native cases, two adapter checks and six extracted
-  package checks at `d7af8fd05`, all without failures or skips. Formal product
+  package checks at `5e126750ae75`, all without failures or skips. The same
+  [qualification run](https://github.com/NeverSight/NeverD/actions/runs/38677375352)
+  passes eleven full producer and fifteen CEF/resource cases on macOS arm64,
+  also without failures or skips. Formal product
   publication requires Windows and complete producer/resource qualification
   at the same source commit and publishes the exact verified archive.
 
