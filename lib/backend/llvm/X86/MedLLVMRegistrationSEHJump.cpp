@@ -278,10 +278,19 @@ emitSEHJumps(const SEHJumpPlan &Plan, llvm::Function &Parent,
       auto *State = After.CreateInBoundsGEP(After.getInt8Ty(), &Frame,
                                             After.getInt32(EntrySP - 8));
       llvm::Value *Level = After.getInt32(Capture.Level);
-      if (Source.ResumeLevel != Capture.Level)
+      if (!Source.ResumeLevel || *Source.ResumeLevel != Capture.Level) {
+        llvm::Value *Resumed = nullptr;
+        if (Source.ResumeLevel) {
+          Resumed = After.getInt32(*Source.ResumeLevel);
+        } else {
+          auto *Current = After.CreateLoad(After.getInt32Ty(), State);
+          Current->setAlignment(llvm::Align(1));
+          Current->setVolatile(true);
+          Resumed = Current;
+        }
         Level = After.CreateSelect(After.CreateICmpEQ(Call, After.getInt32(0)),
-                                   Level, After.getInt32(Source.ResumeLevel),
-                                   "registration.jump.state");
+                                   Level, Resumed, "registration.jump.state");
+      }
       auto *Restore = After.CreateStore(Level, State);
       Restore->setAlignment(llvm::Align(1));
       Restore->setVolatile(true);

@@ -239,4 +239,53 @@ TEST(RegistrationSEHJumpABI,
   EXPECT_NE(F.Function.CallInfos[0].IntegerRegisterArgCount, 0);
 }
 
+TEST(RegistrationSEHJumpABI, MultipleStatesRequireACurrentSourceFrameCell) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    JumpCallFixture F;
+    auto &Chain = *F.Function.ExceptionMetadata->Registration;
+    Chain.SeededTryLevel = -1;
+    Chain.Scopes = {{-1, 0x4000, 0x4100, false}};
+    auto &Resume = F.Function.RegistrationStates->SEHJumpResumptions.front();
+    Resume.ResumedLevels = {-1, 0};
+    Resume.StateInFrame = true;
+    switch (Mutation) {
+    case 1:
+      Resume.StateInFrame = false;
+      break;
+    case 2:
+      Resume.ResumedLevels = {-2, 0};
+      break;
+    case 3:
+      Resume.ResumedLevels = {-1, 1};
+      break;
+    case 4:
+      Resume.ResumedLevels = {0, 0};
+      break;
+    case 5:
+      Resume.ResumedLevels = {0, -1};
+      break;
+    case 6:
+      Resume.ResumedLevels.clear();
+      break;
+    case 7:
+      Chain.SeededTryLevel.reset();
+      break;
+    }
+    const auto Calls = getX86RegistrationSEHJumpCalls(F.Function);
+    if (Mutation) {
+      EXPECT_FALSE(Calls);
+      continue;
+    }
+    ASSERT_TRUE(Calls);
+    ASSERT_EQ(Calls->size(), 2u);
+    for (const auto &[Address, Call] : *Calls)
+      EXPECT_FALSE(Call.ResumeLevel);
+    F.recover();
+    ASSERT_EQ(F.Function.CallInfos.size(), 2u);
+    EXPECT_EQ(F.Function.CallInfos[0].Args.size(), 4u);
+    EXPECT_EQ(F.Function.CallInfos[1].Args.size(), 2u);
+  }
+}
+
 } // namespace

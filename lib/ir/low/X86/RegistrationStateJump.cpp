@@ -171,9 +171,10 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
   };
   SEHFrameOutcomes Outcomes;
   std::vector<RegistrationObjectExtent> Writes;
+  bool StateInFrame = true;
   for (int32_t Level : After.Levels)
     if (!runSEHUnwind(After.Frame, Level, uint32_t(Saved.Level), Outcomes,
-                      Writes, &Saved, &Value))
+                      Writes, &Saved, &Value, &StateInFrame))
       return Refuse();
   for (const auto &Write : Writes)
     if (Write.Begin <
@@ -237,14 +238,17 @@ bool RegistrationStateSolver::resumeJumpCapture(Domain &After,
       SP.CallbackAddress->Offset <= -8)
     Receipt.ValueOffset = SP.CallbackAddress->Offset + 4;
   Receipt.ResumedLevels.assign(Resume.Levels.begin(), Resume.Levels.end());
+  Receipt.StateInFrame = StateInFrame;
   const SEHExitKey Identity{Receipt.EntryVA, Receipt.OrdinaryCall, Op.Addr,
                             Op.Seq};
   const auto [It, New] = JumpResumptions.emplace(Identity, Receipt);
   if (!New) {
     auto Previous = It->second;
     Previous.ResumedLevels = Receipt.ResumedLevels;
+    Previous.StateInFrame = Receipt.StateInFrame;
     if (Previous != Receipt)
       return Refuse();
+    It->second.StateInFrame &= Receipt.StateInFrame;
     auto &Levels = It->second.ResumedLevels;
     if (!charge(Levels.size() + Receipt.ResumedLevels.size()))
       return Refuse();

@@ -20,10 +20,78 @@
 
 namespace neverd::registration_test {
 
+namespace {
+void checkCurrentStateReads(const llvm::Function &Parent,
+                            const ExceptionFunction &Source,
+                            const BinaryImage &Image) {
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Module = llvm::CloneModule(*Parent.getParent());
+    auto *Function = Module->getFunction(Parent.getName());
+    llvm::StoreInst *State = nullptr;
+    llvm::CallBase *Capture = nullptr;
+    for (auto &Block : *Function)
+      for (auto &I : Block) {
+        if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
+          if (const auto *Callee = Call->getCalledFunction();
+              Callee && Callee->getName() == "_setjmp3")
+            Capture = Call;
+        if (auto *MD = I.getMetadata(windows_eh_md::RegistrationJumpAttachment))
+          if (const auto *Role = llvm::mdconst::dyn_extract<llvm::ConstantInt>(
+                  MD->getOperand(2));
+              Role && Role->getZExtValue() ==
+                          unsigned(x86_registration::SEHJumpRole::StateRestore))
+            State = llvm::dyn_cast<llvm::StoreInst>(&I);
+      }
+    auto *Select =
+        State ? llvm::dyn_cast<llvm::SelectInst>(State->getValueOperand())
+              : nullptr;
+    auto *Read = Select
+                     ? llvm::dyn_cast<llvm::LoadInst>(Select->getFalseValue())
+                     : nullptr;
+    if (!Read)
+      return;
+    ASSERT_TRUE(Capture);
+    llvm::IRBuilder<> B(Read);
+    if (Mutation == 0)
+      Read->setVolatile(false);
+    if (Mutation == 1) {
+      Read->setOrdering(llvm::AtomicOrdering::Monotonic);
+      Read->setAlignment(llvm::Align(4));
+    }
+    if (Mutation == 2)
+      Read->setOperand(0, B.CreateInBoundsGEP(B.getInt8Ty(),
+                                              Read->getPointerOperand(),
+                                              B.getInt32(4)));
+    if (Mutation == 3) {
+      Select->setOperand(2, B.getInt32(0));
+      Read->eraseFromParent();
+    }
+    if (Mutation == 4)
+      llvm::cast<llvm::ICmpInst>(Select->getCondition())
+          ->setPredicate(llvm::CmpInst::ICMP_NE);
+    if (Mutation == 5) {
+      auto *Address = llvm::cast<llvm::Instruction>(Read->getPointerOperand());
+      Address->moveBefore(Capture->getIterator());
+      Read->moveBefore(Capture->getIterator());
+    }
+    if (Mutation == 6) {
+      B.SetInsertPoint(Select);
+      B.CreateFreeze(Read);
+    }
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    auto Error = validateCOFFRegistrationIR(*Function, Source, Image);
+    ASSERT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+}
+} // namespace
+
 void checkSEHJumpEdits(const llvm::Function &Parent,
                        const ExceptionFunction &Source,
                        const BinaryImage &Image) {
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
+  checkCurrentStateReads(Parent, Source, Image);
   using x86_registration::SEHJumpRole;
   bool HasCallerFrame = false;
   for (const auto &I : Parent.getEntryBlock())

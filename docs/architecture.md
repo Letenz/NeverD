@@ -494,6 +494,15 @@ reaching levels only after those independent transfers. An ordinary parent
 entry into callback code still requires a separate invocation-exit contract;
 moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
+The suspended-finally interpreter partitions filter returns by disposition and
+written TryLevel, including joins at a shared return block. Search keeps the
+cursor captured before each filter call. Continued exceptions resume every
+resulting frame at the next instruction; instruction-local temporaries cannot
+cross an internal split. Unwind records whether its final state still equals
+the entry or last completed callback state. MedIR may bind a variable resumed
+state only when every contributing path has that property. LLVM then reloads
+the logical cell after a returning capture, and the independent COFF consumer
+checks that exact volatile read, zero-return selector and contiguous restoration.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate

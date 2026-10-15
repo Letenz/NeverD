@@ -230,6 +230,10 @@ struct RegistrationSEHJumpResume {
   /// Actual source states after local unwind. A capture inside a retired
   /// scope does not reactivate that scope when the continuation resumes.
   std::vector<int32_t> ResumedLevels;
+  /// The final state equals the source state at unwind entry or after the
+  /// last completed callback. No later search-only unwind step changes it.
+  /// Native resumption can therefore reload that logical frame cell.
+  bool StateInFrame = false;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 

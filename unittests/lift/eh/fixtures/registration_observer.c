@@ -20,6 +20,9 @@ unsigned registration_parameter_after;
 #endif
 static unsigned observed_caller;
 unsigned registration_trace;
+#if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 39
+unsigned registration_iteration;
+#endif
 #if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2
 #define EXPECTED_TRACE 123
 #elif REGISTRATION_CASE == 3
@@ -36,6 +39,8 @@ unsigned registration_trace;
     REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31 ||                      \
     REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
 #define EXPECTED_TRACE 243
+#elif REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 39
+#define EXPECTED_TRACE 2345
 #elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10 ||                     \
     REGISTRATION_CASE == 12 || REGISTRATION_CASE >= 13
 #define EXPECTED_TRACE 23u
@@ -64,6 +69,9 @@ void mainCRTStartup(void) {
   int value = 0, chain_ok = 1;
   for (; iterations != 4; ++iterations) {
     registration_trace = 0;
+#if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 39
+    registration_iteration = iterations;
+#endif
 #if REGISTRATION_CASE == 6
     registration_parameter_after = 0;
     value = registration_call_entry();

@@ -112,6 +112,10 @@ struct Domain {
 /// Frames with different native TryLevels must not lose their correlation.
 using SEHFrameOutcomes = std::map<int32_t, FrameState>;
 
+/// The filter disposition chooses whether the captured search cursor resumes.
+/// Keep it paired with the frame effects and the callback-written TryLevel.
+using SEHFilterOutcomes = std::map<uint32_t, SEHFrameOutcomes>;
+
 struct BlockFacts {
   bool Invalid = false;
   bool InstalledAtExit = false;
@@ -213,7 +217,8 @@ private:
                     SEHFrameOutcomes &Outcomes,
                     std::vector<RegistrationObjectExtent> &Writes,
                     const EH3JumpCapture *Jump = nullptr,
-                    const FrameValue *JumpValue = nullptr);
+                    const FrameValue *JumpValue = nullptr,
+                    bool *StateInFrame = nullptr);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false,
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
@@ -224,15 +229,16 @@ private:
   runSEHCallbackFrame(va_t Target, FrameState &Parent, bool OrdinaryInvocation,
                       std::vector<RegistrationObjectExtent> *Writes,
                       const EH3JumpCapture *Jump, const FrameValue *JumpValue,
-                      FrameValue *FilterResult, unsigned Depth = 0,
+                      SEHFilterOutcomes *FilterOutcomes, unsigned Depth = 0,
                       std::optional<int32_t> ParentStackOffset = std::nullopt,
                       SEHFrameOutcomes *Outcomes = nullptr);
   bool runSEHNestedFinallyFrame(size_t I, const LowOp &Op, FrameState &State,
                                 int32_t ParentStackOffset,
                                 std::vector<RegistrationObjectExtent> *Writes,
                                 unsigned Depth, SEHFrameOutcomes &Outcomes);
-  bool runSEHContinueFilters(FrameState &Parent,
-                             std::vector<RegistrationObjectExtent> *Writes);
+  bool runSEHContinueFilters(const FrameState &Parent,
+                             std::vector<RegistrationObjectExtent> *Writes,
+                             SEHFrameOutcomes &Outcomes);
   void
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
                     const FrameTransfer &Transfer, const BlockFacts &Facts,

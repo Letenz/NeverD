@@ -12,7 +12,10 @@ class RegistrationSourceReplayTests(unittest.TestCase):
         self.assertEqual(set(current) - set(r4), {
             "longjmp-state-activate-call", "longjmp-state-activate-unwind",
             "longjmp-state-retire", "longjmp-state-sentinel",
-            "longjmp-state-byte", "longjmp-state-word"})
+            "longjmp-state-byte", "longjmp-state-word",
+            "longjmp-filter-correlated-state", "longjmp-filter-shared-state",
+            "longjmp-filter-captured-cursor",
+            "longjmp-filter-negative-disposition"})
         self.assertTrue(all(name.startswith("eh4-gs-") for name in set(r4) - set(legacy)))
         with self.assertRaises(ValueError):
             source_cases("unknown")

@@ -269,7 +269,17 @@ read their arguments from their own outlined stack. A nonlocal unwind may
 continue through such a raise when the active filter search proves a
 continue-execution disposition. The same frame interpreter propagates filter
 writes back to the suspended finally, preserves its private stack, and rejects
-changes to registration administration or a live jump buffer. Mapped PE data,
+unproved changes to registration administration or a live jump buffer. Filter
+dispositions stay paired with their frame effects and written TryLevels through
+shared return blocks. Zero continues along the runtime's captured search
+cursor; any negative 32-bit result continues execution. Every explored path
+must resume the suspended invocation before it can supply returning effects.
+When a nonlocal resumption has several possible states, the capture reloads
+the logical state cell only if every unwind path leaves the entry or last
+completed callback state current. A later search-only unwind step withdraws
+that permission; a single proven result still uses the constant-state path.
+The installer checks the exact volatile read, conditional restore and ordering.
+Mapped PE data,
 including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
 

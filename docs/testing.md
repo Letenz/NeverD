@@ -3846,6 +3846,24 @@ The native receipt tests require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`; r4 builds retain analysis and
 refusal coverage but cannot run the new compiler-protocol tests.
 
+`RegistrationFilterState.*` checks paired dispositions and states at shared
+returns, captured search cursors, arbitrary negative dispositions, continuation
+inside a finally block and reordered edges. Selected handlers, unknown results,
+escaping searches, bad stacks, cycles and incomplete instruction boundaries
+refuse. A skipped filter scope independently withdraws permission to reload the
+last callback state. `RegistrationSEHJumpABI.MultipleStates*` checks that binding
+and rejects missing, invalid or contradictory state sets. Native installation
+mutations change the reload address, volatility, atomicity, selector, uses and
+placement before the capture.
+
+`registration_filter_state.s` supplies four runtime cases:
+`longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
+`longjmp-filter-captured-cursor` and `longjmp-filter-negative-disposition`.
+Each execution alternates both filter paths across four invocations, checks the
+resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
+and restored registration chain. The source reconstruction and independent
+replay scripts include these cases in the current compiler profile.
+
 `registration_state.s` adds six EH3 runtime cases:
 
 | Case | Checked callback state effect |

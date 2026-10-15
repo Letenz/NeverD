@@ -26,8 +26,11 @@ bool RegistrationStateSolver::runLocalFinally(
 bool RegistrationStateSolver::runSEHCallbackFrame(
     va_t Target, FrameState &Parent, bool OrdinaryInvocation,
     std::vector<RegistrationObjectExtent> *Writes, const EH3JumpCapture *Jump,
-    const FrameValue *JumpValue, FrameValue *FilterResult, unsigned Depth,
-    std::optional<int32_t> ParentStackOffset, SEHFrameOutcomes *Outcomes) {
+    const FrameValue *JumpValue, SEHFilterOutcomes *FilterOutcomes,
+    unsigned Depth, std::optional<int32_t> ParentStackOffset,
+    SEHFrameOutcomes *Outcomes) {
+  if (FilterOutcomes && (OrdinaryInvocation || Jump || JumpValue || Outcomes))
+    return false;
   const auto Entry = Entries.find(Target);
   // An ordinary CALL has a proved current ESP and its own return PC. SavedESP
   // belongs to a separate runtime restoration protocol; finally-only helpers
@@ -52,23 +55,56 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     Initial.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
         FrameValue::frame(0);
   }
-  if (FilterResult)
+  if (FilterOutcomes)
     Initial.enterSEHFilter(Target, *Chain.RegistrationOffset - 4);
   else
     Initial.enterCallback(Target);
   const auto InitialLevel = Initial.load(Chain.TryLevelOffset, 4).Constant;
   if (!InitialLevel || !validLevel(int32_t(*InitialLevel)))
     return false;
-  using Key = std::pair<size_t, int32_t>;
-  const Key InitialKey{Entry->second, int32_t(*InitialLevel)};
+  struct Key {
+    size_t Block;
+    size_t FirstOp;
+    int32_t Level;
+    std::optional<uint32_t> Disposition;
+    auto operator<=>(const Key &) const = default;
+  };
+  const auto MakeKey = [&](size_t Block, size_t FirstOp, int32_t Level,
+                           const FrameState &Frame) {
+    const auto &Value = Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride];
+    return Key{Block, FirstOp, Level,
+               FilterOutcomes && !Value.MayBeFrame ? Value.Constant
+                                                   : std::nullopt};
+  };
+  const Key InitialKey =
+      MakeKey(Entry->second, 0, int32_t(*InitialLevel), Initial);
   std::map<Key, FrameState> Incoming{{InitialKey, Initial}};
   std::deque<Key> Pending{InitialKey};
   std::set<Key> Queued{InitialKey};
   std::map<Key, std::set<Key>> Edges;
   SEHFrameOutcomes Returned;
+  SEHFilterOutcomes FilterReturned;
+  const auto RecordReturn = [&](const FrameState &State) {
+    if (!FilterOutcomes)
+      return mergeSEHFrameOutcome(Returned, State);
+    const auto &Value = State.Registers[x86reg::RAX / x86reg::GeneralRegStride];
+    return !Value.MayBeFrame && Value.Constant &&
+           mergeSEHFrameOutcome(FilterReturned[*Value.Constant], State);
+  };
+  const auto Enqueue = [&](const Key &Current, size_t Block, size_t FirstOp,
+                           int32_t Level, const FrameState &Frame) {
+    if (!charge(Frame.cellCount() + Frame.OtherRegisterBytes.size() + 10))
+      return false;
+    const Key Next = MakeKey(Block, FirstOp, Level, Frame);
+    Edges[Current].insert(Next);
+    auto [It, New] = Incoming.emplace(Next, Frame);
+    if ((New || It->second.merge(Frame)) && Queued.insert(Next).second)
+      Pending.push_back(Next);
+    return true;
+  };
   while (!Pending.empty()) {
     const Key Current = Pending.front();
-    const size_t I = Current.first;
+    const size_t I = Current.Block;
     Pending.pop_front();
     Queued.erase(Current);
     FrameState State = Incoming.at(Current);
@@ -81,14 +117,16 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     bool HasResume = false;
     std::set<va_t> ProvenStores;
     SEHFrameOutcomes NestedOutcomes;
-    for (const auto &Op : Block.Ops) {
+    std::optional<size_t> ResumeAt;
+    for (size_t OpIndex = Current.FirstOp; OpIndex < Block.Ops.size();
+         ++OpIndex) {
+      const auto &Op = Block.Ops[OpIndex];
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
           (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
           Op.Opcode == NdOp::INDIR_BR ||
           Op.MemoryOrdering != NdMemoryOrdering::None)
         return false;
       const auto Source = Boundaries.find(Op.Addr);
-      const size_t OpIndex = &Op - Block.Ops.data();
       if (Op.Seq < 0 || Source == Boundaries.end() ||
           Source->second.first != Block.Id ||
           Source->second.second.FirstOp > OpIndex ||
@@ -102,17 +140,37 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
       if (Op.Opcode == NdOp::INDIR_CALL) {
         const auto SP = State.Registers[x86reg::RSP / x86reg::GeneralRegStride]
                             .CallbackAddress;
-        if (FilterResult || !JumpRuntime || !JumpRuntime->Raise || !SP ||
+        SEHFrameOutcomes Continued;
+        if (FilterOutcomes || !JumpRuntime || !JumpRuntime->Raise || !SP ||
             SP->Entry != Target ||
             !State.callbackMemoryIsPrivate(*SP, 16, true) ||
             !JumpRuntime->Raise(Op, State, WorkUsed) ||
             State.loadCallback(SP->Offset + 4, 4).Constant != 0 ||
-            !runSEHContinueFilters(State, Writes))
+            !runSEHContinueFilters(State, Writes, Continued))
           return false;
         // Continue execution restores this suspended invocation, including
         // its nonvolatile registers and private stack. Search-filter writes
         // to the parent remain visible after the stdcall consumes its args.
-        Transfer.write(Op, Transfer.evaluate(Op, true));
+        if (Continued.size() != 1) {
+          // Resume each state at the next instruction. Lifter temporaries
+          // cannot cross this boundary; a split inside one instruction would
+          // lose their reaching values and is not a valid continuation.
+          if (Source->second.second.FirstOp + Source->second.second.OpCount !=
+              OpIndex + 1)
+            return false;
+          for (auto &[Level, Frame] : Continued) {
+            FrameTransfer ContinuedTransfer(Frame, *Chain.RegistrationOffset);
+            ContinuedTransfer.write(Op, {});
+            Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
+                FrameValue::callbackFrame(Target, SP->Offset + 16);
+            Frame.trimCallbackCells();
+          }
+          NestedOutcomes = std::move(Continued);
+          ResumeAt = OpIndex + 1;
+          break;
+        }
+        State = std::move(Continued.begin()->second);
+        Transfer.write(Op, {});
         State.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
             FrameValue::callbackFrame(Target, SP->Offset + 16);
         State.trimCallbackCells();
@@ -122,7 +180,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         if (Op.NumInputs == 1 && Op.Inputs[0].isConst() &&
             Op.Inputs[0].Size == 4 &&
             FinallyTargets.count(Op.Inputs[0].Offset)) {
-          if (FilterResult ||
+          if (FilterOutcomes ||
               !runSEHNestedFinallyFrame(I, Op, State, *ParentSP, Writes, Depth,
                                         NestedOutcomes))
             return false;
@@ -148,7 +206,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         // value. A different target/value needs a separate transition.
         if (Value.MayBeFrame || Normalize(Value) != Normalize(*JumpValue))
           return false;
-        if (!mergeSEHFrameOutcome(Returned, State))
+        if (!RecordReturn(State))
           return false;
         HasReturn = HasResume = true;
         break;
@@ -157,7 +215,7 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         if (!callbackReturnInstruction(I, Op) ||
             State.CallbackEntry != Target || !State.callbackStackIsRestored(0))
           return false;
-        if (!mergeSEHFrameOutcome(Returned, State))
+        if (!RecordReturn(State))
           return false;
         HasReturn = true;
         break;
@@ -252,10 +310,21 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
         State.trimCallbackCells();
       }
     }
-    for (auto Store = Stores.lower_bound(Block.StartAddr);
-         Store != Stores.end() && Store->first < Block.EndAddr; ++Store)
+    const va_t Begin =
+        Current.FirstOp ? Block.Ops[Current.FirstOp].Addr : Block.StartAddr;
+    const va_t End = ResumeAt && *ResumeAt < Block.Ops.size()
+                         ? Block.Ops[*ResumeAt].Addr
+                         : Block.EndAddr;
+    for (auto Store = Stores.lower_bound(Begin);
+         Store != Stores.end() && Store->first < End; ++Store)
       if (!ProvenStores.count(Store->first))
         return false;
+    if (ResumeAt && *ResumeAt < Block.Ops.size()) {
+      for (const auto &[Level, Frame] : NestedOutcomes)
+        if (!Enqueue(Current, I, *ResumeAt, Level, Frame))
+          return false;
+      continue;
+    }
     if (HasReturn) {
       if (!HasResume && !Block.Succs.empty())
         return false;
@@ -268,16 +337,12 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
     for (const auto &[Level, Outcome] : NestedOutcomes)
       for (int Next : Block.Succs) {
         const auto Successor = Index.find(Next);
-        if (Successor == Index.end() || !charge(Outcome.cellCount() + 10))
+        if (Successor == Index.end() ||
+            !Enqueue(Current, Successor->second, 0, Level, Outcome))
           return false;
-        const Key NextKey{Successor->second, Level};
-        Edges[Current].insert(NextKey);
-        auto [It, New] = Incoming.emplace(NextKey, Outcome);
-        if ((New || It->second.merge(Outcome)) && Queued.insert(NextKey).second)
-          Pending.push_back(NextKey);
       }
   }
-  if (Returned.empty())
+  if (Returned.empty() && FilterReturned.empty())
     return false;
   // Every reachable abstract path must return. A fixed point with one return
   // arm and one recurrent arm is not a proof that this invocation returns.
@@ -306,17 +371,22 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
   }
   if (Retired != Incoming.size())
     return false;
+  if (FilterOutcomes) {
+    for (auto &[Disposition, Frames] : FilterReturned)
+      for (auto &[Level, Frame] : Frames) {
+        // Runtime exception pointers expire with this search invocation.
+        // Returning from its filter restores the suspended callback stack.
+        Frame.leaveCallback();
+        FrameState Projected = Parent;
+        Projected.Cells = std::move(Frame.Cells);
+        if (!mergeSEHFrameOutcome((*FilterOutcomes)[Disposition],
+                                  std::move(Projected)))
+          return false;
+      }
+    return true;
+  }
   std::optional<FrameState> Joined;
-  bool FirstFilterResult = true;
   for (auto &[Level, ReturnedFrame] : Returned) {
-    if (FilterResult) {
-      const auto Value =
-          ReturnedFrame.Registers[x86reg::RAX / x86reg::GeneralRegStride];
-      *FilterResult = FirstFilterResult ? Value : join(*FilterResult, Value);
-      FirstFilterResult = false;
-      // Runtime exception pointers expire with this search invocation.
-      ReturnedFrame.leaveCallback();
-    }
     FrameState Projected = Parent;
     Projected.Cells = std::move(ReturnedFrame.Cells);
     if (OrdinaryInvocation) {
