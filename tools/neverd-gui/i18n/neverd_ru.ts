@@ -1449,6 +1449,34 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Включения, вспомогательные типы и объявления, с которыми компилируется этот код; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n строка объявлений</numerusform>
+            <numerusform>%n строки объявлений</numerusform>
+            <numerusform>%n строк объявлений</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n строка атрибутов и метаданных</numerusform>
+            <numerusform>%n строки атрибутов и метаданных</numerusform>
+            <numerusform>%n строк атрибутов и метаданных</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>Цель, типы, глобальные переменные и функции, на которые ссылается эта функция; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>Группы атрибутов и метаданные, которые использует эта функция; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>Дважды щёлкните, чтобы перейти к %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
