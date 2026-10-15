@@ -123,8 +123,11 @@ worker paths, embedded file listings and UTF-8/Latin-1/UTF-16 text behavior,
 plus refusal of unsupported metadata. The native addons retain their captured
 bytes and loader roles. A separately qualified exact-file mapping capability
 now loads all three macOS addons under the independent Bun runtime and records
-their export descriptors. No exported device-control function is invoked.
-Embedded native-file materialization and hardware behavior remain unqualified.
+their export descriptors. A separately authored embedded-graph probe also loads
+them through their original virtual paths, verifies exact materialized bytes,
+and checks repeated-require identity and matching export descriptors. No
+exported device-control function is invoked. Original client feature call sites
+and hardware behavior remain outside this loader qualification.
 
 Two independent compilation runs, followed by the qualified metadata adapter,
 produce the same 124,511,568-byte client with SHA-256
@@ -153,7 +156,7 @@ are now represented explicitly in the matrix.
 
 The independently pinned runtime is official Bun `1.4.3+c6da4a4d3`; the original
 contains `1.4.3+eecfd55de`. Matching the version and policy bytes does not prove
-runtime or performance equivalence. Native hardware behavior and embedded-file materialization, other platforms,
+runtime or performance equivalence. Native hardware behavior, other platforms,
 and erased source information remain outside completed acceptance.
 
 Linux x64 now has an available local amd64 Docker environment. Its own sample
@@ -165,5 +168,36 @@ Two independent builds produce the same 140,675,040-byte ELF executable with
 SHA-256 `51e64bded17171c28261a2452b8aa152371ec00f6164188297a9ebbab006e232`.
 Version/help/unknown-option observations match the Linux original. NeverD
 independently admits its 2,589 modules, entry and runtime-option record.
-The full Linux behavior matrix and relocatable Linux delivery remain open.
+The full Linux matrix now passes: seven configuration and 22 permission, hook,
+MCP, stream/error and session invocations match the Linux original. Ordered
+protocol frames, complete API request bodies, stderr and exits match under the
+same explicit identity/time normalization as macOS; side-effect oracles pass.
+Two fixture-server startups exceeded their readiness deadline under concurrent
+load before a client ran. The failed setup records remain available; sequential
+continuations completed. Latest completed invocations were selected before the
+comparison, with provenance and earlier completed attempts retained.
+
+The persistent Linux behavior profile separately qualifies fresh host-backed
+fixture/state directories and a dedicated container network namespace. It does
+not claim noexec on those writable bind mounts. Root/input files remain
+read-only, the process is non-root with no capabilities and no-new-privileges,
+external network access is denied, and no real host configuration or credentials
+are mounted. The stricter tmpfs smoke/build profile retains its separate tests.
+
+A private relocatable Linux delivery now contains its own source, navigator,
+pinned compiler, C++ adapters and build/verification commands. A clean build
+from that directory reproduces the same ELF hash. Its build host is currently
+qualified on macOS ARM64 with the pinned amd64 Docker environment, not every
+possible Linux or Windows build host. Linux semantic navigation retains
+226,839 anchored evidence records across all 2,345 JavaScript modules, with one
+partial lexical analysis.
+
+Both retained Linux native addons pass load-only ABI checks. The minimal Debian
+image initially lacked libasound.so.2; an official Debian package was hash-pinned
+and extracted without installation, and only the needed library was mapped
+read-only for the audio check. Authored embedded-graph probes now qualify all
+five macOS/Linux addons' original virtual paths, exact temporary-file bytes,
+cached object identity and export descriptors. Device functions and original
+native source reconstruction remain unproven.
+
 The overall goal remains open.
