@@ -8,12 +8,10 @@
 /// Validate source identities and argument recipes for preserved SEH calls.
 
 #include "neverd/Limits.h"
-#include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallResult.h"
-
-#include "llvm/IR/DerivedTypes.h"
+#include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
 
 namespace neverd {
 

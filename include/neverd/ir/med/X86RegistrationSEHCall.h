@@ -1,0 +1,37 @@
+//===- X86RegistrationSEHCall.h - Checked finally calls --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared MedIR evidence for finally-call ABI recovery and native returns.
+
+#ifndef NEVERD_IR_MED_X86REGISTRATIONSEHCALL_H
+#define NEVERD_IR_MED_X86REGISTRATIONSEHCALL_H
+
+#include "neverd/Common.h"
+
+#include <map>
+#include <optional>
+#include <tuple>
+
+namespace neverd {
+struct MedFunc;
+
+struct RegistrationSEHReturns {
+  /// Returning source block to its finally entry.
+  std::map<int, va_t> ReturnBlocks;
+  /// Exact (block, address, original sequence) CALL identity to finally entry.
+  /// Stable identities survive unrelated SSA result normalization.
+  std::map<std::tuple<int, va_t, int>, va_t> ReturningCalls;
+};
+
+/// Bind checked physical near returns to their current CALLs and successors.
+/// These invocations share the parent frame and have no ordinary register or
+/// stack arguments. Native emission still owns frame and result projection.
+std::optional<RegistrationSEHReturns>
+getRegistrationSEHReturns(const MedFunc &Function);
+
+} // namespace neverd
+
+#endif // NEVERD_IR_MED_X86REGISTRATIONSEHCALL_H

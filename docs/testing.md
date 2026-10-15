@@ -3999,6 +3999,18 @@ verifies every image hash, runtime DLL hash, code owner and relocation base.
 Dynamic-scope mutations alter selectors, state cases, restore values, source
 stores and overlapping aliases; each must fail installation. Dead-finally-result
 tests reject observable, aliased, volatile and atomic spill chains.
+`longjmp-nested-finally-call` calls a returning finally from an ordinary finally
+invocation before resuming the parent. `longjmp-nested-finally-unwind` enters
+the outer finally through CRT unwind. Both distinguish the inner/outer frame
+writes and then raise another exception. Sixteen installer mutations per
+ordinary finally call check its source owner, target, frame, abnormal flag,
+ABI and attributes. The clone regression uses two calls sharing unobserved
+result storage and checks atomic refusal when a volatile load observes it.
+The ordinary-entry and runtime-unwind source tests share direct-call and
+folded tail-jump controls, including effects hidden after a CALL.
+`RegistrationSEHJumpABI` checks exact stack argument order and arity despite
+incidental register values, extra private spills and conflicting inferred
+prototypes; missing arguments and changed source receipts remain rejected.
 The source-input unit rejects edits to capture/resume identities, the private
 buffer, register snapshots, restored state and argument slot. Its unwind-adapter
 controls change the copy extent, physical registration field, virtual EBP,

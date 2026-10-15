@@ -21,6 +21,8 @@
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
+#include "neverd/ir/med/X86RegistrationSEHCall.h"
+#include "neverd/ir/med/X86RegistrationSEHJump.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/object/SectionNames.h"
@@ -442,6 +444,19 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
   const BinaryFormat Fmt = Img ? Img->abiFormat() : BinaryFormat::Unknown;
+  const auto SEHReturns = TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
+                              ? getRegistrationSEHReturns(Func)
+                              : std::nullopt;
+  // Result normalization can erase unrelated operations during recovery.
+  // Retain stable source identities, not pointers into an operation vector.
+  std::map<std::tuple<int, va_t, int, va_t>, unsigned> SEHJumpABIs;
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    if (const auto Calls = getX86RegistrationSEHJumpCalls(Func))
+      for (const auto &[Address, Call] : *Calls)
+        SEHJumpABIs.emplace(std::make_tuple(Call.Block, Address,
+                                            Call.Operation->OriginSeq,
+                                            Call.Operation->Inputs[0].ConstVal),
+                            Call.stackArgumentWords());
   const auto FPParamRegs = TRI.floatingParamRegs(Fmt);
   const CallArgumentConvention *Convention =
       callArgumentConvention(TheArch, Fmt);
@@ -623,6 +638,21 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           FnIt != FuncNames.end()
               ? FnIt->second
               : (kAutoFuncPrefix + llvm::utohexstr(CI.TargetAddr)).str();
+      // An ordinary SEH finally CALL uses the checked shared-frame protocol.
+      // Its caller's private PUSHes are saved temporaries, not cdecl argument
+      // setup. Native lowering supplies its separately proved frame operand.
+      if (SEHReturns) {
+        const auto Key = std::make_tuple(Blk.Id, Op.Addr, Op.OriginSeq);
+        const auto Finally = SEHReturns->ReturningCalls.find(Key);
+        if (Finally != SEHReturns->ReturningCalls.end() &&
+            Finally->second == CI.TargetAddr) {
+          Func.CallInfos.push_back(std::move(CI));
+          continue;
+        }
+      }
+      const auto SEHJumpABI =
+          SEHJumpABIs.find({Blk.Id, Op.Addr, Op.OriginSeq, CI.TargetAddr});
+      const bool SEHJump = SEHJumpABI != SEHJumpABIs.end();
       // In a relocatable object EVERY direct call's target operand is a
       // placeholder (0 / the next-instruction-relative encoding); the real
       // callee is named by the branch relocation, and the per-VA callee
@@ -666,7 +696,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
 
       // An external placeholder collision, indirect call or import keeps its
       // existing output here (promoteFloatCallResult).
-      if (!CI.IsIndirect && !IsRelocExtern && !IsDirectImport &&
+      if (!SEHJump && !CI.IsIndirect && !IsRelocExtern && !IsDirectImport &&
           CalleeFPReturnSize)
         if (auto SizeIt = CalleeFPReturnSize->find(CI.TargetAddr);
             SizeIt != CalleeFPReturnSize->end())
@@ -724,7 +754,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // also lets a compiler-generated helper pass an incoming exception
       // object straight through without an explicit register write.
       const bool UseExternalArity =
-          ExternalArity.has_value() &&
+          !SEHJump && ExternalArity.has_value() &&
           (IsDirectImport || IsRelocExtern || CalleeRegArgs < 0);
       if (UseExternalArity) {
         // Where only internal functions take regparm register arguments, an
@@ -758,9 +788,12 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                     ? registrationCallABI(Func, Blk, Op)
                                     : std::nullopt;
       const bool RuntimeThrow = Registration && Registration->RuntimeThrow;
-      if (RuntimeThrow) {
+      // The checked capture/resume protocol also owns its exact stack-only
+      // arity. Incidental GPR/FP values cannot precede the buffer argument.
+      const bool CheckedStackCall = RuntimeThrow || SEHJump;
+      if (CheckedStackCall) {
         CalleeRegArgs = 0;
-        CalleeArgs = 2;
+        CalleeArgs = SEHJump ? SEHJumpABI->second : 2;
       }
       // Checked ordinary members and constructors own exactly one ECX
       // receiver plus their proved scalar stack words. Other live registers
@@ -864,11 +897,11 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           !(Convention->ImportsMayTakeRegisterArguments &&
             Convention->ImportsMayTakeRegisterArguments(*Img));
       const bool StackOnlyCall =
-          RuntimeThrow || (RegparmOnly && !CI.IsIndirect &&
-                           ((CalleeRegArgs == 0 && CalleeArgs > 0) ||
-                            IsRelocExtern || StackOnlyImport));
+          CheckedStackCall || (RegparmOnly && !CI.IsIndirect &&
+                               ((CalleeRegArgs == 0 && CalleeArgs > 0) ||
+                                IsRelocExtern || StackOnlyImport));
       const bool RegArgsApply =
-          !RuntimeThrow && !(RegparmOnly && CI.IsIndirect);
+          !CheckedStackCall && !(RegparmOnly && CI.IsIndirect);
       // A stack-only call takes no integer register argument; its floating
       // arguments are another question (an internal function taking only
       // XMM arguments has no integer register argument).
@@ -2039,7 +2072,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // signature.
       const int NumIntRegArgs = static_cast<int>(IntParamRegs.size());
       bool CalleeHasFP = false;
-      if (!CI.IsIndirect && !IsRelocExtern && CalleeFPArity) {
+      if (!CheckedStackCall && !CI.IsIndirect && !IsRelocExtern &&
+          CalleeFPArity) {
         auto FIt = CalleeFPArity->find(CI.TargetAddr);
         CalleeHasFP = FIt != CalleeFPArity->end() && FIt->second > 0;
       }
@@ -2059,7 +2093,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // only exactly that shape fills gaps there, so ordinary calls keep the
       // strict first-gap cutoff and their register/stack lane classification.
       bool LeadingGap = false;
-      if (!RuntimeThrow && !RegistrationObjectCall && Policy &&
+      if (!CheckedStackCall && !RegistrationObjectCall && Policy &&
           Policy->LeadingStackGapIsUnusedArgument && !CI.IsIndirect &&
           CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
         for (int K = 1; K < MaxArgs; ++K)
@@ -2075,7 +2109,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // but no trailing argument is invented.  A reliable callee arity (>0; a
       // not-yet-promoted forwarder still reports 0 at this point) additionally
       // drops a stray lane recovered above the real argument list.
-      int AssembleEnd = RuntimeThrow             ? 2
+      int AssembleEnd = CheckedStackCall         ? CalleeArgs
                         : RegistrationObjectCall ? CalleeArgs
                                                  : MaxArgs;
       if (FillGaps) {

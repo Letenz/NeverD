@@ -114,9 +114,12 @@ _registration_entry:
 #endif
   jmp .Lbad
 #else
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+  mov dword ptr [ebp-4],2
+#endif
   mov dword ptr [ebp-4],1
   mov ebx,9
-#if REGISTRATION_CASE == 13 || REGISTRATION_CASE == 15 || REGISTRATION_CASE == 27
+#if REGISTRATION_CASE == 13 || REGISTRATION_CASE == 15 || REGISTRATION_CASE == 27 || REGISTRATION_CASE == 28
   mov dword ptr [ebp-4],0
   call .Lfinally
   jmp .Lbad
@@ -257,6 +260,13 @@ _registration_entry:
   imul eax,eax,10
   add eax,2
   mov [ebp-100],eax
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+  push 7
+  call .Linner_finally
+  pop edx
+  add [ebp-100],edx
+  sub dword ptr [ebp-100],7
+#endif
 #if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
   push 0
   push 0
@@ -287,6 +297,18 @@ _registration_entry:
   mov eax,94
   jmp .Lfinish
 #endif
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+.Linner_finally:
+  push 9
+  mov eax,[ebp-100]
+  imul eax,eax,10
+  add eax,4
+  pop edx
+  add eax,edx
+  sub eax,9
+  mov [ebp-100],eax
+  ret
+#endif
 .Lhandler:
   mov eax,7
 .Lfinish:
@@ -313,6 +335,9 @@ _registration_entry:
   .long 0,0,.Lfinally
 #endif
 #endif
+#endif
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+  .long 1,0,.Linner_finally
 #endif
   .long 0,0,0
 .globl __load_config_used

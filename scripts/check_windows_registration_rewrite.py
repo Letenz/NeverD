@@ -60,7 +60,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-control-fp": (24, 23),
               "longjmp-runtime-continue": (25, 23),
               "longjmp-runtime-finally": (26, 23),
-              "longjmp-runtime-ordinary-finally": (27, 23)})
+              "longjmp-runtime-ordinary-finally": (27, 23),
+              "longjmp-nested-finally-call": (28, 243),
+              "longjmp-nested-finally-unwind": (29, 243)})
 
 
 class PE32:

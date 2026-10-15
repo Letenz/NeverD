@@ -191,10 +191,12 @@ private:
   bool enterOrdinaryFinally(size_t I, const Domain &Before, const LowOp &Op,
                             BlockFacts &Facts);
   std::optional<va_t> sehCallContinuation(va_t Call);
+  bool validateSEHCallContinuation(size_t I, const LowOp &Op);
   bool validateSEHInvocationBlock(size_t I);
   bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
                        BlockFacts &Facts);
-  bool returnNestedFinally(Domain &After, const LowOp &Op, BlockFacts &Facts);
+  bool returnNestedFinally(Domain &After, const LowOp &Op, BlockFacts &Facts,
+                           RegistrationSEHInvocationExit Exit);
   void recordSEHStackRestore(const LowOp &Op, Domain &After,
                              const FrameTransfer &Transfer,
                              const FrameValue &Value);
@@ -203,12 +205,16 @@ private:
                        std::vector<RegistrationObjectExtent> *Writes = nullptr,
                        const EH3JumpCapture *Jump = nullptr,
                        const FrameValue *JumpValue = nullptr);
-  bool runSEHCallbackFrame(va_t Target, FrameState &Parent,
-                           bool OrdinaryInvocation,
-                           std::vector<RegistrationObjectExtent> *Writes,
-                           const EH3JumpCapture *Jump,
-                           const FrameValue *JumpValue,
-                           FrameValue *FilterResult);
+  bool
+  runSEHCallbackFrame(va_t Target, FrameState &Parent, bool OrdinaryInvocation,
+                      std::vector<RegistrationObjectExtent> *Writes,
+                      const EH3JumpCapture *Jump, const FrameValue *JumpValue,
+                      FrameValue *FilterResult, unsigned Depth = 0,
+                      std::optional<int32_t> ParentStackOffset = std::nullopt);
+  bool runSEHNestedFinallyFrame(size_t I, const LowOp &Op, FrameState &State,
+                                int32_t ParentStackOffset,
+                                std::vector<RegistrationObjectExtent> *Writes,
+                                unsigned Depth);
   bool runSEHContinueFilters(FrameState &Parent,
                              std::vector<RegistrationObjectExtent> *Writes);
   void
