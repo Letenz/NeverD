@@ -38,6 +38,7 @@
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
+#include "neverd/types/PDBTypeImport.h"
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -102,6 +103,17 @@ struct Session {
   std::unique_ptr<DebugContext> Dbg;
   DebugInfoKind DbgKind = DebugInfoKind::None;
   std::filesystem::path DbgPath;
+  /// The program's local types, read from its debug information when first
+  /// asked for (NeverDCAPILocalTypes.cpp).  A new image or PDB drops them.
+  std::unique_ptr<types::TypeLibrary> LocalTypes;
+  types::PDBTypeImportStats LocalTypeStats;
+  /// Where they came from: "pdb", or "none" for an image without types.
+  std::string LocalTypesSource;
+  void dropLocalTypes() {
+    LocalTypes.reset();
+    LocalTypeStats = {};
+    LocalTypesSource.clear();
+  }
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;

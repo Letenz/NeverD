@@ -258,6 +258,37 @@ with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
 separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
+## Local types
+
+`NeverDTypesTests` covers the local type library: builtin sizes per data
+model, how anonymous unions and structures are rebuilt from MSVC's flat member
+lists (each nesting must flatten back exactly), the PDB import against
+`unittests/types/fixtures/local_types.pdb`, layout JSON, and the C, C++, Rust
+and Go renderers. The fixture's source says how to rebuild the
+`local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
+`NeverDSessionCAPITests` reads the same fixture through the C API.
+
+To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
+`ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
+and every nesting must hold.
+
+Rendered source must also compile with each record's size and offsets checked.
+`scripts/check_type_renders.py` runs `neverd types --all --asserts` and
+compiles the result:
+- C and C++ in all four builtin spellings with clang for the MSVC target, and
+  the portable spelling for the GNU target too;
+- Rust with rustc (64-bit layouts only);
+- Go with `go vet` for Windows.
+
+A missing toolchain is reported and skipped. Without `--binary` it checks the
+fixture:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --binary /path/to/ntoskrnl.exe --pdb /path/to/ntkrnlmp.pdb
+```
+
 ## Scalar x86 floating-point state
 
 `NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`

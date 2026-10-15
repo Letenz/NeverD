@@ -1,0 +1,53 @@
+//===- PDBSimpleTypes.def - CodeView simple types as builtins ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The builtin each CodeView simple type kind is.  MSVC records Windows'
+/// ULONG as unsigned long and its UINT as unsigned int, so the kinds keep
+/// the spelling the source used.
+///
+/// NEVERD_PDB_SIMPLE_TYPE(CodeViewKind, Builtin)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_PDB_SIMPLE_TYPE
+#define NEVERD_PDB_SIMPLE_TYPE(CodeViewKind, Builtin)
+#endif
+
+NEVERD_PDB_SIMPLE_TYPE(Void, Void)
+NEVERD_PDB_SIMPLE_TYPE(HResult, HResult)
+NEVERD_PDB_SIMPLE_TYPE(SignedCharacter, SChar)
+NEVERD_PDB_SIMPLE_TYPE(UnsignedCharacter, UChar)
+NEVERD_PDB_SIMPLE_TYPE(NarrowCharacter, Char)
+NEVERD_PDB_SIMPLE_TYPE(WideCharacter, WChar)
+NEVERD_PDB_SIMPLE_TYPE(Character8, Char8)
+NEVERD_PDB_SIMPLE_TYPE(Character16, Char16)
+NEVERD_PDB_SIMPLE_TYPE(Character32, Char32)
+NEVERD_PDB_SIMPLE_TYPE(SByte, SChar)
+NEVERD_PDB_SIMPLE_TYPE(Byte, UChar)
+NEVERD_PDB_SIMPLE_TYPE(Int16Short, Short)
+NEVERD_PDB_SIMPLE_TYPE(UInt16Short, UShort)
+NEVERD_PDB_SIMPLE_TYPE(Int16, Short)
+NEVERD_PDB_SIMPLE_TYPE(UInt16, UShort)
+NEVERD_PDB_SIMPLE_TYPE(Int32Long, Long)
+NEVERD_PDB_SIMPLE_TYPE(UInt32Long, ULong)
+NEVERD_PDB_SIMPLE_TYPE(Int32, Int)
+NEVERD_PDB_SIMPLE_TYPE(UInt32, UInt)
+NEVERD_PDB_SIMPLE_TYPE(Int64Quad, LongLong)
+NEVERD_PDB_SIMPLE_TYPE(UInt64Quad, ULongLong)
+NEVERD_PDB_SIMPLE_TYPE(Int64, LongLong)
+NEVERD_PDB_SIMPLE_TYPE(UInt64, ULongLong)
+NEVERD_PDB_SIMPLE_TYPE(Int128Oct, Int128)
+NEVERD_PDB_SIMPLE_TYPE(UInt128Oct, UInt128)
+NEVERD_PDB_SIMPLE_TYPE(Int128, Int128)
+NEVERD_PDB_SIMPLE_TYPE(UInt128, UInt128)
+NEVERD_PDB_SIMPLE_TYPE(Float16, Half)
+NEVERD_PDB_SIMPLE_TYPE(Float32, Float)
+NEVERD_PDB_SIMPLE_TYPE(Float64, Double)
+NEVERD_PDB_SIMPLE_TYPE(Float80, LongDouble)
+NEVERD_PDB_SIMPLE_TYPE(Boolean8, Bool)
+
+#undef NEVERD_PDB_SIMPLE_TYPE

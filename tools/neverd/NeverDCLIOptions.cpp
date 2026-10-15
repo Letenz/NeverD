@@ -173,6 +173,9 @@ cl::SubCommand HeadersCmd("headers", "Show comprehensive binary headers");
 cl::SubCommand EntryPointsCmd("entrypoints", "List binary entry points");
 cl::SubCommand SwitchesCmd("switches",
                            "List the switch jump tables analysis recovers");
+cl::SubCommand TypesCmd("types",
+                        "List the program's local types, lay one out, or "
+                        "render them as C, C++, Rust or Go");
 cl::SubCommand DashboardCmd("dashboard", "Show binary overview dashboard");
 cl::SubCommand SigsCmd("sigs", "Apply FLIRT signatures to binary");
 cl::SubCommand SymbolicCmd("sym-explore",
@@ -234,12 +237,13 @@ cl::opt<std::string> InputFile(
     cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
     cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
     cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(TypesCmd));
 
 cl::opt<std::string> OutputFile("o", cl::desc("Output file"), cl::init(""),
                                 cl::sub(LiftCmd), cl::sub(DecompileCmd),
                                 cl::sub(PatchCmd), cl::sub(AuditCmd),
-                                cl::sub(HuntCmd), cl::sub(MobileCmd));
+                                cl::sub(HuntCmd), cl::sub(MobileCmd),
+                                cl::sub(TypesCmd));
 
 cl::opt<bool>
     Verbose("v", cl::desc("Verbose output"), cl::sub(LiftCmd),
@@ -543,8 +547,8 @@ cl::opt<std::string> PdbFile(
     cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
     cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
-    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
-    cl::sub(HuntCmd));
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+    cl::sub(TypesCmd));
 
 cl::opt<bool> PdbUnverified(
     "pdb-unverified",
@@ -560,8 +564,8 @@ cl::opt<bool> PdbUnverified(
     cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
     cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
-    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
-    cl::sub(HuntCmd));
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+    cl::sub(TypesCmd));
 
 cl::opt<std::string> SymbolPathOption(
     "symbol-path",
@@ -579,7 +583,7 @@ cl::opt<std::string> SymbolPathOption(
     cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
     cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
     cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(TypesCmd));
 
 cl::opt<bool> DownloadSymbols(
     "download-symbols",
@@ -596,8 +600,8 @@ cl::opt<bool> DownloadSymbols(
     cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
     cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
-    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
-    cl::sub(HuntCmd));
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+    cl::sub(TypesCmd));
 
 cl::opt<std::string> MapFile(
     "map",
@@ -874,6 +878,53 @@ cl::opt<std::string> StringFilter(
     cl::init(""), cl::value_desc("text"), cl::sub(StringsCmd));
 
 //===----------------------------------------------------------------------===//
+// Types-specific options
+//===----------------------------------------------------------------------===//
+
+cl::list<std::string>
+    TypeNames("type",
+              cl::desc("Render this local type, with every type it needs "
+                       "unless --alone; repeat for more.  Without --type or "
+                       "--all, list the types"),
+              cl::value_desc("name"), cl::sub(TypesCmd));
+cl::opt<bool> TypesAll("all",
+                       cl::desc("Render every local type as one unit that "
+                                "compiles"),
+                       cl::sub(TypesCmd));
+cl::opt<bool> TypesAlone("alone",
+                         cl::desc("Render each --type alone, for reading"),
+                         cl::sub(TypesCmd));
+cl::opt<bool> TypesLayout(
+    "layout",
+    cl::desc("Lay each --type out member by member: offsets, sizes, bits and "
+             "the padding between"),
+    cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesFilter("filter",
+                cl::desc("List the types whose name contains this, ignoring "
+                         "the case of ASCII letters"),
+                cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesLanguage("lang", cl::desc("Render as c, cpp, rust or go (default c)"),
+                  cl::init("c"), cl::value_desc("language"), cl::sub(TypesCmd));
+cl::opt<std::string> TypesSpelling(
+    "spelling",
+    cl::desc("Spell C and C++ builtins as windows (ULONG), ida (unsigned "
+             "int), keywords (unsigned long) or portable (uint32_t)"),
+    cl::init("windows"), cl::value_desc("style"), cl::sub(TypesCmd));
+cl::opt<bool> TypesAsserts("asserts",
+                           cl::desc("Follow each record with checks of its "
+                                    "size and offsets the compiler verifies"),
+                           cl::sub(TypesCmd));
+cl::opt<bool>
+    TypesDecimalOffsets("decimal-offsets",
+                        cl::desc("Show offsets in decimal rather than hex"),
+                        cl::sub(TypesCmd));
+cl::opt<bool> TypesNoOffsets("no-offsets",
+                             cl::desc("Leave out the offset comments"),
+                             cl::sub(TypesCmd));
+
+//===----------------------------------------------------------------------===//
 // Xrefs-specific options
 //===----------------------------------------------------------------------===//
 
@@ -1054,19 +1105,18 @@ ConcolicStringList ConcolicSolverGates(
 // JSON output option (shared)
 //===----------------------------------------------------------------------===//
 
-cl::opt<bool>
-    JsonOutput("json", cl::desc("Output as JSON"), cl::sub(InfoCmd),
-               cl::sub(IdentifyCmd), cl::sub(FuncsCmd), cl::sub(DisasmCmd),
-               cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(StringsCmd),
-               cl::sub(XrefsCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
-               cl::sub(SegmentsCmd), cl::sub(PluginsCmd), cl::sub(BookmarksCmd),
-               cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
-               cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
-               cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
-               cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-               cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-               cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(AuditCmd),
-               cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(DecompileCmd));
+cl::opt<bool> JsonOutput(
+    "json", cl::desc("Output as JSON"), cl::sub(InfoCmd), cl::sub(IdentifyCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(ImportsCmd),
+    cl::sub(ExportsCmd), cl::sub(SegmentsCmd), cl::sub(PluginsCmd),
+    cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
+    cl::sub(RenameCmd), cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
+    cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
+    cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd),
+    cl::sub(DecompileCmd), cl::sub(TypesCmd));
 
 //===----------------------------------------------------------------------===//
 // Plugins-specific options

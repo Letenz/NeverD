@@ -123,6 +123,17 @@ without the PDB it names and is saved with the project like a selection. With a
 one that loads. `pdb_reference` is listed in `capabilities` when the engine has
 it.
 
+`local_types {filter?,language?}`, `local_type {name,spelling?}` and
+`local_types_source {language?,spelling?,offsets?,hexOffsets?,asserts?,
+types?,dependencies?}` read the open program's local types through the SDK's
+`neverd_local_types_json`, `neverd_local_type_json` and
+`neverd_local_types_source`: the list with import statistics, one type laid
+out member by member, and `{language,source}`, the types rendered as C, C++,
+Rust or Go. The engine reads them from the program's PDB the first time it is
+asked. A name the program has no type for, or the PDB's types failing to read,
+is a `local_types_failed` error. The three are listed in `capabilities` when
+the engine has them.
+
 `dwarf_reference {path}` needs no open binary either: it returns the SDK's
 `neverd_dwarf_reference_json`, `{dwarf:null}` or `{dwarf:{path,location}}` --
 the file that holds an ELF or Mach-O image's DWARF, with location `input` (the
