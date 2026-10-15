@@ -2051,3 +2051,7 @@ La validación nativa de Linux ejecuta también toda la batería `HighSwiftEmitt
 ### Captura acotada del contexto llamante del kernel
 
 `KernelContextCaptureTests` comprueba todos los bytes, guardas, pila, flags, alias, solapamientos, objetos, permisos, IRQL y fallos inyectados. `DriverContextCaptureTests` comprueba GPR/FPCW/MXCSR/XMM vivos, ciclos reubicados de entrada/petición/descarga y dependencias. Doce comparaciones completas tienen presupuesto explícito de 400000 instrucciones; el collector varía FPCW separadamente. Son obligatorias 17 identidades por backend nativo; WHP no disponible en Linux se omite explícitamente. Las pruebas de usuario x64/ARM64 protegen el comportamiento previo.
+
+### Coordenadas de región simbólica que cruzan cero
+
+`SymRegionWrap.*` comprueba ambos órdenes de bytes, accesos completos y parciales que cruzan el cero relativo, orígenes de entrada sin vuelta modular, épocas desconocidas copiadas, presupuestos de conservación exactos e insuficientes y el rechazo de desbordamientos absolutos/escalares. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` exige la forma de dirección simbólica `base - 1` y comprueba los efectos completos del STORE, las palabras de dirección de retorno nativas y el estado restaurado de la pila con un oráculo de bytes independiente. La falta de prueba de separación o de alineación de entrada debe seguir provocando un rechazo.

@@ -6623,3 +6623,7 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Bounded kernel caller-context capture
 
 `KernelContextCaptureTests` covers all record/guard bytes, stack scratch, flags, aliases, overlaps, objects, permissions, IRQL and injected collector/setter failures. `DriverContextCaptureTests` checks live GPR/FPCW/MXCSR/XMM values and imported/dynamic calls through rebased entry/request/unload lifecycles, including rejected outputs and retained dependencies. Its bytewise twelve-record oracle has an explicit 400000-instruction test budget. The fixture uses the checked initial FPCW; separate collector cases vary it. All 17 identities per native backend are mandatory; unavailable WHP execution remains an explicit Linux skip. Existing x64/ARM64 user context tests protect unchanged behavior.
+
+### Symbolic region coordinates across zero
+
+`SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.

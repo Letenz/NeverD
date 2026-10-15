@@ -1894,3 +1894,7 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 ### 有界内核调用者上下文捕获
 
 `KernelContextCaptureTests` 检查全部记录和保护字节、栈暂存、标志、别名、重叠、对象、权限、IRQL 及采集/设置失败。`DriverContextCaptureTests` 检查实时 GPR/FPCW/MXCSR/XMM、重定位后的入口/请求/卸载、导入和动态调用、无效目标及依赖保留。12 次逐字节校验明确采用 400000 条测试指令预算；夹具使用 checked 初始 FPCW，独立 collector 用例改变该值。每个原生后端的 17 项均为必跑；Linux 上不可用的 WHP 明确跳过。已有 x64/ARM64 用户上下文测试保护原行为。
+
+### 跨过零点的符号区域坐标
+
+`SymRegionWrap.*` 检查两种字节序、跨相对零点的完整和局部访问、不回绕的输入来源、复制后的未知状态纪元、精确和不足的保存预算，以及绝对／标量范围溢出的拒绝。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` 断言符号地址仍为 `base - 1`，并用独立字节校验器检查完整 STORE 副作用、原生返回地址字和恢复后的栈状态。缺少分离证明或入口对齐时仍须拒绝。

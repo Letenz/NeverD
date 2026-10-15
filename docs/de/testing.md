@@ -2066,3 +2066,7 @@ Die native Linux-Qualifikation führt zusätzlich den gesamten `HighSwiftEmitter
 ### Begrenzte Erfassung des Kernel-Aufruferkontexts
 
 `KernelContextCaptureTests` prüft sämtliche Bytes, Guards, Stack, Flags, Aliase, Überlappung, Objekte, Rechte, IRQL und injizierte Fehler. `DriverContextCaptureTests` prüft lebende GPR/FPCW/MXCSR/XMM, relozierte Eintritts-/Anfrage-/Unload-Zyklen und Abhängigkeiten. Zwölf Bytevergleiche haben ein explizites Testbudget von 400000 Instruktionen; separate Collector-Fälle variieren FPCW. Alle 17 Identitäten pro nativem Backend sind Pflicht; nicht verfügbares WHP bleibt unter Linux ausdrücklich übersprungen. Bestehende x64/ARM64-Benutzertests sichern das alte Verhalten.
+
+### Symbolische Regionskoordinaten über null hinweg
+
+`SymRegionWrap.*` prüft beide Byte-Reihenfolgen, vollständige und partielle Zugriffe über den relativen Nullpunkt, Eingabeherkünfte ohne Umlauf, kopierte Epochen unbekannter Werte, exakt ausreichende und unzureichende Erhaltungsbudgets sowie die Ablehnung absoluter/skalarer Bereichsüberläufe. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` stellt die symbolische Adressform `base - 1` sicher und prüft mit einem unabhängigen Byte-Oracle die vollständigen STORE-Effekte, nativen Rücksprungadresswörter und den wiederhergestellten Stackzustand. Ohne Trennungsbeweis oder Eingangsausrichtung muss die Spezialisierung weiterhin ablehnen.

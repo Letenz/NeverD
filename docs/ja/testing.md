@@ -1950,3 +1950,7 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 ### 制限付きカーネル呼び出し元コンテキスト取得
 
 `KernelContextCaptureTests` は全バイト、ガード、スタック、フラグ、別名、重複、寿命、権限、IRQL、注入失敗を検証します。`DriverContextCaptureTests` はライブ GPR/FPCW/MXCSR/XMM と再配置された入口/要求/アンロード、静的/動的呼び出しと依存を確認します。12 記録のバイト比較には明示的な 400000 命令のテスト予算を使い、初期 FPCW に加え独立 collector で値を変更します。各ネイティブ backend で 17 件必須、Linux の WHP 不可用は明示的スキップ。既存 x64/ARM64 ユーザーテストも維持します。
+
+### ゼロをまたぐシンボリック領域座標
+
+`SymRegionWrap.*` は両エンディアン、相対座標のゼロをまたぐ完全／部分アクセス、折り返さない入力の由来、コピーした未知状態の世代、ちょうど足りる／不足する保存予算、および絶対／スカラ範囲オーバーフローの拒否を検証します。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` はシンボリックアドレスが `base - 1` の形を保つことを確認し、独立したバイト単位の参照実行で STORE 全体の効果、ネイティブの戻りアドレス語、復元後のスタック状態を検証します。分離証明または入口アラインメントがなければ引き続き拒否が必要です。

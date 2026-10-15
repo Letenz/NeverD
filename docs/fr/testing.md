@@ -2065,3 +2065,7 @@ La qualification native Linux exécute aussi toute la suite `HighSwiftEmitter` :
 ### Capture bornée du contexte appelant noyau
 
 `KernelContextCaptureTests` couvre tous les octets, gardes, pile, flags, alias, chevauchements, objets, permissions, IRQL et échecs injectés. `DriverContextCaptureTests` vérifie GPR/FPCW/MXCSR/XMM vivants, cycles relocalisés entrée/requête/unload, imports/appels dynamiques et dépendances. Les douze comparaisons complètes ont un budget de test explicite de 400000 instructions ; le collector varie FPCW séparément du contrôle initial. Les 17 identités par backend natif sont obligatoires ; WHP indisponible sous Linux reste explicitement ignoré. Les tests utilisateur x64/ARM64 préservent le comportement antérieur.
+
+### Coordonnées de région symbolique traversant zéro
+
+`SymRegionWrap.*` vérifie les deux ordres d’octets, les accès complets et partiels traversant le zéro relatif, les origines d’entrée sans rebouclage, les époques inconnues copiées, les budgets de préservation exacts et insuffisants, ainsi que le refus des dépassements absolus/scalaires. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` affirme la forme d’adresse symbolique `base - 1` et vérifie les effets complets du STORE, les mots d’adresse de retour natifs et l’état restauré de la pile avec un oracle d’octets indépendant. L’absence de preuve de séparation ou d’alignement d’entrée doit toujours entraîner un refus.
