@@ -40,12 +40,17 @@ extern "C" {
 /// "origin"},...]}.  "kind" is struct, union, enum, typedef or function;
 /// "size" is absent for a type without one, and "members" counts a record's
 /// named members, anonymous records' included, or an enumeration's values.
+/// "stats" adds "origins", how many types each origin gave: "pdb",
+/// "header" for a header library NeverD ships, "user" for the user's
+/// declarations; "headers" lists the libraries joined as
+/// [{"name","types","prototypes","conflicts":[name,...]} | {"name","error"}].
 /// An image without a PDB has none.  When a declaration of the user's no
 /// longer reads over the program's types, "declarationProblems" lists what
 /// it met: [{"declaration" (its index in neverd_type_declarations_json),
 /// "line","column","message"},...].  OptionsJson may be NULL or
-/// {"filter":"text","language":"c"|"cpp"|"rust"|"go"}: "filter" keeps the
-/// types whose name holds the text, ignoring the case of ASCII letters, and
+/// {"filter":"text","origin":"pdb"|"header"|"user","language":"c"|"cpp"|
+/// "rust"|"go"}: "filter" keeps the types whose name holds the text,
+/// ignoring the case of ASCII letters, "origin" those of one origin, and
 /// "language" adds "renamed":[[name,spelling],...], the names that language
 /// cannot spell as they are.  NULL with neverd_last_error() when no binary
 /// is loaded, the options are malformed or the PDB's types cannot be read.

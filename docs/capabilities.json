@@ -1201,6 +1201,7 @@
           "neverd types --layout",
           "neverd types --no-offsets",
           "neverd types --o",
+          "neverd types --origin",
           "neverd types --pdb",
           "neverd types --pdb-unverified",
           "neverd types --prototypes",

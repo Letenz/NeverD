@@ -925,6 +925,11 @@ cl::opt<std::string>
                          "the case of ASCII letters"),
                 cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
 cl::opt<std::string>
+    TypesOrigin("origin",
+                cl::desc("List the types of one origin: pdb, header (a "
+                         "header library NeverD ships) or user (--declare)"),
+                cl::init(""), cl::value_desc("origin"), cl::sub(TypesCmd));
+cl::opt<std::string>
     TypesLanguage("lang", cl::desc("Render as c, cpp, rust or go (default c)"),
                   cl::init("c"), cl::value_desc("language"), cl::sub(TypesCmd));
 cl::opt<std::string> TypesSpelling(

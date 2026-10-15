@@ -70,7 +70,12 @@ llvm::Expected<RecordDef> layOutRecord(const TypeLibrary &Library,
     if (Field.Bitfield && Field.Alignment)
       return problem("bitfield " + Name +
                      " is aligned, which local types do not lay out");
-    const uint32_t Aligned = std::max(packed(Natural), Field.Alignment);
+    // A type's declared alignment survives the pack too, as Microsoft's
+    // compiler lays it out.
+    const uint32_t Aligned = std::max(
+        {packed(Natural), Field.Alignment,
+         Rules == LayoutRules::MSVC ? Library.requiredAlignOf(*Field.Type)
+                                    : 0u});
 
     if (Field.Bitfield) {
       const uint64_t Unit = *Size * 8;

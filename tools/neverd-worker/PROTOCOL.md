@@ -123,14 +123,16 @@ without the PDB it names and is saved with the project like a selection. With a
 one that loads. `pdb_reference` is listed in `capabilities` when the engine has
 it.
 
-`local_types {filter?,language?}`, `local_type {name,spelling?}` and
-`local_types_source {language?,spelling?,offsets?,hexOffsets?,asserts?,
-types?,dependencies?}` read the open program's local types through the SDK's
-`neverd_local_types_json`, `neverd_local_type_json` and
-`neverd_local_types_source`: the list with import statistics, one type laid
-out member by member, and `{language,source}`, the types rendered as C, C++,
-Rust or Go. The engine reads them from the program's PDB the first time it is
-asked. A name the program has no type for, or the PDB's types failing to read,
+`local_types {filter?,origin?,language?}`, `local_type {name,spelling?}`
+and `local_types_source {language?,spelling?,offsets?,hexOffsets?,asserts?,
+types?,dependencies?,prototypes?}` read the open program's local types
+through the SDK's `neverd_local_types_json`, `neverd_local_type_json` and
+`neverd_local_types_source`: the list with import statistics, counts by
+origin and the header libraries joined (`headers`), one type laid out member
+by member, and `{language,source}`, the types rendered as C, C++, Rust or Go.
+The engine reads them from the program's PDB the first time it is asked, and
+joins the system headers NeverD ships for the image, such as the Windows
+kernel's. A name the program has no type for, or the PDB's types failing to read,
 is a `local_types_failed` error. The three are listed in `capabilities` when
 the engine has them.
 

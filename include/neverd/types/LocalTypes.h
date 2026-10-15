@@ -257,6 +257,10 @@ public:
   uint32_t alignOf(const TypeExpr &Type) const;
   /// The alignment of a record's members together.
   uint32_t alignOf(const RecordDef &Record) const;
+  /// The alignment \p Type is declared with, itself or through a member
+  /// (__declspec(align), alignas): Microsoft's compiler lowers it for no
+  /// #pragma pack.  Zero for none.
+  uint32_t requiredAlignOf(const TypeExpr &Type) const;
 
   /// The prototype of the function named \p Name, as a header declares it,
   /// with its parameters' names; replaces one of that name.

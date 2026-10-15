@@ -3643,6 +3643,14 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
   llvm::json::Value Rows =
       *llvm::json::parse(takeString(neverd_type_declarations_json(Session)));
   ASSERT_EQ(Rows.getAsArray()->size(), 4u);
+  // The list keeps one origin when asked, and counts every origin's.
+  llvm::json::Object Mine =
+      parse(neverd_local_types_json(Session, R"({"origin":"user"})"));
+  EXPECT_EQ(Mine.getArray("types")->size(), 3u);
+  EXPECT_EQ(Mine.getObject("stats")->getObject("origins")->getInteger("user"),
+            3);
+  EXPECT_EQ(neverd_local_types_json(Session, R"({"origin":"elsewhere"})"),
+            nullptr);
   ASSERT_EQ(neverd_type_declarations_save(Session), 0)
       << takeString(neverd_last_error(Session));
   ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1);

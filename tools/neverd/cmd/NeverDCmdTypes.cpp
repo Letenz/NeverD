@@ -73,6 +73,8 @@ int list(neverd_session_t Sess, raw_ostream &Out) {
   json::Object Options;
   if (!TypesFilter.empty())
     Options["filter"] = TypesFilter;
+  if (!TypesOrigin.empty())
+    Options["origin"] = TypesOrigin;
   if (TypesLanguage.getNumOccurrences())
     Options["language"] = TypesLanguage;
   std::optional<json::Value> List = reply(
@@ -88,9 +90,22 @@ int list(neverd_session_t Sess, raw_ostream &Out) {
   const json::Array *Types = Result.getArray("types");
   const json::Object *Stats = Result.getObject("stats");
   const StringRef Source = Result.getString("source").value_or("none");
-  Out << "\nLocal types (" << (Types ? Types->size() : 0) << ", "
-      << (Source == "pdb" ? "from the PDB" : "none read") << ", "
-      << Result.getString("dataModel").value_or("") << "):\n";
+  // How many each origin gave, of every type, whatever the list keeps.
+  std::string From;
+  if (const json::Object *Origins =
+          Stats ? Stats->getObject("origins") : nullptr) {
+    for (const auto &[Key, Label] :
+         {std::pair<StringRef, StringRef>{"pdb", "from the PDB"},
+          {"header", "from system headers"},
+          {"user", "declared"}})
+      if (const std::optional<int64_t> Count = Origins->getInteger(Key))
+        From += (From.empty() ? "" : ", ") + std::to_string(*Count) + " " +
+                Label.str();
+  }
+  if (From.empty())
+    From = Source == "pdb" ? "from the PDB" : "none read";
+  Out << "\nLocal types (" << (Types ? Types->size() : 0) << " listed; " << From
+      << "; " << Result.getString("dataModel").value_or("") << "):\n";
   if (Stats && Source == "pdb")
     Out << format(
         "  %lld structures, %lld unions, %lld enumerations, %lld "
@@ -100,8 +115,8 @@ int list(neverd_session_t Sess, raw_ostream &Out) {
         static_cast<long long>(Stats->getInteger("enums").value_or(0)),
         static_cast<long long>(Stats->getInteger("declaredOnly").value_or(0)));
   if (Types) {
-    Out << format("  %6s  %-8s %8s %7s  %s\n", "#", "Kind", "Size", "Members",
-                  "Name");
+    Out << format("  %6s  %-8s %8s %7s  %-6s  %s\n", "#", "Kind", "Size",
+                  "Members", "Origin", "Name");
     for (const json::Value &Value : *Types) {
       const json::Object *Type = Value.getAsObject();
       if (!Type)
@@ -109,11 +124,12 @@ int list(neverd_session_t Sess, raw_ostream &Out) {
       const std::optional<int64_t> Size = Type->getInteger("size");
       const std::optional<int64_t> Members = Type->getInteger("members");
       Out << format(
-          "  %6lld  %-8s %8s %7s  %s\n",
+          "  %6lld  %-8s %8s %7s  %-6s  %s\n",
           static_cast<long long>(Type->getInteger("ordinal").value_or(0)),
           Type->getString("kind").value_or("").str().c_str(),
           Size ? hexText(*Size).c_str() : "-",
           Members ? std::to_string(*Members).c_str() : "-",
+          Type->getString("origin").value_or("").str().c_str(),
           Type->getString("name").value_or("").str().c_str());
     }
   }
@@ -340,8 +356,9 @@ int runTypesConvert() {
   }
   if (!optionsValid())
     return 1;
-  if (TypesLayout || !TypesFilter.empty()) {
-    WithColor::error() << "--layout and --filter read a binary's types\n";
+  if (TypesLayout || !TypesFilter.empty() || !TypesOrigin.empty()) {
+    WithColor::error()
+        << "--layout, --filter and --origin read a binary's types\n";
     return 1;
   }
   json::Array Declarations;

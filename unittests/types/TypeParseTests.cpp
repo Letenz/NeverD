@@ -124,6 +124,28 @@ TEST(TypeParse, KeepsPackingAndDeclaredAlignment) {
   EXPECT_EQ(shapeOf(recordOf(Library, "R")), "struct{a@0 q@16}");
 }
 
+TEST(TypeParse, KeepsADeclaredAlignmentUnderPack) {
+  // Microsoft's compiler lowers a type's declared alignment for no pack, as
+  // clang's MSVC layout shows: x at 16 in a record of 32 bytes.
+  const TypeLibrary Library = parsed(R"(
+    typedef struct __declspec(align(16)) _M128A {
+      ULONGLONG Low; LONGLONG High;
+    } M128A;
+    #pragma pack(push, 4)
+    struct P4 { CHAR c; M128A x; };
+    struct P4m { CHAR c; __declspec(align(8)) LONGLONG y; };
+    struct P4n { CHAR c; ULONGLONG z; };
+    #pragma pack(pop)
+  )");
+  EXPECT_EQ(shapeOf(recordOf(Library, "P4")), "struct{c@0 x@16}");
+  EXPECT_EQ(recordOf(Library, "P4").Size, 32u);
+  EXPECT_EQ(Library.alignOf(*makeNamed("P4", TypeKind::Struct)), 16u);
+  EXPECT_EQ(shapeOf(recordOf(Library, "P4m")), "struct{c@0 y@8}");
+  // A natural alignment the pack lowers.
+  EXPECT_EQ(shapeOf(recordOf(Library, "P4n")), "struct{c@0 z@4}");
+  EXPECT_EQ(recordOf(Library, "P4n").Size, 12u);
+}
+
 TEST(TypeParse, ReadsEnumerationsWithConstants) {
   const TypeLibrary Library = parsed(R"(
     enum E { A, B = 5, C, D = B << 2, F = -1, G = (int)0x80000000, H = C | 1 };

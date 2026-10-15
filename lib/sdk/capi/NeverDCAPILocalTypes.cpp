@@ -22,6 +22,7 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -382,6 +383,15 @@ const char *neverd_local_types_json(neverd_session_t Sess,
     }
     Filter = Text->str();
   }
+  std::string Origin;
+  if (const llvm::json::Value *Value = Options->get("origin")) {
+    std::optional<llvm::StringRef> Text = Value->getAsString();
+    if (!Text || (*Text != "pdb" && *Text != "header" && *Text != "user")) {
+      S->setError("\"origin\" must be pdb, header or user");
+      return nullptr;
+    }
+    Origin = Text->str();
+  }
   std::optional<types::Language> Lang;
   if (const llvm::json::Value *Value = Options->get("language")) {
     std::optional<llvm::StringRef> Id = Value->getAsString();
@@ -396,14 +406,24 @@ const char *neverd_local_types_json(neverd_session_t Sess,
     return nullptr;
 
   llvm::json::Array Types;
+  llvm::StringMap<int64_t> Origins;
   for (llvm::json::Value &Entry : types::typeListJSON(*Library)) {
     const llvm::json::Object *Object = Entry.getAsObject();
-    if (!Filter.empty() && Object)
+    if (!Object)
+      continue;
+    const llvm::StringRef From = Object->getString("origin").value_or("");
+    ++Origins[From];
+    if (!Origin.empty() && From != Origin)
+      continue;
+    if (!Filter.empty())
       if (std::optional<llvm::StringRef> Name = Object->getString("name"))
         if (!Name->contains_insensitive(Filter))
           continue;
     Types.push_back(std::move(Entry));
   }
+  llvm::json::Object ByOrigin;
+  for (const auto &Entry : Origins)
+    ByOrigin[Entry.first()] = Entry.second;
   llvm::json::Array Mismatches;
   for (const std::string &Name : S->LocalTypeStats.NestingMismatches)
     Mismatches.push_back(jsonSafeText(Name));
@@ -415,7 +435,8 @@ const char *neverd_local_types_json(neverd_session_t Sess,
                           {"unions", S->LocalTypeStats.Unions},
                           {"enums", S->LocalTypeStats.Enums},
                           {"declaredOnly", S->LocalTypeStats.DeclaredOnly},
-                          {"nestingMismatches", std::move(Mismatches)}}},
+                          {"nestingMismatches", std::move(Mismatches)},
+                          {"origins", std::move(ByOrigin)}}},
       {"types", std::move(Types)}};
   if (!S->LocalTypeHeaders.empty()) {
     llvm::json::Array Headers;
