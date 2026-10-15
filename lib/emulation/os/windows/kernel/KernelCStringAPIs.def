@@ -1,0 +1,114 @@
+//===- KernelCStringAPIs.def - C runtime string contracts -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Argument counts, caller-IRQL ceilings and typed operations for the C runtime
+/// string helpers the kernel exports and drivers call directly. Every operation
+/// only reads caller-provided guest memory one unit at a time; residency is
+/// enforced per unit and a run without a terminator stops at the 1 MiB model
+/// limit. Behavior is modeled 1:1 against the Windows 10.0.19041.6456 kernel
+/// exports cited per entry: counts and search results follow the standard C
+/// semantics, comparisons fold only ASCII A-Z, and the result width matches the
+/// routine (int results are zero-extended to 32 bits, size_t and pointer
+/// results are full width). The IRQL ceiling is Any, matching the exported
+/// leaf routines and the bounded memory helpers; validateGuestAccess still
+/// rejects paged reads above APC_LEVEL.
+///
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strlen-wcslen-mbslen-mbslen-l-mbstrlen-mbstrlen-l
+// strlen RVA 0x3d30f0, wcslen RVA 0x3d38d0: count units up to the terminator.
+NEVERD_KERNEL_CSTRING_API(strlen, 1, Any,
+                          runtime::cStringLength(*this, Memory, A, 1))
+NEVERD_KERNEL_CSTRING_API(wcslen, 1, Any,
+                          runtime::cStringLength(*this, Memory, A, 2))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strnlen-strnlen-s
+// strnlen RVA 0x3d34d0, wcsnlen RVA 0x3d39d0: as strlen but stop after the
+// count, never dereferencing beyond it.
+NEVERD_KERNEL_CSTRING_API(strnlen, 2, Any,
+                          runtime::cStringLength(*this, Memory, A, 1))
+NEVERD_KERNEL_CSTRING_API(wcsnlen, 2, Any,
+                          runtime::cStringLength(*this, Memory, A, 2))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strcmp-wcscmp-mbscmp
+// strcmp RVA 0x3d3030, wcscmp RVA 0x3d3840: unsigned unit order, normalized to
+// -1, 0 or 1.
+NEVERD_KERNEL_CSTRING_API(
+    strcmp, 2, Any,
+    runtime::cStringCompare(*this, Memory, A, 1,
+                            runtime::CStringCompare::Normalized))
+NEVERD_KERNEL_CSTRING_API(
+    wcscmp, 2, Any,
+    runtime::cStringCompare(*this, Memory, A, 2,
+                            runtime::CStringCompare::Normalized))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strncmp-wcsncmp-mbsncmp-mbsncmp-l
+// strncmp RVA 0x3d0e40 normalizes to -1, 0 or 1; wcsncmp RVA 0x3d3940 returns
+// the raw unit difference at the first mismatch.
+NEVERD_KERNEL_CSTRING_API(
+    strncmp, 3, Any,
+    runtime::cStringCompare(*this, Memory, A, 1,
+                            runtime::CStringCompare::Normalized))
+NEVERD_KERNEL_CSTRING_API(wcsncmp, 3, Any,
+                          runtime::cStringCompare(*this, Memory, A, 2,
+                                                  runtime::CStringCompare::Raw))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/stricmp-wcsicmp-mbsicmp-stricmp-l-wcsicmp-l-mbsicmp-l
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strnicmp-wcsnicmp-mbsnicmp-strnicmp-l-wcsnicmp-l-mbsnicmp-l
+// _stricmp RVA 0x3d16d0, _wcsicmp RVA 0x3d19d0, _strnicmp RVA 0x3d1780,
+// _wcsnicmp RVA 0x3d1b10: fold ASCII A-Z to lowercase, then return the raw
+// folded difference. Non-ASCII units never fold and so compare unequal.
+NEVERD_KERNEL_CSTRING_API(
+    _stricmp, 2, Any,
+    runtime::cStringCompare(*this, Memory, A, 1,
+                            runtime::CStringCompare::FoldedRaw))
+NEVERD_KERNEL_CSTRING_API(
+    _wcsicmp, 2, Any,
+    runtime::cStringCompare(*this, Memory, A, 2,
+                            runtime::CStringCompare::FoldedRaw))
+NEVERD_KERNEL_CSTRING_API(
+    _strnicmp, 3, Any,
+    runtime::cStringCompare(*this, Memory, A, 1,
+                            runtime::CStringCompare::FoldedRaw))
+NEVERD_KERNEL_CSTRING_API(
+    _wcsnicmp, 3, Any,
+    runtime::cStringCompare(*this, Memory, A, 2,
+                            runtime::CStringCompare::FoldedRaw))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strchr-wcschr-mbschr-mbschr-l
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strrchr-wcsrchr-mbsrchr-mbsrchr-l
+// strchr RVA 0x3d2ff0, wcschr RVA 0x3d3810, strrchr RVA 0x3d34f0,
+// wcsrchr RVA 0x3d3a00: the target is truncated to the unit width and the
+// terminator is part of the search, so a zero target returns its address.
+NEVERD_KERNEL_CSTRING_API(strchr, 2, Any,
+                          runtime::cStringFindChar(*this, Memory, A, 1, false))
+NEVERD_KERNEL_CSTRING_API(wcschr, 2, Any,
+                          runtime::cStringFindChar(*this, Memory, A, 2, false))
+NEVERD_KERNEL_CSTRING_API(strrchr, 2, Any,
+                          runtime::cStringFindChar(*this, Memory, A, 1, true))
+NEVERD_KERNEL_CSTRING_API(wcsrchr, 2, Any,
+                          runtime::cStringFindChar(*this, Memory, A, 2, true))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strstr-wcsstr-mbsstr-mbsstr-l
+// strstr RVA 0x3d1180, wcsstr RVA 0x3d3a90: an empty needle returns the
+// haystack before the haystack is examined.
+NEVERD_KERNEL_CSTRING_API(strstr, 2, Any,
+                          runtime::cStringFind(*this, Memory, A, 1))
+NEVERD_KERNEL_CSTRING_API(wcsstr, 2, Any,
+                          runtime::cStringFind(*this, Memory, A, 2))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strspn-wcsspn-mbsspn-mbsspn-l
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strcspn-wcscspn-mbscspn-mbscspn-l
+// strspn RVA 0x3d3520, wcsspn RVA 0x3d3a40 count the initial run whose units
+// are all in the control set; wcscspn RVA 0x3d3880 counts the initial run with
+// none in it.
+NEVERD_KERNEL_CSTRING_API(strspn, 2, Any,
+                          runtime::cStringSpan(*this, Memory, A, 1, false))
+NEVERD_KERNEL_CSTRING_API(wcsspn, 2, Any,
+                          runtime::cStringSpan(*this, Memory, A, 2, false))
+NEVERD_KERNEL_CSTRING_API(wcscspn, 2, Any,
+                          runtime::cStringSpan(*this, Memory, A, 2, true))

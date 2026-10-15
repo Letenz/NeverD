@@ -393,6 +393,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `IoMarkIrpPending` | 标记当前存活的 IRP；也支持 WDM 宏对栈控制字段的等效写入；派发必须返回 `STATUS_PENDING` |
 | `IofCompleteRequest`、`IoCompleteRequest` | 使用 `IO_NO_INCREMENT` 执行完成展开，支持暂停／继续；仅在最终展开边界释放 IRP、MDL 和缓冲区 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | 有界的来宾缓冲区操作，每次调用最多 1 MiB；要求不重叠的复制 API 会拒绝重叠 |
+| `strlen`、`wcslen`、`strnlen`、`wcsnlen`、`strcmp`、`wcscmp`、`strncmp`、`wcsncmp`、`_stricmp`、`_wcsicmp`、`_strnicmp`、`_wcsnicmp`、`strchr`、`wcschr`、`strrchr`、`wcsrchr`、`strstr`、`wcsstr`、`strspn`、`wcsspn`、`wcscspn` | 导出的 C 运行时字符串辅助函数在任意 IRQL 下逐个单元读取调用方内存；没有终止符的扫描在 1 MiB 模型上限处停止。计数和查找结果遵循标准 C 语义：`strcmp`、`wcscmp`、`strncmp` 归一化为 -1、0 或 1，而 `wcsncmp` 和不区分大小写的一组返回原始差值，且仅折叠 ASCII A-Z。查找目标会被截断到单元宽度，并且连终止符一起查找，因此查找 0 会返回其地址；`strstr`/`wcsstr` 的空子串返回原串。空记录，或没有计数且越过已映射内存的扫描，都会明确失败。 |
 
 `MmProbeAndLockPages` 支持在 IRQL <= APC_LEVEL 下，以 `KernelMode` 锁定输入驱动镜像中由加载器拥有的单个连续区间。镜像页必须可读，并受物理页配额限制。模型已持有私有且驻留的镜像后备存储：即使原镜像视图只读，`IoWriteAccess` 和 `IoModifyAccess` 也允许可写 MDL 别名；`IoReadAccess` 仍只允许只读别名。原镜像保护属性保持不变。镜像空洞和无关映射不属于该所有权；低于用户地址边界的镜像也通过所有权识别。锁定后必须解锁并释放描述符。加载器拥有的镜像页上，临时 MDL 的全部别名解除、全部锁释放且全部描述符释放后，不再额外阻止恢复。此契约允许未指定地址的内核态缓存别名。存活 MDL、其他所有权或映射类型，以及来宾对物理 PFN 身份的读取仍保留恢复依赖；建模的复制、移动和比较服务读取也计入。
 

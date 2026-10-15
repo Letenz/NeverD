@@ -393,6 +393,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `IoMarkIrpPending` | 標記目前存活的 IRP；也支援 WDM 巨集對堆疊控制欄位的等效寫入；派送必須傳回 `STATUS_PENDING` |
 | `IofCompleteRequest`、`IoCompleteRequest` | 以 `IO_NO_INCREMENT` 執行完成展開，支援暫停／繼續；僅在最終展開邊界釋放 IRP、MDL 與緩衝區 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | 有界的客體緩衝區操作，每次呼叫最多 1 MiB；要求不重疊的複製 API 會拒絕重疊 |
+| `strlen`、`wcslen`、`strnlen`、`wcsnlen`、`strcmp`、`wcscmp`、`strncmp`、`wcsncmp`、`_stricmp`、`_wcsicmp`、`_strnicmp`、`_wcsnicmp`、`strchr`、`wcschr`、`strrchr`、`wcsrchr`、`strstr`、`wcsstr`、`strspn`、`wcsspn`、`wcscspn` | 匯出的 C 執行階段字串輔助函式在任意 IRQL 下逐個單元讀取呼叫方記憶體；沒有結束字元的掃描會在 1 MiB 模型上限處停止。計數與搜尋結果遵循標準 C 語意：`strcmp`、`wcscmp`、`strncmp` 正規化為 -1、0 或 1，而 `wcsncmp` 與不分大小寫的一組會傳回原始差值，且僅折疊 ASCII A-Z。搜尋目標會被截斷為單元寬度，並且連結束字元一起搜尋，因此搜尋 0 會傳回其位址；`strstr`/`wcsstr` 的空子字串會傳回原字串。空記錄，或沒有計數且越過已對應記憶體的掃描，都會明確失敗。 |
 
 `MmProbeAndLockPages` 支援在 IRQL <= APC_LEVEL 下，以 `KernelMode` 鎖定輸入驅動程式映像中由載入器擁有的單一連續區間。映像頁必須可讀，並受實體頁配額限制。模型已持有私有且駐留的映像後備儲存：即使原映像檢視唯讀，`IoWriteAccess` 和 `IoModifyAccess` 也允許可寫 MDL 別名；`IoReadAccess` 仍只允許唯讀別名。原映像保護屬性保持不變。映像空洞和無關對映不屬於該所有權；低於使用者位址邊界的映像也透過所有權識別。鎖定後必須解鎖並釋放描述元。載入器擁有的映像頁上，暫時 MDL 的全部別名解除、全部鎖釋放且全部描述元釋放後，不再額外阻止還原。此契約允許未指定位址的核心模式快取別名。存活 MDL、其他所有權或對映類型，以及客體對實體 PFN 身分的讀取仍保留還原相依性；模型化的複製、移動和比較服務讀取也計入。
 
