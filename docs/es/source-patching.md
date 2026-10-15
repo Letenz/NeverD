@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: ea95e492ed89405a4adc058cbf8d89873c3c2df48b902d55a21a390158b23f6e -->
+<!-- i18n-source: ee36c902e90a2f26bd648acf020212b2720bc29bd414bdada2c8c96bf4479130 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR admite Windows ARM64 C++ FH3 y valida xdata, ABI del marco padre y
 
 | Compilador | Artefacto | Perfil de ejecución del SO verificado |
 |---|---|---|
-| Clang 22.1.x | IR LLVM | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | Objeto nativo | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | Objeto nativo | ELF x64/ARM64 C/C++ con runtime Itanium compatible; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | IR LLVM | ELF x64/ARM64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| Clang 22.1.6 | Objeto nativo | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| GCC/G++ 13.3.0 | Objeto nativo | ELF x64/ARM64 C/C++ con runtime Itanium compatible; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
 | NeverC 3389.1.5 modo ordinario | IR LLVM | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 modo ordinario | Objeto nativo | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / objeto nativo | ELF / PE / Mach-O x64/ARM64: fuente C pura |
@@ -198,3 +198,7 @@ ELF ARM y Thumb tienen perfiles distintos. Los productores reciben explícitamen
 Para estas imágenes ELF parcheadas, las rutas `qemu-user` de Linux x86 y ARM32 requieren un `--loader` glibc explícito del sysroot correspondiente a la arquitectura de destino. Linux x86 con `compatibility` usa el soporte de 32 bits del núcleo del anfitrión Linux x64 y se registra por separado de la ejecución QEMU; no acredita ejecución en un anfitrión x86 nativo de 32 bits.
 
 La [validación de procesos](https://github.com/NeverSight/NeverD/actions/runs/38694434082) de `fcee81c9a5e2f20a71090ade23ae833175f64c59` superó las 750 observaciones: 576 en hosts nativos de la misma arquitectura, 78 en modo de compatibilidad x86 y 96 ARM/Thumb mediante QEMU en modo usuario. Una auditoría independiente verificó los hashes de las 126 imágenes, los entornos de ejecución y todos los escenarios. La [recompilación Windows](https://github.com/NeverSight/NeverD/actions/runs/38694628242) superó 194 comprobaciones específicas y 474 observaciones de procesos Windows/Linux. La [recompilación Linux](https://github.com/NeverSight/NeverD/actions/runs/38694638358) superó 444 comprobaciones, incluidos los 62 fallos y 46 casos omitidos originales, sin fallos ni omisiones. Siguen vigentes los límites de hardware y cargador indicados arriba. NeverC continúa limitado a C puro y su repositorio no se modificó.
+
+La [validación adicional de ARM/Thumb](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263) superó las 96 observaciones (48 ARM y 48 Thumb) de las 32 imágenes de prueba C de `fcee81c9a5e2f20a71090ade23ae833175f64c59` en `ubuntu-24.04-arm`. El kernel de Linux cargó cada imagen directamente mediante `/lib/ld-linux-armhf.so.3`, sin QEMU ni un comando explícito del cargador. Se trata de `compatibility` en un host ARM64, no de un host nativo de 32 bits. El commit del programa de pruebas `3ad17ac9608d6bd9f5a4d44953ec375524e5730b` y el de las imágenes se registran por separado. Auditorías independientes verificaron los hashes de las imágenes, los 30 comprobantes de publicación, todos los escenarios y repeticiones, y la ausencia de reglas de intérprete `binfmt_misc` coincidentes.
+
+Las [pruebas separadas de los runners alojados](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719) mostraron que el runner Windows 11 ARM64 proporcionado rechaza programas ARM32 con `WinError 216`. En macOS 15.7.9 con Xcode 16.4, los SDK disponibles no pudieron enlazar programas macOS i386 ni iOS ARMv7. Un programa watchOS ARMv7k se enlazó correctamente, pero no se acreditó su ejecución en un dispositivo físico. El éxito de estas comprobaciones no valida esas plataformas; su cobertura de hardware nativo sigue pendiente. NeverC no se compiló ni modificó.

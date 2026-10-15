@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: ea95e492ed89405a4adc058cbf8d89873c3c2df48b902d55a21a390158b23f6e -->
+<!-- i18n-source: ee36c902e90a2f26bd648acf020212b2720bc29bd414bdada2c8c96bf4479130 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang LLVM IR 路徑接入 Windows ARM64 C++ FH3，驗證 xdata、父框架 ABI 
 
 | 編譯器 | 製品 | 已驗證的作業系統執行設定 |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | 原生物件 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | 原生物件 | ELF x64/ARM64 C/C++，需要相容的 Itanium 執行階段; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| Clang 22.1.6 | 原生物件 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| GCC/G++ 13.3.0 | 原生物件 | ELF x64/ARM64 C/C++，需要相容的 Itanium 執行階段; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生物件 | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / 原生物件 | ELF / PE / Mach-O x64/ARM64: 純 C 原始碼 |
@@ -198,3 +198,7 @@ ELF ARM 與 Thumb 使用獨立設定。原始碼編譯器明確接收 `-marm` �
 對於這些套用補丁後的 ELF 映像，Linux x86 與 ARM32 的 `qemu-user` 路徑都需要明確使用符合目標架構的 sysroot 中的 glibc `--loader`。Linux x86 的 `compatibility` 路徑使用 Linux x64 宿主核心的 32 位元相容支援，並與 QEMU 執行分別記錄；它不能證明在原生 32 位元 x86 主機上執行。
 
 [`fcee81c9a5e2f20a71090ade23ae833175f64c59` 的程序驗證](https://github.com/NeverSight/NeverD/actions/runs/38694434082)通過全部 750 次觀測：相符主機上的 576 次原生執行、78 次 x86 相容模式執行，以及 QEMU 使用者模式下的 96 次 ARM／Thumb 執行。獨立產物稽核核對了全部 126 個映像的雜湊、執行身分與完整情境清單。[Windows 重建驗收](https://github.com/NeverSight/NeverD/actions/runs/38694628242)通過 194 項專項檢查和 474 次 Windows／Linux 程序觀測。[Linux 重建驗收](https://github.com/NeverSight/NeverD/actions/runs/38694638358)通過 444 項檢查，包含原來全部 62 項失敗和 46 項略過，零失敗、零略過。這些結果保留上述硬體與載入器驗證界線；NeverC 仍為純 C，未修改其儲存庫。
+
+補充的 [ARM/Thumb 驗證](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263)在 `ubuntu-24.04-arm` 上執行了 `fcee81c9a5e2f20a71090ade23ae833175f64c59` 的 32 個 C 測試映像，全部 96 次觀測通過（ARM 與 Thumb 各 48 次）。Linux 核心透過 `/lib/ld-linux-armhf.so.3` 直接載入映像，未使用 QEMU 或明確指定的載入器命令。這屬於 ARM64 主機上的 `compatibility`，不是原生 32 位元主機驗證。測試入口提交 `3ad17ac9608d6bd9f5a4d44953ec375524e5730b` 與映像提交分別記錄。獨立產物稽核核對了映像雜湊、全部 30 份發布回執、完整情境及重複次數，並確認沒有符合這些映像的 `binfmt_misc` 直譯器規則。
+
+另外執行的[託管 runner 探測](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719)確認，所提供的 Windows 11 ARM64 runner 以 `WinError 216` 拒絕啟動 ARM32 程式。在 macOS 15.7.9 與 Xcode 16.4 環境中，現有 SDK 無法連結 macOS i386 或 iOS ARMv7 程式。watchOS ARMv7k 程式連結成功，但未取得實體裝置執行證據。探測工作成功不等於這些平台通過驗證；其原生硬體覆蓋仍未補齊。NeverC 未被建置或修改。
