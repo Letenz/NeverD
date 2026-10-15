@@ -351,3 +351,326 @@ u64 stdio_error_indicators(u64 *out) {
   out[12] = feof(f);
   return fclose(f);
 }
+
+/* Mutable file and directory contracts use only synthetic guest inputs. */
+extern long write(int, const void *, u64);
+extern int openat(int, const char *, int, ...);
+extern long readlink(const char *, char *, u64);
+extern u64 fwrite(const void *, u64, u64, FILE *);
+extern u64 fwrite_unlocked(const void *, u64, u64, FILE *);
+extern int fputs(const char *, FILE *);
+extern int fputs_unlocked(const char *, FILE *);
+typedef struct DIR DIR;
+struct dirent64 {
+  u64 ino;
+  long off;
+  unsigned short reclen;
+  unsigned char type;
+  char name[256];
+};
+extern DIR *opendir(const char *);
+extern DIR *fdopendir(int);
+extern int closedir(DIR *);
+extern int dirfd(DIR *);
+extern struct dirent64 *readdir(DIR *);
+extern struct dirent64 *readdir64(DIR *);
+extern long telldir(DIR *);
+extern void seekdir(DIR *, long);
+extern void rewinddir(DIR *);
+extern int __getdents64(int, void *, unsigned);
+
+int stdio_write_sequence(u64 *o) {
+  char *b = (char *)o;
+  FILE *f = fopen("/fixture/input", "w+");
+  if (!f)
+    return 1;
+  o[0] = setvbuf(f, b + 768, 0, 4);
+  o[1] = fwrite("abc", 1, 3, f);
+  o[2] = lseek(fileno(f), 0, 1);
+  o[3] = fflush(f);
+  o[4] = lseek(fileno(f), 0, 1);
+  o[5] = fwrite_unlocked("DEFGH", 1, 5, f);
+  o[6] = ftell(f);
+  o[7] = fseek(f, 0, 0);
+  o[8] = fread(b + 512, 1, 2, f);
+  o[9] = lseek(fileno(f), 0, 1);
+  o[10] = fwrite("X", 1, 1, f);
+  o[11] = fflush_unlocked(f);
+  o[12] = fseek(f, 0, 0);
+  o[13] = fread(b + 528, 1, 8, f);
+  o[14] = fclose(f);
+  int fd = open("/fixture/input", 0);
+  o[15] = read(fd, b + 544, 8);
+  o[16] = close(fd);
+  return 0;
+}
+
+int stdio_line_write(u64 *o) {
+  FILE *f = fopen("/fixture/input", "w");
+  char *b = (char *)o;
+  o[0] = setvbuf(f, b + 768, 1, 8);
+  o[1] = fputs("ab\ncd", f);
+  o[2] = lseek(fileno(f), 0, 1);
+  o[3] = setvbuf(f, 0, 2, 0);
+  o[4] = lseek(fileno(f), 0, 1);
+  o[5] = fputs_unlocked("EF", f);
+  o[6] = fclose(f);
+  int fd = open("/fixture/input", 0);
+  o[7] = read(fd, b + 512, 12);
+  o[8] = close(fd);
+  return 0;
+}
+
+int stdio_append_write(u64 *o) {
+  FILE *a = fopen("/fixture/input", "a+");
+  int other = open("/fixture/input", 2);
+  o[0] = lseek(fileno(a), 0, 1);
+  o[1] = setvbuf(a, 0, 2, 0);
+  o[2] = fseek(a, 0, 0);
+  o[3] = fwrite("Z", 1, 1, a);
+  o[4] = lseek(other, 0, 1);
+  o[5] = write(other, "Q", 1);
+  o[6] = fseek(a, 0, 0);
+  o[7] = fread((char *)o + 512, 1, 20, a);
+  o[8] = fclose(a);
+  o[9] = close(other);
+  return 0;
+}
+
+int stdio_flush_failure(u64 *o, int kind) {
+  FILE *f = fopen("/fixture/input", "w+");
+  char *b = (char *)o;
+  o[0] = setvbuf(f, b + 768, 0, 8);
+  o[1] = fwrite("abc", 1, 3, f);
+  o[2] = close(fileno(f));
+  *__errno() = 717;
+  if (kind == 0) {
+    o[3] = fflush(f);
+    o[4] = *__errno();
+    o[5] = ferror(f);
+    o[6] = fflush(f);
+    o[7] = fclose(f);
+  } else if (kind == 1) {
+    o[3] = fclose(f);
+    o[4] = *__errno();
+  } else {
+    o[3] = fwrite("123456", 2, 3, f);
+    o[4] = *__errno();
+    o[5] = ferror(f);
+    o[6] = fflush(f);
+    o[7] = fclose(f);
+  }
+  return 0;
+}
+
+int stdio_write_transfer(u64 *o, u64 source, u64 size, u64 count, int mode) {
+  FILE *f = fopen("/fixture/input", mode == 3 ? "r" : "w");
+  o[0] = setvbuf(f, 0, mode == 3 ? 2 : mode, 8);
+  *__errno() = 717;
+  o[1] = fwrite((void *)source, size, count, f);
+  o[2] = *__errno();
+  o[3] = ferror(f);
+  o[4] = fclose(f);
+  return 0;
+}
+
+int filesystem_shared(u64 *o) {
+  int a = open("/fixture/input", 2), alias = dup(a),
+      b = open("/fixture/input", 0);
+  o[0] = write(a, "XY", 2);
+  o[1] = lseek(alias, 0, 1);
+  o[2] = read(b, (char *)o + 512, 4);
+  o[3] = lseek(a, 18, 0);
+  o[4] = write(alias, "Z", 1);
+  o[5] = lseek(b, 12, 0);
+  o[6] = read(b, (char *)o + 528, 10);
+  o[7] = close(a);
+  o[8] = lseek(alias, 0, 1);
+  o[9] = close(alias);
+  o[10] = close(b);
+  return 0;
+}
+
+static void save_name(char *dst, const struct dirent64 *e) {
+  for (int i = 0; i < 15 && e->name[i]; ++i)
+    dst[i] = e->name[i];
+}
+int filesystem_directory(u64 *o) {
+  DIR *d = opendir("/fixture");
+  if (!d)
+    return 1;
+  struct dirent64 *e;
+  int n = 0;
+  *__errno() = 717;
+  while ((e = readdir(d))) {
+    if (n == 4)
+      return 2;
+    save_name((char *)o + 512 + 16 * n, e);
+    o[8 + n] = e->type;
+    ++n;
+  }
+  o[0] = n;
+  o[1] = *__errno();
+  o[2] = telldir(d);
+  int alias = dup(dirfd(d));
+  o[3] = __getdents64(alias, (char *)o + 768, 24);
+  seekdir(d, 1);
+  e = readdir64(d);
+  if (!e)
+    return 3;
+  save_name((char *)o + 576, e);
+  o[4] = telldir(d);
+  rewinddir(d);
+  e = readdir(d);
+  if (!e)
+    return 4;
+  save_name((char *)o + 592, e);
+  int file = openat(dirfd(d), "input", 0);
+  o[5] = read(file, (char *)o + 608, 5);
+  close(file);
+  close(alias);
+  o[6] = closedir(d);
+  return 0;
+}
+
+int filesystem_proc(u64 *o) {
+  int d = open("/proc/self/fd", 040000), a = open("/fixture/input", 0),
+      b = dup(a);
+  if (d != 3 || a != 4 || b != 5)
+    return 1;
+  o[0] = readlink("/proc/self/fd/4", (char *)o + 512, 32);
+  close(a);
+  o[1] = readlink("/proc/self/fd/4", (char *)o + 544, 32);
+  o[2] = *__errno();
+  a = open("/fixture/sub", 040000);
+  o[3] = a;
+  o[4] = readlink("/proc/self/fd/4", (char *)o + 544, 32);
+  close(b);
+  int n = 0;
+  for (;;) {
+    int got = __getdents64(d, (char *)o + 768, 24);
+    if (got == 0)
+      break;
+    if (got != 24 || n == 7)
+      return 2;
+    save_name((char *)o + 576 + 16 * n, (void *)((char *)o + 768));
+    ++n;
+  }
+  o[5] = n;
+  o[6] = close(a);
+  o[7] = close(d);
+  return 0;
+}
+
+int filesystem_dir_errors(u64 *o) {
+  int d = open("/fixture", 040000), f = open("/fixture/input", 0);
+  o[0] = __getdents64(d, (char *)o + 768, 23);
+  o[1] = *__errno();
+  o[2] = lseek(d, 0, 1);
+  o[3] = __getdents64(d, (void *)-1UL, 24);
+  o[4] = *__errno();
+  o[5] = lseek(d, 0, 1);
+  o[6] = __getdents64(f, (char *)o + 768, 24);
+  o[7] = *__errno();
+  o[8] = read(d, (char *)o + 512, 1);
+  o[9] = *__errno();
+  o[10] = fdopendir(f) == 0;
+  o[11] = *__errno();
+  DIR *s = fdopendir(d);
+  o[12] = s != 0;
+  o[13] = closedir(s);
+  o[14] = close(d);
+  o[15] = *__errno();
+  o[16] = close(f);
+  o[17] = closedir(0);
+  o[18] = *__errno();
+  return 0;
+}
+
+int stdio_output_fd(u64 *o) {
+  FILE *f = fdopen(1, "w");
+  o[0] = f != 0;
+  o[1] = setvbuf(f, 0, 2, 0);
+  o[2] = fputs("stream\n", f);
+  o[3] = fclose(f);
+  o[4] = write(1, "x", 1);
+  o[5] = *__errno();
+  return 0;
+}
+int stdio_flush_all(u64 *o) {
+  FILE *a = fopen("/fixture/input", "w+"), *b = fopen("/fixture/input", "a");
+  char *p = (char *)o;
+  o[0] = setvbuf(a, p + 768, 0, 8);
+  o[1] = setvbuf(b, p + 800, 0, 8);
+  o[2] = fwrite("one", 1, 3, a);
+  o[3] = fwrite("two", 1, 3, b);
+  o[4] = fflush(0);
+  o[5] = fseek(a, 0, 0);
+  o[6] = fread(p + 512, 1, 8, a);
+  o[7] = fclose(a);
+  o[8] = fclose(b);
+  return 0;
+}
+int filesystem_closed_dir(u64 *o) {
+  DIR *d = opendir("/fixture");
+  struct dirent64 *e = readdir(d);
+  if (!e)
+    return 1;
+  save_name((char *)o + 512, e);
+  o[0] = close(dirfd(d));
+  e = readdir(d);
+  if (!e)
+    return 2;
+  save_name((char *)o + 528, e);
+  e = readdir(d);
+  if (!e)
+    return 3;
+  save_name((char *)o + 544, e);
+  *__errno() = 717;
+  o[1] = readdir(d) == 0;
+  o[2] = *__errno();
+  o[3] = closedir(d);
+  o[4] = *__errno();
+  return 0;
+}
+
+int stdio_cross_stream_read(u64 *o, int direct, int closed) {
+  char *b = (char *)o;
+  FILE *writer = fopen("/fixture/output", "w");
+  FILE *reader = fopen("/fixture/input", "r");
+  o[0] = setvbuf(writer, b + 768, 1, 8);
+  o[1] = setvbuf(reader, b + 800, 1, 8);
+  o[2] = fwrite("xy", 1, 2, writer);
+  int fd = fileno(writer);
+  o[3] = closed ? close(fd) : 0;
+  *__errno() = 717;
+  o[4] = fread(b + 512, 1, direct ? 9 : 1, reader);
+  o[5] = *__errno();
+  o[6] = ferror(writer);
+  o[7] = ferror(reader);
+  o[8] = lseek(fd, 0, 1);
+  o[9] = fclose(reader);
+  o[10] = fclose(writer);
+  return 0;
+}
+
+int stdio_direct_update(u64 *o) {
+  char *b = (char *)o;
+  int fd = open("/fixture/input", 2);
+  FILE *f = fdopen(fd, "r+");
+  o[0] = setvbuf(f, b + 768, 0, 4);
+  o[1] = fwrite("abc", 1, 3, f);
+  // Observe API 28's direct-read shortcut before an actual refill changes
+  // direction. The pending output remains attached to the FILE until then.
+  o[2] = fread(b + 512, 1, 5, f);
+  o[3] = lseek(fd, 0, 1);
+  o[4] = ferror(f);
+  o[5] = fread(b + 528, 1, 1, f);
+  o[6] = lseek(fd, 0, 1);
+  o[7] = ftell(f);
+  o[8] = fclose(f);
+  fd = open("/fixture/input", 0);
+  o[9] = read(fd, b + 544, 15);
+  o[10] = close(fd);
+  return 0;
+}

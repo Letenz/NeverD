@@ -176,7 +176,14 @@ U64 files_open_observed_errors(void) {
 U64 files_open_unobserved(U64 Mode) {
   const char *Name = Mode == 0 ? Path : "/fixture///";
   U64 Flags = Mode == 2 ? DirectoryOnly : DirectIO;
-  raw(OpenAt, 0, (U64)Name, Flags, 0);
+  U64 F = raw(OpenAt, 0, (U64)Name, Flags, 0);
+  if (Mode == 2) {
+    CHECK(F, 3);
+    CHECK(raw(Read, F, (U64)Pages, 1, 0), (U64)-21);
+    CHECK(raw(Seek, F, 0, 1, 0), 0);
+    CHECK(raw(Close, F, 0, 0, 0), 0);
+    return 0;
+  }
   return 99;
 }
 
@@ -687,6 +694,8 @@ U64 files_unsupported(U64 Mode) {
     return raw(Read, 0, (U64)Pages, 1, 0);
   if (Mode == 5)
     return raw(OpenAt, 0, (U64) "/fixture", 0, 0);
+  if (Mode == 7)
+    return raw(OpenAt, 0, (U64) "/fixture/new", 0100, 0);
   U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
   return raw(Seek, F, 0, 3, 0);
 }

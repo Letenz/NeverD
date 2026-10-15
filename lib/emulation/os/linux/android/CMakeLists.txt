@@ -12,6 +12,8 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidSignals.cpp
   AndroidStdio.cpp
   AndroidStdioRead.cpp
+  AndroidStdioWrite.cpp
+  AndroidDirectories.cpp
   AndroidStrings.cpp
   AndroidArguments.cpp
   AndroidFormatting.cpp

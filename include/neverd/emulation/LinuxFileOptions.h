@@ -32,7 +32,7 @@ struct LinuxFileMetadata {
   LinuxTimespec ChangeTime;
 };
 
-/// Closed, immutable file catalogue for Linux ELF64 and Android workloads.
+/// Closed initial file catalogue for Linux ELF64 and Android workloads.
 /// Keys are canonical absolute guest paths, never host paths. Each open has
 /// its own cursor; all guest threads share the workload's descriptor table.
 struct LinuxFileOptions {
@@ -50,6 +50,17 @@ struct LinuxFileOptions {
   /// Explicit device sessions in the same closed namespace. These are input
   /// contracts, not inferred drivers, regular files, or host device handles.
   std::map<std::string, LinuxDeviceOptions> Devices;
+  /// Additional empty directories. Catalogue parents already denote dirs.
+  /// Directory enumeration assigns workload-local inode identities when no
+  /// explicit regular-file inode is supplied; these are not host observations.
+  std::vector<std::string> Directories;
+  /// Opt-in live /proc/self/fd links and enumeration, owned by the FD table.
+  /// Other proc entries remain explicit inputs, not inferred kernel state.
+  bool DynamicProcFDs = false;
+  /// Writable existing memory files and their maximum byte extents. An absent
+  /// grant is unsupported, not an inferred permission or filesystem error.
+  /// Reservations count against the file byte budget. No host file is changed.
+  std::map<std::string, uint64_t> WriteLimits;
 };
 } // namespace neverd::emulation
 #endif

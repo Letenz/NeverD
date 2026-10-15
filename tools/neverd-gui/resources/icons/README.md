@@ -20,9 +20,13 @@ drawn in, which the style sheet picks with its Mode placeholder.
 `app/IconSet.def` is the record of the set: every icon by the group of
 commands it serves and what it shows, and every color the set draws with. The
 workbench unit tests fail when an icon file is not in the record or a recorded
-icon has no file, when an icon leaves the 16 px grid (a chrome glyph takes
-the size of the control part it draws) or paints a color the record does not
-list, and when one embeds a raster image, text, an external reference, a
-script or an editor's metadata. A new icon is drawn by hand in
-the same style and recorded there with its group. The window icon is the
-NeverD logo from `docs/assets`, which keeps its own colors.
+icon has no file, when an icon leaves the 16 px grid (a chrome glyph takes the
+size of the control part it draws) or paints a color the record does not list,
+and when one embeds a raster image, text, an external reference, a script or
+an editor's metadata. `scripts/check_gui_icons.py`, run by the GUI workflow,
+fails when a horizontal or vertical stroke or an unstroked fill edge falls
+between two pixels at the icon's viewBox size, where it would draw blurred and
+darker than its color; `NEVERD_ICON_SOFT_LINE` in the record names the icons
+allowed one, with the reason. A new icon is drawn by hand in the same style
+and recorded there with its group. The window icon is the NeverD logo from
+`docs/assets`, which keeps its own colors.

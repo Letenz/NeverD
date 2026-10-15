@@ -80,7 +80,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
 | `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
-| `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
+| `linux_files` | Absent | Explicit guest file catalogue, bounded write grants and optional live FD links |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
 | `linux_kernel` | Absent | Explicit released GKI branch, fixed guest task catalogue or observed absent guest kernel interfaces |
@@ -419,13 +419,13 @@ sleep and real device clocks remain unsupported.
 
 ## Explicit memory files
 
-`linux_files` supplies immutable file bytes to Linux ELF64 and Android native
+`linux_files` supplies initial file bytes to Linux ELF64 and Android native
 workloads. C++ uses `ProcessOptions::LinuxFiles`; C, Python and CLI share this
 strict JSON contract:
 
 Optional `devices` entries add [explicit descriptor-owned ioctl transactions and read-only mapping snapshots](linux-device-contracts.md)
 in the same namespace. Device responses are declared inputs; regular file
-bytes remain immutable and device mappings are not implied.
+bytes remain immutable unless granted a `write_limit`; device mappings are not implied.
 
 
 Optional `symbolic_links` entries use the same canonical absolute namespace:
@@ -449,7 +449,7 @@ The error ordering follows the [Linux readlink contract](https://github.com/torv
 ```
 
 `files` is required and may be empty. Every entry requires `path` and
-`bytes_hex`, with optional `metadata`; empty bytes describe an empty file. Paths must be distinct,
+`bytes_hex`, with optional `metadata` and `write_limit`; empty bytes describe an empty file. Paths must be distinct,
 absolute and canonical, with no NUL, empty, `.` or `..` components or trailing
 slash. Paths have fewer than 4096 bytes and components at most 255 bytes.
 A file cannot be another file's parent directory. The catalogue holds at most
@@ -475,17 +475,17 @@ pathname and descriptor-exhaustion failures before reaching an opened file;
 the catalogue does not infer its backing filesystem's direct-I/O support.
 ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
 `0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
-Other flags, relative paths, internal repeated
-separators, `.`/`..` components,
-directory opens, writes/creation, symlinks, duplication and descriptor-control
-operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
+Unlisted flags, cwd-relative paths, internal repeated separators, `..`
+components, creation, symlink traversal and descriptor-control operations
+remain unsupported. `openat` additionally resolves canonical relative names
+and `.` against a live directory FD. Exec is unmodeled, so close-on-exec flags have
 no observable transition in this subset.
 
 Guest queries accept canonical absolute names followed by one or more `/`
 characters. Trailing separators require the final object to be a directory:
 queries of a regular file with a trailing slash return `ENOTDIR`, and missing
 names still return `ENOENT`. Paths consisting only of slashes name the root.
-Directory opens and directory metadata remain unsupported. This parsing does
+Directory opens are modeled; directory stat metadata remains unknown. This parsing does
 not relax the canonical keys required by the catalogue configuration. The
 directory requirement follows Linux
 [pathname lookup](https://www.kernel.org/doc/html/latest/filesystems/path-lookup.html).
@@ -511,6 +511,59 @@ the existing captured stdout/stderr streams. Closing those slots enables
 ordinary file reuse; writes through a closed slot or read-only file return
 `EBADF`. Reading stdin remains unsupported; it is never assumed to be empty.
 Descriptors, open flags and seek modes consume their low 32 bits.
+
+### Directories and live FD links
+
+Catalogue parents and `/` are enumerable directories. `directories` optionally
+adds canonical empty directory paths. They share the 256-entry catalogue limit.
+`getdents64` (x64 217, AArch64 61) emits LP64 records with 8-byte alignment,
+opaque continuation cookies, type, inode, name and NUL; padding remains
+unchanged. `.` and `..` precede byte-sorted catalogue children. Supplied file
+inodes are retained; other inodes are deterministic workload-local identities,
+not captured host values. At most 8,448 such identities are admitted. A device
+whose char/block type is unknown has `DT_UNKNOWN`. `dup` shares the directory
+cursor; independent opens do not. Small buffers, EOF, invalid descriptors,
+non-directories and wholly inaccessible outputs have explicit errno behavior;
+mixed-permission record writes stop as unsupported. Directory reads return
+`EISDIR`. Directory `SEEK_SET`/`SEEK_CUR` accepts nonnegative cookies.
+
+`dynamic_proc_fds: true` reserves `/proc/self/fd` for live links and enumeration.
+Opening, duplicating, replacing, closing and reusing an FD immediately changes
+that namespace; no stale static link overrides it. Known file, directory and
+device paths come from their actual open description. Standard captured streams
+have no inferred tty/pipe pathname, so their readlink query stops explicitly.
+`/proc/self` reports the modeled process ID. Conflicting catalogue entries are
+rejected. The virtual FD table preallocates `descriptor_limit` rounded up to
+64 slots: proc cookies include closed slots and reach that table boundary at
+EOF. Rewind is required to revisit reused slots below the cursor. These rules
+follow the kernel [record ABI](https://github.com/torvalds/linux/blob/v5.10/fs/readdir.c)
+and [FD iteration](https://github.com/torvalds/linux/blob/v5.10/fs/proc/fd.c).
+This option does not supply dynamic maps, task, status or fdinfo files, nor
+PID aliases, proc mount metadata or general proc symlink traversal.
+
+### Bounded writes to existing files
+
+An entry's `write_limit` grants mutable content with that maximum extent.
+The full reservation counts against the 16 MiB file budget. The grant does
+not assert real DAC/SELinux permissions or disk capacity. `O_WRONLY`, `O_RDWR`,
+`O_TRUNC` and `O_APPEND` use one mutable object per catalogue path, shared by
+all opens; cursor and flags remain per open description. `dup` shares both.
+`write` overwrites, zero-fills holes, preserves readable-page prefixes on a
+partial input fault, and chooses the current object end for append. Kernel
+validation checks the original signed cursor and count before append selects
+EOF, following the [VFS write contract](https://github.com/torvalds/linux/blob/v5.10/fs/read_write.c).
+Reads and newly opened descriptors observe the resulting bytes. Missing write
+grants and exhausted reservations stop explicitly; they are not fabricated
+EACCES/ENOSPC results. `O_CREAT` can open an existing entry; `O_EXCL` returns
+EEXIST before truncation. Creating absent objects remains unmodeled. `O_CREAT | O_DIRECTORY` also stops
+explicitly because its behavior depends on the Linux release.
+
+Any write or truncation invalidates captured stat observations. A later stat
+stops rather than returning stale size, block counts or timestamps. The known
+filesystem block size remains usable for stdio buffer selection. Vectored
+mutable-file writes, regular file mappings, truncate syscalls, unlink/rename,
+new objects, timestamps and general permission changes remain unmodeled.
+Captured stdout/stderr keep their existing bounded output semantics.
 
 Directory creation supports only failures already determined by pathname
 lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
@@ -586,8 +639,9 @@ and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/ua
 `newfstatat` (x64 262, AArch64 79), Bionic `fstatat`/`fstatat64` and variadic
 `syscall` query those same observations. Absolute paths in the supported form ignore dirfd;
 missing entries return `ENOENT`, and traversal through a regular file returns
-`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for this
-catalogue, which has neither symlinks nor automounts. A non-NULL empty pathname
+`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for supported
+regular-file queries; link metadata, link traversal and automount behavior
+remain unmodeled. A non-NULL empty pathname
 with `AT_EMPTY_PATH` queries an existing descriptor without changing its cursor;
 without that flag it returns `ENOENT`. Closed descriptors return `EBADF`.
 The directory and flags arguments use their low 32 bits. Invalid flag bits
