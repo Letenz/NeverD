@@ -4093,9 +4093,9 @@ displacements and rejection of extra instructions or indexed addresses.
 The native receipt tests require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
 packages. Older r4 builds retain analysis and refusal coverage but cannot run
-these compiler-protocol tests. The focused Wine job and native Windows source
-replay use the complete `all` profile with the published compiler; an LLVM
-workflow artifact override is no longer needed for these 64 source scenarios.
+these compiler-protocol tests. The explicit `r5` source replay profile covers
+these 64 scenarios. The complete `all` profile additionally requires the
+dynamic-call capability described below.
 
 `registration_state_dispatch.s` adds `longjmp-state-byte-high-bits`: the same
 filter byte store produces complete states 0 and 256. Four alternating invocations
@@ -4134,6 +4134,23 @@ The corpus filter-thunk HighC test guards readable `xcpt4` output against
 snapshot-index budget regressions.
 Companion tests preserve distinct source snapshots, converging sibling paths,
 recurrent-path rejection and observable finally writes.
+
+`longjmp-shared-parent-call` reaches one nonlocal call through two active levels
+of the 259-row table. `shared-parent-throwing-call` raises from one ordinary
+helper call and must select different handlers on alternating invocations.
+Each fixture checks 20 original/generated executions, both patch modes,
+optimization settings and rebasing. They require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_DYNAMIC_CALLS`. Source-IR mutations remove or
+alter call-site markers, noinline and notail, or move authority to a callee,
+scope intrinsic or function. `RegistrationSEHDynamicScope` checks that PHIs
+retain original predecessor/value pairs across scope selection.
+Deleted or duplicated source-call receipts and changed operation identities
+also fail both the generic exception counters and PE32 source replay. LLVM
+regressions check live setjmp state, SEH3/EH4 emission, unmarked calls and rejection
+of hoisting a later state reset before an inherited call. A separate register
+liveness regression checks a value observed only after handler entry, including
+a nonreturning call and optimized IR. The runtime handler-selection fixture
+reproduced a stale frame address in EDI before this compiler fix.
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
 returns, captured search cursors, arbitrary negative dispositions, continuation

@@ -399,6 +399,21 @@ MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF
 source replay consume those same bindings.
+`MedLLVMRegistrationSEHDynamicScope` owns parent blocks with several proved
+incoming states. It keeps PHIs on the original predecessor edges and selects
+one scope around a single source body. With LLVM's dynamic-call capability,
+ordinary calls explicitly inherit the live physical state and remain noinline
+and notail. LLVM's x86 state analysis cannot use a later resetting call to infer
+the initial state before an inherited call. `COFFRegistrationSEHDynamicScope`
+independently checks selector storage, complete scope choices, source boundaries
+and every call marker; a marker on a function or outside the checked body grants
+no installation permission. Source-call identity, argument binding and frame
+privacy keep their existing owners.
+`COFFRegistrationSEHCall` binds each dynamic call to its adjacent source receipt.
+The generic exception counter and PE32 replay share this check; the counted call
+set must equal the calls inside authenticated dynamic scope bodies.
+LLVM also models the x86 runtime's register clobber at SEH handler entry, so
+values used only after an exception cannot remain in callee-saved registers.
 With `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, LLVM maps each callback
 write's source semantic token to its physical parent registration and generated
 state. MC receipts bind parent/callback ownership, frame layout, write identity,

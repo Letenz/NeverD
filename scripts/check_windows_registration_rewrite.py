@@ -78,7 +78,9 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-filter-callback-activation": (42, 2345),
               "longjmp-state-byte-high-bits": (43, 2),
               "longjmp-finally-incidental-result": (44, 2),
-              "longjmp-deep-scope-chain": (45, 2)})
+              "longjmp-deep-scope-chain": (45, 2),
+              "longjmp-shared-parent-call": (46, 2),
+              "shared-parent-throwing-call": (47, 2)})
 
 
 class PE32:
@@ -277,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
         sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_deep_scopes.s" if case == 45 else
+                   else ["registration_shared_calls.s" if case == 47 else
+                         "registration_deep_scopes.s" if case in (45, 46) else
                          "registration_state_dispatch.s" if case in (43, 44) else
                          "registration_filter_state.s" if case >= 36 else
                          "registration_state.s" if case >= 30 else

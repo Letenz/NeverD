@@ -29,10 +29,11 @@ else:
 
 
 def source_cases(profile: str) -> dict[str, tuple[int, int]]:
-    if profile not in ("all", "r4", "seh3-eh4"):
+    if profile not in ("all", "r5", "r4", "seh3-eh4"):
         raise ValueError("unknown source reconstruction profile")
+    limit = 46 if profile == "r5" else 30
     return {name: case for name, case in CASES.items()
-            if (profile == "all" or case[0] < 30) and
+            if (profile == "all" or case[0] < limit) and
             (profile != "seh3-eh4" or not name.startswith("eh4-gs-"))}
 
 
@@ -66,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--source-only", action="store_true",
                         help="replay every source case without separate cookie-object fixtures")
-    parser.add_argument("--source-profile", choices=("all", "r4", "seh3-eh4"),
+    parser.add_argument("--source-profile", choices=("all", "r5", "r4", "seh3-eh4"),
                         default="all", help="select an explicitly older evidence checkpoint")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:

@@ -152,10 +152,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
         if (Level != Sentinel &&
             (Level < 0 || uint32_t(Level) >= Chain.Scopes.size()))
           return false;
-      for (const auto &I : *IR->second)
-        if (llvm::isa<llvm::PHINode>(I) || (llvm::isa<llvm::CallBase>(I) &&
-                                            !llvm::isa<llvm::IntrinsicInst>(I)))
-          return false;
+      if (!x86_registration::canEmitDynamicSEHScope(*IR->second))
+        return false;
       Dynamic.emplace(IR->second, State->second->Levels);
       Active.emplace(IR->second, x86_registration::DynamicScopeLevel);
       continue;
@@ -792,7 +790,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       for (int32_t Level : Choice->second)
         if (Level >= 0)
           Unwinds.emplace(Level, Regions[Level].Unwind);
-      x86_registration::emitDynamicSEHScope(
+      ProtectedCalls += x86_registration::emitDynamicSEHScope(
           *Block, *FrameAlloca, FrameEntrySPOffset, EH.CodeRange.Begin,
           SourceBlock, Choice->second, Unwinds, *TryBegin, *TryEnd);
       continue;
