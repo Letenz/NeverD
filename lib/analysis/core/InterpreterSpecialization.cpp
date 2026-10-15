@@ -505,6 +505,10 @@ bool supportedWideOperation(const LowOp &Op,
   case NdOp::INT_ZEXT:
   case NdOp::INT_SEXT:
     return Output && Op.NumInputs == 1 && validValue(Op.Inputs[0]);
+  case NdOp::CONCAT:
+    return Output && Op.NumInputs == 2 && Op.Inputs[0].Size == 8 &&
+           Op.Inputs[1].Size == 8 && validValue(Op.Inputs[0]) &&
+           validValue(Op.Inputs[1]);
   case NdOp::INT_AND:
   case NdOp::INT_OR:
   case NdOp::INT_XOR:

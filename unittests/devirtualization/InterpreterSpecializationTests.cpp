@@ -2434,6 +2434,17 @@ struct WideByteOracle {
         case NdOp::COPY:
           write(O.Output, read(O.Inputs[0]));
           break;
+        case NdOp::CONCAT: {
+          const auto High = read(O.Inputs[0]);
+          const auto Low = read(O.Inputs[1]);
+          if (High.size() + Low.size() != O.Output.Size)
+            return false;
+          auto Bytes = Order == llvm::endianness::little ? Low : High;
+          const auto &Last = Order == llvm::endianness::little ? High : Low;
+          Bytes.insert(Bytes.end(), Last.begin(), Last.end());
+          write(O.Output, Bytes);
+          break;
+        }
         case NdOp::INT_ZEXT:
         case NdOp::INT_SEXT: {
           auto A = read(O.Inputs[0]);
@@ -2995,6 +3006,169 @@ TEST(InterpreterSpecialization, WideIntegerExtensionsAndNumericSlices) {
           EXPECT_EQ(Oracle.read(reg(32, Width)), Oracle.read(Input));
         }
       }
+}
+
+TEST(InterpreterSpecialization, WideIntegerConcatPreservesWordsAndAliases) {
+  constexpr uint64_t High = 0x8172635445362718;
+  constexpr uint64_t Low = 0x19a2b3c4d5e6f708;
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (unsigned Layout = 0; Layout != 5; ++Layout) {
+      const auto A = reg(0x500), B = reg(0x508);
+      const auto Wide = Layout == 0 ? NdVar::tmp(0x10000, 16)
+                                    : reg(Layout == 1 ? 0x500 : 0x540, 16);
+      const auto HighInput = Layout == 2 || Layout == 4 ? constant(High) : A;
+      const auto LowInput = Layout == 3 || Layout == 4 ? constant(Low) : B;
+      Provider P;
+      P.add(0x100,
+            {op(NdOp::CONCAT, Wide, {HighInput, LowInput}),
+             op(NdOp::SUBBYTES, reg(0x580), {Wide, constant(0)}),
+             op(NdOp::SUBBYTES, reg(0x588), {Wide, constant(8)}), ret()});
+      auto O = wideOptions();
+      O.ByteOrder = Order;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      EXPECT_EQ(count(R.Residual, NdOp::CONCAT), 1U);
+      WideByteOracle Oracle(Order);
+      Oracle.word(A, High);
+      Oracle.word(B, Low);
+      Oracle.word(reg(0x4f8), 0x1234);
+      Oracle.word(reg(0x510), 0x5678);
+      ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+      EXPECT_EQ(Oracle.number(reg(0x580)), Low);
+      EXPECT_EQ(Oracle.number(reg(0x588)), High);
+      EXPECT_EQ(Oracle.number(reg(0x4f8)), 0x1234U);
+      EXPECT_EQ(Oracle.number(reg(0x510)), 0x5678U);
+    }
+}
+
+TEST(InterpreterSpecialization, WideIntegerConcatHighWordControlsBothPaths) {
+  const auto Wide = NdVar::tmp(0x10000, 16);
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::CONCAT, Wide, {reg(0), reg(8)}),
+         op(NdOp::SUBBYTES, reg(16), {Wide, constant(8)}),
+         op(NdOp::INT_EQUAL, reg(24, 1), {reg(16), constant(0x8172)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(24, 1)})},
+        0x110);
+  P.add(0x110, {op(NdOp::COPY, reg(32), {constant(17)}), ret()});
+  P.add(0x120, {op(NdOp::COPY, reg(32), {constant(31)}), ret()});
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    auto O = wideOptions();
+    O.ByteOrder = Order;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::RETURN), 2U);
+    for (uint64_t High : {uint64_t{0}, uint64_t{0x8172}, UINT64_MAX}) {
+      WideByteOracle Oracle(Order);
+      Oracle.word(reg(0), High);
+      Oracle.word(reg(8), 0x8172);
+      ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+      EXPECT_EQ(Oracle.number(reg(32)), High == 0x8172 ? 31U : 17U);
+    }
+  }
+}
+
+TEST(InterpreterSpecialization, WideIntegerConcatDecodedDwordShuffle) {
+  Decoder D;
+  ASSERT_TRUE(D.init(Arch::X64));
+  D.setStrict(true);
+  const auto Source = reg(x86reg::XMM0, 16);
+  const std::vector<uint8_t> Input{0x10, 0x91, 0x32, 0xd3, 0x54, 0x35,
+                                   0xf6, 0x77, 0x88, 0x09, 0xaa, 0x4b,
+                                   0xcc, 0xed, 0x6e, 0x1f};
+  for (bool Aliased : {false, true})
+    for (unsigned Selector = 0; Selector != 256; ++Selector) {
+      const uint8_t Bytes[]{0x66, 0x0f, 0x70, uint8_t(Aliased ? 0xc0 : 0xc8),
+                            uint8_t(Selector)};
+      DecodedInsn I{};
+      ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), 0x100, I),
+                sizeof(Bytes));
+      std::vector<LowOp> Ops;
+      D.liftToLow(I, Ops);
+      Provider P;
+      P.add(0x100, Ops, 0x105);
+      P.Code[0x100].Origin.Size = sizeof(Bytes);
+      P.add(0x105, {ret()});
+      const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+      ASSERT_TRUE(R.complete()) << Selector << ": " << R.Diagnostic;
+      WideByteOracle Oracle(llvm::endianness::little);
+      Oracle.write(Source, Input);
+      Oracle.word(reg(x86reg::CF, 1), 1);
+      ASSERT_TRUE(Oracle.run(R.Residual)) << Oracle.Diagnostic;
+      std::vector<uint8_t> Expected(16);
+      for (unsigned Lane = 0; Lane != 4; ++Lane)
+        for (unsigned Byte = 0; Byte != 4; ++Byte)
+          Expected[Lane * 4 + Byte] =
+              Input[((Selector >> (2 * Lane)) & 3) * 4 + Byte];
+      EXPECT_EQ(Oracle.read(reg(Aliased ? x86reg::XMM0 : x86reg::XMM1, 16)),
+                Expected);
+      if (!Aliased)
+        EXPECT_EQ(Oracle.read(Source), Input);
+      EXPECT_EQ(Oracle.number(reg(x86reg::CF, 1)), 1U);
+    }
+}
+
+TEST(InterpreterSpecialization, WideIntegerConcatRejectsMalformedAndShortRuns) {
+  const auto A = reg(0x500), B = reg(0x508), Wide = reg(0x540, 16);
+  std::vector<LowOp> Bad{op(NdOp::CONCAT, Wide, {}),
+                         op(NdOp::CONCAT, Wide, {A}),
+                         op(NdOp::CONCAT, Wide, {A, B, B}),
+                         op(NdOp::CONCAT, Wide, {reg(A.Offset, 4), B}),
+                         op(NdOp::CONCAT, Wide, {A, reg(B.Offset, 16)}),
+                         op(NdOp::CONCAT, reg(Wide.Offset, 9), {A, B}),
+                         op(NdOp::CONCAT, constant(0, 16), {A, B}),
+                         op(NdOp::CONCAT, NdVar::ram(0x600, 16), {A, B}),
+                         op(NdOp::CONCAT, Wide, {NdVar::ram(0x600, 8), B}),
+                         op(NdOp::CONCAT, reg(UINT64_MAX - 14, 16), {A, B}),
+                         op(NdOp::CONCAT, Wide, {reg(UINT64_MAX - 6), B})};
+  auto Ordered = op(NdOp::CONCAT, Wide, {A, B});
+  Ordered.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  Bad.push_back(Ordered);
+  auto Segmented = op(NdOp::CONCAT, Wide, {A, B});
+  Segmented.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  Bad.push_back(Segmented);
+  for (const auto &Instruction : Bad) {
+    Provider P;
+    P.add(0x100, {Instruction, ret()});
+    const auto R = specializeInterpreter(P, {0x100}, wideOptions());
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  Provider P;
+  P.add(0x100, {op(NdOp::CONCAT, Wide, {A, B}), ret()});
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    auto O = wideOptions();
+    O.ExplicitMachineState = Mode & 1;
+    O.NormalNonfaultingExecution = Mode & 2;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  auto O = wideOptions();
+  O.MaxOperations = 2;
+  ASSERT_TRUE(specializeInterpreter(P, {0x100}, O).complete());
+  O.MaxOperations = 1;
+  const auto Short = specializeInterpreter(P, {0x100}, O);
+  EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(Short.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, WideIntegerConcatKeepsUnknownAddressOrigin) {
+  const auto Wide = NdVar::tmp(0x10000, 16);
+  Provider P;
+  P.add(0x100, {op(NdOp::LOAD, reg(0), {reg(8)}),
+                op(NdOp::CONCAT, Wide, {reg(0), constant(7)}),
+                op(NdOp::SUBBYTES, reg(16), {Wide, constant(8)}),
+                op(NdOp::STORE, {}, {reg(16), constant(42)}), ret()});
+  auto O = wideOptions();
+  O.FrameBaseRegister = SymRegisterRange{32, 8};
+  O.RequireRestoredFrameAtReturn = true;
+  O.ExternalStoresPreserveEntryReturnSlot = true;
+  const auto R = specializeInterpreter(P, {0x100}, O);
+  EXPECT_FALSE(R.complete());
+  EXPECT_NE(R.Diagnostic.find("unknown address origin"), std::string::npos)
+      << R.Diagnostic;
+  EXPECT_TRUE(R.Residual.Blocks.empty());
 }
 
 TEST(InterpreterSpecialization, WideIntegerDecodedOverflowControlsResidual) {
