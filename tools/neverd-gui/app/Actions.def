@@ -329,6 +329,11 @@ NEVERD_ACTION(ViewFunctions, QT_TRANSLATE_NOOP("Actions", "&Functions"),
 NEVERD_ACTION(ViewStrings, QT_TRANSLATE_NOOP("Actions", "&Strings"),
               "Shift+F12", "strings",
               QT_TRANSLATE_NOOP("Actions", "Show the strings window"))
+NEVERD_ACTION(ViewLocalTypes, QT_TRANSLATE_NOOP("Actions", "Local t&ypes"),
+              "Shift+F1", "local_types",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show the program's types with their layouts "
+                                "and source"))
 NEVERD_ACTION(ViewSegments, QT_TRANSLATE_NOOP("Actions", "S&egments"),
               "Shift+F7", "segments",
               QT_TRANSLATE_NOOP("Actions", "Show the segments window"))

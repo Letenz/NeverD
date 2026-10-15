@@ -120,6 +120,11 @@ public:
   bool loadsPdbFiles() const {
     return capabilities_.contains(QStringLiteral("pdb_load"));
   }
+  /// Whether the worker lists the program's local types (local_types,
+  /// local_type, local_types_source).
+  bool listsLocalTypes() const {
+    return capabilities_.contains(QStringLiteral("local_types"));
+  }
   /// Whether the worker finds the PDB a PE names before opening it
   /// (pdb_reference), and opens a PE without it.
   bool findsPdbFiles() const {

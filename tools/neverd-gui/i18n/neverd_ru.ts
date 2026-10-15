@@ -847,6 +847,14 @@
         <source>Change the name of the current function and what it is</source>
         <translation>Изменить имя текущей функции и её свойства</translation>
     </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>Локаль&amp;ные типы</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>Показать типы программы с их размещением и исходным кодом</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2272,6 +2280,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Could not tell whether %1 has a symbol table: %2</source>
         <translation>Не удалось определить, есть ли в %1 таблица символов: %2</translation>
     </message>
+    <message>
+        <source>Local Types</source>
+        <translation>Локальные типы</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3372,6 +3384,237 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Discard unsaved analyst assertions and continue?</source>
         <translation>Отбросить несохранённые утверждения аналитика и продолжить?</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C header (*.h)</source>
+        <translation>Заголовок C (*.h)</translation>
+    </message>
+    <message>
+        <source>C++ header (*.hpp)</source>
+        <translation>Заголовок C++ (*.hpp)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Имена Windows (ULONG)</translation>
+    </message>
+    <message>
+        <source>IDA names (unsigned int)</source>
+        <translation>Имена IDA (unsigned int)</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>Ключевые слова C (unsigned long)</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>Точная ширина (uint32_t)</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>Фильтр типов по имени</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Имя</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Вид</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Размер</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Поля</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>Вернуться к ранее показанному типу (Esc)</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>Размещение</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>Копировать размещение или исходный код</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>Экспортировать типы как исходный код</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>Экспортировать этот тип…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>Экспортировать выбранные типы…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>Экспортировать все типы…</translation>
+    </message>
+    <message>
+        <source>How C and C++ name builtin types</source>
+        <translation>Как C и C++ называют встроенные типы</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>Шестнадцатеричные смещения</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>С зависимостями</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>Также объявить все типы, которые нужны этому, чтобы исходный код компилировался</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>Проверки размещения</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>Добавлять после каждого типа проверки размера и смещений, которые выполняет компилятор</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>Поле</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Смещение</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Байты</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>У этого движка нет локальных типов.</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>Чтение типов программы…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>Не удаётся прочитать типы: %1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>PDB не определяет типов.</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB with types.</source>
+        <translation>Нет локальных типов: у программы нет PDB с типами.</translation>
+    </message>
+    <message>
+        <source>Types: %1 · PDB · %2</source>
+        <translation>Типов: %1 · PDB · %2</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>Типов, размещение которых не совпадает с PDB: %1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>Не удаётся разместить тип: %1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// Не удаётся сформировать исходный код типа: %1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>структура</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>объединение</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>перечисление</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>псевдоним типа</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>тип функции</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>байт: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>выравнивание: %1</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>упаковка: %1</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>только объявлен</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>Элемент</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>Значение</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>(заполнение)</translation>
+    </message>
+    <message>
+        <source>Double-click to open %1</source>
+        <translation>Дважды щёлкните, чтобы открыть %1</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>Экспорт локальных типов</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Не удаётся записать %1</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>Экспортировано в %1</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>Не удаётся экспортировать типы: %1</translation>
     </message>
 </context>
 </TS>
