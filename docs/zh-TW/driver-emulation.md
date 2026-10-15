@@ -360,6 +360,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `MmMapLockedPagesSpecifyCache`、`MmGetSystemAddressForMdlSafe`、`MmUnmapLockedPages` | 使用者／系統對映繼承實體頁面快取屬性及各自權限；非分頁集區 MDL 透過安全輔助函式重用原系統對映 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 獨立或 IRP 關聯的非分頁集區／使用者描述元；可修改鏈指標，鎖頁與系統別名獨立；不支援配額 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 明確配置的工作階段登錄、每個控制代碼的權限與生命週期、查詢緩衝區大小及修改；不存取主機登錄 |
+| `ZwEnumerateValueKey` | 依建立順序列舉 Basic、Full、Partial 值資訊；取代保留索引，刪除壓縮索引，重建附加至尾端。需要 `KEY_QUERY_VALUE`，超出範圍傳回 `STATUS_NO_MORE_ENTRIES`。與值查詢共用序列化：x64 Full 資料按 8 位元組對齊，空資料位移為 `0xffffffff`，填補和不完整 UTF-16 單元維持原值 |
 | `ExAllocatePool` | 舊版雙參數介面，支援集區類型 `0`、`1`、`512` 的資料配置；共用對齊、未初始化位元組模型及大小／IRQL 檢查，耗盡時傳回 NULL。透過 `ExFreePool` 或零標籤的 `ExFreePoolWithTag` 釋放；存活配置仍屬於核心相依狀態。 |
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | 對集區類型 `0`、`1`、`512` 提供資料配置；大小／標籤必須為正，帶標籤釋放必須相符，位址不重複使用 |
 | `IoCreateDevice`、`IoDeleteDevice` | 裝置類型為 `0x22`，characteristics 為 `0` 或 `0x100`，擴充區大小有界，名稱為 ASCII `\Device\Name` |

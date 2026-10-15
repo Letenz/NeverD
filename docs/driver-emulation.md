@@ -562,6 +562,7 @@ The initial API model deliberately has a finite contract:
 | `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | MDL system aliases and process-owned user views retain physical cache attributes and permissions; nonpaged pool MDLs reuse the original pool mapping through the safe helper |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | Standalone or IRP-associated nonpaged-pool/user descriptors, mutable chain links, independent locks and shared system aliases; no quota |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | Explicit session registry, per-handle rights and lifetime, query buffer sizing and mutations; no host registry access |
+| `ZwEnumerateValueKey` | Basic, Full and Partial value enumeration in creation order; replacement keeps its index, deletion compacts indices, recreation appends. Requires `KEY_QUERY_VALUE`; out-of-range indices return `STATUS_NO_MORE_ENTRIES`. Shares value-query serialization: x64 Full data is 8-byte aligned, empty data uses offset `0xffffffff`, and padding and incomplete UTF-16 units remain untouched |
 | `ExAllocatePool` | Legacy two-argument data allocation for pool types `0`, `1`, and `512`; shared alignment, uninitialized-byte model, size/IRQL checks and NULL on exhaustion. Free through `ExFreePool` or a zero-tag `ExFreePoolWithTag`; retained allocations remain kernel dependencies. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | Data allocations for pool types `0`, `1`, and `512`; positive size/tag, matching tagged frees, no address reuse |
 | `IoCreateDevice`, `IoDeleteDevice` | Device type `0x22`, characteristics `0` or `0x100`, bounded extensions, ASCII `\Device\Name` names |
@@ -964,6 +965,10 @@ reboot or disk persistence model.
 `ZwQueryValueKey` implements Basic, Full, Partial and their defined Align64
 information classes, including exact lengths, aligned data, partial output and
 distinct `STATUS_BUFFER_TOO_SMALL` / `STATUS_BUFFER_OVERFLOW` results.
+`ZwEnumerateValueKey` accepts Basic, Full and Partial (not Align64), uses
+creation order and returns `STATUS_NO_MORE_ENTRIES` beyond the current count.
+An existing value retains its spelling and position when replaced; deletion
+compacts indices and recreation appends. Snapshots preserve value order.
 `ZwSetValueKey` and `ZwDeleteValueKey` change only this session's tree.
 `ZwDeleteKey` rejects a key with live children; handles to a deleted key return
 `STATUS_KEY_DELETED` until closed. `ZwClose` releases a handle independently of

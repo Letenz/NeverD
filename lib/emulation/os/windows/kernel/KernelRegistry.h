@@ -38,6 +38,9 @@ private:
   struct Key {
     std::string Path;
     std::map<std::string, DriverRegistryValue> Values;
+    // Windows value indices follow the live value list, including insertion
+    // order and deletion compaction, independently of case-insensitive lookup.
+    std::vector<std::string> ValueOrder;
     bool Deleted = false;
     bool Volatile = false;
   };
@@ -57,7 +60,8 @@ private:
                                 llvm::ArrayRef<uint64_t> Arguments,
                                 bool Create);
   llvm::Expected<uint64_t> query(const KernelModel &Model, Key &Key,
-                                 llvm::ArrayRef<uint64_t> Arguments);
+                                 llvm::ArrayRef<uint64_t> Arguments,
+                                 bool Enumerate);
   llvm::Expected<uint64_t> set(const KernelModel &Model, Key &Key,
                                llvm::ArrayRef<uint64_t> Arguments);
 };

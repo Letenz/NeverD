@@ -123,6 +123,20 @@ llvm::Expected<std::vector<uint8_t>> readBytes(const KernelModel &Model,
   return Bytes;
 }
 
+llvm::Error validateOutput(const KernelModel &Model, GuestMemory &Memory,
+                           uint64_t Address, uint32_t Size) {
+  if (!Size)
+    return llvm::Error::success();
+  if (auto E = Model.validateGuestAccess(Address, Size, true))
+    return E;
+  auto Accessible = Memory.canAccess(Address, Size, Write);
+  if (!Accessible)
+    return Accessible.takeError();
+  if (!*Accessible)
+    return registryError("registry output requires writable ordinary RAM");
+  return Memory.validateBacking(Address, Size);
+}
+
 llvm::Expected<std::string> readName(const KernelModel &Model,
                                      GuestMemory &Memory, uint64_t Address,
                                      size_t Limit) {
@@ -222,7 +236,7 @@ llvm::Error KernelRegistry::initialize(
     std::string Path = Input.Path;
     while (true) {
       const std::string Folded = folded(Path);
-      Keys.try_emplace(Folded, Key{Path, {}, false, false});
+      Keys.try_emplace(Folded, Key{Path, {}, {}, false, false});
       if (rootPath(Folded))
         break;
       Path = parentPath(Path);
@@ -232,6 +246,7 @@ llvm::Error KernelRegistry::initialize(
     Entry.Path = Input.Path;
     for (const DriverRegistryValue &Value : Input.Values) {
       Entry.Values.emplace(folded(Value.Name), Value);
+      Entry.ValueOrder.push_back(folded(Value.Name));
       ++ValueCount;
       DataBytes += Value.Data.size();
     }
@@ -247,8 +262,8 @@ std::optional<std::vector<DriverRegistryKey>> KernelRegistry::snapshot() const {
     if (Entry.Deleted)
       continue;
     DriverRegistryKey Output{Entry.Path, {}};
-    for (const auto &[Name, Value] : Entry.Values)
-      Output.Values.push_back(Value);
+    for (const auto &Name : Entry.ValueOrder)
+      Output.Values.push_back(Entry.Values.at(Name));
     Result.push_back(std::move(Output));
   }
   return Result;
@@ -348,8 +363,9 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
   if (auto E = Memory.writeInteger(A[0], NextHandle, 8))
     return E;
   if (!Exists)
-    Keys.emplace(Folded,
-                 Key{Path, {}, false, bool(uint32_t(A[5]) & VolatileOption)});
+    Keys.emplace(
+        Folded,
+        Key{Path, {}, {}, false, bool(uint32_t(A[5]) & VolatileOption)});
   Handles.emplace(NextHandle, Handle{Folded, Access});
   NextHandle += HandleStride;
   return Success;
@@ -357,7 +373,8 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
 
 llvm::Expected<uint64_t> KernelRegistry::query(const KernelModel &Model,
                                                Key &Entry,
-                                               llvm::ArrayRef<uint64_t> A) {
+                                               llvm::ArrayRef<uint64_t> A,
+                                               bool Enumerate) {
   const uint32_t Class = A[2];
   if (Class >= MaxInformationClass)
     return InvalidParameter;
@@ -366,10 +383,19 @@ llvm::Expected<uint64_t> KernelRegistry::query(const KernelModel &Model,
   if ((Class == FullInformationAlign64 || Class == PartialInformationAlign64) &&
       (A[3] % FullDataAlignment64))
     return DatatypeMisalignment;
-  auto Name = readName(Model, Memory, A[1], MaxRegistryValueNameLength);
-  if (!Name)
-    return Name.takeError();
-  auto V = Entry.Values.find(folded(*Name));
+  std::string LookupName;
+  if (Enumerate) {
+    const uint32_t Index = A[1];
+    if (Index >= Entry.ValueOrder.size())
+      return NoMoreEntries;
+    LookupName = Entry.ValueOrder[Index];
+  } else {
+    auto Name = readName(Model, Memory, A[1], MaxRegistryValueNameLength);
+    if (!Name)
+      return Name.takeError();
+    LookupName = folded(*Name);
+  }
+  auto V = Entry.Values.find(LookupName);
   if (V == Entry.Values.end())
     return ObjectNameNotFound;
   const DriverRegistryValue &Value = V->second;
@@ -389,8 +415,10 @@ llvm::Expected<uint64_t> KernelRegistry::query(const KernelModel &Model,
     const uint32_t Alignment = Class == FullInformationAlign64
                                    ? FullDataAlignment64
                                    : FullDataAlignment;
-    DataStart = (Header + NameBytes + Alignment - 1) & ~(Alignment - 1);
-    Required = DataStart + DataSize;
+    DataStart = DataSize
+                    ? (Header + NameBytes + Alignment - 1) & ~(Alignment - 1)
+                    : UINT32_MAX;
+    Required = DataSize ? DataStart + DataSize : Header + NameBytes;
     break;
   }
   default:
@@ -402,29 +430,28 @@ llvm::Expected<uint64_t> KernelRegistry::query(const KernelModel &Model,
   }
   const uint32_t Length = A[4];
   const uint32_t Written = Length < Header ? 0 : std::min(Length, Required);
-  if (auto E = Model.validateGuestAccess(A[5], 4, true))
+  if (auto E = validateOutput(Model, Memory, A[5], 4))
     return E;
-  if (auto E = Model.validateGuestAccess(A[3], Written, true))
+  if (auto E = validateOutput(Model, Memory, A[3], Written))
     return E;
-  if (auto E = Memory.writeInteger(A[5], Required, 4))
-    return E;
-  if (!Written)
+  if (!Written) {
+    if (auto E = Memory.writeInteger(A[5], Required, 4))
+      return E;
     return BufferTooSmall;
-  std::vector<uint8_t> Bytes(Required, 0);
+  }
+  std::vector<uint8_t> Bytes(Header, 0);
   store32(Bytes,
           Class == PartialInformationAlign64 ? Partial64TypeOffset : TypeOffset,
           Value.Type);
   switch (Class) {
   case BasicInformation:
     store32(Bytes, BasicNameLengthOffset, NameBytes);
-    storeName(Bytes, Header, Value.Name);
     break;
   case FullInformation:
   case FullInformationAlign64:
     store32(Bytes, FullDataOffset, DataStart);
     store32(Bytes, FullDataLengthOffset, DataSize);
     store32(Bytes, FullNameLengthOffset, NameBytes);
-    storeName(Bytes, Header, Value.Name);
     break;
   default:
     store32(Bytes,
@@ -433,10 +460,30 @@ llvm::Expected<uint64_t> KernelRegistry::query(const KernelModel &Model,
             DataSize);
     break;
   }
-  if (Class != BasicInformation)
-    std::copy(Value.Data.begin(), Value.Data.end(), Bytes.begin() + DataStart);
-  if (auto E = Memory.write(A[3],
-                            llvm::ArrayRef<uint8_t>(Bytes).take_front(Written)))
+  if (auto E = Memory.write(A[3], Bytes))
+    return E;
+  // The x64 kernel aligns Full data to eight bytes for both Full classes.
+  // With no data it uses DataOffset=-1 and no alignment tail. ASCII names
+  // occupy compressed hive names: truncation writes complete UTF-16 units.
+  // Padding and any final half-unit retain the caller's bytes.
+  if (Class == BasicInformation || Class == FullInformation ||
+      Class == FullInformationAlign64) {
+    std::vector<uint8_t> NameBytesOut(std::min(NameBytes, Written - Header) &
+                                      ~1u);
+    storeName(NameBytesOut, 0,
+              llvm::StringRef(Value.Name).take_front(NameBytesOut.size() / 2));
+    if (!NameBytesOut.empty())
+      if (auto E = Memory.write(A[3] + Header, NameBytesOut))
+        return E;
+  }
+  if (Class != BasicInformation && DataSize && Written > DataStart)
+    if (auto E = Memory.write(A[3] + DataStart,
+                              llvm::ArrayRef<uint8_t>(Value.Data)
+                                  .take_front(Written - DataStart)))
+      return E;
+  // NtQueryValueKey/NtEnumerateValueKey publish ResultLength after the payload,
+  // including when it aliases part of that payload.
+  if (auto E = Memory.writeInteger(A[5], Required, 4))
     return E;
   return Length < Required ? BufferOverflow : Success;
 }
@@ -473,8 +520,10 @@ llvm::Expected<uint64_t> KernelRegistry::set(const KernelModel &Model,
   Value.Data = std::move(*Bytes);
   if (Old != Entry.Values.end())
     Value.Name = Old->second.Name;
-  else
+  else {
     ++ValueCount;
+    Entry.ValueOrder.push_back(Name);
+  }
   DataBytes = DataBytes - OldBytes + Size;
   Entry.Values.insert_or_assign(Name, std::move(Value));
   return Success;
@@ -490,6 +539,9 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
   if (!Configured)
     return registryError("registry availability is unspecified; supply an "
                          "explicit registry scenario");
+  if (Function == API::ZwEnumerateValueKey &&
+      uint32_t(A[2]) > PartialInformation)
+    return InvalidParameter;
   if (Function == API::ZwOpenKey || Function == API::ZwCreateKey)
     return open(Model, A, Function == API::ZwCreateKey);
   auto H = Handles.find(A[0]);
@@ -508,14 +560,17 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
   if (Entry.Deleted)
     return KeyDeleted;
   uint32_t Required =
-      Function == API::ZwQueryValueKey ? QueryValueAccess : SetValueAccess;
+      (Function == API::ZwQueryValueKey || Function == API::ZwEnumerateValueKey)
+          ? QueryValueAccess
+          : SetValueAccess;
   if (Function == API::ZwDeleteKey)
     Required = DeleteAccess;
   if (!(H->second.Access & Required))
     return AccessDenied;
   switch (Function) {
   case API::ZwQueryValueKey:
-    return query(Model, Entry, A);
+  case API::ZwEnumerateValueKey:
+    return query(Model, Entry, A, Function == API::ZwEnumerateValueKey);
   case API::ZwSetValueKey:
     return set(Model, Entry, A);
   case API::ZwDeleteValueKey: {
@@ -527,6 +582,7 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
       return ObjectNameNotFound;
     DataBytes -= Value->second.Data.size();
     --ValueCount;
+    std::erase(Entry.ValueOrder, Value->first);
     Entry.Values.erase(Value);
     return Success;
   }
@@ -541,6 +597,7 @@ llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
       DataBytes -= Value.Data.size();
     }
     Entry.Values.clear();
+    Entry.ValueOrder.clear();
     Entry.Deleted = true;
     return Success;
   default:
