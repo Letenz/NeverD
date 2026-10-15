@@ -841,6 +841,9 @@ frames and a conservative frame-storage share of the stack/memory allowance;
 resource exhaustion stops explicitly. Uninitialized registers, torn wide
 values and incompatible results fail. Wide moves read both halves before an
 overlapping write. Diagnostics name the method and DEX code-unit address.
+DEX bodies execute synchronously inside their JNI call; this contract does not
+preempt Java threads or equate bytecode steps with physical CPU/GPU timing.
+Native scheduling and explicitly configured virtual clocks retain their owners.
 
 This is a bounded interpreter, not complete ART. Object/array instructions,
 float/double bodies, exception handlers, synchronization, field/class
