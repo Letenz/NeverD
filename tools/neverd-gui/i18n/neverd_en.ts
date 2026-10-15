@@ -3610,5 +3610,131 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Cannot export the types: %1</source>
         <translation>Cannot export the types: %1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>Add types from a declaration</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>Edit the type's declaration</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>Delete the selected types</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Add types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Edit type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Delete types…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>A declaration of yours no longer reads: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>%n declarations of yours no longer read: %1</numerusform>
+            <numerusform>%n declarations of yours no longer read: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>Add types</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>Cannot read the type: %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>Edit %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>Declared %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>Declared %n types</numerusform>
+            <numerusform>Declared %n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>Delete the type %1?</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>Delete %n types?</numerusform>
+            <numerusform>Delete %n types?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>Delete types</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>Deleted %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>Deleted %n types</numerusform>
+            <numerusform>Deleted %n types</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(%1 still names it)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(%n types still name it)</numerusform>
+            <numerusform>(%n types still name it)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>Cannot delete the types: %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>The window closed</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>Declare types</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>Declare</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>Read the declarations (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>Line %1, column %2: %3</translation>
+    </message>
 </context>
 </TS>

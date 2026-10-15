@@ -119,7 +119,8 @@ TEST_P(KernelFileObjectExecution,
 }
 
 TEST_P(KernelFileObjectExecution, GenuineWdkQueriesBorrowedFileInformation) {
-#ifndef NEVERD_WDM_FILE_QUERIES_FIXTURE
+#if !defined(NEVERD_WDM_FILE_QUERIES_FIXTURE) ||                               \
+    !defined(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE)
   GTEST_SKIP() << "NEVERD_WDM_FILE_QUERIES_FIXTURE requires genuine WDK input";
 #else
   const auto [Backend, Contract, Rebase] = GetParam();
@@ -301,7 +302,8 @@ TEST_P(KernelFileObjectExecution, OriginalDriverClosesSharedFileHandles) {
 }
 
 TEST_P(KernelFileObjectExecution, GenuineKmdfRestoresFileHandleCaller) {
-#ifndef NEVERD_KMDF_FILE_HANDLES_FIXTURE
+#if !defined(NEVERD_KMDF_FILE_HANDLES_FIXTURE) ||                              \
+    !defined(NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE)
   GTEST_SKIP() << "NEVERD_KMDF_FILE_HANDLES_FIXTURE requires genuine WDK input";
 #else
   const auto [Backend, Contract, Rebase] = GetParam();

@@ -55,6 +55,8 @@ public:
   /// Whether the engine lists the program's local types (local_types,
   /// local_type, local_types_source).
   static bool listsLocalTypes();
+  /// Whether the engine adds declared types (local_types_declare).
+  static bool declaresLocalTypes();
   /// Whether the engine finds the PDB a PE names before opening it, and
   /// opens a PE without it.
   static bool findsPdbFiles();

@@ -22,6 +22,8 @@
 // ChooserCommand a list window that has the command runs.  The list window's
 // key wins over a window-wide command with the same key while it has the
 // focus, as in IDA.
+// NEVERD_IDA_TYPES_COMMAND(IdaAction, Shortcut, QtShortcut, Command): a
+// command of IDA's Local Types window, as a list window's.
 #ifndef NEVERD_IDA_ACTION
 #define NEVERD_IDA_ACTION(IdaAction, Shortcut, NeverDAction)
 #endif
@@ -30,6 +32,9 @@
 #endif
 #ifndef NEVERD_IDA_CHOOSER_COMMAND
 #define NEVERD_IDA_CHOOSER_COMMAND(IdaAction, Shortcut, QtShortcut, Command)
+#endif
+#ifndef NEVERD_IDA_TYPES_COMMAND
+#define NEVERD_IDA_TYPES_COMMAND(IdaAction, Shortcut, QtShortcut, Command)
 #endif
 
 // File.
@@ -198,6 +203,12 @@ NEVERD_IDA_PLANNED("WindowsListNext", "Ctrl-Tab", "Windows")
 // List windows.
 NEVERD_IDA_CHOOSER_COMMAND("ChooserEdit", "Ctrl-E", "Ctrl+E", Edit)
 
+// The Local Types window.
+NEVERD_IDA_TYPES_COMMAND("TilAddType", "Ins", "Ins", Add)
+NEVERD_IDA_TYPES_COMMAND("TilEditType", "Ctrl-E", "Ctrl+E", Edit)
+NEVERD_IDA_TYPES_COMMAND("TilDelType", "Del", "Del", Delete)
+
 #undef NEVERD_IDA_CHOOSER_COMMAND
+#undef NEVERD_IDA_TYPES_COMMAND
 #undef NEVERD_IDA_ACTION
 #undef NEVERD_IDA_PLANNED

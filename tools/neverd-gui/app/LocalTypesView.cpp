@@ -1,10 +1,12 @@
 #include "LocalTypesView.h"
 
+#include "DeclareTypesDialog.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
 #include "Session.h"
 #include "ShrinkableRow.h"
 #include "Theme.h"
+#include "TypeSourceHighlighter.h"
 
 #include <QAction>
 #include <QApplication>
@@ -22,9 +24,11 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollBar>
@@ -34,113 +38,15 @@
 #include <QStackedWidget>
 #include <QStandardItemModel>
 #include <QStyledItemDelegate>
-#include <QSyntaxHighlighter>
 #include <QTabBar>
 #include <QTextBlock>
 #include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace neverd::gui {
-
-/// Colors the C, C++, Rust or Go a local type renders as: keywords and
-/// builtins, the program's types, numbers, directives and comments, the
-/// offsets a comment gives standing out from its text.
-class TypeSourceHighlighter final : public QSyntaxHighlighter {
-public:
-  explicit TypeSourceHighlighter(QTextDocument *document)
-      : QSyntaxHighlighter(document) {}
-
-  void setLanguage(const QString &language) {
-    language_ = language;
-    keywords_.clear();
-    builtins_.clear();
-    const QString family =
-        language == QLatin1String("cpp") ? QStringLiteral("c") : language;
-#define NEVERD_TYPE_SOURCE_KEYWORD(Language, Word)                             \
-  if (family == QLatin1String(Language) ||                                     \
-      language == QLatin1String(Language))                                     \
-    keywords_.insert(QStringLiteral(Word));
-#define NEVERD_TYPE_SOURCE_BUILTIN(Language, Word)                             \
-  if (family == QLatin1String(Language))                                       \
-    builtins_.insert(QStringLiteral(Word));
-#include "TypeSourceVocabulary.def"
-    rehighlight();
-  }
-  void setTypeNames(const QSet<QString> &names) {
-    names_ = names;
-    rehighlight();
-  }
-  /// The program's type \p word names: itself, or the type an anonymous
-  /// record's generated name (_KTHREAD_0_1) belongs to.
-  QString typeOf(QString word) const {
-    static const QRegularExpression suffix(QStringLiteral("_[0-9]+$"));
-    while (!word.isEmpty()) {
-      if (names_.contains(word))
-        return word;
-      const auto match = suffix.match(word);
-      if (!match.hasMatch())
-        break;
-      word.chop(match.capturedLength());
-    }
-    return {};
-  }
-
-protected:
-  void highlightBlock(const QString &text) override {
-    const auto &theme = Theme::instance();
-    const auto format = [&](ColorRole role) {
-      QTextCharFormat result;
-      result.setForeground(theme.color(role));
-      return result;
-    };
-    int comment = text.indexOf(QLatin1String("//"));
-    if (comment < 0)
-      comment = int(text.size());
-    const QString code = text.left(comment);
-    const QString trimmed = code.trimmed();
-    if (trimmed.startsWith(QLatin1Char('#'))) {
-      // A directive, or a Rust attribute.
-      setFormat(0, comment, format(ColorRole::ListingDirective));
-    } else {
-      static const QRegularExpression token(QStringLiteral(
-          R"((0x[0-9A-Fa-f]+|\b[0-9]+\b)|("[^"]*")|([A-Za-z_][A-Za-z0-9_]*))"));
-      for (auto it = token.globalMatch(code); it.hasNext();) {
-        const auto match = it.next();
-        if (match.capturedLength(1))
-          setFormat(match.capturedStart(), match.capturedLength(),
-                    format(ColorRole::ListingNumber));
-        else if (match.capturedLength(2))
-          setFormat(match.capturedStart(), match.capturedLength(),
-                    format(ColorRole::ListingString));
-        else if (const QString word = match.captured(3);
-                 keywords_.contains(word) || builtins_.contains(word))
-          setFormat(match.capturedStart(), match.capturedLength(),
-                    format(ColorRole::ListingKeyword));
-        else if (!typeOf(word).isEmpty())
-          setFormat(match.capturedStart(), match.capturedLength(),
-                    format(ColorRole::ListingLibraryName));
-      }
-    }
-    if (comment < text.size()) {
-      setFormat(comment, int(text.size()) - comment,
-                format(ColorRole::ListingComment));
-      // The offset and bits a comment gives are what a reader looks for.
-      static const QRegularExpression where(QStringLiteral(
-          R"(0x[0-9A-Fa-f]+|\+[0-9]+|\bbits? [0-9]+(\.\.[0-9]+)?)"));
-      for (auto it = where.globalMatch(text, comment); it.hasNext();) {
-        const auto match = it.next();
-        setFormat(match.capturedStart(), match.capturedLength(),
-                  format(ColorRole::ListingNumber));
-      }
-    }
-  }
-
-private:
-  QString language_;
-  QSet<QString> keywords_, builtins_, names_;
-};
 
 namespace {
 
@@ -289,12 +195,38 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   left->setMinimumWidth(MinimumPaneWidth);
   auto *leftLayout = new QVBoxLayout(left);
   leftLayout->setContentsMargins(4, 4, 4, 4);
-  filter_ = new QLineEdit(left);
+  auto *filterRow = new QWidget(left);
+  auto *filterLayout = new QHBoxLayout(filterRow);
+  filterLayout->setContentsMargins(0, 0, 0, 0);
+  filter_ = new QLineEdit(filterRow);
   filter_->setObjectName(QStringLiteral("localTypesFilter"));
   filter_->setPlaceholderText(tr("Filter types by name"));
   filter_->setClearButtonEnabled(true);
   filter_->installEventFilter(this);
-  leftLayout->addWidget(filter_);
+  filterLayout->addWidget(filter_, 1);
+  const auto commandButton = [&](TypesCommand command, const char *iconName,
+                                 const QString &text) {
+    auto *button = new QToolButton(filterRow);
+    button->setIcon(icon(QString::fromLatin1(iconName)));
+    button->setToolTip(QStringLiteral("%1 (%2)").arg(
+        text, commandKey(command).toString(QKeySequence::NativeText)));
+    button->setAutoRaise(true);
+    connect(button, &QToolButton::clicked, this,
+            [this, command] { run(command); });
+    filterLayout->addWidget(button);
+    return button;
+  };
+  add_ = commandButton(TypesCommand::Add, "local_types_add",
+                       tr("Add types from a declaration"));
+  add_->setObjectName(QStringLiteral("localTypesAdd"));
+  edit_ = commandButton(TypesCommand::Edit, "local_types_edit",
+                        tr("Edit the type's declaration"));
+  edit_->setObjectName(QStringLiteral("localTypesEdit"));
+  delete_ = commandButton(TypesCommand::Delete, "local_types_delete",
+                          tr("Delete the selected types"));
+  delete_->setObjectName(QStringLiteral("localTypesDelete"));
+  makeRowShrinkable(*filterRow);
+  leftLayout->addWidget(filterRow);
   model_ = new QStandardItemModel(0, ListColumns, this);
   model_->setHorizontalHeaderLabels(
       {tr("#"), tr("Name"), tr("Kind"), tr("Size"), tr("Members")});
@@ -315,6 +247,7 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
   list_->header()->setStretchLastSection(false);
   list_->header()->setSectionResizeMode(NameColumn, QHeaderView::Stretch);
   list_->installEventFilter(this);
+  list_->setContextMenuPolicy(Qt::CustomContextMenu);
   activateOnReturn(*list_);
   leftLayout->addWidget(list_, 1);
   summary_ = new QLabel(left);
@@ -470,6 +403,21 @@ LocalTypesView::LocalTypesView(Session &session, QWidget *parent)
     QSettings().setValue(AssertsSetting, on);
     requestSource();
   });
+  connect(list_, &QTreeView::customContextMenuRequested, this,
+          [this](const QPoint &at) {
+            QMenu menu(this);
+            const auto item = [&](TypesCommand command, const QString &text,
+                                  const QToolButton *button) {
+              auto *action = menu.addAction(button->icon(), text, this,
+                                            [this, command] { run(command); });
+              action->setShortcut(commandKey(command));
+              action->setEnabled(button->isEnabled());
+            };
+            item(TypesCommand::Add, tr("Add types…"), add_);
+            item(TypesCommand::Edit, tr("Edit type…"), edit_);
+            item(TypesCommand::Delete, tr("Delete types…"), delete_);
+            menu.exec(list_->viewport()->mapToGlobal(at));
+          });
   connect(back_, &QToolButton::clicked, this, &LocalTypesView::back);
   connect(copy_, &QToolButton::clicked, this, &LocalTypesView::copy);
   connect(exportOne, &QAction::triggered, this, [this] {
@@ -626,9 +574,25 @@ void LocalTypesView::listed(const QJsonObject &payload) {
     summary_->setToolTip(
         tr("Types that do not lay out as the PDB lists them: %1")
             .arg(mismatches.toVariantList().size()));
-  // The type shown before stays, laid out anew; else the first.
+  const QJsonArray problems = payload.value("declarationProblems").toArray();
+  if (!problems.isEmpty()) {
+    const QJsonObject first = problems.first().toObject();
+    note_ = (problems.size() == 1
+                 ? tr("A declaration of yours no longer reads: %1")
+                 : tr("%n declarations of yours no longer read: %1", "",
+                      int(problems.size())))
+                .arg(first.value("message").toString());
+  }
+  if (!note_.isEmpty())
+    summary_->setText(summary_->text() + QLatin1Char('\n') + note_);
+  note_.clear();
+  // The type just declared shows; else the one shown before stays, laid out
+  // anew; else the first.
   current_.clear();
-  if (!keep.isEmpty() && names_.contains(keep))
+  const QString next = std::exchange(showNext_, QString());
+  if (!next.isEmpty() && names_.contains(next))
+    open(next, !keep.isEmpty());
+  else if (!keep.isEmpty() && names_.contains(keep))
     open(keep, false);
   else if (proxy_->rowCount() > 0)
     list_->setCurrentIndex(proxy_->index(0, NameColumn));
@@ -636,6 +600,8 @@ void LocalTypesView::listed(const QJsonObject &payload) {
 }
 
 void LocalTypesView::selectionChanged() {
+  // Deleting takes the selection, whatever row is current.
+  updateActions();
   const QModelIndex index = list_->currentIndex();
   if (!index.isValid())
     return;
@@ -921,6 +887,10 @@ void LocalTypesView::exportTypes(const QStringList &names) {
 }
 
 void LocalTypesView::updateActions() {
+  const bool declares = session_.loaded() && session_.declaresLocalTypes();
+  add_->setEnabled(declares);
+  edit_->setEnabled(declares && !current_.isEmpty());
+  delete_->setEnabled(declares && !selectedNames().isEmpty());
   back_->setEnabled(!history_.isEmpty());
   copy_->setEnabled(!current_.isEmpty());
   export_->setEnabled(model_->rowCount() > 0);
@@ -932,9 +902,144 @@ void LocalTypesView::updateActions() {
   asserts_->setEnabled(source);
 }
 
+QKeySequence LocalTypesView::commandKey(TypesCommand command) {
+#define NEVERD_IDA_TYPES_COMMAND(IdaAction, Shortcut, QtShortcut, Command)     \
+  if (command == TypesCommand::Command)                                        \
+    return QKeySequence(QStringLiteral(QtShortcut), QKeySequence::PortableText);
+#include "IdaActions.def"
+  return {};
+}
+
+std::optional<TypesCommand>
+LocalTypesView::commandFor(const QKeySequence &key) const {
+#define NEVERD_IDA_TYPES_COMMAND(IdaAction, Shortcut, QtShortcut, Command)     \
+  if (key == commandKey(TypesCommand::Command))                                \
+    return TypesCommand::Command;
+#include "IdaActions.def"
+  return std::nullopt;
+}
+
+void LocalTypesView::run(TypesCommand command) {
+  if (!session_.loaded() || !session_.declaresLocalTypes())
+    return;
+  switch (command) {
+  case TypesCommand::Add:
+    openEditor(language(), QString(), tr("Add types"));
+    return;
+  case TypesCommand::Edit: {
+    if (current_.isEmpty())
+      return;
+    // The type as the language shown declares it, alone and unchecked: its
+    // checks would refuse the change they were made before.
+    const QString name = current_, lang = language();
+    session_.read(
+        QStringLiteral("local_types_source"),
+        {{"language", lang},
+         {"spelling", spelling()},
+         {"hexOffsets", hex_->isChecked()},
+         {"asserts", false},
+         {"dependencies", false},
+         {"types", QJsonArray{name}}},
+        this,
+        [this, name, lang](const QJsonObject &payload) {
+          // The editor's declaration is a command, which waits for this
+          // read's answer to finish: the editor opens after it.
+          const QString source = payload.value("source").toString();
+          QMetaObject::invokeMethod(
+              this,
+              [this, name, lang, source] {
+                openEditor(lang, source, tr("Edit %1").arg(name));
+              },
+              Qt::QueuedConnection);
+        },
+        [this](const QString &, const QString &message) {
+          summary_->setText(tr("Cannot read the type: %1").arg(message));
+        });
+    return;
+  }
+  case TypesCommand::Delete:
+    deleteTypes(selectedNames());
+    return;
+  }
+}
+
+void LocalTypesView::openEditor(const QString &language, const QString &source,
+                                const QString &title) {
+  QPointer<LocalTypesView> view(this);
+  DeclareTypesDialog dialog(
+      language, source,
+      [view](const QString &lang, const QString &text, auto answered) {
+        if (!view) {
+          answered({{"error", tr("The window closed")}});
+          return;
+        }
+        view->session_.declareTypes(
+            lang, text, answered,
+            [answered](const QString &, const QString &message) {
+              answered({{"error", message}});
+            });
+      },
+      this);
+  dialog.setWindowTitle(title);
+  dialog.setTypeNames(names_);
+  if (dialog.exec() != QDialog::Accepted || !view)
+    return;
+  const QStringList declared = dialog.declared();
+  showNext_ = declared.value(0);
+  note_ = declared.size() == 1
+              ? tr("Declared %1").arg(declared.first())
+              : tr("Declared %n types", "", int(declared.size()));
+  reload();
+}
+
+void LocalTypesView::deleteTypes(const QStringList &names) {
+  if (names.isEmpty())
+    return;
+  const QString question = names.size() == 1
+                               ? tr("Delete the type %1?").arg(names.first())
+                               : tr("Delete %n types?", "", int(names.size()));
+  if (QMessageBox::question(this, tr("Delete types"), question,
+                            QMessageBox::Yes | QMessageBox::No,
+                            QMessageBox::No) != QMessageBox::Yes)
+    return;
+  session_.forgetTypes(
+      names,
+      [this](const QJsonObject &payload) {
+        const QJsonArray removed = payload.value("removed").toArray();
+        const QJsonArray usedBy = payload.value("usedBy").toArray();
+        note_ = removed.size() == 1
+                    ? tr("Deleted %1").arg(removed.first().toString())
+                    : tr("Deleted %n types", "", int(removed.size()));
+        if (!usedBy.isEmpty())
+          note_ +=
+              QLatin1Char(' ') +
+              (usedBy.size() == 1
+                   ? tr("(%1 still names it)").arg(usedBy.first().toString())
+                   : tr("(%n types still name it)", "", int(usedBy.size())));
+        reload();
+      },
+      [this](const QString &, const QString &message) {
+        summary_->setText(tr("Cannot delete the types: %1").arg(message));
+      });
+}
+
 bool LocalTypesView::eventFilter(QObject *object, QEvent *event) {
   if (!source_)
     return QWidget::eventFilter(object, event);
+  // The window's own commands take their keys before window-wide ones
+  // while a list or a type has the focus, as in IDA.
+  if ((object == list_ || object == layout_ || object == source_) &&
+      (event->type() == QEvent::ShortcutOverride ||
+       event->type() == QEvent::KeyPress)) {
+    const auto *pressed = static_cast<QKeyEvent *>(event);
+    if (const auto command =
+            commandFor(QKeySequence(pressed->keyCombination()))) {
+      event->accept();
+      if (event->type() == QEvent::KeyPress)
+        run(*command);
+      return true;
+    }
+  }
   if (event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (key->matches(QKeySequence::Find)) {

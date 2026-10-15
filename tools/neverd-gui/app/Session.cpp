@@ -54,6 +54,8 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("function_edit"),
                                    QStringLiteral("item_define"),
                                    QStringLiteral("operand_format"),
+                                   QStringLiteral("local_types_declare"),
+                                   QStringLiteral("local_types_forget"),
                                    QStringLiteral("undo"),
                                    QStringLiteral("redo"),
                                    QStringLiteral("save")};
@@ -956,6 +958,20 @@ void Session::reportPdb(const QJsonObject &result) {
           .arg(QDir::toNativeSeparators(result.value("path").toString()))
           .arg(result.value("name_count").toInteger()),
       result.value("verified").toBool() ? 0 : 1);
+}
+
+void Session::declareTypes(const QString &language, const QString &source,
+                           Reply done, Failure failed) {
+  command(QStringLiteral("local_types_declare"),
+          {{"language", language}, {"source", source}}, std::move(done),
+          std::move(failed));
+}
+
+void Session::forgetTypes(const QStringList &names, Reply done,
+                          Failure failed) {
+  command(QStringLiteral("local_types_forget"),
+          {{"names", QJsonArray::fromStringList(names)}}, std::move(done),
+          std::move(failed));
 }
 
 void Session::setStringOptions(const QStringList &encodings,

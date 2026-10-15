@@ -82,7 +82,8 @@ TEST_P(KernelProcessorExecution, OriginalImportsAndLookupShareProcessorState) {
 }
 TEST_P(KernelProcessorExecution,
        GenuineWdkInlineAndExportCallsShareProcessorState) {
-#ifndef NEVERD_WDM_PROCESSORS_FIXTURE
+#if !defined(NEVERD_WDM_PROCESSORS_FIXTURE) ||                                 \
+    !defined(NEVERD_WDM_PROCESSORS_CFG_FIXTURE)
   GTEST_SKIP() << "genuine WDK processor fixture was not supplied";
 #else
   run(NEVERD_WDM_PROCESSORS_FIXTURE);

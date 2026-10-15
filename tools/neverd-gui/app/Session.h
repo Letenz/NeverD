@@ -125,6 +125,11 @@ public:
   bool listsLocalTypes() const {
     return capabilities_.contains(QStringLiteral("local_types"));
   }
+  /// Whether the worker adds and removes local types (local_types_declare,
+  /// local_types_forget).
+  bool declaresLocalTypes() const {
+    return capabilities_.contains(QStringLiteral("local_types_declare"));
+  }
   /// Whether the worker finds the PDB a PE names before opening it
   /// (pdb_reference), and opens a PE without it.
   bool findsPdbFiles() const {
@@ -239,6 +244,16 @@ public:
   QueryService::SubscriptionId read(const QString &operation,
                                     const QJsonObject &payload, QObject *owner,
                                     Reply done, Failure failed = {});
+
+  // Local types.
+  /// Adds the types \p source declares in \p language (c, cpp, rust or go)
+  /// to the program's local types; \p done has the types declared or the
+  /// problems, each at its line and column.
+  void declareTypes(const QString &language, const QString &source, Reply done,
+                    Failure failed = {});
+  /// Removes the local types \p names; \p done has the types removed and
+  /// those that still name one.
+  void forgetTypes(const QStringList &names, Reply done, Failure failed = {});
 
   // MCP bridge.
   void externalQuery(const QString &id, const QString &operation,

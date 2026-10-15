@@ -52,8 +52,8 @@ static std::filesystem::path annotationPath(const Session *S) {
   return Path;
 }
 
-static bool saveSidecar(Session *S, const std::filesystem::path &Path,
-                        llvm::json::Value Values, llvm::StringRef Kind) {
+bool neverd::sdk::saveSidecar(Session *S, const std::filesystem::path &Path,
+                              llvm::json::Value Values, llvm::StringRef Kind) {
   const auto UTF8Path = pathToUTF8(Path);
   auto Temporary = llvm::sys::fs::TempFile::create(
       UTF8Path + ".tmp-%%%%%%",

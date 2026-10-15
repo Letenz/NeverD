@@ -224,6 +224,12 @@ struct LocalType {
 class TypeLibrary {
 public:
   explicit TypeLibrary(DataModel Model = DataModel::LLP64) : Model(Model) {}
+  /// Copies are whole libraries of their own, which share the definitions,
+  /// so that a change can be tried on one and kept or dropped.
+  TypeLibrary(const TypeLibrary &Other);
+  TypeLibrary &operator=(const TypeLibrary &Other);
+  TypeLibrary(TypeLibrary &&) = default;
+  TypeLibrary &operator=(TypeLibrary &&) = default;
 
   DataModel dataModel() const { return Model; }
 
@@ -249,8 +255,20 @@ public:
   /// The alignment of a record's members together.
   uint32_t alignOf(const RecordDef &Record) const;
 
+  /// The prototype of the function named \p Name, as a header declares it,
+  /// with its parameters' names; replaces one of that name.
+  void definePrototype(std::string Name,
+                       std::shared_ptr<const FunctionDef> Function);
+  const FunctionDef *findPrototype(llvm::StringRef Name) const;
+  /// Every prototype, by function name.
+  const llvm::StringMap<std::shared_ptr<const FunctionDef>> &
+  prototypes() const {
+    return Prototypes;
+  }
+
 private:
   DataModel Model;
+  llvm::StringMap<std::shared_ptr<const FunctionDef>> Prototypes;
   /// By ordinal - 1; null where a type was removed.
   std::vector<std::unique_ptr<LocalType>> ByOrdinal;
   llvm::StringMap<uint32_t> ByName;

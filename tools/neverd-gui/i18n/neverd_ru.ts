@@ -3616,5 +3616,136 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Cannot export the types: %1</source>
         <translation>Не удаётся экспортировать типы: %1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>Добавить типы из объявления</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>Изменить объявление типа</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>Удалить выбранные типы</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Добавить типы…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Изменить тип…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Удалить типы…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>Одно из ваших объявлений больше не читается: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>%n ваше объявление больше не читается: %1</numerusform>
+            <numerusform>%n ваших объявления больше не читаются: %1</numerusform>
+            <numerusform>%n ваших объявлений больше не читаются: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>Добавление типов</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>Не удаётся прочитать тип: %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>Изменение %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>Объявлен %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>Объявлен %n тип</numerusform>
+            <numerusform>Объявлено %n типа</numerusform>
+            <numerusform>Объявлено %n типов</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>Удалить тип %1?</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>Удалить %n тип?</numerusform>
+            <numerusform>Удалить %n типа?</numerusform>
+            <numerusform>Удалить %n типов?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>Удаление типов</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>Удалён %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>Удалён %n тип</numerusform>
+            <numerusform>Удалено %n типа</numerusform>
+            <numerusform>Удалено %n типов</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(%1 всё ещё ссылается на него)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(%n тип всё ещё ссылается на него)</numerusform>
+            <numerusform>(%n типа всё ещё ссылаются на него)</numerusform>
+            <numerusform>(%n типов всё ещё ссылаются на него)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>Не удаётся удалить типы: %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>Окно закрыто</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>Объявление типов</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>Объявите структуры, объединения, перечисления и typedef. Тип с именем типа программы заменяет его.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>Объявить</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>Прочитать объявления (Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>Строка %1, столбец %2: %3</translation>
+    </message>
 </context>
 </TS>

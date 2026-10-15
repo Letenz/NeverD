@@ -3604,5 +3604,126 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Cannot export the types: %1</source>
         <translation>형식을 내보낼 수 없습니다: %1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>선언에서 형식 추가</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>형식의 선언 편집</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>선택한 형식 삭제</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>형식 추가…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>형식 편집…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>형식 삭제…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>사용자 선언 하나를 더 이상 읽을 수 없습니다: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>사용자 선언 %n개를 더 이상 읽을 수 없습니다: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>형식 추가</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>형식을 읽을 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>%1 편집</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>%1을(를) 선언했습니다</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>형식 %n개를 선언했습니다</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>%1 형식을 삭제하시겠습니까?</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>형식 %n개를 삭제하시겠습니까?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>형식 삭제</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>%1을(를) 삭제했습니다</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>형식 %n개를 삭제했습니다</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>(%1이(가) 아직 참조합니다)</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>(형식 %n개가 아직 참조합니다)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>형식을 삭제할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>창이 닫혔습니다</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>형식 선언</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>구조체, 공용체, 열거형, typedef를 선언합니다. 프로그램의 형식과 이름이 같은 형식은 그 형식을 대체합니다.</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>선언</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>선언 읽기(Ctrl+Enter)</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>%1행 %2열: %3</translation>
+    </message>
 </context>
 </TS>

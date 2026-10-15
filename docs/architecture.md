@@ -105,6 +105,23 @@ enumerator two enumerations share, take one identifier per language
 (`renamedNames`). With asserts, the output checks every size and offset when
 it compiles.
 
+`parseTypes` reads C, C++, Rust and Go declarations back into the library
+(`TypeParse.h`), and `layOutRecord` lays each record out under MSVC or
+Itanium rules (`TypeLayout.h`):
+- C and C++ take every builtin spelling the renderers write, `#pragma pack`,
+  alignment specifiers and static assertions, which are checked;
+- Rust and Go take what their renderers write: records named `<Parent>_<n>`
+  that the parent holds go back in place, a `_bitfield` comment lists its
+  bitfields, and Go's unions, unaligned members and flexible arrays come
+  back from their accessor methods.
+
+A source reads whole or not at all. The C API keeps the user's declarations
+in order and reads them again over the program's types whenever those are
+read anew, as after loading another PDB. A declaration that no longer reads
+is left out and reported (`declarationProblems`), never silently dropped.
+The worker writes the declarations to `<input>.neverd-types.json` at once;
+they do not join undo history.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and

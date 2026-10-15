@@ -3604,5 +3604,126 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Cannot export the types: %1</source>
         <translation>无法导出类型：%1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>从声明添加类型</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>编辑该类型的声明</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>删除所选类型</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>添加类型…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>编辑类型…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>删除类型…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>你的一条声明已无法读取：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>你的 %n 条声明已无法读取：%1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>添加类型</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>无法读取类型：%1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>编辑 %1</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>已声明 %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>已声明 %n 个类型</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>删除类型 %1？</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>删除 %n 个类型？</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>删除类型</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>已删除 %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>已删除 %n 个类型</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>（%1 仍引用它）</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>（仍有 %n 个类型引用它）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>无法删除类型：%1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>窗口已关闭</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>声明类型</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>声明结构体、联合体、枚举和 typedef。与程序中已有类型同名的类型会替换它。</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>声明</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>读取这些声明（Ctrl+Enter）</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>第 %1 行，第 %2 列：%3</translation>
+    </message>
 </context>
 </TS>
