@@ -1113,5 +1113,79 @@ TEST_F(DriverKernelModel, CRuntimeStringsFoldOnlyAsciiAndRefuseBadBuffers) {
   EXPECT_EQ(invoke("_wcsnicmp", {0, 0, 0}), 0u);
 }
 
+TEST_F(DriverKernelModel, QueuedSpinLocksRaiseStoreAndRestoreLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4b51534c; // 'KQSL'
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  const uint64_t Handle = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  const uint64_t Other = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  ASSERT_NE(Lock, 0u);
+  ASSERT_NE(Handle, 0u);
+  ASSERT_NE(Other, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  // Acquire raises to DISPATCH_LEVEL, stores the handle in the lock, and stores
+  // the lock and saved IRQL in the handle.
+  EXPECT_EQ(invoke("KeAcquireInStackQueuedSpinLock", {Lock, Handle}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  EXPECT_EQ(integer(Lock), Handle);
+  EXPECT_EQ(integer(Handle + windows::LockQueueLockOffset), Lock);
+  EXPECT_EQ(integer(Handle + windows::LockQueueNextOffset), 0u);
+  EXPECT_EQ(integer(Handle + windows::LockQueueOldIrqlOffset, 1), 0u);
+  // A second acquisition of a held lock cannot make progress here.
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLock", {Lock, Other}),
+            "executive spin lock would deadlock on this cooperative processor");
+  // Initializing a held lock would clobber the token, so it is refused.
+  EXPECT_EQ(failure("KeInitializeSpinLock", {Lock}),
+            "cannot initialize a held executive spin lock");
+  // A corrupted saved IRQL in the handle is caught before the lock is cleared.
+  success(Memory->writeInteger(Handle + windows::LockQueueOldIrqlOffset, 7, 1));
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock handle's saved IRQL was modified");
+  success(Memory->writeInteger(Handle + windows::LockQueueOldIrqlOffset, 0, 1));
+  // Release restores the saved IRQL and frees the lock.
+  EXPECT_EQ(invoke("KeReleaseInStackQueuedSpinLock", {Handle}), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+  invoke("ExFreePoolWithTag", {Handle, Tag});
+  invoke("ExFreePoolWithTag", {Other, Tag});
+}
+
+TEST_F(DriverKernelModel, QueuedSpinLocksAtDpcLevelAndRefuseMismatches) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4b51534c;
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  const uint64_t Handle = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  ASSERT_NE(Lock, 0u);
+  ASSERT_NE(Handle, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  // The AtDpcLevel form requires the caller already at DISPATCH_LEVEL.
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLockAtDpcLevel", {Lock, Handle}),
+            "DPC-level queued spin-lock acquisition requires DISPATCH_LEVEL");
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_EQ(invoke("KeAcquireInStackQueuedSpinLockAtDpcLevel", {Lock, Handle}),
+            0u);
+  EXPECT_EQ(integer(Lock), Handle);
+  // The raising release does not match a DPC-level acquisition.
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock release variant does not match acquisition");
+  // The matching release leaves IRQL at DISPATCH_LEVEL.
+  EXPECT_EQ(invoke("KeReleaseInStackQueuedSpinLockFromDpcLevel", {Handle}), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  invoke("KeLowerIrql", {Previous});
+
+  // A contended lock stops clearly, and an unheld handle is not owned.
+  success(Memory->writeInteger(Lock, 0x1234, 8));
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLock", {Lock, Handle}),
+            "executive spin lock must be initialized and free");
+  success(Memory->writeInteger(Handle + windows::LockQueueLockOffset, 0, 8));
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock is not owned by this thread");
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+  invoke("ExFreePoolWithTag", {Handle, Tag});
+}
+
 } // namespace
 } // namespace neverd::emulation

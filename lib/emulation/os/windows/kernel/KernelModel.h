@@ -661,6 +661,33 @@ private:
   llvm::Expected<uint64_t> acquireSpinLock(uint64_t Address, SpinLockMode Mode);
   llvm::Expected<uint64_t> releaseSpinLock(uint64_t Address,
                                            std::optional<uint8_t> RestoreIRQL);
+  // In-stack queued spin locks store the caller's KLOCK_QUEUE_HANDLE pointer in
+  // the lock and the saved IRQL in the handle, keyed here by the lock address.
+  struct QueuedSpinLock {
+    uint64_t Execution;
+    uint64_t Handle;
+    uint8_t OldIRQL;
+    bool RaisedIRQL;
+  };
+  std::map<uint64_t, QueuedSpinLock> QueuedSpinLocks;
+  // A lock address or an execution holds a lock if either spin-lock kind tracks
+  // it, so every held-lock rule treats executive and queued locks alike.
+  bool spinLockHeldAt(uint64_t Address) const {
+    return ExecutiveSpinLocks.count(Address) || QueuedSpinLocks.count(Address);
+  }
+  bool executionHoldsSpinLock(uint64_t Execution) const {
+    for (const auto &[Address, Lock] : ExecutiveSpinLocks)
+      if (Lock.Execution == Execution)
+        return true;
+    for (const auto &[Address, Lock] : QueuedSpinLocks)
+      if (Lock.Execution == Execution)
+        return true;
+    return false;
+  }
+  llvm::Error validateQueueHandle(uint64_t Handle) const;
+  llvm::Expected<uint64_t> acquireQueuedSpinLock(uint64_t SpinLock,
+                                                 uint64_t Handle, bool Raise);
+  llvm::Expected<uint64_t> releaseQueuedSpinLock(uint64_t Handle, bool Restore);
   llvm::Error validateInterlockedLock(uint64_t Lock) const;
   llvm::Error validateInterlockedStorage(uint64_t Lock, uint64_t Address,
                                          uint32_t Size, bool IsWrite) const;
