@@ -2248,6 +2248,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>式またはコマンド (help)</translation>
     </message>
     <message>
+        <source>&amp;Copy</source>
+        <translation>コピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>すべて選択(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>クリア(&amp;L)</translation>
+    </message>
+    <message>
         <source>Commands:</source>
         <translation>コマンド：</translation>
     </message>
