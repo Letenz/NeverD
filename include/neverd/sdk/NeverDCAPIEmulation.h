@@ -61,7 +61,7 @@ neverd_emulate_driver_json(neverd_session_t Sess, const char *Path,
 /// ownership rules match neverd_emulate_driver_json. ScenarioJSON is required,
 /// NUL-terminated UTF-8 JSON, limited to NEVERD_DRIVER_SCENARIO_JSON_LIMIT
 /// bytes. Supported root keys: load_address (0x string), unload (boolean),
-/// requests, registry, pnp_devices, and kernel_exports (routine names mapped
+/// requests, registry, pnp_devices, and kernel_exports (export names mapped
 /// to availability booleans).
 /// Additional root options include service_name, scheduling,
 /// trace_memory_writes, cpuid, and loader_view (version, flags, evidence).

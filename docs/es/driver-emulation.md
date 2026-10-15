@@ -532,7 +532,7 @@ su omisión o `"0x0"` utiliza la dirección preferida. La imagen debe cumplir lo
 requisitos de reubicación. El comando de inicialización y la API C originales
 no implican ningún escenario.
 
-En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`,
+En la raíz solo se aceptan `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`,
 `kernel_exports`, `registry_system_time_100ns`, `registry` y `pnp_devices`. Las solicitudes ordinarias de archivo aceptan `kind`, `device` o `device_id` opcionales (excluyentes) y un `file` opcional. Los IOCTL requieren `code` y aceptan `input`, `output_size`
 y `direct_input`. Un `read` acepta `output_size` y `byte_offset`; un `write`
 acepta `input` y `byte_offset`. Los desplazamientos valen cero por defecto,
