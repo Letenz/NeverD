@@ -98,7 +98,7 @@ std::string RustWriter::abi(CallingConvention Convention) const {
       Library.dataModel() == DataModel::LLP64)
     return "system";
   switch (Convention) {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA)                          \
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide)                    \
   case CallingConvention::Name:                                                \
     return Rust;
 #include "neverd/types/CallingConventions.def"
@@ -220,7 +220,7 @@ void RustWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
     }
     }
   }
-  if (Record.Union && Record.Size > UnionSize && Outer)
+  if (Record.Union && Record.Size > UnionSize)
     Out += "    pub _size: [u8; " + std::to_string(Record.Size) + "],\n";
   if (Plan.TailFiller)
     Out += withComment("    pub _filler_end: [u8; " +
@@ -294,12 +294,19 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
       Methods += "    /// " + Bit->Name + ", " +
                  bitText(Access.Shift, Access.Width) + " of " + Place.Name +
                  ".\n";
+      std::string Write = Field + " = (" + Field + " & !(" + Access.Mask +
+                          Shift + ")) | ((" + Stored + " & " + Access.Mask +
+                          ")" + Shift + ");";
+      // A union's field reads only in unsafe code.
+      if (Plan.Record->Union) {
+        Read = "unsafe { " + Read + " }";
+        Write = "unsafe { " + Write + " }";
+      }
       Methods += "    pub const fn " + unique(Names.member(Bit->Name)) +
                  "(&self) -> " + Value + " {\n        " + Read + "\n    }\n";
       Methods += "    pub fn " + unique("set_" + Names.member(Bit->Name)) +
-                 "(&mut self, value: " + Value + ") {\n        " + Field +
-                 " = (" + Field + " & !(" + Access.Mask + Shift + ")) | ((" +
-                 Stored + " & " + Access.Mask + ")" + Shift + ");\n    }\n";
+                 "(&mut self, value: " + Value + ") {\n        " + Write +
+                 "\n    }\n";
     }
   }
   if (!Methods.empty())

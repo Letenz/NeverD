@@ -3527,10 +3527,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>No hay tipos locales: este programa no tiene un PDB con tipos.</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>Tipos: %1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>Tipos cuya disposición no coincide con el PDB: %1</translation>
     </message>
@@ -3712,6 +3708,51 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>La ventana se cerró</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>Todos los tipos</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>Del PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>De los encabezados del sistema</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>Declarados</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>Mostrar los tipos de un solo origen</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>Tipos: %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n del PDB</numerusform>
+            <numerusform>%n del PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n de los encabezados del sistema</numerusform>
+            <numerusform>%n de los encabezados del sistema</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n declarado</numerusform>
+            <numerusform>%n declarados</numerusform>
+        </translation>
     </message>
 </context>
 <context>

@@ -2167,10 +2167,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     };
     // The options the C API reads, as the request states them.
     Json options = Json::object();
-    for (const char *key : {"filter", "language", "spelling"})
+    for (const char *key : {"filter", "language", "spelling", "origin"})
       if (p.contains(key))
         options[key] = stringField(p, key, {}, 4096);
-    for (const char *key : {"offsets", "hexOffsets", "asserts", "dependencies"})
+    for (const char *key :
+         {"offsets", "hexOffsets", "asserts", "dependencies", "prototypes"})
       if (p.contains(key)) {
         if (!p.at(key).is_boolean())
           throw Error("invalid_request",

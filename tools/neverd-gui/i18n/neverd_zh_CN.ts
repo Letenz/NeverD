@@ -3521,10 +3521,6 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>没有本地类型：此程序没有包含类型的 PDB。</translation>
     </message>
     <message>
-        <source>Types: %1 · PDB · %2</source>
-        <translation>类型：%1 · PDB · %2</translation>
-    </message>
-    <message>
         <source>Types that do not lay out as the PDB lists them: %1</source>
         <translation>布局与 PDB 所列不一致的类型：%1</translation>
     </message>
@@ -3701,6 +3697,48 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The window closed</source>
         <translation>窗口已关闭</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>全部类型</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>来自 PDB</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>来自系统头文件</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>自己声明的</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>只显示某一来源的类型</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>类型：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>%n 个来自 PDB</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>%n 个来自系统头文件</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>%n 个自己声明</numerusform>
+        </translation>
     </message>
 </context>
 <context>

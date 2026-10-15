@@ -237,7 +237,7 @@ cl::opt<std::string> InputFile(
     cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
     cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
     cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(TypesCmd));
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
 
 cl::opt<std::string> OutputFile("o", cl::desc("Output file"), cl::init(""),
                                 cl::sub(LiftCmd), cl::sub(DecompileCmd),
@@ -881,6 +881,26 @@ cl::opt<std::string> StringFilter(
 // Types-specific options
 //===----------------------------------------------------------------------===//
 
+cl::opt<std::string>
+    TypesInput(cl::Positional,
+               cl::desc("<binary>: the program whose types to show; without "
+                        "one, --data-model converts --declare files alone"),
+               cl::init(""), cl::sub(TypesCmd));
+cl::opt<std::string> TypesDataModel(
+    "data-model",
+    cl::desc("Without a binary, lay the --declare files out for LLP64 "
+             "(Windows x64), LP64 or ILP32"),
+    cl::init(""), cl::value_desc("model"), cl::sub(TypesCmd));
+cl::opt<bool> TypesKeepGoing(
+    "keep-going",
+    cl::desc("Keep the C and C++ declarations that read when others do not, "
+             "each problem reported as a warning"),
+    cl::sub(TypesCmd));
+cl::opt<bool> TypesPrototypes(
+    "prototypes",
+    cl::desc("With --all, follow the types with the function prototypes "
+             "(C and C++)"),
+    cl::sub(TypesCmd));
 cl::list<std::string>
     TypeNames("type",
               cl::desc("Render this local type, with every type it needs "
@@ -904,6 +924,11 @@ cl::opt<std::string>
                 cl::desc("List the types whose name contains this, ignoring "
                          "the case of ASCII letters"),
                 cl::init(""), cl::value_desc("text"), cl::sub(TypesCmd));
+cl::opt<std::string>
+    TypesOrigin("origin",
+                cl::desc("List the types of one origin: pdb, header (a "
+                         "header library NeverD ships) or user (--declare)"),
+                cl::init(""), cl::value_desc("origin"), cl::sub(TypesCmd));
 cl::opt<std::string>
     TypesLanguage("lang", cl::desc("Render as c, cpp, rust or go (default c)"),
                   cl::init("c"), cl::value_desc("language"), cl::sub(TypesCmd));

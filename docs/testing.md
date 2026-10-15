@@ -284,6 +284,21 @@ renders every kernel type as C, Rust and Go and reads it back; each record
 must keep its size and every member's bit offset and width, and every
 rendered size and offset check must hold.
 
+`HeaderLibrary.*` reads the embedded Windows kernel library and checks how a
+header library joins a program's types. After running
+`scripts/generate_windows_kernel_types.py`, check the library in every
+language:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/WindowsKernelX64.h --data-model LLP64
+```
+
+With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
+ntoskrnl.exe and its PDB,
+`SessionCAPITest.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
+and checks that the headers join its PDB without conflicts.
+
 Declared types are covered at each layer:
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
   replacing a PDB type in place, problems with their place, removal, and the
