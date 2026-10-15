@@ -3019,6 +3019,12 @@ callbacks, cache hits/misses and full unload across that matrix.
 `KernelLookaside` checks registration links and reserved bytes, cached-pool
 lifetimes, corruption, IRQL, missing exports, MDL borrowing in either order,
 and deletion preflight with held locks, pinned pages and read-only storage.
+`driver_fast_mutex.c` covers both WDK initialization forms, all eleven fast/guarded
+mutex exports, failed Try calls, APC_LEVEL entry, Unsafe regions and unload
+across the same backend/contract/base matrix. `KernelFastMutex` checks logical
+thread ownership, nested holds and callbacks, IRQL/region restoration, padding,
+corruption, read-only and paged storage, MDL borrowing in either order and
+failure before mutation. Contended waits remain explicit unsupported paths.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 

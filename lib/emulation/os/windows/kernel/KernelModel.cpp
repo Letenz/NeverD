@@ -692,6 +692,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return E;
   if (auto E = validateLookasideAccess(Address, Size, IsWrite))
     return E;
+  if (auto E = validateFastMutexAccess(Address, Size, IsWrite))
+    return E;
   const uint64_t End = Address + Size;
   if (Address < profile::ProcessorEnvironmentBase + profile::PageSize &&
       profile::ProcessorEnvironmentBase < End)

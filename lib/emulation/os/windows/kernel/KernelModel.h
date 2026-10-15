@@ -739,7 +739,27 @@ private:
   llvm::Expected<std::vector<uint64_t>>
   lookasideEntries(uint64_t Address) const;
   llvm::Error writableLookasideStorage(uint64_t Address, uint32_t Size) const;
-  llvm::Error validateLookasideBorrow(uint64_t Address, uint64_t Size) const;
+  llvm::Error validateKernelObjectBorrow(uint64_t Address, uint64_t Size) const;
+  llvm::Error validateUnborrowedKernelStorage(uint64_t Address,
+                                              uint64_t Size) const;
+  enum class FastMutexMode { Normal, Unsafe, UnsafeGuarded };
+  struct FastMutexHold {
+    uint64_t Thread, Object;
+    uint8_t OldIRQL;
+    FastMutexMode Mode;
+  };
+  std::map<uint64_t, FastMutexHold> FastMutexHolds;
+  llvm::Expected<uint64_t> initializeFastMutex(uint64_t Address);
+  llvm::Expected<uint64_t> acquireFastMutex(uint64_t Address,
+                                            FastMutexMode Mode, bool Try);
+  llvm::Expected<uint64_t> releaseFastMutex(uint64_t Address, bool Unsafe);
+  llvm::Error validateFastMutexStorage(uint64_t Address, bool Initialize) const;
+  llvm::Error validateFastMutexAccess(uint64_t Address, uint32_t Size,
+                                      bool IsWrite) const;
+  llvm::Error validateFastMutexContext(uint8_t IRQL, uint16_t Critical,
+                                       uint16_t Guarded,
+                                       uint64_t Retiring = 0) const;
+  bool threadHoldsFastMutex(uint64_t Thread) const;
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;

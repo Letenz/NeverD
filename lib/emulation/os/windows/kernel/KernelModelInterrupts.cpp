@@ -139,6 +139,8 @@ llvm::Error KernelModel::validateExecutionReturn(uint64_t Identity,
       return apiError("guest return retains a raised IRQL");
   if (!Nested && Dispatcher.ownsMutex(CurrentThreadKey))
     return apiError(dispatcher::OwnedMutexReturn);
+  if (!Nested && threadHoldsFastMutex(CurrentThreadKey))
+    return apiError("guest return retains an owned fast mutex");
   if (!Nested && SystemAffinityThreads.contains(CurrentThreadKey))
     return apiError("guest return retains an unmatched system affinity");
   if (auto It = ApcStates.find(CurrentThreadKey);
