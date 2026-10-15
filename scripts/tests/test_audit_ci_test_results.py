@@ -88,7 +88,7 @@ def workflow_bash():
     git = shutil.which("git")
     if git:
         root = Path(git).resolve().parent.parent
-        if root.name.lower() in ("mingw32", "mingw64", "usr"):
+        if root.name.lower() in ("mingw32", "mingw64", "ucrt64", "usr"):
             root = root.parent
         for relative in ("bin/bash.exe", "usr/bin/bash.exe"):
             bash = root / relative
@@ -134,7 +134,7 @@ class WorkflowShellTests(unittest.TestCase):
             bash = root / "bin" / "bash.exe"
             bash.parent.mkdir()
             bash.touch()
-            for layout in ("bin", "cmd", "mingw32/bin", "mingw64/bin", "usr/bin"):
+            for layout in ("bin", "cmd", "mingw32/bin", "mingw64/bin", "ucrt64/bin", "usr/bin"):
                 with self.subTest(layout=layout), mock.patch.object(
                     sys, "platform", "win32"
                 ), mock.patch.object(
