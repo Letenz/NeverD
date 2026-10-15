@@ -2719,6 +2719,45 @@ TEST_F(ProcessPublic, AndroidMutableFilesAndLiveProcMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidLiveProcAndMaintainedStatMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "proc-O2-relr.so")
+             .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto Request = llvm::cantFail(llvm::json::parse(R"({
+    "backend":"unicorn", "linux_time":{"clocks":[{"id":0,"seconds":100,"nanoseconds":7}]},
+    "android":{"entry_symbol":"proc_write_stat","initialize":false,"thread_limit":2},
+    "linux_files":{"dynamic_proc":{"name":"fixture","parent_pid":1},
+      "files":[{"path":"/fixture/value","bytes_hex":"616263","write_limit":16384,
+        "track_write_metadata":true,
+        "metadata":{"device":0,"inode":42,"mode":33188,"link_count":1,
+          "uid":0,"gid":0,"size":3,"block_size":4096,"blocks":8,
+          "access_time":{"seconds":0,"nanoseconds":0},
+          "modification_time":{"seconds":0,"nanoseconds":0},
+          "change_time":{"seconds":0,"nanoseconds":0}}}]}})"));
+  for (const char *Entry :
+       {"proc_write_stat", "proc_live_maps", "proc_thread_lifecycle"}) {
+    (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
+    const auto Options = jsonText(*Request.getAsObject());
+    const auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned") << Text;
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

@@ -762,12 +762,14 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
             page["text"].get_ref<const std::string &>();
         for (auto &row : page["rows"])
           full["rows"].push_back(std::move(row));
-        // A spelled page names the source names on it alone.
-        if (auto names = page.find("source_names");
-            names != page.end() && names->is_array() &&
-            full.contains("source_names") && full["source_names"].is_array())
-          for (auto &name : *names)
-            full["source_names"].push_back(std::move(name));
+        // A spelled page names the source names on it alone, and an LLVM IR
+        // page the globals on its lines.
+        for (const char *field : {"source_names", "references"})
+          if (auto names = page.find(field);
+              names != page.end() && names->is_array() &&
+              full.contains(field) && full[field].is_array())
+            for (auto &name : *names)
+              full[field].push_back(std::move(name));
       }
       if (complete)
         break;
@@ -821,9 +823,20 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
             return std::nullopt;
           });
     std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
-    if (!sourceView)
+    if (!sourceView) {
       full["text"] = renameIdentifiers(full["text"].get<std::string>(),
                                        listing().functionAliases(), shift);
+      // A global's name reads as the renamed text spells it.
+      if (auto references = full.find("references");
+          references != full.end() && references->is_array())
+        for (auto &reference : *references)
+          if (reference.contains("name") && reference["name"].is_string()) {
+            std::vector<std::pair<std::size_t, std::ptrdiff_t>> unused;
+            reference["name"] =
+                renameIdentifiers(reference["name"].get<std::string>(),
+                                  listing().functionAliases(), unused);
+          }
+    }
     const std::size_t base = full.value("byte_offset", std::size_t{0});
     if (auto regions = full.find("library_regions");
         regions != full.end() && regions->is_array())
@@ -846,15 +859,17 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
             name[field] =
                 base +
                 shiftedOffset(name[field].get<std::size_t>() - base, shift);
-    // Renames before the definition move where it begins, not its line.
-    if (auto prelude = full.find("prelude");
-        prelude != full.end() && prelude->is_object() &&
-        prelude->contains("end_byte") &&
-        (*prelude)["end_byte"].is_number_unsigned() &&
-        (*prelude)["end_byte"].get<std::size_t>() >= base)
-      (*prelude)["end_byte"] =
-          base + shiftedOffset((*prelude)["end_byte"].get<std::size_t>() - base,
-                               shift);
+    // Renames before the definition move where it begins, not its line; so
+    // too where the lines after it begin.
+    for (const auto &[region, field] : {std::pair{"prelude", "end_byte"},
+                                        std::pair{"epilogue", "begin_byte"}})
+      if (auto bounds = full.find(region);
+          bounds != full.end() && bounds->is_object() &&
+          bounds->contains(field) && (*bounds)[field].is_number_unsigned() &&
+          (*bounds)[field].get<std::size_t>() >= base)
+        (*bounds)[field] =
+            base +
+            shiftedOffset((*bounds)[field].get<std::size_t>() - base, shift);
     const auto &text = full["text"].get_ref<const std::string &>();
     document->lines.push_back(0);
     for (std::size_t i = 0; i < text.size(); ++i)
@@ -910,7 +925,8 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   Json page = Json::object();
   for (const auto &[field, value] : namedView_.items())
     if (field != "text" && field != "rows" &&
-        !((field == "source_names" || field == "code_names") &&
+        !((field == "source_names" || field == "code_names" ||
+           field == "references") &&
           value.is_array()))
       page[field] = value;
   page["text"] = text.substr(startByte, endByte - startByte);
@@ -921,6 +937,16 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
       rows.push_back(row);
   }
   page["rows"] = std::move(rows);
+  if (const auto references = namedView_.find("references");
+      references != namedView_.end() && references->is_array()) {
+    Json onPage = Json::array();
+    for (const auto &reference : *references) {
+      const auto line = reference.value("line", std::size_t{0});
+      if (line >= start && line < end)
+        onPage.push_back(reference);
+    }
+    page["references"] = std::move(onPage);
+  }
   const std::size_t base = namedView_.value("byte_offset", std::size_t{0});
   for (const char *field : {"source_names", "code_names"}) {
     if (!namedView_.contains(field) || !namedView_[field].is_array())
@@ -2725,8 +2751,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     std::string mappingStatus = "unsupported_representation";
     // Why the engine offers no page, such as Rust asked of a C program.
     std::string reason;
+    // An engine that pages no LLVM IR answers without text; its whole text
+    // follows below.
     if (representation == "low" || representation == "med" ||
-        representation == "c" || representation == "llvmc" || spelled) {
+        representation == "llvm" || representation == "c" ||
+        representation == "llvmc" || spelled) {
       if (auto named =
               namedViewPage(address, representation, offset, limit, options))
         return *named;

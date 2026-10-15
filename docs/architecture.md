@@ -160,6 +160,29 @@ source MedIR call/return recovery. A later HighC request resumes only that
 projection through the ordinary HighIR completion boundary; it does not relift
 instructions or mutate the MedIR retained by LLVM emission.
 
+The LLVM IR view of a function (`neverd_ir_llvm`, and the `llvm` pages of
+`neverd_ir_view_json`) is that function moved into a module of its own, as
+`llvm-extract` moves it (`lib/sdk/capi/LLVMFunctionView.cpp`). Every global its
+instructions, own operands and attached metadata reach, and those the
+declarations' metadata reach, is declared without an initializer; the body is
+cloned and the original module's flags kept, so the text verifies alone. Other
+named metadata stays with the whole module, and a slice that does not verify
+shows the function alone after a comment that says why. Comments read image
+addresses only from authoritative identities: NeverD's mirrors by their
+`__nd_data_`/`__nd_codeptr_` spelling plus constant offsets, functions by their
+source identity. Data is named as the listing names it (user names, import
+slots with the suffix `DataNames.def` shares with the listing, debug and image
+symbols, strings). Pages publish where the prelude ends and the epilogue
+begins, and, line by line, the image address each spelled global stands for.
+A mirror an instruction reaches at several offsets maps its spellings in
+printing order only when the counts agree, otherwise to its first byte. The
+rendered view is kept with the inspection module and dropped with the user's
+names. Its rows stay unmapped (`unsupported_representation`), and the worker's
+named view renames the references' spellings with the text. Bytecode keeps its
+whole module as its text (`neverd_ir_llvm`), and its `llvm` pages report its
+architecture as unsupported, as its C pages do. A function another
+module only declares has no identity there, so the GUI resolves its name.
+
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only
 replicas and database packing. Source identity and exact row anchors prevent
@@ -3541,9 +3564,11 @@ do not need vocabulary entries.
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
 Mutable bytes are one object per granted catalogue path; independent opens
-have independent offsets, while dup shares its open description. Mutation
+have independent offsets, while dup shares its open description. Without a metadata provider, mutation
 invalidates captured stat observations, retaining only unchanged block-size
-facts for libc buffer selection. Directory and stdio buffers belong to Bionic,
+facts for libc buffer selection. Opt-in tracked memory files keep complete
+metadata and sparse allocated-page state in the same mutable object, borrowing
+time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
@@ -6376,3 +6401,18 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 `SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
 
 `KernelModelObjects.cpp` owns process/thread pointer references, handle metadata and retirement. Scheduling owns execution holds and exit; waits retain their existing domain holds. Referenced borrowed threads survive callback/stack retirement. Reused stacks get new identities and priorities, while retained old objects preserve their exit priority. Process identities remain session-owned; registry handles still route to the registry owner pending integration.
+
+`KernelDataExports.def` owns the kernel data inventory and layout outside the PE forwarder span. `KernelExportRegistry` separates data addresses from function gates without consuming thunk slots. `KernelModelDataExports.cpp` initializes identities through the object owner and protects data pages before entry. `KernelModelMemory` observes successful model reads; CPU read hooks cover guest instructions. Preflight and diagnostic snapshots remain pure. Declared debugger facts and consumed data retain recovery dependencies; retained data pointers remain borrowed state.
+
+### Live proc and maintained file metadata
+
+`LinuxProc` classifies the optional live namespace, borrowing task snapshots
+directly from GuestThreads through LinuxServices. It owns no second scheduler.
+`LinuxProcRead` retains record buffering in the shared open description, and
+fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
+`LinuxProcMaps` intersects optional backing identities and device aliases with
+AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
+labels on unmap. JSON supplies explicit identity/provider declarations only.
+See [live proc](linux-live-proc.md) for the supported fields and boundaries.
+
+`KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.

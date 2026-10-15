@@ -1910,3 +1910,7 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 `InterpreterSpecialization.Timestamp*` 以獨立值與狀態參考實作檢查完整讀數、高半部清零、獨立與重複讀取、暫存器／旗標／記憶體／區段基址保持、精確與不足預算、非法序列及未知位址來源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 檢查原始還原完成並保留原生證明與原始碼配置拒絕。現有 `X86_64_Intrinsics` 時間戳案例檢查原始碼產生與單次讀取的完整位元結果；`DriverTimestamp` 另行檢查 Unicorn/KVM/WHP 共用時鐘策略、狀態保持、預算及溢位。平台略過不代表該後端已執行。
 
 `KernelObjectTests.cpp` 驗證已知 ID、型別/權限/模式失敗、控制代碼資訊、輸出失敗無參照洩漏、卸載及堆疊重用。`DriverObjectTests.cpp` 在可用 Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、偏好/重定位位址及協作/17 指令排程執行原創 `driver_objects.c`。`NativeDriverTests.def` 要求 KVM/WHP 結果；缺失或跳過仍為缺口。這些測試不證明 ACL、一般行程退出或未實作物件類別。
+
+`KernelDataExportTests.cpp` 驗證身分、可用性、thunk 容量、唯讀/NX、未宣告偵錯器位元組及還原相依性。`DriverDataExportTests.cpp` 使用原創 `driver_data.c` 的真實 DATA 匯入，在可用後端、兩種契約和載入基址執行，涵蓋卸載與拒絕寫入/執行。情境、C ABI、CLI 和 Python 測試驗證布林宣告及報告傳輸。`NativeDriverTests.def` 要求原生結果；不可用後端仍屬覆蓋缺口。
+
+`KernelNamespaceTests.cpp` 驗證型別、相對路徑、大小寫、緩衝區大小與複製順序、尾部位元組、權限、行程範圍、IRQL、失敗輸出及延遲刪除。`DriverNamespaceTests.cpp` 於可用 Unicorn/KVM/WHP/HVF、兩種契約、兩種位址及協作/17 指令排程執行原創 `driver_namespace.c`。`NativeDriverTests.def` 要求原生結果；不可用後端及未支援資訊/安全類別仍為缺口。

@@ -40,7 +40,7 @@ NEVERD_ACTION(FileReload,
                                 "Read the input file again, with its saved "
                                 "annotations"))
 NEVERD_ACTION(FileLoadPdb, QT_TRANSLATE_NOOP("Actions", "&PDB file..."), "",
-              "signatures",
+              "symbol_file",
               QT_TRANSLATE_NOOP("Actions",
                                 "Load symbols from a selected PDB file"))
 NEVERD_ACTION(
@@ -164,7 +164,7 @@ NEVERD_VIEW_ACTION(EditComment,
                    QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
 NEVERD_VIEW_ACTION(EditRepeatableComment,
                    QT_TRANSLATE_NOOP("Actions", "Enter re&peatable comment..."),
-                   ";", "comment",
+                   ";", "comment_repeatable",
                    QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
 NEVERD_VIEW_ACTION(EditBookmark,
                    QT_TRANSLATE_NOOP("Actions", "Mar&k position..."), "Alt+M",
@@ -190,12 +190,12 @@ NEVERD_VIEW_ACTION(JumpForward,
                                      "Go forward in the navigation history"))
 NEVERD_VIEW_ACTION(JumpNextFunction,
                    QT_TRANSLATE_NOOP("Actions", "Next f&unction"),
-                   "Ctrl+Shift+Down", "forward",
+                   "Ctrl+Shift+Down", "function_next",
                    QT_TRANSLATE_NOOP("Actions",
                                      "Move to the start of the next function"))
 NEVERD_VIEW_ACTION(
     JumpPreviousFunction, QT_TRANSLATE_NOOP("Actions", "Pre&vious function"),
-    "Ctrl+Shift+Up", "back",
+    "Ctrl+Shift+Up", "function_previous",
     QT_TRANSLATE_NOOP("Actions", "Move to the start of the previous function"))
 NEVERD_VIEW_ACTION(
     JumpPseudocode, QT_TRANSLATE_NOOP("Actions", "Jump to pseudo&code"), "Tab",
@@ -222,12 +222,12 @@ NEVERD_ACTION(JumpEntry,
               QT_TRANSLATE_NOOP("Actions", "Choose an entry point to jump to"))
 NEVERD_ACTION(JumpXrefsTo,
               QT_TRANSLATE_NOOP("Actions", "List cross references &to..."),
-              "Ctrl+X", "xrefs",
+              "Ctrl+X", "xrefs_to",
               QT_TRANSLATE_NOOP("Actions",
                                 "List references to the current item"))
 NEVERD_ACTION(JumpXrefsFrom,
               QT_TRANSLATE_NOOP("Actions", "List cross references f&rom..."),
-              "Ctrl+J", "xrefs",
+              "Ctrl+J", "xrefs_from",
               QT_TRANSLATE_NOOP(
                   "Actions", "List references made by the current instruction"))
 NEVERD_VIEW_ACTION(
@@ -254,7 +254,7 @@ NEVERD_ACTION(SearchBytes,
                                 "Search the binary for a byte sequence"))
 NEVERD_ACTION(SearchNextBytes,
               QT_TRANSLATE_NOOP("Actions", "Next se&quence of bytes"), "Ctrl+B",
-              "search_next",
+              "search_bytes_next",
               QT_TRANSLATE_NOOP("Actions", "Repeat the last byte search"))
 NEVERD_ACTION(SearchStringReferences,
               QT_TRANSLATE_NOOP("Actions", "String &references"),
@@ -263,13 +263,13 @@ NEVERD_ACTION(SearchStringReferences,
                                 "List the instructions that refer to strings"))
 NEVERD_VIEW_ACTION(
     SearchHighlightUp, QT_TRANSLATE_NOOP("Actions", "Search highlight &up"),
-    "Alt+Up", "back",
+    "Alt+Up", "up",
     QT_TRANSLATE_NOOP(
         "Actions",
         "Move to the previous occurrence of the highlighted identifier"))
 NEVERD_VIEW_ACTION(
     SearchHighlightDown, QT_TRANSLATE_NOOP("Actions", "Search highlight &down"),
-    "Alt+Down", "forward",
+    "Alt+Down", "down",
     QT_TRANSLATE_NOOP(
         "Actions", "Move to the next occurrence of the highlighted identifier"))
 NEVERD_VIEW_ACTION(
@@ -295,13 +295,13 @@ NEVERD_ACTION(ViewPseudocode,
               "pseudocode",
               QT_TRANSLATE_NOOP("Actions", "Decompile the current function"))
 NEVERD_ACTION(ViewLowIR, QT_TRANSLATE_NOOP("Actions", "Generate &LowIR"), "",
-              "ir",
+              "ir_low",
               QT_TRANSLATE_NOOP("Actions", "Show the current function's LowIR"))
 NEVERD_ACTION(ViewMedIR, QT_TRANSLATE_NOOP("Actions", "Generate &MedIR"),
-              "Ctrl+Shift+F8", "ir",
+              "Ctrl+Shift+F8", "ir_med",
               QT_TRANSLATE_NOOP("Actions", "Show the current function's MedIR"))
 NEVERD_ACTION(ViewHighIR, QT_TRANSLATE_NOOP("Actions", "Generate &HighIR"),
-              "Ctrl+F6", "ir",
+              "Ctrl+F6", "ir_high",
               QT_TRANSLATE_NOOP("Actions",
                                 "Show the current function's HighIR"))
 NEVERD_ACTION(ViewLLVMIR, QT_TRANSLATE_NOOP("Actions", "Generate LLVM &IR"), "",
@@ -389,7 +389,7 @@ NEVERD_ACTION(OptionsColors, QT_TRANSLATE_NOOP("Actions", "&Colors..."), "",
 NEVERD_ACTION(OptionsFont, QT_TRANSLATE_NOOP("Actions", "&Font..."), "", "font",
               QT_TRANSLATE_NOOP("Actions", "Choose the code font"))
 NEVERD_ACTION(OptionsShortcuts, QT_TRANSLATE_NOOP("Actions", "&Shortcuts..."),
-              "", "options",
+              "", "keyboard",
               QT_TRANSLATE_NOOP("Actions", "List keyboard shortcuts"))
 NEVERD_ACTION(OptionsPalette,
               QT_TRANSLATE_NOOP("Actions", "Show command &palette..."),
@@ -398,7 +398,7 @@ NEVERD_ACTION(OptionsPalette,
 NEVERD_ACTION(
     OptionsRepeatPalette,
     QT_TRANSLATE_NOOP("Actions", "&Repeat last palette command"),
-    "Ctrl+Shift+R", "palette",
+    "Ctrl+Shift+R", "palette_repeat",
     QT_TRANSLATE_NOOP("Actions",
                       "Run the last command chosen in the palette again"))
 NEVERD_ACTION(

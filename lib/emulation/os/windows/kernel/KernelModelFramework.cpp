@@ -196,8 +196,8 @@ void KernelModel::configureFrameworkDeviceHost() {
           "framework device deletion with an active IRP is outside this "
           "profile");
     for (const auto &Key : Owner->second) {
-      auto Link = SymbolicLinks.find(Key);
-      if (Link == SymbolicLinks.end() || Link->second != Object->second.Name)
+      const auto Link = findSymbolicLink(Key);
+      if (!Link || SymbolicLinks.at(Link).Target != Object->second.Name)
         return frameworkDeviceError(
             "framework device symbolic-link ownership changed before deletion");
     }
@@ -271,6 +271,8 @@ void KernelModel::configureFrameworkDeviceHost() {
 
 std::optional<unsigned>
 KernelModel::argumentCount(const KernelExportRegistry::Export &Export) {
+  if (Export.Kind == KernelExportRegistry::ExportKind::ModuleData)
+    return std::nullopt;
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return argumentCount(Export.Name);
@@ -289,6 +291,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     llvm::ArrayRef<uint64_t> Arguments,
     llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
     const KernelContextCapture *Context) {
+  if (Export.Kind == KernelExportRegistry::ExportKind::ModuleData)
+    return llvm::createStringError("kernel data exports are not callable");
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return call(Export.Name, Arguments, ReadArgument, Context);

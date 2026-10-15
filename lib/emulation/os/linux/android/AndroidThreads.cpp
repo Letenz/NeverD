@@ -176,6 +176,19 @@ llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
   }
   return false;
 }
+std::vector<linux_model::ProcTask> GuestThreads::procTasks() const {
+  std::vector<linux_model::ProcTask> Tasks;
+  for (size_t I = 0; I < Threads.size(); ++I) {
+    const auto &T = Threads[I];
+    if (I && T.Report.Finished)
+      continue;
+    Tasks.push_back({uint32_t(T.Report.ID), T.Report.Finished ? 'Z'
+                                            : T.Waiting && !ready(*T.Waiting)
+                                                ? 'S'
+                                                : 'R'});
+  }
+  return Tasks;
+}
 void GuestThreads::report() {
   if (!enabled())
     return;

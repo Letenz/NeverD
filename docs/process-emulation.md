@@ -539,7 +539,9 @@ EOF. Rewind is required to revisit reused slots below the cursor. These rules
 follow the kernel [record ABI](https://github.com/torvalds/linux/blob/v5.10/fs/readdir.c)
 and [FD iteration](https://github.com/torvalds/linux/blob/v5.10/fs/proc/fd.c).
 This option does not supply dynamic maps, task, status or fdinfo files, nor
-PID aliases, proc mount metadata or general proc symlink traversal.
+PID aliases, proc mount metadata or general proc symlink traversal. The separate
+[`dynamic_proc` contract](linux-live-proc.md) supplies maps, live tasks, supported
+status fields and fdinfo, including process/thread-self aliases.
 
 **Bounded writes to existing files**
 
@@ -558,11 +560,14 @@ EACCES/ENOSPC results. `O_CREAT` can open an existing entry; `O_EXCL` returns
 EEXIST before truncation. Creating absent objects remains unmodeled. `O_CREAT | O_DIRECTORY` also stops
 explicitly because its behavior depends on the Linux release.
 
-Any write or truncation invalidates captured stat observations. A later stat
+Without an explicit `track_write_metadata` provider, any write or truncation
+invalidates captured stat observations. A later stat
 stops rather than returning stale size, block counts or timestamps. The known
 filesystem block size remains usable for stdio buffer selection. Vectored
 mutable-file writes, regular file mappings, truncate syscalls, unlink/rename,
-new objects, timestamps and general permission changes remain unmodeled.
+new objects and general permission changes remain unmodeled. An explicit
+[metadata provider](linux-live-proc.md#metadata-after-regular-file-writes) can
+maintain complete size, sparse allocation and virtual timestamps after writes.
 Captured stdout/stderr keep their existing bounded output semantics.
 
 Directory creation supports only failures already determined by pathname
