@@ -22,6 +22,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QScrollBar>
 #include <QSettings>
@@ -44,11 +45,15 @@ constexpr QSize DialogSize(900, 560);
 constexpr QSize MinimumDialogSize(720, 460);
 /// The side pane: the product, above its ways to start.
 constexpr int SideWidth = 300;
+/// The widest the side grows for a translation's longer actions.
+constexpr int MaximumSideWidth = 440;
 constexpr int SideTop = 32;
 constexpr int LogoSize = 56;
 constexpr int ActionHeight = 56;
 constexpr int ActionGlyphSlot = 36;
 constexpr int GlyphSize = 24;
+/// Around an action's glyph, text and key cap.
+constexpr int ActionPadding = 12;
 constexpr qreal RowRadius = 5;
 constexpr qreal DisabledOpacity = 0.45;
 /// The recent files.
@@ -146,12 +151,33 @@ QFont sized(QFont font, int pixels, QFont::Weight weight = QFont::Normal) {
   return font;
 }
 
-/// \p text without its mnemonic marks, as it is painted.
+/// \p text without its mnemonic marks, as it is painted.  The "(&X)" that
+/// Chinese, Japanese, Korean and Arabic titles append goes whole: the key cap
+/// shows its letter.
 QString withoutMnemonic(QString text) {
+  static const QRegularExpression Appended(
+      QStringLiteral("\\s*[(\\x{FF08}]&[^&][)\\x{FF09}]$"));
+  text.remove(Appended);
   for (qsizetype At = 0; At < text.size(); ++At)
     if (text.at(At) == u'&')
       text.remove(At, 1);
   return text;
+}
+
+/// The letter \p title marks as its access key, which its key cap shows and
+/// which presses it without Alt as IDA's quick start keys do; \p fallback
+/// when the title marks none.
+QString accessKey(const QString &title, QChar fallback) {
+  for (qsizetype At = 0; At + 1 < title.size(); ++At) {
+    if (title.at(At) != u'&')
+      continue;
+    if (title.at(At + 1) == u'&') {
+      ++At;
+      continue;
+    }
+    return title.at(At + 1).toUpper();
+  }
+  return QString(fallback);
 }
 
 /// An SVG resource rendered at \p size logical pixels, crisp at \p ratio.
@@ -288,7 +314,15 @@ public:
     setAccessibleDescription(description);
   }
 
-  QSize sizeHint() const override { return {SideWidth, ActionHeight}; }
+  /// Wide enough to show the title, the description and the key cap whole.
+  QSize sizeHint() const override {
+    const QFontMetrics title(sized(font(), TitlePixels, QFont::Medium));
+    const QFontMetrics body(sized(font(), BodyPixels));
+    const int text = std::max(title.horizontalAdvance(title_),
+                              body.horizontalAdvance(description_));
+    return {4 * ActionPadding + ActionGlyphSlot + text + capWidth(),
+            ActionHeight};
+  }
   QSize minimumSizeHint() const override { return {0, ActionHeight}; }
 
 protected:
@@ -325,8 +359,8 @@ protected:
     }
 
     const int middle = height() / 2;
-    const QRect glyphArea(12, middle - ActionGlyphSlot / 2, ActionGlyphSlot,
-                          ActionGlyphSlot);
+    const QRect glyphArea(ActionPadding, middle - ActionGlyphSlot / 2,
+                          ActionGlyphSlot, ActionGlyphSlot);
     painter.drawPixmap(glyphArea.left() + (ActionGlyphSlot - GlyphSize) / 2,
                        glyphArea.top() + (ActionGlyphSlot - GlyphSize) / 2,
                        glyph(glyph_, GlyphSize,
@@ -335,13 +369,12 @@ protected:
                              devicePixelRatioF()));
 
     const QFont keyFont = sized(font(), KeyPixels, QFont::Medium);
-    const int capWidth =
-        std::max(20, QFontMetrics(keyFont).horizontalAdvance(key_) + 12);
-    const QRect cap(width() - 12 - capWidth, middle - 10, capWidth, 20);
+    const QRect cap(width() - ActionPadding - capWidth(), middle - 10,
+                    capWidth(), 20);
     drawKey(painter, cap, key_, keyFont);
 
-    const int left = glyphArea.right() + 1 + 12;
-    const int width = cap.left() - 12 - left;
+    const int left = glyphArea.right() + 1 + ActionPadding;
+    const int width = cap.left() - ActionPadding - left;
     const QFont titleFont = sized(font(), TitlePixels, QFont::Medium);
     const QFont bodyFont = sized(font(), BodyPixels);
     const QFontMetrics titleMetrics(titleFont), bodyMetrics(bodyFont);
@@ -361,6 +394,11 @@ protected:
   }
 
 private:
+  int capWidth() const {
+    const QFont keyFont = sized(font(), KeyPixels, QFont::Medium);
+    return std::max(20, QFontMetrics(keyFont).horizontalAdvance(key_) + 12);
+  }
+
   QString glyph_, key_, title_, description_;
 };
 
@@ -563,7 +601,11 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
 
   // The product, its ways to start, and whether it greets the next start.
   auto *side = new SidePane(this);
-  side->setFixedWidth(SideWidth);
+  // The side is as wide as its actions need, which a translation may make
+  // wider than English, up to MaximumSideWidth; the actions then elide.
+  side->setMinimumWidth(SideWidth);
+  side->setMaximumWidth(MaximumSideWidth);
+  side->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
   auto *sideLayout = new QVBoxLayout(side);
   sideLayout->setContentsMargins(16, SideTop, 17, 20);
   sideLayout->setSpacing(0);
@@ -598,15 +640,18 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
   version->setAlignment(Qt::AlignCenter);
   sideLayout->addWidget(version);
   sideLayout->addSpacing(32);
-  auto *newButton =
-      new StartButton(QStringLiteral("start_new"), tr("&New"),
-                      tr("Disassemble a new file"), QStringLiteral("N"), side);
-  auto *goButton =
-      new StartButton(QStringLiteral("start_go"), tr("&Go"),
-                      tr("Work on your own"), QStringLiteral("G"), side);
-  previous_ = new StartButton(QStringLiteral("start_previous"), tr("&Previous"),
-                              tr("Load the selected recent file"),
-                              QStringLiteral("P"), side);
+  const QString newTitle = tr("&New"), goTitle = tr("&Go"),
+                previousTitle = tr("&Previous");
+  const QString newKey = accessKey(newTitle, u'N'),
+                goKey = accessKey(goTitle, u'G'),
+                previousKey = accessKey(previousTitle, u'P');
+  auto *newButton = new StartButton(QStringLiteral("start_new"), newTitle,
+                                    tr("Disassemble a new file"), newKey, side);
+  auto *goButton = new StartButton(QStringLiteral("start_go"), goTitle,
+                                   tr("Work on your own"), goKey, side);
+  previous_ =
+      new StartButton(QStringLiteral("start_previous"), previousTitle,
+                      tr("Load the selected recent file"), previousKey, side);
   sideLayout->addWidget(newButton);
   sideLayout->addSpacing(4);
   sideLayout->addWidget(goButton);
@@ -675,13 +720,14 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
           [this](int row) { previous_->setEnabled(row >= 0); });
   connect(recent_, &QWidget::customContextMenuRequested, this,
           &QuickStartDialog::showRecentMenu);
-  // IDA's keys for its buttons, also without Alt.
+  // IDA's keys for its buttons, also without Alt: each button's access key
+  // in the current language, as its key cap shows.
   for (const auto &[key, button] :
-       {std::pair<const char *, QPushButton *>{"N", newButton},
-        {"G", goButton},
-        {"P", previous_}})
-    connect(new QShortcut(QKeySequence(QString::fromLatin1(key)), this),
-            &QShortcut::activated, button, &QPushButton::click);
+       {std::pair<QString, QPushButton *>{newKey, newButton},
+        {goKey, goButton},
+        {previousKey, previous_}})
+    connect(new QShortcut(QKeySequence(key), this), &QShortcut::activated,
+            button, &QPushButton::click);
 
   fillRecent();
   if (recent_->count()) {

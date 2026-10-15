@@ -64,6 +64,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <QTranslator>
 #include <QTreeView>
 #include <QUrl>
 #include <cmath>
@@ -3465,6 +3466,75 @@ private slots:
     QCOMPARE(dialog.result(), int(QDialog::Accepted));
     QCOMPARE(dialog.start(), QuickStartDialog::Start::Previous);
     QCOMPARE(dialog.file(), elf);
+  }
+
+  void quickStartKeysFollowTheTranslatedAccessKeys() {
+    // A translation moves a button's access key, and the key that presses
+    // it without Alt and its key cap move with it: French "&Continuer"
+    // takes C, and G no longer works on one's own.
+    class French final : public QTranslator {
+    public:
+      bool isEmpty() const override { return false; }
+      QString translate(const char *context, const char *source, const char *,
+                        int) const override {
+        if (qstrcmp(context, "neverd::gui::QuickStartDialog") == 0 &&
+            qstrcmp(source, "&Go") == 0)
+          return QStringLiteral("&Continuer");
+        return {};
+      }
+    } french;
+    QCoreApplication::installTranslator(&french);
+    const auto restore =
+        qScopeGuard([&] { QCoreApplication::removeTranslator(&french); });
+    const auto pick = [](QWidget *) { return QString(); };
+
+    QuickStartDialog ignored(pick);
+    ignored.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&ignored));
+    QTest::keyClick(&ignored, Qt::Key_G);
+    QVERIFY(ignored.isVisible());
+    QCOMPARE(ignored.start(), QuickStartDialog::Start::None);
+
+    QuickStartDialog dialog(pick);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(buttonNamed(&dialog, QStringLiteral("&Continuer")));
+    QTest::keyClick(&dialog, Qt::Key_C);
+    QVERIFY(!dialog.isVisible());
+    QCOMPARE(dialog.start(), QuickStartDialog::Start::Go);
+  }
+
+  void quickStartWidensForALongerTranslation() {
+    // A translation longer than English, here the longest catalog's, widens
+    // the side rather than cut the action's description off.
+    class German final : public QTranslator {
+    public:
+      bool isEmpty() const override { return false; }
+      QString translate(const char *context, const char *source, const char *,
+                        int) const override {
+        if (qstrcmp(context, "neverd::gui::QuickStartDialog") == 0 &&
+            qstrcmp(source, "Load the selected recent file") == 0)
+          return QStringLiteral("Ausgewählte zuletzt verwendete Datei laden");
+        return {};
+      }
+    } german;
+    QCoreApplication::installTranslator(&german);
+    const auto restore =
+        qScopeGuard([&] { QCoreApplication::removeTranslator(&german); });
+    QuickStartDialog dialog([](QWidget *) { return QString(); });
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    const auto actions =
+        dialog.findChildren<QPushButton *>(QStringLiteral("quickStartAction"));
+    QCOMPARE(actions.size(), 3);
+    for (const auto *action : actions)
+      QVERIFY2(action->width() >= action->sizeHint().width(),
+               qPrintable(QStringLiteral("%1: %2 < %3, side %4")
+                              .arg(action->text())
+                              .arg(action->width())
+                              .arg(action->sizeHint().width())
+                              .arg(action->parentWidget()->width())));
+    QVERIFY(actions.front()->parentWidget()->width() > 300);
   }
 
   void quickStartAsksForANewFileOverItself() {
