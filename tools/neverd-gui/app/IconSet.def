@@ -183,7 +183,8 @@ NEVERD_ICON("menu_check-dark", Chrome, "a check mark")
 NEVERD_ICON("menu_check-light", Chrome, "a check mark")
 
 // Line glyphs of the quick start, drawn on a 24 px grid and tinted where they
-// are painted.
+// are painted.  Straight strokes run along pixel centers, so the 24 px glyphs
+// keep their full color instead of blurring across two pixels.
 NEVERD_ICON("start_new", Glyph, "a page with a plus")
 NEVERD_ICON("start_go", Glyph, "a window with a side pane")
 NEVERD_ICON("start_previous", Glyph, "a clock with an arrow turning back")
