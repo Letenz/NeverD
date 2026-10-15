@@ -23,7 +23,7 @@ unsigned registration_trace;
 #if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49
 unsigned registration_iteration;
 #endif
-#if REGISTRATION_CASE == 48 || REGISTRATION_CASE == 49
+#if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
 unsigned registration_helper_visits;
 #endif
 #if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2
@@ -66,7 +66,7 @@ void registration_raise(void) {
 
 void registration_no_raise(void) {
   observed_caller = (unsigned)_ReturnAddress();
-#if REGISTRATION_CASE == 48
+#if REGISTRATION_CASE == 48 || REGISTRATION_CASE == 50
   ++registration_helper_visits;
 #endif
 }
@@ -80,7 +80,7 @@ void mainCRTStartup(void) {
 #if REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49
     registration_iteration = iterations;
 #endif
-#if REGISTRATION_CASE == 48 || REGISTRATION_CASE == 49
+#if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
     registration_helper_visits = 0;
 #endif
 #if REGISTRATION_CASE == 6

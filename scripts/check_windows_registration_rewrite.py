@@ -90,6 +90,10 @@ EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
                   "longjmp-retired-scope", "longjmp-retired-inner-scope")
 CASES.update({prefix + name: CASES[name]
               for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
+CASES.update({prefix + name: (number, 23)
+              for prefix in ("eh4-", "eh4-gs-")
+              for number, name in ((50, "longjmp-private-parent-call"),
+                                   (51, "longjmp-private-parent-graph"))})
 
 
 
@@ -300,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
                          "registration_state.s" if case >= 30 else
                          "registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
-        if case == 49:
+        if case in (49, 51):
             sources.append("registration_private_graph.s")
         if args.case in ("longjmp-callee", "longjmp-returning-callee",
                          "longjmp-scalar-callee"):

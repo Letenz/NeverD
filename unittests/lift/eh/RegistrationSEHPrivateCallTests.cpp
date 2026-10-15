@@ -229,3 +229,45 @@ TEST(RegistrationSEHPrivateCall, RechecksChangedCalleeBytesAndImportStorage) {
   Work = 0;
   EXPECT_FALSE(F.prove(Work));
 }
+
+TEST(RegistrationSEHPrivateCall, EH4CalleeGraphsPreserveTheImageCookie) {
+  for (bool Graph : {false, true})
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(Graph);
+      SCOPED_TRACE(Mutation);
+      PrivateCallImage F;
+      auto &EH = *F.Function.ExceptionMetadata;
+      EH.Personality = ExceptionPersonality::ExceptHandler4;
+      EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+      EH.Registration->SeededTryLevel = -2;
+      EH.Registration->Scopes.front().EnclosingLevel = -2;
+      F.Image.DynInfo.SecurityCookieRVA = F.Data + 4 - F.Image.Base;
+      if (Graph)
+        F.install(F.Callee, {0xe8, 0xfb, 0, 0, 0, 0xc3});
+      if (Mutation >= 1 && Mutation <= 5) {
+        const va_t Address = Mutation == 1   ? F.Data
+                             : Mutation == 2 ? F.Data + 4
+                             : Mutation == 3 ? F.Data + 3
+                             : Mutation == 4 ? F.Data + 7
+                                             : F.Table;
+        F.install(Graph ? F.Child : F.Callee,
+                  {0xc7, 0x05, uint8_t(Address), uint8_t(Address >> 8),
+                   uint8_t(Address >> 16), uint8_t(Address >> 24), 7, 0, 0, 0,
+                   0xb8, 7, 0, 0, 0, 0xc3});
+        if (Mutation == 5) {
+          F.Image.Segments[1].Flags =
+              F.Image.Segments[1].Flags | SegmentFlags::Writable;
+          F.Image.Sections[1].Flags =
+              F.Image.Sections[1].Flags | SegmentFlags::Writable;
+        }
+      }
+      if (Mutation == 6)
+        F.Image.DynInfo.SecurityCookieRVA = 0;
+      if (Mutation == 7)
+        F.Image.DynInfo.SecurityCookieRVA = UINT32_MAX - F.Image.Base;
+      if (Mutation == 8)
+        F.Image.Base = uint64_t(UINT32_MAX) + 1;
+      size_t Work = 0;
+      EXPECT_EQ(F.prove(Work), Mutation < 2);
+    }
+}

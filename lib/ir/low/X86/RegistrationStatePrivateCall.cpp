@@ -13,7 +13,8 @@ namespace neverd::registration_state {
 std::optional<FrameValue>
 RegistrationStateSolver::transferPrivateSEHCall(Domain &State, const LowOp &Op,
                                                 const BlockFacts &Facts) {
-  if (!JumpRuntime || !JumpRuntime->PrivateCall || KnownCxx || EH4 ||
+  if (!JumpRuntime || !JumpRuntime->PrivateCall || KnownCxx ||
+      (EH4 && (!CompleteCookies || !cookiesReady(State.Frame))) ||
       Conditional || CheckCalls || State.Unknown || Facts.Invalid ||
       Facts.InvocationAtExit || !State.Parent || State.Callback ||
       State.Frame.CallbackEntry || !State.Installed || State.Uninstalled ||
