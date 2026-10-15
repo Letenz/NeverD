@@ -1445,6 +1445,30 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>此程式碼編譯所需的引入檔、輔助型別與宣告；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n 行宣告</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n 行屬性與中繼資料</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>此函式參照的目標、型別、全域變數與函式；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>此函式使用的屬性群組與中繼資料；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>按兩下前往 %1。</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>

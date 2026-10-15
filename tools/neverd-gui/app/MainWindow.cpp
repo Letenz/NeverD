@@ -1010,10 +1010,14 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name,
       },
       [this, view, name, serial, epoch, source, representation,
        sourceOptions](const QString &, const QString &error) {
-        if (serial == codeNavigationSerial_ && epoch == session_.epoch() &&
-            view->text()->function() == source &&
-            view->text()->sourceOptions() == sourceOptions &&
-            view->representation() == representation && view->isVisible())
+        if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
+            view->text()->function() != source ||
+            view->text()->sourceOptions() != sourceOptions ||
+            view->representation() != representation || !view->isVisible())
+          return;
+        // What the code declares but the binary does not name, such as an
+        // LLVM intrinsic, shows at its declaration.
+        if (!view->text()->showUnresolvedDeclaration(name))
           output_->append(tr("Cannot jump to %1: %2").arg(name, error), 2);
       });
 }

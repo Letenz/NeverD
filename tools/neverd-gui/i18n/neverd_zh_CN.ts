@@ -1445,6 +1445,30 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>此代码编译所需的包含文件、辅助类型和声明；单击可显示，按小键盘 - 可再次折叠。</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n 行声明</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n 行属性和元数据</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>此函数引用的目标、类型、全局变量和函数；单击可显示，按小键盘 - 可再次折叠。</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>此函数使用的属性组和元数据；单击可显示，按小键盘 - 可再次折叠。</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>双击转到 %1。</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>

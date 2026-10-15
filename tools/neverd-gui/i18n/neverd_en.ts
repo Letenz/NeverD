@@ -1447,6 +1447,32 @@ Recognized library operation; click to show its code.</translation>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n lines of declarations</numerusform>
+            <numerusform>%n lines of declarations</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n lines of attributes and metadata</numerusform>
+            <numerusform>%n lines of attributes and metadata</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>Double-click to go to %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>

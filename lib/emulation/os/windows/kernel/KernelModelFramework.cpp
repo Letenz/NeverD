@@ -196,8 +196,8 @@ void KernelModel::configureFrameworkDeviceHost() {
           "framework device deletion with an active IRP is outside this "
           "profile");
     for (const auto &Key : Owner->second) {
-      auto Link = SymbolicLinks.find(Key);
-      if (Link == SymbolicLinks.end() || Link->second != Object->second.Name)
+      const auto Link = findSymbolicLink(Key);
+      if (!Link || SymbolicLinks.at(Link).Target != Object->second.Name)
         return frameworkDeviceError(
             "framework device symbolic-link ownership changed before deletion");
     }

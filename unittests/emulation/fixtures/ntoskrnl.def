@@ -231,3 +231,10 @@ ExSetResourceOwnerPointerEx
   KeNumberProcessors DATA
   KdDebuggerEnabled DATA
   KdDebuggerNotPresent DATA
+
+  ObQueryNameString
+  ObReferenceObjectByName
+  ZwOpenDirectoryObject
+  ZwOpenSymbolicLinkObject
+  ZwQuerySymbolicLinkObject
+  ZwQueryObject
