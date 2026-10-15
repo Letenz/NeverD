@@ -171,3 +171,7 @@ strcat
 wcscat
 strncat
 wcsncat
+ExInitializeNPagedLookasideList
+ExInitializePagedLookasideList
+ExDeleteNPagedLookasideList
+ExDeletePagedLookasideList

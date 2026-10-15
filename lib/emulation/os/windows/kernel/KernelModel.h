@@ -721,6 +721,25 @@ private:
   llvm::Expected<uint64_t> popEntrySList(uint64_t Header);
   llvm::Expected<uint64_t> flushSList(uint64_t Header);
   llvm::Expected<uint64_t> querySList(uint64_t Header, bool FirstEntry);
+
+  struct Lookaside {
+    bool Paged;
+    uint32_t Type, EntrySize, Tag;
+    uint64_t Allocate, Free;
+  };
+  std::map<uint64_t, Lookaside> Lookasides;
+  uint64_t LookasideHeads[2] = {};
+  llvm::Expected<uint64_t> initializeLookaside(llvm::ArrayRef<uint64_t> A,
+                                               bool Paged);
+  llvm::Expected<uint64_t> deleteLookaside(uint64_t Address, bool Paged);
+  llvm::Error validateLookasideAccess(uint64_t Address, uint32_t Size,
+                                      bool IsWrite) const;
+  llvm::Error canReleaseLookasideRange(uint64_t Address, uint64_t Size,
+                                       uint64_t Retiring) const;
+  llvm::Expected<std::vector<uint64_t>>
+  lookasideEntries(uint64_t Address) const;
+  llvm::Error writableLookasideStorage(uint64_t Address, uint32_t Size) const;
+  llvm::Error validateLookasideBorrow(uint64_t Address, uint64_t Size) const;
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
@@ -846,7 +865,8 @@ private:
   llvm::Error validateRemoveLockOwner(uint64_t Lock) const;
   llvm::Error canReleaseRemoveLockStorage(uint64_t Base, uint64_t Size) const;
   llvm::Error canReleaseRange(uint64_t Base, uint64_t Size,
-                              uint64_t IgnoredDMAPin = 0) const;
+                              uint64_t IgnoredDMAPin = 0,
+                              uint64_t RetiringLookaside = 0) const;
   llvm::Expected<uint64_t> beginWait(llvm::ArrayRef<uint64_t> Arguments,
                                      bool Delay);
   llvm::Expected<uint64_t>
@@ -857,7 +877,8 @@ private:
   llvm::Error releaseWaitReferences(const Wait &Pending);
   llvm::Error
   canRevokeVirtualRange(uint64_t Base, uint64_t Size,
-                        std::optional<UsbIdleKey> RetiringUsbIdle = {}) const;
+                        std::optional<UsbIdleKey> RetiringUsbIdle = {},
+                        uint64_t RetiringLookaside = 0) const;
   llvm::Error prepareRevokeVirtualRange(uint64_t Base, uint64_t Size);
   llvm::Error prepareReleaseRange(uint64_t Base, uint64_t Size,
                                   uint64_t IgnoredDMAPin = 0);

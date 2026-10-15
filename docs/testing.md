@@ -3012,6 +3012,11 @@ explicitly.
 C string writers. Model tests cover copy padding versus append termination,
 zero-count narrow/wide differences, exact source boundaries, full-width counts,
 overlap, write preflight, paged IRQL restrictions and expired pool storage.
+`driver_lookaside.c` exercises the public x64 inline cache paths, default pool
+callbacks, cache hits/misses and full unload across that matrix.
+`KernelLookaside` checks registration links and reserved bytes, cached-pool
+lifetimes, corruption, IRQL, missing exports, MDL borrowing in either order,
+and deletion preflight with held locks, pinned pages and read-only storage.
 External acceptance also covers Zero synchronous direct reads/writes and
 statistics queries.
 

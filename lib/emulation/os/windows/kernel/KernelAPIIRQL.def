@@ -101,6 +101,10 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelRundownAPIs.def"
 #undef NEVERD_KERNEL_RUNDOWN_API
+#define NEVERD_KERNEL_LOOKASIDE_API(Name, Arity, IRQL, Operation)              \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelLookasideAPIs.def"
+#undef NEVERD_KERNEL_LOOKASIDE_API
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioconnectinterrupt
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesynchronizeexecution

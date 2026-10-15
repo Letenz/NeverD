@@ -154,6 +154,8 @@ llvm::Error KernelModel::buildNonPagedMDL(uint64_t MDL) {
     return mdlError("MmBuildMdlForNonPagedPool requires an unbuilt, live "
                     "driver-allocated MDL");
   auto &State = It->second;
+  if (auto E = validateLookasideBorrow(State.Buffer, State.ByteCount))
+    return E;
   auto Pool = Allocations.upper_bound(State.Buffer);
   if (Pool == Allocations.begin())
     return mdlError("MmBuildMdlForNonPagedPool requires a live nonpaged pool "
@@ -307,6 +309,8 @@ llvm::Error KernelModel::probeAndLockPages(uint64_t MDL, uint32_t Mode,
   // MDL's ByteCount. Retained opaque records exclude every intersecting page.
   if (auto E =
           validateBugCheckPageBorrow(State.OriginalAddress, State.ByteCount))
+    return E;
+  if (auto E = validateLookasideBorrow(State.OriginalAddress, State.ByteCount))
     return E;
   const bool UserRange =
       State.OriginalAddress < profile::UserProbeLimit && !ImageRange;
