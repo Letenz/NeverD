@@ -1,6 +1,10 @@
 name: Temporary Windows session C API qualification
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/session-capi-qualification.yml
   workflow_dispatch:
 
 permissions:
@@ -18,7 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Shared integration candidate for CI admission and Darwin libSystem.
-          ref: ba641d0893f65125b5dcc3b90371788fe7679370
+          ref: 0b79a770b9db66be3138c4899bef2984a26cab2f
           fetch-depth: 32
           submodules: recursive
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -57,6 +61,30 @@ jobs:
             -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF \
             -DNEVERD_ENABLE_BINARY_CORPUS_TESTS=OFF \
             -DNEVERD_ENABLE_WEB_ANALYSIS=OFF -DNEVERD_ENABLE_Z3=OFF
+      - name: Record verified LLVM r5 package identity
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          from pathlib import Path
+          import json, re, subprocess
+          cache = Path('build-ci/CMakeCache.txt').read_text()
+          def value(name):
+              return re.search(r'^' + name + r':[^=]+=(.*)$', cache, re.M).group(1)
+          tag = value('NEVERD_LLVM_PREBUILT_TAG')
+          assert tag == 'neverd-llvm-v23.0.0-r5'
+          root = Path(value('NEVERD_LLVM_PREBUILT_CACHE_DIR')) / tag / 'x64'
+          digest = (root / 'neverd-llvm-windows-x64.zip.stamp').read_text().strip()
+          assert digest == '9a875d6d1530b01d02ed062cbe0122f0bd5fc990af25cac32b32aa6f5d3eb257'
+          buildinfo = (root / 'neverd-llvm-windows-x64/BUILDINFO.txt').read_text()
+          commit = '4a949c0bbe5dceb0f07b1bf683586049c6317fda'
+          assert re.findall(r'^llvm_commit: (.*)$', buildinfo, re.M) == [commit]
+          gitlink = subprocess.check_output(['git', 'ls-tree', 'HEAD', 'third_party/llvm-project'], text=True)
+          assert gitlink.split()[2] == commit
+          Path('build-ci/evidence/llvm-package.json').write_text(json.dumps({
+              'tag': tag, 'verified_archive_sha256': digest, 'llvm_commit': commit,
+              'gitlink': gitlink, 'buildinfo': buildinfo
+          }, indent=2))
+          PYCODE
       - name: Build and link the owning executable
         timeout-minutes: 20
         shell: bash

@@ -68,8 +68,8 @@ jobs:
           print(result.stdout.decode(errors='replace'))
           print(result.stderr.decode(errors='replace'))
           report = result.stderr.decode()
-          assert result.returncode == 0 and re.search(r'Ran 34 tests in ', report)
-          assert len([line for line in report.splitlines() if line.endswith(' ... ok')]) == 34
+          assert result.returncode == 0 and re.search(r'Ran 35 tests in ', report)
+          assert len([line for line in report.splitlines() if line.endswith(' ... ok')]) == 35
           assert 'OK (skipped=' not in report
           for name in ['test_running_workflow_shell_takes_precedence_over_another_git',
                        'test_explicit_workflow_shell_must_exist_and_be_absolute',
@@ -84,7 +84,7 @@ jobs:
           assert fallback.returncode == 0 and b'GNU bash' in fallback.stdout
           (root / 'receipt.json').write_text(json.dumps({
               'fallback_shell': fallback_shell, 'fallback_status': fallback.returncode,
-              'accepted': True, 'tests': 34, 'skipped': 0, 'baseline_discovery': baseline,
+              'accepted': True, 'tests': 35, 'skipped': 0, 'baseline_discovery': baseline,
               'active_shell_sha256': hashlib.sha256(shell.read_bytes()).hexdigest(),
               'inputs': {name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
                          for name in ['.github/workflows/ci.yml', 'scripts/tests/test_audit_ci_test_results.py',
