@@ -26,6 +26,10 @@ __declspec(dllimport) void ExReInitializeRundownProtection(EX_RUNDOWN_REF *);
 __declspec(dllimport) U8 ExAcquireRundownProtection(EX_RUNDOWN_REF *);
 __declspec(dllimport) void ExReleaseRundownProtection(EX_RUNDOWN_REF *);
 __declspec(dllimport) void ExWaitForRundownProtectionRelease(EX_RUNDOWN_REF *);
+__declspec(dllimport) U8 ExAcquireRundownProtectionEx(EX_RUNDOWN_REF *,
+                                                      unsigned int);
+__declspec(dllimport) void ExReleaseRundownProtectionEx(EX_RUNDOWN_REF *,
+                                                        unsigned int);
 
 static EX_RUNDOWN_REF Ref;
 
@@ -44,6 +48,11 @@ NTSTATUS DriverEntry(void *Driver, void *RegistryPath) {
   ExReInitializeRundownProtection(&Ref);
   U8 Reused = ExAcquireRundownProtection(&Ref);
   ExReleaseRundownProtection(&Ref);
-  DbgPrint("rundown %u %u %u %u", First, Second, AfterRundown, Reused);
+  // The counted forms take and return several protections at once.
+  U8 Counted = ExAcquireRundownProtectionEx(&Ref, 3);
+  U64 Held = Ref.Count;
+  ExReleaseRundownProtectionEx(&Ref, 3);
+  DbgPrint("rundown %u %u %u %u %u held %llu left %llu", First, Second,
+           AfterRundown, Reused, Counted, Held, Ref.Count);
   return 0;
 }

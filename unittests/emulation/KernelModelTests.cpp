@@ -1253,5 +1253,36 @@ TEST_F(DriverKernelModel, RundownProtectionRefusesUnreachableCooperativePaths) {
   invoke("ExFreePoolWithTag", {Ref, Tag});
 }
 
+TEST_F(DriverKernelModel, RundownProtectionCountedFormsStepByTwiceTheCount) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252;
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  invoke("ExInitializeRundownProtection", {Ref});
+  // A counted acquisition adds twice the count; a counted release removes it.
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 3}), 1u);
+  EXPECT_EQ(integer(Ref), 6u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtectionEx", {Ref, 2}), 0u);
+  EXPECT_EQ(integer(Ref), 2u);
+  // Releasing more than is outstanding underflows and is refused untouched.
+  EXPECT_EQ(failure("ExReleaseRundownProtectionEx", {Ref, 2}),
+            "run-down protection release without a matching acquisition");
+  EXPECT_EQ(integer(Ref), 2u);
+  // The ULONG doubles in 32 bits, so 0x80000000 steps by zero, and only the
+  // low 32 bits of the argument register count.
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 0x80000000}), 1u);
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 0xffffffff00000001}),
+            1u);
+  EXPECT_EQ(integer(Ref), 4u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtectionEx", {Ref, 2}), 0u);
+  EXPECT_EQ(integer(Ref), 0u);
+  // After run-down, a counted acquisition fails without writing.
+  invoke("ExRundownCompleted", {Ref});
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 5}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
 } // namespace
 } // namespace neverd::emulation

@@ -692,8 +692,11 @@ private:
   // Count word, so these operations only validate and update guest memory.
   llvm::Expected<uint64_t> readRundownCount(uint64_t RunRef);
   llvm::Expected<uint64_t> initializeRundownProtection(uint64_t RunRef);
-  llvm::Expected<uint64_t> acquireRundownProtection(uint64_t RunRef);
-  llvm::Expected<uint64_t> releaseRundownProtection(uint64_t RunRef);
+  // \p Units is 1 for the plain routines and the ULONG count of the Ex forms.
+  llvm::Expected<uint64_t> acquireRundownProtection(uint64_t RunRef,
+                                                    uint32_t Units);
+  llvm::Expected<uint64_t> releaseRundownProtection(uint64_t RunRef,
+                                                    uint32_t Units);
   llvm::Expected<uint64_t> waitForRundownProtectionRelease(uint64_t RunRef);
   llvm::Expected<uint64_t> rundownCompleted(uint64_t RunRef);
   llvm::Error validateInterlockedLock(uint64_t Lock) const;
