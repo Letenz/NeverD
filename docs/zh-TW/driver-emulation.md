@@ -330,6 +330,8 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `RtlPrefixUnicodeString` | 計數式 UTF-16 前綴判斷；不區分大小寫的請求只有在不相等的單元需要 Windows 大小寫對照表時才會停止 |
 | `RtlIntegerToUnicodeString`、`RtlUnicodeStringToInteger` | 以 2、8、10、16 為基數的無號轉換，前導空白、正負號、`0x`/`0o`/`0b` 前綴與 32 位元回繞皆遵循核心規則；格式化需要為結尾字元預留空間，並在寫入長度後回傳 `STATUS_BUFFER_OVERFLOW` |
 | `RtlAnsiStringToUnicodeString`、`RtlUnicodeStringToAnsiString`、`RtlFreeUnicodeString`、`RtlFreeAnsiString` | 在計數式 8 位元記錄與 UTF-16 記錄之間轉換 ASCII 文字；其他文字取決於未建模的系統 ANSI 字碼頁，因此會停止。先寫入長度；配置來自帶 `Strg` 標記的分頁集區，兩個釋放常式都會釋放它並清除記錄（忽略集區標記）。不配置時，ANSI 轉 Unicode 不做轉換直接回傳 `STATUS_BUFFER_OVERFLOW`，而 Unicode 轉 ANSI 會轉換放得下的前置部分、寫入結尾字元並回傳 `STATUS_BUFFER_OVERFLOW` |
+| `RtlInitUnicodeStringEx` | 先清除記錄，再像 `RtlInitUnicodeString` 一樣建立客體 `UNICODE_STRING`；超過 `0x7FFE` 個單元的來源回傳 `STATUS_NAME_TOO_LONG`，兩個長度維持為零 |
+| `RtlCopyString`、`RtlEqualString`、`RtlCompareString` | 計數式 8 位元字串依容量複製且不寫入結尾字元；以無號位元組比較，前置部分相同時由長度決定；不區分大小寫的請求只有在不相等的位元組需要 Windows 大小寫對照表時才會停止 |
 | `PsGetCurrentProcess`、`PsGetCurrentThread`、`KeGetCurrentThread` | `IoGetCurrentProcess` 與內嵌 `GS:[0x188]` 讀取的匯出別名，任意 IRQL 皆可呼叫：目前 APC 狀態中的行程隨行程附加而改變，目前邏輯執行緒的借用不透明身分則維持不變 |
 | `PsGetCurrentThreadId`、`PsGetThreadId` | 存活執行緒物件的用戶端 ID：首次觀察時自 `0x2000` 起以 4 為步長配置，略過已建模的行程 ID 且永不重複使用；請求者 ID 與已配置執行緒 ID 相同的請求會被拒絕。`PsCreateSystemThread` 也透過 `ClientId` 回傳系統行程 ID 與執行緒 ID。前景分派在同一個邏輯執行緒上執行，因此來自不同請求者行程的請求看到相同的執行緒 ID，而 `PsGetCurrentProcessId` 會跟隨請求者。`PsGetThreadId` 需要 IRQL ≤ `DISPATCH_LEVEL` |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |

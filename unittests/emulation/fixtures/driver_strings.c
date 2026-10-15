@@ -48,6 +48,11 @@ __declspec(dllimport) NTSTATUS
 RtlUnicodeStringToAnsiString(STRING *, const UNICODE_STRING *, U8);
 __declspec(dllimport) void RtlFreeUnicodeString(UNICODE_STRING *);
 __declspec(dllimport) void RtlFreeAnsiString(STRING *);
+__declspec(dllimport) NTSTATUS RtlInitUnicodeStringEx(UNICODE_STRING *,
+                                                      const U16 *);
+__declspec(dllimport) void RtlCopyString(STRING *, const STRING *);
+__declspec(dllimport) U8 RtlEqualString(const STRING *, const STRING *, U8);
+__declspec(dllimport) int RtlCompareString(const STRING *, const STRING *, U8);
 
 NTSTATUS DriverEntry(void *Driver, const UNICODE_STRING *RegistryPath) {
   (void)Driver;
@@ -108,5 +113,18 @@ NTSTATUS DriverEntry(void *Driver, const UNICODE_STRING *RegistryPath) {
   STRING Short = {0, sizeof(Head), 0, Head};
   NTSTATUS Truncated = RtlUnicodeStringToAnsiString(&Short, &Path, 0);
   DbgPrint("convert %08x %u %s", (U32)Truncated, Short.Length, Head);
+
+  // Bounded initialization, terminator-free byte copy and byte comparison.
+  UNICODE_STRING Bounded;
+  char Bytes[8] = {'!', '!', '!', '!', '!', '!', '!', '!'};
+  STRING Copied = {0, sizeof(Bytes), 0, Bytes};
+  RtlCopyString(&Copied, &Name);
+  if (RtlInitUnicodeStringEx(&Bounded, (const U16 *)L"Sample") ||
+      Bounded.Length != 12 || Bounded.MaximumLength != 14 ||
+      Copied.Length != 6 || Bytes[6] != '!' ||
+      !RtlEqualString(&Copied, &Name, 0))
+    return (NTSTATUS)0xc000000dU;
+  DbgPrint("bytes %d %d", RtlCompareString(&Name, &Empty, 0),
+           RtlCompareString(&Empty, &Name, 0));
   return 0;
 }

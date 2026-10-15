@@ -978,6 +978,125 @@ TEST_F(KernelRuntime, StringConversionAndReleaseFollowTheirIRQLContracts) {
   invoke("KeLowerIrql", {Dispatch});
 }
 
+TEST_F(KernelRuntime, BoundedUnicodeInitializationRejectsLongSources) {
+  // RtlInitUnicodeStringEx (RVA 0x32eb60) clears the record before measuring.
+  wide(Scratch + 0x100, u"abc");
+  check(Memory->write(Scratch, std::vector<uint8_t>(16, 0xff)));
+  EXPECT_EQ(invoke("RtlInitUnicodeStringEx", {Scratch, Scratch + 0x100}), 0u);
+  EXPECT_EQ(integer(Scratch, 2), 6u);
+  EXPECT_EQ(integer(Scratch + 2, 2), 8u);
+  EXPECT_EQ(integer(Scratch + 4, 4), 0u);
+  EXPECT_EQ(integer(Scratch + 8), Scratch + 0x100);
+  check(Memory->write(Scratch, std::vector<uint8_t>(16, 0xff)));
+  EXPECT_EQ(invoke("RtlInitUnicodeStringEx", {Scratch, 0}), 0u);
+  EXPECT_EQ(integer(Scratch), 0u);
+  EXPECT_EQ(integer(Scratch + 8), 0u);
+  check(Memory->map(Scratch + 0x10000, 0x20000, Read | Write));
+  for (size_t Count : {size_t(0x7ffe), size_t(0x7fff)}) {
+    SCOPED_TRACE(Count);
+    wide(Scratch + 0x10000, std::u16string(Count, u'x'));
+    const uint64_t Status =
+        invoke("RtlInitUnicodeStringEx", {Scratch, Scratch + 0x10000});
+    EXPECT_EQ(integer(Scratch + 8), Scratch + 0x10000);
+    if (Count == 0x7ffe) {
+      EXPECT_EQ(Status, 0u);
+      EXPECT_EQ(integer(Scratch, 2), 0xfffcu);
+      EXPECT_EQ(integer(Scratch + 2, 2), 0xfffeu);
+    } else {
+      EXPECT_EQ(Status, 0xc0000106u);
+      EXPECT_EQ(integer(Scratch, 4), 0u);
+    }
+  }
+}
+
+TEST_F(KernelRuntime, CountedByteCopyNeverWritesATerminator) {
+  const uint64_t Destination = Scratch;
+  const uint64_t Buffer = Scratch + 0x100;
+  const uint64_t Source = Scratch + 0x200;
+  ansi(Source, Scratch + 0x300, "abcdef", 6);
+  ansi(Destination, Buffer, "", 8);
+  invoke("RtlCopyString", {Destination, Source});
+  EXPECT_EQ(integer(Destination, 2), 6u);
+  EXPECT_EQ(bytesText(Buffer, 8), "abcdef!!");
+  ansi(Destination, Buffer, "", 8);
+  check(Memory->writeInteger(Destination + 2, 4, 2));
+  invoke("RtlCopyString", {Destination, Source});
+  EXPECT_EQ(integer(Destination, 2), 4u);
+  EXPECT_EQ(bytesText(Buffer, 6), "abcd!!");
+  // A null source only clears the length.
+  invoke("RtlCopyString", {Destination, 0});
+  EXPECT_EQ(integer(Destination, 2), 0u);
+  EXPECT_EQ(bytesText(Buffer, 1), "a");
+}
+
+TEST_F(KernelRuntime, CountedByteComparisonUsesUnsignedBytesAndLengths) {
+  ansi(Scratch, Scratch + 0x100, "abc", 3);
+  ansi(Scratch + 0x20, Scratch + 0x120, "abc", 3);
+  ansi(Scratch + 0x40, Scratch + 0x140, "abd", 3);
+  ansi(Scratch + 0x60, Scratch + 0x160, "ab", 2);
+  ansi(Scratch + 0x80, Scratch + 0x180, "a\x80", 2);
+  ansi(Scratch + 0xa0, Scratch + 0x1a0, "a\x01", 2);
+  ansi(Scratch + 0xc0, Scratch + 0x1c0, "", 0);
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch, Scratch + 0x20, 0}), 1u);
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch, Scratch + 0x40, 0}), 0u);
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch, Scratch + 0x60, 0}), 0u);
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch + 0xc0, Scratch + 0xc0, 0}), 1u);
+  auto Compare = [&](uint64_t Left, uint64_t Right) {
+    return static_cast<int32_t>(invoke("RtlCompareString", {Left, Right, 0}));
+  };
+  EXPECT_EQ(Compare(Scratch, Scratch + 0x20), 0);
+  EXPECT_EQ(Compare(Scratch, Scratch + 0x40), -1);
+  EXPECT_EQ(Compare(Scratch + 0x60, Scratch), -1);
+  EXPECT_EQ(Compare(Scratch, Scratch + 0x60), 1);
+  EXPECT_EQ(Compare(Scratch + 0x80, Scratch + 0xa0), 0x7f);
+  EXPECT_EQ(Compare(Scratch + 0xc0, Scratch), -3);
+  // Case-insensitive requests that never meet unequal bytes are exact.
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch, Scratch + 0x20, 1}), 1u);
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch, Scratch + 0x60, 1}), 0u);
+  EXPECT_EQ(static_cast<int32_t>(
+                invoke("RtlCompareString", {Scratch + 0x60, Scratch, 1})),
+            -1);
+  EXPECT_NE(failure("RtlEqualString", {Scratch, Scratch + 0x40, 1})
+                .find("case table"),
+            std::string::npos);
+  EXPECT_NE(failure("RtlCompareString", {Scratch, Scratch + 0x40, 1})
+                .find("case table"),
+            std::string::npos);
+  // BOOLEAN arguments use only their low byte.
+  EXPECT_EQ(invoke("RtlEqualString", {Scratch, Scratch + 0x40, 0x100}), 0u);
+  // A length beyond the capacity is a malformed record.
+  check(Memory->writeInteger(Scratch, 4, 2));
+  EXPECT_NE(failure("RtlEqualString", {Scratch, Scratch + 0x20, 0})
+                .find("8-bit string"),
+            std::string::npos);
+}
+
+TEST_F(KernelRuntime, CountedByteHelpersFollowTheirIRQLContracts) {
+  ansi(Scratch, Scratch + 0x100, "abc", 3);
+  ansi(Scratch + 0x20, Scratch + 0x120, "", 4);
+  wide(Scratch + 0x200, u"a");
+  Model->enterExecution(0x100);
+  const auto APC = invoke("KfRaiseIrql", {1});
+  EXPECT_NE(
+      failure("RtlEqualString", {Scratch, Scratch, 0}).find("PASSIVE_LEVEL"),
+      std::string::npos);
+  EXPECT_NE(
+      failure("RtlCompareString", {Scratch, Scratch, 0}).find("PASSIVE_LEVEL"),
+      std::string::npos);
+  invoke("KeLowerIrql", {APC});
+  const auto Dispatch = invoke("KfRaiseIrql", {2});
+  invoke("RtlCopyString", {Scratch + 0x20, Scratch});
+  EXPECT_EQ(invoke("RtlInitUnicodeStringEx", {Scratch + 0x40, Scratch + 0x200}),
+            0u);
+  invoke("KeLowerIrql", {Dispatch});
+  const auto Above = invoke("KfRaiseIrql", {3});
+  EXPECT_NE(failure("RtlInitUnicodeStringEx", {Scratch + 0x40, Scratch + 0x200})
+                .find("IRQL"),
+            std::string::npos);
+  invoke("RtlCopyString", {Scratch + 0x20, Scratch});
+  invoke("KeLowerIrql", {Above});
+}
+
 TEST_F(KernelRuntime, DebugIntegersUseWindowsWidthsAndFormattingRules) {
   EXPECT_EQ(
       formatted(
@@ -1122,12 +1241,14 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
   ASSERT_TRUE(Result->NTStatus.has_value());
   EXPECT_EQ(*Result->NTStatus, 0u);
-  ASSERT_EQ(Result->Messages.size(), 3u);
+  ASSERT_EQ(Result->Messages.size(), 4u);
   EXPECT_EQ(Result->Messages[0], "strings \\Device\\Sample42 42 -42 driver 32");
   // The overflow still stores the formatted length in the short record.
   EXPECT_EQ(Result->Messages[1], "status c0000023 80000005 10");
   // A short ANSI conversion keeps the terminated prefix that fits.
   EXPECT_EQ(Result->Messages[2], "convert 80000005 3 \\De");
+  // A byte copy without a terminator compares by unsigned bytes and length.
+  EXPECT_EQ(Result->Messages[3], "bytes 6 -6");
   std::map<std::string, unsigned> Calls;
   for (const auto &Call : Result->Calls)
     ++Calls[Call.Name];
@@ -1142,6 +1263,10 @@ TEST(KernelRuntimeExecution, CompiledDriverBuildsAndParsesCountedStrings) {
   EXPECT_EQ(Calls["RtlAnsiStringToUnicodeString"], 1u);
   EXPECT_EQ(Calls["RtlFreeAnsiString"], 1u);
   EXPECT_EQ(Calls["RtlFreeUnicodeString"], 1u);
+  EXPECT_EQ(Calls["RtlInitUnicodeStringEx"], 1u);
+  EXPECT_EQ(Calls["RtlCopyString"], 1u);
+  EXPECT_EQ(Calls["RtlEqualString"], 1u);
+  EXPECT_EQ(Calls["RtlCompareString"], 2u);
 }
 
 TEST(KernelRuntimeExecution, CompiledDriverSeesOneIdentityThroughEachAlias) {
