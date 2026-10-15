@@ -1732,3 +1732,5 @@ i386/ELF 联合有限域证明在全部消费者对受限所有者图重放索�
 `KernelDataExports.def` 统一定义内核数据清单和布局，地址位于 PE 转发器范围之外。`KernelExportRegistry` 区分数据地址与函数入口，数据不占用 thunk 槽。`KernelModelDataExports.cpp` 通过对象管理层初始化身份，并在入口执行前保护数据页。`KernelModelMemory` 记录模型的成功读取，CPU 读取钩子记录客户指令读取。预检和诊断快照保持无副作用。调试器声明和已读取数据保留恢复依赖；保留的数据指针仍属于借用状态。
 
 `KernelModelNamespace.cpp` 通过统一引用和句柄管理方解析名称。设备记录拥有设备名称；对象记录拥有不可变的驱动/目录/链接名称。链接保存捕获的目标字节，并区分永久状态与名称绑定。最后句柄关闭先移除临时名称，指针引用随后决定对象回收。设备 I/O 保留独立控制驱动列表移除，指针引用控制存储寿命；后端不另建命名空间或引用计数。
+
+KernelModel 将场景编号与按地址索引的文件对象分开。KernelModelObjects 管理调用方指针计数；KernelModelFileObjects 管理延后的 CLOSE 派送与等待。KernelModelIO 仅在请求完成且派送及续调返回后释放对象。设备和 PnP 保留检查对象本身，包括已无场景编号的对象。DriverSession 让同步嵌套回调继承实际父上下文；独立调度回调保留自己的上下文。

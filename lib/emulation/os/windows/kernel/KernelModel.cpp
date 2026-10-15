@@ -618,7 +618,7 @@ llvm::Error KernelModel::retireDeviceIfUnreferenced(uint64_t Address) {
   if (!Device.DeletePending || Device.InternalReferences || Device.Lower ||
       Device.Upper || Scheduler.hasOutstanding(Address))
     return llvm::Error::success();
-  for (const auto &[Id, File] : Files)
+  for (const auto &[Id, File] : FileObjects)
     if (File.Address && File.Device == Address)
       return llvm::Error::success();
   for (const auto &[IRP, Request] : Requests)
@@ -964,7 +964,7 @@ llvm::Error KernelModel::inheritExecutionContext(uint64_t Child,
   if (!Child || Child == Parent || Parent != CurrentExecution ||
       ExecutionThreadKeys.contains(Child) ||
       InheritedExecutionContexts.contains(Child))
-    return modelError("exception context inheritance requires a fresh "
+    return modelError("nested context inheritance requires a fresh "
                       "child of the active execution");
   InheritedExecutionContexts.emplace(
       Child,

@@ -107,7 +107,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 启用的控制流保护（CFG）会验证 PE 标志、指针槽和已排序的可执行目标表。检查与分派辅助函数仅允许已声明的映像入口或已登记的 API 跳板，保留 Win64 调用状态，并拒绝未声明的目标。只有插桩而未启用 CFG 时，保留原始来宾回退指针。启用的 XFG、导出抑制和其他未建模的保护策略仍被拒绝；地址位于可执行内存并不使它成为合法目标。
 
-WDM 设备栈可以包含同一来宾驱动拥有的多个设备对象。`IoAttachDeviceToDeviceStack` 将独立源设备附加到目标的当前栈顶，返回原栈顶，并设置 `StackSize` 和 `AlignmentRequirement`；它不修改驱动的 `NextDevice` 链，也不复制缓冲标志。`IoDetachDevice` 接收保存的下层设备，要求 `PASSIVE_LEVEL`；附加允许 IRQL 不高于 `DISPATCH_LEVEL`。打开具名下层设备时，请求派发到当前栈顶，而 `FILE_OBJECT.DeviceObject` 和报告保留具名设备身份。READ/WRITE 使用所选栈顶的缓冲标志。请求保存的路径在拆链、删除后仍保留各层设备，直到派发返回；内部引用不增加表示打开句柄数的 `ReferenceCount`。
+WDM 设备栈可以包含同一来宾驱动拥有的多个设备对象。`IoAttachDeviceToDeviceStack` 将独立源设备附加到目标的当前栈顶，返回原栈顶，并设置 `StackSize` 和 `AlignmentRequirement`；它不修改驱动的 `NextDevice` 链，也不复制缓冲标志。`IoDetachDevice` 接收保存的下层设备，要求 `PASSIVE_LEVEL`；附加允许 IRQL 不高于 `DISPATCH_LEVEL`。打开具名下层设备时，请求派发到当前栈顶，而 `FILE_OBJECT.DeviceObject` 和报告保留具名设备身份。READ/WRITE 使用所选栈顶的缓冲标志。请求保存的路径在拆链、删除后仍保留各层设备，直到派发返回；内部引用不增加 `DEVICE_OBJECT.ReferenceCount`。
 
 对于已建模的设备栈，`IoGetAttachedDevice` 借用当前顶层设备，不增加引用；`IoGetAttachedDeviceReference` 和 `IoGetDeviceAttachmentBaseRef` 分别返回带指针引用的顶层和基底设备。`IoGetLowerDeviceObject` 引用下一层设备；没有下层设备或输入设备等待删除时返回空，仅下层设备等待删除不会阻止返回。每个带引用的结果都须通过 `ObDereferenceObject` 释放。引用在 detach/delete 后保留存储，不改变 `DEVICE_OBJECT.ReferenceCount`。四个查询都会验证所属拓扑，并要求 IRQL 不高于 `DISPATCH_LEVEL`。
 
@@ -683,3 +683,5 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 ## 有界内核调用者上下文捕获
 
 `RtlCaptureContext` 在 checked-x64 Unicorn/KVM/WHP 上共用导入和动态调用实现，要求 IRQL <= DISPATCH_LEVEL。目标为 16 字节对齐、完整可读写的 1232 字节内核记录；仅写 `[48,72)`、`[120,262)`、`[280,284)`、`[416,672)`，其余字节（包括 x87 数据、指针和 MXCSR mask）保持不变。ContextFlags 为 `0x10000f`，调用者 RSP=入口 RSP+8，RIP 取实际返回槽；入口 RSP-8 写入 8 字节标志暂存值，RAX 返回零扩展 EFLAGS，算术标志按 ADD(入口 RSP-8,8) 更新。DS/ES/FS/GS 使用 checked 逻辑 SS 选择子，不代表宿主或原始后端选择子。完整记录、返回槽和暂存槽必须通过普通内核 RAM、有效对象、权限和唯一物理映射检查；记录不得与返回/暂存范围重叠，入口 RSP 模 16 必须为 8。采集或准入失败不改变 CPU/RAM，legacy 明确拒绝。这是有界模型，不代表所有 Windows 实现；即使捕获字节被覆盖，仍保留未重建环境依赖，不授予 UNPACK 还原或符号前提。
+
+文件对象按地址保持唯一身份，并使用共享的指针引用管理，包括 CREATE 期间取得的引用。旧对象仍被保留时，可以复用场景文件编号。CLEANUP 关闭场景句柄；CLOSE 释放剩余的场景保留。若驱动仍持有指针，CLOSE 结果的 IRP 为零且未完成，直到最后一次释放在 PASSIVE_LEVEL 派送实际回调。挂起的 CLOSE 会暂停释放它的线程。CREATE 失败时，带引用的对象保留存储但清除设备关联，不发送 CLOSE。每个关联的文件对象在最终销毁前保留设备，并计入 DEVICE_OBJECT.ReferenceCount。嵌套回调继承调用方的线程、进程和 PreviousMode。文件句柄创建及复制、文件系统名称查询和声明式文件系统提供方仍未实现。

@@ -6487,3 +6487,5 @@ alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
 
 `KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
+
+KernelModel keeps scenario identifiers separate from address-keyed file bodies. KernelModelObjects owns caller pointer counts; KernelModelFileObjects owns deferred CLOSE dispatch and waits. KernelModelIO retires bodies only after packet completion and dispatch/continuation return. Device and PnP holds inspect bodies, including bodies with no scenario identifier. DriverSession inherits the actual parent context for synchronous nested callbacks; independent scheduled callbacks keep their own context.

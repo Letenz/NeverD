@@ -569,6 +569,8 @@ KernelModel::advanceIRPCompletion(uint64_t Token) {
     return E;
   if (auto E = tryFinalizePowerRequest(IRP))
     return E;
+  if (auto E = tryFinalizeFileClose(IRP))
+    return E;
   return std::optional<uint64_t>{ReturnValue};
 }
 
@@ -598,6 +600,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
   auto Call = IRPCalls.find(Token);
   if (Call == IRPCalls.end() || !Call->second.AwaitingCallback)
     return stackError("unknown or inactive guest continuation");
+  if (Call->second.Kind == IRPCallKind::FileClose)
+    return finishFileCloseDispatch(Token, ResultValue);
   if (Call->second.Kind == IRPCallKind::PowerCompletion)
     return finishPowerCompletion(Token);
   if (Call->second.Kind == IRPCallKind::Cancel) {
@@ -609,6 +613,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     CancelLock = {};
     IRPCalls.erase(Call);
     if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
+    if (auto E = tryFinalizeFileClose(IRP))
       return E;
     if (auto E = tryFinalizePowerRequest(IRP))
       return E;
@@ -642,6 +648,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
       return E;
     if (auto E = tryFinalizeDriverIRP(IRP))
       return E;
+    if (auto E = tryFinalizeFileClose(IRP))
+      return E;
     return std::optional<uint64_t>{Status};
   }
   const uint64_t IRP = Call->second.IRP;
@@ -668,6 +676,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     if (auto E = tryFinalizePowerRequest(IRP))
       return E;
     if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
+    if (auto E = tryFinalizeFileClose(IRP))
       return E;
     return std::optional<uint64_t>{ReturnValue};
   }
