@@ -171,6 +171,38 @@ KernelModel::deviceStack(uint64_t Top) const {
   return Stack;
 }
 
+llvm::Expected<uint64_t> KernelModel::queryDeviceStack(uint64_t Device,
+                                                       DeviceStackQuery Query) {
+  uint64_t Selected = 0;
+  if (Query == DeviceStackQuery::Top ||
+      Query == DeviceStackQuery::TopReference) {
+    auto Top = topAttachedDevice(Device);
+    if (!Top)
+      return Top.takeError();
+    Selected = *Top;
+  } else {
+    auto Stack = deviceStack(Device);
+    if (!Stack)
+      return Stack.takeError();
+    if (Query == DeviceStackQuery::BaseReference) {
+      Selected = Stack->back();
+    } else {
+      // The target lower-device query checks the input object's deletion
+      // state, not the selected neighbor's. IoDeleteDevice sets that state;
+      // attachment and pointer references can still retain either object.
+      if (Devices.at(Device).DeletePending)
+        return 0;
+      Selected = Devices.at(Device).Lower;
+    }
+  }
+  if (Selected && Query != DeviceStackQuery::Top) {
+    auto Referenced = referenceObject(Selected);
+    if (!Referenced)
+      return Referenced.takeError();
+  }
+  return Selected;
+}
+
 llvm::Error
 KernelModel::validateDeviceStackMutation(llvm::ArrayRef<uint64_t> Stack) const {
   for (uint64_t Address : Stack) {

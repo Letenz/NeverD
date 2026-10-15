@@ -24,6 +24,12 @@ EXPORTS
   ExFreePool
   ExFreePoolWithTag
   IoCreateDevice
+  IoAttachDeviceToDeviceStack
+  IoDetachDevice
+  IoGetAttachedDevice
+  IoGetAttachedDeviceReference
+  IoGetLowerDeviceObject
+  IoGetDeviceAttachmentBaseRef
   IoCreateSymbolicLink
   IoDeleteDevice
   IoAllocateWorkItem

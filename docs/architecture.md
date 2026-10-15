@@ -4429,6 +4429,8 @@ explicitly unsupported. Resource operations retain a recovery dependency.
 
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
+Attachment queries use the same topology and object-reference owner; returned pointer references retain allocation independently of driver-list membership and open-handle counts.
+
 `DriverUserMemory.h/.def` own explicit user-region and pointer-reference facts;
 `DriverScenario` validates the complete graph without interpreting private IOCTL
 layouts. `KernelModelUserMemory` allocates process-owned regions, initializes

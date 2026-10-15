@@ -600,6 +600,8 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `KernelModelDeviceStack` 用单一记录管理每个设备的驱动所有者、分配、上下层邻居、待删除状态和内部引用。来宾 `NextDevice` 枚举链与宿主拥有的附着图含义不同。名称解析保留具名下层设备作为 `FILE_OBJECT` 和报告身份，选择当前栈顶进行初始派发及 READ/WRITE 缓冲配置，并保存保活整条路径的引用。拆链或删除不能使请求／回调仍持有的设备失效；公开 `ReferenceCount` 仍只计算打开句柄。
 
+附件查询使用同一拓扑和对象引用所有者；返回的指针引用独立于驱动设备链成员关系及打开句柄计数保留分配。
+
 `KernelModelIRPStack` 管理原始来宾数据包的有界栈游标、确切目标派发和完成展开；内联 Copy/Skip/SetCompletion 写入仍是权威数据。派发状态、完成回调控制值和最终 `IoStatus` 分离，pending 可以在派发返回后传播。`STATUS_MORE_PROCESSING_REQUIRED` 保留数据包、MDL 和缓冲区，直到继续执行并到达最终展开边界；这也适用于嵌套完成。`KernelGuestCall` 携带子系统所有者和局部 token，防止 WDM／WDF 续接身份碰撞；`DriverSession` 保存 CPU 帧和继承的 IRQL。一个来宾驱动可附着于单独拥有的场景 PDO；驱动自行分配的 IRP 仍不支持。WDF 附着／转发、活动栈附加、中间层拆除、改变主功能及路径外目标仍不支持。 在调用上层完成回调之前，已消耗的下层栈位置会被清零。
 
 `DriverPnp.h` 与公开 `DeviceLifecycle.def` 统一生命周期枚举和精确成功合约；`devicePnpFinalStatusError` 由场景预检与来宾最终完成共享。`KernelModelPnpDevices` 拥有稳定 PDO 身份、独立提供者驱动清单及真实 AddDevice 观测。`KernelModelPnpRequests` 将事务和不可变设备／文件身份关联到现有 IRP，不根据停止、待移除或电源状态虚构 I/O 拒绝。普通请求进入真实来宾派发，由驱动决定成功、失败或等待。`KernelModelPnpCompletion` 管理实际总线接收／完成和虚拟期限，复用 `KernelModelIRPStack` 及带所有者标记的续接。最终上层完成提交状态；成功 PnP 必须已完成总线转发，Start/QueryStop/QueryRemove 的上层早失败可保留空总线观测。Stop/CancelStop/SurpriseRemoval/CancelRemove/Remove 必须精确返回 STATUS_SUCCESS；QueryStop 的 STATUS_RESOURCE_REQUIREMENTS_CHANGED (0x119) 因资源重新查询未实现而拒绝。提供者退休和来宾拆链／删除保持独立，不会静默清理泄漏。八种常见次功能使用显式总线配置；PnP 包保持串行，Remove 前要求关闭文件并排空先前请求。其他 PnP、其他硬件／资源及超出已描述子集的广泛 KMDF PnP 仍不支持。

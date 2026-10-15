@@ -109,6 +109,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 WDM 设备栈可以包含同一来宾驱动拥有的多个设备对象。`IoAttachDeviceToDeviceStack` 将独立源设备附加到目标的当前栈顶，返回原栈顶，并设置 `StackSize` 和 `AlignmentRequirement`；它不修改驱动的 `NextDevice` 链，也不复制缓冲标志。`IoDetachDevice` 接收保存的下层设备，要求 `PASSIVE_LEVEL`；附加允许 IRQL 不高于 `DISPATCH_LEVEL`。打开具名下层设备时，请求派发到当前栈顶，而 `FILE_OBJECT.DeviceObject` 和报告保留具名设备身份。READ/WRITE 使用所选栈顶的缓冲标志。请求保存的路径在拆链、删除后仍保留各层设备，直到派发返回；内部引用不增加表示打开句柄数的 `ReferenceCount`。
 
+对于已建模的设备栈，`IoGetAttachedDevice` 借用当前顶层设备，不增加引用；`IoGetAttachedDeviceReference` 和 `IoGetDeviceAttachmentBaseRef` 分别返回带指针引用的顶层和基底设备。`IoGetLowerDeviceObject` 引用下一层设备；没有下层设备或输入设备等待删除时返回空，仅下层设备等待删除不会阻止返回。每个带引用的结果都须通过 `ObDereferenceObject` 释放。引用在 detach/delete 后保留存储，不改变 `DEVICE_OBJECT.ReferenceCount`。四个查询都会验证所属拓扑，并要求 IRQL 不高于 `DISPATCH_LEVEL`。
+
 `IofCallDriver` 和 `IoCallDriver` 辅助入口调用保存路径中的确切目标。真实内联 `IoCopyCurrentIrpStackLocationToNext`、`IoSkipCurrentIrpStackLocation` 和 `IoSetCompletionRoutine` 操作原始来宾 IRP；模型验证游标、数量和控制标志。下层派发返回真实状态，与 `IoStatus` 及完成回调返回值分开。完成展开先推进游标，按成功／错误／取消标志选择回调并向上传递 pending 状态；执行完成回调时，回调负责传播 pending，包括派发已返回 `STATUS_PENDING` 后的传播。`STATUS_MORE_PROCESSING_REQUIRED` 暂停展开并保留 IRP、MDL 和缓冲区，后续完成调用可以继续。嵌套完成要求外层返回停止结果，最终展开只释放一次存储。带所属子系统标记的续接保留嵌套 WDM／WDF 调用帧和继承的 IRQL。 在调用上层完成回调之前，已消耗的下层栈位置会被清零。
 
 `IoAllocateIrp` 与 `IoFreeIrp` 支持调用方拥有的 IRP，允许至 `DISPATCH_LEVEL`，要求 `ChargeQuota=FALSE`。首次 `IoCallDriver` 验证包并保存精确的下层设备路径。本范围支持内核 `IRP_MJ_INTERNAL_DEVICE_CONTROL` 与驱动拥有的 `METHOD_NEITHER` 缓冲区，不创建用户文件或复制用户缓冲区。来宾执行真实完成及取消回调。在完成回调内释放包必须返回 `STATUS_MORE_PROCESSING_REQUIRED`；包访问立即失效，派发与回调元数据保留至调用帧返回。未发送包可直接释放；泄漏、重复释放、外来或仍被占有的包明确失败。任意重用、其他调用方请求格式、`IoBuildDeviceIoControlRequest` 仍不支持。
@@ -366,6 +368,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | 对池类型 `0`、`1`、`512` 提供数据分配；大小／标签必须为正，带标签释放必须匹配，地址不复用 |
 | `IoCreateDevice`、`IoDeleteDevice` | 设备类型为 `0x22`，characteristics 为 `0` 或 `0x100`，扩展大小有界，名称为 ASCII `\Device\Name` |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | 同驱动附加；返回原栈顶，拆链接收保存的下层设备；遵守上述拓扑和生命周期限制 |
+| `IoGetAttachedDevice`, `IoGetAttachedDeviceReference`, `IoGetLowerDeviceObject`, `IoGetDeviceAttachmentBaseRef` | 当前已建模的顶层、下层和基底设备；借用与共享指针引用、删除状态；IRQL <= DISPATCH_LEVEL |
 | `IofCallDriver`, `IoCallDriver` | 在保留路径中向确切目标派发；验证来宾栈游标，保留下层 NTSTATUS |
 | `IoInitializeRemoveLockEx`, `IoAcquireRemoveLockEx` | 扩展内确切所有者及不透明32／120字节；NULL／重复 Tag |
 | `IoReleaseRemoveLockEx`, `IoReleaseRemoveLockAndWaitEx` | 匹配 Tag 释放及提供者接收后的可恢复 REMOVE 等待 |
