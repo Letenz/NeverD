@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <filesystem>
 #include <set>
 
@@ -67,14 +68,44 @@ struct Reader {
                 [](const auto &A, const auto &B) { return A.Name < B.Name; });
       for (const auto &Entry : Entries) {
         auto Child = win::openChild(File, Entry.Name);
-        if (!Entry.matches(win::inspect(Child.get())))
+        const auto Opened = win::inspect(Child.get());
+        if (!Entry.matches(Opened)) {
+          std::fprintf(stderr,
+                       "NTFS enumeration difference: directory=%d id=%d "
+                       "attributes=%lu/%lu size=%llu/%llu "
+                       "write=%lld/%lld change=%lld/%lld\n",
+                       Opened.directory(), Entry.ID == Opened.id(),
+                       Entry.Attributes, Opened.Identity.dwFileAttributes,
+                       static_cast<unsigned long long>(Entry.Size),
+                       static_cast<unsigned long long>(Opened.size()),
+                       Entry.WriteTime.QuadPart,
+                       Opened.Times.LastWriteTime.QuadPart,
+                       Entry.ChangeTime.QuadPart,
+                       Opened.Times.ChangeTime.QuadPart);
           throw Error("input_changed");
+        }
         visit(Child.get(), Path.empty() ? Entry.Name : Path + "/" + Entry.Name,
               Depth + 1);
       }
     }
-    if (!Before.same(win::inspect(File)))
+    const auto After = win::inspect(File);
+    if (!Before.same(After)) {
+      std::fprintf(stderr,
+                   "NTFS handle difference: directory=%d id=%d "
+                   "attributes=%lu/%lu links=%lu/%lu size=%llu/%llu "
+                   "write=%lld/%lld change=%lld/%lld\n",
+                   Before.directory(), Before.id() == After.id(),
+                   Before.Identity.dwFileAttributes,
+                   After.Identity.dwFileAttributes,
+                   Before.Identity.nNumberOfLinks, After.Identity.nNumberOfLinks,
+                   static_cast<unsigned long long>(Before.size()),
+                   static_cast<unsigned long long>(After.size()),
+                   Before.Times.LastWriteTime.QuadPart,
+                   After.Times.LastWriteTime.QuadPart,
+                   Before.Times.ChangeTime.QuadPart,
+                   After.Times.ChangeTime.QuadPart);
       throw Error("input_changed");
+    }
   }
 };
 } // namespace
