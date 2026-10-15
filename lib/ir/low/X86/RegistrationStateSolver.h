@@ -237,9 +237,11 @@ private:
                                 int32_t ParentStackOffset,
                                 std::vector<RegistrationObjectExtent> *Writes,
                                 unsigned Depth, SEHFrameOutcomes &Outcomes);
-  bool runSEHContinueFilters(const FrameState &Parent,
-                             std::vector<RegistrationObjectExtent> *Writes,
-                             SEHFrameOutcomes &Outcomes);
+  bool runSEHFilterSearch(const FrameState &Parent,
+                          std::vector<RegistrationObjectExtent> *Writes,
+                          SEHFrameOutcomes &Outcomes, bool RequireResume);
+  bool applySEHContinueFilters(size_t I, Domain &State,
+                               const BlockFacts &Facts);
   void
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
                     const FrameTransfer &Transfer, const BlockFacts &Facts,

@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Propagates checked filter effects back to a suspended finally invocation.
+/// Separates returning filter effects from paths which select a handler.
 
 #include "RegistrationStateSolver.h"
 
@@ -12,9 +12,9 @@
 
 namespace neverd::registration_state {
 
-bool RegistrationStateSolver::runSEHContinueFilters(
+bool RegistrationStateSolver::runSEHFilterSearch(
     const FrameState &Parent, std::vector<RegistrationObjectExtent> *Writes,
-    SEHFrameOutcomes &Outcomes) {
+    SEHFrameOutcomes &Outcomes, bool RequireResume) {
   if (KnownCxx || EH4 || !Chain.TryLevelOffset)
     return false;
   const auto Level = Parent.load(*Chain.TryLevelOffset, 4).Constant;
@@ -30,8 +30,18 @@ bool RegistrationStateSolver::runSEHContinueFilters(
     Search Current = std::move(Pending.front());
     Pending.pop_front();
     if (!charge(Current.Frame.cellCount() +
-                Current.Frame.OtherRegisterBytes.size() + 10) ||
-        Current.Cursor < 0 || size_t(Current.Cursor) >= Chain.Scopes.size() ||
+                Current.Frame.OtherRegisterBytes.size() + 10))
+      return false;
+    if (Current.Cursor < 0) {
+      // A search outside this registration can return through an external
+      // handler. It contributes ordinary effects but cannot close a bounded
+      // nonlocal-unwind proof.
+      if (RequireResume ||
+          !mergeSEHFrameOutcome(Outcomes, std::move(Current.Frame)))
+        return false;
+      continue;
+    }
+    if (size_t(Current.Cursor) >= Chain.Scopes.size() ||
         ++Current.Steps > Chain.Scopes.size())
       return false;
     const auto &Scope = Chain.Scopes[Current.Cursor];
@@ -56,15 +66,14 @@ bool RegistrationStateSolver::runSEHContinueFilters(
           // filter. Its state write affects later unwind, not this cursor.
           Pending.push_back(
               {std::move(Frame), Scope.EnclosingLevel, Current.Steps});
-        } else {
-          // A selected handler, nonlocal transfer or unknown disposition
-          // cannot create an ordinary returning fact. Every path must resume
-          // this invocation; escaping the parent's search also refuses.
+        } else if (RequireResume) {
+          // A selected handler abandons this invocation. It contributes no
+          // ordinary returning frame, and prevents a closed resumption proof.
           return false;
         }
       }
   }
-  return !Outcomes.empty();
+  return !RequireResume || !Outcomes.empty();
 }
 
 } // namespace neverd::registration_state

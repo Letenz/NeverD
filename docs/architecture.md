@@ -524,7 +524,15 @@ The suspended-finally interpreter partitions filter returns by disposition and
 written TryLevel, including joins at a shared return block. Search keeps the
 cursor captured before each filter call. Continued exceptions resume every
 resulting frame at the next instruction; instruction-local temporaries cannot
-cross an internal split. Unwind records the logical state left at entry or by
+cross an internal split. Ordinary callback propagation uses these same checked
+filter effects after a returning `RaiseException`, including changed parent
+cells. Each returned state supplies its own exceptional roots before the
+frames join, so a filter can establish the proof for a scope absent from
+ordinary parent flow. A failed search cannot publish a complete root proof.
+Handler-selected paths contribute no ordinary returning frame. Ordinary
+propagation can retain a conditional return from an external search, while
+nonlocal unwind still requires every path to resume inside its proved search.
+Unwind records the logical state left at entry or by
 the last completed callback together with the final runtime state. Remaining
 filter-only unwind steps may make those values differ. MedIR binds a variable
 resumption only when these pairs give a complete, unambiguous projection for

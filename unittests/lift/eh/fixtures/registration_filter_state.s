@@ -19,10 +19,12 @@ _registration_entry:
   mov [ebp-104],ebx
   mov ebx,6
   mov dword ptr [ebp-100],0
+#if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
 #if REGISTRATION_CASE == 41
-  // Install every scope before capture so this case isolates the two distinct
-  // unwind projections from reconstruction of unreachable table entries.
+  // Case 41 isolates state projections; case 42 first activates scope 2 in
+  // the filter, so its callback and handler need independent entry proofs.
   mov dword ptr [ebp-4],2
+#endif
   mov dword ptr [ebp-4],1
   push 1
 #else
@@ -39,7 +41,7 @@ _registration_entry:
   test eax,eax
   jnz .Lresumed
   mov ebx,9
-#if REGISTRATION_CASE == 41
+#if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
   mov dword ptr [ebp-4],4
 #else
   mov dword ptr [ebp-4],2
@@ -58,7 +60,7 @@ _registration_entry:
   cmp dword ptr [ebp-4],0
 #elif REGISTRATION_CASE == 38
   cmp dword ptr [ebp-4],-1
-#elif REGISTRATION_CASE == 41
+#elif REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
   mov ecx,[_registration_iteration]
   and ecx,1
   xor ecx,1
@@ -92,7 +94,7 @@ _registration_entry:
   mov dword ptr [ebp-4],-1
 #elif REGISTRATION_CASE == 40
   mov dword ptr [ebp-4],1
-#elif REGISTRATION_CASE == 41
+#elif REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
   mov dword ptr [ebp-4],3
 #else
   mov dword ptr [ebp-4],0
@@ -106,7 +108,7 @@ _registration_entry:
   mov [ebp-100],eax
 #if REGISTRATION_CASE == 37
   mov dword ptr [ebp-4],0
-#elif REGISTRATION_CASE == 41
+#elif REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
   mov dword ptr [ebp-4],2
 #else
   mov dword ptr [ebp-4],-1
@@ -148,7 +150,7 @@ _registration_entry:
   mov dword ptr [ebp-4],-1
   mov eax,96
   jmp .Lfinish
-#if REGISTRATION_CASE == 41
+#if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
 .Lmiddle_filter:
   mov eax,-1
   ret
@@ -179,7 +181,7 @@ _registration_entry:
 .p2align 2
 .Lscope_table:
   .long -1,.Louter_filter,.Louter_handler
-#if REGISTRATION_CASE == 41
+#if REGISTRATION_CASE == 41 || REGISTRATION_CASE == 42
   .long 0,.Lmiddle_filter,.Lmiddle_handler
   .long 1,.Lskipped_filter,.Lskipped_handler
   .long 0,.Lfilter,.Lhandler

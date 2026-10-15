@@ -445,6 +445,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                              RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
                                            SP.CallbackAddress->Offset + 16);
+        if (After.Callback && After.Activation.Entry &&
+            FinallyTargets.count(*After.Activation.Entry) &&
+            !applySEHContinueFilters(I, After, Facts)) {
+          Invalidate();
+          Result.SEHInvocationExitsComplete = false;
+        }
       }
     }
     if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,

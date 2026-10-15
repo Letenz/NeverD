@@ -4072,10 +4072,11 @@ pairs. Native installation mutations change the reload address, volatility,
 atomicity, alignment, selector, projection keys/results, uses and placement
 before the capture. They also remove a projection or compare another value.
 
-`registration_filter_state.s` supplies six runtime cases:
+`registration_filter_state.s` supplies seven runtime cases:
 `longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
 `longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
-`longjmp-filter-skipped-scope` and `longjmp-filter-two-resume-mappings`.
+`longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and
+`longjmp-filter-callback-activation`.
 The skipped-scope case writes state 1 in a filter; after
 the suspended finally returns, the CRT skips that filter scope and resumes at
 state 0. Its other branch retires to -1, requiring a variable projection.
@@ -4085,6 +4086,13 @@ LLVM's old depth-first order 0,3,4,1,2 skipped the finally when unwinding from
 source state 4 to captured state 1. The compiler must preserve source order,
 and `NonlocalUnwindPreservesSiblingStateOrder` independently rejects a sibling
 permutation whose bytes, fixups and enclosing graph are otherwise valid.
+`longjmp-filter-callback-activation` omits the ordinary activation of scope 2;
+its distinct filter and handler acquire their entry proofs only from the
+continued callback state. Unit controls require both roots and reject complete
+proof publication when any filter path selects a handler instead of resuming.
+The genuine `CorpusFuncLoadX86FilterThunksPrintTheirValue` regression retains
+structured filters when an ordinary finally's raise selects a handler: that
+path must not be treated as a failed nonlocal resumption.
 Each execution alternates both filter paths across four invocations, checks the
 resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
 and restored registration chain. The source reconstruction and independent

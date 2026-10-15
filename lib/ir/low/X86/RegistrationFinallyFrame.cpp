@@ -146,7 +146,8 @@ bool RegistrationStateSolver::runSEHCallbackFrame(
             !State.callbackMemoryIsPrivate(*SP, 16, true) ||
             !JumpRuntime->Raise(Op, State, WorkUsed) ||
             State.loadCallback(SP->Offset + 4, 4).Constant != 0 ||
-            !runSEHContinueFilters(State, Writes, Continued))
+            !runSEHFilterSearch(State, Writes, Continued,
+                                /*RequireResume=*/true))
           return false;
         // Continue execution restores this suspended invocation, including
         // its nonvolatile registers and private stack. Search-filter writes

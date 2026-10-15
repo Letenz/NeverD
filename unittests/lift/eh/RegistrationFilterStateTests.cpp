@@ -12,6 +12,8 @@
 
 #include "neverd/lift/X86Regs.h"
 
+#include <utility>
+
 using namespace neverd;
 using namespace neverd::registration_state;
 using namespace neverd::registration_test;
@@ -222,8 +224,7 @@ LowFunc filterFrame(Variant V) {
   return F;
 }
 
-RegistrationStateAnalysis analyze(Variant V) {
-  auto F = filterFrame(V);
+RegistrationStateAnalysis analyze(LowFunc F, Variant V) {
   EH3JumpRuntime Runtime;
   Runtime.ImportSlots.insert(0x4100);
   Runtime.Capture = [V](const LowOp &Op, const FrameState &Frame, bool,
@@ -254,7 +255,66 @@ RegistrationStateAnalysis analyze(Variant V) {
                                  nullptr, nullptr, nullptr, &Runtime);
   return Solver.run();
 }
+
+RegistrationStateAnalysis analyze(Variant V) {
+  return analyze(filterFrame(V), V);
+}
+
+LowFunc callbackActivatedFrame() {
+  auto F = filterFrame(Variant::TwoResumeMappings);
+  auto &Chain = *F.ExceptionMetadata->Registration;
+  // State 2 is entered only by the search filter. Give its roots distinct
+  // addresses so another scope cannot accidentally provide their proof.
+  Chain.Scopes[2].FilterVA = 0x19c0;
+  Chain.Scopes[2].HandlerVA = 0x19d0;
+  LowBlock Filter;
+  Filter.Id = F.Blocks.size();
+  Filter.StartAddr = 0x19c0;
+  emitOp(Filter, 0x19c0, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+         {NdVar::cst(UINT32_MAX, 4)});
+  Filter.InstructionBoundaries = {{0x19c0, 5, 0, 1}};
+  addReturn(Filter, 0x19c5);
+  F.Blocks.push_back(std::move(Filter));
+  LowBlock Handler;
+  Handler.Id = F.Blocks.size();
+  Handler.StartAddr = 0x19d0;
+  Handler.EndAddr = 0x19d7;
+  Handler.Succs = {6};
+  addStateStore(Handler, 0x19d0, -1, Chain);
+  F.Blocks.push_back(std::move(Handler));
+  for (auto &Block : F.Blocks)
+    for (unsigned I = 0; I != Block.Ops.size(); ++I)
+      Block.Ops[I].Seq = I;
+  return F;
+}
 } // namespace
+
+TEST(RegistrationFilterState, CallbackActivatedScopeHasIndependentRoots) {
+  const auto Result =
+      analyze(callbackActivatedFrame(), Variant::TwoResumeMappings);
+  ASSERT_TRUE(Result.Complete);
+  ASSERT_GE(Result.Blocks.size(), 2u);
+  const auto &Filter = Result.Blocks[Result.Blocks.size() - 2];
+  const auto &Handler = Result.Blocks.back();
+  EXPECT_TRUE(Filter.Reached);
+  EXPECT_TRUE(Filter.CallbackOnly);
+  EXPECT_EQ(Filter.Levels, (std::vector<int32_t>{2}));
+  EXPECT_TRUE(Handler.Reached);
+  EXPECT_FALSE(Handler.CallbackOnly);
+  EXPECT_EQ(Handler.Levels, (std::vector<int32_t>{1}));
+}
+
+TEST(RegistrationFilterState, FailedSearchCannotPublishCompleteRootProofs) {
+  auto F = callbackActivatedFrame();
+  F.Blocks[15].Ops.front().Inputs[0] = NdVar::cst(1, 4);
+  const auto Result = analyze(std::move(F), Variant::TwoResumeMappings);
+  EXPECT_FALSE(Result.Complete);
+  ASSERT_GE(Result.Blocks.size(), 2u);
+  const auto &Filter = Result.Blocks[Result.Blocks.size() - 2];
+  const auto &Handler = Result.Blocks.back();
+  EXPECT_TRUE(!Filter.Reached || Filter.Unknown);
+  EXPECT_TRUE(!Handler.Reached || Handler.Unknown);
+}
 
 TEST(RegistrationFilterState,
      PreservesDispositionAndWrittenStateAtSharedReturn) {

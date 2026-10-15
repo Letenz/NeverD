@@ -285,8 +285,13 @@ Native scope numbering must also preserve source index order: the CRT compares
 current and saved states numerically, including unrelated sibling scopes. LLVM
 orders authenticated source rows before assigning invoke/asynchronous states;
 installation rejects any reordered table for a function with a jump capture.
-Scope entries without a proven activation still require a separate callback and
-handler reconstruction proof.
+Scopes activated only by a continuing filter receive independent filter and
+handler entry proofs from the returned frame, even when ordinary parent flow
+never entered them. The ordinary state solver shares the same bounded filter
+interpreter with nonlocal unwind and carries its parent-frame effects forward.
+Handler selection supplies no ordinary returning frame; it still prevents a
+closed nonlocal resumption proof.
+Scopes without any proved activation remain unsupported.
 Mapped PE data,
 including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
