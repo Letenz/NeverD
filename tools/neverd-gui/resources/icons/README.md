@@ -9,7 +9,8 @@ body areas so every icon stays legible on both light and dark toolbars.
 
 Message box icons (`message_information`, `message_warning`,
 `message_critical`) take the accent that reads as their severity, the
-navigation, file and analysis accents in turn; a question takes `help`.
+navigation, file and analysis accents in turn; a question takes `help`, which
+with `about` takes the information blue too.
 
 The chrome glyphs that the theme style sheet draws (`check`, `check_partial`,
 `radio_dot`, chevrons, toolbar grips and the menu check mark) are single-color

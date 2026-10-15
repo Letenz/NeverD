@@ -389,7 +389,7 @@ NEVERD_ACTION(OptionsColors, QT_TRANSLATE_NOOP("Actions", "&Colors..."), "",
 NEVERD_ACTION(OptionsFont, QT_TRANSLATE_NOOP("Actions", "&Font..."), "", "font",
               QT_TRANSLATE_NOOP("Actions", "Choose the code font"))
 NEVERD_ACTION(OptionsShortcuts, QT_TRANSLATE_NOOP("Actions", "&Shortcuts..."),
-              "", "options",
+              "", "keyboard",
               QT_TRANSLATE_NOOP("Actions", "List keyboard shortcuts"))
 NEVERD_ACTION(OptionsPalette,
               QT_TRANSLATE_NOOP("Actions", "Show command &palette..."),
@@ -398,7 +398,7 @@ NEVERD_ACTION(OptionsPalette,
 NEVERD_ACTION(
     OptionsRepeatPalette,
     QT_TRANSLATE_NOOP("Actions", "&Repeat last palette command"),
-    "Ctrl+Shift+R", "palette",
+    "Ctrl+Shift+R", "palette_repeat",
     QT_TRANSLATE_NOOP("Actions",
                       "Run the last command chosen in the palette again"))
 NEVERD_ACTION(
