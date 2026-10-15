@@ -920,6 +920,11 @@ cl::opt<bool>
     TypesDecimalOffsets("decimal-offsets",
                         cl::desc("Show offsets in decimal rather than hex"),
                         cl::sub(TypesCmd));
+cl::list<std::string> TypesDeclare(
+    "declare",
+    cl::desc("Add the types this file declares first: C (.h, .c), C++ (.hpp, "
+             ".cpp), Rust (.rs) or Go (.go); repeat for more"),
+    cl::value_desc("file"), cl::sub(TypesCmd));
 cl::opt<bool> TypesNoOffsets("no-offsets",
                              cl::desc("Leave out the offset comments"),
                              cl::sub(TypesCmd));

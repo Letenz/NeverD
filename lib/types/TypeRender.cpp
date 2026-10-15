@@ -547,4 +547,12 @@ std::string renderTypes(const TypeLibrary &Library,
   return std::string();
 }
 
+std::vector<std::string> mentionedTypeNames(const LocalType &Type) {
+  std::vector<std::string> Names;
+  render::mentionedTypes(Type, Names);
+  llvm::sort(Names);
+  Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+  return Names;
+}
+
 } // namespace neverd::types

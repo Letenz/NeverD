@@ -289,6 +289,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.FunctionAttributeEdits.clear();
   S.DataItems.clear();
   S.OperandFormats.clear();
+  S.TypeDeclarations.clear();
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
   S.ImageStrings.reset();
@@ -300,6 +301,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
     neverd_functions_load(Sess);
     neverd_items_load(Sess);
     neverd_operand_formats_load(Sess);
+    neverd_type_declarations_load(Sess);
   }
 
   return 1;

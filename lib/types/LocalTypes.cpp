@@ -107,6 +107,29 @@ TypeExprRef qualified(TypeExprRef Type, bool Const, bool Volatile) {
   return Copy;
 }
 
+TypeLibrary::TypeLibrary(const TypeLibrary &Other)
+    : Model(Other.Model), Prototypes(Other.Prototypes), ByName(Other.ByName) {
+  ByOrdinal.reserve(Other.ByOrdinal.size());
+  for (const auto &Type : Other.ByOrdinal)
+    ByOrdinal.push_back(Type ? std::make_unique<LocalType>(*Type) : nullptr);
+}
+
+TypeLibrary &TypeLibrary::operator=(const TypeLibrary &Other) {
+  if (this != &Other)
+    *this = TypeLibrary(Other);
+  return *this;
+}
+
+void TypeLibrary::definePrototype(std::string Name,
+                                  std::shared_ptr<const FunctionDef> Function) {
+  Prototypes[Name] = std::move(Function);
+}
+
+const FunctionDef *TypeLibrary::findPrototype(llvm::StringRef Name) const {
+  auto Found = Prototypes.find(Name);
+  return Found == Prototypes.end() ? nullptr : Found->second.get();
+}
+
 uint32_t TypeLibrary::define(LocalType Type) {
   auto Found = ByName.find(Type.Name);
   if (Found != ByName.end()) {

@@ -40,7 +40,10 @@ extern "C" {
 /// "origin"},...]}.  "kind" is struct, union, enum, typedef or function;
 /// "size" is absent for a type without one, and "members" counts a record's
 /// named members, anonymous records' included, or an enumeration's values.
-/// An image without a PDB has none.  OptionsJson may be NULL or
+/// An image without a PDB has none.  When a declaration of the user's no
+/// longer reads over the program's types, "declarationProblems" lists what
+/// it met: [{"declaration" (its index in neverd_type_declarations_json),
+/// "line","column","message"},...].  OptionsJson may be NULL or
 /// {"filter":"text","language":"c"|"cpp"|"rust"|"go"}: "filter" keeps the
 /// types whose name holds the text, ignoring the case of ASCII letters, and
 /// "language" adds "renamed":[[name,spelling],...], the names that language
@@ -77,6 +80,35 @@ NEVERD_API const char *neverd_local_type_json(neverd_session_t Sess,
 /// malformed options.
 NEVERD_API const char *neverd_local_types_source(neverd_session_t Sess,
                                                  const char *OptionsJson);
+
+/// Adds the types \p Source declares to the program's local types: C, C++,
+/// Rust or Go as OptionsJson's "language" says ("c" when NULL), which may
+/// replace types of their names.  Returns {"types":[name,...],
+/// "prototypes":[name,...],"problems":[{"line","column","message"},...]}:
+/// with any problem, nothing changes.  The declaration joins the user's,
+/// which are read again over the program's types whenever those are read
+/// anew, as after loading a PDB; neverd_type_declarations_save keeps them.
+/// NULL with neverd_last_error() when no binary is loaded or the options
+/// are malformed.
+NEVERD_API const char *neverd_local_types_declare(neverd_session_t Sess,
+                                                  const char *Source,
+                                                  const char *OptionsJson);
+/// Removes the types the JSON array \p NamesJson names from the program's
+/// local types, the program's own as well as the user's.  Returns
+/// {"removed":[name,...],"usedBy":[name,...]}: the types that still name a
+/// removed one keep their layout and name it as a type the program lacks.
+/// The removal joins the user's declarations.  NULL with neverd_last_error()
+/// when no binary is loaded, the names are malformed, or one names no type.
+NEVERD_API const char *neverd_local_types_forget(neverd_session_t Sess,
+                                                 const char *NamesJson);
+/// The user's declarations in the order made:
+/// [{"language","source"} | {"forget":[name,...]}, ...].
+NEVERD_API const char *neverd_type_declarations_json(neverd_session_t Sess);
+/// Write or read the declarations as `<input>.neverd-types.json`, which
+/// neverd_session_load reads too.  Reading them reads the program's types
+/// anew.  Return 0, or -1 with neverd_last_error.
+NEVERD_API int neverd_type_declarations_save(neverd_session_t Sess);
+NEVERD_API int neverd_type_declarations_load(neverd_session_t Sess);
 
 #ifdef __cplusplus
 }

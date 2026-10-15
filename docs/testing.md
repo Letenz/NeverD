@@ -272,7 +272,20 @@ and Go renderers. The fixture's source says how to rebuild the
 
 To check the whole Windows kernel, point `NEVERD_TYPES_NTKRNLMP` at a copy of
 `ntkrnlmp.pdb`. `PDBTypeImportKernel.RebuildsTheKernelTypes` then imports it,
-and every nesting must hold.
+and every nesting must hold. `TypeParseKernel.ReadsBackEveryKernelTypeAsRendered`
+renders every kernel type as C, Rust and Go and reads it back; each record
+must keep its size and every member's bit offset and width, and every
+rendered size and offset check must hold.
+
+Declared types are covered at each layer:
+- `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
+  replacing a PDB type in place, problems with their place, removal, and the
+  declarations coming back with the next load, a PDB-less load reporting the
+  one that no longer reads;
+- `NeverDWorkerLocalTypes`: the worker's commands, the sidecar and the
+  analysis replica;
+- `WorkbenchTests::localTypesAreDeclaredEditedAndDeletedByIdasKeys`: the
+  editor under IDA's Ins, Ctrl+E and Del.
 
 Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and

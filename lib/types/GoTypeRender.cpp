@@ -481,16 +481,21 @@ void GoWriter::structure(const RecordPlan &Plan, std::string &Out) {
 
 void GoWriter::record(const RecordPlan &Plan, bool Outer, std::string &Out) {
   const RecordDef &Record = *Plan.Record;
+  // Go cannot pack or align a type; its comment says, for readers and to
+  // read it back.
+  const std::string Layout =
+      (Plan.Pack ? ", packed to " + std::to_string(Plan.Pack) : "") +
+      (Record.Alignment ? ", aligned to " + std::to_string(Record.Alignment)
+                        : "");
   if (Outer)
     Out += "// " + Plan.Name + ": " + hex(Record.Size) + " (" +
-           std::to_string(Record.Size) + ") bytes" +
-           (Plan.Pack ? ", packed to " + std::to_string(Plan.Pack) : "") +
+           std::to_string(Record.Size) + ") bytes" + Layout +
            (Record.Union ? "; a union, read through its accessors" : "") +
            ".\n";
   else
     Out += "// " + Plan.Name + ": the anonymous " +
            (Record.Union ? "union" : "structure") + " at " + Parent + "+" +
-           comment(Base) + ", " + hex(Record.Size) + " bytes" +
+           comment(Base) + ", " + hex(Record.Size) + " bytes" + Layout +
            (Record.Union ? "; read it through its accessors" : "") + ".\n";
   if (Record.Union)
     unionStorage(Plan, Out);

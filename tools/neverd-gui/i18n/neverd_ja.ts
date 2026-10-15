@@ -3604,5 +3604,126 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Cannot export the types: %1</source>
         <translation>型をエクスポートできません：%1</translation>
     </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>宣言から型を追加</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>型の宣言を編集</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>選択した型を削除</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>型を追加…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>型を編集…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>型を削除…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>宣言の 1 つが読み込めなくなりました：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>宣言のうち %n 件が読み込めなくなりました：%1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>型の追加</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>型を読み込めません：%1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>%1 の編集</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>%1 を宣言しました</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>%n 個の型を宣言しました</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>型 %1 を削除しますか？</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>%n 個の型を削除しますか？</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>型の削除</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>%1 を削除しました</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>%n 個の型を削除しました</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>（%1 がまだ参照しています）</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>（%n 個の型がまだ参照しています）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>型を削除できません：%1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>ウィンドウが閉じられました</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>型の宣言</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>構造体、共用体、列挙型、typedef を宣言します。プログラムの型と同じ名前の型はそれを置き換えます。</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>宣言</translation>
+    </message>
+    <message>
+        <source>Read the declarations (Ctrl+Enter)</source>
+        <translation>宣言を読み込む（Ctrl+Enter）</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>%1 行 %2 列：%3</translation>
+    </message>
 </context>
 </TS>
