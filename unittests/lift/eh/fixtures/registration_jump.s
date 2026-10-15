@@ -24,6 +24,9 @@ _registration_entry:
   mov [ebp-104],ebx
   mov ebx,6
   mov dword ptr [ebp-100],0
+#if REGISTRATION_CASE == 25
+  mov dword ptr [ebp-112],0
+#endif
 #if REGISTRATION_CASE == 24
   mov dword ptr [ebp-112],0xdeadbeef
   push 0
@@ -171,6 +174,9 @@ _registration_entry:
   push 0xe0420042
   call dword ptr [__imp__RaiseException@16]
 #if REGISTRATION_CASE == 25
+  mov dword ptr [esp],7
+  cmp dword ptr [ebp-112],7
+  jne .Lbad
   mov dword ptr [ebp-4],-1
   mov eax,7
   jmp .Lfinish
