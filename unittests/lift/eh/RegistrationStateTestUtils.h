@@ -27,6 +27,7 @@ void addFinallyTailJump(LowBlock &Call, LowBlock &Resume,
 void addFinallyCallTrailingEffect(LowBlock &Call);
 LowFunc makeBranchingFrame();
 LowFunc makeJumpFrame(unsigned Mutation = 0);
+void initializeEH4JumpFrame(LowFunc &Function, bool GS = false);
 LowFunc makeCxxCatchContinuation(bool IncludeResume = true);
 
 } // namespace neverd::registration_test

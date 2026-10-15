@@ -4218,9 +4218,10 @@ bytes/slices and caller-PC readback. `RegistrationPrivateCallState` checks that
 stack-only facts cannot preserve a capture, deallocated buffers refuse and a
 frame-preserving call supplies no scalar result authority.
 
-The EH4 jump matrix repeats fourteen capture/resumption scenarios with and without
+The EH4 jump matrix repeats seventeen capture/resumption scenarios with and without
 GS cookies: parent and callback jumps, zero values, filter search, incoming
-parameters, retired scopes and private leaf/graph calls with a live buffer.
+parameters, retired scopes, private leaf/graph calls with a live buffer, and
+registered EH3 helpers borrowing the parent buffer and a scalar object.
 The helper cases require exactly one observed helper effect after resumption.
 `RegistrationSEHPrivateCall.EH4CalleeGraphsPreserveTheImageCookie` rejects
 transitive cookie/header writes, partial cookie overlap and invalid cookie
@@ -4241,7 +4242,16 @@ four calls, unwind the same finally, check the restored state and nonvolatile
 register, then raise another exception. The native mutation tests alter the saved
 state slot, read address, volatile accesses, placement, use closure and captured
 projection key while retaining verifier-clean IR. The full source profile now
-contains 97 scenarios; older compiler profiles keep their original membership.
+contains 103 scenarios; older compiler profiles keep their original membership.
+
+The EH4/GS `longjmp-callee`, `longjmp-returning-callee` and
+`longjmp-scalar-callee` variants retain the source helper's registration while
+mapping its caller's generated buffer and object. `RegistrationBoundCallState`
+checks full/partial cookie overlap, registration storage, unused object-address
+arguments and allocation bounds. Runtime source mutations retarget the actual
+object-address instruction into both cookie slots; source replay and installation
+must reject them. The MedIR binder also rejects missing cookie proof or invalid
+cookie addresses before lowering the preserved call.
 
 
 `RegistrationFilterState.*` checks paired dispositions and states at shared
