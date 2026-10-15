@@ -95,11 +95,8 @@ llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
 llvm::Expected<uint64_t>
 KernelModel::referenceObjectByHandle(llvm::ArrayRef<uint64_t> A) {
   const auto Handle = ObjectHandles.find(A[0]);
-  if (Handle == ObjectHandles.end()) {
-    if (Registry.ownsHandle(A[0]))
-      return objectError("registry-key object references are unsupported");
+  if (Handle == ObjectHandles.end())
     return windows::StatusInvalidHandle;
-  }
   const auto &State = Handle->second;
   const auto Found = ReferencedObjects.find(State.Object);
   if (Found == ReferencedObjects.end())
@@ -154,7 +151,7 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
       !matchesObjectType(Object->second.Kind, A[4]))
     return windows::StatusObjectTypeMismatch;
   if (!objectAccessMask(Object->second.Kind))
-    return objectError("object handles require a process or thread object");
+    return objectError("unsupported object handle class");
   // ACLs, access-state records and inheritance need a declared security
   // environment. Refuse those requests without granting invented authority.
   if (Mode != windows::KernelMode || A[2] ||
@@ -174,6 +171,9 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
     return windows::StatusInvalidParameter;
   if (auto E = validateObjectOutput(A[6], 8))
     return E;
+  if (Object->second.RegistryOwner)
+    if (auto E = Object->second.RegistryOwner->checkHandleCapacity())
+      return E;
   if (NextObjectHandle > profile::SystemThreadHandleLimit)
     return windows::StatusInsufficientResources;
   if (auto E = Memory.writeInteger(A[6], NextObjectHandle, 8))
@@ -192,11 +192,8 @@ void KernelModel::retainObjectHandle(uint64_t Object, uint32_t Access,
 
 llvm::Expected<uint64_t> KernelModel::closeHandle(uint64_t Handle) {
   const auto Found = ObjectHandles.find(Handle);
-  if (Found == ObjectHandles.end()) {
-    if (Registry.ownsHandle(Handle))
-      return Registry.call(*this, kernel_api::ZwClose, {Handle});
+  if (Found == ObjectHandles.end())
     return windows::StatusInvalidHandle;
-  }
   if (!findObjectHandle(Handle))
     return windows::StatusInvalidHandle;
   const uint64_t Object = Found->second.Object;
@@ -284,8 +281,13 @@ void KernelModel::retireObjectIfUnreferenced(uint64_t Object) {
   if (References->second.Pointers || References->second.Handles ||
       WaitReferences.contains(Object))
     return;
+  if (References->second.RegistryOwner) {
+    References->second.RegistryOwner->retireObject(Object);
+    FreedRanges.emplace(Object, profile::ProcessTokenSize);
+    ReferencedObjects.erase(References);
+    return;
+  }
   // Process and driver identities are retained by the session environment.
-  // Only thread objects currently have a modeled retirement transition.
   if (References->second.Kind != ObjectKind::Thread)
     return;
   const auto Thread = ThreadObjects.find(Object);

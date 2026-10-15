@@ -818,7 +818,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
       return modelError("guest access to an opaque thread object");
   for (const auto &[Object, State] : ReferencedObjects)
     if ((State.Kind == ObjectKind::Directory ||
-         State.Kind == ObjectKind::SymbolicLink) &&
+         State.Kind == ObjectKind::SymbolicLink ||
+         State.Kind == ObjectKind::Key) &&
         Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque namespace object");
   for (const auto &[Kind, Object] : ObjectTypes)
