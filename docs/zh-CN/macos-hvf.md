@@ -1,6 +1,6 @@
 **语言**: [English](../macos-hvf.md) | [简体中文](macos-hvf.md) | [繁體中文](../zh-TW/macos-hvf.md) | [日本語](../ja/macos-hvf.md) | [한국어](../ko/macos-hvf.md) | [Français](../fr/macos-hvf.md) | [Deutsch](../de/macos-hvf.md) | [Español](../es/macos-hvf.md) | [Italiano](../it/macos-hvf.md) | [Русский](../ru/macos-hvf.md) | [العربية](../ar/macos-hvf.md)
 
-<!-- i18n-source: 5e83757469a7e3ff81f7d18aba5f4d6641fc007f13b7f64d2a19549d26c1b3dc -->
+<!-- i18n-source: c6842dbcde7494478da5d1a0035e88fb073d2764b43e2a30400a470727685ec4 -->
 
 [← 文档索引](README.md)
 
@@ -14,7 +14,7 @@ NeverD 使用 Apple 的 Hypervisor.framework，后端名为 `hvf`，对应 Linux
 
 框架链接及 hypervisor 签名仅适用于 macOS 构建目标（`CMAKE_SYSTEM_NAME=Darwin`）。iOS 等 Apple 移动平台目标不会被附加该框架依赖或权限。NeverD 本身在架构匹配的 Mac 上运行时，iOS 来宾配置仍可使用 HVF。
 
-真正调用框架的**进程可执行文件**必须具有 `com.apple.security.hypervisor` entitlement。CMake 在链接后为 CLI、worker 和模拟测试签名；默认使用 ad-hoc，可通过 `NEVERD_HVF_SIGN_IDENTITY` 指定已有签名身份。打包脚本在修改 Mach-O 依赖后重新签名 worker，并检查最终权限没有丢失。嵌入式 SDK 使用方应签署自己的宿主程序；NeverD 不会改签已安装的 Python 解释器。
+真正调用框架的**进程可执行文件**必须具有 `com.apple.security.hypervisor` entitlement。CMake 在链接后为 CLI、worker、进程探针和模拟测试签名；默认使用 ad-hoc，可通过 `NEVERD_HVF_SIGN_IDENTITY` 指定已有签名身份。打包脚本在修改 Mach-O 依赖后重新签名 worker，并检查最终权限没有丢失。嵌入式 SDK 使用方应签署自己的宿主程序；NeverD 不会改签已安装的 Python 解释器。
 
 独立构建 worker 或桌面程序时，导入的引擎库不提供其构建选项，因此 worker 默认仍会附加该 entitlement。若明确不需要 HVF，可设 `NEVERD_WORKER_SIGN_HVF=OFF`。
 
