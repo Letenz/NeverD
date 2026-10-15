@@ -84,6 +84,10 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::Name:
 #include "KernelCStringAPIs.def"
 #undef NEVERD_KERNEL_CSTRING_API
+#define NEVERD_KERNEL_RUNDOWN_API(Name, Arity, IRQL, Operation)                \
+  case KernelAPIKind::Name:
+#include "KernelRundownAPIs.def"
+#undef NEVERD_KERNEL_RUNDOWN_API
     break;
   case KernelAPIKind::IoAllocateMdl:
   case KernelAPIKind::IoFreeMdl:
@@ -258,6 +262,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return Operation;
 #include "KernelCStringAPIs.def"
 #undef NEVERD_KERNEL_CSTRING_API
+#define NEVERD_KERNEL_RUNDOWN_API(Name, Arity, IRQL, Operation)                \
+  case KernelAPIKind::Name:                                                    \
+    return Operation;
+#include "KernelRundownAPIs.def"
+#undef NEVERD_KERNEL_RUNDOWN_API
 #define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \
   case KernelAPIKind::Name:                                                    \
     return Operation;
