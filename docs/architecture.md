@@ -6385,3 +6385,13 @@ fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
 AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
 labels on unmap. JSON supplies explicit identity/provider declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
+
+
+`AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI
+function tables. Object identity, references, frames and pending exceptions
+remain in that owner; string/array helpers implement value and copy-back
+semantics. Guest storage uses the existing allocator and address-space authority.
+`LinuxBinder` owns LP64 control/looper state within each device open description,
+shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
+alternate semantics or service responses. JNI object limits and Binder stream
+admission fail explicitly rather than borrowing a host VM or driver.

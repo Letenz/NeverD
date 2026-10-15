@@ -4,8 +4,9 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, signal delivery, a general filesystem, or a
-network. It never calls host functions to satisfy a guest import.
+Android system or supply a Java bytecode runtime, system-service peers, signal
+delivery, a general filesystem, or a network. JNI and Binder have explicit
+bounded models described below. It never calls host functions to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
 independently of the guest profile; `unicorn` works without an Android device.
@@ -713,3 +714,47 @@ A trace demonstrates behavior for its explicit inputs. It is not proof of
 unvisited branches or arbitrary input equivalence. Unknown services and CPU
 instructions, invalid pointers, stack-check failures, and exhausted budgets
 remain visible stops. No unsupported instruction is replaced by NOP.
+
+## JNI native values and thread attachment
+
+Set `"android":{"jni":true,...}` to enable the JNI 1.6 LP64 interface. The
+strict Boolean defaults to false. `JNI_GetCreatedJavaVMs` exposes one guest VM;
+`GetEnv`, attachment and detachment use the cooperative native thread ID.
+Threads initially have no JNIEnv. A successful attachment creates a distinct
+identity; an environment from another thread or a previous attachment fails.
+The function tables are immutable guest storage, checked before each call.
+
+This native value model supports intrinsic class identity, local/global
+references, local frames, pending exceptions, UTF-16 and modified UTF-8 strings,
+primitive arrays of all eight widths, and Object/String object arrays. Array
+region copies preserve complete element bits; borrowed element copies obey
+release, commit and abort modes. Borrowed strings require matching releases.
+Pending-exception cleanup preserves both exception identity and borrowed values.
+Slots not implemented stop with their standard JNI table index in the diagnostic.
+
+The supported class set comprises Object, Class, String, Throwable, Exception,
+Error, RuntimeException, IllegalArgumentException, IndexOutOfBoundsException,
+ArrayIndexOutOfBoundsException, StringIndexOutOfBoundsException,
+NegativeArraySizeException, ArrayStoreException and OutOfMemoryError, plus the
+primitive and Object/String array classes. Unknown classes stop rather than
+inventing an application class or assuming ClassNotFoundException. `ThrowNew`
+admits only a null message for these intrinsic throwable classes.
+
+There is no Java method/field execution, class loader, native-method
+registration, monitor, weak-reference, critical/direct-buffer, GC or JIT model.
+Attachment names/groups and VM destruction also remain unsupported. The model
+retains at most 4096 objects and 4096 live references/borrows, with object storage
+bounded by half the memory limit and 512 unique attachment identities per
+workload. Exhaustion fails explicitly; it is not a claim about ART heap pressure.
+Native child-thread exit requires detachment and all borrowed copies released.
+Stopping observation at the selected main function's return is not a thread exit.
+
+Invocation ordering and return statuses follow the pinned
+[API 28 ART implementation](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/java_vm_ext.cc).
+In particular, zero-capacity VM enumeration copies no VM and reports zero, and
+unsupported GetEnv versions leave its output untouched. Native values follow
+[JNI functions](https://docs.oracle.com/en/java/javase/17/docs/specs/jni/functions.html)
+and the [invocation interface](https://docs.oracle.com/en/java/javase/17/docs/specs/jni/invocation.html).
+These are bounded protocol models implemented independently of ART, not a booted
+Android runtime. See [device contracts](linux-device-contracts.md) for Binder and
+GPU ownership shared with raw Linux syscalls.

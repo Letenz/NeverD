@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_ANDROIDINTERNAL_H
 #define NEVERD_EMULATION_ANDROIDINTERNAL_H
 #include "../kernel/LinuxServices.h"
+#include "AndroidJNI.h"
 #include "AndroidProperties.h"
 
 #include "neverd/emulation/AndroidNative.h"
@@ -68,7 +69,9 @@ struct LinkedImage {
   std::map<uint64_t, std::string> DynamicProviders;
   std::map<std::string, std::map<std::string, uint64_t>> Libraries;
   PropertyTable Properties;
+  std::vector<uint8_t> JNIImage;
 };
+llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked);
 llvm::Expected<PropertyTable>
 initializeProperties(AddressSpace &Space, const ProcessOptions &Options,
                      const ExecutionBudget &Budget);
@@ -119,6 +122,7 @@ public:
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
+  llvm::Error jniThreadExit();
 
 private:
   ExecutionBackend &CPU;
@@ -147,6 +151,26 @@ private:
     uint64_t Entry, Argument, DSO;
   };
   std::vector<ExitCallback> ExitCallbacks;
+  JNIState JNI;
+  BionicResult jniCall(const NativeCallEvent &Call);
+  BionicResult jniVM(const NativeCallEvent &Call);
+  BionicResult jniObjects(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
+  llvm::Error jniIdentity(uint64_t Address, uint64_t Expected);
+  llvm::Expected<JNIState::Thread *> jniThread(uint64_t Environment);
+  llvm::Expected<std::shared_ptr<JNIObject>> jniObject(uint64_t Reference);
+  llvm::Expected<uint64_t> jniReference(std::shared_ptr<JNIObject> Object,
+                                        bool Global = false);
+  llvm::Expected<std::shared_ptr<JNIObject>> jniClass(llvm::StringRef Name);
+  llvm::Expected<std::shared_ptr<JNIObject>>
+  jniNewObject(JNIObject::Kind Kind, llvm::StringRef Class, uint64_t Bytes);
+  llvm::Error jniException(llvm::StringRef Class);
+  llvm::Expected<uint64_t> jniBorrow(std::shared_ptr<JNIObject> Object,
+                                     llvm::ArrayRef<uint8_t> Bytes,
+                                     uint64_t IsCopy, unsigned Slot);
+  BionicResult jniRelease(unsigned Slot, const NativeCallEvent &Call);
+  llvm::Error jniPut(uint64_t Address, uint64_t Value, unsigned Size);
   llvm::Error access(uint64_t Address, uint64_t Size, unsigned Permissions);
   llvm::Expected<uint8_t> byte(uint64_t Address);
   llvm::Expected<std::string> string(uint64_t Address);

@@ -214,6 +214,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       Result.Diagnostic = diagnostic::ThreadCallbackExit;
       return false;
     }
+    if (auto E = LibC.jniThreadExit()) {
+      RuntimeFailure(std::move(E));
+      return false;
+    }
     if (auto E = Threads.finish(Value, ExitStatus)) {
       RuntimeFailure(std::move(E));
       return false;

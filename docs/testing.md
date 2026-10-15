@@ -6711,3 +6711,19 @@ real cooperative thread creation/join and libc DIR/FILE reads. Run
 Android and process-public test targets, then the four OS/session suites for
 shared-owner changes. `test_android_live_proc_and_maintained_stat` checks Python
 against the built SDK; unavailable backends are skips, not successful coverage.
+
+
+### Native JNI and Binder contracts
+
+`AndroidJNI` executes independent O0/O2 callers with ordinary/APS2/RELR
+relocations, validating complete string/array bytes, copy-back modes, exception
+cleanup, local/global lifetime, thread attachment and invalid identity/borrow
+controls. `AndroidBinder` covers control records, looper responses, shared-open
+ownership and per-thread state. `LinuxBinder` checks both LP64 kernel ABIs,
+including full records, guards, output aliases and rejected model combinations.
+Process-public tests compare complete C API/CLI reports, and Python integration
+runs the same guest functions. Build the Android, Linux, process-public and
+execution-session targets, run `ctest -R 'AndroidJNI|Binder'`, then their complete
+owner labels for changes to shared models. GPU context fixtures also check known
+empty queues, unknown external queues and invalid timestamp copy-out. Missing
+native transports remain skips, not execution evidence.

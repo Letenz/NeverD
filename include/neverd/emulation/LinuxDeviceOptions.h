@@ -51,7 +51,8 @@ struct LinuxDeviceMapping {
 struct LinuxKGSLContexts {
   /// Select an explicit 40-byte-slot LP64 memstore mapping. The narrow model
   /// supports idle PREAMBLE/NO_GMEM_ALLOC contexts and consumed/retired
-  /// queries; GPU command execution and queued timestamps remain unsupported.
+  /// queries. Queued is known zero only without a producer for that context;
+  /// GPU command execution and externally submitted queue state are unmodeled.
   uint64_t MemstoreOffset = 0;
   uint32_t ContextLimit = 0;
 };
@@ -69,6 +70,9 @@ struct LinuxDeviceOptions {
   /// supply no MMIO or inferred producer; updates must be explicitly provided.
   std::vector<LinuxDeviceMapping> ReadOnlyMappings;
   std::optional<LinuxKGSLContexts> KGSL;
+  /// Explicit LP64 Binder protocol-8 control/looper subset. No remote service,
+  /// transaction buffer, object handle or peer response is inferred.
+  bool Binder = false;
 };
 } // namespace neverd::emulation
 #endif
