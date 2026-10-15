@@ -191,7 +191,7 @@ struct SymbolicOwnershipService {
   std::array<std::optional<uint64_t>, 6> Arguments;
 };
 inline std::vector<SymbolicOwnershipService>
-symbolicOwnershipServices(unsigned Kind) {
+symbolicOwnershipServices(unsigned Kind, bool Lchown = false) {
   std::vector<SymbolicOwnershipService> R;
   const uint64_t UID = 501, GID = Kind & 1 ? 20 : Kind >= 2 ? 20 : 31;
   constexpr uint64_t High = 0x13579bdf00000000ULL, None = 0xffffffffULL;
@@ -207,8 +207,17 @@ symbolicOwnershipServices(unsigned Kind) {
     add(5, FD, false, {{1, Flags}, {2, 0}});
   };
   auto stat = [&](uint64_t FD) { add(339, 0, false, {{0, FD}}); };
-  auto own = [&](uint64_t FD, uint64_t U, uint64_t G) {
-    add(123, 0, false, {{0, FD}, {1, U}, {2, G}});
+  auto own = [&](uint64_t FD, uint64_t U, uint64_t G, bool Path = false) {
+    if (Lchown && Path)
+      add(364, 0, false, {{1, U}, {2, G}, {3, 0}, {4, 0}, {5, 0}});
+    else
+      add(123, 0, false, {{0, FD}, {1, U}, {2, G}});
+  };
+  auto nofollow = [&](uint64_t Value, bool Error, uint64_t U, uint64_t G) {
+    if (Lchown)
+      add(364, Value, Error, {{1, U}, {2, G}, {3, 0}, {4, 0}, {5, 0}});
+    else
+      add(468, Value, Error, {{0, UINT64_MAX}, {2, U}, {3, G}, {4, 0x20}});
   };
   auto emit = [&] {
     if (Kind & 1)
@@ -222,30 +231,39 @@ symbolicOwnershipServices(unsigned Kind) {
   open(6, 0);
   stat(3);
   stat(6);
-  own(3, None, None);
+  own(3, None, None, true);
   stat(3);
   own(4, UID, GID);
   stat(5);
   stat(6);
   emit();
   emit();
-  add(High | 468, 0, false,
-      {{0, High | 0xfffffffeULL},
-       {2, High | UID},
-       {3, High | GID},
-       {4, High | 0x20}});
+  if (Lchown)
+    add(High | 364, 0, false,
+        {{1, High | UID}, {2, High | GID}, {3, 0}, {4, 0}, {5, 0}});
+  else
+    add(High | 468, 0, false,
+        {{0, High | 0xfffffffeULL},
+         {2, High | UID},
+         {3, High | GID},
+         {4, High | 0x20}});
   stat(3);
   add(16, 0, false, {{1, None}, {2, GID}});
   stat(6);
   emit();
   add(471, 0, false, {{0, 0xfffffffeULL}, {2, 0xfffffffeULL}, {4, 0}});
   open(7);
-  add(High | 123, 0, false, {{0, High | 7}, {1, High | UID}, {2, High | GID}});
+  if (Lchown)
+    add(High | 364, 0, false,
+        {{1, High | UID}, {2, High | GID}, {3, 0}, {4, 0}, {5, 0}});
+  else
+    add(High | 123, 0, false,
+        {{0, High | 7}, {1, High | UID}, {2, High | GID}});
   stat(3);
   emit();
   add(128);
-  add(468, 2, true, {{0, UINT64_MAX}, {2, UID}, {3, GID}, {4, 0x20}});
-  add(468, 0, false, {{0, UINT64_MAX}, {2, UID}, {3, GID}, {4, 0x20}});
+  nofollow(2, true, UID, GID);
+  nofollow(0, false, UID, GID);
   stat(7);
   emit();
   add(10);
@@ -256,7 +274,7 @@ symbolicOwnershipServices(unsigned Kind) {
   add(57);
   open(8);
   stat(8);
-  own(8, UID, GID);
+  own(8, UID, GID, true);
   stat(8);
   emit();
   own(5, UID, GID);
@@ -267,11 +285,11 @@ symbolicOwnershipServices(unsigned Kind) {
   open(9);
   own(9, UID, GID);
   add(16, 2, true, {{1, UID}, {2, GID}});
-  add(468, 0, false, {{0, UINT64_MAX}, {2, None}, {3, None}, {4, 0x20}});
+  nofollow(0, false, None, None);
   add(57);
   add(16, 62, true, {{1, UID}, {2, GID}});
   open(10);
-  own(10, None, None);
+  own(10, None, None, true);
   add(123, 9, true, {{0, UINT64_MAX}, {1, UID}, {2, GID}});
   add(468, 22, true, {{0, UINT64_MAX}, {1, 1}, {2, UID}, {3, GID}, {4, 8}});
   add(6, 0, false, {{0, 3}});

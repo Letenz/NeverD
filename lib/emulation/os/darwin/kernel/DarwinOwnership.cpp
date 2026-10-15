@@ -42,7 +42,8 @@ DarwinFiles::changeOwnership(ServiceKind Service,
       return returned(InvalidArgument, true);
     auto Resolved = resolvePath(
         At ? A[1] : A[0], At ? uint32_t(A[0]) : uint32_t(AtCurrentDirectory),
-        LookupMode::Existing, {!(Flags & AtNoFollow), false}, true,
+        LookupMode::Existing,
+        {Service != ServiceKind::Lchown && !(Flags & AtNoFollow), false}, true,
         Subject::Effective, LookupAuthorization::Ownership);
     if (!Resolved)
       return Resolved.takeError();

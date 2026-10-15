@@ -9749,8 +9749,24 @@ static int symbolic_owner_emit(const union mode_stat_guard *out,
   return call(4, 1, (u64)out->bytes, 160, 0, 0, 0, &error) != 160 || error ||
          secondary;
 }
-static __attribute__((noinline)) int symbolic_ownership(const char *path,
-                                                        unsigned kind) {
+static int symbolic_owner_fd_or_path(unsigned direct, u64 high, u64 fd,
+                                     const char *path, u64 uid, u64 gid,
+                                     unsigned expected) {
+  return directory_ownership_result(high | (direct ? 364 : 123),
+                                    direct ? (u64)path : high | fd, high | uid,
+                                    high | gid, 0, 0, expected);
+}
+static int symbolic_owner_path(unsigned direct, u64 high, u64 fd,
+                               const char *path, u64 uid, u64 gid,
+                               unsigned expected) {
+  if (direct)
+    return directory_ownership_result(high | 364, (u64)path, high | uid,
+                                      high | gid, 0, 0, expected);
+  return directory_ownership_result(high | 468, fd, (u64)path, high | uid,
+                                    high | gid, high | 0x20, expected);
+}
+static __attribute__((noinline)) int
+symbolic_ownership(const char *path, unsigned kind, unsigned direct) {
   char moved[1024], alias[1024];
   unsigned n = 0, error;
   while (path[n] && n < 1017) {
@@ -9789,8 +9805,8 @@ static __attribute__((noinline)) int symbolic_ownership(const char *path,
                  gid = (kind & 1) ? 20 : little_integer(initial.bytes + 28, 4);
   const unsigned literal = kind & 1;
   const u64 own_sec = kind >= 2 ? 101 : 181, own_nano = kind >= 2 ? 102 : 182;
-  if (directory_ownership_result(123, link, 0xffffffffUL, 0xffffffffUL, 0, 0,
-                                 0) ||
+  if (symbolic_owner_fd_or_path(direct, 0, link, path, 0xffffffffUL,
+                                0xffffffffUL, 0) ||
       symbolic_owner_capture(link, &current) ||
       symbolic_owner_same(&initial, &current))
     return 404;
@@ -9803,8 +9819,8 @@ static __attribute__((noinline)) int symbolic_ownership(const char *path,
       symbolic_owner_emit(&current, kind) || symbolic_owner_emit(&other, kind))
     return 405;
   const u64 high = 0x13579bdf00000000UL;
-  if (directory_ownership_result(high | 468, high | 0xfffffffeUL, (u64)path,
-                                 high | uid, high | gid, high | 0x20, 0) ||
+  if (symbolic_owner_path(direct, high, high | 0xfffffffeUL, path, uid, gid,
+                          0) ||
       symbolic_owner_capture(link, &current) ||
       symbolic_owner_stable(&initial, &current, uid, gid, 1, literal, own_sec,
                             own_nano) ||
@@ -9817,16 +9833,15 @@ static __attribute__((noinline)) int symbolic_ownership(const char *path,
     return 407;
   const u64 hard = call(5, (u64)alias, 0x200000, 0, 0, 0, 0, &error);
   if (error || secondary ||
-      directory_ownership_result(high | 123, high | hard, high | uid,
-                                 high | gid, 0, 0, 0) ||
+      symbolic_owner_fd_or_path(direct, high, hard, alias, uid, gid, 0) ||
       symbolic_owner_capture(link, &current) ||
       symbolic_owner_stable(&initial, &current, uid, gid, 2, literal, own_sec,
                             own_nano) ||
       symbolic_owner_emit(&current, kind))
     return 408;
   if (mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
-      directory_ownership_result(468, -1UL, (u64)path, uid, gid, 0x20, 2) ||
-      directory_ownership_result(468, -1UL, (u64)moved, uid, gid, 0x20, 0) ||
+      symbolic_owner_path(direct, 0, -1UL, path, uid, gid, 2) ||
+      symbolic_owner_path(direct, 0, -1UL, moved, uid, gid, 0) ||
       symbolic_owner_capture(hard, &current) ||
       symbolic_owner_stable(&initial, &current, uid, gid, 2, literal, own_sec,
                             own_nano) ||
@@ -9845,7 +9860,7 @@ static __attribute__((noinline)) int symbolic_ownership(const char *path,
   union mode_stat_guard fresh;
   if (error || secondary || symbolic_owner_capture(replacement, &fresh) ||
       initial.words[2] == fresh.words[2] ||
-      directory_ownership_result(123, replacement, uid, gid, 0, 0, 0) ||
+      symbolic_owner_fd_or_path(direct, 0, replacement, path, uid, gid, 0) ||
       symbolic_owner_capture(replacement, &other) ||
       symbolic_owner_stable(&fresh, &other, uid, gid, 1, literal, 101, 102) ||
       symbolic_owner_emit(&other, kind) ||
@@ -9863,15 +9878,15 @@ static __attribute__((noinline)) int symbolic_ownership(const char *path,
   if (error || secondary ||
       directory_ownership_result(123, dangling, uid, gid, 0, 0, 0) ||
       directory_ownership_result(16, (u64)alias, uid, gid, 0, 0, 2) ||
-      directory_ownership_result(468, -1UL, (u64)alias, 0xffffffffUL,
-                                 0xffffffffUL, 0x20, 0) ||
+      symbolic_owner_path(direct, 0, -1UL, alias, 0xffffffffUL, 0xffffffffUL,
+                          0) ||
       mode_result(57, (u64)moved, (u64)moved, 0, 0, 0) ||
       directory_ownership_result(16, (u64)moved, uid, gid, 0, 0, 62))
     return 413;
   const u64 cycle = call(5, (u64)moved, 0x200000, 0, 0, 0, 0, &error);
   if (error || secondary ||
-      directory_ownership_result(123, cycle, 0xffffffffUL, 0xffffffffUL, 0, 0,
-                                 0) ||
+      symbolic_owner_fd_or_path(direct, 0, cycle, moved, 0xffffffffUL,
+                                0xffffffffUL, 0) ||
       directory_ownership_result(123, -1UL, uid, gid, 0, 0, 9) ||
       directory_ownership_result(468, -1UL, 1, uid, gid, 8, 22) ||
       mode_result(6, link, 0, 0, 0, 0) ||
@@ -9965,13 +9980,20 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "symbolic-ownership-mutations") ||
       equal(argv[1], "virtual-symbolic-ownership") ||
       equal(argv[1], "created-symbolic-ownership") ||
-      equal(argv[1], "virtual-created-symbolic-ownership")) {
+      equal(argv[1], "virtual-created-symbolic-ownership") ||
+      equal(argv[1], "lchown-ownership-mutations") ||
+      equal(argv[1], "virtual-lchown-ownership")) {
     const unsigned kind = equal(argv[1], "virtual-created-symbolic-ownership")
                               ? 3
                           : equal(argv[1], "created-symbolic-ownership") ? 2
-                          : equal(argv[1], "virtual-symbolic-ownership") ? 1
-                                                                         : 0;
-    const int status = argc < 3 ? 400 : symbolic_ownership(argv[2], kind);
+                          : (equal(argv[1], "virtual-symbolic-ownership") ||
+                             equal(argv[1], "virtual-lchown-ownership"))
+                              ? 1
+                              : 0;
+    const unsigned direct = equal(argv[1], "lchown-ownership-mutations") ||
+                            equal(argv[1], "virtual-lchown-ownership");
+    const int status =
+        argc < 3 ? 400 : symbolic_ownership(argv[2], kind, direct);
     return status ? status : 58;
   }
   if (equal(argv[1], "filesystem-observations")) {

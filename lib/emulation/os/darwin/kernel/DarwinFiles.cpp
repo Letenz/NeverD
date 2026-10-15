@@ -3036,8 +3036,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return select(Event, Result);
   if (Service == ServiceKind::Pselect)
     return pselect(Event, Result);
-  if (Service == ServiceKind::Chown || Service == ServiceKind::Fchown ||
-      Service == ServiceKind::FchownAt)
+  if (Service == ServiceKind::Chown || Service == ServiceKind::Lchown ||
+      Service == ServiceKind::Fchown || Service == ServiceKind::FchownAt)
     return changeOwnership(Service, Event, Result);
   if (Service == ServiceKind::Chmod || Service == ServiceKind::Fchmod ||
       Service == ServiceKind::FchmodAt)
