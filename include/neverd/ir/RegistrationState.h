@@ -191,10 +191,11 @@ struct RegistrationSEHInvocationExit {
   bool operator==(const RegistrationSEHInvocationExit &) const = default;
 };
 
-/// Exact source invocation of the EH3 capture protocol. Native reconstruction
-/// must replace its physical register/PC contents and CRT state arguments;
-/// copying the original jump buffer is not a continuation contract.
+/// Exact source invocation of the EH3/EH4 capture protocol. Native
+/// reconstruction must replace its physical register/PC contents and CRT state
+/// arguments; copying the original jump buffer is not a continuation contract.
 struct RegistrationSEHJumpCapture {
+  enum class Kind : uint8_t { EH3, EH4 };
   static constexpr uint16_t BufferBytes = 64;
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
@@ -204,6 +205,10 @@ struct RegistrationSEHJumpCapture {
   int32_t BufferOffset = 0;
   int32_t StackOffset = 0;
   int32_t Level = -1;
+  Kind Protocol = Kind::EH3;
+  /// EH4's third unwind argument names the image's load-config cookie.
+  /// It is an address, never the runtime value or an invented replacement.
+  va_t SecurityCookieVA = 0;
   bool operator==(const RegistrationSEHJumpCapture &) const = default;
 };
 
@@ -215,7 +220,7 @@ struct RegistrationSEHJumpState {
   auto operator<=>(const RegistrationSEHJumpState &) const = default;
 };
 
-/// A live EH3 buffer supplies one physical capture PC and restored ESP. The
+/// A live SEH buffer supplies one physical capture PC and restored ESP. The
 /// source invocation is retired by the authenticated nonlocal runtime call;
 /// this is distinct from an ordinary CALL return or a target-wide noreturn.
 struct RegistrationSEHJumpResume {
@@ -304,9 +309,9 @@ struct RegistrationStateAnalysis {
   bool HasBoundSEHCallees = false;
   bool SEHBoundCallsComplete = true;
   std::vector<RegistrationSEHBoundCall> SEHBoundCalls;
-  /// Original EH3 captures retain their physical buffer and invocation. Native
+  /// Original SEH captures retain their physical buffer and invocation. Native
   /// reconstruction requires a separate replacement-buffer contract.
-  bool HasEH3JumpCaptures = false;
+  bool HasSEHJumpCaptures = false;
   bool SEHJumpCapturesComplete = true;
   std::vector<RegistrationSEHJumpCapture> SEHJumpCaptures;
   bool SEHJumpResumptionsComplete = true;

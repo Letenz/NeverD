@@ -128,7 +128,7 @@ parent-frame 偏移与 continuation 列表，同时让原生 handler 保持独�
 变量中恰好相同的整数序列不能替代这一证据。
 
 SEH3/EH4 原生重建还会证明固定且私有的源栈帧、平衡的 FS:[0] 操作，以及每个普通 CFG
-block 唯一的活动状态。LLVM 拥有新的物理 registration；独立 filter 与 termination
+block 完整的活动状态集合。LLVM 拥有新的物理 registration；独立 filter 与 termination
 callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有经过认证的源
 链操作才会被替换。每个活动区间都有显式异步 scope 边界，包括内层 handler 进入外层
 保护区的入口。原函数和保留的直接被调函数必须证明 caller-cleanup 栈行为；间接调用
@@ -138,8 +138,9 @@ callback 通过 escaped frame 恢复源 EBP/ESP 和 exception pointer。只有�
 保留当前祖先路径，避免逐层复制整条路径。运行验证覆盖 259 行嵌套表，状态测试覆盖
 1,024 层、1,024 个不同帧快照及循环路径。快照索引的哈希和冲突比较开销计入预算，
 只有完整状态相等才能省去重复贡献。
-多个活动层级汇合后的普通或非局部调用，仍需独立的
-原生状态选择契约。
+多个活动层级汇合后的普通或非局部调用，要求编译器提供
+`LLVM_NEVERD_X86_REGISTRATION_SEH_DYNAMIC_CALLS`；旧编译器拒绝这些调用。
+源 callee、栈帧和非局部缓冲区的证明仍然必须完整。
 
 仅由运行时调用的 finally 可以在 `RaiseException` 后直接返回，而不初始化 EAX。
 只有完整 callback 区域、入口类型和物理 near return 都经过检查，才能丢弃这个
@@ -158,8 +159,8 @@ r4 编译器仍不具备。
 MOV32 的字节、栈帧偏移、基址寄存器、立即数和唯一代码范围与编译器凭据逐项核对；
 缺失、额外或重排的写入都会拒绝安装。仅通过这些 callback 写入到达的 scope 会保留
 语言表行，但不会在父函数入口被激活。所有保留行必须来自已证明的父函数状态、callback
-迁移结果或其外层 scope。该契约适用于经过检查的 SEH3/SEH4 栈帧；EH4 非局部跳转
-缓冲区和独立的 C++ 对象生命周期契约仍不在其范围内。
+迁移结果或其外层 scope。该契约适用于经过检查的 SEH3/SEH4 栈帧；非局部跳转
+缓冲区及 C++ 对象生命周期仍分别校验各自的契约。
 
 搜索 filter 可以读取当前 `EXCEPTION_POINTERS`、其中的 record 指针，以及 32 位
 `ExceptionCode` 和 `ExceptionFlags`。每个源 LOAD 都绑定到所属 filter；安装器独立
@@ -168,7 +169,7 @@ MOV32 的字节、栈帧偏移、基址寄存器、立即数和唯一代码范�
 让指针逸出都会拒绝安装。该契约覆盖经过检查的 EH3、EH4 和 EH4+GS 栈帧；其他
 exception/context 字段和非局部续接仍需各自的原生契约。
 
-经过检查的 EH3 父函数可用 `_setjmp3` 捕获私有的 64 字节跳转缓冲区，并在同一父函数或其经过检查的 finally callback、搜索 filter 内
+经过检查的 EH3/EH4 父函数可用 `_setjmp3` 捕获私有的 64 字节跳转缓冲区，并在同一父函数或其经过检查的 finally callback、搜索 filter 内
 通过 `_longjmpex` 恢复。源证明绑定捕获点、缓冲区生命周期、unwind import、续接点、
 参数槽和 scope 状态。LLVM 生成新的续接地址及 registration 状态；原生 lowering 另外
 恢复逻辑寄存器 spill 和局部展开实际到达的源 try level，并保留 finally 对源栈帧的写入；
@@ -181,7 +182,16 @@ exception/context 字段和非局部续接仍需各自的原生契约。
 callback 仍保留源 CFG 身份和外层 scope 行。搜索 filter 通过 `llvm.eh.recoverfp`
 恢复父帧，并核对精确的所属函数与运行时帧深度。字面地址 0 的读取保留实际 volatile
 内存操作及异步 scope；安装器逐一核对源操作身份、地址、宽度和顺序，拒绝被修改或
-缺失的读取。EH4 跳转缓冲区仍需补充原生契约。
+缺失的读取。
+
+EH4 还将第三个 unwind 参数绑定到映像中经过认证的 security cookie 地址，并调用
+`_seh_longjmp_unwind4`。EH4 缓冲区初始化 11 个 DWORD，其中包括 cookie 地址；
+EH3 初始化 10 个。完整缓冲区必须与 EH cookie 及可选的 GS cookie 槽分离。
+捕获和恢复前均校验源 cookie 初始化、scope 指针编码及生命周期；callback 私有栈访问
+继续受独立的边界证明约束。原生 lowering 分别保留 EH3/EH4 unwind 适配函数，安装器
+核对相应运行库身份，不允许替换成 EH3 协议。已覆盖单一源状态捕获、零值恢复、
+父函数/finally/filter 恢复及已退出的作用域，包括带 GS 检查的 EH4 栈帧。
+多状态捕获和借用缓冲区的 helper 协议仍需分别证明。
 
 保留的 EH3 helper 可以借用生成的父函数缓冲区，并跨过自身注册帧恢复父函数。
 每个调用点分别绑定 helper 的不可变代码、cdecl 参数槽、已初始化的四字节父栈对象及
@@ -224,10 +234,20 @@ finally 回调之间的普通调用使用同一物理父帧，各次调用保留
 源调用所属回调、目标、父帧和调用约定。未被观察的标量返回值链按准确的 clone 身份
 移除；返回值可被观察时，生成过程拒绝且不改变模块。
 
-对于可能在多个已证明层级进入、且不含普通调用的父函数块，重建代码从受保护的逻辑
+对于可能在多个已证明层级进入的父函数块，重建代码从受保护的逻辑
 状态槽选择异步 SEH 区间。块内操作只执行一次，入口与出口使用同一份状态快照。
 安装器独立核对全部状态分支、CFG 边、源状态写入及运行时恢复，拒绝重叠写入或被改变的
-选择条件。finally 返回值只有经过完全不可观察的私有 spill 链时才可移除。
+选择条件。源 PHI 在状态选择之前保留原始前驱。具备动态调用能力时，块中的每个普通
+调用都携带经过检查的调用点契约，继承已选定的物理状态；LLVM 不得把它改回父函数
+基础状态，也不能将后续状态重置提前到该调用之前。安装器检查源执行区间、
+noinline/notail 条件和唯一的动态块，拒绝复制到 callee 或其他指令上的标记。
+同一源操作只保留一次，不按状态复制副作用。多状态源 jump capture 仍需独立的
+生命周期证明。finally 返回值只有经过完全不可观察的私有 spill 链时才可移除。
+普通私有叶函数或有界无环调用图，在不借用父帧或对象、不读取传入栈参数且没有
+callee 清栈时，可以保留父函数已经捕获的跳转缓冲区。代码必须不可变，映像写入
+不得覆盖 scope 元数据或 import。易失寄存器和返回值继续保持未知，原生安装仍
+独立检查完整调用图及返回地址读回。仅证明栈平衡不足以保留 capture；当前调用 SP
+以下的存储也不能继续携带精确值。
 `longjmp-retired-scope` 与 `longjmp-retired-inner-scope` 分别验证退出整个作用域和
 保留有效外层作用域。后者使用捕获的微软 x86 CRT；当当前层级低于保存层级时，
 Wine 9 内置 CRT 的局部展开停止规则与微软实现不同。

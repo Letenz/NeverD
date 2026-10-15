@@ -1866,6 +1866,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     registration_test::checkSEHRuntimeEdits(*Parent, EH, Image);
   registration_test::checkSEHFinallyEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
+  registration_test::checkDynamicSEHCallEdits(*Parent, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
         return !B.CallbackOnly && B.Levels.size() > 1;
       }))
@@ -2216,8 +2217,9 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         return false;
       },
       "stack cleanup ABI");
-  if (EH.Registration->Scopes.size() > 1 &&
-      !EH.Registration->Scopes.back().IsFinally)
+  if (llvm::any_of(EH.Registration->Scopes, [](const auto &Scope) {
+        return !Scope.IsFinally && Scope.EnclosingLevel >= 0;
+      }))
     RejectMutation(
         "nested handler bypasses outer scope entry",
         [](llvm::Function &F) {
@@ -2398,46 +2400,54 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         ScopeEnd ? "unanchored SEH scope state change" : "unanchored call");
-  RejectMutation(
-      "missing callback runtime root identity",
-      [](llvm::Function &F) {
-        for (auto &Helper : *F.getParent())
-          for (auto &Block : Helper)
-            for (auto &I : Block)
-              if (I.getMetadata(windows_eh_md::RegistrationRootAttachment)) {
-                I.setMetadata(windows_eh_md::RegistrationRootAttachment,
-                              nullptr);
-                return true;
-              }
-        return false;
-      },
-      "runtime root set");
-  for (bool Redirect : {false, true})
+  bool HasCallbackRoot = false;
+  for (const auto &Helper : *Module)
+    for (const auto &Block : Helper)
+      for (const auto &I : Block)
+        HasCallbackRoot |=
+            I.getMetadata(windows_eh_md::RegistrationRootAttachment) != nullptr;
+  if (HasCallbackRoot) {
     RejectMutation(
-        Redirect ? "redirected callback root" : "late callback root",
-        [Redirect](llvm::Function &F) {
+        "missing callback runtime root identity",
+        [](llvm::Function &F) {
           for (auto &Helper : *F.getParent())
             for (auto &Block : Helper)
-              for (auto &I : Block) {
-                auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-                if (!Store || !Store->getMetadata(
-                                  windows_eh_md::RegistrationRootAttachment))
-                  continue;
-                if (Redirect) {
-                  llvm::IRBuilder<> B(
-                      &*Helper.getEntryBlock().getFirstInsertionPt());
-                  Store->setOperand(1, B.CreateAlloca(B.getInt32Ty()));
+              for (auto &I : Block)
+                if (I.getMetadata(windows_eh_md::RegistrationRootAttachment)) {
+                  I.setMetadata(windows_eh_md::RegistrationRootAttachment,
+                                nullptr);
                   return true;
                 }
-                for (auto *User : Store->getPointerOperand()->users())
-                  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
-                    Store->moveAfter(Load);
-                    return true;
-                  }
-              }
           return false;
         },
-        Redirect ? "unused storage" : "dominate");
+        "runtime root set");
+    for (bool Redirect : {false, true})
+      RejectMutation(
+          Redirect ? "redirected callback root" : "late callback root",
+          [Redirect](llvm::Function &F) {
+            for (auto &Helper : *F.getParent())
+              for (auto &Block : Helper)
+                for (auto &I : Block) {
+                  auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+                  if (!Store || !Store->getMetadata(
+                                    windows_eh_md::RegistrationRootAttachment))
+                    continue;
+                  if (Redirect) {
+                    llvm::IRBuilder<> B(
+                        &*Helper.getEntryBlock().getFirstInsertionPt());
+                    Store->setOperand(1, B.CreateAlloca(B.getInt32Ty()));
+                    return true;
+                  }
+                  for (auto *User : Store->getPointerOperand()->users())
+                    if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
+                      Store->moveAfter(Load);
+                      return true;
+                    }
+                }
+            return false;
+          },
+          Redirect ? "unused storage" : "dominate");
+  }
   if (llvm::any_of(EH.Registration->Scopes,
                    [](const auto &Scope) { return !Scope.IsFinally; }))
     RejectMutation(
@@ -3346,7 +3356,7 @@ TEST(WindowsRegistrationNative, JumpCapturesRequireAReplacementBufferReceipt) {
     RegistrationNativeFixture F;
     auto &States = *F.Source.RegistrationStates;
     if (Mutation == 0)
-      States.HasEH3JumpCaptures = true;
+      States.HasSEHJumpCaptures = true;
     if (Mutation == 1)
       States.SEHJumpResumptionsComplete = false;
     if (Mutation == 2)

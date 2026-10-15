@@ -182,7 +182,8 @@ protocol still require separate proofs, so these coordinates alone do not
 enable native reconstruction of a realigned source.
 
 Native SEH3/EH4 reconstruction additionally proves a fixed private source frame,
-balanced FS:[0] administration and one active state at each ordinary CFG block.
+balanced FS:[0] administration and a complete active-state domain at each
+ordinary CFG block.
 LLVM owns the new physical registration. Outlined filters and termination
 callbacks recover source EBP/ESP and exception pointers through its escaped
 frame; source chain operations are replaced only at authenticated occurrences.
@@ -203,8 +204,9 @@ without copying each whole path. Runtime coverage includes a 259-row nested
 chain; state tests cover 1,024 levels, 1,024 distinct frame snapshots and
 recurrent paths. Indexed snapshot lookup charges hashing and collision checks;
 complete equality remains mandatory.
-Ordinary/nonlocal calls at a parent join with several active levels still need
-a separate native state-selection contract.
+Ordinary/nonlocal calls at a parent join with several active levels require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_DYNAMIC_CALLS`. Older compilers reject these
+calls. The source callee, frame and nonlocal-buffer proofs remain mandatory.
 
 Native callback TryLevel writes additionally require
 `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
@@ -223,8 +225,8 @@ against the compiler receipt. Missing, extra or reordered writes refuse
 installation. Scopes reached only through these callback writes retain their
 language-table rows without becoming active on parent entry; all retained rows
 must follow checked parent states or callback transition results and their
-enclosing scopes. This contract covers checked SEH3/SEH4 frames; EH4 nonlocal
-jump buffers and the separate C++ lifetime contracts remain outside it.
+enclosing scopes. This contract covers checked SEH3/SEH4 frames; nonlocal jump
+buffers and C++ lifetimes require their separate contracts.
 
 Search filters may read their current `EXCEPTION_POINTERS`, its record link,
 and the 32-bit `ExceptionCode` and `ExceptionFlags` fields. Each source load is
@@ -235,7 +237,7 @@ filter's pointer slot, unindexed reads and pointer escapes refuse installation.
 This applies to checked EH3, EH4 and EH4+GS frames. Other exception/context
 fields and nonlocal continuations still require separate native contracts.
 
-Checked EH3 parents can capture a private 64-byte jump buffer with `_setjmp3`
+Checked EH3/EH4 parents can capture a private 64-byte jump buffer with `_setjmp3`
 and resume it with `_longjmpex` in the same parent or its checked finally
 callbacks and search filters. The source proof binds the
 capture, buffer lifetime, unwind import, continuation, argument slot and scope
@@ -256,8 +258,19 @@ leave only through a nonlocal jump. Search filters recover their parent through
 `llvm.eh.recoverfp` with the exact owning function and runtime frame depth.
 Literal null reads keep their actual volatile memory effect and asynchronous
 scope. Installation checks each source occurrence, address, width and ordering;
-a changed or missing read fails closed. EH4 jump buffers require an additional
-native contract.
+a changed or missing read fails closed.
+
+EH4 additionally binds the third unwind argument to the image's authenticated
+security-cookie address and uses `_seh_longjmp_unwind4`. Its buffer initializes
+11 DWORDs, including that cookie address; EH3 initializes 10. The complete buffer
+must remain disjoint from both EH and optional GS cookie slots. Source cookie
+initialization, scope-pointer encoding and lifetime are checked before capture
+and resumption. Private callback stack accesses retain their separate bounds
+proof. Native lowering keeps distinct EH3/EH4 unwind bridges and independently
+checks the matching runtime identity; it cannot substitute the EH3 protocol.
+Single-state captures, zero values, parent/finally/filter resumptions and retired
+scopes are covered, including EH4 frames with GS checks. Multi-state captures
+and borrowed-buffer helper protocols still require their own proofs.
 
 Preserved EH3 helpers can borrow a generated parent buffer and resume it across
 their own registration frame. Each exact caller occurrence binds the helper's
@@ -321,11 +334,27 @@ pass a zero abnormal flag. Installation replays each source call's callback
 owner, target, frame and calling convention. Unobserved scalar return chains
 are removed by exact clone identity; an observable result refuses atomically.
 
-Call-free parent blocks reached at several proved scope levels select their
+Parent blocks reached at several proved scope levels select their
 asynchronous SEH interval from the protected logical state slot. The body runs
 once; entry and exit use the same captured selector. Installation independently
 checks all state choices, CFG edges, source state stores and runtime restores,
-and rejects overlapping writes or altered selectors. Finally return values may
+and rejects overlapping writes or altered selectors. Source PHIs retain their
+original predecessors before this selection. With the dynamic-call capability,
+each ordinary call in that body carries a checked, call-site-only contract to
+inherit the selected physical state. LLVM cannot reset it to the parent base
+state or hoist a later reset across the call. Installation checks the call's
+source segment, noinline/notail requirements and unique dynamic body, and
+rejects a marker copied onto a callee or another instruction. This preserves
+one source occurrence without cloning its effects per possible state.
+Multi-state source jump captures still require their own lifetime proof.
+An ordinary private leaf or bounded acyclic helper graph may preserve an
+already captured parent jump buffer when it has no parent-frame or object
+borrow, no stack arguments, and zero callee cleanup. Code must remain immutable;
+image writes cannot overlap scope metadata or imports. Volatile registers and
+results remain unknown, and native admission still checks the complete caller
+closure and return-address readback. Stack balance alone cannot preserve a
+capture, and cells below the current call SP lose their exact values.
+Finally return values may
 flow through private spill chains only when the complete chain is unobservable.
 The `longjmp-retired-scope` and `longjmp-retired-inner-scope` fixtures distinguish
 retiring the entire scope from retaining an outer scope. The latter uses a

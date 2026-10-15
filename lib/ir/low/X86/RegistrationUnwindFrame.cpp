@@ -4,9 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Replays the checked EH3 unwind protocol, reloading callback-written state.
+/// Replays the checked SEH unwind protocol, reloading callback-written state.
 
 #include "RegistrationStateSolver.h"
+
+#include "neverd/loader/RegistrationScopeGraph.h"
 
 #include <bit>
 #include <cassert>
@@ -17,10 +19,11 @@ namespace neverd::registration_state {
 
 bool RegistrationStateSolver::runSEHUnwind(
     FrameState Frame, int32_t Level, uint32_t Bound, SEHFrameOutcomes &Outcomes,
-    std::vector<RegistrationObjectExtent> &Writes, const EH3JumpCapture *Jump,
+    std::vector<RegistrationObjectExtent> &Writes, const SEHJumpCapture *Jump,
     const FrameValue *JumpValue,
     std::set<RegistrationSEHJumpState> *StateRestores) {
-  if (KnownCxx || EH4 || !Chain.TryLevelOffset || !validLevel(Level))
+  if (KnownCxx || !Chain.TryLevelOffset || !validLevel(Level) ||
+      (EH4 && (!CompleteCookies || !cookiesReady(Frame))))
     return false;
   struct Step {
     FrameState Frame;
@@ -61,7 +64,9 @@ bool RegistrationStateSolver::runSEHUnwind(
     // Keep the original checked CRT's unsigned stop predicate. A callback can
     // retire or redirect the state, so its enclosing link is not the next
     // iteration's state unless the callback actually preserved that value.
-    if (Walk == -1 || (Bound != UINT32_MAX && uint32_t(Walk) <= Bound)) {
+    const int32_t Outside = registrationOutsideTryLevel(EH4);
+    if (Walk == Outside ||
+        (Bound != uint32_t(Outside) && uint32_t(Walk) <= Bound)) {
       if (StateRestores) {
         if (!charge(1))
           return false;

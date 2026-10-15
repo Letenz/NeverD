@@ -1,5 +1,11 @@
 include_guard(GLOBAL)
 
+if(TARGET ZLIB::ZLIB)
+  # LLVM may have already imported this target in an ancestor directory.
+  # It is visible here, but only its defining directory can promote it.
+  return()
+endif()
+
 # Prefer the platform's compression library. Windows source builds can use
 # the pinned static fallback without a separately installed package manager.
 find_package(ZLIB QUIET)

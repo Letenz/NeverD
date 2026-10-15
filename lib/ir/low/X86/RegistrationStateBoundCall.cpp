@@ -76,7 +76,7 @@ bool RegistrationStateSolver::transferBoundSEHCallee(
                 });
             if (!After.JumpBindingsIntact ||
                 Capture == After.JumpCaptures.end() ||
-                !hasEH3JumpCapture(After.Frame, Capture->second)) {
+                !hasSEHJumpCapture(After.Frame, Capture->second)) {
               Facts.Invalid = After.Unknown = true;
               After.Levels.clear();
               Result.SEHJumpResumptionsComplete = false;

@@ -62,17 +62,9 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       Callees = CalleeIndex->contracts(Func);
       Cleanups = CalleeIndex->cleanupContracts(Func);
     }
-    va_t CookieCheckVA = 0;
-    if (CurrentImg &&
-        Metadata.Personality == ExceptionPersonality::ExceptHandler4 &&
-        Metadata.Registration->GSCookieOffset != -2)
-      if (auto Check = coff_loader::getCheckedX86EH4CookieCheck(
-              *CurrentImg, Metadata.PersonalityVA);
-          Check &&
-          coff_loader::hasCheckedX86CookieCheckSuccessPath(*CurrentImg, *Check))
-        CookieCheckVA = *Check;
     if (CurrentImg && !Metadata.Cxx &&
-        Metadata.Personality == ExceptionPersonality::ExceptHandler3)
+        (Metadata.Personality == ExceptionPersonality::ExceptHandler3 ||
+         Metadata.Personality == ExceptionPersonality::ExceptHandler4))
       Func.RegistrationStates = analyzeCheckedX86SEHStates(
           *CurrentImg, Func, Stacks ? &*Stacks : nullptr,
           LocalUnwinds ? &*LocalUnwinds : nullptr,
@@ -83,7 +75,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
               ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
               : 0,
-          CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
+          0, CheckCalls && Callees ? &*Callees : nullptr,
           CheckCalls && Cleanups ? &*Cleanups : nullptr,
           Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
           SEHControls ? &*SEHControls : nullptr);

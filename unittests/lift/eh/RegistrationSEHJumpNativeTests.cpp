@@ -26,6 +26,10 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
   checkSEHJumpStateEdits(Parent, Source, Image);
   using x86_registration::SEHJumpRole;
+  const auto Protocol =
+      Source.Personality == ExceptionPersonality::ExceptHandler4
+          ? RegistrationSEHJumpCapture::Kind::EH4
+          : RegistrationSEHJumpCapture::Kind::EH3;
   bool HasCallerFrame = false;
   for (const auto &I : Parent.getEntryBlock())
     HasCallerFrame |=
@@ -119,7 +123,8 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
     if (Mutation == 16)
       Resume->addFnAttr(llvm::Attribute::NoCallback);
     if (Mutation == 17 || Mutation == 18) {
-      auto *Unwind = Module->getFunction("_seh_longjmp_unwind");
+      auto *Unwind =
+          Module->getFunction(x86_registration::getSEHJumpUnwindName(Protocol));
       ASSERT_TRUE(Unwind);
       if (Mutation == 17)
         Unwind->setCallingConv(llvm::CallingConv::C);
@@ -127,9 +132,10 @@ void checkSEHJumpEdits(const llvm::Function &Parent,
         rewrite_source::setOriginalVA(*Unwind, 0x401000);
     }
     if (Mutation >= 19 && Mutation <= 25) {
-      auto *Unwind = Module->getFunction(x86_registration::SEHJumpUnwindName);
-      auto *Runtime =
-          Module->getFunction(x86_registration::SEHSourceJumpUnwindName);
+      auto *Unwind =
+          Module->getFunction(x86_registration::getSEHJumpUnwindName(Protocol));
+      auto *Runtime = Module->getFunction(
+          x86_registration::getSEHSourceJumpUnwindName(Protocol));
       ASSERT_TRUE(Unwind && Runtime);
       for (auto &I : Unwind->getEntryBlock()) {
         if (auto *Copy = llvm::dyn_cast<llvm::MemCpyInst>(&I);

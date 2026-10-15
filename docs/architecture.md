@@ -160,7 +160,11 @@ document. A hit can answer before preparing the mutable single-function Session;
 it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
 Documents own text, rows and edit anchors, and project or presentation changes
-invalidate them. Oversized documents remain readable without being retained.
+invalidate them. After decoration, a document checks whether its row numbers
+and both ends of its name spans are monotone. Pages seek directly through those
+arrays when they are ordered; other producer orders and nested spans keep their
+original filtering order. Oversized documents remain readable without being
+retained.
 
 `SourceViewOptions` owns request-local native source policy. Ordinary HighIR
 conversion skips symbolic expression simplification. An explicit source request
@@ -432,6 +436,28 @@ MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
 recovery uses their exact stack-only capture/resume contracts; an incidental
 register value cannot shift the jump-buffer argument. LLVM emission and COFF
 source replay consume those same bindings.
+`MedLLVMRegistrationSEHDynamicScope` owns parent blocks with several proved
+incoming states. It keeps PHIs on the original predecessor edges and selects
+one scope around a single source body. With LLVM's dynamic-call capability,
+ordinary calls explicitly inherit the live physical state and remain noinline
+and notail. LLVM's x86 state analysis cannot use a later resetting call to infer
+the initial state before an inherited call. `COFFRegistrationSEHDynamicScope`
+independently checks selector storage, complete scope choices, source boundaries
+and every call marker; a marker on a function or outside the checked body grants
+no installation permission. Source-call identity, argument binding and frame
+privacy keep their existing owners.
+`RegistrationSourceCall` authenticates the owned PE32 E8 occurrence shared by
+jump-runtime and private-callee proofs. `RegistrationSEHPrivateCall` reuses the
+bounded private object graph with no object borrow or stack arguments to retain
+live parent captures across ordinary calls. Code, scope-table and import-write
+checks remain mandatory. The state transfer drops cells below call SP and keeps
+volatile results unknown; it grants no bound-helper or native argument ABI.
+Native admission independently replays the caller closure and caller-PC readback.
+`COFFRegistrationSEHCall` binds each dynamic call to its adjacent source receipt.
+The generic exception counter and PE32 replay share this check; the counted call
+set must equal the calls inside authenticated dynamic scope bodies.
+LLVM also models the x86 runtime's register clobber at SEH handler entry, so
+values used only after an exception cannot remain in callee-saved registers.
 With `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, LLVM maps each callback
 write's source semantic token to its physical parent registration and generated
 state. MC receipts bind parent/callback ownership, frame layout, write identity,
@@ -6329,13 +6355,15 @@ returns that identity and its scalar value to the caller's unwind owner.
 These are source-analysis facts; native lowering rejects them until a replacement
 call and buffer plan is proved.
 
-`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
-unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
-checks a current source CALL, complete buffer separation, the installed canonical
-frame and the explicit two-argument unwind protocol. It retains actual captured
-nonvolatile values, including unknown pointer provenance. `RegistrationJumpBuffer`
-owns the ten initialized DWORDs; the six unused unwind-data words retain their
-original contents. `RegistrationStateJump` retains captures across checked
+`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and
+EH3/EH4 unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
+checks a current source CALL, complete buffer separation and the installed canonical
+frame. `RegistrationJumpEH4` binds the three-argument EH4 protocol to the encoded
+scope pointer and image cookie address; EH3 requires two unwind arguments. The
+state owner additionally proves cookie initialization, lifetime and disjoint slots.
+Captures retain actual nonvolatile values, including unknown pointer provenance.
+`RegistrationJumpBuffer` owns ten initialized DWORDs for EH3 and eleven for EH4;
+the remaining unwind-data words retain their original contents. `RegistrationStateJump` retains captures across checked
 transfers, withdraws them on overlapping writes, released storage or unknown
 calls, and rejects an altered runtime import slot. An authenticated resume walks
 the current unwind levels, preserves checked finally writes, restores captured
