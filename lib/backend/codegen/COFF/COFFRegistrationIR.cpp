@@ -11,6 +11,7 @@
 #include "COFFRegistrationIRProof.h"
 #include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
+#include "COFFRegistrationSEHFinally.h"
 #include "COFFRegistrationSEHJump.h"
 
 #include "neverd/Limits.h"
@@ -209,60 +210,6 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       callbacks(Function, Source, &ExpectedRoots, &ExceptionBridges);
   if (!CallbackMap)
     return CallbackMap.takeError();
-  std::map<va_t, va_t> NormalFinallyCalls;
-  for (const auto &Block : Replay.Blocks)
-    for (const auto &Op : Block.Ops)
-      if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
-          Op.Inputs[0].isConst())
-        for (const auto &Scope : Source.Registration->Scopes)
-          if (Scope.IsFinally && Scope.HandlerVA == Op.Inputs[0].Offset)
-            NormalFinallyCalls.emplace(Op.Addr, Scope.HandlerVA);
-  std::set<va_t> SeenNormalFinallyCalls;
-  std::set<const llvm::CallBase *> NormalFinallyIR;
-  for (const auto &Block : Function)
-    for (const auto &I : Block) {
-      const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-      const auto *Marker =
-          I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment);
-      if (!Marker)
-        continue;
-      if (!Call || Marker->getNumOperands() != 3)
-        return rejectIR(
-            "ordinary finally call has a malformed source identity");
-      auto Field = [&](unsigned Index) {
-        return integer(llvm::mdconst::dyn_extract<llvm::ConstantInt>(
-                           Marker->getOperand(Index)),
-                       64);
-      };
-      const auto Owner = Field(0), Address = Field(1), Target = Field(2);
-      const auto *ParentFrame =
-          Call->arg_size() == 2
-              ? llvm::dyn_cast<llvm::IntrinsicInst>(Call->getArgOperand(1))
-              : nullptr;
-      if (Owner != Source.CodeRange.Begin || !Address || !Target ||
-          !matchesSourceOperation(I, Source.CodeRange.Begin, *Address, 2) ||
-          !NormalFinallyCalls.count(*Address) ||
-          NormalFinallyCalls.at(*Address) != *Target ||
-          !SeenNormalFinallyCalls.insert(*Address).second ||
-          !CallbackMap->count({*Target, true}) ||
-          Call->getCalledFunction() != CallbackMap->at({*Target, true}) ||
-          Call->arg_size() != 2 || integer(Call->getArgOperand(0), 8) != 0 ||
-          !ParentFrame ||
-          (Call->doesNotReturn() &&
-           llvm::any_of(*Call->getCalledFunction(),
-                        [](const llvm::BasicBlock &Block) {
-                          return llvm::isa<llvm::ReturnInst>(
-                              Block.getTerminator());
-                        })) ||
-          ParentFrame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
-          ParentFrame->arg_size() || ParentFrame->getFunction() != &Function ||
-          Call->getNumOperandBundles())
-        return rejectIR(
-            "ordinary finally call changed its normal parent-frame ABI");
-      NormalFinallyIR.insert(Call);
-    }
-  if (SeenNormalFinallyCalls.size() != NormalFinallyCalls.size())
-    return rejectIR("source ordinary finally call has no recovered callback");
   std::vector<const llvm::Function *> CallbackFunctions;
   for (const auto &[Key, Callback] : *CallbackMap)
     CallbackFunctions.push_back(Callback);
@@ -556,6 +503,10 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
                                                *CallbackMap, NativeFunctions);
   if (!SourceSegments)
     return SourceSegments.takeError();
+  auto NormalFinallyIR = coff_registration::bindSEHFinallyCalls(
+      ReplayMed, Function, *CallbackMap, *SourceSegments, NativeFunctions);
+  if (!NormalFinallyIR)
+    return NormalFinallyIR.takeError();
   for (size_t I = 0; I < Scopes.size(); ++I) {
     const auto &D = Dispatches.at(I);
     const auto *Outer = Scopes[I].EnclosingLevel < 0
@@ -807,7 +758,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
             Call &&
             llvm::is_contained(CallbackFunctions, Call->getCalledFunction()) &&
-            !NormalFinallyIR.count(Call) && !AbnormalFinallyIR.count(Call))
+            !NormalFinallyIR->count(Call) && !AbnormalFinallyIR.count(Call))
           return rejectIR(
               "generated callback has no checked runtime entry protocol");
   LowFunc GeneratedCalleeABI;

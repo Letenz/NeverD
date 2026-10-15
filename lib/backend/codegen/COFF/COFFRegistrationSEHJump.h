@@ -42,10 +42,11 @@ llvm::Error validateSEHJumpBufferUses(
 llvm::Error validateSEHJumpUnwindBridge(const llvm::Function &Parent,
                                         va_t SourceUnwind);
 
-llvm::Expected<std::set<const llvm::CallBase *>>
-bindSEHBoundCalls(const MedFunc &Source, const llvm::Function &Parent,
-                  const RegistrationFrame &Frame,
-                  const std::map<va_t, const llvm::AllocaInst *> &Buffers);
+llvm::Expected<std::set<const llvm::CallBase *>> bindSEHBoundCalls(
+    const MedFunc &Source, const llvm::Function &Parent,
+    const RegistrationFrame &Frame,
+    const std::map<va_t, const llvm::AllocaInst *> &Buffers,
+    const std::map<CallbackKey, const llvm::Function *> &Callbacks);
 
 } // namespace neverd::coff_registration
 

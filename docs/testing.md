@@ -2354,6 +2354,8 @@ unknown high bits controlling both branches, numeric byte slices, malformed
 shapes and exact/short budgets. `BinaryLowIRRefinement.WideInteger*` checks raw
 binary completion while retaining native-proof and both source-layout refusals.
 
+`InterpreterSpecialization.WideIntegerConcat*` checks both byte orders, high/low words, constant inputs, overlapping output, high-word control, malformed shapes, exact/short budgets and retained unknown-memory provenance. Strictly decoded `PSHUFD` covers all 256 selectors with aliased and distinct destinations against independent dword indexing. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` retains native-proof and both source-layout refusals.
+
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 
 Physical-return regressions cover direct and indirect calls that skip invalid inline bytes, feasible bad continuations, complete target enumeration and exact/short budgets. Full-state refinement rejects altered results. Independently compiled C at O1/O2 must also preserve the complete frame write; matching return values cannot hide a changed return-slot byte.
@@ -3999,6 +4001,18 @@ verifies every image hash, runtime DLL hash, code owner and relocation base.
 Dynamic-scope mutations alter selectors, state cases, restore values, source
 stores and overlapping aliases; each must fail installation. Dead-finally-result
 tests reject observable, aliased, volatile and atomic spill chains.
+`longjmp-nested-finally-call` calls a returning finally from an ordinary finally
+invocation before resuming the parent. `longjmp-nested-finally-unwind` enters
+the outer finally through CRT unwind. Both distinguish the inner/outer frame
+writes and then raise another exception. Sixteen installer mutations per
+ordinary finally call check its source owner, target, frame, abnormal flag,
+ABI and attributes. The clone regression uses two calls sharing unobserved
+result storage and checks atomic refusal when a volatile load observes it.
+The ordinary-entry and runtime-unwind source tests share direct-call and
+folded tail-jump controls, including effects hidden after a CALL.
+`RegistrationSEHJumpABI` checks exact stack argument order and arity despite
+incidental register values, extra private spills and conflicting inferred
+prototypes; missing arguments and changed source receipts remain rejected.
 The source-input unit rejects edits to capture/resume identities, the private
 buffer, register snapshots, restored state and argument slot. Its unwind-adapter
 controls change the copy extent, physical registration field, virtual EBP,
@@ -6643,6 +6657,11 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 
 `SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.
 
+### Sequential raw compare-and-exchange
+
+`SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.
+
+### Live proc and maintained file metadata
 
 `LinuxProc` checks x64 and AArch64 stat bytes, sparse page allocation, truncation,
 clock failure, live FD offsets/CLOEXEC, proc buffering, task disappearance and

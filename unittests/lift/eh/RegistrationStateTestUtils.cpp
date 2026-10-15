@@ -39,6 +39,74 @@ void addSlotStore(LowBlock &Block, int32_t Value, uint16_t Width) {
   Block.Ops.push_back(Store);
 }
 
+void addFinallyCallTrailingEffect(LowBlock &Call) {
+  auto &Instruction = Call.InstructionBoundaries.back();
+  emitOp(Call, Instruction.Address, NdOp::COPY, NdVar::reg(x86reg::RBP, 4),
+         {NdVar::cst(0, 4)});
+  ++Instruction.OpCount;
+}
+
+void addFinallyTailJump(LowBlock &Call, LowBlock &Resume,
+                        std::vector<RegistrationSEHControlContract> &Controls,
+                        unsigned Mutation) {
+  const va_t OriginalBegin = Resume.StartAddr;
+  const va_t OriginalEnd = Resume.EndAddr;
+  Resume.StartAddr += 0x10;
+  Resume.EndAddr += 0x10;
+  for (auto &Op : Resume.Ops)
+    Op.Addr += 0x10;
+  for (auto &Boundary : Resume.InstructionBoundaries)
+    Boundary.Address += 0x10;
+  for (auto &Control : Controls)
+    if (Control.Address >= OriginalBegin && Control.Address < OriginalEnd) {
+      Control.Address += 0x10;
+      Control.EndAddress += 0x10;
+    }
+  const va_t ReturnPC = Call.EndAddr;
+  const size_t First = Call.Ops.size();
+  emitOp(Call, ReturnPC, NdOp::BRANCH, {}, {NdVar::cst(Resume.StartAddr, 8)});
+  Call.EndAddr += 2;
+  Call.InstructionBoundaries.push_back({ReturnPC, 2, First, 1});
+  auto &Tail = Call.InstructionBoundaries.back();
+  Tail.Control = LowInstructionControl::Branch;
+  Tail.ControlFlags = LowInstructionControlFlag::Branch;
+  Tail.Immediate = Resume.StartAddr;
+  Controls.push_back({RegistrationSEHControlContract::Kind::NearJump, ReturnPC,
+                      Call.EndAddr, Resume.StartAddr});
+  switch (Mutation) {
+  case 0:
+    break;
+  case 1:
+    Controls.pop_back();
+    break;
+  case 2:
+    ++Controls.back().Target;
+    break;
+  case 3:
+    Tail.ControlFlags |= LowInstructionControlFlag::Conditional;
+    break;
+  case 4:
+    Tail.ControlFlags |= LowInstructionControlFlag::InstructionGuard;
+    break;
+  case 5:
+    Call.Ops.back().Opcode = NdOp::COPY;
+    Call.Ops.back().Output = NdVar::reg(x86reg::RBP, 4);
+    Call.Ops.back().Inputs[0] = NdVar::cst(0, 4);
+    emitOp(Call, ReturnPC, NdOp::BRANCH, {}, {NdVar::cst(Resume.StartAddr, 8)});
+    Tail.OpCount = 2;
+    break;
+  case 6:
+    Call.Ops.back().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    break;
+  case 7:
+    Call.Ops.back().MemoryOrdering = NdMemoryOrdering::Acquire;
+    break;
+  case 8:
+    --Controls.back().EndAddress;
+    break;
+  }
+}
+
 LowFunc makeBranchingFrame() {
   LowFunc F;
   F.Entry = 0x1000;

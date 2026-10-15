@@ -8,6 +8,7 @@
 #include "RegistrationCxxContinuationTestUtils.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
+#include "RegistrationSEHFinallyIRMutations.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
 #include "RegistrationSEHNullAccessTestUtils.h"
 #include "gtest/gtest.h"
@@ -1896,6 +1897,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                RegistrationSEHBoundCall::Kind::PreservedHelper;
       }))
     registration_test::checkSEHRuntimeEdits(*Parent, EH, Image);
+  registration_test::checkSEHFinallyEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
         return !B.CallbackOnly && B.Levels.size() > 1;
@@ -1918,22 +1920,23 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     RejectMutation(
         "an ordinary finally invocation must return to its caller",
         [](llvm::Function &F) {
-          for (auto &Block : F)
-            for (auto &I : Block) {
-              auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-              if (!Call ||
-                  !I.getMetadata(
-                      windows_eh_md::RegistrationFinallyCallAttachment))
-                continue;
-              for (auto &CallbackBlock : *Call->getCalledFunction())
-                if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
-                        CallbackBlock.getTerminator())) {
-                  new llvm::UnreachableInst(F.getContext(),
-                                            Return->getIterator());
-                  Return->eraseFromParent();
-                  return true;
-                }
-            }
+          for (auto &Owner : *F.getParent())
+            for (auto &Block : Owner)
+              for (auto &I : Block) {
+                auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+                if (!Call ||
+                    !I.getMetadata(
+                        windows_eh_md::RegistrationFinallyCallAttachment))
+                  continue;
+                for (auto &CallbackBlock : *Call->getCalledFunction())
+                  if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
+                          CallbackBlock.getTerminator())) {
+                    new llvm::UnreachableInst(F.getContext(),
+                                              Return->getIterator());
+                    Return->eraseFromParent();
+                    return true;
+                  }
+              }
           return false;
         },
         "callback return changed its source execution exit");
@@ -2137,7 +2140,9 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                 }
             return false;
           },
-          Mutation == 0 ? "no recovered callback" : "normal parent-frame ABI");
+          Mutation == 0   ? "no recovered callback"
+          : Mutation == 2 ? "unproved LLVM escape or access"
+                          : "normal parent-frame ABI");
   bool HasIncomingFrame = false;
   unsigned IncomingLoadCount = 0;
   for (const auto &F : *Module)
@@ -3197,6 +3202,124 @@ TEST(WindowsRegistrationNative, NormalFinallyRequiresAnUnobservedSourceResult) {
                     0u);
         }
     EXPECT_EQ(NormalCalls, 1u);
+  }
+}
+
+TEST(WindowsRegistrationNative,
+     NestedFinallyDiscardsOnlyPreflightedResultClones) {
+  for (bool Observe : {false, true}) {
+    SCOPED_TRACE(Observe);
+    RegistrationNativeFixture F;
+    auto &EH = *F.Source.ExceptionMetadata;
+    auto &Chain = *EH.Registration;
+    auto &States = *F.Source.RegistrationStates;
+    EH.CodeRange.End = 0x1050;
+    Chain.Scopes = {{-1, 0, 0x1020, true}, {0, 0, 0x1040, true}};
+    Chain.TryLevelStores.front().Level = 1;
+    States.Blocks[1].Levels = {1};
+    States.Blocks[2].CanDispatch = true;
+    F.Source.Blocks[2].EndAddr = States.Blocks[2].Range.End = 0x1025;
+    auto AddBlock = [&](int Id, va_t Begin, va_t End, llvm::StringRef Name) {
+      MedBlock Source;
+      Source.Id = Id;
+      Source.StartAddr = Begin;
+      Source.EndAddr = End;
+      F.Source.Blocks.push_back(Source);
+      States.Blocks.push_back({Id, {Begin, End}, {-1}, false, true, true});
+      auto *Block = llvm::BasicBlock::Create(F.Context, Name, F.Parent);
+      F.Blocks.emplace(Id, Block);
+      return Block;
+    };
+    auto *Inner = AddBlock(4, 0x1040, 0x1041, "inner.finally");
+    auto *Again = AddBlock(5, 0x1025, 0x102a, "outer.again");
+    auto *Done = AddBlock(6, 0x102a, 0x1030, "outer.return");
+    F.Source.Blocks[2].Succs = {5};
+    F.Source.Blocks[5].Succs = {6};
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1040;
+    Return.OriginSeq = 0;
+    F.Source.Blocks[4].Ops.push_back(Return);
+    llvm::IRBuilder<> B(Inner);
+    B.CreateRet(B.getInt32(0));
+    B.SetInsertPoint(Done);
+    B.CreateRet(B.getInt32(0));
+    F.Filter->getTerminator()->eraseFromParent();
+    B.SetInsertPoint(F.Filter);
+    B.CreateBr(Again);
+    B.SetInsertPoint(Again);
+    B.CreateBr(Done);
+    llvm::IRBuilder<> Entry(F.Entry->getTerminator());
+    auto *Slot = Entry.CreateAlloca(B.getInt32Ty(), nullptr, "nested.result");
+    auto *Copy = Entry.CreateAlloca(B.getInt32Ty(), nullptr, "nested.copy");
+    auto Callee =
+        F.Module.getOrInsertFunction("nested.finally", B.getInt64Ty());
+    for (int Id : {2, 5}) {
+      auto &Block = F.Source.Blocks[Id];
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = Block.StartAddr;
+      Call.OriginSeq = 0;
+      Call.NumInputs = 1;
+      Call.Inputs[0] = MedVar::makeConst(0x1040, 4);
+      Block.Ops.push_back(Call);
+      RegistrationSEHInvocationExit Exit;
+      Exit.EntryVA = 0x1040;
+      Exit.CallVA = Call.Addr;
+      Exit.Address = 0x1040;
+      Exit.EndAddress = 0x1041;
+      Exit.OpSeq = 0;
+      Exit.TargetVA = Block.EndAddr;
+      States.SEHInvocationExits.push_back(Exit);
+      B.SetInsertPoint(F.Blocks.at(Id)->getTerminator());
+      auto *Invocation = B.CreateCall(Callee);
+      MedLLVMEmitterTestPeer::call(F.Emitter, *Invocation, Call.Addr);
+      B.CreateStore(B.CreateTrunc(Invocation, B.getInt32Ty()), Slot);
+    }
+    B.SetInsertPoint(&F.Filter->front());
+    B.CreateStore(B.getInt32(73), Copy);
+    B.SetInsertPoint(Again->getTerminator());
+    // Both calls share this unused result chain. Outlining recovers the slots
+    // from the parent; only the exact checked definitions may be discarded.
+    auto *Read = B.CreateLoad(B.getInt32Ty(), Slot);
+    Read->setVolatile(Observe);
+    B.CreateStore(B.CreateZExt(Read, B.getInt64Ty()),
+                  Entry.CreateAlloca(B.getInt64Ty()));
+    B.CreateStore(Read, Copy);
+    const auto Before = F.print();
+    ASSERT_EQ(F.lower(), !Observe) << F.print();
+    if (Observe) {
+      EXPECT_EQ(F.print(), Before);
+      continue;
+    }
+    EXPECT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+    auto *Outer = F.Module.getFunction("guarded.registration.callback.0");
+    auto *OutlinedInner =
+        F.Module.getFunction("guarded.registration.callback.1");
+    ASSERT_TRUE(Outer);
+    ASSERT_TRUE(OutlinedInner);
+    unsigned Calls = 0, RetainedStores = 0;
+    for (const auto &Block : *Outer)
+      for (const auto &I : Block) {
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+          const auto *Value =
+              llvm::dyn_cast<llvm::ConstantInt>(Store->getValueOperand());
+          ASSERT_TRUE(Value);
+          EXPECT_TRUE(Value->equalsInt(73));
+          ++RetainedStores;
+        }
+        EXPECT_FALSE(llvm::isa<llvm::LoadInst>(I));
+        if (!I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment))
+          continue;
+        const auto *Call = llvm::cast<llvm::CallInst>(&I);
+        EXPECT_EQ(Call->getCalledFunction(), OutlinedInner);
+        EXPECT_EQ(Call->getArgOperand(1), Outer->getArg(1));
+        EXPECT_TRUE(
+            llvm::cast<llvm::ConstantInt>(Call->getArgOperand(0))->isZero());
+        ++Calls;
+      }
+    EXPECT_EQ(Calls, 2u);
+    EXPECT_EQ(RetainedStores, 1u);
   }
 }
 

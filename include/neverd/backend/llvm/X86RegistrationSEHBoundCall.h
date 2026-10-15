@@ -10,7 +10,7 @@
 #ifndef NEVERD_BACKEND_LLVM_X86REGISTRATIONSEHBOUNDCALL_H
 #define NEVERD_BACKEND_LLVM_X86REGISTRATIONSEHBOUNDCALL_H
 
-#include "neverd/ir/RegistrationState.h"
+#include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
 
 #include "llvm/IR/CallingConv.h"
 
@@ -25,16 +25,6 @@ class LLVMContext;
 namespace neverd {
 struct MedFunc;
 struct MedOp;
-
-struct X86RegistrationSEHBoundCall {
-  const RegistrationSEHBoundCall *Source = nullptr;
-  const MedOp *Operation = nullptr;
-  int Block = -1;
-};
-
-/// Bind invocation-specific argument recipes to their exact source operations.
-std::optional<std::map<va_t, X86RegistrationSEHBoundCall>>
-getX86RegistrationSEHBoundCalls(const MedFunc &Function);
 
 llvm::FunctionType *
 getX86RegistrationSEHBoundType(const RegistrationSEHBoundCall &Call,

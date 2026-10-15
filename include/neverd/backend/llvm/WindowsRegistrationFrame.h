@@ -12,6 +12,7 @@
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@ class AllocaInst;
 class BasicBlock;
 class CallInst;
 class Function;
+class Instruction;
 class Module;
 class StoreInst;
 } // namespace llvm
@@ -83,13 +85,20 @@ struct X86RegistrationCallbackRequest {
   std::vector<llvm::CallInst *> NonReturningCalls;
 };
 
+using X86RegistrationCallbackInstructionMap =
+    std::map<const llvm::Instruction *, llvm::Instruction *>;
+
 /// Prepare every callback, allocate one stable escape-index map, then commit
 /// the whole batch. Any rejection leaves the complete module unchanged.
 /// Preparation and commit are internal to this call; callers cannot mutate a
 /// prepared plan. Parent must already have the EH3/EH4 personality.
+/// Optional InstructionMaps records each original body instruction's final
+/// clone, in request order. Rejection leaves this output unchanged too.
 llvm::Expected<std::vector<llvm::Function *>> outlineX86RegistrationCallbacks(
     llvm::Function &Parent,
-    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests);
+    llvm::ArrayRef<X86RegistrationCallbackRequest> Requests,
+    std::vector<X86RegistrationCallbackInstructionMap> *InstructionMaps =
+        nullptr);
 
 /// Outline a closed ordinary-flow callback from an emitted PE32 function.
 /// Filters use i32(), frameaddress(1), eh.recoverfp and localrecover. Finally

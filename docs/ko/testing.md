@@ -1944,3 +1944,9 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 ### 0을 가로지르는 기호 영역 좌표
 
 `SymRegionWrap.*`는 두 바이트 순서, 상대 좌표 0을 가로지르는 전체 및 부분 접근, 순환하지 않는 입력 출처, 복사된 미지 상태 세대, 정확하거나 부족한 보존 예산, 절대／스칼라 범위 오버플로 거부를 검사합니다. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero`는 기호 주소가 `base - 1` 형태를 유지하는지 확인하고, 독립적인 바이트 참조 실행으로 전체 STORE 효과, 네이티브 반환 주소 워드, 복원된 스택 상태를 검사합니다. 분리 증명이나 진입 정렬이 없으면 계속 거부해야 합니다.
+
+### 순차 raw 실행의 비교 교환
+
+`SymAtomicCmpxchg.*`와 `InterpreterSpecialization.AtomicCmpxchg*`는 전체 바이트 효과, 두 바이트 순서, 이전 값 출처, 입출력 별칭, 네이티브 반환 셀, 병합을 가로지르는 아핀 스필 무효화, 순서 지정 연산의 발생 유지, 엄격한 허용과 정확한/부족한 예산을 다룹니다. 독립 바이트 오라클은 순차 값 의미론만 모델링합니다. 소스 래핑 대조군은 초기화되고 구조적으로 유효한 그래프에 대해 순서 지정 메모리 경계의 거부를 요구합니다. 독립 LowIR 대조군은 완전한 sidecar도 결합하며 인증서가 없어야 합니다. 네이티브 바이너리 증명은 LOCK CMPXCHG의 아키텍처 미정의 출력 감사가 완전하지 않아 더 이른 단계에서 거부될 수 있습니다. raw 영수증 검사는 순서, 주소 공간과 새 값 피연산자를 결합합니다. 지원을 선언하기 전에 소유 테스트 모음을 실행해야 합니다. 테스트 정의만으로 실행 증거가 되지는 않습니다.
+
+`InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.

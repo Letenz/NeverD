@@ -189,12 +189,124 @@ TEST_F(DriverKernelRegistry, BasicAndFullQuerySerializeNamesAndDataOffsets) {
   EXPECT_EQ(bytes(Output + 12, 8),
             (std::vector<uint8_t>{'M', 0, 'o', 0, 'd', 0, 'e', 0}));
   EXPECT_EQ(query(Handle, 1, 20), 0x80000005u);
-  EXPECT_EQ(get(LengthOutput, 4), 32u);
-  EXPECT_EQ(get(Output + 8, 4), 28u);
+  EXPECT_EQ(get(LengthOutput, 4), 36u);
+  EXPECT_EQ(get(Output + 8, 4), 32u);
   EXPECT_EQ(get(Output + 12, 4), 4u);
   EXPECT_EQ(get(Output + 16, 4), 8u);
-  EXPECT_EQ(query(Handle, 1, 32), 0u);
-  EXPECT_EQ(get(Output + 28, 4), 0x04030201u);
+  EXPECT_EQ(query(Handle, 1, 36), 0u);
+  EXPECT_EQ(get(Output + 32, 4), 0x04030201u);
+}
+
+TEST_F(DriverKernelRegistry, EnumerationUsesCreationOrderAndLiveValueIndices) {
+  initialize(
+      {{Path, {{"Zulu", 3, {0x11}}, {"Alpha", 4, {0x22}}, {"", 0, {}}}}});
+  const auto Handle = open();
+  auto Enumerate = [&](uint64_t Index, uint64_t Class = 0) {
+    return call("ZwEnumerateValueKey",
+                {Handle, Index, Class, Output, 64, LengthOutput});
+  };
+  EXPECT_EQ(Enumerate(0), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'Z');
+  EXPECT_EQ(Enumerate(1), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'A');
+  EXPECT_EQ(Enumerate(2), 0u);
+  EXPECT_EQ(get(Output + 8, 4), 0u);
+  EXPECT_EQ(Enumerate(3), 0x8000001au);
+  // Replacing a value preserves its original name and position.
+  unicode(ValueName, "zULU");
+  put(Data, 0x33, 1);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 1}), 0u);
+  EXPECT_EQ(Enumerate(0, 1), 0u);
+  EXPECT_EQ(get(Output + 20, 2), 'Z');
+  EXPECT_EQ(get(Output + 32, 1), 0x33u);
+  // Removing compacts the list; recreating appends, even for the same spelling.
+  EXPECT_EQ(call("ZwDeleteValueKey", {Handle, ValueName}), 0u);
+  EXPECT_EQ(Enumerate(0), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'A');
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 1}), 0u);
+  EXPECT_EQ(Enumerate(2), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'z');
+  const auto Snapshot = Registry->snapshot();
+  ASSERT_TRUE(Snapshot);
+  const auto &Values = Snapshot->back().Values;
+  ASSERT_EQ(Values.size(), 3u);
+  EXPECT_EQ(Values[0].Name, "Alpha");
+  EXPECT_EQ(Values[1].Name, "");
+  EXPECT_EQ(Values[2].Name, "zULU");
+  initialize(*Snapshot);
+  const auto Reopened = open();
+  EXPECT_EQ(
+      call("ZwEnumerateValueKey", {Reopened, 2, 0, Output, 64, LengthOutput}),
+      0u);
+  EXPECT_EQ(get(Output + 12, 2), 'z');
+}
+
+TEST_F(DriverKernelRegistry, EnumerationSharesQueryLayoutsAndShortBuffers) {
+  const auto Handle = open();
+  for (uint32_t Class : {0, 1, 2}) {
+    for (uint32_t Length = 0; Length <= 40; ++Length) {
+      SCOPED_TRACE(::testing::Message() << Class << ':' << Length);
+      success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+      const auto Status = query(Handle, Class, Length);
+      const auto Required = get(LengthOutput, 4);
+      const auto Expected = bytes(Output, 64);
+      success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+      EXPECT_EQ(call("ZwEnumerateValueKey",
+                     {Handle, 0, Class, Output, Length, LengthOutput}),
+                Status);
+      EXPECT_EQ(get(LengthOutput, 4), Required);
+      EXPECT_EQ(bytes(Output, 64), Expected);
+    }
+  }
+  // Independently checked against CmpQueryKeyValueData in 19041.6456:
+  // Full data is eight-aligned; padding and an incomplete ASCII unit survive.
+  success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+  EXPECT_EQ(query(Handle, 1, 64), 0u);
+  EXPECT_EQ(get(Output + 8, 4), 32u);
+  EXPECT_EQ(get(Output + 28, 4), 0xccccccccu);
+  success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+  EXPECT_EQ(query(Handle, 0, 13), 0x80000005u);
+  EXPECT_EQ(get(Output + 12, 2), 0xccccu);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 0, 0, 0}), 0u);
+  EXPECT_EQ(query(Handle, 1, 28), 0u);
+  EXPECT_EQ(get(LengthOutput, 4), 28u);
+  EXPECT_EQ(get(Output + 8, 4), UINT32_MAX);
+  EXPECT_EQ(get(Output + 12, 4), 0u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, 0, 0, Output, 64, Output}),
+            0u);
+  EXPECT_EQ(get(Output, 4), 20u);
+  EXPECT_EQ(get(Output + 8, 4), 8u);
+}
+
+TEST_F(DriverKernelRegistry, EnumerationErrorsPreserveOutputsAndRespectRights) {
+  const auto Handle = open();
+  put(Output, 0x1122334455667788);
+  put(LengthOutput, 0x98765432, 4);
+  // Invalid enum classes precede handle, index and output access in the kernel.
+  for (uint64_t Class : {3, 4, 5, 6, -1})
+    EXPECT_EQ(call("ZwEnumerateValueKey", {0, 0, Class, 0, 0, 0}), 0xc000000du);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {0, 0, 0, 0, 0, 0}), 0xc0000008u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, UINT32_MAX, 0, 0, 0, 0}),
+            0x8000001au);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {open(Path, 2), 0, 0, 0, 0, 0}),
+            0xc0000022u);
+  EXPECT_FALSE(failure("ZwEnumerateValueKey",
+                       {Handle, 0, 0, 0x90000000, 64, LengthOutput})
+                   .empty());
+  EXPECT_FALSE(
+      failure("ZwEnumerateValueKey", {Handle, 0, 0, Output, 64, 0x90000000})
+          .empty());
+  EXPECT_EQ(get(Output), 0x1122334455667788u);
+  EXPECT_EQ(get(LengthOutput, 4), 0x98765432u);
+  constexpr uint64_t High = 0xfedcba9800000000;
+  EXPECT_EQ(call("ZwEnumerateValueKey",
+                 {Handle, High, High | 2, Output, High | 16, LengthOutput}),
+            0u);
+  EXPECT_EQ(get(Output + 12, 4), 0x04030201u);
+  EXPECT_EQ(call("ZwDeleteKey", {Handle}), 0u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, 0, 0, 0, 0, 0}), 0xc000017cu);
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, 0, 0, 0, 0, 0}), 0xc0000008u);
 }
 
 TEST_F(DriverKernelRegistry,

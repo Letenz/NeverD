@@ -465,9 +465,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                              RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::frame(*SP.Offset + 16);
       } else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
-                                           *SP.CallbackAddress, 16, true))
+                                           *SP.CallbackAddress, 16, true)) {
+        recordSEHRuntimeCall(After, Op,
+                             RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
                                            SP.CallbackAddress->Offset + 16);
+      }
     }
     if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,
                                 CallException))

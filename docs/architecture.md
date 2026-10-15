@@ -315,6 +315,15 @@ The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private
 state solver owns the shared lattice and cumulative work budget across them.
+MedIR's `X86/RegistrationSEHCall.cpp` binds ordinary finally invocations to
+checked near returns and continuations. Call-ABI recovery and LLVM callback
+lowering consume this one binding, so callback-private pushes cannot become
+cdecl arguments. Outlining exposes exact instruction clone identities for
+removing preflighted unused return transports without reopening the proof.
+MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
+recovery uses their exact stack-only capture/resume contracts; an incidental
+register value cannot shift the jump-buffer argument. LLVM emission and COFF
+source replay consume those same bindings.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
 `MedLLVMRegistrationIncoming` owns the transactional caller-frame projection
@@ -2902,6 +2911,8 @@ owns the arithmetic. Scalar address, control and constant-materialization limits
 remain separate; whole memory accesses and existing alias checks are retained.
 Raw completeness grants neither an undefined-output audit nor a wider source or
 native-proof contract.
+
+Raw specialization also accepts exact 8+8-byte `CONCAT` into a writable 16-byte scalar. The first input supplies the high 64 bits and the second supplies the low 64 bits, independently of storage byte order. Both inputs must be complete scalar locations or constants. The existing explicit, nonfaulting, default-space and unordered-operation restrictions remain; `SymExec` owns evaluation, and aliasing outputs read both original inputs before writing. This adds no source layout or native-proof contract.
 
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
@@ -6323,6 +6334,11 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
 
+### Sequential raw compare-and-exchange
+
+`SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
+
+### Live proc and maintained file metadata
 
 `LinuxProc` classifies the optional live namespace, borrowing task snapshots
 directly from GuestThreads through LinuxServices. It owns no second scheduler.

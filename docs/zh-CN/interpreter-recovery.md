@@ -141,7 +141,7 @@ JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscove
 
 ## 执行契约
 
-二进制适配器目前接受位于其映射地址的已链接 x64 ELF 和 PE 映像。映射、字节和权限必须保持固定，且不得并发修改。严格的按需提升会沿可达机器码进行；遇到不支持的指令、调用、不透明操作、带内存序要求的访问、未解析控制流或语言级异常处理时，恢复会停止。
+二进制适配器目前接受位于其映射地址的已链接 x64 ELF 和 PE 映像。映射、字节和权限必须保持固定，且不得并发修改。严格的按需提升会沿可达机器码进行；遇到不支持的指令、调用、不透明操作、下述受限原始 CAS 域之外的带内存序要求的访问、未解析控制流或语言级异常处理时，恢复会停止。
 
 PE 恢复要求完整的映像元数据，包括全映像重定位和异常记录。CLI 会先加载这些元数据，再应用 `--func`；C API 调用方不得事先用 `neverd_session_restrict_function()` 限制会话。二进制适配器拒绝按受限函数集合加载的映像，因为省略的元数据不能证明不存在修正项或异常边。
 
@@ -162,6 +162,14 @@ PE 恢复要求完整的映像元数据，包括全映像重定位和异常记�
 在保存完整标志位映像之前，每个已建模的算术标志位和方向标志位都必须已在恢复的函数内部得到定义。直接读取标志位也要求它在所有可达的前驱路径上已定义，即使符号化简能抵消其值；否则恢复会拒绝，而不会输出带有“未知寄存器”陷阱的 C 源码。
 
 LowIR 临时值只在单条已提升的原生指令内有效。读取的每个字节都必须在该指令中先被定义；沿用上一条指令的偏移，或用代数化简抵消未定义值，都不能作为源码正确性的证据。入口常量只能绑定物理寄存器。
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## 顺序执行域内的原始比较交换
+
+原始专门化仅在 `ExplicitMachineState=true`、`NormalNonfaultingExecution=true`、`Default` 内存空间、64 位地址、等宽的 1/2/4/8 字节值和 `SequentiallyConsistent` 内存序下接纳 `ATOMIC_CMPXCHG`。原子操作、内存序、地址空间和发生次数均保持不变。此能力沿用没有并发或异步修改的顺序执行域，不提供并发或 MMIO 模型。其他原子操作、16 字节 CAS、其他内存序、分段 CAS 及带内存序的 LOAD/STORE 仍不在该恢复路径的支持范围内。
+
+现有 `ExternalStoresPreserveEntryReturnSlot` 与 `ExternalStoresDisjointEntryFrame` 契约适用于整个写入阶段，包括比较失败或值不变的情况。`ExternalStoresPreserveEntryReturnSlot` 仅保护入口返回槽。`ExternalStoresDisjointEntryFrame` 仅保护声明的栈帧范围；范围外的活动原生返回单元仍需独立的分离证据。不推导额外的不别名前提。机器状态源码包装和独立 LowIR／原生／LLVM 证明路径仍拒绝可达的有序 CAS；完整的原始结果不是源码或等价性证书。
 
 <!-- i18n-section: machine-state -->
 

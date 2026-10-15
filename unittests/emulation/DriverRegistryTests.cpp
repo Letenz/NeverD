@@ -9,13 +9,16 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
 
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
+#include <tuple>
 
 namespace neverd::emulation {
 namespace {
@@ -116,6 +119,55 @@ TEST(DriverRegistry, ExecutesQueriesMutationsAndHandleCleanup) {
   ASSERT_EQ(Initial->size(), 1u);
   EXPECT_EQ(Initial->front().getAsObject()->getArray("values")->size(), 1u);
 }
+
+class DriverRegistryEnumeration
+    : public testing::TestWithParam<
+          std::tuple<ExecutionBackendKind, ExecutionContract, bool>> {};
+
+TEST_P(DriverRegistryEnumeration,
+       CompiledValuesAndDeletionPreserveLiveIndices) {
+  const auto [Backend, Contract, Rebase] = GetParam();
+  auto Probe = createExecutionBackend(Backend, Contract, 64 * 1024 * 1024);
+  if (!Probe) {
+    auto E = Probe.takeError();
+    const bool Unavailable = E.isA<BackendUnavailableError>();
+    const auto Reason = llvm::toString(std::move(E));
+    if (Unavailable && !requireHvf(Backend, GuestArchitecture::X64))
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  Probe->CPU.reset();
+  DriverOptions Options;
+  Options.Backend = Backend;
+  Options.Contract = Contract;
+  if (Rebase)
+    Options.LoadAddress = 0x1c0000000;
+  Options.Registry = std::vector<DriverRegistryKey>{
+      {"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\NeverDDriver",
+       {{"Zulu", 4, {3, 0, 0, 0}}, {"Alpha", 4, {7, 0, 0, 0}}}}};
+  auto Run = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
+                               "driver_registry_values.sys",
+                           Options);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+  EXPECT_EQ(Run->NTStatus, 0u);
+  ASSERT_TRUE(Run->Registry);
+  const auto &Values = Run->Registry->back().Values;
+  ASSERT_EQ(Values.size(), 2u);
+  EXPECT_EQ(Values[0].Name, "Alpha");
+  EXPECT_EQ(Values[1].Name, "Zulu");
+  EXPECT_EQ(Values[1].Data, (std::vector<uint8_t>{10, 0, 0, 0}));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Backends, DriverRegistryEnumeration,
+    testing::Combine(testing::Values(ExecutionBackendKind::Unicorn,
+                                     ExecutionBackendKind::KVM,
+                                     ExecutionBackendKind::WHP,
+                                     ExecutionBackendKind::HVF),
+                     testing::Values(ExecutionContract::Legacy,
+                                     ExecutionContract::CheckedX64),
+                     testing::Bool()));
 
 TEST(DriverRegistry,
      UnspecifiedAvailabilityStopsAndExplicitAbsenceReturnsStatus) {
