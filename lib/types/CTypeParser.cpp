@@ -1533,6 +1533,20 @@ private:
 
 } // namespace
 
+ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
+                       const ParseOptions &Options) {
+  switch (Options.Lang) {
+  case Language::C:
+  case Language::Cpp:
+    return parseCTypes(Source, Library, Options);
+  case Language::Rust:
+    return parseRustTypes(Source, Library, Options);
+  case Language::Go:
+    return parseGoTypes(Source, Library, Options);
+  }
+  return ParseResult();
+}
+
 ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
                         const ParseOptions &Options) {
   ParseResult Result;

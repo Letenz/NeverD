@@ -1,9 +1,11 @@
 add_neverd_component_library(NeverDTypes
   CTypeParser.cpp
   CTypeRender.cpp
+  GoTypeParser.cpp
   GoTypeRender.cpp
   LocalTypes.cpp
   PDBTypeImport.cpp
+  RustTypeParser.cpp
   RustTypeRender.cpp
   TypeJSON.cpp
   TypeLayout.cpp

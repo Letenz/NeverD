@@ -23,7 +23,7 @@ namespace {
 /// \p Source read into a new library, every problem a failure.
 TypeLibrary parsed(llvm::StringRef Source, ParseOptions Options = {}) {
   TypeLibrary Library;
-  const ParseResult Result = parseCTypes(Source, Library, Options);
+  const ParseResult Result = parseTypes(Source, Library, Options);
   for (const SourceProblem &Problem : Result.Problems)
     ADD_FAILURE() << Problem.Line << ":" << Problem.Column << ": "
                   << Problem.Message;
@@ -212,13 +212,17 @@ namespace {
 
 /// Renders every type of \p Library as C with layout checks, reads it back,
 /// and expects each record to lay out as it did: the same size and members.
-void expectCRoundTrip(const TypeLibrary &Library, BuiltinSpelling Spelling) {
+void expectRoundTrip(const TypeLibrary &Library, Language Lang,
+                     BuiltinSpelling Spelling = BuiltinSpelling::Windows) {
   RenderOptions Render;
+  Render.Lang = Lang;
   Render.Spelling = Spelling;
   Render.Asserts = true;
   const std::string Source = renderTypes(Library, {}, Render);
   TypeLibrary Back(Library.dataModel());
-  const ParseResult Result = parseCTypes(Source, Back);
+  ParseOptions Options;
+  Options.Lang = Lang;
+  const ParseResult Result = parseTypes(Source, Back, Options);
   for (const SourceProblem &Problem : Result.Problems) {
     // Show the line a problem is on.
     llvm::SmallVector<llvm::StringRef, 0> Lines;
@@ -245,7 +249,8 @@ void expectCRoundTrip(const TypeLibrary &Library, BuiltinSpelling Spelling) {
     const std::string ReadLeaves = leaves(*Read->Record);
     for (llvm::StringRef Leaf : llvm::split(ReadLeaves, ' '))
       if (!Leaf.empty() && !Leaf.starts_with("__filler") &&
-          !Leaf.starts_with("__size@"))
+          !Leaf.starts_with("__size@") && !Leaf.starts_with("_filler") &&
+          !Leaf.starts_with("_size@"))
         Actual += Leaf.str() + " ";
     EXPECT_EQ(Actual, Expected) << Type->Name;
   }
@@ -254,13 +259,58 @@ void expectCRoundTrip(const TypeLibrary &Library, BuiltinSpelling Spelling) {
 
 } // namespace
 
+TEST(TypeParse, ReadsRust) {
+  ParseOptions Options;
+  Options.Lang = Language::Rust;
+  const TypeLibrary Library = parsed(R"(
+    use core::ffi::c_void;
+    /// A device.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Device {
+        pub Kind: u16,
+        pub Anonymous: Device_0,
+        pub Next: *mut Device,
+        pub Dispatch: Option<unsafe extern "system" fn(*mut Device, *mut c_void) -> i32>,
+        /// Locked bit 0, Count bits 4..10
+        pub _bitfield: u32,
+    }
+    #[repr(C)]
+    pub union Device_0 {
+        pub Value: u64,
+        pub Bytes: [u8; 8],
+    }
+    impl Device {
+        pub const fn Count(&self) -> i32 { ((self._bitfield << 21) as i32) >> 25 }
+    }
+    pub type Mode = i32;
+    pub const Off: Mode = 0;
+    pub const On: Mode = 0x10;
+    #[repr(C, packed(1))]
+    pub struct Packed { pub Tag: u8, pub Value: u32 }
+    const _: () = assert!(core::mem::size_of::<Packed>() == 5);
+  )",
+                                     Options);
+  const RecordDef &Device = recordOf(Library, "Device");
+  EXPECT_EQ(shapeOf(Device), "struct{Kind@0 union@8{Value@0 Bytes@0} Next@16 "
+                             "Dispatch@24 Locked@256b:1 Count@260b:7}");
+  EXPECT_EQ(Library.find("Device_0"), nullptr);
+  // The accessor reads Count signed.
+  EXPECT_EQ(Device.Members[5].Type->TheBuiltin, Builtin::Int);
+  EXPECT_EQ(Library.find("Mode")->Enum->Values[1].Value, 0x10u);
+  EXPECT_EQ(recordOf(Library, "Packed").Size, 5u);
+}
+
 TEST(TypeParse, ReadsBackTheFixtureAsRendered) {
   auto Library = importPDBTypes(NEVERD_TYPES_FIXTURES "/local_types.pdb");
   ASSERT_TRUE(bool(Library)) << llvm::toString(Library.takeError());
   for (BuiltinSpelling Spelling :
        {BuiltinSpelling::Windows, BuiltinSpelling::IDA,
         BuiltinSpelling::Keywords, BuiltinSpelling::Portable})
-    expectCRoundTrip(**Library, Spelling);
+    expectRoundTrip(**Library, Language::C, Spelling);
+  expectRoundTrip(**Library, Language::Cpp);
+  expectRoundTrip(**Library, Language::Rust);
+  expectRoundTrip(**Library, Language::Go);
 }
 
 TEST(TypeParseKernel, ReadsBackEveryKernelTypeAsRendered) {
@@ -269,5 +319,7 @@ TEST(TypeParseKernel, ReadsBackEveryKernelTypeAsRendered) {
     GTEST_SKIP() << "NEVERD_TYPES_NTKRNLMP is not set";
   auto Library = importPDBTypes(Path);
   ASSERT_TRUE(bool(Library)) << llvm::toString(Library.takeError());
-  expectCRoundTrip(**Library, BuiltinSpelling::Windows);
+  expectRoundTrip(**Library, Language::C);
+  expectRoundTrip(**Library, Language::Rust);
+  expectRoundTrip(**Library, Language::Go);
 }

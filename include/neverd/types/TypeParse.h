@@ -64,6 +64,27 @@ struct ParseResult {
 ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
                         const ParseOptions &Options = {});
 
+/// Reads the #[repr(C)] structures and unions, type aliases, constants and
+/// extern "C" functions \p Source declares, as the Rust renderer writes
+/// them: a record named <Parent>_<n> that its parent holds is in place, a
+/// _bitfield field's doc comment lists its bitfields, and an integer alias
+/// with constants of its type is an enumeration.
+ParseResult parseRustTypes(llvm::StringRef Source, TypeLibrary &Library,
+                           const ParseOptions &Options = {});
+
+/// Reads the structs, defined types, constants and accessor methods
+/// \p Source declares, as the Go renderer writes them: a struct of raw
+/// storage whose methods return pointers to it is a union of what they
+/// return, a _bitfield field's comment lists its bitfields, a byte field
+/// Name_ that method Name reads is of the type it returns, and "packed to N"
+/// in a type's comment is its packing.
+ParseResult parseGoTypes(llvm::StringRef Source, TypeLibrary &Library,
+                         const ParseOptions &Options = {});
+
+/// Reads \p Source in the language \p Options names.
+ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
+                       const ParseOptions &Options = {});
+
 } // namespace neverd::types
 
 #endif // NEVERD_TYPES_TYPEPARSE_H
