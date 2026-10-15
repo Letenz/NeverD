@@ -2524,6 +2524,18 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
       return Parsed.takeError();
     Base.KernelVaShadowQuery = std::move(*Parsed);
   }
+  if (const auto *State = Object->get(DebuggerStateField)) {
+    const auto *Fields = State->getAsObject();
+    if (!Fields || Fields->size() != 2)
+      return invalid(
+          "debugger_state requires exactly enabled and not_present booleans");
+    const auto Enabled = Fields->getBoolean("enabled");
+    const auto NotPresent = Fields->getBoolean("not_present");
+    if (!Enabled || !NotPresent)
+      return invalid(
+          "debugger_state requires enabled and not_present booleans");
+    Base.DebuggerState = DriverDebuggerState{*Enabled, *NotPresent};
+  }
   if (const auto *Query = Object->get(VersionQueryField)) {
     auto Parsed = driver_version_query::parse(*Query);
     if (!Parsed)

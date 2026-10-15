@@ -153,6 +153,13 @@ struct DriverKernelVaShadowQuery {
   std::string Evidence;
 };
 
+/// Explicit debugger data, never inferred from the host. Omitting the whole
+/// declaration leaves KdDebuggerEnabled/KdDebuggerNotPresent inaccessible.
+struct DriverDebuggerState {
+  bool Enabled = false;
+  bool NotPresent = true;
+};
+
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
 /// or explicit instruction-driven preemptive scheduling, dispatcher waits,
 /// and DPC execution at modeled IRQLs.
@@ -207,6 +214,7 @@ struct DriverOptions {
   /// Optional diagnostic query; even unused declarations retain an
   /// unreconstructed environment dependency. Requires checked-x64 execution.
   std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  std::optional<DriverDebuggerState> DebuggerState;
 };
 
 enum class DriverStopReason {

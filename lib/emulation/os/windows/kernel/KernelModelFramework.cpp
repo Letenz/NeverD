@@ -271,6 +271,8 @@ void KernelModel::configureFrameworkDeviceHost() {
 
 std::optional<unsigned>
 KernelModel::argumentCount(const KernelExportRegistry::Export &Export) {
+  if (Export.Kind == KernelExportRegistry::ExportKind::ModuleData)
+    return std::nullopt;
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return argumentCount(Export.Name);
@@ -289,6 +291,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     llvm::ArrayRef<uint64_t> Arguments,
     llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
     const KernelContextCapture *Context) {
+  if (Export.Kind == KernelExportRegistry::ExportKind::ModuleData)
+    return llvm::createStringError("kernel data exports are not callable");
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return call(Export.Name, Arguments, ReadArgument, Context);

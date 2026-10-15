@@ -18,6 +18,47 @@
 namespace neverd::emulation {
 namespace {
 
+TEST(DriverScenario, DebuggerStateRequiresBothBooleansAndRoundTrips) {
+  DriverResult Result;
+  auto JSON = llvm::cantFail(llvm::json::parse(driverResultJSON(Result)));
+  EXPECT_FALSE(
+      JSON.getAsObject()->getObject("configuration")->get("debugger_state"));
+  for (bool Enabled : {false, true})
+    for (bool NotPresent : {false, true}) {
+      const auto Input = std::string("{\"debugger_state\":{\"enabled\":") +
+                         (Enabled ? "true" : "false") +
+                         ",\"not_present\":" + (NotPresent ? "true" : "false") +
+                         "}}";
+      auto Parsed = driverOptionsFromScenarioJSON(Input);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      ASSERT_TRUE(Parsed->DebuggerState);
+      EXPECT_EQ(Parsed->DebuggerState->Enabled, Enabled);
+      EXPECT_EQ(Parsed->DebuggerState->NotPresent, NotPresent);
+      auto Inherited = driverOptionsFromScenarioJSON("{}", *Parsed);
+      ASSERT_TRUE(bool(Inherited));
+      Result.Configuration = *Inherited;
+      JSON = llvm::cantFail(llvm::json::parse(driverResultJSON(Result)));
+      const auto *State = JSON.getAsObject()
+                              ->getObject("configuration")
+                              ->getObject("debugger_state");
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getBoolean("enabled"), Enabled);
+      EXPECT_EQ(State->getBoolean("not_present"), NotPresent);
+    }
+  for (const char *Value :
+       {"null", "true", "0", "[]", "{}", R"({"enabled":false})",
+        R"({"not_present":true})", R"({"enabled":0,"not_present":true})",
+        R"({"enabled":false,"not_present":1})",
+        R"({"enabled":false,"not_present":null})",
+        R"({"enabled":false,"not_present":true,"extra":0})",
+        R"({"enabled":false,"enabled":true,"not_present":true})"}) {
+    auto Parsed = driverOptionsFromScenarioJSON(
+        std::string("{\"debugger_state\":") + Value + "}");
+    ASSERT_FALSE(bool(Parsed)) << Value;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(DriverScenario, LoaderViewIsExplicitAndRoundTripsWithoutDefaultFields) {
   DriverResult Default;
   auto Report = llvm::cantFail(llvm::json::parse(driverResultJSON(Default)));
