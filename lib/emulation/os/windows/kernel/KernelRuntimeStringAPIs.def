@@ -92,3 +92,12 @@ NEVERD_KERNEL_RUNTIME_STRING_API(RtlFreeUnicodeString, 1, APC,
                                  freeCountedString(A))
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlFreeAnsiString, 1, APC,
                                  freeCountedString(A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlstringfromguid
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlguidfromstring
+// RVA 0x6f34d0 formats lowercase registry text into a 78-byte paged 'Strg'
+// allocation; RVA 0x6bd650 parses that form with exact field widths.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlStringFromGUID, 2, Passive,
+                                 stringFromGUID(A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlGUIDFromString, 2, Passive,
+                                 guidFromString(A))

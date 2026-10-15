@@ -109,3 +109,5 @@ EXPORTS
   RtlCompareString
   RtlTimeToTimeFields
   RtlTimeFieldsToTime
+  RtlStringFromGUID
+  RtlGUIDFromString
