@@ -37,13 +37,16 @@ llvm::Expected<uint64_t> KernelModel::objectType(uint64_t Object) {
   const auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end())
     return objectError("object type requires a known object");
-  if (const auto Type = ObjectTypes.find(Found->second.Kind);
-      Type != ObjectTypes.end())
+  return objectType(Found->second.Kind);
+}
+
+llvm::Expected<uint64_t> KernelModel::objectType(ObjectKind Kind) {
+  if (const auto Type = ObjectTypes.find(Kind); Type != ObjectTypes.end())
     return Type->second;
   auto Type = allocate(profile::ProcessTokenSize);
   if (!Type)
     return Type.takeError();
-  ObjectTypes.emplace(Found->second.Kind, *Type);
+  ObjectTypes.emplace(Kind, *Type);
   return *Type;
 }
 
@@ -79,21 +82,21 @@ KernelModel::referenceObjectByPointer(llvm::ArrayRef<uint64_t> A) {
 llvm::Expected<uint64_t> KernelModel::dereferenceObject(uint64_t Object) {
   auto Found = ReferencedObjects.find(Object);
   if (Found == ReferencedObjects.end() || !Found->second.Pointers)
-    return objectError("ObfDereferenceObject requires a referenced thread or "
-                       "process object");
+    return objectError("ObfDereferenceObject requires a referenced object");
   --Found->second.Pointers;
-  retireObjectIfUnreferenced(Object);
+  if (Found->second.Kind == ObjectKind::Device) {
+    if (auto E = retireDeviceIfUnreferenced(Object))
+      return E;
+  } else
+    retireObjectIfUnreferenced(Object);
   return uint64_t(0);
 }
 
 llvm::Expected<uint64_t>
 KernelModel::referenceObjectByHandle(llvm::ArrayRef<uint64_t> A) {
   const auto Handle = ObjectHandles.find(A[0]);
-  if (Handle == ObjectHandles.end()) {
-    if (Registry.ownsHandle(A[0]))
-      return objectError("registry-key object references are unsupported");
+  if (Handle == ObjectHandles.end())
     return windows::StatusInvalidHandle;
-  }
   const auto &State = Handle->second;
   const auto Found = ReferencedObjects.find(State.Object);
   if (Found == ReferencedObjects.end())
@@ -101,18 +104,15 @@ KernelModel::referenceObjectByHandle(llvm::ArrayRef<uint64_t> A) {
   const uint8_t Mode = A[3];
   if (Mode != windows::KernelMode && Mode != windows::UserMode)
     return objectError("invalid object reference access mode");
-  const auto Context = executionProcessContext();
-  const uint32_t ProcessID = Context ? Context->ProcessID : 0;
   const bool Kernel = State.Attributes & windows::ObjectKernelHandle;
-  if ((Kernel && Mode == windows::UserMode) ||
-      (!Kernel && State.ProcessID != ProcessID))
+  if ((Kernel && Mode == windows::UserMode) || !findObjectHandle(A[0]))
     return windows::StatusInvalidHandle;
   if (!matchesObjectType(Found->second.Kind, A[2]))
     return windows::StatusObjectTypeMismatch;
-  const uint32_t ValidAccess = Found->second.Kind == ObjectKind::Thread
-                                   ? windows::ThreadAllAccess
-                                   : windows::ProcessAllAccess;
-  if (uint32_t(A[1]) & ~ValidAccess)
+  const auto ValidAccess = objectAccessMask(Found->second.Kind);
+  if (!ValidAccess)
+    return objectError("unsupported object handle class");
+  if (uint32_t(A[1]) & ~*ValidAccess)
     return objectError("unsupported object reference access mask");
   if (Mode == windows::UserMode && (uint32_t(A[1]) & ~State.GrantedAccess))
     return windows::StatusAccessDenied;
@@ -150,17 +150,17 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
   if ((!A[4] && Mode == windows::UserMode) ||
       !matchesObjectType(Object->second.Kind, A[4]))
     return windows::StatusObjectTypeMismatch;
+  if (!objectAccessMask(Object->second.Kind))
+    return objectError("unsupported object handle class");
   // ACLs, access-state records and inheritance need a declared security
   // environment. Refuse those requests without granting invented authority.
   if (Mode != windows::KernelMode || A[2] ||
       (uint32_t(A[1]) & ~windows::ObjectKernelHandle))
     return objectError("object open requires kernel mode, no access state and "
                        "only OBJ_KERNEL_HANDLE attributes");
-  const uint32_t ValidAccess = Object->second.Kind == ObjectKind::Thread
-                                   ? windows::ThreadAllAccess
-                                   : windows::ProcessAllAccess;
-  if (uint32_t(A[3]) & ~ValidAccess)
-    return objectError("unsupported object open access mask");
+  auto Access = mapObjectAccess(Object->second.Kind, uint32_t(A[3]));
+  if (!Access)
+    return Access.takeError();
   const auto Context = executionProcessContext();
   const uint32_t ProcessID = Context ? Context->ProcessID : 0;
   if (ProcessID != windows::SystemProcessID &&
@@ -171,11 +171,14 @@ KernelModel::openObjectByPointer(llvm::ArrayRef<uint64_t> A) {
     return windows::StatusInvalidParameter;
   if (auto E = validateObjectOutput(A[6], 8))
     return E;
+  if (Object->second.RegistryOwner)
+    if (auto E = Object->second.RegistryOwner->checkHandleCapacity())
+      return E;
   if (NextObjectHandle > profile::SystemThreadHandleLimit)
     return windows::StatusInsufficientResources;
   if (auto E = Memory.writeInteger(A[6], NextObjectHandle, 8))
     return E;
-  retainObjectHandle(A[0], uint32_t(A[3]), uint32_t(A[1]), ProcessID);
+  retainObjectHandle(A[0], *Access, uint32_t(A[1]), ProcessID);
   return windows::StatusSuccess;
 }
 
@@ -189,15 +192,9 @@ void KernelModel::retainObjectHandle(uint64_t Object, uint32_t Access,
 
 llvm::Expected<uint64_t> KernelModel::closeHandle(uint64_t Handle) {
   const auto Found = ObjectHandles.find(Handle);
-  if (Found == ObjectHandles.end()) {
-    if (Registry.ownsHandle(Handle))
-      return Registry.call(*this, kernel_api::ZwClose, {Handle});
+  if (Found == ObjectHandles.end())
     return windows::StatusInvalidHandle;
-  }
-  const auto Context = executionProcessContext();
-  const uint32_t ProcessID = Context ? Context->ProcessID : 0;
-  if (!(Found->second.Attributes & windows::ObjectKernelHandle) &&
-      Found->second.ProcessID != ProcessID)
+  if (!findObjectHandle(Handle))
     return windows::StatusInvalidHandle;
   const uint64_t Object = Found->second.Object;
   auto Reference = ReferencedObjects.find(Object);
@@ -266,12 +263,32 @@ llvm::Expected<uint64_t> KernelModel::threadTerminating(uint64_t Object) const {
 
 void KernelModel::retireObjectIfUnreferenced(uint64_t Object) {
   const auto References = ReferencedObjects.find(Object);
-  if (References == ReferencedObjects.end() || References->second.Pointers ||
-      References->second.Handles || WaitReferences.contains(Object))
+  if (References == ReferencedObjects.end())
     return;
-  // Process identities are currently retained by the declared request/session
-  // environment. Dropping a caller reference must not revoke that environment.
-  if (References->second.Kind == ObjectKind::Process)
+  // Making a permanent link temporary removes its name only at last handle
+  // close. Pointer references keep the unnamed object and its target alive.
+  if (auto Link = SymbolicLinks.find(Object); Link != SymbolicLinks.end()) {
+    if (!Link->second.Permanent && !References->second.Handles)
+      Link->second.Named = false;
+    if (!Link->second.Named && !References->second.Pointers &&
+        !References->second.Handles) {
+      FreedRanges.emplace(Object, profile::ProcessTokenSize);
+      SymbolicLinks.erase(Link);
+      ReferencedObjects.erase(References);
+    }
+    return;
+  }
+  if (References->second.Pointers || References->second.Handles ||
+      WaitReferences.contains(Object))
+    return;
+  if (References->second.RegistryOwner) {
+    References->second.RegistryOwner->retireObject(Object);
+    FreedRanges.emplace(Object, profile::ProcessTokenSize);
+    ReferencedObjects.erase(References);
+    return;
+  }
+  // Process and driver identities are retained by the session environment.
+  if (References->second.Kind != ObjectKind::Thread)
     return;
   const auto Thread = ThreadObjects.find(Object);
   if (Thread == ThreadObjects.end() || !Thread->second.Exited)

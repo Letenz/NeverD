@@ -65,6 +65,8 @@ inline constexpr llvm::StringLiteral RegistrationOperationAttachment(
     "neverd.windows.registration.source-operation");
 inline constexpr llvm::StringLiteral RegistrationFinallyCallAttachment(
     "neverd.windows.registration.finally-call");
+inline constexpr llvm::StringLiteral RegistrationScopeRetentionAttachment(
+    "neverd.windows.registration.scope-retention");
 inline constexpr llvm::StringLiteral
     RegistrationJumpAttachment("neverd.windows.registration.jump");
 

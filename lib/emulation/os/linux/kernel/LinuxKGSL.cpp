@@ -90,18 +90,25 @@ LinuxFiles::contextIoctl(LinuxDeviceState &Device, uint32_t Request,
     return Reply(0);
   }
   const uint32_t Type = llvm::support::endian::read32le(Data + 4);
-  if (Type != 1 && Type != 2)
-    return unsupported(
-        Result,
-        "GPU context model has no queued or unknown timestamp semantics");
+  // The queued value is context-owned, not either word in the shared memstore.
+  // A context created here has submitted no commands. That proves zero only
+  // when no declared external producer can affect this context's slot.
+  if (Type == 3)
+    for (const auto &Update : Mapping->Updates)
+      if (Update.Offset < uint64_t(ID + 1) * kgsl::SlotBytes &&
+          uint64_t(ID) * kgsl::SlotBytes < Update.Offset + Update.Bytes.size())
+        return unsupported(
+            Result, "GPU queued timestamp requires explicit submission state");
   const auto Bytes = Memory->deviceBytes(*Mapping);
   const uint64_t Offset = uint64_t(ID) * kgsl::SlotBytes + (Type == 2 ? 8 : 0);
   const uint32_t Timestamp =
-      llvm::support::endian::read32le(Bytes.data() + Offset);
+      Type == 1 || Type == 2
+          ? llvm::support::endian::read32le(Bytes.data() + Offset)
+          : 0;
   llvm::support::endian::write32le(Data + 8, Timestamp);
   if (auto E = CPU.write(Argument, llvm::ArrayRef(Data, Size)))
     return std::move(E);
-  return Reply(0);
+  return Reply(Type >= 1 && Type <= 3 ? 0 : uint64_t(0) - InvalidArgument);
 }
 
 bool LinuxMemory::contextIdle(const LinuxDeviceState &Device,

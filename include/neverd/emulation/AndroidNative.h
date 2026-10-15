@@ -66,6 +66,10 @@ struct AndroidNativeOptions {
   /// stop at that return and report the remaining thread states. Requires
   /// ThreadLimit > 1; never replenishes execution limits.
   bool DrainThreads = false;
+  /// Opt into a bounded JNI 1.6 native-interface model. Threads initially
+  /// remain detached. This supplies neither Java bytecode execution nor
+  /// application classes, methods or framework services.
+  bool JNI = false;
   /// Exact library names and available function names for the local dlfcn
   /// model. No host files are loaded. Calling an unmodeled function still
   /// stops.

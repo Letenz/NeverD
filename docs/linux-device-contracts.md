@@ -155,8 +155,9 @@ Host time, sample PCs and inferred hardware events do not trigger writes.
 A device may opt into `"kgsl_contexts":{"memstore_offset":4096,"context_limit":3}`.
 The offset must select one declared mapping whose 40-byte slots fit IDs 0 through
 the inclusive limit (1–1,024). This is an LP64 Adreno protocol subset, not a GPU
-driver. Every context starts idle; command submission, queued timestamps,
-fault recovery, secure contexts, hardware scheduling and original SDKs are absent.
+driver. Every context starts idle; command submission, externally submitted
+queued timestamps, fault recovery, secure contexts, hardware scheduling and
+original SDKs are absent.
 An external producer trace is a declared workload assumption, not command execution.
 
 The implemented requests are `0xc0080913` (create), `0x40040914` (destroy), and
@@ -170,8 +171,8 @@ Contexts belong to the creating open description, shared by duplicated FDs and
 retained by that description's mappings. Another independent open cannot query
 or destroy them (`EINVAL`), even though its mapping sees the same device bytes.
 Timestamp types 1 and 2 read the consumed/retired words at slot offsets 0 and 8;
-other types stop. Read-only or partial result buffers stop before allocation or
-output effects. Static ioctl entries cannot shadow these three modeled requests.
+type 3 requires the queue proof below, and invalid types copy zero with EINVAL.
+Read-only or partial result buffers stop before allocation or output effects. Static ioctl entries cannot shadow these three modeled requests.
 
 Destroy or final-reference retirement admits only equal consumed and retired
 timestamps under the declared quiescent producer contract. An unequal pair
@@ -187,3 +188,43 @@ the pinned AOSP msm revision `12d6459848fcd3bf073765e61299d8d87ec14fdf`:
 [Adreno context initialization](https://android.googlesource.com/kernel/msm/+/12d6459848fcd3bf073765e61299d8d87ec14fdf/drivers/gpu/msm/adreno_drawctxt.c).
 Selecting this model does not identify a captured device's kernel version or
 establish equivalence to all vendor variants.
+
+### Queued timestamp admission
+
+A newly created context has a known empty queue only if no declared producer
+update can touch its 40-byte memstore slot. Type 3 then reports zero. A producer
+for that context makes queued state unknown: consumed/retired page words do not
+supply a queued timestamp. Unknown timestamp types return EINVAL and copy out a
+zero timestamp. This follows the read/copy-out contracts in the pinned
+[KGSL ioctl owner](https://android.googlesource.com/kernel/msm/+/973f4134d9deb396415846f902848f0a32cb4cfa/drivers/gpu/msm/kgsl.c)
+and [Adreno timestamp owner](https://android.googlesource.com/kernel/msm/+/a65478df351382d255d293d745aee9bae3a3a741/drivers/gpu/msm/adreno.c).
+Blocking waits, command execution and busy-context retirement remain unmodeled.
+
+## Binder control and looper protocol
+
+An explicit device entry can set `"binder":true`, with `access_mode`,
+`open_errno` and an empty `ioctls` array as usual. For example:
+
+```json
+{"path":"/dev/binder","access_mode":2,"open_errno":0,
+ "ioctls":[],"binder":true}
+```
+
+The LP64 protocol-8 subset implements VERSION, SET_MAX_THREADS, THREAD_EXIT and
+WRITE_READ with REGISTER/ENTER/EXIT_LOOPER commands. Every independent open owns
+its control state and per-native-thread loopers; dup aliases share that owner.
+O_NONBLOCK is admitted for this device model. Fresh Binder threads can receive
+BR_NOOP or a thread-pool spawn request; an empty nonblocking read thereafter
+returns EAGAIN while preserving the kernel's observable BR_NOOP buffer write.
+Complete write/read records, consumed counts, guards and overlapping output
+copy order are retained. A zero-length stream does not dereference its pointer.
+
+There are no inferred peers, service-manager entries, Parcel values, remote
+objects, transaction buffers, death notifications or system-service replies.
+Such commands and blocking reads that need work stop explicitly. Captured ioctl
+replies, read-only mappings and KGSL cannot be combined with this model. Command
+streams are bounded to 4096 bytes and 4096 thread identities; partial command or
+record faults, short read buffers and resumed read buffers are not admitted.
+The state machine follows the pinned
+[Binder driver contract](https://android.googlesource.com/kernel/common/+/cf21a9ac5ee4f57c6f45fe2b09d197bdc038f39d/drivers/android/binder.c),
+without executing or copying its implementation or contacting a host driver.

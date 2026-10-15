@@ -1447,6 +1447,32 @@ Erkannte Bibliotheksoperation; klicken, um ihren Code anzuzeigen.</translation>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Die Includes, Hilfstypen und Deklarationen, mit denen dieser Code kompiliert wird; klicken zeigt sie an, - auf dem Ziffernblock faltet sie wieder ein.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>%n Zeile mit Deklarationen</numerusform>
+            <numerusform>%n Zeilen mit Deklarationen</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>%n Zeile mit Attributen und Metadaten</numerusform>
+            <numerusform>%n Zeilen mit Attributen und Metadaten</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>Das Ziel, die Typen, globalen Variablen und Funktionen, auf die diese Funktion verweist; klicken zeigt sie an, - auf dem Ziffernblock faltet sie wieder ein.</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>Die Attributgruppen und Metadaten, die diese Funktion verwendet; klicken zeigt sie an, - auf dem Ziffernblock faltet sie wieder ein.</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>Doppelklicken springt zu %1.</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -2250,6 +2276,18 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Expression or command (help)</source>
         <translation>Ausdruck oder Befehl (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Kopieren</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>&amp;Alles auswählen</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>&amp;Leeren</translation>
     </message>
     <message>
         <source>Commands:</source>

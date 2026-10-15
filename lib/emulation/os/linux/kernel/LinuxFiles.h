@@ -213,6 +213,10 @@ private:
                                     uint32_t New, uint32_t Flags,
                                     ProcessResult &Result);
   bool canRelease(const std::shared_ptr<Descriptor> &Description) const;
+  llvm::Expected<std::optional<uint64_t>> binderIoctl(LinuxDeviceState &Device,
+                                                      uint32_t Request,
+                                                      uint64_t Argument,
+                                                      ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> contextIoctl(LinuxDeviceState &Device,
                                                        uint32_t Request,
                                                        uint64_t Argument,

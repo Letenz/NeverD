@@ -393,6 +393,24 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/web-analysis-implementation.md",
+        rule="private-path",
+        commits=frozenset({
+            "2a5d6f60dc231c1e2c90516e762a1a407ae78ce9",
+            "f5c1f1c145767f8da374c3a0449076ea00200cea",
+        }),
+        line="",
+        reason=(
+            "Reviewed removal of a local evidence directory from the issue "
+            "closure notes. The exact line digest and introduction/removal "
+            "commits record the cleanup without republishing the path. "
+            "Current files and future occurrences remain forbidden."
+        ),
+        line_sha256=frozenset({
+            "90101851e50b6c41cdb14014f7669182fa5deef52e4d6214bba21b6be517581e",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/web-claude-code-qualification.md",
         rule="private-path",
         commits=frozenset({

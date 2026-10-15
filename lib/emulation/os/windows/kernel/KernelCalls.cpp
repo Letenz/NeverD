@@ -190,6 +190,7 @@ llvm::Expected<uint64_t> KernelModel::call(
 #define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
   case KernelAPIKind::Name:                                                    \
     return Operation;
+#include "KernelNamespaceAPIs.def"
 #include "KernelObjectAPIs.def"
 #undef NEVERD_KERNEL_OBJECT_API
   case KernelAPIKind::IoGetRequestorProcessId: {
@@ -329,7 +330,7 @@ llvm::Expected<uint64_t> KernelModel::call(
 #undef NEVERD_KERNEL_REGISTRY_API
     if (Kind == KernelAPIKind::ZwClose)
       return closeHandle(A[0]);
-    return Registry.call(*this, Name, A);
+    return Registry.call(Name, A);
   case KernelAPIKind::MmGetSystemRoutineAddress:
     return resolveRoutine(A[0]);
   case KernelAPIKind::MmGetPhysicalMemoryRanges:

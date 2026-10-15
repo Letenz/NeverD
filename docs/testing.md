@@ -55,7 +55,16 @@ module cache identities. `NativeLLVMInspection*` preserves inspection branches
 across source profiles and both view orders. `LLVMViewsDeferOnlyHighIR*`
 checks integer and floating call results, unchanged LLVM/source output and
 resumption without relifting; `FunctionViewRejectsUnknown*` preserves the
-prepared function on invalid view names. Worker source-cache tests also check
+prepared function on invalid view names. `LLVMViewShowsTheFunctionInAModuleOfItsOwn`
+builds a glibc PIE: `_start`'s LLVM IR must assemble and verify alone, declare
+the GOT's mirror before the definition under a comment saying what it stands
+for, and name the `__libc_start_main` slot as the listing does; pages keep the prelude, epilogue and by-line references
+through small pages, a rename of the slot reaches the comment, and `main`'s
+strings read beside their references.
+`LLVMViewMapsEachSpellingOfAMirrorToItsOwnOffset` renders a hand-written
+module: a mirror spelled at two offsets on one line, and on a call whose
+callee prints before its arguments, maps each spelling to its own address, and
+each mirror's comment lists the offsets used, a bare name as +0. Worker source-cache tests also check
 that preparation receives the requested LLVM representation.
 `HighSymSimplify.OrdinaryConversion*` keeps optional
 rewriting out of ordinary HighC; the other HighSymSimplify cases explicitly
@@ -114,6 +123,13 @@ the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
 than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
+`llvmIrNamesGoWhereTheyStandFor` opens LLVM IR between its folded prelude and
+epilogue, jumps to the lines defining values, blocks, parameters, attribute
+groups and metadata, shows the declaration of a name the binary lacks, resolves
+a comment's address, shows the comment over a mirror's declaration on hover,
+and sends an image mirror to its first byte where declared,
+to the byte its constant offset reaches on a load, and each of two spellings on
+one line to its own offset.
 Cross-reference cases query the name under the code cursor while assembly is
 at a different function, then select an instruction in the caller. They check
 the originating window, representation and pin, proven source-line mapping,
@@ -3970,7 +3986,7 @@ installation.
 Native installation needs the LLVM fork exposing
 `LLVM_NEVERD_X86_REGISTRATION_EH` and, for EH4,
 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS source frames additionally need
-`LLVM_NEVERD_X86_REGISTRATION_GS`. The pinned r4 packages and their matching
+`LLVM_NEVERD_X86_REGISTRATION_GS`. The pinned r5 packages and their matching
 source commit provide these receipts, including the C++ catch-subfield,
 function-range and handler receipts needed by native C++ reconstruction.
 
@@ -4047,6 +4063,116 @@ ABI and attributes. The clone regression uses two calls sharing unobserved
 result storage and checks atomic refusal when a volatile load observes it.
 The ordinary-entry and runtime-unwind source tests share direct-call and
 folded tail-jump controls, including effects hidden after a CALL.
+
+Callback TryLevel coverage is split across `RegistrationSEHTryLevel.*`
+(state/frame correlation, retirement, narrow writes and source receipts),
+`RegistrationSEHStateStore.*` (exact MedIR store binding, preserved high bytes
+and retained scopes),
+and `RegistrationSEHStateNative.*` (EH3/EH4 lowering, source replay, callback ABI
+retention and physical write mutations). `CompiledSEHStateWrites.*` checks
+receipt transport through layout changes and final ownership/range closure;
+`CompiledSEHStateStoreBytes.*` checks every architectural address register,
+displacements and rejection of extra instructions or indexed addresses.
+The native receipt tests require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
+packages. Older r4 builds retain analysis and refusal coverage but cannot run
+these compiler-protocol tests. The focused Wine job and native Windows source
+replay use the complete `all` profile with the published compiler; an LLVM
+workflow artifact override is no longer needed for these 63 source scenarios.
+
+`registration_state_dispatch.s` adds `longjmp-state-byte-high-bits`: the same
+filter byte store produces complete states 0 and 256. Four alternating invocations
+require one or two cleanup visits, respectively, and check the restored EAX/EBX,
+final state and registration chain. Intermediate sibling rows have ordinary
+activation stores to isolate the result domain from deep nesting and unrelated
+reachability limits. Two separate nonlocal call sites keep each parent call's
+active level unambiguous. The 20 runtime images cover source and generated PE,
+both CLI modes, IR/EXE input, optimization on/off and rebasing.
+`RegistrationSEHStateDispatchTests` replays 20 verifier-clean edits to the actual
+reconstructed IR: changed read address/width/ordering, missing or extra uses,
+changed domains, swapped or bypassed cases, altered or duplicated updates,
+hoisted reads and escaped case/continuation addresses all refuse installation.
+Reordering the physical case blocks remains accepted. MedIR tests separately
+cover EH3/EH4 sentinel and positive outcomes of the same byte store.
+
+`longjmp-finally-incidental-result` uses the same state-selection fixture but
+returns directly after `RaiseException`. The frozen pre-fix emitter refuses
+this source. `RegistrationSEHRuntimeReturn.*` checks that only a runtime-only
+finally can discard the incidental scalar result: the source body, all entry
+kinds, ordinary call/branch edges and exact physical near returns must agree.
+An ordinary caller, shared filter/handler entry, parent return, memory write or
+other scalar use remains observable. This proof is shared by emission and COFF
+source replay through the MedIR call-result binder.
+
+`RegistrationFilterState.*` checks paired dispositions and states at shared
+returns, captured search cursors, arbitrary negative dispositions, continuation
+inside a finally block and reordered edges. Selected handlers, unknown results,
+escaping searches, bad stacks, cycles and incomplete instruction boundaries
+refuse. Skipping one or several filter scopes records the last callback state
+and its final runtime state separately. `RegistrationSEHJumpABI` checks complete
+state projections and rejects missing, invalid, unordered or contradictory
+pairs. Native installation mutations change the reload address, volatility,
+atomicity, alignment, selector, projection keys/results, uses and placement
+before the capture. They also remove a projection or compare another value.
+
+`registration_filter_state.s` supplies seven runtime cases:
+`longjmp-filter-correlated-state`, `longjmp-filter-shared-state`,
+`longjmp-filter-captured-cursor`, `longjmp-filter-negative-disposition`,
+`longjmp-filter-skipped-scope`, `longjmp-filter-two-resume-mappings` and
+`longjmp-filter-callback-activation`.
+The skipped-scope case writes state 1 in a filter; after
+the suspended finally returns, the CRT skips that filter scope and resumes at
+state 0. Its other branch retires to -1, requiring a variable projection.
+`longjmp-filter-two-resume-mappings` activates its scope rows before capture and
+checks both 2-to-1 and 3-to-0 resumption. It also exposes a numeric-bound bug:
+LLVM's old depth-first order 0,3,4,1,2 skipped the finally when unwinding from
+source state 4 to captured state 1. The compiler must preserve source order,
+and `NonlocalUnwindPreservesSiblingStateOrder` independently rejects a sibling
+permutation whose bytes, fixups and enclosing graph are otherwise valid.
+`longjmp-filter-callback-activation` omits the ordinary activation of scope 2;
+its distinct filter and handler acquire their entry proofs only from the
+continued callback state. Unit controls require both roots and reject complete
+proof publication when any filter path selects a handler instead of resuming.
+The genuine `CorpusFuncLoadX86FilterThunksPrintTheirValue` regression retains
+structured filters when an ordinary finally's raise selects a handler: that
+path must not be treated as a failed nonlocal resumption.
+Each execution alternates both filter paths across four invocations, checks the
+resumed TryLevel and nonvolatile register, and requires the exact cleanup trace
+and restored registration chain. The source reconstruction and independent
+replay scripts include these cases in the current compiler profile.
+
+`registration_state.s` adds six EH3 runtime cases:
+
+| Case | Checked callback state effect |
+|------|-------------------------------|
+| `longjmp-state-activate-call` (30) | An ordinary finally activates a callback-only scope before resumption |
+| `longjmp-state-activate-unwind` (31) | A CRT-dispatched finally activates that scope before nested resumption |
+| `longjmp-state-retire` (32) | A returning unwind callback retires a pending inner cleanup |
+| `longjmp-state-sentinel` (33) | A callback leaves no active scope; the resumed parent later activates one |
+| `longjmp-state-byte` (34) | A callback activates a scope with a byte store before nonlocal resumption |
+| `longjmp-state-word` (35) | The same transition preserves the high half of a word store |
+
+The six cases have passed local Wine execution against the captured Microsoft
+x86 CRT: 120 original and rewritten image executions cover both patch modes,
+IR and EXE input, optimization on/off and forced rebasing. Each execution checks
+four invocations, the cleanup trace, resumed registers/state and FS:[0]
+restoration. To run the complete script, use NeverD built against a compiler
+with the capability above and the captured Microsoft x86 CRT. `--compiler` and
+`--linker` select fixture tools, not the LLVM library linked into NeverD:
+
+```bash
+for registration_case in longjmp-state-activate-call longjmp-state-activate-unwind longjmp-state-retire longjmp-state-sentinel longjmp-state-byte longjmp-state-word; do
+  python scripts/check_windows_registration_rewrite.py \
+    --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
+    --patch-binary build/bin/neverd \
+    --compiler /path/to/neverd-llvm/bin/clang \
+    --linker /path/to/neverd-llvm/bin/lld-link \
+    --wine wine --runtime-root /path/to/runtime-libs \
+    --case "$registration_case" \
+    --output "build/evidence/registration-${registration_case}"
+done
+```
+
 `RegistrationSEHJumpABI` checks exact stack argument order and arity despite
 incidental register values, extra private spills and conflicting inferred
 prototypes; missing arguments and changed source receipts remain rejected.
@@ -6539,6 +6665,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `FrameOffsets.*Normalization*` covers exact identities, extra inputs, root identity, infeasible predicates without cached witnesses, default behavior, prefix/measurement charges and post-call node refusal. `FrameNormalizationPreservesStoresAndNativeReturns` and `RawCodeFrameNormalization*` exercise original memory effects and physical return words with independent byte oracles, both byte orders where applicable, exact/short operation budgets and receipt mutation. `FrameNormalizationStrategyBindsIndependentProof` checks both binary proof identities.
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` checks that cached history is not charged again, appended wide constants still cost admission, short work and node budgets still refuse, and copied readability caches remain independent.
+
 ## Native Lift qualification
 
 The `Lift native qualification` workflow owns the 108 previously unqualified cases (62 failures and 46 skips). It installs Clang 23 or newer, GNU GCC and the i386 development libraries on a native Linux x86-64 runner, and initializes the pinned binary corpus. `unittests/Inputs/lift-qualification.json` retains every original test identity. `scripts/run_lift_qualification.py` rejects missing, duplicate, disabled, skipped or failed cases and a nonzero process exit; `qualification.json` records individual passes, source/corpus revisions, compiler versions and binary hashes.
@@ -6700,6 +6828,8 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 
 `KernelObjectTests.cpp` checks known-ID lookup, type/access/mode failures, optional handle information, failed outputs without leaked references, unload, and retained identities across stack reuse. `DriverObjectTests.cpp` executes original `driver_objects.c` on available Unicorn/KVM/WHP/HVF backends, Legacy/CheckedX64, preferred/rebased images and cooperative/17-instruction scheduling. KVM/WHP outcomes are mandatory in `NativeDriverTests.def`; missing or skipped execution is a gap. These fixtures do not certify ACLs, general process exit or unimplemented object classes.
 
+`KernelDataExportTests.cpp` checks object identity, availability, thunk capacity, read-only/NX permissions, undeclared debugger bytes and recovery dependencies. `DriverDataExportTests.cpp` runs original `driver_data.c` with real DATA imports across available backends, both contracts and image bases, including unload and rejected writes/execution. Scenario, C ABI, CLI and Python tests cover strict debugger booleans and report transport. Native outcomes are required by `NativeDriverTests.def`; unavailable backends remain coverage gaps.
+
 ### Live proc and maintained file metadata
 
 `LinuxProc` checks x64 and AArch64 stat bytes, sparse page allocation, truncation,
@@ -6711,3 +6841,22 @@ real cooperative thread creation/join and libc DIR/FILE reads. Run
 Android and process-public test targets, then the four OS/session suites for
 shared-owner changes. `test_android_live_proc_and_maintained_stat` checks Python
 against the built SDK; unavailable backends are skips, not successful coverage.
+
+### Native JNI and Binder contracts
+
+`AndroidJNI` executes independent O0/O2 callers with ordinary/APS2/RELR
+relocations, validating complete string/array bytes, copy-back modes, exception
+cleanup, local/global lifetime, thread attachment and invalid identity/borrow
+controls. `AndroidBinder` covers control records, looper responses, shared-open
+ownership and per-thread state. `LinuxBinder` checks both LP64 kernel ABIs,
+including full records, guards, output aliases and rejected model combinations.
+Process-public tests compare complete C API/CLI reports, and Python integration
+runs the same guest functions. Build the Android, Linux, process-public and
+execution-session targets, run `ctest -R 'AndroidJNI|Binder'`, then their complete
+owner labels for changes to shared models. GPU context fixtures also check known
+empty queues, unknown external queues and invalid timestamp copy-out. Missing
+native transports remain skips, not execution evidence.
+
+`KernelNamespaceTests.cpp` checks typed names, root-relative and case-sensitive lookup, buffer sizing/copy order, captured link tails, permissions, process scope, IRQL, failed-output reference safety and held deletion. `DriverNamespaceTests.cpp` runs original `driver_namespace.c` on available Unicorn/KVM/WHP/HVF, both contracts, both load addresses and cooperative/17-instruction scheduling. `NativeDriverTests.def` requires native outcomes. Unavailable backends and unsupported information/security classes remain coverage gaps.
+
+`KernelRegistryTests.cpp` covers independent opens, typed references, cloned handles, process scope, generic mapping, deleted identities, odd/short name buffers, aliased output ordering and failure/capacity boundaries. Original `fixtures/driver_registry_objects.c` runs through `DriverRegistryObjectTests.cpp` on each available backend, both execution contracts and image bases, with cooperative and 17-instruction scheduling. A deliberate pointer leak verifies unload rejection. Native acceptance requires all four contract/base outcomes.

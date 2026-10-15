@@ -94,6 +94,14 @@ derived facts separately from the authenticated loader descriptor. HighIR
 requires every reaching state to agree about region membership before emitting
 a structured region. Unknown transitions retain annotations rather than
 inventing an IP-to-state map.
+
+SEH state-store receipts retain the exact source occurrence, width, literal and
+input/output levels. A finally callback's frame effects remain partitioned by
+its resulting level; local unwind reloads that level before choosing the next
+cleanup. This preserves activation and retirement performed inside a callback,
+including the untouched high bytes of a narrow write. These source facts alone
+do not authorize a generated physical registration write.
+
 C++ catches have a separate runtime context. The active catch guard first
 searches tries inside that catch; an unmatched exception continues through
 enclosing guards and the parent registration. LowIR records each possible
@@ -183,6 +191,32 @@ nested handler entry into its outer scope. Original functions and preserved
 direct callees must have checked caller-cleanup stack behavior. Indirect or
 unproved cleanup conventions remain rejected.
 
+A runtime-only finally may return immediately after `RaiseException` without
+initializing EAX. Its incidental scalar result can be discarded only after the
+complete body, entry kinds and physical near returns are checked. Ordinary
+callers, shared filter/handler entries and other uses of that result still
+require an observation proof; a `void` import declaration alone is insufficient.
+
+Native callback TryLevel writes additionally require
+`LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, supplied by the pinned r5
+compiler and absent from r4. The current path accepts checked constant 8-, 16-
+and 32-bit stores with a proved finite set of complete results. Narrow writes
+preserve untouched high bytes. Multiple results use a volatile full-word reload
+after the source store and select the matching physical update before continuing.
+The installer checks the exact reload, complete result domain, unique update on
+each case edge and common continuation; case addresses cannot escape. Each
+generated write binds the exact
+source occurrence, owning callback, recovered parent frame and scope semantic
+token to LLVM's generated state index, or the checked EH3/EH4 outside sentinel.
+The installer replays the logical source store and checks the physical MOV32
+bytes, frame displacement, base register, immediate and unique code range
+against the compiler receipt. Missing, extra or reordered writes refuse
+installation. Scopes reached only through these callback writes retain their
+language-table rows without becoming active on parent entry; all retained rows
+must follow checked parent states or callback transition results and their
+enclosing scopes. This contract covers checked SEH3/SEH4 frames; EH4 nonlocal
+jump buffers and the separate C++ lifetime contracts remain outside it.
+
 Search filters may read their current `EXCEPTION_POINTERS`, its record link,
 and the 32-bit `ExceptionCode` and `ExceptionFlags` fields. Each source load is
 bound to its filter invocation. Independent installation replay checks the
@@ -244,7 +278,30 @@ read their arguments from their own outlined stack. A nonlocal unwind may
 continue through such a raise when the active filter search proves a
 continue-execution disposition. The same frame interpreter propagates filter
 writes back to the suspended finally, preserves its private stack, and rejects
-changes to registration administration or a live jump buffer. Mapped PE data,
+unproved changes to registration administration or a live jump buffer. Filter
+dispositions stay paired with their frame effects and written TryLevels through
+shared return blocks. Zero continues along the runtime's captured search
+cursor; any negative 32-bit result continues execution. Every explored path
+must resume the suspended invocation before it can supply returning effects.
+When a nonlocal resumption has several possible states, the proof pairs each
+logical state left at entry or by the last completed callback with its final
+runtime state. This includes subsequent filter-only unwind steps. A complete,
+unambiguous projection permits one volatile read and checked state remapping
+after the capture returns; a single result uses the constant-state path.
+The installer checks the read, mapping keys/results, conditional restore and
+ordering. Missing or contradictory projections remain refused.
+Native scope numbering must also preserve source index order: the CRT compares
+current and saved states numerically, including unrelated sibling scopes. LLVM
+orders authenticated source rows before assigning invoke/asynchronous states;
+installation rejects any reordered table for a function with a jump capture.
+Scopes activated only by a continuing filter receive independent filter and
+handler entry proofs from the returned frame, even when ordinary parent flow
+never entered them. The ordinary state solver shares the same bounded filter
+interpreter with nonlocal unwind and carries its parent-frame effects forward.
+Handler selection supplies no ordinary returning frame; it still prevents a
+closed nonlocal resumption proof.
+Scopes without any proved activation remain unsupported.
+Mapped PE data,
 including zero-fill storage, retains its runtime values and access permissions;
 overlapping mappings, import writes and escaping frame pointers refuse.
 

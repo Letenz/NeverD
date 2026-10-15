@@ -76,6 +76,8 @@ llvm::Expected<std::string> KernelModel::linkKey(llvm::StringRef Name) const {
   std::string Key = foldedASCII(Name.str());
   if (singleComponent(Key, DosDevicesPrefix))
     return DosDeviceAliasPrefix.str() + Key.substr(DosDevicesPrefix.size());
+  if (singleComponent(Key, "\\GLOBAL??\\"))
+    return DosDeviceAliasPrefix.str() + Key.substr(10);
   if (singleComponent(Key, DosDeviceAliasPrefix))
     return Key;
   return modelError("symbolic-link model supports only \\DosDevices\\Name or "
@@ -87,21 +89,22 @@ KernelModel::resolveDeviceName(llvm::StringRef Name) const {
   if (auto E = validateObjectNameText(Name))
     return E;
   for (const auto &[Address, Object] : Devices)
-    if (Object.Name == Name)
+    if (!Object.DeletePending && Object.Name == Name)
       return Address;
   const auto Folded = foldedASCII(Name.str());
   if (!singleComponent(Folded, DosDevicesPrefix) &&
-      !singleComponent(Folded, DosDeviceAliasPrefix))
+      !singleComponent(Folded, DosDeviceAliasPrefix) &&
+      !singleComponent(Folded, "\\GLOBAL??\\"))
     return 0;
   auto Key = linkKey(Name);
   if (!Key)
     return Key.takeError();
-  auto Link = SymbolicLinks.find(*Key);
-  if (Link == SymbolicLinks.end())
+  const auto Link = findSymbolicLink(*Key);
+  if (!Link)
     return 0;
-  const auto Target = foldedASCII(Link->second);
+  const auto Target = foldedASCII(SymbolicLinks.at(Link).Target);
   for (const auto &[Address, Object] : Devices)
-    if (foldedASCII(Object.Name) == Target)
+    if (!Object.DeletePending && foldedASCII(Object.Name) == Target)
       return Address;
   return 0;
 }
@@ -238,6 +241,7 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Object)
     return Object.takeError();
   DriverObject = *Object;
+  ReferencedObjects.emplace(DriverObject, ObjectReferences{ObjectKind::Driver});
   auto Extension = allocate(DriverExtensionSize);
   if (!Extension)
     return Extension.takeError();
@@ -268,7 +272,9 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Path)
     return Path.takeError();
   RegistryPath = *Path;
-  auto Name = makeUnicodeString(DriverPrefix.str() + Options.ServiceName);
+  ReferencedObjects.at(DriverObject).Name =
+      DriverPrefix.str() + Options.ServiceName;
+  auto Name = makeUnicodeString(ReferencedObjects.at(DriverObject).Name);
   if (!Name)
     return Name.takeError();
   auto Hardware = makeUnicodeString(RegistryHardwarePath.str());
@@ -328,7 +334,9 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Watch)
     return Watch.takeError();
   DispatchInitialization = std::move(*Watch);
-  return llvm::Error::success();
+  if (auto E = initializeObjectNamespace())
+    return E;
+  return initializeDataExports(Options);
 }
 
 llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
@@ -450,6 +458,7 @@ llvm::Expected<uint64_t> KernelModel::createDevice(llvm::ArrayRef<uint64_t> A) {
     if (auto Restore =
             Memory.writeInteger(DriverObject + DriverDeviceHead, *Previous, 8))
       return llvm::joinErrors(std::move(E), std::move(Restore));
+    ReferencedObjects.erase(Created->Address);
     Devices.erase(Created->Address);
     return E;
   }
@@ -490,7 +499,7 @@ KernelModel::createDeviceObjectForOwner(llvm::StringRef Name,
     if (!singleComponent(Key, DevicePrefix))
       return modelError("device-name model supports \\Device\\Name only");
     for (const auto &[Address, Existing] : Devices)
-      if (foldedASCII(Existing.Name) == Key)
+      if (!Existing.DeletePending && foldedASCII(Existing.Name) == Key)
         return DeviceCreation{StatusObjectNameCollision, 0};
   }
   auto Previous = Memory.readInteger(Owner + DriverDeviceHead, 8);
@@ -539,6 +548,7 @@ KernelModel::createDeviceObjectForOwner(llvm::StringRef Name,
   Device.OwnerKind = OwnerKind;
   Device.Size = Size;
   Devices.emplace(*Object, std::move(Device));
+  ReferencedObjects.emplace(*Object, ObjectReferences{ObjectKind::Device});
   return DeviceCreation{StatusSuccess, *Object};
 }
 
@@ -551,9 +561,20 @@ KernelModel::createSymbolicLink(llvm::StringRef Name, llvm::StringRef Target) {
     return E;
   if (!singleComponent(foldedASCII(Target.str()), DevicePrefix))
     return modelError("symbolic-link targets must be \\Device\\Name");
-  if (SymbolicLinks.count(*Key))
+  if (findSymbolicLink(*Key))
     return StatusObjectNameCollision;
-  SymbolicLinks.emplace(*Key, Target.str());
+  auto Object = allocate(profile::ProcessTokenSize);
+  if (!Object)
+    return Object.takeError();
+  ReferencedObjects.emplace(
+      *Object, ObjectReferences{ObjectKind::SymbolicLink, 0, 0,
+                                "\\GLOBAL??\\" +
+                                    Name.substr(Name.rfind('\\') + 1).str()});
+  std::vector<uint8_t> Bytes((Target.size() + 1) * 2);
+  for (size_t I = 0; I < Target.size(); ++I)
+    Bytes[2 * I] = uint8_t(Target[I]);
+  SymbolicLinks.emplace(*Object,
+                        SymbolicLinkObject{Target.str(), std::move(Bytes)});
   return StatusSuccess;
 }
 
@@ -561,7 +582,12 @@ llvm::Expected<uint32_t> KernelModel::deleteSymbolicLink(llvm::StringRef Name) {
   auto Key = linkKey(Name.str());
   if (!Key)
     return Key.takeError();
-  return SymbolicLinks.erase(*Key) ? StatusSuccess : StatusObjectNameNotFound;
+  const auto Object = findSymbolicLink(*Key);
+  if (!Object)
+    return StatusObjectNameNotFound;
+  SymbolicLinks.at(Object).Permanent = false;
+  retireObjectIfUnreferenced(Object);
+  return StatusSuccess;
 }
 
 llvm::Error KernelModel::deleteDevice(uint64_t Address) {
@@ -587,7 +613,8 @@ llvm::Error KernelModel::retireDeviceIfUnreferenced(uint64_t Address) {
   auto It = Devices.find(Address);
   if (It == Devices.end())
     return modelError("IoDeleteDevice received an unknown or deleted device");
-  const auto &Device = It->second;
+  auto &Device = It->second;
+  const auto &References = ReferencedObjects.at(Address);
   if (!Device.DeletePending || Device.InternalReferences || Device.Lower ||
       Device.Upper || Scheduler.hasOutstanding(Address))
     return llvm::Error::success();
@@ -597,31 +624,44 @@ llvm::Error KernelModel::retireDeviceIfUnreferenced(uint64_t Address) {
   for (const auto &[IRP, Request] : Requests)
     if (Request.Device == Address)
       return llvm::Error::success();
-  uint64_t Link = Device.OwnerDriver + DriverDeviceHead;
-  std::set<uint64_t> Seen;
-  while (true) {
-    auto Current = Memory.readInteger(Link, 8);
-    if (!Current)
-      return Current.takeError();
-    if (!*Current || !Devices.count(*Current) ||
-        Devices.at(*Current).OwnerDriver != Device.OwnerDriver ||
-        !Seen.insert(*Current).second)
-      return modelError("device missing from, or cycle in, DRIVER_OBJECT list");
-    auto Next = Memory.readInteger(*Current + DeviceNext, 8);
-    if (!Next)
-      return Next.takeError();
-    if (*Current == Address) {
-      if (auto E = prepareReleaseRange(Address, Device.Size))
-        return E;
-      if (auto E = Memory.writeInteger(Link, *Next, 8))
-        return E;
-      FreedRanges.emplace(Address, Device.Size);
-      Devices.erase(It);
-      WorkReferences.erase(Address);
-      return llvm::Error::success();
+  const bool ReleaseStorage = !References.Pointers && !References.Handles;
+  if (ReleaseStorage)
+    if (auto E = prepareReleaseRange(Address, Device.Size))
+      return E;
+  // I/O-manager deletion removes the driver-list entry independently of
+  // object-manager pointer references. Those references retain the storage.
+  if (!Device.UnlinkedFromDriver) {
+    uint64_t Link = Device.OwnerDriver + DriverDeviceHead;
+    std::set<uint64_t> Seen;
+    while (true) {
+      auto Current = Memory.readInteger(Link, 8);
+      if (!Current)
+        return Current.takeError();
+      if (!*Current || !Devices.count(*Current) ||
+          Devices.at(*Current).OwnerDriver != Device.OwnerDriver ||
+          Devices.at(*Current).UnlinkedFromDriver ||
+          !Seen.insert(*Current).second)
+        return modelError(
+            "device missing from, or cycle in, DRIVER_OBJECT list");
+      auto Next = Memory.readInteger(*Current + DeviceNext, 8);
+      if (!Next)
+        return Next.takeError();
+      if (*Current == Address) {
+        if (auto E = Memory.writeInteger(Link, *Next, 8))
+          return E;
+        Device.UnlinkedFromDriver = true;
+        break;
+      }
+      Link = *Current + DeviceNext;
     }
-    Link = *Current + DeviceNext;
   }
+  if (!ReleaseStorage)
+    return llvm::Error::success();
+  FreedRanges.emplace(Address, Device.Size);
+  Devices.erase(It);
+  ReferencedObjects.erase(Address);
+  WorkReferences.erase(Address);
+  return llvm::Error::success();
 }
 
 llvm::Error KernelModel::snapshot() {
@@ -688,6 +728,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return llvm::Error::success();
   if (Size > UINT64_MAX - Address)
     return modelError("overflowing guest access in Windows model");
+  if (auto E = validateDataExportAccess(Address, Size, IsWrite))
+    return E;
   if (auto E = validateBugCheckAccess(Address, Size, IsWrite))
     return E;
   if (auto E = validateLookasideAccess(Address, Size, IsWrite))
@@ -774,6 +816,12 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   for (const auto &[Object, Thread] : ThreadObjects)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque thread object");
+  for (const auto &[Object, State] : ReferencedObjects)
+    if ((State.Kind == ObjectKind::Directory ||
+         State.Kind == ObjectKind::SymbolicLink ||
+         State.Kind == ObjectKind::Key) &&
+        Address < Object + profile::ProcessTokenSize && Object < End)
+      return modelError("guest access to an opaque namespace object");
   for (const auto &[Kind, Object] : ObjectTypes)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque object type");

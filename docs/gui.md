@@ -207,6 +207,31 @@ the inspection and optimized source views keep separate cached modules.
 LLVM views construct HighIR only if a later source view needs it, while keeping
 shared ABI and return recovery in the initial preparation.
 
+The LLVM IR view shows the function in a module of its own, as `llvm-extract`
+leaves it, so the text reads and assembles alone. The target, types, globals
+and functions it refers to are declared before it and fold into one line; the
+attribute groups and metadata it uses follow it and fold into another. Comments
+give the image behind what the IR names: each function's address, with the
+listing's name where the IR names it otherwise (`; Address: 0x117F check`), and
+beside an instruction each address it reaches through an image mirror, with
+what the listing calls it or the string there
+(`; 0x3FD8 __libc_start_main_ptr`, `; 0x2004 "%d\n"`). An image mirror such as
+`@__nd_codeptr_3DB0` is NeverD's stand-in for a range of the image, which keeps
+the IR free of absolute addresses; it is declared under a comment that says so:
+how many image bytes at which address and in which sections it stands for,
+whether they hold pointers the loader relocates, that an offset into it is an
+image address, and the offsets the function uses with what the listing names
+there (`+552 = 0x3FD8 __libc_start_main_ptr`). Double-clicking a global goes
+where it stands for: a function to that function, and a mirror on an
+instruction to the byte its constant offset reaches, such as the GOT slot
+`_start` calls `__libc_start_main` through. Hovering a global shows the comment
+over its declaration, the declaration and the address a double-click goes to.
+A name the binary does not have, such as an LLVM intrinsic, goes to its
+declaration. Double-clicking a value, block label, parameter, attribute
+group (`#0`) or metadata node (`!4`) goes to the line that defines it, and an
+address or name in a comment resolves as it reads.
+`neverd export --format ir --func` writes the same module.
+
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
 the requested function. F5 or Tab pressed while a jump is loading decompiles the

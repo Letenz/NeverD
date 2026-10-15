@@ -756,6 +756,33 @@ private slots:
     }
   }
 
+  void outputLogClearsFromItsMenu() {
+    Workbench bench;
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output);
+    auto *log = output->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    QCOMPARE(log->contextMenuPolicy(), Qt::CustomContextMenu);
+    output->append(QStringLiteral("first line"));
+    const auto action = [](const std::unique_ptr<QMenu> &menu,
+                           const char *name) {
+      return menu->findChild<QAction *>(QLatin1String(name));
+    };
+    std::unique_ptr<QMenu> menu(output->createLogMenu());
+    QVERIFY(action(menu, "outputCopy") && action(menu, "outputSelectAll"));
+    QVERIFY(!action(menu, "outputCopy")->isEnabled());
+    QVERIFY(action(menu, "outputClear")->isEnabled());
+    action(menu, "outputSelectAll")->trigger();
+    QVERIFY(log->textCursor().hasSelection());
+    menu.reset(output->createLogMenu());
+    QVERIFY(action(menu, "outputCopy")->isEnabled());
+    action(menu, "outputClear")->trigger();
+    QVERIFY(log->document()->isEmpty());
+    // An empty log has nothing to clear.
+    menu.reset(output->createLogMenu());
+    QVERIFY(!action(menu, "outputClear")->isEnabled());
+  }
+
   void copyingCharacterSelections() {
     QFETCH(QString, view);
     QFETCH(bool, reverse);
@@ -2575,6 +2602,128 @@ private slots:
                              OpenTimeoutMs);
     QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
                  QStringLiteral("Pseudocode-A (Rust)"));
+  }
+
+  void llvmIrNamesGoWhereTheyStandFor() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("llvm-view.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    view->setRepresentation(QStringLiteral("llvm"));
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() && code->representation() == QLatin1String("llvm") &&
+            code->hasPrelude(),
+        OpenTimeoutMs);
+    // The function shows alone: its declarations fold before it, its
+    // attribute groups and metadata after it.
+    QVERIFY(code->preludeFolded());
+    QVERIFY(code->hasEpilogue() && code->epilogueFolded());
+    QCOMPARE(code->lineCount(), 14);
+    const QStringList source = code->allText().split(QLatin1Char('\n'));
+    QCOMPARE(source.size(), 29);
+    QSignalSpy messages(&bench.session, &Session::message);
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const qreal width = metrics.horizontalAdvance(QLatin1Char('M'));
+    // Double-click occurrence \p occurrence of \p token on displayed line
+    // \p line, which shows source line \p sourceLine, inside its second
+    // character.
+    const auto doubleClick = [&](int line, int sourceLine, const QString &token,
+                                 int occurrence = 0) {
+      int column = -1;
+      for (int i = 0; i <= occurrence; ++i)
+        column = int(source[sourceLine].indexOf(token, column + 1));
+      QVERIFY2(column >= 0, qPrintable(token));
+      code->setCursorLine(line);
+      code->horizontalScrollBar()->setValue(0);
+      const QPoint point(
+          qRound(6 + int(5 * width) + (column + 1.5) * width),
+          qRound((line - code->verticalScrollBar()->value() + 0.5) *
+                 std::ceil(metrics.lineSpacing())));
+      code->setFocus();
+      QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        point);
+      QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier,
+                         point);
+    };
+    // Metadata the definition names opens the epilogue at its node.
+    doubleClick(2, 14, QStringLiteral("!0"));
+    QVERIFY(!code->epilogueFolded());
+    QCOMPARE(code->cursorLine(), 28 - 12);
+    // A global the binary does not name shows at its declaration.
+    doubleClick(7, 19, QStringLiteral("@llvm.example"));
+    QCOMPARE(names.size(), 1);
+    QCOMPARE(names.last().first().toString(), QStringLiteral("llvm.example"));
+    QTRY_VERIFY(!code->preludeFolded());
+    QTRY_COMPARE(code->cursorLine(), 11);
+    // Locals, blocks, parameters and attribute groups open where defined.
+    doubleClick(18, 18, QStringLiteral("%slot"));
+    QCOMPARE(code->cursorLine(), 16);
+    doubleClick(20, 20, QStringLiteral("%done"));
+    QCOMPARE(code->cursorLine(), 22);
+    doubleClick(18, 18, QStringLiteral("%arg0"));
+    QCOMPARE(code->cursorLine(), 14);
+    doubleClick(14, 14, QStringLiteral("#0"));
+    QCOMPARE(code->cursorLine(), 26);
+    QCOMPARE(names.size(), 1);
+    // A comment's address resolves as it reads.
+    doubleClick(16, 16, QStringLiteral("0xFFFF800012343008"));
+    QCOMPARE(names.size(), 2);
+    QCOMPARE(names.last().first().toString(),
+             QStringLiteral("0xFFFF800012343008"));
+    // Hovering a mirror tells what it is: the comment over its declaration,
+    // the declaration, and where this line's spelling goes.
+    const int load = int(source[16].indexOf(QStringLiteral("@__nd_codeptr_")));
+    const QString hover = code->globalHoverText(16, load + 2);
+    QVERIFY2(
+        hover.startsWith(QStringLiteral(
+            "NeverD's mirror of the 64 image bytes at 0xFFFF800012343000")),
+        qPrintable(hover));
+    QVERIFY2(hover.contains(
+                 QStringLiteral("\n  +8 = 0xFFFF800012343008 data_slot\n")),
+             qPrintable(hover));
+    QVERIFY2(hover.contains(QStringLiteral(
+                 "\n@__nd_codeptr_FFFF800012343000 = external global")),
+             qPrintable(hover));
+    QVERIFY2(hover.endsWith(
+                 QStringLiteral("Double-click to go to 0xFFFF800012343008.")),
+             qPrintable(hover));
+    QVERIFY(code->globalHoverText(
+                    18, int(source[18].indexOf(QStringLiteral("%slot"))))
+                .isEmpty());
+    // An image mirror stands for its first byte where declared, and for the
+    // byte the load's constant offset reaches on the load.
+    doubleClick(9, 9, QStringLiteral("@__nd_codeptr_"));
+    QCOMPARE(names.size(), 3);
+    QCOMPARE(names.last().first().toString(), hexAddress(Base + 0x3000));
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(Base + 0x3000));
+    // A mirror a line reaches at two offsets: each spelling, its own.
+    doubleClick(17, 17, QStringLiteral("@__nd_codeptr_"), 1);
+    QCOMPARE(names.size(), 4);
+    QCOMPARE(names.last().first().toString(), hexAddress(Base + 0x3018));
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(Base + 0x3018));
+    doubleClick(16, 16, QStringLiteral("@__nd_codeptr_"));
+    QCOMPARE(names.size(), 5);
+    QCOMPARE(names.last().first().toString(), hexAddress(Base + 0x3008));
+    QTRY_COMPARE(bench.window->disassembly()->currentAddress(),
+                 std::optional<Address>(Base + 0x3008));
+    QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+    for (const auto &row : messages)
+      QVERIFY(
+          !row.first().toString().startsWith(QStringLiteral("Cannot jump to")));
   }
 
   void cppPseudocodeRetainsASeparateCChoice() {

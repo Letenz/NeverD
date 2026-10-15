@@ -35,6 +35,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPainter>
@@ -1191,6 +1192,39 @@ private slots:
     QTRY_VERIFY(!button("closeButton")->isVisible());
     window.showNormal();
     QTRY_VERIFY(button("closeButton")->isVisible());
+  }
+
+  void titleFitLeavesAMessageBoxItsWrapping() {
+    // A rich text wraps from the start, as About NeverD's does.  Fitting the
+    // title measured it wrapped, so the box then showed it unwrapped and cut
+    // off at the title's width, with no way to resize it.
+    const QString text = QStringLiteral(
+        "<h3>NeverD 1.0</h3><p>Interactive disassembler and decompiler "
+        "workbench.</p><p>Licensed under the GNU Affero General Public "
+        "License v3. Icons are original NeverD artwork.</p>");
+    QMessageBox plain(QMessageBox::Information, QStringLiteral("About"), text);
+    QMessageBox fitted(QMessageBox::Information, QStringLiteral("About"), text);
+    WindowFrame::fitTitle(fitted, 240);
+    plain.show();
+    fitted.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&fitted));
+    QCOMPARE(fitted.size(), plain.size());
+    const auto *label =
+        fitted.findChild<QLabel *>(QStringLiteral("qt_msgbox_label"));
+    QVERIFY(label && label->wordWrap());
+    QVERIFY(label->heightForWidth(label->width()) <= label->height());
+  }
+
+  void titleFitWidensAShortMessage() {
+    // A text narrower than the title still widens to show the title whole.
+    for (const QString &text :
+         {QStringLiteral("Done."), QStringLiteral("<b>Done.</b>")}) {
+      QMessageBox box(QMessageBox::Information, QStringLiteral("Saved"), text);
+      WindowFrame::fitTitle(box, 420);
+      box.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&box));
+      QVERIFY2(box.width() >= 420, qPrintable(text));
+    }
   }
 
   void nativeFrameKeepsTheTitleBarOnScreen() {

@@ -6,8 +6,10 @@
 
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 
+#include "../X86/CompiledSEHStateWrites.h"
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHStateWrites.h"
 #include "COFFRegistrationTableProof.h"
 
 #include "neverd/Limits.h"
@@ -217,6 +219,9 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
       if (llvm::Error Error =
               validateCOFFRegistrationSemanticRows(*Function, *EH, Compiled))
         return std::move(Error);
+      if (llvm::Error Error =
+              validateCOFFRegistrationSEHStateWrites(*Function, *EH, Compiled))
+        return std::move(Error);
       RequiredHandlers.insert(uint32_t(EH->PersonalityVA - Image.Base));
     }
     SourceNames.insert(Function->getName().str());
@@ -244,6 +249,17 @@ llvm::Expected<COFFRegistrationPatchUpdate> prepareCOFFRegistrationPatch(
     if (!SourceNames.count(Row.SourceFunction))
       return reject(
           "generated scope row belongs to an uninstalled source owner");
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+  if (!validateCompiledX86SEHStateWrites(Compiled))
+    return reject("physical SEH state-write receipts have no valid closure");
+  for (const auto &Frame : Compiled.WinX86SEHFrames)
+    if (!SourceNames.count(Frame.SourceFunction))
+      return reject(
+          "physical SEH frame belongs to an uninstalled source owner");
+  for (const auto &Write : Compiled.WinX86SEHStateWrites)
+    if (!SourceNames.count(Write.ParentFrame.SourceFunction))
+      return reject("callback state write belongs to an uninstalled parent");
+#endif
 
   auto Prepared = Compiled.Bytes;
   auto Append = [&](llvm::ArrayRef<uint8_t> Bytes) -> llvm::Expected<uint32_t> {

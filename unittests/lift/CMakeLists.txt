@@ -1404,6 +1404,9 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationSEHInvocationTests.cpp
   eh/RegistrationSEHExceptionTests.cpp
   eh/RegistrationJumpStateTests.cpp
+  eh/RegistrationJumpTestUtils.cpp
+  eh/RegistrationFilterStateTests.cpp
+  eh/RegistrationSEHTryLevelTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
   eh/RegistrationRuntimeMemberStateTests.cpp
   eh/RegistrationMemberArgumentStateTests.cpp
@@ -1486,14 +1489,18 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
+  eh/RegistrationSEHStateStoreTests.cpp
   eh/RegistrationSEHExceptionNativeTests.cpp
   eh/RegistrationSEHJumpNativeTests.cpp
+  eh/RegistrationSEHJumpStateNativeTests.cpp
   eh/RegistrationSEHJumpABITests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
   eh/RegistrationSEHDynamicScopeTests.cpp
   eh/RegistrationSEHFinallyResultTests.cpp
+  eh/RegistrationSEHStateNativeTests.cpp
+  eh/RegistrationSEHStateDispatchTests.cpp
   eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
@@ -1577,6 +1584,7 @@ target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
 
 add_neverd_unittest(NeverDRegistrationCallResultTests
   eh/RegistrationCallResultTests.cpp
+  eh/RegistrationSEHRuntimeReturnTests.cpp
   eh/RegistrationLLVMCallResultTests.cpp
   LINK_COMPONENTS IRMed BackendLLVM
 )
@@ -1739,6 +1747,7 @@ add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/ReplacementIRTests.cpp
   eh/SourcePatchBindingsTests.cpp
   eh/RewriteFunctionProvenanceTests.cpp
+  eh/CompiledSEHStateWriteTests.cpp
 
   LINK_COMPONENTS
   BackendC

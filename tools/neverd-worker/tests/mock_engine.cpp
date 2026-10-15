@@ -1075,10 +1075,106 @@ const char *neverd_ir_view_ex_json(neverd_session_t s, neverd_va_t address,
   return copy(page.dump());
 }
 
+namespace {
+/// An LLVM IR page as the engine pages a function's view: the function
+/// between the declarations of what it refers to and its attribute groups
+/// and metadata, with the image address each global name stands for.
+std::string llvmViewPage(std::uint64_t address, std::size_t offset,
+                         std::size_t limit) {
+  const std::string mirror = "@__nd_codeptr_FFFF800012343000";
+  const std::string function =
+      "@function_" + std::to_string((address - Base) / 16);
+  const std::vector<std::string> lines{
+      "; ModuleID = 'neverd_output'\n",
+      "target triple = \"x86_64-unknown-linux-gnu\"\n",
+      "\n",
+      "; NeverD's mirror of the 64 image bytes at 0xFFFF800012343000 (.data), "
+      "which\n",
+      "; hold pointers the loader relocates. An offset into it is an image "
+      "address,\n",
+      "; 0xFFFF800012343000 + offset. This function uses:\n",
+      ";   +8 = 0xFFFF800012343008 data_slot\n",
+      ";   +16 = 0xFFFF800012343010\n",
+      ";   +24 = 0xFFFF800012343018\n",
+      mirror + " = external global [64 x i8]\n",
+      "\n",
+      "declare i64 @llvm.example(i64)\n",
+      "\n",
+      "; Address: " + hexAddress(address) + "\n",
+      "define i64 " + function + "(i64 %arg0) #0 !neverd.windows.eh !0 {\n",
+      "entry:\n",
+      "  %slot = load i64, ptr getelementptr (i8, ptr " + mirror +
+          ", i64 8), align 8 ; 0xFFFF800012343008 data_slot\n",
+      "  %pick = select i1 true, ptr getelementptr (i8, ptr " + mirror +
+          ", i64 16), ptr getelementptr (i8, ptr " + mirror +
+          ", i64 24) ; 0xFFFF800012343010, 0xFFFF800012343018\n",
+      "  %sum = add i64 %slot, %arg0\n",
+      "  %folded = call i64 @llvm.example(i64 %sum)\n",
+      "  br label %done\n",
+      "\n",
+      "done:                                             ; preds = %entry\n",
+      "  ret i64 %folded\n",
+      "}\n",
+      "\n",
+      "attributes #0 = { nounwind }\n",
+      "\n",
+      "!0 = !{}\n"};
+  constexpr std::size_t Definition = 13, Epilogue = 25;
+  const Json references = Json::array(
+      {{{"line", 9}, {"name", mirror}, {"address", hexAddress(DataBase)}},
+       {{"line", 14}, {"name", function}, {"address", hexAddress(address)}},
+       {{"line", 16}, {"name", mirror}, {"address", hexAddress(DataBase + 8)}},
+       {{"line", 17},
+        {"name", mirror},
+        {"address", hexAddress(DataBase + 0x10)}},
+       {{"line", 17},
+        {"name", mirror},
+        {"address", hexAddress(DataBase + 0x18)}}});
+  const auto bytesBefore = [&](std::size_t line) {
+    std::size_t bytes = 0;
+    for (std::size_t i = 0; i < line && i < lines.size(); ++i)
+      bytes += lines[i].size();
+    return bytes;
+  };
+  const auto first = std::min(offset, lines.size());
+  const auto end = first + std::min(limit, lines.size() - first);
+  std::string text;
+  for (auto i = first; i < end; ++i)
+    text += lines[i];
+  Json onPage = Json::array();
+  for (const auto &reference : references)
+    if (reference["line"].get<std::size_t>() >= first &&
+        reference["line"].get<std::size_t>() < end)
+      onPage.push_back(reference);
+  return Json{{"schema_version", 1},
+              {"address", hexAddress(address)},
+              {"representation", "llvm"},
+              {"mapping_status", "unsupported_representation"},
+              {"text", text},
+              {"rows", Json::array()},
+              {"library_regions", Json::array()},
+              {"references", onPage},
+              {"offset", first},
+              {"byte_offset", bytesBefore(first)},
+              {"total_lines", lines.size()},
+              {"complete", end == lines.size()},
+              {"next_offset", end == lines.size() ? Json(nullptr) : Json(end)},
+              {"prelude",
+               {{"lines", Definition}, {"end_byte", bytesBefore(Definition)}}},
+              {"epilogue",
+               {{"lines", lines.size() - Epilogue},
+                {"begin_byte", bytesBefore(Epilogue)}}}}
+      .dump();
+}
+} // namespace
+
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  if (session(s)->path.ends_with("llvm-view.bin") &&
+      std::string(representation) == "llvm")
+    return copy(llvmViewPage(address, offset, limit));
   if (session(s)->path.find("xrefs-") != std::string::npos) {
     const bool delayed = session(s)->path.ends_with("xrefs-delayed.bin");
     const bool unmapped = session(s)->path.ends_with("xrefs-unmapped.bin");

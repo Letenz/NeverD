@@ -37,11 +37,13 @@ std::optional<SymRef>
 normalizeFrameExpression(SymContext &Ctx, SymRef Value,
                          uint64_t MaxSymbolicNodes,
                          FrameOffsetNormalization &Budget) {
-  // Charge the context prefix that readability inspection can visit. Counts
-  // are fixed-width metadata: obtain the price without walking operand lists
-  // or inspecting constant payloads. These are admission/measurement units,
-  // not an upper bound on rebuilding, sorting or default sample defect guards.
-  for (uint64_t I = 0, N = Ctx.numNodes(); I != N; ++I) {
+  // Readability extends a context-owned prefix cache. Charge only its pending
+  // extension: earlier queries or builders have already computed older costs.
+  // Counts are fixed-width metadata, so pricing needs no operand-list walk or
+  // constant-payload inspection. These are admission/measurement units, not an
+  // upper bound on rebuilding, sorting or default sample defect guards.
+  for (uint64_t I = Ctx.numCachedReadabilityNodes(), N = Ctx.numNodes(); I != N;
+       ++I) {
     const SymRef R(static_cast<uint32_t>(I));
     // Operand counts and bit widths are 32-bit, so this sum cannot overflow.
     const uint64_t Cost =

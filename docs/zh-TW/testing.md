@@ -1740,6 +1740,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` 涵蓋精確恆等式、額外輸入、根身分、無快取見證的不可達述詞、預設行為、結構准入與測量計費，以及呼叫後的節點超限拒絕。`FrameNormalizationPreservesStoresAndNativeReturns` 與 `RawCodeFrameNormalization*` 使用獨立位元組檢查器驗證原始記憶體效果與實際返回位址，並涵蓋適用的兩種位元組順序、精確及不足的操作預算與回執竄改。`FrameNormalizationStrategyBindsIndependentProof` 檢查兩種二進位證明身分。
 
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 檢查快取歷史不再重複計費、新增寬常數仍需計費、工作或節點額度不足仍拒絕，以及可讀性快取副本保持獨立。
+
 ## 原生 Lift 驗收
 
 `Lift native qualification` 工作流程負責先前未完成驗證的 108 項（62 項失敗與 46 項略過）。它在原生 Linux x86-64 執行器上安裝 Clang 23 或更新版本、GNU GCC 與 i386 開發函式庫，並初始化固定版本的二進位語料。`unittests/Inputs/lift-qualification.json` 保留所有原始測試識別碼。`scripts/run_lift_qualification.py` 拒絕遺漏、重複、停用、略過、失敗與非零程序結束狀態；`qualification.json` 記錄逐項通過結果、原始碼與語料版本、編譯器版本和二進位雜湊。
@@ -1910,3 +1912,9 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 `InterpreterSpecialization.Timestamp*` 以獨立值與狀態參考實作檢查完整讀數、高半部清零、獨立與重複讀取、暫存器／旗標／記憶體／區段基址保持、精確與不足預算、非法序列及未知位址來源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 檢查原始還原完成並保留原生證明與原始碼配置拒絕。現有 `X86_64_Intrinsics` 時間戳案例檢查原始碼產生與單次讀取的完整位元結果；`DriverTimestamp` 另行檢查 Unicorn/KVM/WHP 共用時鐘策略、狀態保持、預算及溢位。平台略過不代表該後端已執行。
 
 `KernelObjectTests.cpp` 驗證已知 ID、型別/權限/模式失敗、控制代碼資訊、輸出失敗無參照洩漏、卸載及堆疊重用。`DriverObjectTests.cpp` 在可用 Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、偏好/重定位位址及協作/17 指令排程執行原創 `driver_objects.c`。`NativeDriverTests.def` 要求 KVM/WHP 結果；缺失或跳過仍為缺口。這些測試不證明 ACL、一般行程退出或未實作物件類別。
+
+`KernelDataExportTests.cpp` 驗證身分、可用性、thunk 容量、唯讀/NX、未宣告偵錯器位元組及還原相依性。`DriverDataExportTests.cpp` 使用原創 `driver_data.c` 的真實 DATA 匯入，在可用後端、兩種契約和載入基址執行，涵蓋卸載與拒絕寫入/執行。情境、C ABI、CLI 和 Python 測試驗證布林宣告及報告傳輸。`NativeDriverTests.def` 要求原生結果；不可用後端仍屬覆蓋缺口。
+
+`KernelNamespaceTests.cpp` 驗證型別、相對路徑、大小寫、緩衝區大小與複製順序、尾部位元組、權限、行程範圍、IRQL、失敗輸出及延遲刪除。`DriverNamespaceTests.cpp` 於可用 Unicorn/KVM/WHP/HVF、兩種契約、兩種位址及協作/17 指令排程執行原創 `driver_namespace.c`。`NativeDriverTests.def` 要求原生結果；不可用後端及未支援資訊/安全類別仍為缺口。
+
+`KernelRegistryTests.cpp` 涵蓋獨立開啟、型別參照、複製控制代碼、行程範圍、通用權限、刪除身分、短/奇數位元組名稱緩衝區、輸出別名順序及失敗/容量邊界。`DriverRegistryObjectTests.cpp` 在可用後端、兩種執行契約及兩個載入位址下，以協作排程及17條指令排程執行原創 `fixtures/driver_registry_objects.c`；刻意洩漏指標驗證解除載入拒絕。原生驗收要求全部四種契約/位址組合。

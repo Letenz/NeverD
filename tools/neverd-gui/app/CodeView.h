@@ -76,22 +76,42 @@ public:
   bool findText(const QString &text, bool forward);
   /// Move the cursor to \p line and reveal it.
   void setCursorLine(int line) { moveCursor(line, 0, false); }
+  /// The displayed line the cursor is on.
+  int cursorLine() const { return cursorLine_; }
   int lineCount() const { return int(lines_.size()); }
   /// Recognized library operations that can fold into one-line summaries.
   int foldableCount() const { return library_.foldableCount(); }
   bool anyFolded() const { return library_.anyFolded(); }
   /// Some recognized library operation shows as its summary.
   bool libraryFolded() const { return library_.libraryFolded(); }
-  /// C code with the includes and declarations before its definition.
+  /// Code with the declarations before its definition: C's includes and
+  /// declarations, or what an LLVM IR function refers to.
   bool hasPrelude() const;
   bool preludeFolded() const;
   void setPreludeFolded(bool folded);
+  /// LLVM IR with the attribute groups and metadata after its definition.
+  bool hasEpilogue() const;
+  bool epilogueFolded() const;
+  void setEpilogueFolded(bool folded);
   /// The source line that declares type or macro \p name in this code: a
   /// typedef, struct, union, enum or #define.  Functions are named in the
-  /// binary and navigate there instead.
+  /// binary and navigate there instead.  In LLVM IR, the line that defines a
+  /// global (`@name`), type, value or block (`%name`), attribute group (`#0`)
+  /// or metadata (`!4`).
   std::optional<int> declarationLine(const QString &name) const;
-  /// Show the declaration of \p name, expanding the prelude that holds it.
+  /// Show the declaration of \p name, expanding the fold that holds it.
   bool goToDeclaration(const QString &name);
+  /// The image address the global name at a line and column of LLVM IR
+  /// stands for there, as the engine resolved it: a function's entry, or the
+  /// byte a constant offset from an image mirror reaches.
+  std::optional<Address> globalReferenceAt(int line, int column) const;
+  /// What hovering that global shows: the comments over its declaration,
+  /// which say what it is, the declaration, and where a double-click goes.
+  /// Empty where no global stands for an image address.
+  QString globalHoverText(int line, int column) const;
+  /// Show the declaration of the global last activated as \p name, which the
+  /// binary does not name; false when this code declares none.
+  bool showUnresolvedDeclaration(const QString &name);
   /// The symbol a function declaration links \p name to with an assembler
   /// label: a C++ function reads by its stem and links by its mangled name.
   std::optional<QString> linkedSymbol(const QString &name) const;
@@ -150,8 +170,16 @@ protected:
 private:
   void request(int offset, quint64 serial);
   void appendPage(const QJsonObject &payload, int offset);
-  /// The library regions of the loaded function and its prelude.
+  /// The library regions of the loaded function, its prelude and epilogue.
   QJsonArray foldRegions() const;
+  /// The source line where the epilogue begins.
+  int epilogueLine() const;
+  /// The token at a line and column; in LLVM IR, a name with its sigil.
+  QString tokenAt(int line, int column) const;
+  /// A double-click in LLVM IR: a global goes to the image address it stands
+  /// for, or else to what the binary names so; any other name goes to the
+  /// line that defines it.
+  void activateLLVMToken();
   /// Display lines from the source, folded where the user asked.
   void rebuildLines(bool append = false);
   /// Position in the displayed text of a line and column.
@@ -194,6 +222,19 @@ private:
   QString blockStructureAfterLoad_;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
+  /// The first page's epilogue: lines and begin_byte.
+  QJsonObject epilogue_;
+  bool foldEpilogueAfterLoad_ = true;
+  /// The image addresses the global names of each source line stand for, in
+  /// the order the line spells them (LLVM IR).
+  struct GlobalReference {
+    QString name;
+    Address address = 0;
+  };
+  QHash<int, QVector<GlobalReference>> references_;
+  /// The global last activated by its name, whose declaration shows if the
+  /// binary does not name it.
+  QString unresolvedDeclaration_;
   /// The language the first page names, and how many declarations it shows
   /// as C because that language could not spell them.
   QString pageLanguage_;

@@ -10,6 +10,7 @@
 #include "MedLLVMRegistrationSEHFinally.h"
 #include "MedLLVMRegistrationSEHJump.h"
 #include "MedLLVMRegistrationSEHProof.h"
+#include "MedLLVMRegistrationSEHState.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
@@ -20,6 +21,7 @@
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 #include "neverd/backend/llvm/X86RegistrationSEHScope.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
 
@@ -27,6 +29,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
 #include <set>
@@ -236,10 +239,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
             SourceBlock = Candidate;
         if (!SourceBlock)
           return false;
-        for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores)
-          if (Store.StoreVA >= SourceBlock->StartAddr &&
-              Store.StoreVA < SourceBlock->EndAddr)
-            return false;
         for (llvm::BasicBlock *Successor : llvm::successors(Block))
           Pending.push_back(Successor);
       }
@@ -350,13 +349,19 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   auto &SourceOperations = SourceProof->Operations;
   auto &CookieCheckCalls = SourceProof->CookieCheckCalls;
 
-  // Each scope must actually participate in the proven dispatch graph.
-  std::vector<bool> Used(Regions.size());
-  for (const auto &[Block, Level] : Active)
-    for (int32_t State = Level; State >= 0;
-         State = Chain.Scopes[State].EnclosingLevel)
-      Used[State] = true;
-  if (llvm::any_of(Used, [](bool Used) { return !Used; }))
+  auto StateWrites = x86_registration::prepareSEHCallbackStateWrites(
+      Func, Parent, Requests, RegistrationMemoryIR);
+  const auto RetainedScopes = getX86RegistrationSEHRetainedScopes(Func);
+  if (!StateWrites || !RetainedScopes ||
+      (!StateWrites->empty() &&
+       !x86_registration::canPreserveSEHCallbackABI(Parent)) ||
+      (!RetainedScopes->empty() &&
+       (!x86_registration::canEmitSEHRetainedScopes(Parent) ||
+        !llvm::isa<llvm::UncondBrInst>(
+            Parent.getEntryBlock().getTerminator()) ||
+        llvm::any_of(OriginalBlockMap, [&](const auto &Block) {
+          return Block.second == &Parent.getEntryBlock();
+        }))))
     return false;
 
   struct CallPlan {
@@ -531,6 +536,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
 
   // Commit. All source occurrences, callbacks and control edges are closed.
   IncomingProjection.commit();
+  if (!StateWrites->empty()) {
+    llvm::SmallVector<llvm::GlobalValue *> CallbackABI(Outlined->begin(),
+                                                       Outlined->end());
+    llvm::appendToCompilerUsed(*Mod, CallbackABI);
+  }
   if (EH4 && !Mod->getNamedValue("__security_cookie"))
     new llvm::GlobalVariable(*Mod, llvm::Type::getInt32Ty(*Ctx), false,
                              llvm::GlobalValue::ExternalLinkage, nullptr,
@@ -665,6 +675,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   x86_registration::emitSEHNestedFinallyCalls(NestedFinallyCalls, *Outlined,
                                               CallbackInstructions, Parent,
                                               EH.CodeRange.Begin);
+  x86_registration::emitSEHCallbackStateWrites(*StateWrites, *Outlined,
+                                               CallbackInstructions, Parent);
 
   std::set<llvm::Instruction *> DeadResults(DeadCallResults.begin(),
                                             DeadCallResults.end());
@@ -829,6 +841,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
         State->second, SourceBlock.Id);
     BB.CreateInvoke(TryBegin, Block, Regions[State->second].Unwind);
   }
+  std::vector<llvm::BasicBlock *> Unwinds;
+  for (const auto &R : Regions)
+    Unwinds.push_back(R.Unwind);
+  x86_registration::emitSEHRetainedScopes(Parent, EH.CodeRange.Begin,
+                                          *RetainedScopes, Unwinds);
   for (llvm::BasicBlock *Block : AllCallbackBlocks) {
     for (llvm::Instruction &Instruction : *Block)
       if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))

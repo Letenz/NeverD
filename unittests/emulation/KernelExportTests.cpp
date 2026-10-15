@@ -431,7 +431,7 @@ TEST(KernelExports, NamespaceCapacityNeverAllocatesTheReturnSentinel) {
   const uint64_t Sentinel =
       profile::ThunkBase + profile::ThunkSize - profile::ThunkStride;
   uint64_t Next =
-      profile::ThunkBase + Registry.entries().size() * profile::ThunkStride;
+      Sentinel - Registry.availableThunkCount() * profile::ThunkStride;
   unsigned Index = 0;
   while (Next < Sentinel) {
     EXPECT_EQ(requireValue(Registry.insertFrameworkFunction(
@@ -558,7 +558,12 @@ TEST(KernelExports, ReadablePEExportsMatchTheAuthoritativeNamespace) {
       ASSERT_NE(Entry, nullptr);
       EXPECT_EQ(Entry->Name, Name);
       EXPECT_EQ(Entry->Module, Module);
-      EXPECT_EQ(Entry->Kind, KernelExportRegistry::ExportKind::ModuleExport);
+      EXPECT_TRUE(Entry->isModuleSymbol());
+      if (Entry->Kind == KernelExportRegistry::ExportKind::ModuleData) {
+        EXPECT_GE(RVA, profile::KernelModuleDataRVA);
+        EXPECT_LT(RVA, profile::KernelModuleExportRVA);
+        EXPECT_FALSE(KernelExportRegistry::overlapsThunk(Entry->Address));
+      }
       ++Seen;
     }
   }
@@ -573,7 +578,7 @@ TEST(KernelExports, OpaqueCodeRangesExcludeReadableHeadersAndExportTables) {
                              "fltmgr.sys", "ndis.sys", "netio.sys"}) {
     const uint64_t Base = *KernelExportRegistry::moduleBase(Module);
     const uint64_t Code = Base + profile::KernelModuleCodeRVA;
-    const uint64_t End = Base + profile::KernelModuleExportRVA;
+    const uint64_t End = Base + profile::KernelModuleDataRVA;
     EXPECT_FALSE(KernelExportRegistry::overlapsThunk(Base, 4096));
     EXPECT_FALSE(KernelExportRegistry::overlapsThunk(End, 4096));
     EXPECT_FALSE(KernelExportRegistry::overlapsThunk(Code, 0));
@@ -921,7 +926,7 @@ TEST_F(KernelExportLookup, ModuleMetadataIsReadOnlyAndFunctionBodiesAreOpaque) {
         std::string::npos);
     EXPECT_NE(
         llvm::toString(Model->validateGuestAccess(
-                           Base + profile::KernelModuleExportRVA - 1, 2, true))
+                           Base + profile::KernelModuleDataRVA - 1, 2, false))
             .find("thunks"),
         std::string::npos);
     // API implementations obey the same opacity contract as CPU reads.
@@ -965,7 +970,8 @@ TEST_F(KernelExportLookup, ModuleQueryRetainsBorrowedRecoveryDependencies) {
     return false;
   };
   for (const auto &[Address, Export] : Exports.entries()) {
-    EXPECT_FALSE(Contains(Address));
+    EXPECT_EQ(Contains(Address),
+              Export.Kind == KernelExportRegistry::ExportKind::ModuleData);
     EXPECT_TRUE(Contains(Address + 1));
   }
 }

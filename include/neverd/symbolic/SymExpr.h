@@ -399,6 +399,11 @@ public:
   /// appended; neither query expands the tree or constructs its text.
   SymReadability readability(SymRef R) const;
 
+  /// Number of leading nodes whose readability is already cached. Inspecting
+  /// this count does not populate the cache or construct symbolic nodes.
+  /// Metered callers can charge only the prefix extension they still need.
+  size_t numCachedReadabilityNodes() const { return ReadabilityCosts.size(); }
+
   /// Every variable reachable from \p R, in ascending variable-id order.
   void collectVars(SymRef R, llvm::SmallVectorImpl<uint32_t> &Out) const;
 

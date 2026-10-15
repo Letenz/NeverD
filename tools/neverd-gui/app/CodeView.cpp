@@ -29,6 +29,7 @@
 #include <QToolTip>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace neverd::gui {
@@ -36,8 +37,12 @@ namespace {
 constexpr int PageLines = 256;
 constexpr int Margin = 6;
 constexpr int WheelLines = 3;
-/// The fold over the lines before a C definition.
+/// The fold over the lines before a definition: C's includes and
+/// declarations, or the declarations of what LLVM IR refers to.
 constexpr char PreludeRegion[] = "prelude";
+/// The fold over the attribute groups and metadata after LLVM IR's
+/// definition.
+constexpr char EpilogueRegion[] = "epilogue";
 
 /// How a representation is colored; Source takes the language the page names.
 enum class Dialect { C, Cpp, Rust, Go, IR, LLVM, Source };
@@ -193,6 +198,161 @@ bool identifierStart(QChar c) { return c.isLetter() || c == QLatin1Char('_'); }
 bool identifierPart(QChar c) {
   return c.isLetterOrNumber() || c == QLatin1Char('_');
 }
+
+/// A token of a line of LLVM IR: a name with its sigil (`@main`, `@"a b"`,
+/// `%sub`, `#0`, `!4`, `!llvm.module.flags`), a bare word (`load`, `bb_0`),
+/// or a word of the line's comment (`0x3FD8`, `__libc_start_main_ptr`).
+struct LLVMToken {
+  QString text;
+  int begin = 0;
+  bool comment = false;
+};
+
+/// Whether \p c continues an unquoted LLVM name.
+bool llvmNamePart(QChar c) {
+  return c.isLetterOrNumber() || c == QLatin1Char('-') ||
+         c == QLatin1Char('$') || c == QLatin1Char('.') ||
+         c == QLatin1Char('_');
+}
+
+/// The tokens of a line of LLVM IR, in order, outside its strings.
+QVector<LLVMToken> llvmTokens(QStringView text) {
+  QVector<LLVMToken> tokens;
+  const int n = int(text.size());
+  for (int i = 0; i < n;) {
+    const QChar c = text.at(i);
+    if (c == QLatin1Char(';')) {
+      for (int j = i + 1; j < n;) {
+        if (!isTokenCharacter(text.at(j))) {
+          ++j;
+          continue;
+        }
+        int end = j;
+        while (end < n && isTokenCharacter(text.at(end)))
+          ++end;
+        tokens.append({text.mid(j, end - j).toString(), j, true});
+        j = end;
+      }
+      break;
+    }
+    // LLVM escapes a quote in a string, so the next quote ends it.
+    if (c == QLatin1Char('"')) {
+      const int close = int(text.indexOf(QLatin1Char('"'), i + 1));
+      if (close < 0)
+        break;
+      i = close + 1;
+      continue;
+    }
+    const bool sigil = c == QLatin1Char('@') || c == QLatin1Char('%') ||
+                       c == QLatin1Char('#') || c == QLatin1Char('!');
+    const int start = i + (sigil ? 1 : 0);
+    int end = start;
+    if (sigil && end < n && text.at(end) == QLatin1Char('"')) {
+      // A quoted global or local name; `!"..."` is a metadata string.
+      const int close = int(text.indexOf(QLatin1Char('"'), end + 1));
+      if (close < 0)
+        break;
+      if (c != QLatin1Char('@') && c != QLatin1Char('%')) {
+        i = close + 1;
+        continue;
+      }
+      end = close + 1;
+    } else {
+      while (end < n && llvmNamePart(text.at(end)))
+        ++end;
+    }
+    if (end == start) {
+      ++i;
+      continue;
+    }
+    tokens.append({text.mid(i, end - i).toString(), i, false});
+    i = end;
+  }
+  return tokens;
+}
+
+/// The token of a line of LLVM IR at \p column, or none.
+std::optional<LLVMToken> llvmTokenAt(QStringView text, int column) {
+  for (const auto &token : llvmTokens(text))
+    if (column >= token.begin && column <= token.begin + int(token.text.size()))
+      return token;
+  return std::nullopt;
+}
+
+/// A global's name without its sigil and quotes, as the binary may name it.
+QString llvmGlobalName(const QString &token) {
+  QString name = token.mid(1);
+  if (name.size() < 2 || !name.startsWith(QLatin1Char('"')) ||
+      !name.endsWith(QLatin1Char('"')))
+    return name;
+  // LLVM escapes what a quoted name cannot hold as two hexadecimal digits.
+  const QByteArray quoted = name.mid(1, name.size() - 2).toUtf8();
+  QByteArray bytes;
+  for (int i = 0; i < quoted.size(); ++i) {
+    bool ok = false;
+    const int value = quoted[i] == '\\' && i + 2 < quoted.size()
+                          ? quoted.mid(i + 1, 2).toInt(&ok, 16)
+                          : 0;
+    if (ok) {
+      bytes.append(char(value));
+      i += 2;
+    } else {
+      bytes.append(quoted[i]);
+    }
+  }
+  return QString::fromUtf8(bytes);
+}
+
+/// The lines that define what LLVM IR names: a global or function (`@name`),
+/// a type, value or parameter (`%name`), a block (its label `name:`), an
+/// attribute group (`#0`) or metadata (`!4`, `!llvm.module.flags`).
+QHash<QString, int> llvmDefinitions(QStringView source) {
+  QHash<QString, int> found;
+  int line = 0;
+  for (const QStringView text : source.split(QLatin1Char('\n'))) {
+    const auto tokens = llvmTokens(text);
+    const auto define = [&](const QString &name) {
+      if (!found.contains(name))
+        found.insert(name, line);
+    };
+    if (!tokens.isEmpty() && !tokens.front().comment) {
+      const LLVMToken &first = tokens.front();
+      const QChar sigil = first.text.front();
+      const QStringView after =
+          text.mid(first.begin + first.text.size()).trimmed();
+      if ((sigil == QLatin1Char('@') || sigil == QLatin1Char('%') ||
+           sigil == QLatin1Char('!')) &&
+          after.startsWith(QLatin1Char('='))) {
+        define(first.text);
+      } else if (first.text == QLatin1String("attributes") &&
+                 tokens.size() > 1 &&
+                 tokens[1].text.startsWith(QLatin1Char('#'))) {
+        define(tokens[1].text);
+      } else if (first.text == QLatin1String("declare") ||
+                 first.text == QLatin1String("define")) {
+        // The function, then a definition's parameters.
+        bool named = false;
+        for (const auto &token : tokens) {
+          if (token.comment)
+            break;
+          if (!named && token.text.startsWith(QLatin1Char('@'))) {
+            define(token.text);
+            named = true;
+          } else if (named && first.text == QLatin1String("define") &&
+                     token.text.startsWith(QLatin1Char('%'))) {
+            define(token.text);
+          }
+        }
+      } else if (first.begin == 0 && llvmNamePart(sigil) &&
+                 after.startsWith(QLatin1Char(':'))) {
+        // A block's label, which branches name as `%label`.
+        define(QLatin1Char('%') + first.text);
+      }
+    }
+    ++line;
+  }
+  return found;
+}
 } // namespace
 
 CodeText::CodeText(Session &session, QWidget *parent)
@@ -276,6 +436,9 @@ void CodeText::clear() {
   regions_ = {};
   regionsValid_ = false;
   prelude_ = {};
+  epilogue_ = {};
+  references_.clear();
+  unresolvedDeclaration_.clear();
   declarations_.reset();
   library_.reset({}, {}, {});
   blocksAfterLoad_.clear();
@@ -313,6 +476,7 @@ void CodeText::load(Address function, const QString &representation,
   function_ = function;
   representation_ = representation;
   sourceOptions_ = nextOptions;
+  unresolvedDeclaration_.clear();
   const quint64 serial = ++serial_;
   if (!same) {
     renderedOptions_ = {};
@@ -330,6 +494,7 @@ void CodeText::load(Address function, const QString &representation,
   // a new function opens at its definition, its prelude folded.
   foldAfterLoad_ = same && library_.libraryFolded();
   foldPreludeAfterLoad_ = !same || library_.isFolded(PreludeRegion);
+  foldEpilogueAfterLoad_ = !same || library_.isFolded(EpilogueRegion);
   blocksAfterLoad_ = same ? library_.foldedBlocks() : QSet<QString>();
   blockStructureAfterLoad_ = same ? library_.blockStructure() : QString();
   if (!same)
@@ -376,6 +541,8 @@ void CodeText::request(int offset, quint64 serial) {
           library_.setFolded(true);
         if (foldPreludeAfterLoad_)
           library_.setRegionFolded(PreludeRegion, true);
+        if (foldEpilogueAfterLoad_)
+          library_.setRegionFolded(EpilogueRegion, true);
         if (!blocksAfterLoad_.isEmpty() &&
             library_.blockStructure() == blockStructureAfterLoad_)
           library_.setFoldedBlocks(blocksAfterLoad_);
@@ -458,6 +625,8 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     regionsValid_ =
         payload.value("library_regions").isArray() && pageOffset >= 0;
     prelude_ = payload.value("prelude").toObject();
+    epilogue_ = payload.value("epilogue").toObject();
+    references_.clear();
     declarations_.reset();
     byteOffset_ = std::max<qint64>(0, pageOffset);
     sourceNames_.clear();
@@ -486,6 +655,15 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
   }
   for (const auto &row : payload.value("rows").toArray())
     sourceRows_.append(row.toObject().toVariantMap());
+  for (const auto &value : payload.value("references").toArray()) {
+    const auto reference = value.toObject();
+    const auto line = reference.value("line").toInteger(-1);
+    const auto address = addressValue(reference.value("address"));
+    const QString name = reference.value("name").toString();
+    if (line >= 0 && line < std::numeric_limits<int>::max() && address &&
+        !name.isEmpty())
+      references_[int(line)].append({name, *address});
+  }
   // A source name's bytes are in the page that holds its line.
   const QByteArray bytes = text.toUtf8();
   for (const auto &value : payload.value("code_names").toArray()) {
@@ -587,16 +765,33 @@ QJsonArray CodeText::foldRegions() const {
   // definition kept.
   const qint64 lines = prelude_.value("lines").toInteger(-1);
   const qint64 end = prelude_.value("end_byte").toInteger(-1);
+  const bool llvm = dialectOf(representation_, pageLanguage_) == Dialect::LLVM;
   if (lines > 0 && end > byteOffset_ + 1)
     regions.append(QJsonObject{
         {"id", PreludeRegion},
         {"kind", PreludeRegion},
         {"display_name",
-         tr("%n lines of includes and declarations", nullptr, int(lines))},
+         llvm ? tr("%n lines of declarations", nullptr, int(lines))
+              : tr("%n lines of includes and declarations", nullptr,
+                   int(lines))},
         {"foldable", true},
         {"mapping_status", "mapped"},
         {"spans", QJsonArray{QJsonObject{{"begin_byte", byteOffset_},
                                          {"end_byte", end - 1}}}}});
+  // The epilogue folds to its summary line too, the final newline kept.
+  const qint64 tail = epilogue_.value("lines").toInteger(-1);
+  const qint64 begin = epilogue_.value("begin_byte").toInteger(-1);
+  const qint64 last = byteOffset_ + sourceBytes_ - 1;
+  if (tail > 0 && begin >= byteOffset_ && begin < last)
+    regions.append(QJsonObject{
+        {"id", EpilogueRegion},
+        {"kind", EpilogueRegion},
+        {"display_name",
+         tr("%n lines of attributes and metadata", nullptr, int(tail))},
+        {"foldable", true},
+        {"mapping_status", "mapped"},
+        {"spans",
+         QJsonArray{QJsonObject{{"begin_byte", begin}, {"end_byte", last}}}}});
   return regions;
 }
 
@@ -793,12 +988,21 @@ bool CodeText::event(QEvent *event) {
         const auto region = value.toMap();
         if (region.value(QStringLiteral("id")).toString() != id)
           continue;
+        const bool llvm =
+            dialectOf(representation_, pageLanguage_) == Dialect::LLVM;
         QToolTip::showText(
             help->globalPos(),
-            id == QLatin1String(PreludeRegion)
+            id == QLatin1String(PreludeRegion) && llvm
+                ? tr("The target, types, globals and functions this function "
+                     "refers to; click to show them, Keypad - to fold them "
+                     "again.")
+            : id == QLatin1String(PreludeRegion)
                 ? tr("The includes, support types and declarations this code "
                      "compiles with; click to show them, Keypad - to fold "
                      "them again.")
+            : id == QLatin1String(EpilogueRegion)
+                ? tr("The attribute groups and metadata this function uses; "
+                     "click to show them, Keypad - to fold them again.")
             : region.value(QStringLiteral("kind")) == "source-block"
                 ? tr("Expand block (Ctrl+Shift+])")
                 : tr("%1\nRecognized library operation; click to show its "
@@ -819,20 +1023,32 @@ bool CodeText::event(QEvent *event) {
         QToolTip::showText(help->globalPos(), text, this);
         return true;
       }
+    // A global of LLVM IR says what it is and where it goes.
+    if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
+      if (const QString text = globalHoverText(line, columnAt(line, local.x()));
+          !text.isEmpty()) {
+        QToolTip::showText(help->globalPos(), text, this);
+        return true;
+      }
     // A type or macro the code declares shows its declaration.
     if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
-      if (const QString token =
-              lines_[line].styled.tokenAt(columnAt(line, local.x()));
+      if (const QString token = tokenAt(line, columnAt(line, local.x()));
           !token.isEmpty())
         if (const auto declared = declarationLine(token)) {
           const auto text = QStringView(source_)
                                 .split(QLatin1Char('\n'))
                                 .at(*declared)
                                 .trimmed();
-          QToolTip::showText(help->globalPos(),
-                             tr("%1\nDouble-click to go to the declaration.")
-                                 .arg(text.toString()),
-                             this);
+          // A global of LLVM IR goes first to what the binary names so.
+          const bool global =
+              dialectOf(representation_, pageLanguage_) == Dialect::LLVM &&
+              token.startsWith(QLatin1Char('@'));
+          QToolTip::showText(
+              help->globalPos(),
+              global ? text.toString()
+                     : tr("%1\nDouble-click to go to the declaration.")
+                           .arg(text.toString()),
+              this);
           return true;
         } else if (const auto linked = declarations().linked.constFind(token);
                    linked != declarations().linked.cend()) {
@@ -1456,6 +1672,10 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
       if (hasPrelude() && !preludeFolded() &&
           cursorLine_ < prelude_.value("lines").toInteger(0))
         setPreludeFolded(true);
+      else if (hasEpilogue() && !epilogueFolded() && cursorLine_ >= 0 &&
+               cursorLine_ < lines_.size() &&
+               lines_[cursorLine_].sourceLine >= epilogueLine())
+        setEpilogueFolded(true);
       return;
     }
   }
@@ -1489,7 +1709,7 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
   if (event->button() == Qt::LeftButton) {
     selecting_ = true;
     const auto name = sourceNameAt(line, column);
-    highlight_ = name ? name->first : lines_[line].styled.tokenAt(column);
+    highlight_ = name ? name->first : tokenAt(line, column);
   }
   updateMouseCursor(event->position().toPoint());
   viewport()->update();
@@ -1527,6 +1747,10 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
                                                      : name->second.symbol);
     return;
   }
+  if (dialectOf(representation_, pageLanguage_) == Dialect::LLVM) {
+    activateLLVMToken();
+    return;
+  }
   const QString token = currentToken();
   // A type or macro this code declares opens at its declaration; the
   // language's own words name nothing in the binary.
@@ -1562,6 +1786,129 @@ void CodeText::setPreludeFolded(bool folded) {
   emit foldingChanged();
 }
 
+bool CodeText::hasEpilogue() const {
+  return library_.hasRegion(QLatin1String(EpilogueRegion));
+}
+
+bool CodeText::epilogueFolded() const {
+  return library_.isFolded(QLatin1String(EpilogueRegion));
+}
+
+void CodeText::setEpilogueFolded(bool folded) {
+  if (!hasEpilogue() || epilogueFolded() == folded)
+    return;
+  library_.setRegionFolded(QLatin1String(EpilogueRegion), folded);
+  rebuildLines();
+  if (folded && cursorLine_ >= lines_.size())
+    moveCursor(int(lines_.size()) - 1, 0, false);
+  emit foldingChanged();
+}
+
+int CodeText::epilogueLine() const {
+  return int(source_.count(QLatin1Char('\n')) -
+             epilogue_.value("lines").toInteger(0));
+}
+
+QString CodeText::tokenAt(int line, int column) const {
+  if (line < 0 || line >= lines_.size())
+    return {};
+  if (dialectOf(representation_, pageLanguage_) != Dialect::LLVM)
+    return lines_[line].styled.tokenAt(column);
+  const auto token = llvmTokenAt(lines_[line].styled.text, column);
+  return token ? token->text : QString();
+}
+
+std::optional<Address> CodeText::globalReferenceAt(int line, int column) const {
+  if (line < 0 || line >= lines_.size() || lines_[line].folded ||
+      dialectOf(representation_, pageLanguage_) != Dialect::LLVM)
+    return std::nullopt;
+  const QString &text = lines_[line].styled.text;
+  const auto token = llvmTokenAt(text, column);
+  if (!token || token->comment || !token->text.startsWith(QLatin1Char('@')))
+    return std::nullopt;
+  const auto found = references_.constFind(lines_[line].sourceLine);
+  if (found == references_.cend())
+    return std::nullopt;
+  // A mirror the line reaches at two offsets spells twice: the occurrence
+  // picks its reference.
+  int occurrence = 0;
+  for (const auto &other : llvmTokens(text))
+    if (other.begin < token->begin && other.text == token->text &&
+        !other.comment)
+      ++occurrence;
+  std::optional<Address> last;
+  for (const auto &reference : *found)
+    if (reference.name == token->text) {
+      if (occurrence-- == 0)
+        return reference.address;
+      last = reference.address;
+    }
+  return last;
+}
+
+QString CodeText::globalHoverText(int line, int column) const {
+  const auto address = globalReferenceAt(line, column);
+  if (!address)
+    return {};
+  QString text;
+  if (const auto declared = declarationLine(tokenAt(line, column))) {
+    const auto source = QStringView(source_).split(QLatin1Char('\n'));
+    // The comments over the declaration say what the global is: a mirror's
+    // image bytes and the offsets this function uses, a function's address.
+    int first = *declared;
+    while (first > 0 && source.at(first - 1).trimmed().startsWith(u';'))
+      --first;
+    for (int i = first; i < *declared; ++i) {
+      QStringView comment = source.at(i).trimmed().mid(1);
+      if (comment.startsWith(u' '))
+        comment = comment.mid(1);
+      text += comment;
+      text += QLatin1Char('\n');
+    }
+    // A mirror's declaration spells its whole layout.
+    constexpr int Shown = 160;
+    QString declaration = source.at(*declared).trimmed().toString();
+    if (declaration.size() > Shown)
+      declaration = declaration.left(Shown - 1) + QChar(0x2026);
+    text += declaration + QLatin1Char('\n');
+  }
+  return text + tr("Double-click to go to %1.")
+                    .arg(QStringLiteral("0x") + displayAddress(*address));
+}
+
+bool CodeText::showUnresolvedDeclaration(const QString &name) {
+  const QString token = std::exchange(unresolvedDeclaration_, QString());
+  return !token.isEmpty() && llvmGlobalName(token) == name &&
+         goToDeclaration(token);
+}
+
+void CodeText::activateLLVMToken() {
+  unresolvedDeclaration_.clear();
+  if (cursorLine_ < 0 || cursorLine_ >= lines_.size())
+    return;
+  const auto token =
+      llvmTokenAt(lines_[cursorLine_].styled.text, cursorColumn_);
+  if (!token)
+    return;
+  // A comment names image addresses and what the listing calls them there.
+  if (token->comment) {
+    emit nameActivated(token->text);
+    return;
+  }
+  if (token->text.startsWith(QLatin1Char('@'))) {
+    if (const auto address = globalReferenceAt(cursorLine_, cursorColumn_)) {
+      emit nameActivated(hexAddress(*address));
+      return;
+    }
+    // The binary may name a global the engine gives no address, such as an
+    // import; LLVM's own and NeverD's declarations show in the prelude.
+    unresolvedDeclaration_ = token->text;
+    emit nameActivated(llvmGlobalName(token->text));
+    return;
+  }
+  goToDeclaration(token->text);
+}
+
 const CodeText::Declarations &CodeText::declarations() const {
   if (declarations_)
     return *declarations_;
@@ -1586,6 +1933,10 @@ const CodeText::Declarations &CodeText::declarations() const {
   static const QRegularExpression Declared(
       QStringLiteral(R"(\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*[=;])"));
   auto &found = declarations_.emplace();
+  if (dialectOf(representation_, pageLanguage_) == Dialect::LLVM) {
+    found.types = llvmDefinitions(source_);
+    return found;
+  }
   int line = 0;
   std::optional<Address> declaredAt;
   for (const QStringView text : QStringView(source_).split(QLatin1Char('\n'))) {
@@ -1650,6 +2001,8 @@ bool CodeText::goToDeclaration(const QString &name) {
   if (hasPrelude() && preludeFolded() &&
       *source < prelude_.value("lines").toInteger(0))
     setPreludeFolded(false);
+  if (hasEpilogue() && epilogueFolded() && *source >= epilogueLine())
+    setEpilogueFolded(false);
   const int line = library_.canFold() ? library_.displayLine(*source) : *source;
   if (line < 0 || line >= lines_.size())
     return false;

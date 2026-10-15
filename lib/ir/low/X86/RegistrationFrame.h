@@ -147,6 +147,7 @@ struct FrameState {
   size_t memoryAccessWork(const FrameValue &Address, uint16_t Width,
                           bool Write = false) const;
 
+  bool operator==(const FrameState &) const = default;
   bool merge(const FrameState &Other);
   void forgetCellValues();
   /// A possible write drops exact values but retains pointer provenance from

@@ -1,0 +1,30 @@
+//===- KernelDataExports.def - Read-only kernel data identities ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Offsets are relative to KernelModuleDataRVA. Data is outside the PE export
+// directory span, so an export parser must not interpret it as a forwarder.
+NEVERD_KERNEL_DATA_EXPORT(PsProcessType, 0, 8, objectType(ObjectKind::Process))
+NEVERD_KERNEL_DATA_EXPORT(PsThreadType, 8, 8, objectType(ObjectKind::Thread))
+NEVERD_KERNEL_DATA_EXPORT(IoDriverObjectType, 16, 8,
+                          objectType(ObjectKind::Driver))
+NEVERD_KERNEL_DATA_EXPORT(IoFileObjectType, 24, 8, objectType(ObjectKind::File))
+NEVERD_KERNEL_DATA_EXPORT(ExEventObjectType, 32, 8,
+                          objectType(ObjectKind::Event))
+NEVERD_KERNEL_DATA_EXPORT(ExSemaphoreObjectType, 40, 8,
+                          objectType(ObjectKind::Semaphore))
+NEVERD_KERNEL_DATA_EXPORT(PsJobType, 48, 8, objectType(ObjectKind::Job))
+NEVERD_KERNEL_DATA_EXPORT(SeTokenObjectType, 56, 8,
+                          objectType(ObjectKind::Token))
+NEVERD_KERNEL_DATA_EXPORT(PsInitialSystemProcess, 64, 8,
+                          processObject(windows::SystemProcessID))
+NEVERD_KERNEL_DATA_EXPORT(KeNumberProcessors, 72, 1,
+                          uint64_t(std::popcount(profile::ActiveProcessorMask)))
+// The second page can remain inaccessible when debugger facts are omitted.
+NEVERD_KERNEL_DATA_EXPORT(
+    KdDebuggerEnabled, 4096, 1,
+    uint64_t(Options.DebuggerState &&Options.DebuggerState->Enabled))
+NEVERD_KERNEL_DATA_EXPORT(
+    KdDebuggerNotPresent, 4097, 1,
+    uint64_t(Options.DebuggerState &&Options.DebuggerState->NotPresent))
