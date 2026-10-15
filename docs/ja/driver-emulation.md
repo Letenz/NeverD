@@ -697,3 +697,5 @@ PASSIVE_LEVEL で長さが 4 未満なら結果に触れず `STATUS_INFO_LENGTH_
 ## プロセッサ識別と DPC レベルへの昇格
 
 単一プロセッサ設定の `KeGetCurrentProcessorNumberEx` は全モデル IRQL でインデックスゼロを返し、任意の出力にグループゼロ、プロセッサゼロ、予約バイトゼロの四バイトだけを書きます。無効な出力を拒否し、周囲を保持します。`KeRaiseIrqlToDpcLevel` は IRQL 0、1、2 を受け付け、元のレベルを返し、`KfRaiseIrql` と `KeLowerIrql` と実行所有の入れ子状態を共有します。インポートと動的検索は同じ契約です。実際の x64 WDK インライン関数は `KfRaiseIrql(2)` を呼び、独立したエクスポートも動的に取得できます。
+
+`RtlInt64ToUnicodeString` は PASSIVE_LEVEL で符号なし 64 ビット値全体を文字列化します。基数は 2、8、10、16 で、0 は十進数です。既存の `RtlIntegerToUnicodeString` は ULONG への切り詰めを維持します。両者は `STATUS_BUFFER_OVERFLOW` を返す前に `Length` を設定し、終端文字の領域を要求し、未使用バイトを保持します。数字を書いた後に `Buffer` を読み直して終端文字を書き込むため、出力とレコードが重なる場合も同じ順序になります。終端書き込みの障害でも既存の数字は残ります。

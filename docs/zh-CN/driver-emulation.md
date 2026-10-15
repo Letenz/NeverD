@@ -697,3 +697,5 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 ## 处理器身份与 DPC 级别提升
 
 单处理器配置在所有已建模 IRQL 上实现 `KeGetCurrentProcessorNumberEx`，返回处理器索引零，并可选地精确写入四字节：组零、处理器零、保留字节零。输出检查保留相邻内存并拒绝非法存储。`KeRaiseIrqlToDpcLevel` 接受 IRQL 0、1、2，返回原级别，并与 `KfRaiseIrql`、`KeLowerIrql` 共用执行上下文的嵌套栈。导入和动态查找共用这些契约。真实 x64 WDK 内联封装调用 `KfRaiseIrql(2)`；独立导出入口也可通过动态查找调用。
+
+`RtlInt64ToUnicodeString` 在 PASSIVE_LEVEL 格式化完整的无符号 64 位值，支持 2、8、10、16 进制，0 表示十进制。已有 `RtlIntegerToUnicodeString` 保留 ULONG 截断。两者先写入 `Length`，再报告 `STATUS_BUFFER_OVERFLOW`，必须为终止符留出空间，并保留未使用的字节。写入数字后会重新读取 `Buffer` 再写终止符，包括输出与记录重叠的情况；终止符写入失败时，已写入的数字仍保留。
