@@ -22,6 +22,11 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
+  struct ProcMapping : LinuxProcMapping {
+    unsigned Permissions = 0;
+  };
+  llvm::Error initializeProc();
+  llvm::Expected<std::vector<ProcMapping>> procMappings() const;
   /// KSM eligibility only; the deterministic profile has no background scanner.
   bool isMergeable(uint64_t Address) const;
   llvm::Expected<std::optional<uint64_t>>
@@ -38,6 +43,9 @@ public:
 
 private:
   AddressSpace &Space;
+  const ProcessOptions &Options;
+  std::vector<LinuxProcMapping> ProcMappings;
+  void retireProcMappings(uint64_t Address, uint64_t Size);
   const uint64_t PageSize, UserLimit, Limit, MinimumBreak, GuardBase, GuardEnd;
   uint64_t ProgramBreak;
   // Sorted, disjoint eligible intervals [begin, end). These own neither RAM

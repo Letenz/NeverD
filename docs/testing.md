@@ -5524,8 +5524,10 @@ LP64 architectures, complete defined dirent bytes and untouched padding,
 partial source-page writes, closed FD slots, EOF cookies and budget refusal.
 C/CLI and Python exercise fresh mutable-file and proc workloads through the
 public JSON contract. None of these fixtures needs a phone or a host filesystem
-oracle. These bounded contracts do not establish dynamic maps/task procfs,
-creation, timestamp maintenance or complete Android filesystem equivalence.
+oracle. Live maps/task/status/fdinfo and opt-in timestamp/allocation maintenance
+have separate `LinuxProcTests` and `AndroidProcTests` coverage; see
+[live proc](linux-live-proc.md). These bounded contracts do not establish
+creation or complete Android filesystem equivalence.
 
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
@@ -6640,3 +6642,14 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 ### Symbolic region coordinates across zero
 
 `SymRegionWrap.*` checks both byte orders, complete and partial accesses across relative zero, nonwrapping input origins, copied unknown epochs, exact and insufficient preservation budgets, and rejection of absolute/scalar overflow. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` asserts the symbolic `base - 1` address shape and checks complete STORE effects, native return words and restored stack state with an independent byte oracle. Missing separation proof or entry alignment must still refuse.
+
+
+`LinuxProc` checks x64 and AArch64 stat bytes, sparse page allocation, truncation,
+clock failure, live FD offsets/CLOEXEC, proc buffering, task disappearance and
+mapping-label retirement. `AndroidProc` runs independent O0/O2 callers with
+ordinary/APS2/RELR relocation packing on every available transport, including
+real cooperative thread creation/join and libc DIR/FILE reads. Run
+`ctest -R 'LinuxProc|AndroidProc|AndroidLiveProc'` after building the Linux,
+Android and process-public test targets, then the four OS/session suites for
+shared-owner changes. `test_android_live_proc_and_maintained_stat` checks Python
+against the built SDK; unavailable backends are skips, not successful coverage.

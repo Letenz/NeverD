@@ -17,6 +17,7 @@ struct LinuxDeviceState {
   const LinuxDeviceOptions *Options;
   size_t NextIoctl = 0;
   std::set<uint32_t> Contexts;
+  uint32_t OpenFlags = 0;
 };
 } // namespace neverd::emulation::linux_model
 #endif

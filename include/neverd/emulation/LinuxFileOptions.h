@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,6 +32,22 @@ struct LinuxFileMetadata {
   LinuxTimespec AccessTime;
   LinuxTimespec ModificationTime;
   LinuxTimespec ChangeTime;
+};
+
+/// Explicit identity for the bounded live proc view. Unknown status fields
+/// are omitted, rather than inferred from the host or an Android version.
+struct LinuxProcMapping {
+  uint64_t Address = 0, Size = 0, Offset = 0, Inode = 0;
+  uint32_t Device = 0;
+  bool Shared = false;
+  std::string Path;
+};
+struct LinuxProcOptions {
+  std::string Name;
+  uint32_t ParentPID = 0;
+  /// Optional guest backing identities for initial mapped RAM. Permissions
+  /// come from AddressSpace; munmap retires identities before address reuse.
+  std::vector<LinuxProcMapping> Mappings;
 };
 
 /// Closed initial file catalogue for Linux ELF64 and Android workloads.
@@ -57,10 +75,18 @@ struct LinuxFileOptions {
   /// Opt-in live /proc/self/fd links and enumeration, owned by the FD table.
   /// Other proc entries remain explicit inputs, not inferred kernel state.
   bool DynamicProcFDs = false;
+  /// Live maps, task/status and fdinfo, plus FD links. Mount and inode numbers
+  /// are workload-local identities. The status view contains modeled fields.
+  std::optional<LinuxProcOptions> DynamicProc;
   /// Writable existing memory files and their maximum byte extents. An absent
   /// grant is unsupported, not an inferred permission or filesystem error.
   /// Reservations count against the file byte budget. No host file is changed.
   std::map<std::string, uint64_t> WriteLimits;
+  /// Opt-in noatime, page-backed memory files with complete initial metadata.
+  /// Track allocated 4 KiB pages and realtime mtime/ctime after
+  /// writes/truncate. Requires dense initial bytes/blocks, no set-ID bits and a
+  /// realtime clock.
+  std::set<std::string> TrackWriteMetadata;
 };
 } // namespace neverd::emulation
 #endif

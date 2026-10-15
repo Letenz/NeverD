@@ -7,10 +7,59 @@
 /// Mutable contents are inode state; cursors and append/access flags belong to
 /// shared open descriptions. Captured stat observations are invalidated by IO.
 #include "LinuxFiles.h"
+#include "LinuxTime.h"
 
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
+LinuxFiles::MutableFile &LinuxFiles::mutableFile(const std::string &Path) {
+  auto [I, Inserted] = MutableFiles.try_emplace(Path);
+  auto &F = I->second;
+  if (Inserted) {
+    F.Bytes = Options->Files.at(Path);
+    if (Options->TrackWriteMetadata.contains(Path)) {
+      F.Metadata = Options->Metadata.at(Path);
+      for (uint64_t Page = 0; Page * 4096 < F.Bytes.size(); ++Page)
+        F.AllocatedPages.insert(Page);
+    }
+  }
+  return F;
+}
+const LinuxFileMetadata *
+LinuxFiles::fileMetadata(const std::string &Path) const {
+  if (auto I = MutableFiles.find(Path); I != MutableFiles.end()) {
+    if (I->second.Metadata)
+      return &*I->second.Metadata;
+    if (I->second.Changed)
+      return nullptr;
+  }
+  auto I = Options->Metadata.find(Path);
+  return I == Options->Metadata.end() ? nullptr : &I->second;
+}
+bool LinuxFiles::touchWrite(MutableFile &File, ProcessResult &Result) {
+  if (!File.Metadata)
+    return true;
+  if (!Clock) {
+    unsupported(Result,
+                "file metadata update requires a virtual realtime clock");
+    return false;
+  }
+  auto Now = Clock->read(ClockRealtime, Result);
+  if (!Now)
+    return false;
+  File.Metadata->ModificationTime = *Now;
+  File.Metadata->ChangeTime = *Now;
+  return true;
+}
+void LinuxFiles::allocateWrittenPages(MutableFile &File, uint64_t Begin,
+                                      uint64_t Size) {
+  if (!File.Metadata || !Size)
+    return;
+  for (uint64_t Page = Begin / 4096; Page <= (Begin + Size - 1) / 4096; ++Page)
+    File.AllocatedPages.insert(Page);
+  File.Metadata->Size = File.Bytes.size();
+  File.Metadata->Blocks = File.AllocatedPages.size() * 8;
+}
 bool LinuxFiles::isRegularFile(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   return I != Descriptors.end() && std::holds_alternative<OpenFile>(*I->second);
@@ -47,6 +96,10 @@ LinuxFiles::writeDescriptor(ServiceKind Kind, uint32_t FD, uint64_t Address,
   if (Size && (Position > Limit || Size > Limit - Position))
     return unsupported(Result,
                        "memory-file write exceeds explicit reservation");
+  // The selected noatime memory-file provider performs its timestamp update
+  // before copying data, including a nonempty write that later faults.
+  if (Size && !touchWrite(Object, Result))
+    return Reply();
   uint64_t Done = 0;
   while (Done < Size) {
     const auto At = Address + Done;
@@ -64,6 +117,7 @@ LinuxFiles::writeDescriptor(ServiceKind Kind, uint32_t FD, uint64_t Address,
       Object.Bytes.resize(Position + Count, 0);
     std::copy(Bytes.begin(), Bytes.end(), Object.Bytes.begin() + Position);
     Object.Changed = true;
+    allocateWrittenPages(Object, Position, Count);
     Done += Count;
     Position += Count;
     F->Offset = Position;

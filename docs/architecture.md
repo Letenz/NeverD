@@ -3519,9 +3519,11 @@ do not need vocabulary entries.
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
 Mutable bytes are one object per granted catalogue path; independent opens
-have independent offsets, while dup shares its open description. Mutation
+have independent offsets, while dup shares its open description. Without a metadata provider, mutation
 invalidates captured stat observations, retaining only unchanged block-size
-facts for libc buffer selection. Directory and stdio buffers belong to Bionic,
+facts for libc buffer selection. Opt-in tracked memory files keep complete
+metadata and sparse allocated-page state in the same mutable object, borrowing
+time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
@@ -6320,3 +6322,13 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Symbolic region coordinates across zero
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
+
+
+`LinuxProc` classifies the optional live namespace, borrowing task snapshots
+directly from GuestThreads through LinuxServices. It owns no second scheduler.
+`LinuxProcRead` retains record buffering in the shared open description, and
+fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
+`LinuxProcMaps` intersects optional backing identities and device aliases with
+AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
+labels on unmap. JSON supplies explicit identity/provider declarations only.
+See [live proc](linux-live-proc.md) for the supported fields and boundaries.

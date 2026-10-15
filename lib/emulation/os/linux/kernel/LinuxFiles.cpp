@@ -28,6 +28,8 @@ LinuxFiles::descriptorStatus(uint32_t FD, ProcessResult &Result) const {
         File->Metadata ? std::optional<uint32_t>(File->Metadata->BlockSize)
                        : std::nullopt,
         false, bool(File->Flags & OpenAppend)};
+  if (std::holds_alternative<OpenProcFile>(*I->second))
+    return DescriptorStatus{0, uint32_t(ProcBlockSize)};
   if (std::holds_alternative<OpenDirectory>(*I->second))
     return DescriptorStatus{0, std::nullopt, true};
   if (const auto *Device = std::get_if<OpenDevice>(I->second.get()))
