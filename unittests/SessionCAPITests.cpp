@@ -4525,7 +4525,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
     ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
     const auto Entry = seedAnalysisCacheSymbols(Session);
     auto &State = *neverd::sdk::toSession(Session);
-    State.selectFunction(Entry);
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
     const auto Source = takeString(neverd_decompile(Session, Entry));
     const auto LLVM = takeString(neverd_decompile_llvm(Session, Entry));
@@ -4535,7 +4535,7 @@ TEST_F(SessionCAPITest, LLVMViewsDeferOnlyHighIRAndPreserveLaterSource) {
     ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
     for (const char *View : {"llvm", "llvmc"}) {
       SCOPED_TRACE(View);
-      State.selectFunction(Entry);
+      neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
       ASSERT_EQ(neverd_prepare_function_view(Session, Entry, View), 1);
       ASSERT_TRUE(State.PipeResult.HighIRDeferred);
       ASSERT_TRUE(State.PipeResult.HighFuncs.empty());
@@ -4785,7 +4785,7 @@ TEST_F(SessionCAPITest, SourceOptionsKeepOrdinaryAndEnhancedPagesIndependent) {
   auto &State = *neverd::sdk::toSession(Session);
   State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry, 11));
   State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry + 16, 6));
-  State.resetFunctionsFromImage();
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
   const auto Ordinary = takeString(neverd_decompile(Session, Entry));
   ASSERT_FALSE(Ordinary.empty()) << takeString(neverd_last_error(Session));
   const auto Low = takeString(neverd_ir_low(Session, Entry));
@@ -4854,7 +4854,7 @@ TEST_F(SessionCAPITest, SourceOptionsDoNotDependOnLLVMViewOrder) {
   std::string Original, Enhanced, Med;
   for (bool LLVMFirst : {false, true}) {
     SCOPED_TRACE(LLVMFirst);
-    State.clearPipeline();
+    neverd::sdk::SessionTestAccess::clearPipeline(State);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
     const auto Before = takeString(neverd_ir_med(Session, Entry));
     if (LLVMFirst) {
@@ -4970,7 +4970,7 @@ TEST_F(SessionCAPITest,
   std::string Inspection, Source;
   for (bool SourceFirst : {false, true}) {
     SCOPED_TRACE(SourceFirst);
-    State.clearPipeline();
+    neverd::sdk::SessionTestAccess::clearPipeline(State);
     ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
     if (SourceFirst)
       EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), Source);

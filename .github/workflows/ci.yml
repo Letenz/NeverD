@@ -224,6 +224,9 @@ jobs:
       - name: Verify Debug and Release target flags
         shell: bash
         run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            export NEVERD_TEST_BASH="$(cygpath -w "$BASH")"
+          fi
           "$PYTHON" -m unittest \
             scripts.tests.test_debug_build_configuration \
             scripts.tests.test_ci_configuration \
