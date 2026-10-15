@@ -4111,6 +4111,10 @@ from the separate parent-call state-selection contract.
 `RegistrationSEHTryLevel.DeepUnwindKeepsTheDefaultProofBudget` and
 `RegistrationDispatch.SharedFinallyRetainsEveryLevelWithinDefaultBudget` cover
 1,024 levels without changing the work cap, including reversed block order.
+`RegistrationDispatch.ManyDistinctFramesStayWithinDefaultBudget` checks 1,024
+different parent cells with otherwise equal registers, in both block orders.
+The corpus filter-thunk HighC test guards readable `xcpt4` output against
+snapshot-index budget regressions.
 Companion tests preserve distinct source snapshots, converging sibling paths,
 recurrent-path rejection and observable finally writes.
 

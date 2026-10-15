@@ -18,6 +18,57 @@
 using namespace neverd;
 using namespace neverd::registration_test;
 
+TEST(RegistrationDispatch, ManyDistinctFramesStayWithinDefaultBudget) {
+  for (bool ReverseBlocks : {false, true}) {
+    SCOPED_TRACE(ReverseBlocks);
+    auto F = makeBranchingFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    Chain.Scopes = {{-1, 0, 0x1800, true}};
+    constexpr int Count = 1024;
+    F.ExceptionMetadata->CodeRange.End = 0x7000;
+    F.Blocks[1].Succs = {4};
+    // Each active block has the same registers and a distinct parent cell.
+    // Comparing each snapshot with every earlier snapshot is quadratic even
+    // though this function has only one finally and one active TryLevel.
+    for (int I = 0; I != Count; ++I) {
+      LowBlock Body;
+      Body.Id = I + 4;
+      Body.StartAddr = 0x2000 + 0x10 * I;
+      Body.EndAddr = Body.StartAddr + 7;
+      Body.Succs = {I + 1 == Count ? 3 : I + 5};
+      emitOp(Body, Body.StartAddr, NdOp::INT_ADD, NdVar::tmp(0, 4),
+             {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-28), 4)});
+      emitOp(Body, Body.StartAddr, NdOp::STORE, {},
+             {NdVar::tmp(0, 4), NdVar::cst(I, 4)});
+      Body.InstructionBoundaries = {{Body.StartAddr, 7, 0, 2}};
+      F.Blocks.push_back(std::move(Body));
+    }
+    LowBlock Callback;
+    Callback.Id = Count + 4;
+    Callback.StartAddr = 0x1800;
+    Callback.EndAddr = 0x1801;
+    emitOp(Callback, 0x1800, NdOp::RETURN, {}, {});
+    Callback.InstructionBoundaries = {{0x1800, 1, 0, 1}};
+    Callback.InstructionBoundaries.back().Control =
+        LowInstructionControl::Return;
+    F.Blocks.push_back(std::move(Callback));
+    if (ReverseBlocks)
+      std::reverse(F.Blocks.begin(), F.Blocks.end());
+    const auto A = analyzeRegistrationStates(F);
+    for (const auto &Diagnostic : A.Diagnostics)
+      ADD_FAILURE() << Diagnostic;
+    ASSERT_TRUE(A.Complete);
+    EXPECT_TRUE(A.CallbackStatesComplete);
+    const auto Root =
+        std::find_if(A.Blocks.begin(), A.Blocks.end(),
+                     [](const auto &B) { return B.Range.Begin == 0x1800; });
+    ASSERT_NE(Root, A.Blocks.end());
+    EXPECT_TRUE(Root->CallbackOnly);
+    EXPECT_FALSE(Root->Unknown);
+    EXPECT_EQ(Root->Levels, std::vector<int32_t>{-1});
+  }
+}
+
 TEST(RegistrationDispatch, SharedFinallyRetainsEveryLevelWithinDefaultBudget) {
   for (bool ReverseBlocks : {false, true}) {
     SCOPED_TRACE(ReverseBlocks);

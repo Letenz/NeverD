@@ -97,7 +97,10 @@ struct Domain {
   size_t sehCallerCellCount() const {
     size_t Count = 0;
     for (const auto &Caller : SEHCallers)
-      Count += Caller.Stack.cellCount() + Caller.Activation.Callers.size() + 8;
+      Count += Caller.Stack.cellCount() +
+               Caller.Stack.OtherRegisterBytes.size() +
+               Caller.Activation.JumpCaptureCalls.size() +
+               Caller.Activation.Callers.size() + 8;
     return Count;
   }
   bool JumpBindingsIntact = true;
@@ -115,8 +118,15 @@ struct Domain {
            Activation.JumpCaptureCalls.size() + Activation.Callers.size() +
            sehCallerCellCount() + catchCellCount() + 10;
   }
+  /// A lookup accelerator; complete equality remains the identity check.
+  size_t snapshotHash() const;
   bool operator==(const Domain &) const = default;
 };
+
+/// Facts inherited by a runtime dispatch. Entry construction replaces the
+/// registers, invocation stack and activation; captures retain their own saved
+/// registers. Both root construction and pending-root identity use this owner.
+Domain dispatchSource(const Domain &Source);
 
 /// Frames with different native TryLevels must not lose their correlation.
 using SEHFrameOutcomes = std::map<int32_t, FrameState>;
@@ -368,6 +378,7 @@ private:
     std::set<int32_t> Pending;
   };
   std::vector<SEHDispatchMemo> DispatchedSEHFrames;
+  std::map<size_t, std::vector<size_t>> SEHFrameBuckets;
   std::set<size_t> PendingSEHFrames;
   std::vector<size_t> Order;
   std::set<std::tuple<size_t, size_t, SEHActivation>> Work;

@@ -126,6 +126,19 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     Work.emplace(Order[Target], Target, Source.Activation);
 }
 
+Domain dispatchSource(const Domain &Source) {
+  Domain Root;
+  Root.Frame.Cells = Source.Frame.Cells;
+  Root.Frame.EntryCells = Source.Frame.EntryCells;
+  Root.JumpCaptures = Source.JumpCaptures;
+  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
+  Root.InitializedFrameBytes = Source.InitializedFrameBytes;
+  Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
+  Root.RuntimeObject.forgetCellValues();
+  Root.Unknown = Source.Unknown;
+  return Root;
+}
+
 void RegistrationStateSolver::dispatch(
     va_t Address, std::set<int32_t> Levels, const Domain &Source, bool Unknown,
     bool Callback, bool SearchFilter,
@@ -136,10 +149,10 @@ void RegistrationStateSolver::dispatch(
       CompleteCxxContinuations = false;
     return;
   }
-  Domain Root;
   assert(!Levels.empty());
   if (!charge(Levels.size() + 1))
     return;
+  Domain Root = dispatchSource(Source);
   Root.Levels = std::move(Levels);
   if (!KnownCxx && Callback)
     Root.Activation = {Address, SearchFilter};
@@ -152,13 +165,6 @@ void RegistrationStateSolver::dispatch(
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
-  Root.Frame.Cells = Source.Frame.Cells;
-  Root.Frame.EntryCells = Source.Frame.EntryCells;
-  Root.JumpCaptures = Source.JumpCaptures;
-  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
-  Root.InitializedFrameBytes = Source.InitializedFrameBytes;
-  Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
-  Root.RuntimeObject.forgetCellValues();
   // This is the join of roots from one source snapshot, differing only in
   // their logical level. Distinct constants have no exact cell value; the
   // complete finite domain remains in Levels for subsequent state transfers.
@@ -183,7 +189,7 @@ void RegistrationStateSolver::dispatch(
     else
       Root.Frame.enterCallback(Address);
   }
-  Root.Unknown = Unknown || Source.Unknown;
+  Root.Unknown |= Unknown;
   Root.Parent = !Callback;
   Root.Callback = Callback;
   Root.OtherCallback = Callback && !CxxCatch;

@@ -8,6 +8,8 @@
 
 #include "RegistrationStateSolver.h"
 
+#include "llvm/ADT/Hashing.h"
+
 #include <bit>
 
 namespace neverd::registration_state {
@@ -19,23 +21,33 @@ void RegistrationStateSolver::queueSEHScopes(const Domain &Before,
     return;
   if (!charge(Before.snapshotWork() + Reaching.size() + 1))
     return;
-  Domain Snapshot = Before;
-  Snapshot.Levels.clear();
+  Domain Snapshot = dispatchSource(Before);
   // dispatch replaces this exact cell with the selected root level. Every
-  // other source fact stays in the key, including captures, invocation
-  // identities, aliases and unknown provenance. No distinct frame is joined
-  // here; it must contribute independently to every affected runtime root.
+  // inherited fact stays in the key, including captures, parent cells and
+  // unknown provenance. The same owner projects facts for dispatch itself,
+  // so caller registers that the runtime replaces cannot split this key.
   Snapshot.Frame.Cells.erase(*Chain.TryLevelOffset);
-  size_t Index = 0;
-  for (; Index != DispatchedSEHFrames.size(); ++Index) {
-    const auto &Candidate = DispatchedSEHFrames[Index];
+  if (!charge(Snapshot.snapshotWork() + 1 +
+              2 * std::bit_width(SEHFrameBuckets.size() + 1)))
+    return;
+  const size_t Hash = llvm::hash_combine(Snapshot.snapshotHash(), Invalid);
+  auto &Candidates = SEHFrameBuckets[Hash];
+  size_t Index = DispatchedSEHFrames.size();
+  for (size_t CandidateIndex : Candidates) {
+    const auto &Candidate = DispatchedSEHFrames[CandidateIndex];
     if (!charge(Snapshot.snapshotWork() + Candidate.Source.snapshotWork()))
       return;
-    if (Candidate.Invalid == Invalid && Candidate.Source == Snapshot)
+    // Hash collisions never merge states. Full equality also keeps a newly
+    // added domain field authoritative before its hash is updated.
+    if (Candidate.Invalid == Invalid && Candidate.Source == Snapshot) {
+      Index = CandidateIndex;
       break;
+    }
   }
-  if (Index == DispatchedSEHFrames.size())
+  if (Index == DispatchedSEHFrames.size()) {
     DispatchedSEHFrames.push_back({std::move(Snapshot), Invalid, {}, {}});
+    Candidates.push_back(Index);
+  }
   auto &Memo = DispatchedSEHFrames[Index];
   for (int32_t Level : Reaching) {
     if (!charge(1 + 2 * std::bit_width(Memo.Levels.size() + 1) +

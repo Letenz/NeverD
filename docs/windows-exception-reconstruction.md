@@ -200,7 +200,9 @@ require an observation proof; a `void` import declaration alone is insufficient.
 Deep scope chains retain the same proof budget. The solver batches equal
 source-frame contributions to exceptional roots and tracks unwind ancestry
 without copying each whole path. Runtime coverage includes a 259-row nested
-chain; state tests cover 1,024 levels, changed frames and recurrent paths.
+chain; state tests cover 1,024 levels, 1,024 distinct frame snapshots and
+recurrent paths. Indexed snapshot lookup charges hashing and collision checks;
+complete equality remains mandatory.
 Ordinary/nonlocal calls at a parent join with several active levels still need
 a separate native state-selection contract.
 
