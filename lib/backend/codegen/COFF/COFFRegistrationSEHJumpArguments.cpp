@@ -89,7 +89,8 @@ llvm::Error validateSEHJumpArguments(
     if (!llvm::isa<llvm::InvokeInst>(Call) || !Anchor ||
         Anchor->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
         Anchor->arg_size() || Anchor->getNumOperandBundles() != 1 ||
-        Anchor->countOperandBundlesOfType(windows_eh_md::ProvenanceBundle) != 1 ||
+        Anchor->countOperandBundlesOfType(windows_eh_md::ProvenanceBundle) !=
+            1 ||
         next(*Anchor) != &Call)
       return rejectIR("native jump value moved across source execution");
   }
