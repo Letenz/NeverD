@@ -91,6 +91,22 @@ void parseDarwinExceptions(BinaryImage &Img) {
   if (HasFrames)
     Frames = dwarf_eh::parseEHFrame(Img, FrameSec, Bases);
 
+  // Pointer encodings and relative data addresses have already been decoded
+  // against their original bases. Normalize only the semantic code fields;
+  // retain the raw frame bytes, range lengths and LSDA/personality pointers.
+  auto NormalizeLocations = [&](std::vector<CFIInstruction> &Instructions) {
+    for (CFIInstruction &Instruction : Instructions)
+      if (Instruction.Kind == CFIOpKind::SetLoc)
+        Instruction.Offset = static_cast<int64_t>(canonicalCodeAddress(
+            Img.Arch, static_cast<uint64_t>(Instruction.Offset)));
+  };
+  for (DwarfCIE &CIE : Frames.CIEs)
+    NormalizeLocations(CIE.InitialInstructions);
+  for (DwarfFDE &FDE : Frames.FDEs) {
+    FDE.InitialLocation = canonicalCodeAddress(Img.Arch, FDE.InitialLocation);
+    NormalizeLocations(FDE.Instructions);
+  }
+
   if (Compact.Entries.empty() && Frames.FDEs.empty())
     return;
 

@@ -1596,6 +1596,14 @@ private:
   llvm::Error deleteDevice(uint64_t Address);
   llvm::Error retireDeviceIfUnreferenced(uint64_t Address);
   llvm::Expected<uint64_t> topAttachedDevice(uint64_t Base) const;
+  enum class DeviceStackQuery {
+    Top,
+    TopReference,
+    LowerReference,
+    BaseReference
+  };
+  llvm::Expected<uint64_t> queryDeviceStack(uint64_t Device,
+                                            DeviceStackQuery Query);
   llvm::Expected<std::vector<uint64_t>> deviceStack(uint64_t Top) const;
   enum class ObjectRead { Execution, Snapshot };
   llvm::Expected<uint64_t> readObjectField(uint64_t Address, unsigned Width,

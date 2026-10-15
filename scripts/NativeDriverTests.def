@@ -9,6 +9,18 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDUnpackDriverTests)
 NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}CheckedRebased")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/KernelRegistryObjectExecution."
     "OriginalDriverSharesKeyHandlesAndDetectsPointerLeaks/"

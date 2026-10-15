@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: ee36c902e90a2f26bd648acf020212b2720bc29bd414bdada2c8c96bf4479130 -->
+<!-- i18n-source: be6fcc291675e50f0ce8d8517475c9efa35e98e854f9dd96e0a044bdf3b28e88 -->
 
 [← Documentation Index](README.md)
 
@@ -202,3 +202,11 @@ ELF ARM과 Thumb는 별도 프로필입니다. 소스 생성기에 `-marm` 또�
 추가 [ARM/Thumb 검증](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263)은 `ubuntu-24.04-arm`에서 `fcee81c9a5e2f20a71090ade23ae833175f64c59`의 C 테스트 이미지 32개를 실행하여 96회 관측 모두 통과했습니다(ARM과 Thumb 각각 48회). Linux 커널은 QEMU나 명시적인 로더 명령 없이 `/lib/ld-linux-armhf.so.3`을 통해 각 이미지를 직접 로드했습니다. 이는 ARM64 호스트의 `compatibility`이며 네이티브 32비트 호스트 검증은 아닙니다. 테스트 하네스 커밋 `3ad17ac9608d6bd9f5a4d44953ec375524e5730b`와 이미지 커밋은 별도로 기록됩니다. 독립적인 산출물 감사로 이미지 해시, 게시 영수증 30개 전체, 모든 시나리오와 반복 횟수, 그리고 일치하는 `binfmt_misc` 인터프리터 규칙이 없음을 확인했습니다.
 
 별도의[호스팅 runner 조사](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719)에서 제공된 Windows 11 ARM64 runner는 ARM32 프로그램 실행을 `WinError 216`으로 거부했습니다. macOS 15.7.9와 Xcode 16.4 환경에서는 제공된 SDK로 macOS i386 또는 iOS ARMv7 프로그램을 링크할 수 없었습니다. watchOS ARMv7k 프로그램은 링크에 성공했지만 실제 기기 실행 증거는 확보되지 않았습니다. 조사 작업의 성공은 해당 플랫폼의 검증 완료를 뜻하지 않으며 네이티브 하드웨어 검증은 아직 남아 있습니다. NeverC는 빌드하거나 변경하지 않았습니다.
+
+추가 [개인 Actions Linux 검증](https://github.com/gmh5225/test_mac_intel/actions/runs/38773830274)에서는 32비트 Linux 커널과 glibc를 갖춘 완전한 QEMU TCG ARM32 게스트 안에서 ARM/Thumb 실행 96회가 통과했고, 같은 게스트의 Wine에서 PE ARM32 실행 30회도 통과했습니다. 게스트 커널이 ELF 이미지를 직접 로드합니다. 이는 시스템 전체 에뮬레이션이며 명시적 로더를 사용하는 `qemu-user` 경로와 구분합니다. ARM64 호스트 호환 계층에서 수행한 Wine 레지스트리 설치는 별도로 기록하며 패치 실행 횟수에는 포함하지 않습니다. 게스트의 Wine 초기화와 모든 측정 실행은 원래 제한 시간 안에 성공해야 합니다.
+
+[Apple 호환성 검증](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358)에서는 Linux의 Darling에서 Mach-O i386 실행 30회, Intel macOS의 touchHLE에서 ARMv7/ARMv7k 실행 60회가 통과했습니다. 원본과 소스 IR, 컴파일 객체, 외부 객체를 사용한 각 교체 결과를 세 번씩 실행합니다. 독립 감사는 이 추가 실행들의 이미지 72개, 패치 게시 기록 66개, 실행 216회 전체와 GitHub 산출물 크기, SHA256, 정확한 커밋, 전체 사례 목록을 확인했습니다. Linux 입력은 계속 `fcee81c9a5`에 고정되며 PE 입력은 `a542f97ba`, Mach-O 입력은 `8f5f06762`에서 생성했습니다. 검증 스크립트 커밋은 연결된 실행에 별도로 기록합니다.
+
+Mach-O 수정은 이미지 전체의 ARM/Thumb 혼합 정보와 별개로 선택된 Thumb 함수를 인증하고, 증거가 있는 Thumb 내보내기 포인터와 ARM32 언와인드 코드 주소를 정규화합니다. 데이터 포인터나 범위 길이는 바꾸지 않습니다. 통합 LLVM 소스 빌드는 로컬에서 CPU 매트릭스 검사 154개와 예외 계약 검사 258개를 모두 통과했으며 실패나 건너뛰기가 없습니다. 구형 Mach-O 테스트는 기록된 오픈 소스 링커와 예약된 언와인드 공간을 사용합니다. i386에는 올바르게 정렬된 시작 진입점과 64 KiB 페이지 제로 세그먼트가 있습니다.
+
+이 결과는 명시한 에뮬레이터와 호환 계층에서의 C 코드 실행을 입증합니다. Wine은 Microsoft Windows가 아니며 Darling은 macOS가 아닙니다. iOS HLE 안의 ARMv7k 실행은 watchOS, WatchKit 또는 Apple 실기기 검증이 아닙니다. 구형 Apple SDK나 네이티브 32비트 하드웨어 지원을 추론하지 않으며 C++ 예외 언와인드 검증으로도 간주하지 않습니다. 기존 네이티브 및 호환 모드 증거는 계속 분리해 기록합니다. NeverC는 빌드하거나 변경하지 않았습니다.

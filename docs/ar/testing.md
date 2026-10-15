@@ -1819,6 +1819,8 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 تغطي `FrameOffsets.*Normalization*` المتطابقات الدقيقة والمدخلات الإضافية وهوية الجذر والشروط المستحيلة دون شهود مخبأة والسلوك الافتراضي وتكاليف البنية والقياس والرفض عند تجاوز عدد العقد. تختبر `FrameNormalizationPreservesStoresAndNativeReturns` و`RawCodeFrameNormalization*` آثار الذاكرة الأصلية وعناوين العودة الفعلية بمراجع بايتات مستقلة، وترتيبي البايتات حيث ينطبقان، وميزانيات العمليات الكافية تمامًا أو الناقصة وتعديل الإيصالات. تتحقق `FrameNormalizationStrategyBindsIndependentProof` من هويتي الإثبات الثنائي.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
 `NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` يتحقق من عدم احتساب السجل المخزن مؤقتًا مرة أخرى، واستمرار احتساب الثوابت العريضة المضافة، ورفض ميزانيات العمل والعقد غير الكافية، واستقلال نسخ مخبأ قابلية القراءة.
 
 ## التحقق الأصلي من Lift
@@ -1997,3 +1999,6 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 يتحقق `KernelNamespaceTests.cpp` من الأنواع والأسماء النسبية وحالة الأحرف والأحجام وترتيب النسخ والبايتات الختامية والحقوق ونطاق العملية وIRQL والمخرجات الفاشلة والحذف مع المراجع. ينفذ `DriverNamespaceTests.cpp` العينة الأصلية `driver_namespace.c` على Unicorn/KVM/WHP/HVF المتاحة بعقدين وعنوانين وجدولة تعاونية/17 تعليمة. يفرض `NativeDriverTests.def` نتائج أصلية؛ تظل الخلفيات وفئات المعلومات/الأمان غير المتاحة فجوات تغطية.
 
 يغطي `KernelRegistryTests.cpp` هويات الفتح والمراجع ذات النوع والمقابض المنسوخة ونطاق العملية والحقوق العامة والحذف ومخازن الأسماء القصيرة والفردية وترتيب المخرجات وحدود الفشل والسعة. يشغل `DriverRegistryObjectTests.cpp` الاختبار الأصلي `fixtures/driver_registry_objects.c` على المحركات المتاحة والعقدين وعنواني التحميل، بجدولة تعاونية وكمية 17 تعليمة. يثبت تسريب مؤشر متعمد رفض التفريغ؛ يتطلب القبول الأصلي نتائج العقد/العنوان الأربع.
+
+
+تتحقق `KernelDeviceStackTests.cpp` من الجيران الحاليين والنتائج المستعارة والمحتفظ بها وحذف الإدخال أو الجار وتحرير آخر مرجع والمدخلات غير الصالحة أو التالفة ورفض IRQL قبل إضافة المرجع. يعمل المثال الأصلي `fixtures/driver_device_queries.c` عبر `DriverDeviceQueryTests.cpp` على الخلفيات المتاحة بالعقدين وعنواني التحميل وبجدولة تعاونية واستباقية كل 17 تعليمة. يتحقق من الاحتفاظ بالتخزين بعد detach/delete ورفض التفريغ عند تسريب مرجع عمداً؛ يلزم نجاح التركيبات الأصلية الأربع للعقد والعنوان.

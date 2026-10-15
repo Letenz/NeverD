@@ -109,6 +109,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 WDM スタックには同じゲストドライバーが所有する複数のデバイスを配置できます。`IoAttachDeviceToDeviceStack` は独立したソースを対象の現在の最上位に接続し、以前の最上位を返します。`StackSize` と `AlignmentRequirement` を設定しますが、`NextDevice` リストやバッファーフラグは変更しません。`IoDetachDevice` は保存した下位デバイスを受け取り、`PASSIVE_LEVEL` を要求します。接続は `DISPATCH_LEVEL` 以下で実行できます。名前付き下位デバイスを開くと現在の最上位へディスパッチされますが、`FILE_OBJECT.DeviceObject` とレポートは名前付きデバイスを保持します。READ/WRITE のバッファー方式は選択した最上位のフラグで決まります。要求が保持する経路は切断・削除後もディスパッチの復帰まで各デバイスを保持し、内部参照は開いたハンドル数を示す `ReferenceCount` に加算しません。
 
+モデル化されたデバイススタックでは、`IoGetAttachedDevice` は参照を増やさず現在の最上位を借用します。`IoGetAttachedDeviceReference` と `IoGetDeviceAttachmentBaseRef` は最上位と基底をポインター参照付きで返します。`IoGetLowerDeviceObject` は直下を参照し、直下が存在しない場合または入力デバイスが削除待ちの場合は null を返します。直下だけが削除待ちでも結果は抑制されません。参照付きの結果はそれぞれ `ObDereferenceObject` で解放します。参照は detach/delete 後も記憶領域を保持し、`DEVICE_OBJECT.ReferenceCount` を変更しません。4 つのクエリは所有するトポロジーを検証し、IRQL は `DISPATCH_LEVEL` 以下が必要です。
+
 `IofCallDriver` と `IoCallDriver` ヘルパーは保持経路内の指定された対象を直接呼び出します。実際のインライン `IoCopyCurrentIrpStackLocationToNext`、`IoSkipCurrentIrpStackLocation`、`IoSetCompletionRoutine` は元のゲスト IRP を操作し、モデルはカーソル、個数、制御フラグを検証します。下位ディスパッチの実際の戻り値、`IoStatus`、完了ルーチンの戻り値は別物です。完了処理はカーソルを進め、成功／エラー／キャンセル条件でコールバックを選び、pending を上位へ伝播します。完了ルーチンが呼ばれる場合はそのルーチンが伝播を担当し、先に `STATUS_PENDING` が返った後でも伝播できます。`STATUS_MORE_PROCESSING_REQUIRED` は IRP、MDL、バッファーを保持したまま展開を止め、後の完了呼び出しで再開できます。入れ子の完了には外側の停止結果が必要で、最終展開時に一度だけストレージを解放します。所有サブシステムを示す継続が WDM／WDF の呼び出しフレームと継承 IRQL を保持します。 上位の完了コールバックを実行する前に、消費済みの下位スタック位置をゼロにします。
 
 `IoAllocateIrp` と `IoFreeIrp` は呼び出し側所有の IRP を `DISPATCH_LEVEL` 以下で扱い、`ChargeQuota=FALSE` が必要です。最初の `IoCallDriver` はパケットを検証し、正確な下位デバイス経路を保持します。この範囲ではカーネルの `IRP_MJ_INTERNAL_DEVICE_CONTROL` とドライバー所有の `METHOD_NEITHER` バッファーを扱い、ユーザーファイルやユーザーバッファーのコピーを作りません。実際のゲスト完了・キャンセルルーチンを実行します。完了内で解放した場合は `STATUS_MORE_PROCESSING_REQUIRED` が必要です。パケットへのアクセスは直ちに終了し、呼び出しメタデータはフレームの復帰まで保持します。未送信の解放は可能ですが、リーク、二重解放、所有外や処理中の解放は明示的に失敗します。任意の再利用、他の要求形式、`IoBuildDeviceIoControlRequest` は未対応です。
@@ -366,6 +368,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `ExAllocatePoolWithTag`、`ExFreePoolWithTag`、`ExFreePool` | プール種別 `0`、`1`、`512` のデータ割り当て。サイズ／タグは正で、タグ付き解放は割り当てと一致する必要があり、アドレスは再利用しない |
 | `IoCreateDevice`、`IoDeleteDevice` | デバイス種別 `0x22`、characteristics は `0` または `0x100`、拡張領域のサイズは有限、名前は ASCII の `\Device\Name` |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | 同一ドライバー内の接続。以前の最上位を返し、切断は保存した下位を受け取る。上記の構造・寿命制限に従う |
+| `IoGetAttachedDevice`, `IoGetAttachedDeviceReference`, `IoGetLowerDeviceObject`, `IoGetDeviceAttachmentBaseRef` | 現在のモデル化された最上位・直下・基底、借用と共有ポインター参照、削除状態。IRQL <= DISPATCH_LEVEL |
 | `IofCallDriver`, `IoCallDriver` | 保持経路の指定対象へ直接ディスパッチ。ゲストカーソルを検証し下位 NTSTATUS を保持 |
 | `IoInitializeRemoveLockEx`, `IoAcquireRemoveLockEx` | 拡張部の正確な所有者と不透明32／120バイト。NULL／重複 Tag |
 | `IoReleaseRemoveLockEx`, `IoReleaseRemoveLockAndWaitEx` | 一致する Tag の解放とプロバイダー受信後の再開可能な REMOVE 待機 |
